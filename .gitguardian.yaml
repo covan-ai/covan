@@ -1,0 +1,31 @@
+version: 2
+
+# Covan's Docker quick start has to work with no setup step, so
+# `.env.docker.example` ships working local values. They are structurally valid
+# credentials, which is why secret scanners flag them — but none of them is a
+# real secret, and none of them is used by anything reachable from the internet:
+#
+#   ANON_KEY, SERVICE_ROLE_KEY   Supabase's own published self-host demo JWTs.
+#                                Both decode to `"iss": "supabase-demo"`.
+#   JWT_SECRET                   The demo secret those two are signed with,
+#                                published in the same Supabase docs.
+#   SECRET_KEY_BASE              Realtime's Phoenix signing base. Generated for
+#                                the local stack only.
+#   ROUTINE_SECRET_KEY           base64 of the literal string
+#                                "covan-local-dev-routine-key-0001".
+#
+# The real production secrets live in Cloudflare (`wrangler secret put`) and in
+# the operator's own `.env`, which is gitignored. Nothing here touches them.
+#
+# Every one of these values carries an inline comment in `.env.docker.example`
+# telling you to regenerate it before the stack is reachable by anyone else.
+# That warning is the actual mitigation; this file only stops the scanner from
+# reporting the same four known values on every run.
+#
+# Deliberate tradeoff: this ignores the file by path, not by value hash, so a
+# genuinely new secret pasted into `.env.docker.example` would also go
+# unreported. That file is meant to hold nothing but local placeholder values —
+# if you ever need a real one there, you don't; put it in `.env` instead.
+secret:
+  ignored-paths:
+    - ".env.docker.example"

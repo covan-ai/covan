@@ -1,0 +1,33 @@
+# Dependencies are installed inside the image from the lockfile.
+node_modules
+worker/node_modules
+
+# Build output — rebuilt in the image.
+.output
+.nitro
+.tanstack
+dist
+dist-ssr
+
+# Deployment state and vendor lock-in.
+.vercel
+.wrangler
+.git
+.github
+
+# Secrets. .env.local in particular is loaded by Vite during `bun run build`,
+# so leaving it in the context would bake whatever is in it into browser
+# JavaScript. The image gets its values from build args and compose.
+.env*
+worker/.dev.vars
+worker/wrangler.toml
+worker/wrangler.cron.toml
+
+# Never ships.
+MANIFESTO.md
+docs/superpowers
+.superpowers
+.claude
+
+*.log
+.DS_Store

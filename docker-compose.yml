@@ -1,0 +1,337 @@
+# Covan — the whole product on one machine.
+#
+#   cp .env.docker.example .env    # then set OPENAI_API_KEY
+#   docker compose up --build
+#
+#   frontend  http://localhost:3000
+#   API       http://localhost:8787
+#   Supabase  http://localhost:8000
+#
+# The Supabase services below are trimmed from the official self-host bundle
+# (supabase/supabase@master:docker/docker-compose.yml) so version pinning and
+# inter-service wiring stay upstream's. Covan runs db, auth, rest and realtime;
+# studio, storage, imgproxy, meta, functions, analytics, vector and supavisor
+# are dropped. See docs/self-hosting.md.
+#
+# Every image is pinned to an exact tag. Self-hosted Supabase drifts fast, and
+# `:latest` turns "it worked last week" into an unreproducible bug report.
+
+name: covan
+
+services:
+  # ---------------------------------------------------------------- Supabase
+  db:
+    container_name: covan-db
+    # supabase/postgres, not postgres:17 — the migrations need pgvector
+    # (0004_knowledge_bundles.sql) and pgcrypto (0001_init.sql), and this image
+    # ships both plus the roles GoTrue, PostgREST and Realtime log in as.
+    image: supabase/postgres:17.6.1.136
+    restart: unless-stopped
+    volumes:
+      - covan-db-data:/var/lib/postgresql/data
+      # Persist the pgsodium root key across restarts.
+      - covan-db-config:/etc/postgresql-custom
+      # Init hooks, run once when the data volume is empty. All three go in
+      # init-scripts/ rather than upstream's split across init-scripts/ and
+      # migrations/: the image's migrate.sh runs `set -eu`, so the first
+      # failing statement anywhere aborts the rest of initialisation, and
+      # migrations/ is last in line. See docker/db-init/99-roles.sql.
+      - ./docker/db-init/99-jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./docker/db-init/99-realtime.sql:/docker-entrypoint-initdb.d/init-scripts/99-realtime.sql:ro
+      - ./docker/db-init/99-roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: postgres
+      POSTGRES_DB: postgres
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_EXP: ${JWT_EXPIRY:-3600}
+    ports:
+      # Host access for psql / a GUI client. 54322 is the port
+      # supabase/config.toml gives the CLI's database, so one habit covers both
+      # paths — they are alternatives and cannot both run at once.
+      - "${POSTGRES_PORT:-54322}:5432"
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      # Keeps Realtime's polling queries out of the log.
+      - -c
+      - log_min_messages=fatal
+
+  auth:
+    container_name: covan-auth
+    image: supabase/gotrue:v2.189.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 10
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}/auth/v1
+
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_ISSUER: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}/auth/v1
+
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      # This stack ships no mail server, so a confirmation link would never
+      # arrive and nobody could ever sign in. Matches `enable_confirmations =
+      # false` in supabase/config.toml. Turn this off (and configure
+      # GOTRUE_SMTP_*) before putting the stack on a network.
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+
+  rest:
+    container_name: covan-rest
+    image: postgrest/postgrest:v14.12
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public,graphql_public
+      PGRST_DB_MAX_ROWS: 1000
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_ADMIN_SERVER_PORT: 3001
+      PGRST_ADMIN_SERVER_HOST: localhost
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+    command: ["postgrest"]
+
+  realtime:
+    container_name: covan-realtime
+    # Kept, unlike the rest of the optional Supabase services: the brainstorm
+    # board (src/components/idea-board.tsx) and shared chat sessions
+    # (src/routes/_authed.agents.$agentId.chat.tsx) subscribe to
+    # postgres_changes. Without this service both fall back to whatever the
+    # last fetch returned and never live-update.
+    image: supabase/realtime:v2.102.3
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          # Not cosmetic: Realtime parses the tenant id out of the Host
+          # subdomain, so Kong must reach it at `realtime-dev.*` to hit the
+          # tenant SEED_SELF_HOST creates.
+          - realtime-dev.supabase-realtime
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sSfL --head -o /dev/null -H "Authorization: Bearer ${ANON_KEY}"
+          http://127.0.0.1:4000/api/tenants/realtime-dev/health
+      timeout: 5s
+      interval: 10s
+      retries: 5
+      start_period: 20s
+    environment:
+      PORT: 4000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:-supabaserealtime}
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      DISABLE_HEALTHCHECK_LOGGING: "true"
+
+  kong:
+    container_name: covan-kong
+    # The single origin supabase-js talks to: /auth/v1, /rest/v1, /realtime/v1
+    # all arrive here and are routed by docker/kong.yml.
+    image: kong/kong:3.9.3
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${KONG_HTTP_PORT:-8000}:8000/tcp"
+    volumes:
+      - ./docker/kong.yml:/home/kong/temp.yml:ro
+      - ./docker/kong-entrypoint.sh:/home/kong/kong-entrypoint.sh:ro
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/kong.yml
+      KONG_ROUTER_FLAVOR: expressions
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_DNS_NOT_FOUND_TTL: 1
+      KONG_DNS_VALID_TTL: 5
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,request-termination
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      SUPABASE_ANON_KEY: ${ANON_KEY:?set ANON_KEY in .env}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY:?set SERVICE_ROLE_KEY in .env}
+      # Covan uses the legacy HS256 keys only. Left empty on purpose: the
+      # entrypoint reads them to decide whether to emit the opaque-key
+      # translation expressions, and strips the empty credentials from the
+      # declarative config.
+      SUPABASE_PUBLISHABLE_KEY: ""
+      SUPABASE_SECRET_KEY: ""
+      ANON_KEY_ASYMMETRIC: ""
+      SERVICE_ROLE_KEY_ASYMMETRIC: ""
+    entrypoint: ["/bin/sh", "/home/kong/kong-entrypoint.sh"]
+
+  # ------------------------------------------------------------------- Covan
+  migrate:
+    container_name: covan-migrate
+    # psql client only — the server is the db service above.
+    image: postgres:17.6-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+      # Not just db: 0001_init.sql declares foreign keys against auth.users and
+      # hangs a trigger off it, and that table does not exist until GoTrue has
+      # run its own migrations. Waiting on db alone is a race that fails on a
+      # cold start and passes on a warm one.
+      auth:
+        condition: service_healthy
+    volumes:
+      - ./supabase/migrations:/migrations:ro
+      - ./docker/migrate.sh:/migrate.sh:ro
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+    restart: "no"
+
+  covan-api:
+    container_name: covan-api
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    # tini as PID 1, so signals reach the runtime the way they would anywhere
+    # else and orphaned children get reaped. PID 1 has no default signal
+    # disposition, which is what makes an unprepared process ignore SIGTERM
+    # until docker's timeout expires and it is SIGKILLed; Bun handles SIGTERM
+    # itself and src/node.ts adds an explicit handler, but the measured stop
+    # still improves from ~1.2s to ~0.25s with an init in front.
+    init: true
+    stop_grace_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kong:
+        condition: service_healthy
+    environment:
+      # Server-side, so this is the compose network address — not localhost.
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env — Covan cannot answer anything without it}
+      ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY:?set ROUTINE_SECRET_KEY in .env}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
+      # No R2 binding off Cloudflare, so getDocStore falls to the filesystem
+      # store rooted here. This path is a volume; see below.
+      DOCS_DIR: /data/docs
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
+      PORT: 8787
+      ROUTINE_TICK_MS: ${ROUTINE_TICK_MS:-60000}
+    volumes:
+      - covan-docs:/data/docs
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8787/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    ports:
+      - "${COVAN_API_PORT:-8787}:8787"
+
+  covan-web:
+    container_name: covan-web
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # Baked into the browser bundle by Vite at BUILD time — the browser
+        # talks to these directly, so they must be host-reachable URLs, never
+        # compose service names. `http://kong:8000` here produces a frontend
+        # that cannot sign anyone in.
+        VITE_SUPABASE_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}
+        VITE_SUPABASE_ANON_KEY: ${ANON_KEY}
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8787}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10s
+    depends_on:
+      covan-api:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    ports:
+      - "${COVAN_WEB_PORT:-3000}:3000"
+
+volumes:
+  covan-db-data:
+  covan-db-config:
+  # Uploaded documents. Owned by uid/gid 1000 (the `bun` user in Dockerfile.api)
+  # — Docker seeds a fresh named volume with the ownership of the image
+  # directory it covers. See docs/self-hosting.md before replacing this with a
+  # bind mount.
+  covan-docs:

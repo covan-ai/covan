@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1
+#
+# The Covan API. Same source as the Cloudflare Worker — worker/src/node.ts is
+# the self-hosted entry point that supplies from the process environment what
+# Cloudflare would inject as bindings, and runs the routine tick on an interval
+# instead of a cron trigger.
+
+FROM oven/bun:1.3.0-alpine AS deps
+WORKDIR /app
+COPY worker/package.json worker/bun.lock ./
+RUN bun install --frozen-lockfile
+
+FROM oven/bun:1.3.0-alpine
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY worker/ ./
+
+# The document store's root. Creating it here, owned by the unprivileged user
+# the container runs as, is what makes the named volume usable: Docker seeds a
+# fresh volume with the ownership and mode of the image directory it covers, so
+# `covan-docs` comes up owned by bun:bun rather than root:root. Without this the
+# first upload fails with EACCES — which fsDocStore surfaces as a thrown error
+# rather than a silent "not found", so it is at least a legible failure.
+RUN mkdir -p /data/docs && chown -R bun:bun /data/docs
+
+USER bun
+ENV PORT=8787
+ENV DOCS_DIR=/data/docs
+EXPOSE 8787
+
+# `bun run src/node.ts`, not `bun run start:node`: the package script would put
+# a second process between the init and the server, and the signal handling in
+# src/node.ts is what makes `docker stop` prompt.
+CMD ["bun", "run", "src/node.ts"]

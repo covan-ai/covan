@@ -1,0 +1,63 @@
+# Copy to wrangler.cron.toml and fill in before deploying.
+#
+# The routine engine, deployed on its own.
+#
+# Same codebase as the API Worker, different entry point (src/cron.ts).
+# Cloudflare's Free plan caps an account at five cron triggers. If your
+# account has a free slot, you can deploy this alongside the API Worker on the
+# same account; if it doesn't, pin a second account's id below and deploy the
+# engine there instead.
+#
+#   deploy:  bun run deploy:cron    (from worker/)
+#   logs:    bun run tail:cron
+#
+# Secrets to set before the first deploy — `wrangler secret
+# put <NAME> -c wrangler.cron.toml` for each:
+#   SUPABASE_URL
+#   SUPABASE_SERVICE_ROLE_KEY
+#   OPENAI_API_KEY
+#   ROUTINE_SECRET_KEY   <- MUST be byte-identical to the API Worker's. The API
+#                           encrypts delivery_channels.secret_ciphertext with it
+#                           and this Worker decrypts. A different key here makes
+#                           every Slack webhook and email address undecryptable.
+#   RESEND_API_KEY
+#   RESEND_FROM
+#
+# Not set here, deliberately: SUPABASE_ANON_KEY (no user-scoped access — this
+# Worker only ever uses the service role) and the DOCS R2 binding (the engine
+# never touches documents).
+
+name = "covan-routines"
+main = "src/cron.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# No public URL. This Worker exports no `fetch` handler, and its only entry
+# point is the cron trigger below — putting it on the internet would add attack
+# surface for a Worker nothing is meant to call.
+workers_dev = false
+
+# Pin the account this Worker deploys to. `wrangler login` decides which
+# account you can reach, so without this a deploy while logged into the wrong
+# account silently creates a second copy of the engine there instead of
+# failing. If you're deploying to a second account (see the header above),
+# pin that account's id here — leave it unset if you're deploying alongside
+# the API Worker on the same account.
+# account_id = "your-cloudflare-account-id"
+
+[vars]
+# Not about CORS here — this Worker serves no HTTP. The SSRF guard reads it so a
+# routine cannot be pointed back at your own frontend. Keep in sync with
+# wrangler.toml.
+ALLOWED_ORIGIN = "https://your-app.example.com"
+
+# The engine's heartbeat. It only asks "is anything due?" — each routine's own
+# frequency lives in routines.next_run_at, so "every 15 minutes" and "Mondays at
+# 09:00" both run off this one trigger.
+[triggers]
+crons = ["*/5 * * * *"]
+
+# A Worker with no HTTP surface is invisible without this: it puts each tick's
+# console output in the dashboard's Workers Logs.
+[observability]
+enabled = true

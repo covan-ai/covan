@@ -1,0 +1,37 @@
+{
+  "name": "covan-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//engines": "Matches the frontend's floor so one `node` satisfies both halves of the repo, even though the API itself runs on Workers or Bun. See README.md.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:cron": "wrangler deploy -c wrangler.cron.toml",
+    "dry:cron": "wrangler deploy -c wrangler.cron.toml --dry-run",
+    "tail:cron": "wrangler tail -c wrangler.cron.toml",
+    "typecheck": "tsc --noEmit",
+    "dry": "wrangler deploy --dry-run",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start:node": "bun run src/node.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@supabase/supabase-js": "^2.45.4",
+    "cron-parser": "^4.9.0",
+    "fast-xml-parser": "^4.5.0",
+    "hono": "^4.6.9",
+    "openai": "^4.68.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241004.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.80.0"
+  }
+}

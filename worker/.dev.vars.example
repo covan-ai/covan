@@ -1,0 +1,37 @@
+# Copy this file to `.dev.vars` (gitignored) and fill in real values for local `wrangler dev`.
+# Never commit `.dev.vars` or real secret values.
+#
+# In production these are set with `wrangler secret put <NAME>`, except
+# ALLOWED_ORIGIN and WORKER_HOST, which are plain [vars] in wrangler.toml.
+# See docs/self-hosting.md.
+
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=replace-with-anon-key
+SUPABASE_SERVICE_ROLE_KEY=replace-with-service-role-key
+OPENAI_API_KEY=replace-with-openai-api-key
+
+# Comma-separated EXACT frontend origins. Never a wildcard or a pattern —
+# docs/self-hosting.md explains what that costs. localhost is allowed in code.
+ALLOWED_ORIGIN=http://localhost:3000
+
+# 32 random bytes, base64: `openssl rand -base64 32`
+# Must decode to exactly 16, 24 or 32 bytes (AES-GCM), and must be byte-identical
+# to the routine engine's copy — the API encrypts delivery secrets with it and
+# the engine decrypts them.
+ROUTINE_SECRET_KEY=
+
+# Email delivery for routines. Leave blank to disable it.
+RESEND_API_KEY=
+RESEND_FROM=
+
+# Optional. This Worker's own domain, for the routine engine's SSRF guard. Leave
+# unset on workers.dev — that whole domain class is already blocked.
+# WORKER_HOST=api.example.com
+
+# Optional. Shared secret for POST /admin/backfill-embeddings, sent in the
+# `x-admin-key` header. Unset, that endpoint fails closed.
+# ADMIN_API_KEY=
+
+# Not set here: DOCS_DIR. Document storage on Cloudflare is the DOCS R2 binding
+# declared in wrangler.toml; DOCS_DIR is the Node/Docker filesystem fallback and
+# is set by docker-compose.yml, not by this file.

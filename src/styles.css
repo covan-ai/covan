@@ -1,0 +1,359 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  /* Radius encodes scale and is strictly monotonic — the bigger the box, the
+     rounder the corner, and a child inside a rounded parent takes one step
+     LARGER, never smaller. Ladder lifted from the design system §3.4. */
+  --radius-sm: 4px; /* chips, status pills, the button's accent chip */
+  --radius-md: 8px; /* buttons, pills, rows inside a visual */
+  --radius-lg: 10px; /* data rows inside a panel, terminals, icon tiles */
+  --radius-xl: 12px; /* cards, stages, media wells */
+  --radius-2xl: 14px; /* chat bubbles, accordion items */
+  --radius-3xl: 20px; /* opened cards, floating product panels */
+  --radius-4xl: 24px; /* full-bleed painted panels */
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-dm: "DM Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --color-accent-orange: var(--accent-orange);
+  --color-accent-orange-foreground: var(--accent-orange-foreground);
+
+  --ease-spring: var(--ease-spring);
+  --ease-standard: var(--ease-standard);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-muted: var(--surface-muted);
+  --color-hairline: var(--hairline);
+  --color-card-body: var(--card-body);
+  --color-micro-foreground: var(--micro-foreground);
+  --color-display-muted: var(--display-muted);
+
+  --shadow-elegant: var(--shadow-elegant);
+  --shadow-card: var(--shadow-card);
+  --shadow-open: var(--shadow-open);
+  --shadow-glow: var(--shadow-glow);
+
+  --background-image-hero-glow: var(--gradient-hero);
+}
+
+/*
+ * The application palette.
+ *
+ * Warm neutrals, one ink, exactly one saturated colour — an amber orange that
+ * is a POINTER, never a surface. Values are lifted verbatim from the design
+ * system's `:root` (§3.1 / §13); do not round them or introduce a second
+ * accent. The semantic token names are kept so every existing Tailwind class
+ * (`bg-card`, `text-muted-foreground`, …) keeps working.
+ *
+ * Note `--primary` is the ink, not the orange: the primary button is a black
+ * fill with a 36px orange chip inside it. Orange on a large fill reads as a
+ * warning in this palette, not as a brand.
+ */
+:root {
+  --radius: 12px;
+
+  /* Surfaces — a four-step ladder. Depth is a step, never a shadow. */
+  --background: #f7f7f4; /* canvas */
+  --surface: #eeede6; /* cards, list panels, the rail */
+  --surface-hover: #e8e6dd; /* the hover state of anything --surface */
+  --surface-muted: #f5f4f0; /* panel title bars, empty wells */
+  --card: #eeede6;
+  --popover: #ffffff; /* white is a promotion: menus and dialogs float */
+
+  /* Ink — four greys, not interchangeable. */
+  --foreground: #251f19;
+  --card-foreground: #251f19;
+  --popover-foreground: #251f19;
+  --card-body: #3d342c; /* body copy sitting on a painted surface */
+  --muted-foreground: #68615a; /* the default secondary */
+  --micro-foreground: #8e867d; /* micro-labels only, never body */
+  --display-muted: #948b81; /* the italic half of a two-tone headline */
+
+  /* Primary = ink. The orange lives in the button's chip (§6). */
+  --primary: #251f19;
+  --primary-foreground: #ffffff;
+  --secondary: #ffffff;
+  --secondary-foreground: #251f19;
+  --muted: #e4e0dd;
+  --accent: #e8e6dd;
+  --accent-foreground: #251f19;
+
+  --accent-orange: #f48d16;
+  --accent-orange-foreground: #ffffff;
+
+  /* Lines. Borders are how this system separates things. */
+  --border: #ddd8d3; /* a card sitting on the canvas */
+  --hairline: #ebe8e4; /* a row inside a panel */
+  --input: #ddd8d3;
+  --ring: #f48d16; /* focus is orange, on both surfaces */
+
+  /* Destructive is an extension: the marketing system has no destructive
+     action, but "delete agent" must not look like "save". Kept muted and
+     reserved for confirmation actions. */
+  --destructive: #a8341c;
+  --destructive-foreground: #ffffff;
+
+  --chart-1: #f48d16;
+  --chart-2: #251f19;
+  --chart-3: #68615a;
+  --chart-4: #948b81;
+  --chart-5: #d4cdc7;
+
+  --sidebar: #eeede6;
+  --sidebar-foreground: #251f19;
+  --sidebar-primary: #251f19;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e8e6dd;
+  --sidebar-accent-foreground: #251f19;
+  --sidebar-border: #ddd8d3;
+  --sidebar-ring: #f48d16;
+
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1); /* transform, height */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* opacity, colour */
+
+  /* Three shadows in the whole system. Cards get none of them. */
+  --shadow-card: 0 28px 70px -23px rgba(26, 23, 20, 0.18); /* a panel that floats */
+  --shadow-elegant: 0 28px 70px -23px rgba(26, 23, 20, 0.18);
+  --shadow-open: 0 12px 16px 0 #ebe8e4; /* an opened card lifting off its row */
+  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--accent-orange);
+
+  --gradient-hero: none;
+}
+
+/*
+ * Dark mode is an EXTENSION, not part of the design system.
+ *
+ * The system defines no dark theme — it is a light, warm, printed surface, and
+ * its only dark objects are the primary button and the terminal quotation. But
+ * the product ships a theme toggle and removing it would be a regression, so
+ * this block derives the same ladder in reverse from the same ink (#251f19):
+ * warm near-blacks, the identical amber accent, the same four-step depth. The
+ * button keeps its structure — the chip stays orange in both themes (§6.2) —
+ * and only the fill and label swap. If the system ever specifies a dark theme,
+ * this block is what it replaces.
+ */
+.dark {
+  --background: #17130f;
+  --surface: #1f1a15;
+  --surface-hover: #272119;
+  --surface-muted: #1b1611;
+  --card: #1f1a15;
+  --popover: #26201a;
+
+  --foreground: #f4f1ec;
+  --card-foreground: #f4f1ec;
+  --popover-foreground: #f4f1ec;
+  --card-body: #ddd6cd;
+  --muted-foreground: #a9a099;
+  --micro-foreground: #8a8078;
+  --display-muted: #7d746c;
+
+  /* Inverted button fill; the chip stays amber. */
+  --primary: #f4f1ec;
+  --primary-foreground: #251f19;
+  --secondary: #2b241d;
+  --secondary-foreground: #f4f1ec;
+  --muted: #2f2820;
+  --accent: #272119;
+  --accent-foreground: #f4f1ec;
+
+  --accent-orange: #f48d16;
+  --accent-orange-foreground: #17130f;
+
+  --border: #332b23;
+  --hairline: #2b241d;
+  --input: #3a3129;
+  --ring: #f48d16;
+
+  --destructive: #e0674a;
+  --destructive-foreground: #17130f;
+
+  --chart-1: #f48d16;
+  --chart-2: #f4f1ec;
+  --chart-3: #a9a099;
+  --chart-4: #7d746c;
+  --chart-5: #453b31;
+
+  --sidebar: #1b1611;
+  --sidebar-foreground: #f4f1ec;
+  --sidebar-primary: #f4f1ec;
+  --sidebar-primary-foreground: #251f19;
+  --sidebar-accent: #272119;
+  --sidebar-accent-foreground: #f4f1ec;
+  --sidebar-border: #332b23;
+  --sidebar-ring: #f48d16;
+
+  --shadow-card: 0 28px 70px -23px rgba(0, 0, 0, 0.55);
+  --shadow-elegant: 0 28px 70px -23px rgba(0, 0, 0, 0.55);
+  --shadow-open: 0 12px 16px 0 rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--accent-orange);
+
+  --gradient-hero: none;
+}
+
+.dark {
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    /* Geist does every interface and body job. */
+    font-family: var(--font-sans);
+  }
+
+  /* DM Sans does every display job — headlines, card titles, numbers, the
+     wordmark — at the pinned 14 optical size, which keeps letterforms open
+     enough to read as editorial rather than geometric (§3.2). The two
+     families never swap roles: pick by role, not by size. */
+  h1,
+  h2,
+  .font-dm {
+    font-family: var(--font-dm);
+    font-variation-settings: "opsz" 14;
+    letter-spacing: -0.01em;
+  }
+
+  /* Headlines never leave an orphan; paragraphs get pretty rag. */
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+/* The two-tone headline: statement, then an italic turn in muted display grey.
+   The signature device of the system (§5.5) — the italic half is always the
+   second half, always muted, always weight 500. */
+.h2-turn em {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--display-muted);
+}
+
+/* Square bullets. Circles appear in exactly two places in this system, both
+   window-chrome imitations; everything else that marks a list is a square. */
+.square-bullet::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--accent-orange);
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Typing indicator dots shown while an agent composes a reply. */
+@keyframes typing-bob {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.typing-dot {
+  animation: typing-bob 1.2s infinite ease-in-out;
+}
+
+/* Blinking caret at the end of streaming text. */
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.stream-caret {
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+/* Subtle messaging-app wallpaper for the chat surface. */
+.chat-bg {
+  background-color: var(--surface-muted);
+  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-dot,
+  .stream-caret {
+    animation: none;
+  }
+}

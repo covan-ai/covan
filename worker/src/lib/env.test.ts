@@ -1,0 +1,42 @@
+import { describe, it, expect } from "vitest";
+import { loadEnv } from "./env";
+
+const complete = {
+  SUPABASE_URL: "https://x.supabase.co",
+  SUPABASE_ANON_KEY: "anon",
+  SUPABASE_SERVICE_ROLE_KEY: "service",
+  OPENAI_API_KEY: "sk-test",
+  ROUTINE_SECRET_KEY: "cm9vdGtleQ==",
+  RESEND_API_KEY: "re_test",
+  RESEND_FROM: "Covan <covan@example.com>",
+  ALLOWED_ORIGIN: "http://localhost:3000",
+  DOCS_DIR: "/data/docs",
+};
+
+describe("loadEnv", () => {
+  it("builds bindings from the process environment", () => {
+    const env = loadEnv(complete);
+    expect(env.SUPABASE_URL).toBe("https://x.supabase.co");
+    expect(env.DOCS_DIR).toBe("/data/docs");
+  });
+
+  it("leaves DOCS unset so getDocStore picks the filesystem", () => {
+    const env = loadEnv(complete);
+    expect(env.DOCS).toBeUndefined();
+  });
+
+  it("names every missing required variable at once", () => {
+    expect(() => loadEnv({ SUPABASE_URL: "https://x.supabase.co" })).toThrow(
+      /SUPABASE_ANON_KEY.*SUPABASE_SERVICE_ROLE_KEY.*OPENAI_API_KEY/s,
+    );
+  });
+
+  it("treats an empty string as missing", () => {
+    expect(() => loadEnv({ ...complete, OPENAI_API_KEY: "" })).toThrow(/OPENAI_API_KEY/);
+  });
+
+  it("allows the optional variables to be absent", () => {
+    const { RESEND_API_KEY, RESEND_FROM, ...rest } = complete;
+    expect(() => loadEnv(rest)).not.toThrow();
+  });
+});

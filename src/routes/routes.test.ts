@@ -1,0 +1,32 @@
+import { describe, it, expect } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+
+// TanStack Router's flat file routing makes `a.tsx` the PARENT of `a.b.tsx`.
+// A parent renders its child through <Outlet />, so a parent without one
+// silently swallows every child route: the URL matches, the child component
+// never mounts, and the user just keeps looking at the parent. Nothing in the
+// type system or the generated tree catches it, and a component test does not
+// either, because the components themselves are fine.
+//
+// This is the invariant that would have caught /agents/$agentId/routines
+// swallowing /agents/$agentId/routines/$routineId.
+
+// Resolved from the project root rather than import.meta.url: under jsdom the
+// module URL is not a file: URL.
+const ROUTES_DIR = `${process.cwd()}/src/routes/`;
+
+function routeFiles(): string[] {
+  return readdirSync(ROUTES_DIR).filter((f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"));
+}
+
+describe("route files", () => {
+  it("every route with children renders an <Outlet />", () => {
+    const names = routeFiles().map((f) => f.replace(/\.tsx$/, ""));
+
+    const parentsMissingOutlet = names
+      .filter((name) => names.some((other) => other.startsWith(`${name}.`)))
+      .filter((name) => !readFileSync(`${ROUTES_DIR}${name}.tsx`, "utf8").includes("<Outlet"));
+
+    expect(parentsMissingOutlet).toEqual([]);
+  });
+});

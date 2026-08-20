@@ -1,0 +1,46 @@
+# Copy to wrangler.toml and fill in before deploying.
+
+name = "covan-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Pin the account this Worker deploys to. `wrangler login` decides which account
+# you can reach, so without this a deploy while logged into a different account
+# silently creates a second copy of the API there instead of failing.
+# account_id = "your-cloudflare-account-id"
+
+# -----------------------------------------------------------------------------
+# Secrets — set with `wrangler secret put <NAME>` (never commit real values):
+#   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+#   OPENAI_API_KEY, ROUTINE_SECRET_KEY, RESEND_API_KEY, RESEND_FROM
+# -----------------------------------------------------------------------------
+
+[vars]
+# Comma-separated allowlist of EXACT frontend origins. localhost is added in
+# code for dev.
+#
+# Do not be tempted to pattern-match `*.vercel.app` here. Vercel serves
+# project-name subdomains first-come on a shared apex, so a regex — even one
+# anchored to your own project slug — can be satisfied by someone who names
+# their project to embed that slug. Combined with `credentials: true` that is a
+# real cross-origin read. List every preview host explicitly.
+ALLOWED_ORIGIN = "https://your-app.example.com"
+
+# WORKER_HOST — this worker's own domain, for the routine engine's self-fetch
+# guard. Leave unset on workers.dev (that whole domain class is already
+# blocked); set it once a custom domain fronts this worker.
+
+# Create the bucket before your first deploy: wrangler r2 bucket create covan-docs
+[[r2_buckets]]
+binding = "DOCS"
+bucket_name = "covan-docs"
+
+# No [triggers] here on purpose. The Workers Free plan caps an account at five
+# cron triggers, and registering one past the cap fails the deploy at the
+# schedules step — after the script has already uploaded, leaving a confusing
+# half-succeeded deploy. Add a trigger back here on Workers Paid or when a slot
+# frees up; `src/index.ts` still exports `scheduled`. Running it alongside a
+# second cron Worker is safe: `claim_due_routines` uses
+# `for update skip locked`, so two ticks can never claim the same routine.

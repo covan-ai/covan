@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+#
+# The Covan frontend, built by Vite and served by the nitro node-server output.
+
+FROM oven/bun:1.3.0-alpine AS build
+WORKDIR /app
+COPY package.json bun.lock bunfig.toml ./
+RUN bun install --frozen-lockfile
+COPY . .
+
+# NITRO_PRESET is a shell variable, never a .env value: nitro reads
+# process.env.NITRO_PRESET before c12 loads dotenv, and skips .env entirely on a
+# production build. vite.config.ts already defaults to node-server; stating it
+# here means the image does not silently change target if that default moves.
+ENV NITRO_PRESET=node-server
+
+# Vite inlines VITE_* at build time — they are not read at runtime, so they have
+# to be build args. They end up in JavaScript the browser downloads, which is
+# why the anon key (a public key, protected by row level security) is the only
+# key that may appear here.
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_API_URL
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+ENV VITE_API_URL=$VITE_API_URL
+RUN bun run build
+
+# Node 22, not 20. @supabase/supabase-js constructs a RealtimeClient inside
+# createClient(), and that constructor throws "Node.js detected but native
+# WebSocket not found" on anything below Node 22 — global WebSocket only became
+# available in Node 22. src/lib/supabase/client.ts is imported during SSR, so on
+# Node 20 every single page renders the 500 error shell instead of the app. The
+# build is perfectly green either way; the failure is entirely at runtime.
+FROM node:22.23.2-alpine
+WORKDIR /app
+COPY --from=build --chown=node:node /app/.output ./.output
+USER node
+ENV PORT=3000
+ENV HOST=0.0.0.0
+EXPOSE 3000
+CMD ["node", ".output/server/index.mjs"]

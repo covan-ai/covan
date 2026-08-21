@@ -308,10 +308,11 @@ routines.patch("/routines/:id", async (c) => {
 
 // POST /routines/:id/run — run it now instead of waiting for the schedule.
 //
-// The engine's cron trigger fires every five minutes, so without this the only
-// way to find out whether a routine works is to create it and wait. That makes
-// every mistake — a feed that 404s, a webhook that was revoked, an instruction
-// that produces nothing useful — cost a five-minute round trip to discover.
+// The engine only looks every few minutes — five on the Cloudflare trigger,
+// ROUTINE_TICK_MS on Node — so without this the only way to find out whether a
+// routine works is to create it and wait. That makes every mistake — a feed
+// that 404s, a webhook that was revoked, an instruction that produces nothing
+// useful — cost a full round trip through the scheduler to discover.
 //
 // Overlapping with a cron tick is safe: the executor reserves delivery keys
 // before it sends, so the second run of a pair delivers nothing.

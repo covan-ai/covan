@@ -321,8 +321,8 @@ describe("runRoutine", () => {
     expect(deliverCalls).toHaveLength(0);
   });
 
-  // The engine wakes every five minutes. Told once per tick, a routine waiting
-  // on a monthly allowance would mail its owner thousands of times.
+  // Ticks are minutes apart. Told once per tick, a routine waiting on a
+  // monthly allowance would mail its owner thousands of times.
   it("stays quiet when the previous run was already a quota skip", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     const { db } = makeDb({

@@ -86,6 +86,103 @@ describe("deleting a workspace", () => {
   });
 });
 
+describe("deleting a workspace a delivery channel was added from", () => {
+  it("succeeds, and leaves the channel and the routine using it working", async () => {
+    // The case no other test builds: a channel whose workspace and whose
+    // routine are two different workspaces.
+    //
+    // Every rule in the schema treats a channel as belonging to a person —
+    // routines_insert_own admits any channel where dc.user_id = auth.uid()
+    // without comparing workspaces, and the executor matches on user_id too.
+    // Only delivery_channels.workspace_id disagreed, by cascading. So a routine
+    // in Erin's workspace could hold Frank's workspace open forever, and Frank
+    // could not see the routine, let alone delete it.
+    const db = sql();
+    const erin = await createTestUser("erin");
+    const frank = await createTestUser("frank");
+
+    const { error: joinError } = await serviceClient()
+      .from("workspace_members")
+      .insert({ workspace_id: frank.workspaceId, user_id: erin.id, role: "member" });
+    if (joinError) throw new Error(joinError.message);
+
+    // Erin adds a channel while Frank's workspace is the active one. That is
+    // the only thing that decides workspace_id — see POST /delivery-channels.
+    const { data: channel, error: channelError } = await serviceClient()
+      .from("delivery_channels")
+      .insert({
+        workspace_id: frank.workspaceId,
+        user_id: erin.id,
+        kind: "email",
+        label: "e••••n@covan.test",
+        secret_ciphertext: "not-a-real-ciphertext",
+      })
+      .select("id")
+      .single();
+    if (channelError) throw new Error(channelError.message);
+
+    // ...and uses it on a routine in her own workspace. The policy allows this,
+    // which is the first half of the finding.
+    const { data: agent, error: agentError } = await erin.db
+      .from("agents")
+      .insert({ workspace_id: erin.workspaceId, name: "Erin's agent", created_by: erin.id })
+      .select("id")
+      .single();
+    if (agentError) throw new Error(agentError.message);
+
+    const { data: routine, error: routineError } = await erin.db
+      .from("routines")
+      .insert({
+        workspace_id: erin.workspaceId,
+        agent_id: agent.id,
+        user_id: erin.id,
+        name: "Erin's routine",
+        source_kind: "rss",
+        instruction: "summarise",
+        delivery_channel_id: channel.id,
+        schedule_cron: "0 9 * * *",
+      })
+      .select("id")
+      .single();
+    expect(routineError, "a routine may use its owner's channel from any workspace").toBeNull();
+
+    // Frank dismantles his workspace. Before 0019 this raised
+    // "violates foreign key constraint routines_delivery_channel_id_fkey" —
+    // the cascade took the channel and the deferred check found Erin's routine
+    // still pointing at it.
+    await db`delete from public.workspaces where id = ${frank.workspaceId}`;
+
+    const [{ count: workspaces }] = await db<{ count: string }[]>`
+      select count(*) from public.workspaces where id = ${frank.workspaceId}`;
+    expect(Number(workspaces), "a routine elsewhere kept the workspace alive").toBe(0);
+
+    // Erin keeps her channel — it was hers, not the workspace's — and it now
+    // records that the workspace it was added from is gone.
+    const [survivor] = await db<{ workspace_id: string | null }[]>`
+      select workspace_id from public.delivery_channels where id = ${channel.id}`;
+    expect(survivor, "the channel went with a workspace that did not own it").toBeDefined();
+    expect(survivor.workspace_id).toBeNull();
+
+    // And the routine still delivers somewhere.
+    const [{ count: routines }] = await db<{ count: string }[]>`
+      select count(*) from public.routines
+      where id = ${routine.id} and delivery_channel_id = ${channel.id}`;
+    expect(Number(routines)).toBe(1);
+  });
+
+  it("still refuses to delete a channel a routine is using", async () => {
+    // The other half. Loosening the workspace key must not loosen this one:
+    // it is what the API turns into the 409 the interface explains.
+    const db = sql();
+    const gwen = await createTestUser("gwen");
+    const seeded = await seedWorkspace(gwen);
+
+    await expect(
+      db`delete from public.delivery_channels where id = ${seeded.channelId}`,
+    ).rejects.toThrow(/routines_delivery_channel_id_fkey/);
+  });
+});
+
 describe("deleting a person", () => {
   it("keeps what they made in workspaces that outlive them, without their name on it", async () => {
     // The case the six NO ACTION keys made impossible: someone who ever created

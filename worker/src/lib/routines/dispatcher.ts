@@ -33,7 +33,7 @@ export type DispatcherDeps = {
  * row — then runs each one.
  *
  * The batch is capped: a tick that cannot drain the backlog leaves the rest for
- * the next one five minutes later, rather than running until it is killed.
+ * the next tick, rather than running until it is killed.
  */
 function executorDeps(env: RoutineEnv, db: any): ExecutorDeps {
   // WORKER_HOST is optional — on workers.dev the guard already blocks the whole

@@ -68,7 +68,8 @@ work as-is on a laptop.
   before exposing the stack.
 - `POSTGRES_PASSWORD`, `SECRET_KEY_BASE`, `ROUTINE_SECRET_KEY` — same story.
   `ROUTINE_SECRET_KEY` must decode to 16, 24 or 32 bytes; it is an AES-GCM key,
-  and a wrong length fails when a routine is saved rather than at boot.
+  and a wrong length fails when a delivery channel is saved rather than at
+  boot.
 - `SUPABASE_PUBLIC_URL`, `VITE_API_URL` — **build-time** values. Vite inlines
   them into the JavaScript the browser downloads, so changing them needs
   `docker compose build covan-web`, not just a restart.
@@ -97,7 +98,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `JWT_EXPIRY`                                           | `3600`                     | Access-token lifetime in seconds. Refresh is automatic in the client.                                                            |
 | `SECRET_KEY_BASE`                                      | local placeholder          | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                       |
 | `REALTIME_DB_ENC_KEY`                                  | `supabaserealtime`         | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                     |
-| `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to exactly 16, 24 or 32 bytes, or saving a routine fails.     |
+| `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to 16, 24 or 32 bytes, or saving a delivery channel fails.    |
 | `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Build-time — rebuild `covan-web` after changing it.                                      |
 | `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Build-time, same caveat.                                                            |
 | `SITE_URL`                                             | `http://localhost:3000`    | The origin GoTrue puts in confirmation and password-reset links.                                                                 |

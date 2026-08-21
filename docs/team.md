@@ -1,0 +1,362 @@
+# Your team
+
+A workspace is the boundary everything hangs off: the agents, what they know, and
+the people who can reach them. This page is about the people — how somebody
+joins, what a role does and does not govern, what changes when a conversation is
+shared, where a routine's output goes, and what is actually removed when a person
+or a whole workspace is deleted.
+
+[Core concepts](concepts.md#member) defines a membership against the schema. This
+page assumes that and goes after the consequences. All of it is read off the
+policies in `supabase/migrations/` rather than off the screens, because those are
+what decide who can do what — see
+[Authorization](architecture.md#authorization-is-postgres) — and in more than one
+place, noted where it comes up, a screen says something the database does not.
+
+## Inviting somebody
+
+An invitation is a row in `invitations`: a workspace, an email address, a role,
+who sent it, and a status of `pending`, `accepted` or `revoked`. Only an admin
+can create one. The insert policy asks two things — that the caller is an admin
+of that workspace, and that `invited_by` is the caller — so a member cannot
+invite anybody, and nobody can post an invitation with somebody else's name on
+it. The address is lowercased before it is stored.
+
+**Nothing is sent.** There is no email in the invitation path: the API writes the
+row and stops. The interface says "Invite sent" because that is when its work is
+done, not because a message left the building. Somebody who is not told out of
+band that they have been invited will never find out — so tell them, and tell
+them which address to use.
+
+### What the invitee sees
+
+When that person signs in with the address the invitation names, two places offer
+it. A banner sits above the app with the workspace's name and the role, and a
+new account meets the same invitation as a step in the welcome flow instead —
+somebody who was invited already has a workspace waiting, so walking them through
+furnishing another one they are about to abandon would be the wrong order.
+
+Accepting runs `accept_invitation()`, a `SECURITY DEFINER` function, because the
+person accepting is by definition not yet a member and no policy would let them
+insert their own membership row. It compares the invitation's address with the
+one in their token, case-insensitively, and refuses if they differ. That is the
+whole authentication of an invitation: it is bound to an address, not to a link
+or a token, so signing up with a different address — a personal Gmail where the
+invitation went to a work domain — produces an account that cannot see it.
+
+On success it inserts the membership with the role the invitation carried,
+stamps the invitation `accepted` with the time and the person, and switches their
+active workspace to the one they just joined. They keep the personal workspace
+their signup created; a person can be in as many workspaces as they are invited
+to, and `profiles.active_workspace_id` records which one they are looking at.
+
+### Pending, revoked, re-invited
+
+A unique index allows one _pending_ invitation per workspace and address.
+Inviting the same address twice answers with a conflict rather than a second row.
+Accepted and revoked rows are excluded from that index, which is what makes
+re-inviting somebody later possible.
+
+Revoking is a hard delete, and only an admin can do it. An accepted invitation is
+not deleted — it stays as the record of who joined, when, and who let them in.
+
+## What a role actually governs
+
+The role column takes exactly two values, `admin` and `member`. The first admin
+is made by the signup trigger, which gives every new account a workspace and an
+admin membership in it; `create_workspace()` does the same for any workspace
+somebody makes later.
+
+Admin governs two things and no more:
+
+- **The workspace row.** Its name, its slug and its default model. One policy,
+  `workspaces_update_admin`, covers all three, which is why the same people who
+  can rename a workspace can set where its model picker starts.
+- **The people in it.** Creating and revoking invitations, changing a role, and
+  removing a member — the invitation policies plus
+  `workspace_members_update_admin` and `workspace_members_delete_admin`.
+
+Everything else asks only whether you are a member. The policies on `agents`,
+`knowledge_bundles`, `documents`, `agent_bundles` and `document_chunks` do not
+mention `role` at all: each one resolves to a membership check on the owning
+workspace and nothing further. So a plain member can create an agent, rewrite
+another agent's persona, change its model, upload to any bundle, detach a bundle
+from an agent, and **delete any agent, bundle or document in the workspace**,
+with no approval anywhere in the path. The cascades make that larger than it
+sounds: deleting an agent takes every session anybody ever had with it, every
+message in those sessions and every routine pointed at it, and deleting a bundle
+takes its documents and their embeddings. None of it is recoverable from inside
+the product.
+
+That is worth saying plainly because the Team screen says the opposite. It
+renders `admin` as the role that can change things and `member` as the one that
+cannot, and on the only question people ask of a role — can this person destroy
+our work — it is wrong. Treat `member` as a full participant who cannot
+administer the workspace, not as a reader.
+
+The Settings screen has a smaller version of the same problem: it shows the
+workspace name and slug as editable fields to everyone, and a member who edits
+and saves gets a 403 back. The API is right and the form is optimistic.
+
+### The last admin
+
+A trigger refuses to remove or demote a workspace's last admin, whoever asks and
+however they ask. It is the only thing that does: no route checks first, so what
+reaches the interface is the trigger's own refusal, mapped to a 400. A workspace
+therefore cannot be left with nobody able to administer it. The same
+trigger has one exception, and it is deliberate: when the membership row is
+disappearing because the _workspace_ is being deleted, the workspace it is
+protecting no longer exists by the time the trigger runs, and it stands aside.
+
+## Sharing a conversation
+
+A session is private to the person who started it, and sharing is a switch on
+that session with two positions. A brainstorm session is the exception: it is
+created shared, because a brainstorm exists to be worked on together.
+
+Sharing widens reads and nothing else. The select policy admits the owner, plus
+any member of the workspace once visibility is `shared`; insert, update and
+delete on the session stay owner-only. So a colleague reading your shared session
+cannot rename it, un-share it or delete it, and the private sessions of everybody
+else stay invisible whatever their role — there is no admin override, because no
+policy on `chat_sessions` mentions `role`.
+
+What a colleague _can_ do is write in it. The message insert policy admits anyone
+who can see the session, provided the row carries their own user id as
+`sender_id`, so every human message in a shared session names the person who
+wrote it. Their reply drives the agent as yours would; a small `SECURITY DEFINER`
+function exists solely so a non-owner's message can still bump the session's
+`updated_at`, which the owner-only update policy would otherwise refuse.
+
+Two rough edges follow from that, and both are visible in the interface:
+
+- The **Edit** control appears on every human message in a shared session,
+  because the chat decides to draw it from the message's role and not from who
+  owns the session. In a session you do not own it never works, on your own
+  messages either: the update policy on `messages` is keyed to the parent
+  session's owner, so the API matches zero rows, answers 404, and the interface
+  reports that it could not update the conversation. Nothing is corrupted — the
+  affordance is offered where it cannot work.
+- The insert policy constrains `sender_id` but never `role`. The API cannot be
+  used to exploit that — `POST /messages` accepts only `role: "user"` — but
+  PostgREST is reachable directly with the anon key that ships in the browser
+  bundle, and the chat decides how to draw a message from its role alone. A
+  member can therefore put words into a shared session that render as the
+  agent's. Treat a shared session as a room your workspace is in, not as a
+  transcript of record.
+
+### Brainstorm boards
+
+A brainstorm session gains an idea board: `ideas` rows scoped to that session.
+All four policies on the table defer to the parent session's visibility, so
+anyone who can read the session can add, edit, move and delete cards on it —
+including cards somebody else wrote. Only the attribution is pinned: the insert
+policy requires `created_by` to be the caller, so a card cannot be filed under
+another person's name.
+
+### Usage figures are neither yours alone nor the team's
+
+The usage breakdown on Settings is worth reading precisely, because it is not
+what its own heading claims. The function behind it runs as the caller and
+filters nothing itself, so what it returns is whatever the session and message
+policies would return to you anyway: every agent in the workspace is listed, and
+the tokens counted against each one come from your own conversations **plus every
+shared session in the workspace you can read**. Since a brainstorm session is
+created shared, a team that brainstorms will see each other's tokens in that
+total by default.
+
+The interface calls the figures yours alone, and a comment in the migration that
+introduced them says the same. Both were written before sessions could be shared
+at all, and neither was revisited when they could be. There is still no
+workspace-wide view — nobody sees what a colleague spends in private — but the
+number on the screen is a wider one than the screen says it is.
+
+## Where the work gets delivered
+
+A delivery channel is a Slack incoming webhook or an email address, created on
+Settings, that [routines](routines.md) post their results to. What belongs on
+this page is who it belongs to: **a channel is yours, not the workspace's.** The
+select policy on `delivery_channels` returns only rows whose `user_id` is the
+caller, so a colleague cannot see, use or delete a channel you added, and cannot
+see that it exists. Sharing a routine with the workspace shares what it does and
+what it sent, never where it goes.
+
+The secret itself never comes back out. Row level security is row-level and
+cannot hide a column, so the table's blanket grant to `authenticated` is revoked
+and every column except the ciphertext handed back; what the interface shows is a
+mask computed once when the channel was created. Creating one is the one write
+that needs the service role, because the secret has to be encrypted before the
+row exists. [Delivery](routines.md#delivery) covers the sending, and
+[the secret you hand it](routines.md#the-secret-you-hand-it) covers the
+encryption.
+
+One detail belongs to the person rather than the routine: a channel is filed
+under whichever workspace was active when it was created, and it stays there. A
+routine may point at any channel belonging to its own owner, so a channel created
+in one workspace can back a routine in another. Keeping a channel in the
+workspace whose routines use it is the arrangement the schema expects.
+
+Which notices the engine sends you — a routine pausing itself, a run skipped for
+a spent allowance — is also yours alone, a row in `notification_preferences` with
+your user id as its primary key. A missing row means everything is on, which is
+why turning a notice off is an update rather than a delete.
+
+## Removing a member
+
+Only an admin can remove somebody: the delete policy on `workspace_members` is
+admin-only, and the last-admin trigger still refuses if that person is the only
+admin left. Removal deletes exactly one row — the membership — and everything
+that follows from that is the policies re-evaluating.
+
+**A member cannot leave a workspace on their own.** No policy lets a member
+delete their own membership row, and the interface offers no control for it, so a
+member who wants out has to ask an admin. An admin is in a different position:
+the delete policy admits them for any row in the workspace, their own included,
+and the API route does not exclude the caller, so an admin who is not the last
+one can remove themselves through the API. The Team screen renders the remove
+control only for _other_ people, so that is a door that exists in the database
+and not on the screen.
+
+### What removal takes away
+
+Access, immediately and everywhere it was gated on membership: agents, bundles,
+documents, chunks, and every shared session and shared routine in that workspace
+stop being readable. Every one of those policies asks the same question — bundles,
+documents, chunks and attachments through the `is_workspace_member` helper,
+`agents` through an equivalent `exists` written out in full — and the answer has
+just changed. Their active workspace falls back to their oldest remaining
+membership the next time the API resolves it.
+
+Their name and avatar may also stop resolving for the people left behind. The
+profiles policy shows a profile to anyone who shares _any_ workspace with it, so
+this only bites when the workspace they were removed from was the last one they
+had in common: then their past messages in a shared session keep their text and
+quietly lose their attribution line. Share another workspace with them and
+nothing changes.
+
+### What removal leaves behind
+
+More than the word "remove" suggests:
+
+- **What they made stays, with their name on it.** Agents, bundles and idea cards
+  are workspace-owned, and their `created_by` is attribution rather than
+  ownership, so removing a membership does not touch it. A document has no such
+  column at all — the table never recorded who uploaded a file.
+- **Their shared sessions stay readable to the workspace.** The shared branch of
+  the select policy tests the _reader's_ membership, not the owner's, so a
+  conversation somebody shared before they left goes on being visible to everyone
+  who is still there.
+- **Their own sessions and routines still exist, are still theirs, and are still
+  reachable.** Both tables key off `auth.users` and carry no membership foreign
+  key, so nothing about them cascades — and the owner branch of each select
+  policy tests only `user_id = auth.uid()`, with no membership check beside it.
+  What removal takes away is the _list_: `GET /sessions` is scoped to the
+  caller's active workspace, and a workspace they have been removed from cannot
+  be made active, so the conversation stops appearing. It does not stop
+  existing. Reading a session's messages is filtered on the session id alone,
+  and the insert policy admits its owner on the same terms, so somebody who
+  still has the id — a bookmark, an open tab, a URL in their history — can read
+  the whole transcript back and append to it. What they cannot do is get an
+  answer: the reply path loads the agent first, that read is membership-gated,
+  and it returns a 404. Treat removal as ending their access to the workspace,
+  not as sealing the conversations they had in it.
+- **Their routines stop at the next tick, not at the moment of removal.** The
+  engine holds a service-role client that row level security does not constrain,
+  so it re-checks the owner's membership before every single run and pauses the
+  routine with a recorded reason when it has gone. Until that tick arrives the
+  routine is still scheduled. The owner is deliberately not notified — see
+  [runs that send nothing](routines.md#runs-that-send-nothing).
+- **Their delivery channels survive** — they were never the workspace's to take.
+
+Re-inviting the person gives all of it back, because none of it was destroyed.
+The one thing that does not resume itself is a routine the engine paused: the
+pause outlives the rejoining, and only its owner can clear it.
+
+## Deleting a workspace
+
+Not from the app. `workspaces` has select, update and insert policies and no
+delete policy at all, and no route anywhere calls for one, so there is no request
+any account can make that removes a workspace. It is an operator action, taken
+against the database, and the migration that made it possible says why it went
+unnoticed for so long: the first person to need it would have been somebody
+exercising a legal right to erasure.
+
+Two of the references to a workspace do not cascade. `chat_sessions.workspace_id`
+and `ideas.workspace_id` were both added after the original schema and are plain
+references, so the tested procedure clears those two tables for the workspace
+first and then deletes the workspace row. A third,
+`profiles.active_workspace_id`, sets itself to null, which is the same state a
+fresh account is in and resolves to the person's oldest remaining membership.
+
+What goes with it is everything that hangs off it, directly or through something
+that does: memberships, agents, and through the agents every session, message and
+favourite; bundles, and through them documents, chunks and agent attachments;
+invitations, whatever their status; routines, their run history and their
+delivery records; and the delivery channels filed under that workspace.
+
+One thing the application does not do, and an operator should know it. The
+cascade is a database cascade, and the uploaded files themselves live in object
+storage under the key on each `documents` row. Deleting a single document removes
+its object; deleting a bundle, an agent or a workspace deletes the rows that
+named those keys and nothing in Covan touches the store. Whether those objects
+are then cleaned up is a question about the storage itself — a lifecycle rule on
+the bucket, or a sweep somebody runs — not one this codebase answers. If it is
+the latter, collect the keys before the rows go, because afterwards there is
+nothing left to enumerate them by.
+
+What survives is the people. Deleting a workspace deletes no accounts, and the
+last-admin trigger stands aside for exactly this case rather than blocking it —
+a membership whose workspace is already gone is debris, and there is nothing left
+to leave un-owned.
+
+## Deleting a person
+
+There is no route for this either, and the same operator path applies. The schema
+draws one line through it, and it is worth knowing which side a thing falls on.
+Six columns record who _made_ something — the `created_by` on workspaces, agents,
+bundles and ideas, and both of the who-did-this columns on invitations. All six
+null out. A workspace does not evaporate because the person who opened it left,
+and a shared agent does not vanish because its author closed their account; the
+row stays and the name drops off it.
+
+Everything that was theirs alone goes: their profile, their own sessions and the
+messages in them, their favourites, their delivery channels, their routines,
+their notification preferences. A private conversation has no meaning without its
+person.
+
+Two cases are refused, and only the first is refused on purpose.
+
+**The last admin of a surviving workspace.** Somebody who is the only admin of a
+workspace that still exists cannot be deleted, because the cascade into
+`workspace_members` meets the guard. Whether that should promote the oldest
+remaining member, block until the role is handed over, or take the workspace with
+it is a product question that has not been answered, and answering it in the
+schema would be answering it by accident. Deleting or handing over the workspace
+first is the way through.
+
+**Anyone who has spoken in somebody else's session.** This one is an oversight
+rather than a decision. `messages.sender_id` points at `profiles` with no delete
+behaviour declared, which in Postgres means the strict one: the reference must be
+gone before the profile can be. Deleting an account cascades the profile away,
+and every message that person wrote in a session they do not own — a shared
+conversation, or any brainstorm, since brainstorms are shared from the moment
+they are created — is left pointing at a profile that is going, and refuses. So
+the ordinary, encouraged thing this page has been describing is also the thing
+that makes an account undeletable. The deletion tests do not catch it because
+none of them has one person write into another's session.
+
+Until the reference declares what should happen — nulling `sender_id` would keep
+the message and drop the name, which is what the six attribution columns already
+do — an operator facing this has to clear those messages by hand first, and doing
+so removes them from a conversation other people are still reading.
+
+## Where to go next
+
+- [Core concepts](concepts.md#member) — memberships, sessions and routines
+  defined against the tables they live in.
+- [Routines](routines.md) — the scheduling and delivery this page only touches at
+  the edges.
+- [Knowledge bundles](knowledge.md) — what everybody in the workspace, both roles
+  alike, can add to and take away.
+- [Authorization](architecture.md#authorization-is-postgres) — why the policies
+  are the specification and the screens are a view of it.

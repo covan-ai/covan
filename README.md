@@ -123,6 +123,21 @@ Docker stack.
 
 See [`docs/architecture.md`](docs/architecture.md) for detail.
 
+## Documentation
+
+`docs/` is the whole of it. The same files are rendered at
+<https://co-van.vercel.app/docs> if you would rather read them there.
+
+| Page                                          | What it answers                                                             |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| [Quickstart](docs/quickstart.md)              | From an empty account to an answer that names the file it came from         |
+| [Core concepts](docs/concepts.md)             | Workspace, agent, bundle, session, routine — what each is and how they nest |
+| [Knowledge bundles](docs/knowledge.md)        | Uploading, grouping, attaching, and why a question finds the passage it does |
+| [Routines](docs/routines.md)                  | Scheduled work, what it can reach, and what it does with the secret you give it |
+| [Your team](docs/team.md)                     | Invitations, what a role actually gates, shared sessions, deletion          |
+| [Self-hosting](docs/self-hosting.md)          | Running it on your own machine, and deploying it somewhere real             |
+| [Architecture](docs/architecture.md)          | How a request reaches a row, and the two seams that serve both runtimes     |
+
 ## Repository layout
 
 | Path                   | What it is                                              |
@@ -131,7 +146,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detail.
 | `worker/`              | Hono API; `src/index.ts` is the Worker, `src/node.ts` Node |
 | `supabase/migrations/` | Numbered SQL, applied in order                          |
 | `docker/`              | Compose support files (Kong config, DB init hooks)      |
-| `docs/`                | Self-hosting and architecture notes                     |
+| `docs/`                | The documentation above, in markdown                    |
 
 ## Development
 

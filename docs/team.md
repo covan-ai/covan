@@ -128,7 +128,7 @@ wrote it. Their reply drives the agent as yours would; a small `SECURITY DEFINER
 function exists solely so a non-owner's message can still bump the session's
 `updated_at`, which the owner-only update policy would otherwise refuse.
 
-Two rough edges follow from that, and both are visible in the interface:
+One rough edge follows from that, and it is visible in the interface:
 
 - The **Edit** control appears on every human message in a shared session,
   because the chat decides to draw it from the message's role and not from who
@@ -137,13 +137,13 @@ Two rough edges follow from that, and both are visible in the interface:
   session's owner, so the API matches zero rows, answers 404, and the interface
   reports that it could not update the conversation. Nothing is corrupted — the
   affordance is offered where it cannot work.
-- The insert policy constrains `sender_id` but never `role`. The API cannot be
-  used to exploit that — `POST /messages` accepts only `role: "user"` — but
-  PostgREST is reachable directly with the anon key that ships in the browser
-  bundle, and the chat decides how to draw a message from its role alone. A
-  member can therefore put words into a shared session that render as the
-  agent's. Treat a shared session as a room your workspace is in, not as a
-  transcript of record.
+The policy also requires `role = 'user'` on anything a client writes
+(`0018_message_authorship.sql`), so a member cannot put words into a shared
+session that render as the agent's. That matters because PostgREST is reachable
+directly with the anon key that ships in the browser bundle, so it is the
+policy and not `POST /messages` that has to hold the line: the API was already
+accepting only `role: "user"`, and the API was never the thing an attacker
+would use.
 
 ### Brainstorm boards
 
@@ -324,7 +324,7 @@ messages in them, their favourites, their delivery channels, their routines,
 their notification preferences. A private conversation has no meaning without its
 person.
 
-Two cases are refused, and only the first is refused on purpose.
+One case is refused, and it is refused on purpose.
 
 **The last admin of a surviving workspace.** Somebody who is the only admin of a
 workspace that still exists cannot be deleted, because the cascade into
@@ -334,21 +334,20 @@ it is a product question that has not been answered, and answering it in the
 schema would be answering it by accident. Deleting or handing over the workspace
 first is the way through.
 
-**Anyone who has spoken in somebody else's session.** This one is an oversight
-rather than a decision. `messages.sender_id` points at `profiles` with no delete
-behaviour declared, which in Postgres means the strict one: the reference must be
-gone before the profile can be. Deleting an account cascades the profile away,
-and every message that person wrote in a session they do not own — a shared
-conversation, or any brainstorm, since brainstorms are shared from the moment
-they are created — is left pointing at a profile that is going, and refuses. So
-the ordinary, encouraged thing this page has been describing is also the thing
-that makes an account undeletable. The deletion tests do not catch it because
-none of them has one person write into another's session.
+What a departing account leaves behind, in somebody else's session, is its
+words without its name. `messages.sender_id` nulls on delete
+(`0018_message_authorship.sql`), the same way the six attribution columns
+already did. The alternative — cascading — would have deleted that person's
+lines out of conversations belonging to people who are still here, which is a
+strange price for one person's erasure. So a shared conversation keeps every
+line of it, and the ones written by someone who has gone simply appear
+unattributed.
 
-Until the reference declares what should happen — nulling `sender_id` would keep
-the message and drop the name, which is what the six attribution columns already
-do — an operator facing this has to clear those messages by hand first, and doing
-so removes them from a conversation other people are still reading.
+For a while this was not a choice but an omission: the reference declared no
+delete behaviour at all, which in Postgres means the strict one, so a single
+message in a colleague's shared session made an account undeletable. Nothing
+caught it, because no deletion test had one person write into another's
+session. `tests/rls/message-authorship.test.ts` is the test that would have.
 
 ## Where to go next
 

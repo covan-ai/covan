@@ -15,12 +15,12 @@ docker compose up --build
 First run builds two images and pulls six more, so give it a few minutes.
 When it settles:
 
-| What        | Where                   |
-| ----------- | ----------------------- |
-| Covan       | <http://localhost:3000> |
-| Covan API   | <http://localhost:8787> |
-| Supabase    | <http://localhost:8000> |
-| Postgres    | `localhost:54322`       |
+| What      | Where                   |
+| --------- | ----------------------- |
+| Covan     | <http://localhost:3000> |
+| Covan API | <http://localhost:8787> |
+| Supabase  | <http://localhost:8000> |
+| Postgres  | `localhost:54322`       |
 
 Open <http://localhost:3000>, create an account with any email and password,
 and you are in. Email confirmation is off (`GOTRUE_MAILER_AUTOCONFIRM`) because
@@ -31,16 +31,16 @@ uploaded document too.
 
 ## What is in the stack
 
-| Service        | Image                          | Why                                              |
-| -------------- | ------------------------------ | ------------------------------------------------ |
-| `db`           | `supabase/postgres:17.6.1.136` | Postgres with `pgvector` and `pgcrypto`          |
-| `auth`         | `supabase/gotrue:v2.189.0`     | Sign-up, sign-in, JWTs                           |
-| `rest`         | `postgrest/postgrest:v14.12`   | The Data API row level security is enforced by   |
-| `realtime`     | `supabase/realtime:v2.102.3`   | Live updates for shared chats and idea boards    |
-| `kong`         | `kong/kong:3.9.3`              | One origin in front of auth/rest/realtime        |
-| `migrate`      | `postgres:17.6-alpine`         | Applies `supabase/migrations/`, then exits       |
-| `covan-api`    | built from `Dockerfile.api`    | `worker/src/node.ts` — the same code as the Worker |
-| `covan-web`    | built from `Dockerfile.web`    | The Vite build served by nitro's node server     |
+| Service     | Image                          | Why                                                |
+| ----------- | ------------------------------ | -------------------------------------------------- |
+| `db`        | `supabase/postgres:17.6.1.136` | Postgres with `pgvector` and `pgcrypto`            |
+| `auth`      | `supabase/gotrue:v2.189.0`     | Sign-up, sign-in, JWTs                             |
+| `rest`      | `postgrest/postgrest:v14.12`   | The Data API row level security is enforced by     |
+| `realtime`  | `supabase/realtime:v2.102.3`   | Live updates for shared chats and idea boards      |
+| `kong`      | `kong/kong:3.9.3`              | One origin in front of auth/rest/realtime          |
+| `migrate`   | `postgres:17.6-alpine`         | Applies `supabase/migrations/`, then exits         |
+| `covan-api` | built from `Dockerfile.api`    | `worker/src/node.ts` — the same code as the Worker |
+| `covan-web` | built from `Dockerfile.web`    | The Vite build served by nitro's node server       |
 
 The Supabase services are trimmed from the [official self-host
 bundle](https://github.com/supabase/supabase/tree/master/docker), with the
@@ -86,25 +86,25 @@ anyone in.
 The four notes above are the ones that bite. This is the complete reference —
 every line in `.env.docker.example`, in the order it appears there.
 
-| Variable                                        | Default in the template          | What it does                                                                                                                    |
-| ----------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`                                 | *empty — you must set it*        | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                    |
-| `POSTGRES_PASSWORD`                              | `covan-local-dev-password`       | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                             |
-| `POSTGRES_PORT`                                  | `54322`                          | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                            |
-| `JWT_SECRET`                                     | Supabase demo secret             | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it.  |
-| `ANON_KEY`                                       | Supabase demo key                | The public API key. It reaches the browser by design; row level security is what protects the data behind it.                     |
-| `SERVICE_ROLE_KEY`                               | Supabase demo key                | Bypasses row level security entirely. Server-side only — it must never reach a browser.                                          |
-| `JWT_EXPIRY`                                     | `3600`                           | Access-token lifetime in seconds. Refresh is automatic in the client.                                                            |
-| `SECRET_KEY_BASE`                                | local placeholder                | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                       |
-| `REALTIME_DB_ENC_KEY`                            | `supabaserealtime`               | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                     |
-| `ROUTINE_SECRET_KEY`                             | local placeholder                | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to exactly 16, 24 or 32 bytes, or saving a routine fails.      |
-| `SUPABASE_PUBLIC_URL`                            | `http://localhost:8000`          | Where the **browser** reaches Supabase. Build-time — rebuild `covan-web` after changing it.                                       |
-| `VITE_API_URL`                                   | `http://localhost:8787`          | Where the **browser** reaches the Covan API. Build-time, same caveat.                                                            |
-| `SITE_URL`                                       | `http://localhost:3000`          | The origin GoTrue puts in confirmation and password-reset links.                                                                 |
-| `ALLOWED_ORIGIN`                                 | `http://localhost:3000`          | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.    |
-| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, then rebuild `covan-web`.                                              |
-| `ROUTINE_TICK_MS`                                | `60000`                          | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.            |
-| `RESEND_API_KEY` / `RESEND_FROM`                 | *empty*                          | Optional. Email delivery for routines, via [Resend](https://resend.com). Leave blank and email delivery is simply unavailable.     |
+| Variable                                               | Default in the template    | What it does                                                                                                                     |
+| ------------------------------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                    |
+| `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                             |
+| `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                           |
+| `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. |
+| `ANON_KEY`                                             | Supabase demo key          | The public API key. It reaches the browser by design; row level security is what protects the data behind it.                    |
+| `SERVICE_ROLE_KEY`                                     | Supabase demo key          | Bypasses row level security entirely. Server-side only — it must never reach a browser.                                          |
+| `JWT_EXPIRY`                                           | `3600`                     | Access-token lifetime in seconds. Refresh is automatic in the client.                                                            |
+| `SECRET_KEY_BASE`                                      | local placeholder          | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                       |
+| `REALTIME_DB_ENC_KEY`                                  | `supabaserealtime`         | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                     |
+| `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to exactly 16, 24 or 32 bytes, or saving a routine fails.     |
+| `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Build-time — rebuild `covan-web` after changing it.                                      |
+| `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Build-time, same caveat.                                                            |
+| `SITE_URL`                                             | `http://localhost:3000`    | The origin GoTrue puts in confirmation and password-reset links.                                                                 |
+| `ALLOWED_ORIGIN`                                       | `http://localhost:3000`    | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.   |
+| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, then rebuild `covan-web`.                                               |
+| `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.           |
+| `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email delivery for routines, via [Resend](https://resend.com). Leave blank and email delivery is simply unavailable.   |
 
 Three more values the API reads are set by `docker-compose.yml` rather than by
 you: `SUPABASE_URL` (`http://kong:8000` — the compose network address, not
@@ -136,12 +136,12 @@ content type.
   A permissions failure surfaces as a real error from the API rather than a
   silent "document not found", which is what you want when a mount is wrong.
 - **Symlinks.** The store rejects keys that resolve outside its root, but the
-  check is lexical rather than `realpath`-based, so a symlink *already inside*
+  check is lexical rather than `realpath`-based, so a symlink _already inside_
   the store that points elsewhere would be followed. Exploiting that requires
   the ability to write into the volume already. Do not share the document
   volume with untrusted processes.
 - **Backups.** `docker run --rm -v covan_covan-docs:/d -v "$PWD":/out alpine
-  tar czf /out/covan-docs.tgz -C /d .` and the equivalent `pg_dump` for the
+tar czf /out/covan-docs.tgz -C /d .` and the equivalent `pg_dump` for the
   database.
 
 ## Migrations
@@ -156,6 +156,23 @@ on the second `docker compose up`.
 `migrate` waits for both `db` and `auth` to be healthy. `0001_init.sql`
 references `auth.users`, and that table does not exist until GoTrue has run its
 own migrations.
+
+The directories it reads come from `MIGRATION_DIRS`, a space-separated list
+applied left to right, with missing entries skipped. It defaults to the mount
+points the compose file provides, so there is nothing to set for a normal
+`docker compose up`. It is there so the same script can also run against a
+database that is not the compose one — a managed Postgres, say — without a
+second copy of the ledger logic drifting out of step with this one:
+
+```bash
+POSTGRES_HOST=db.example.com POSTGRES_PORT=5432 POSTGRES_DB=postgres \
+POSTGRES_PASSWORD=... MIGRATION_DIRS="supabase/migrations" \
+sh docker/migrate.sh
+```
+
+Filenames have to stay unique across whatever directories you list: the ledger
+keys on the filename alone, so a duplicate would be silently skipped. The script
+refuses to start rather than let that happen.
 
 To inspect the database:
 
@@ -232,7 +249,7 @@ create.
 > Honest note: the numbered migrations in this repository are applied end to end
 > on every fresh `docker compose up`, and have been applied by hand to a hosted
 > project. The two CLI commands above are the documented Supabase equivalent and
-> were *not* re-run against a hosted project while writing this guide — check the
+> were _not_ re-run against a hosted project while writing this guide — check the
 > [CLI docs](https://supabase.com/docs/guides/deployment/database-migrations) if
 > `db push` reports drift.
 
@@ -352,8 +369,8 @@ that is wrong.
 ## Two traps worth knowing about
 
 **The Workers Free plan caps an account at five cron triggers.** Registering a
-sixth does not fail cleanly. The deploy uploads the script *first* and registers
-schedules *second*, so you get a half-succeeded deploy: new code live, no
+sixth does not fail cleanly. The deploy uploads the script _first_ and registers
+schedules _second_, so you get a half-succeeded deploy: new code live, no
 trigger, and an error message about schedules that reads like the whole thing
 failed. This is why `wrangler.toml.example` ships with no `[triggers]` block and
 the engine has its own config — a second Worker, and if necessary a second
@@ -367,7 +384,7 @@ ticks can never claim the same routine.
 This looks like unnecessary friction until you see why. Vercel serves
 project-name subdomains first-come on a shared apex, so a regex that matches
 `*.vercel.app`, or even one anchored to your own project slug, can be satisfied
-by someone who names *their* project to embed that slug —
+by someone who names _their_ project to embed that slug —
 `your-project-evil-team.vercel.app`. Combined with `credentials: true`, that is a
 real cross-origin read of your users' data. The API therefore reflects only
 exact strings from `ALLOWED_ORIGIN` (plus `localhost` in code, for development).

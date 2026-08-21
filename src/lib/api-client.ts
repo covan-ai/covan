@@ -1,5 +1,6 @@
 import { supabase } from "./supabase/client";
 import type { Agent, ChatSession, Idea, Message } from "./agents-store";
+import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
   Routine,
   RoutineRun,
@@ -29,6 +30,7 @@ export type Me = {
   user: { id: string; name: string | null; email: string | null; avatarUrl: string | null };
   workspace: Workspace;
   members: WorkspaceMember[];
+  onboarding: { completed: boolean; answers: OnboardingAnswers };
 };
 
 export type WorkspaceSummary = { id: string; name: string; slug: string; role: string };
@@ -359,6 +361,11 @@ export const api = {
     get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
     update: (patch: Partial<NotificationPreferences>): Promise<NotificationPreferences> =>
       request("PATCH", "/notification-preferences", patch),
+  },
+  onboarding: {
+    update: (patch: AnswerPatch): Promise<OnboardingAnswers> =>
+      request("PATCH", "/onboarding", patch),
+    complete: (): Promise<{ completed: true }> => request("POST", "/onboarding/complete"),
   },
 };
 

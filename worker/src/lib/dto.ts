@@ -75,6 +75,23 @@ export type MeDTO = {
     role: string;
     avatarUrl: string | null;
   }>;
+  /**
+   * Where this account stands with its first run. The `_authed` layout gates on
+   * `completed`, which is why this rides along with /me rather than having an
+   * endpoint of its own — every page load needs the answer, and this response
+   * was already being fetched. The answers come too, so someone who closed the
+   * browser mid-survey resumes on the question they stopped at instead of
+   * starting over.
+   */
+  onboarding: {
+    completed: boolean;
+    answers: {
+      role: string | null;
+      useCase: string | null;
+      teamSize: string | null;
+      referralSource: string | null;
+    };
+  };
 };
 
 export function toEpochMs(value: string): number {

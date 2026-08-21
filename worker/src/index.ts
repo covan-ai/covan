@@ -20,6 +20,7 @@ import { invitations } from "./routes/invitations";
 import { usage } from "./routes/usage";
 import { routines } from "./routes/routines";
 import { notifications } from "./routes/notifications";
+import { onboarding } from "./routes/onboarding";
 
 const app = new Hono<AppEnv>();
 
@@ -83,6 +84,7 @@ api.route("/", invitations);
 api.route("/", usage);
 api.route("/", routines);
 api.route("/", notifications);
+api.route("/", onboarding);
 
 app.route("/", api);
 

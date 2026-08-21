@@ -106,6 +106,16 @@ me.get("/me", async (c) => {
     })
     .filter((m): m is NonNullable<typeof m> => m !== null);
 
+  // No row is the normal state for a new account, not an error: the row appears
+  // with the first answer. Either way the question is only ever "is there a
+  // stamp", so a failed read is treated as unfinished rather than as a 500 —
+  // refusing to serve /me over this would lock a working account out of the app.
+  const { data: onboardingRow } = await db
+    .from("user_onboarding")
+    .select("completed_at, role, use_case, team_size, referral_source")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   const result: MeDTO = {
     user: {
       id: user.id,
@@ -120,6 +130,15 @@ me.get("/me", async (c) => {
       defaultModel: (workspace.default_model as string | null) ?? null,
     },
     members,
+    onboarding: {
+      completed: Boolean(onboardingRow?.completed_at),
+      answers: {
+        role: (onboardingRow?.role as string | null) ?? null,
+        useCase: (onboardingRow?.use_case as string | null) ?? null,
+        teamSize: (onboardingRow?.team_size as string | null) ?? null,
+        referralSource: (onboardingRow?.referral_source as string | null) ?? null,
+      },
+    },
   };
 
   return c.json(result);

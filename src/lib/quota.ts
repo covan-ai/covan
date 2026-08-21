@@ -80,3 +80,22 @@ export function useQuota(): QuotaView | null {
   const { data } = useQuery({ queryKey: ["usage"], queryFn: api.usage });
   return useMemo(() => quotaFrom(data), [data]);
 }
+
+/**
+ * Whether this is the hosted Covan rather than someone's own install.
+ *
+ * There is no flag for this and there does not need to be one: the entitlements
+ * adapter already knows. A self-hosted install brings its own OpenAI key and
+ * has no allowance, which is exactly what `limit: null` means (see usage.ts).
+ * Named here rather than left as a bare null check at each call site, so the
+ * inference is stated once and can be corrected in one place if it ever stops
+ * holding.
+ *
+ * `undefined` while the figure is still loading — callers that would otherwise
+ * flash a hosted-only surface should wait for it.
+ */
+export function useIsHosted(): boolean | undefined {
+  const { data, isPending } = useQuery({ queryKey: ["usage"], queryFn: api.usage });
+  if (isPending) return undefined;
+  return typeof data?.quota?.limit === "number";
+}

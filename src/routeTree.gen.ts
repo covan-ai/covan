@@ -15,6 +15,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
 import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedIntegrationsRouteImport } from './routes/_authed.integrations'
@@ -56,6 +57,11 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedWelcomeRoute = AuthedWelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedTeamRoute = AuthedTeamRouteImport.update({
   id: '/team',
@@ -134,6 +140,7 @@ export interface FileRoutesByFullPath {
   '/integrations': typeof AuthedIntegrationsRoute
   '/settings': typeof AuthedSettingsRoute
   '/team': typeof AuthedTeamRoute
+  '/welcome': typeof AuthedWelcomeRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
@@ -153,6 +160,7 @@ export interface FileRoutesByTo {
   '/integrations': typeof AuthedIntegrationsRoute
   '/settings': typeof AuthedSettingsRoute
   '/team': typeof AuthedTeamRoute
+  '/welcome': typeof AuthedWelcomeRoute
   '/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
@@ -173,6 +181,7 @@ export interface FileRoutesById {
   '/_authed/integrations': typeof AuthedIntegrationsRoute
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/team': typeof AuthedTeamRoute
+  '/_authed/welcome': typeof AuthedWelcomeRoute
   '/_authed/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/_authed/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/_authed/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
@@ -194,6 +203,7 @@ export interface FileRouteTypes {
     | '/integrations'
     | '/settings'
     | '/team'
+    | '/welcome'
     | '/agents/$agentId'
     | '/agents/$agentId/chat'
     | '/agents/$agentId/configuration'
@@ -213,6 +223,7 @@ export interface FileRouteTypes {
     | '/integrations'
     | '/settings'
     | '/team'
+    | '/welcome'
     | '/agents/$agentId/chat'
     | '/agents/$agentId/configuration'
     | '/agents/$agentId/knowledge'
@@ -232,6 +243,7 @@ export interface FileRouteTypes {
     | '/_authed/integrations'
     | '/_authed/settings'
     | '/_authed/team'
+    | '/_authed/welcome'
     | '/_authed/agents/$agentId'
     | '/_authed/agents/$agentId/chat'
     | '/_authed/agents/$agentId/configuration'
@@ -294,6 +306,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authed/welcome': {
+      id: '/_authed/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof AuthedWelcomeRouteImport
+      parentRoute: typeof AuthedRoute
     }
     '/_authed/team': {
       id: '/_authed/team'
@@ -411,6 +430,7 @@ interface AuthedRouteChildren {
   AuthedIntegrationsRoute: typeof AuthedIntegrationsRoute
   AuthedSettingsRoute: typeof AuthedSettingsRoute
   AuthedTeamRoute: typeof AuthedTeamRoute
+  AuthedWelcomeRoute: typeof AuthedWelcomeRoute
   AuthedAgentsAgentIdRoute: typeof AuthedAgentsAgentIdRouteWithChildren
 }
 
@@ -419,6 +439,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedIntegrationsRoute: AuthedIntegrationsRoute,
   AuthedSettingsRoute: AuthedSettingsRoute,
   AuthedTeamRoute: AuthedTeamRoute,
+  AuthedWelcomeRoute: AuthedWelcomeRoute,
   AuthedAgentsAgentIdRoute: AuthedAgentsAgentIdRouteWithChildren,
 }
 

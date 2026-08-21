@@ -140,3 +140,55 @@ describe("a user from another workspace", () => {
     expect(profiles ?? []).toEqual([]);
   });
 });
+
+/**
+ * Onboarding answers are keyed on `user_id`, not `id`, so they sit outside the
+ * generic loop above. They are also the one table here a user writes for
+ * themselves before belonging to anything, which makes "your own" the entire
+ * policy — worth its own denial.
+ */
+describe("another user's onboarding answers", () => {
+  beforeAll(async () => {
+    // Alice answers for herself, through her own client, the way the route does.
+    const { error } = await alice.db
+      .from("user_onboarding")
+      .upsert({ user_id: alice.id, role: "engineering" }, { onConflict: "user_id" });
+    expect(error).toBeNull();
+  });
+
+  it("cannot be read by anyone else", async () => {
+    const { data } = await bob.db.from("user_onboarding").select("user_id").eq("user_id", alice.id);
+    expect(data ?? []).toEqual([]);
+  });
+
+  it("cannot be found by listing the table either", async () => {
+    const { data } = await bob.db.from("user_onboarding").select("user_id");
+    expect((data ?? []).some((row) => row.user_id === alice.id)).toBe(false);
+  });
+
+  it("cannot be updated by anyone else", async () => {
+    const { data } = await bob.db
+      .from("user_onboarding")
+      .update({ role: "sales" })
+      .eq("user_id", alice.id)
+      .select("user_id");
+    expect(data ?? []).toEqual([]);
+
+    // And Alice's answer is untouched — proving the empty result above was a
+    // denial and not a row that had already gone.
+    const { data: mine } = await alice.db
+      .from("user_onboarding")
+      .select("role")
+      .eq("user_id", alice.id)
+      .maybeSingle();
+    expect(mine?.role).toBe("engineering");
+  });
+
+  it("cannot be forged on someone else's behalf", async () => {
+    const { error } = await bob.db.from("user_onboarding").insert({
+      user_id: alice.id,
+      role: "founder",
+    });
+    expect(error).not.toBeNull();
+  });
+});

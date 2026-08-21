@@ -6,11 +6,15 @@
 -- client-written row always carries its author, and the unattributed rows the
 -- worker writes for the assistant are ones no client can produce.
 --
--- What it does not do is constrain `role`. The policy never inspects it, there
--- is no trigger on messages and no revoke, so `authenticated` keeps its
--- PostgREST INSERT: a member can write role='assistant' carrying their own
--- sender_id into any session they can see, and the chat UI, which branches on
--- role alone, renders it under the agent's name and avatar.
+-- What it does not do is constrain `role` — which this file's first version
+-- claimed it did. The policy below never inspects it, and there is no trigger
+-- on messages and no revoke, so `authenticated` keeps its PostgREST INSERT: a
+-- member could write role='assistant' carrying their own sender_id into any
+-- session they could see, and the chat UI, which branches on role alone,
+-- rendered it under the agent's name and avatar.
+--
+-- 0018_message_authorship.sql closes that by adding `and role = 'user'` to the
+-- same check. Read the two together; this policy is superseded.
 
 drop policy if exists "messages_insert_session_visible" on public.messages;
 

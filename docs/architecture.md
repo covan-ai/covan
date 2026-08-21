@@ -79,16 +79,18 @@ Concretely:
   `authenticated` grant revoked and every column except `secret_ciphertext`
   handed back (`0012_routines.sql`). A user can list their own delivery
   channels; the encrypted secret is not among the columns they can select.
-- A policy constrains the columns it names and nothing else.
-  `messages_insert_user_self` (`0009_lock_assistant_messages.sql`) requires an
-  inserted message to carry the caller's own id as `sender_id` and to belong to a
-  session that caller can read. It does not inspect `role`, and nothing behind it
-  does either — there is no trigger on `messages` and no revoke, so
-  `authenticated` keeps its PostgREST `INSERT`. A member can write a row with
-  `role = 'assistant'` and their own `sender_id` into any session they can see,
-  and in a shared session every other member's client renders it under the
-  agent's name. What the policy guarantees is attribution and session
-  membership, not authorship.
+- A policy constrains the columns it names and nothing else, and the gap is
+  invisible until someone writes the column it forgot.
+  `messages_insert_user_self` (`0009_lock_assistant_messages.sql`) required an
+  inserted message to carry the caller's own id as `sender_id` and to belong to
+  a session that caller can read — and stopped there. It did not inspect `role`,
+  and nothing behind it did either: no trigger on `messages`, no revoke, so
+  `authenticated` kept its PostgREST `INSERT`. A member could write
+  `role = 'assistant'` with their own `sender_id` into any session they could
+  see, and every other member's client, which branches on `role` alone, rendered
+  it under the agent's name. `0018_message_authorship.sql` adds `and role =
+  'user'` to the check. The server is unaffected, because it writes assistant
+  rows through the service-role client, which no policy reaches.
 - `SECURITY DEFINER` functions need their `EXECUTE` grant revoked from `PUBLIC`
   explicitly. Postgres grants it by default and every role inherits it, so
   `revoke ... from authenticated` alone leaves the function callable through

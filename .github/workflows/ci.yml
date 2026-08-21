@@ -26,6 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # First, and before anything is installed. The checker is dependency-free
+      # on purpose, so the highest-consequence mistake in the repo — a table
+      # created without RLS, which the public anon key can then read and write —
+      # is reported in seconds rather than after a full install and a database.
+      - name: Row level security is enabled on every table
+        run: node scripts/check-rls.mjs
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest

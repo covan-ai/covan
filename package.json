@@ -14,6 +14,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "check:rls": "node scripts/check-rls.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",

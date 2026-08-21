@@ -41,6 +41,7 @@ and for the production deployment path.
 ```bash
 bun run lint
 bun run typecheck
+bun run check:rls
 bun run test
 cd worker && bun run typecheck && bun run test
 ```
@@ -62,7 +63,9 @@ that, so `tests/rls/` drives a real database with real users and real tokens.
 
 **If you add or change a migration, run these.** In particular, a new table
 without `enable row level security` will fail `tests/rls/structure.test.ts` — by
-design.
+design. `bun run check:rls` catches the same thing in a second and without a
+database, which is why CI runs it first; the suite is what proves the policies
+you wrote actually behave.
 
 They need a database, so they are not part of `bun run test`. With the Docker
 stack from above running, point the suite at it — this is the same path CI
@@ -89,6 +92,21 @@ bun run test:rls
 
 The suite creates its own users, and deletes them and everything they own when
 it finishes.
+
+### The bypass is pinned
+
+All of the above proves the policies do their job. It cannot notice a route that
+stops asking them to. `serviceClient()` skips RLS entirely — that is what it is
+for — so a handler that switches to it keeps working and stops being scoped to
+the caller, silently.
+
+`worker/src/service-client.static.test.ts` therefore pins the files allowed to
+reach it, and separately the files allowed to name the service-role key, since
+naming the key is enough to build your own client. Adding a call site is fine;
+adding one silently is not. If your change trips it, the fix is an entry **with
+the reason written next to it** — the list is meant to shrink over time, and
+every entry should be a place the database genuinely could not be the one
+deciding.
 
 ## Contributor License Agreement
 

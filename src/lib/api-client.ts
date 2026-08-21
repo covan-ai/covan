@@ -35,7 +35,18 @@ export type Me = {
 
 export type WorkspaceSummary = { id: string; name: string; slug: string; role: string };
 
-export type PendingInvitation = { id: string; email: string; role: string; createdAt: number };
+export type PendingInvitation = {
+  id: string;
+  email: string;
+  role: string;
+  createdAt: number;
+  /**
+   * Whether an email actually reached them. Only on the invitation you just
+   * created — nothing stores it, so the pending list cannot answer it. Undefined
+   * means "not something this response knows", never "no".
+   */
+  emailed?: boolean;
+};
 
 export type IncomingInvitation = {
   id: string;
@@ -324,6 +335,12 @@ export const api = {
         request("PATCH", `/workspace/members/${userId}`, { role }),
       remove: (userId: string): Promise<{ ok: true }> =>
         request("DELETE", `/workspace/members/${userId}`),
+      /**
+       * Leave the workspace you are currently in. `me` is a literal, not a user
+       * id — the server resolves the caller from the session, so this cannot be
+       * pointed at anybody else.
+       */
+      leave: (): Promise<{ ok: true }> => request("DELETE", "/workspace/members/me"),
     },
   },
   invitations: {

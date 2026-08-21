@@ -22,11 +22,19 @@ of that workspace, and that `invited_by` is the caller — so a member cannot
 invite anybody, and nobody can post an invitation with somebody else's name on
 it. The address is lowercased before it is stored.
 
-**Nothing is sent.** There is no email in the invitation path: the API writes the
-row and stops. The interface says "Invite sent" because that is when its work is
-done, not because a message left the building. Somebody who is not told out of
-band that they have been invited will never find out — so tell them, and tell
-them which address to use.
+**The email is a courtesy, and the row is the invitation.** After the row is
+written, the API emails the invitee through the same Resend account routine
+deliveries use — naming who invited them, which workspace, and which address to
+sign in with. It deliberately carries no link that accepts anything: acceptance
+is matched against the address, so a token in a URL would be a second and weaker
+key to the same door.
+
+If that email fails, or if the deployment has no `RESEND_API_KEY` and
+`RESEND_FROM` — a supported configuration, not a broken one — the invitation
+still stands, and the response says `emailed: false`. The dialog then says the
+person is invited and asks you to tell them, rather than claiming a message went
+out. It used to say "Invite sent" unconditionally, in a product that had never
+sent one.
 
 ### What the invitee sees
 
@@ -208,14 +216,28 @@ admin-only, and the last-admin trigger still refuses if that person is the only
 admin left. Removal deletes exactly one row — the membership — and everything
 that follows from that is the policies re-evaluating.
 
-**A member cannot leave a workspace on their own.** No policy lets a member
-delete their own membership row, and the interface offers no control for it, so a
-member who wants out has to ask an admin. An admin is in a different position:
-the delete policy admits them for any row in the workspace, their own included,
-and the API route does not exclude the caller, so an admin who is not the last
-one can remove themselves through the API. The Team screen renders the remove
-control only for _other_ people, so that is a door that exists in the database
-and not on the screen.
+### Leaving
+
+Anybody can leave a workspace on their own. `workspace_members_delete_self`
+(`0020`) permits exactly one row — yours — and `DELETE /workspace/members/me`
+resolves the caller from the session, so the route cannot be pointed at anybody
+else. On the Team screen it is on your own row.
+
+Two things refuse it, both of them said in the dialog before the button is
+pressed rather than after:
+
+- **You are the only admin.** `trg_prevent_last_admin` refuses to leave a
+  surviving workspace without one, whoever asks and however they ask. Hand the
+  role over first. That was left open as a product question when `0016` made
+  workspaces deletable; the answer is to block, rather than to promote somebody
+  who never agreed to it or to delete a workspace other people are still using.
+- **It is your only workspace.** Refused by the route, not the database, because
+  it is not a rule about the workspace — it is about having somewhere to be
+  afterwards. Everyone starts as the sole admin of their own, so reaching this
+  means having handed that one over.
+
+Leaving takes away exactly what removal takes away, described below; the
+difference is only who asked.
 
 ### What removal takes away
 

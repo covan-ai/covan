@@ -46,6 +46,7 @@ import { api } from "@/lib/api-client";
 import type { WorkspaceMember } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
 import { useAgentsStore } from "@/lib/agents-store";
+import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { IncomingInvitesBanner } from "@/components/incoming-invites-banner";
 
 const nav = [
@@ -82,17 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (workspaceId === me?.workspace.id) return;
     try {
       await api.workspace.setActive(workspaceId);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["me"] }),
-        queryClient.invalidateQueries({ queryKey: ["workspaces"] }),
-        queryClient.invalidateQueries({ queryKey: ["agents"] }),
-        queryClient.invalidateQueries({ queryKey: ["bundles"] }),
-        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
-        queryClient.invalidateQueries({ queryKey: ["usage"] }),
-        queryClient.invalidateQueries({ queryKey: ["favorites"] }),
-        queryClient.invalidateQueries({ queryKey: ["messages"] }),
-        queryClient.invalidateQueries({ queryKey: ["invitations"] }),
-      ]);
+      await invalidateWorkspaceScoped(queryClient);
     } catch {
       toast.error("Couldn't switch workspace.");
     }
@@ -110,17 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       await api.workspaces.create(name);
       // The RPC already made the new workspace active; refresh everything the
       // switcher would refresh so the app rebinds to the new workspace.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["me"] }),
-        queryClient.invalidateQueries({ queryKey: ["workspaces"] }),
-        queryClient.invalidateQueries({ queryKey: ["agents"] }),
-        queryClient.invalidateQueries({ queryKey: ["bundles"] }),
-        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
-        queryClient.invalidateQueries({ queryKey: ["usage"] }),
-        queryClient.invalidateQueries({ queryKey: ["favorites"] }),
-        queryClient.invalidateQueries({ queryKey: ["messages"] }),
-        queryClient.invalidateQueries({ queryKey: ["invitations"] }),
-      ]);
+      await invalidateWorkspaceScoped(queryClient);
       setCreateOpen(false);
       setNewName("");
       toast.success("Workspace created");

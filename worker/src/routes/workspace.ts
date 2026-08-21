@@ -182,6 +182,77 @@ workspace.patch("/workspace/members/:userId", async (c) => {
   return c.json({ ok: true });
 });
 
+// DELETE /workspace/members/me — leave the workspace you are currently in.
+//
+// REGISTERED BEFORE /workspace/members/:userId, and it has to stay that way:
+// Hono matches in declaration order, so with the parameterised route first this
+// would arrive as a request to remove a member whose id is the string "me" —
+// matching nobody, and answering 403 for a reason that has nothing to do with
+// what happened.
+//
+// The database is the real boundary. `workspace_members_delete_self` (0020)
+// permits exactly your own row, and `trg_prevent_last_admin` refuses to leave a
+// surviving workspace without an admin. This handler's job is to name both
+// outcomes in a way the screen can repeat to the person.
+workspace.delete("/workspace/members/me", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
+
+  // Refused here rather than in the database, because it is not a rule about
+  // this workspace — it is about the person having somewhere to be afterwards.
+  // getActiveWorkspaceId returns null with no memberships left, and every route
+  // that calls it then answers 404, so leaving your last workspace would log
+  // you into an application with no rooms in it. Everyone starts as the sole
+  // admin of their own workspace, so this is only reachable by someone who has
+  // handed that one over.
+  // Counted by reading the rows rather than with `{ count: 'exact', head: true }`:
+  // a person belongs to a handful of workspaces, and RLS already limits this to
+  // their own memberships.
+  const { data: mine, error: membershipsError } = await db
+    .from("workspace_members")
+    .select("workspace_id")
+    .eq("user_id", user.id);
+
+  if (membershipsError) return c.json({ error: "failed to check your memberships" }, 500);
+  if ((mine ?? []).length <= 1) {
+    return c.json({ error: "this is your only workspace — you would have nowhere to go" }, 409);
+  }
+
+  const { data: left, error } = await db
+    .from("workspace_members")
+    .delete()
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
+    .select("user_id");
+
+  if (error) {
+    // The trigger's message, turned into the sentence the team screen shows.
+    // Matched on the phrase rather than an error code: it is a plpgsql
+    // `raise exception`, so it arrives as the generic P0001.
+    if (/last admin/.test(error.message ?? "")) {
+      return c.json(
+        { error: "make someone else an admin first — a workspace cannot be left without one" },
+        409,
+      );
+    }
+    return c.json({ error: "failed to leave the workspace" }, 400);
+  }
+  if (!left || left.length === 0) {
+    // No policy matched and no trigger fired. Reachable if the membership is
+    // already gone — someone removed you between the page loading and the
+    // button being pressed — which is the outcome you wanted anyway.
+    return c.json({ error: "you are not a member of that workspace" }, 404);
+  }
+
+  // Nothing repoints the active workspace here on purpose: getActiveWorkspaceId
+  // re-checks membership on every call and falls back to the oldest remaining
+  // one, so the next request lands somewhere real without a second write.
+  return c.json({ ok: true });
+});
+
 // DELETE /workspace/members/:userId — remove a member (admin only).
 workspace.delete("/workspace/members/:userId", async (c) => {
   const db = c.get("db");

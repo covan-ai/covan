@@ -49,7 +49,19 @@ export type ChatSessionDTO = {
 
 export type WorkspaceSummaryDTO = { id: string; name: string; slug: string; role: string };
 
-export type PendingInvitationDTO = { id: string; email: string; role: string; createdAt: number };
+export type PendingInvitationDTO = {
+  id: string;
+  email: string;
+  role: string;
+  createdAt: number;
+  /**
+   * Whether an email actually reached the invitee. Present on the row returned
+   * when an invitation is created, and absent from the pending list — nothing
+   * stores it, and an old invitation cannot be asked after the fact. The
+   * invite dialog uses it to describe what happened instead of assuming.
+   */
+  emailed?: boolean;
+};
 
 export type IncomingInvitationDTO = {
   id: string;

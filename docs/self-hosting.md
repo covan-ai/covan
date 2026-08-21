@@ -105,7 +105,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `ALLOWED_ORIGIN`                                       | `http://localhost:3000`    | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.   |
 | `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, then rebuild `covan-web`.                                               |
 | `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.           |
-| `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email delivery for routines, via [Resend](https://resend.com). Leave blank and email delivery is simply unavailable.   |
+| `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.      |
 
 Three more values the API reads are set by `docker-compose.yml` rather than by
 you: `SUPABASE_URL` (`http://kong:8000` — the compose network address, not
@@ -283,9 +283,14 @@ bunx wrangler secret put RESEND_FROM
 ```
 
 `ROUTINE_SECRET_KEY` must decode to 16, 24 or 32 bytes — `openssl rand -base64
-32`. The two `RESEND_*` values only matter for email delivery of routines; skip
-both if you do not need it, and use Slack-webhook channels instead. There is no
-guard against a half-configured Resend, so if you set one, set both.
+32`. The two `RESEND_*` values cover the two things Covan emails: routine
+deliveries to an email channel, and the note that tells somebody they have been
+invited. Skip both and neither goes out — routines can still deliver to Slack,
+and an invitation is still created and still works, but you have to tell the
+person yourself. Set one without the other and the two paths differ: an
+invitation checks for both and quietly reports that nothing was emailed, while a
+routine posts anyway and records whatever Resend answers as a failed run. So if
+you set one, set both.
 
 Check the build, then ship it:
 

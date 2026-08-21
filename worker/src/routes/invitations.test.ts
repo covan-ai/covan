@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { invitations } from "./invitations";
 import {
@@ -43,12 +43,31 @@ function appWith(spec: FakeDbSpec) {
   return { app, ...fake };
 }
 
-const json = (app: Hono<AppEnv>, method: string, path: string, body?: unknown) =>
-  app.request(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+const json = (
+  app: Hono<AppEnv>,
+  method: string,
+  path: string,
+  body?: unknown,
+  env?: Record<string, string>,
+) =>
+  app.request(
+    path,
+    {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    // Hono's third argument is the Bindings object. Left undefined for every
+    // test that does not care, which is also what a deployment with no mail
+    // configured looks like from inside the handler.
+    env,
+  );
+
+const MAIL_ENV = {
+  RESEND_API_KEY: "re_test",
+  RESEND_FROM: "Covan <hello@covan.test>",
+  ALLOWED_ORIGIN: "https://covan.test",
+};
 
 describe("GET /invitations", () => {
   it("lists the pending invitations of the caller's own workspace", async () => {
@@ -141,6 +160,10 @@ describe("POST /invitations", () => {
       email: "new@example.com",
       role: "member",
       createdAt: Date.parse(CREATED_AT),
+      // No RESEND_API_KEY in these tests, which is also a real deployment: mail
+      // is optional and the invitation stands without it. The dialog reads this
+      // to say what happened rather than claiming an email went out.
+      emailed: false,
     });
 
     // workspace_id comes from the caller's session, never from the request
@@ -400,5 +423,107 @@ describe("POST /invitations/:id/accept", () => {
     await expect(res.json()).resolves.toEqual({
       error: "invitation is not addressed to you",
     });
+  });
+});
+
+describe("POST /invitations — telling the invitee", () => {
+  /**
+   * The gap this closes was not a missing feature so much as a false sentence:
+   * the dialog said "Invite sent" and nothing had ever been sent. So what these
+   * tests hold in place is that `emailed` reports what actually happened, in
+   * every direction — including the two where it is false and the invitation
+   * still stands.
+   */
+  const created = {
+    id: "inv-1",
+    email: "new@example.com",
+    role: "member",
+    created_at: CREATED_AT,
+  };
+
+  function appWithMail(fetchImpl: typeof fetch) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchImpl);
+    return appWith({
+      tables: {
+        invitations: { insert: () => ({ data: [created], error: null }) },
+        workspaces: { select: () => ({ data: { name: "Acme" }, error: null }) },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns === "name"
+              ? { data: { name: "Ada Lovelace" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("emails the invitee, naming the inviter and the workspace", async () => {
+    let sent: { url: string; body: Record<string, unknown> } | undefined;
+    const { app } = appWithMail(async (input, init) => {
+      sent = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return new Response("{}", { status: 200 });
+    });
+
+    const res = await json(
+      app,
+      "POST",
+      "/invitations",
+      { email: "new@example.com", role: "member" },
+      MAIL_ENV,
+    );
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({ emailed: true });
+
+    expect(sent?.url).toBe("https://api.resend.com/emails");
+    expect(sent?.body.from).toBe(MAIL_ENV.RESEND_FROM);
+    expect(sent?.body.to).toEqual(["new@example.com"]);
+    expect(sent?.body.subject).toBe("Ada Lovelace invited you to Acme on Covan");
+
+    const text = String(sent?.body.text);
+    // The address is the credential — accept_invitation matches it against the
+    // caller's verified JWT email — so the mail has to name which address to
+    // sign in with, and must not offer a link that accepts on its own.
+    expect(text).toContain("new@example.com");
+    expect(text).toContain(MAIL_ENV.ALLOWED_ORIGIN);
+    expect(text, "the mail offered a link that accepts the invitation").not.toMatch(
+      /\/invitations?\/[\w-]+\/accept|token=/,
+    );
+  });
+
+  it("still creates the invitation when Resend refuses", async () => {
+    const { app } = appWithMail(async () => new Response("nope", { status: 422 }));
+
+    const res = await json(
+      app,
+      "POST",
+      "/invitations",
+      { email: "new@example.com", role: "member" },
+      MAIL_ENV,
+    );
+
+    // The row is the invitation. /invitations/incoming will still find it and
+    // accept_invitation will still consume it, so a failed courtesy email must
+    // not turn into a failed request.
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({ id: "inv-1", emailed: false });
+  });
+
+  it("does not try, and does not claim to have tried, without a mail sender", async () => {
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const { app } = appWithMail(fetchImpl as unknown as typeof fetch);
+
+    const res = await json(app, "POST", "/invitations", {
+      email: "new@example.com",
+      role: "member",
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({ emailed: false });
+    expect(fetchImpl, "posted to Resend with no API key").not.toHaveBeenCalled();
   });
 });

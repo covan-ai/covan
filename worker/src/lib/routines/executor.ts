@@ -446,7 +446,8 @@ async function announcePause(
 /**
  * Tell the owner a run was skipped because their allowance is spent.
  *
- * Sent once, not once per tick: the engine wakes every five minutes, so a
+ * Sent once, not once per tick. Ticks are minutes apart — five on the
+ * Cloudflare trigger in wrangler.cron.toml, ROUTINE_TICK_MS on Node — so a
  * routine left waiting on a monthly allowance would otherwise mail its owner
  * thousands of times before the month turned over. `lastRunWasQuotaSkip` below
  * is what makes it once.
@@ -539,7 +540,7 @@ async function wantsNotice(
  * The engine has no memory between ticks, so the run history is where it looks.
  * A failure to read is treated as "already told" — the cost of staying quiet
  * once is a missed notice; the cost of guessing the other way is a mailbox
- * filled every five minutes.
+ * filled once per tick until the allowance resets.
  */
 async function lastRunWasQuotaSkip(db: any, routineId: string): Promise<boolean> {
   try {

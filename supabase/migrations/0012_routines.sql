@@ -79,8 +79,8 @@ create table if not exists public.routines (
   updated_at timestamptz not null default now()
 );
 
--- The due query runs every five minutes forever; it is the only hot query in
--- the engine.
+-- The due query runs on every tick, forever, whatever the deployment sets its
+-- heartbeat to; it is the only hot query in the engine.
 create index if not exists routines_due_idx
   on public.routines (status, next_run_at);
 

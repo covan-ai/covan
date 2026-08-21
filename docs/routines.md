@@ -124,6 +124,15 @@ where the owner sees the label.
 Deleting a channel that a routine still points at fails with a conflict, and the
 interface names the reason rather than showing the database's version of it.
 
+Because the channel is the person's, it outlives the workspace it was added
+from. The row records which workspace you were in when you created it, and
+nothing reads that afterwards — so when a workspace is deleted, channels added
+from it are kept and that record is simply cleared. Before `0019` they were
+deleted along with it, which meant a routine in one workspace could make a
+different workspace permanently undeletable: the workspace's own admins could
+neither see the routine holding it open nor do anything about it. Deleting the
+_person_ still takes their channels with them.
+
 Email delivery needs `RESEND_API_KEY` and `RESEND_FROM` set on the deployment;
 both are optional, and without them email delivery is unavailable. Pressing **Run
 now** on an email routine in that state answers with a readable error instead of

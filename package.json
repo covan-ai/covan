@@ -13,9 +13,11 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:rls": "vitest run --config vitest.rls.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -91,6 +93,7 @@
     "globals": "^15.15.0",
     "jsdom": "^25.0.1",
     "nitro": "3.0.260603-beta",
+    "postgres": "^3.4.9",
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",

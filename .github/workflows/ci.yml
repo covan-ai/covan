@@ -1,0 +1,140 @@
+name: CI
+
+# `pull_request`, not `pull_request_target`. The difference matters here: this
+# repo takes contributions from forks, and `pull_request_target` would run that
+# code with a write-scoped token and access to repository secrets. Nothing in
+# this workflow needs a secret — the tests bring their own database — so there
+# is no reason to reach for it.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only by default. Any job needing more should ask for it explicitly.
+permissions:
+  contents: read
+
+# A branch that gets three pushes in a minute should spend CI on the last one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore the package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'worker/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      # --frozen-lockfile: a pull request that quietly changes a dependency
+      # version without committing the lockfile fails here rather than being
+      # installed.
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: worker
+
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run typecheck
+        working-directory: worker
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore the package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'worker/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: worker
+
+      - name: Frontend
+        run: bun run test
+      - name: API
+        run: bun run test
+        working-directory: worker
+
+  rls:
+    name: Row level security
+    runs-on: ubuntu-latest
+    # Slower than the other two by an order of magnitude, because it boots a
+    # real Postgres and applies every migration. Kept as its own job so a
+    # failing lint reports in seconds instead of waiting behind it.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore the package cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'worker/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # The repo's own compose stack rather than `supabase start`. Two reasons:
+      # it is the stack self-hosters actually run, so this job doubles as a
+      # check that it still comes up; and its service list is pinned here in
+      # docker-compose.yml rather than moving with a CLI release.
+      - name: Configure the stack
+        run: |
+          cp .env.docker.example .env
+          # docker compose interpolates the whole file even when only some
+          # services are named, and the API service declares OPENAI_API_KEY as
+          # required. No test makes a model call.
+          printf '\nOPENAI_API_KEY=unused-by-these-tests\n' >> .env
+
+      # Only the four services the suite needs: Postgres for the schema, GoTrue
+      # to mint real user tokens, PostgREST to serve them, Kong in front. The
+      # API, the web app and Realtime are never touched.
+      - name: Start Postgres, GoTrue, PostgREST and Kong
+        run: docker compose up -d --wait db auth rest kong
+
+      # A separate step so a migration that fails to apply is reported as
+      # exactly that, rather than as a suite of failing tests.
+      - name: Apply migrations
+        run: docker compose run --rm migrate
+
+      - name: Run the suite
+        run: |
+          set -a && . ./.env && set +a
+          SUPABASE_TEST_URL="http://localhost:${KONG_HTTP_PORT:-8000}" \
+          SUPABASE_TEST_ANON_KEY="$ANON_KEY" \
+          SUPABASE_TEST_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+          SUPABASE_TEST_DB_URL="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-54322}/postgres" \
+          bun run test:rls
+
+      - name: Show what the database said, if anything failed
+        if: failure()
+        run: docker compose logs --tail 100 db auth rest
+
+      - name: Tear the stack down
+        if: always()
+        run: docker compose down -v

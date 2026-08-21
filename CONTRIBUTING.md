@@ -40,12 +40,55 @@ and for the production deployment path.
 
 ```bash
 bun run lint
+bun run typecheck
 bun run test
 cd worker && bun run typecheck && bun run test
 ```
 
+Every one of these also runs on your pull request in GitHub Actions
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), along with the
+database tests below. Nothing in CI needs a secret, so the checks run the same
+way on a fork as they do here.
+
 Keep pull requests focused on one change. Explain what problem it solves, not
 only what it does.
+
+## Database tests
+
+Tenant isolation in Covan is enforced by Postgres Row Level Security, not by
+application code — a route hands the caller's token to Supabase and the policies
+in `supabase/migrations` decide what comes back. No amount of TypeScript checks
+that, so `tests/rls/` drives a real database with real users and real tokens.
+
+**If you add or change a migration, run these.** In particular, a new table
+without `enable row level security` will fail `tests/rls/structure.test.ts` — by
+design.
+
+They need a database, so they are not part of `bun run test`. With the Docker
+stack from above running, point the suite at it — this is the same path CI
+takes:
+
+```bash
+set -a && . ./.env && set +a
+SUPABASE_TEST_URL="http://localhost:${KONG_HTTP_PORT:-8000}" \
+SUPABASE_TEST_ANON_KEY="$ANON_KEY" \
+SUPABASE_TEST_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+SUPABASE_TEST_DB_URL="postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-54322}/postgres" \
+bun run test:rls
+```
+
+If you would rather use the Supabase CLI, `supabase start` works too and needs
+no variables at all — the suite reads `supabase status` when they are unset.
+Note that the CLI and `docker compose` both want port 54322, so only one of them
+can be running.
+
+```bash
+supabase start
+bun run test:rls
+```
+
+The suite creates its own users, and deletes them and everything they own when
+it finishes.
 
 ## Contributor License Agreement
 

@@ -1,0 +1,19 @@
+<!--
+  The Covan mark: an inverted hive, four courses narrowing to a point.
+
+  Source of truth for every rendering of the logo — the inline copy in
+  components/brand-mark.tsx and the rasters in public/ (favicon.ico,
+  favicon-32.png, apple-touch-icon.png) are all this shape.
+
+  Deliberately carries no colour and no background. The mark is painted by
+  whatever encloses it: `currentColor` in the app, so it inverts with the
+  theme, and a flat white on the ink tile in the icons. The viewBox is cropped
+  to the glyph itself, so anything drawing it can centre it without having to
+  know about padding baked into the file.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 135" fill="currentColor">
+  <polygon points="0,0 150,0 135.42,26.25 14.58,26.25" />
+  <polygon points="20.14,36.25 129.86,36.25 115.28,62.5 34.72,62.5" />
+  <polygon points="40.28,72.5 109.72,72.5 95.14,98.75 54.86,98.75" />
+  <polygon points="60.42,108.75 89.58,108.75 75,135" />
+</svg>

@@ -119,9 +119,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       // whatever the host sends for `Cache-Control` — so a redrawn icon can
       // keep showing the old one for weeks. Changing the URL is the only
       // reliable way to retire it. Bump this whenever the icons change.
-      { rel: "icon", href: "/favicon.ico?v=2", type: "image/x-icon" },
-      { rel: "icon", href: "/favicon-32.png?v=2", type: "image/png", sizes: "32x32" },
-      { rel: "apple-touch-icon", href: "/apple-touch-icon.png?v=2" },
+      { rel: "icon", href: "/favicon.ico?v=3", type: "image/x-icon" },
+      { rel: "icon", href: "/favicon-32.png?v=3", type: "image/png", sizes: "32x32" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png?v=3" },
     ],
   }),
   shellComponent: RootShell,

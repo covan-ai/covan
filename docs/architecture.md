@@ -53,8 +53,8 @@ sequenceDiagram
    an anon-key client (`authClient`), then puts two things on the context:
    `user`, and `db` — a **request-scoped** Supabase client constructed with the
    anon key and the caller's token forwarded as an `Authorization` header.
-5. Routes read and write through `c.get("db")` — with three deliberate
-   exceptions, listed [below](#when-the-service-role-client-is-legitimate).
+5. Routes read and write through `c.get("db")` — with the deliberate exceptions
+   listed [below](#when-the-service-role-client-is-legitimate).
 
 That fifth step is the whole design. The client carrying the caller's token
 means `auth.uid()` inside Postgres resolves to that user, so every policy in
@@ -79,6 +79,16 @@ Concretely:
   `authenticated` grant revoked and every column except `secret_ciphertext`
   handed back (`0012_routines.sql`). A user can list their own delivery
   channels; the encrypted secret is not among the columns they can select.
+- A policy constrains the columns it names and nothing else.
+  `messages_insert_user_self` (`0009_lock_assistant_messages.sql`) requires an
+  inserted message to carry the caller's own id as `sender_id` and to belong to a
+  session that caller can read. It does not inspect `role`, and nothing behind it
+  does either — there is no trigger on `messages` and no revoke, so
+  `authenticated` keeps its PostgREST `INSERT`. A member can write a row with
+  `role = 'assistant'` and their own `sender_id` into any session they can see,
+  and in a shared session every other member's client renders it under the
+  agent's name. What the policy guarantees is attribution and session
+  membership, not authorship.
 - `SECURITY DEFINER` functions need their `EXECUTE` grant revoked from `PUBLIC`
   explicitly. Postgres grants it by default and every role inherits it, so
   `revoke ... from authenticated` alone leaves the function callable through
@@ -92,20 +102,32 @@ were invisible, and a write attempt against a known id returned 404.
 
 ### When the service-role client is legitimate
 
-`serviceClient()` bypasses RLS entirely. It appears in exactly three places, and
-each has a reason that a request-scoped client cannot satisfy:
+`serviceClient()` bypasses RLS entirely, so every file allowed to call it is
+pinned: `worker/src/service-client.static.test.ts` holds the allowlist, with the
+argument for each entry written beside it, and fails on any call site that is not
+on it. That test is the current list — the prose here is not, and a count in a
+document goes stale in a way a failing test does not.
+
+Three of those call sites are in the shared codebase, and each has a reason that
+a request-scoped client cannot satisfy:
 
 | Where                                | Why                                                                                                                              |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `routes/chat.ts` — persisting the assistant's reply | Assistant messages are server-authoritative. RLS forbids a client-authored assistant row (`0009_lock_assistant_messages.sql`), so the server writes them under a role that can. |
+| `routes/chat.ts` — persisting the assistant's reply | Assistant messages are written with no `sender_id`, and `messages_insert_user_self` (`0009_lock_assistant_messages.sql`) admits only rows stamped with the caller's own id. No client can write an unattributed row, so the server writes them under a role the policy does not reach. |
 | `routes/routines.ts` — creating a delivery channel  | `INSERT` on `delivery_channels` is granted to nobody but the service role, on purpose: the destination secret has to be AES-GCM encrypted before it is written, and only the server can do that. |
 | `lib/routines/dispatcher.ts` / `executor.ts`        | A cron tick has no caller and therefore no `auth.uid()`. There is no token to scope a client with. |
 
+The hosted service adds one more, for its token meter: `user_usage` has a
+select-own policy and no write policy at all, because a user who could write
+their own counter could reset it. That call site sits behind the entitlements
+interface (`worker/src/lib/entitlements/`), whose metered implementation only a
+hosted build registers — the open build ships the unmetered one, which counts
+nothing and never reaches for the service role.
+
 The rule the codebase holds itself to: **a route that reaches for the
 service-role client to make something work is almost always a bug.** In the two
-route cases above, RLS is not being worked around — it is being *enforced*
-(clients genuinely may not write those rows) and the server is the only actor
-allowed through.
+route cases above, RLS is not being worked around — it is being *enforced*, and
+the server is the only actor allowed through.
 
 The routine executor pays for its service-role client with a rule of its own,
 stated at the top of `executor.ts`: every id it uses is read off the routine row
@@ -234,11 +256,11 @@ Two details worth knowing:
   there second reserves nothing and therefore delivers nothing.
 - **The URL guard** (`lib/routines/url-guard.ts`) rejects loopback, RFC1918,
   link-local and IPv4-mapped-IPv6 addresses, on the original URL and on every
-  redirect hop, plus the deployment's own hosts (`ALLOWED_ORIGIN`, and
-  `WORKER_HOST` once a custom domain fronts the Worker) so a routine cannot be
-  pointed back at Covan itself. It is explicit in its own header comment about
-  what it does not do: it cannot resolve DNS, so a hostname that resolves to a
-  private address still passes.
+  redirect hop, plus any `workers.dev` host and the deployment's own hosts
+  (`ALLOWED_ORIGIN`, and `WORKER_HOST` once a custom domain fronts the Worker)
+  so a routine cannot be pointed back at Covan itself. It is explicit in its
+  own header comment about what it does not do: it cannot resolve DNS, so a
+  hostname that resolves to a private address still passes.
 
 Failures back off, capped at six hours past the natural next run, and a routine
 pauses itself after 5 consecutive failures — or 20 if they are transient (429s

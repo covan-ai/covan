@@ -32,8 +32,19 @@ const items: Integration[] = [
     status: "beta",
   },
   {
-    name: "Slack",
-    desc: "Send agent replies and routine digests straight to a channel.",
+    // Shipped, but narrower than "Slack" sounds: an incoming-webhook URL you
+    // paste into Settings, which routines post their results to. There is no
+    // Slack app and no OAuth, so nothing reads *from* Slack — and the earlier
+    // "send agent replies" half of this entry described the connector below
+    // rather than anything that exists.
+    name: "Slack webhook",
+    desc: "Deliver a routine's results to a channel, through a webhook URL you paste in Settings.",
+    icon: MessageSquare,
+    status: "available",
+  },
+  {
+    name: "Slack app",
+    desc: "Reply to an agent from a channel, without leaving Slack.",
     icon: MessageSquare,
     status: "soon",
   },
@@ -57,7 +68,10 @@ const items: Integration[] = [
  * exactly right for a page whose job is to be honest about what is built.
  */
 function StatusChip({ status }: { status: Status }) {
-  const label = status === "beta" ? "Beta" : status === "available" ? "Connected" : "Coming soon";
+  // "Available", not "Connected": this list says what Covan can do, not what
+  // this workspace has set up. Whether a webhook URL actually exists is a
+  // question for Settings, and answering it here would be a guess.
+  const label = status === "beta" ? "Beta" : status === "available" ? "Available" : "Coming soon";
   return <Chip tone={status === "soon" ? "neutral" : "on"}>{label}</Chip>;
 }
 

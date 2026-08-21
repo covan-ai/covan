@@ -31,15 +31,27 @@ function invitationEmail(args: {
   return {
     to: args.email,
     subject: `${args.inviterName} invited you to ${args.workspaceName} on Covan`,
+    // Hard-wrapped, and every interpolated value sits on a line of its own —
+    // an address or a workspace name in the middle of a sentence pushes the
+    // wrap around and turns a tidy paragraph into a ragged one for exactly the
+    // people whose names are longest.
     text: [
-      `${args.inviterName} invited you to join ${args.workspaceName} on Covan, as ${asRole}.`,
+      `${args.inviterName} invited you to join ${args.workspaceName} on Covan,`,
+      `as ${asRole}.`,
       "",
       "Covan is where a team keeps its AI agents: the agents and the knowledge",
       "they read are shared, and your own conversations stay yours.",
       "",
-      `Go to ${args.appUrl} and sign in with this address — ${args.email} — and the`,
-      "invitation will be waiting. If you do not have an account yet, sign up with",
-      "the same address; that is what the invitation is matched to.",
+      "To accept, sign in and the invitation will be waiting:",
+      "",
+      `  ${args.appUrl}`,
+      "",
+      "Sign in with the address this was sent to:",
+      "",
+      `  ${args.email}`,
+      "",
+      "If you do not have an account yet, sign up with that same address — it is",
+      "what the invitation is matched to, so a different one will not find it.",
       "",
       "If you were not expecting this, you can ignore it. Nothing happens until",
       "you accept.",
@@ -176,7 +188,11 @@ async function notifyInvitee(
         inviterName,
         role: invite.role,
         email: invite.email,
-        appUrl: c.env.ALLOWED_ORIGIN,
+        // ALLOWED_ORIGIN is a comma-separated list — a deployment reachable at
+        // more than one origin sets several. The first is the canonical one,
+        // and putting the raw variable in the mail would send somebody a URL
+        // with a comma in it.
+        appUrl: (c.env.ALLOWED_ORIGIN ?? "").split(",")[0].trim(),
       }),
       { fetchImpl: fetch.bind(globalThis), apiKey: c.env.RESEND_API_KEY, from: c.env.RESEND_FROM },
     );

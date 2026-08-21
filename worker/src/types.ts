@@ -1,4 +1,5 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
+import type { Entitlements } from "./lib/entitlements";
 
 /**
  * Exactly what the routine engine needs to run a tick.
@@ -26,6 +27,15 @@ export type RoutineEnv = {
   ALLOWED_ORIGIN: string;
   /** This worker's own domain, once a custom domain fronts it (unset on workers.dev). */
   WORKER_HOST?: string;
+  /**
+   * Monthly token allowance per user. Unset means unmetered, which is what a
+   * self-hosted Covan is: the operator brings their own OPENAI_API_KEY and
+   * decides what to spend on it. A hosted deployment sets this and registers a
+   * metering implementation — see `lib/entitlements`. Declared here, in the
+   * shared type, because shared code checks for its presence to catch a hosted
+   * deploy that forgot to register one.
+   */
+  QUOTA_MONTHLY_TOKENS?: string;
 };
 
 /**
@@ -55,6 +65,8 @@ export type Bindings = RoutineEnv & {
 export type Variables = {
   user: User;
   db: SupabaseClient;
+  /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
+  entitlements: Entitlements;
 };
 
 export type AppEnv = {

@@ -6,6 +6,8 @@ import { getActiveWorkspaceId } from "../lib/workspace";
 import { chunkText, embedTexts } from "../lib/embeddings";
 import { extractDocumentText } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
+import { guardQuota, recordQuota } from "../lib/entitlements/guard";
+import { embeddingCost } from "../lib/entitlements";
 
 const bundles = new Hono<AppEnv>();
 
@@ -138,6 +140,11 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   const db = c.get("db");
   const bundleId = c.req.param("id");
 
+  // Refused outright rather than stored-but-unindexed: a document the agent
+  // cannot retrieve from looks uploaded and behaves as if it were never there.
+  const denied = await guardQuota(c);
+  if (denied) return denied;
+
   const contentLength = parseInt(c.req.header("content-length") ?? "", 10);
   if (Number.isFinite(contentLength) && contentLength > MAX_SIZE) {
     return c.json({ error: "file too large (max 10 MB)" }, 413);
@@ -201,7 +208,9 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   try {
     const chunks = chunkText(fullText);
     if (chunks.length > 0) {
-      const vectors = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+      const embedded = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+      const vectors = embedded.vectors;
+      await recordQuota(c, embeddingCost(embedded.tokens));
       const rows = chunks.map((ch, i) => ({
         document_id: doc.id,
         bundle_id: bundleId,
@@ -268,7 +277,9 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
       continue;
     }
     try {
-      const vectors = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+      // Not charged to anyone's quota: this is the operator repairing their own
+      // data, not a user asking for work. It is gated by ADMIN_API_KEY above.
+      const { vectors } = await embedTexts(c.env.OPENAI_API_KEY, chunks);
       const rows = chunks.map((ch, i) => ({
         document_id: d.id,
         bundle_id: d.bundle_id,

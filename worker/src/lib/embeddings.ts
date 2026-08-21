@@ -76,16 +76,28 @@ export function chunkText(text: string, size = 1000, overlap = 150): string[] {
   return chunks;
 }
 
+export type EmbeddingResult = {
+  /** Vectors in input order. */
+  vectors: number[][];
+  /** What the call cost, for usage accounting. */
+  tokens: number;
+};
+
 /**
  * Embeds each input string. Returns vectors in input order (OpenAI guarantees
  * response ordering by `index`; we sort defensively). Throws on API error.
+ *
+ * The token count comes back alongside the vectors because embedding is real
+ * spend — a large document costs more to index than a long conversation costs
+ * to answer — and a usage counter that ignored it would leave uploads free.
  */
-export async function embedTexts(apiKey: string, texts: string[]): Promise<number[][]> {
-  if (texts.length === 0) return [];
+export async function embedTexts(apiKey: string, texts: string[]): Promise<EmbeddingResult> {
+  if (texts.length === 0) return { vectors: [], tokens: 0 };
   const openai = new OpenAI({ apiKey });
   const res = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: texts });
-  return res.data
+  const vectors = res.data
     .slice()
     .sort((a, b) => a.index - b.index)
     .map((d) => d.embedding as number[]);
+  return { vectors, tokens: res.usage?.total_tokens ?? 0 };
 }

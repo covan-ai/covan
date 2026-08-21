@@ -4,6 +4,7 @@ import { serviceClient } from "../supabase";
 import { runRoutine as defaultRunRoutine, type ExecutorDeps, type RoutineRow } from "./executor";
 import { summariseWithOpenAI } from "./summarise";
 import { ownHostsFrom } from "./url-guard";
+import { entitlementsFor } from "../entitlements";
 
 /**
  * How many routines one tick may run, bounded by the Workers **Free** plan's
@@ -49,6 +50,7 @@ function executorDeps(env: RoutineEnv, db: any): ExecutorDeps {
   return {
     db,
     summarise: summariseWithOpenAI(env),
+    entitlements: entitlementsFor(env),
     fetchDeps: { fetchImpl: boundFetch, ownHosts },
     deliveryDeps: {
       fetchImpl: boundFetch,

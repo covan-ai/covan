@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Markdown } from "@/components/markdown";
 import { AgentAvatar } from "@/components/avatars";
+import { useQuota, quotaSentence } from "@/lib/quota";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
   component: ChatTab,
@@ -52,6 +53,16 @@ function ChatTab() {
   const { agents, sessions, startSession } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId)!;
   const queryClient = useQueryClient();
+
+  // Only the hosted service meters anything; self-hosted installs answer with
+  // `limit: null` and nothing below renders. Refetched by the invalidation that
+  // already follows every reply, which is exactly when the number moves.
+  // An allowance nobody can see is a trap: the first a user hears of it is the
+  // reply that doesn't come. So it is on screen from the first message — as a
+  // quiet line in the composer footer while there is room, and as a banner once
+  // it is nearly gone. `useQuota` returns null on a self-hosted install, where
+  // there is no allowance and none of this renders.
+  const quota = useQuota();
 
   const agentSessions = useMemo(
     () => sessions.filter((s) => s.agentId === agentId).sort((a, b) => b.updatedAt - a.updatedAt),
@@ -234,6 +245,28 @@ function ChatTab() {
         body: JSON.stringify({ sessionId }),
         signal: controller.signal,
       });
+
+      if (res.status === 402) {
+        // Out of allowance. The user's message is already saved, so the
+        // conversation isn't lost — only the reply is refused.
+        const body = (await res.json().catch(() => null)) as { resetsAt?: string } | null;
+        const resets = body?.resetsAt
+          ? new Date(body.resetsAt).toLocaleDateString(undefined, {
+              month: "long",
+              day: "numeric",
+            })
+          : null;
+        toast.error(
+          resets
+            ? `You've used this month's allowance. It resets on ${resets}.`
+            : "You've used this month's allowance.",
+        );
+        setThinking(false);
+        setStreamText("");
+        setReplyingIn(null);
+        void queryClient.invalidateQueries({ queryKey: ["usage"] });
+        return;
+      }
 
       if (!res.ok || !res.body) {
         toast.error("Couldn't reach the assistant. Please try again.");
@@ -699,6 +732,12 @@ function ChatTab() {
       {/* Composer */}
       <div className="border-t border-border bg-background px-4 pb-4 pt-3 lg:px-6">
         <div className="mx-auto max-w-3xl">
+          {quota && quota.level !== "fine" && (
+            <div className="mb-2 flex items-center gap-2 rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+              <span className="h-2 w-2 shrink-0 bg-accent-orange" />
+              <span>{quotaSentence(quota)}</span>
+            </div>
+          )}
           <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">
             <Textarea
               value={input}
@@ -750,6 +789,7 @@ function ChatTab() {
             {isShared ? <Users className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
             {isShared ? "Shared with your workspace" : "Private to you"} · grounded in{" "}
             {agent.documents.length} team {agent.documents.length === 1 ? "document" : "documents"}
+            {quota?.level === "fine" && <> · {quotaSentence(quota)}</>}
           </p>
         </div>
       </div>

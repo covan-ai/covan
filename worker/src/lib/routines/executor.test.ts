@@ -1,6 +1,12 @@
 // worker/src/lib/routines/executor.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { runRoutine, MAX_FAILURES, MAX_TRANSIENT_FAILURES, type RoutineRow } from "./executor";
+import {
+  runRoutine,
+  MAX_FAILURES,
+  MAX_TRANSIENT_FAILURES,
+  QUOTA_SKIP_REASON,
+  type RoutineRow,
+} from "./executor";
 import { encryptSecret } from "./crypto";
 
 // Same fixture key used in delivery.test.ts. The stubbed `delivery_channels`
@@ -78,6 +84,8 @@ function makeDb(
       select: () => {
         const chain: any = {
           eq: () => chain,
+          order: () => chain,
+          limit: () => chain,
           maybeSingle: async () => ({ data: await rowFor(table), error: null }),
           single: async () => ({ data: await rowFor(table), error: null }),
         };
@@ -127,12 +135,24 @@ function makeDb(
 let fetchImpl: any;
 let summarise: any;
 let deliverCalls: any[];
+/** Tokens charged through `entitlements.record`, per run. */
+let recorded: Array<{ userId: string; tokens: number }>;
 
 function makeDeps(db: any) {
   deliverCalls = [];
+  recorded = [];
   return {
     db,
     summarise,
+    // Unmetered by default, like a self-hosted install. The quota tests
+    // override `check` on the returned object.
+    entitlements: {
+      check: vi.fn(async () => ({ allowed: true })),
+      record: vi.fn(async (userId: string, tokens: number) => {
+        recorded.push({ userId, tokens });
+      }),
+      snapshot: vi.fn(async () => ({ used: 0, limit: null, resetsAt: null })),
+    },
     fetchDeps: { fetchImpl, ownHosts: ["api.example.com"] },
     deliveryDeps: {
       fetchImpl: vi.fn(async (url: string, init: any) => {
@@ -206,6 +226,124 @@ describe("runRoutine", () => {
     expect(out.status).toBe("ok");
     expect(summarise).toHaveBeenCalledTimes(1);
     expect(deliverCalls).toHaveLength(1);
+  });
+
+  it("charges the routine's owner for what the run cost", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const deps = makeDeps(db) as any;
+    await runRoutine(r, deps);
+
+    // The owner, not whoever triggered it — a scheduled run has no caller.
+    expect(recorded).toEqual([{ userId: "u1", tokens: 120 }]);
+  });
+
+  it("skips without spending or claiming anything when the owner is out of quota", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, claimed, inserts } = makeDb();
+    const deps = makeDeps(db) as any;
+    deps.entitlements.check = vi.fn(async () => ({
+      allowed: false,
+      used: 1000,
+      limit: 1000,
+      resetsAt: "2026-09-01T00:00:00.000Z",
+    }));
+
+    const out = await runRoutine(
+      routine({
+        cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+      }),
+      deps,
+    );
+
+    expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    expect(summarise).not.toHaveBeenCalled();
+    // The one delivery is the notice explaining the skip, never a summary —
+    // there is nothing to summarise, because the model was never called.
+    expect(deliverCalls).toHaveLength(1);
+    expect(JSON.stringify(deliverCalls[0].init.body)).toMatch(/allowance is used up/);
+    // The important half: nothing was reserved. A delivery key claimed by a run
+    // that then skips can never be claimed again, so those items would be lost
+    // for good rather than reported once the allowance resets.
+    expect(claimed).toEqual([]);
+    const run = inserts.find((i: any) => i.table === "routine_runs")!;
+    expect(run.values.status).toBe("skipped");
+    expect(run.values.error).toMatch(/quota/i);
+  });
+
+  it("tells the owner the first time a run is skipped for quota", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    // No prior run: rowFor("routine_runs") falls through to null.
+    const { db } = makeDb();
+    const deps = makeDeps(db) as any;
+    deps.entitlements.check = vi.fn(async () => ({
+      allowed: false,
+      used: 60000,
+      limit: 60000,
+      resetsAt: "2026-09-01T00:00:00.000Z",
+    }));
+
+    await runRoutine(routine(), deps);
+
+    expect(deliverCalls).toHaveLength(1);
+    const sent = JSON.parse(deliverCalls[0].init.body);
+    const text = JSON.stringify(sent);
+    expect(text).toMatch(/allowance is used up/);
+    // Says when it comes back, and that waiting costs them nothing.
+    expect(text).toMatch(/1 September/);
+    expect(text).toMatch(/Nothing has been lost/);
+  });
+
+  it("respects an owner who has turned the quota notice off", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb({
+      rows: {
+        notification_preferences: { routine_paused: true, quota_exhausted: false },
+      },
+    });
+    const deps = makeDeps(db) as any;
+    deps.entitlements.check = vi.fn(async () => ({
+      allowed: false,
+      used: 60000,
+      limit: 60000,
+      resetsAt: "2026-09-01T00:00:00.000Z",
+    }));
+
+    const out = await runRoutine(routine(), deps);
+
+    // The run is still skipped and still recorded — the preference silences the
+    // message, it does not change what the engine does.
+    expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    expect(deliverCalls).toHaveLength(0);
+  });
+
+  // The engine wakes every five minutes. Told once per tick, a routine waiting
+  // on a monthly allowance would mail its owner thousands of times.
+  it("stays quiet when the previous run was already a quota skip", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb({
+      rows: {
+        routine_runs: {
+          status: "skipped",
+          error: QUOTA_SKIP_REASON,
+        },
+      },
+    });
+    const deps = makeDeps(db) as any;
+    deps.entitlements.check = vi.fn(async () => ({
+      allowed: false,
+      used: 60000,
+      limit: 60000,
+      resetsAt: "2026-09-01T00:00:00.000Z",
+    }));
+
+    await runRoutine(routine(), deps);
+
+    expect(deliverCalls).toHaveLength(0);
   });
 
   // Without this the run history can say "Sent · 2 new items" but not what was

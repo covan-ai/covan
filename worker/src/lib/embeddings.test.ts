@@ -1,5 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { chunkText } from "./embeddings";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { create } = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock("openai", () => ({
+  default: class {
+    embeddings = { create };
+  },
+}));
+
+const { chunkText, embedTexts } = await import("./embeddings");
 
 describe("chunkText", () => {
   it("returns [] for empty or whitespace-only text", () => {
@@ -80,5 +88,45 @@ describe("chunkText", () => {
     // The first chunk ends at the paragraph break, so it holds only Alpha.
     expect(chunks[0]).toContain("Alpha");
     expect(chunks[0]).not.toContain("Bravo");
+  });
+});
+
+describe("embedTexts", () => {
+  beforeEach(() => create.mockReset());
+
+  it("returns vectors in input order, however the API orders them", async () => {
+    create.mockResolvedValue({
+      data: [
+        { index: 1, embedding: [0.2] },
+        { index: 0, embedding: [0.1] },
+      ],
+      usage: { total_tokens: 42 },
+    });
+
+    const { vectors } = await embedTexts("sk-test", ["first", "second"]);
+
+    expect(vectors).toEqual([[0.1], [0.2]]);
+  });
+
+  // Indexing a document is real spend. A counter that ignored it would make
+  // uploads free, which is the cheapest way to run up someone else's bill.
+  it("reports what the call cost", async () => {
+    create.mockResolvedValue({
+      data: [{ index: 0, embedding: [0.1] }],
+      usage: { total_tokens: 42 },
+    });
+
+    await expect(embedTexts("sk-test", ["hello"])).resolves.toMatchObject({ tokens: 42 });
+  });
+
+  it("reports zero when the API omits usage", async () => {
+    create.mockResolvedValue({ data: [{ index: 0, embedding: [0.1] }] });
+
+    await expect(embedTexts("sk-test", ["hello"])).resolves.toMatchObject({ tokens: 0 });
+  });
+
+  it("costs nothing and calls nothing for an empty input", async () => {
+    await expect(embedTexts("sk-test", [])).resolves.toEqual({ vectors: [], tokens: 0 });
+    expect(create).not.toHaveBeenCalled();
   });
 });

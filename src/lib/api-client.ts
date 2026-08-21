@@ -9,7 +9,13 @@ import type {
   UpdateRoutineInput,
 } from "./routines-api";
 
-export type Workspace = { id: string; name: string; slug: string };
+export type Workspace = {
+  id: string;
+  name: string;
+  slug: string;
+  /** Model new agents start on. `null` means the interface picks. */
+  defaultModel: string | null;
+};
 
 export type WorkspaceMember = {
   id: string;
@@ -88,6 +94,22 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       const errBody = await res.json();
       if (errBody && typeof errBody.error === "string") {
         message = errBody.error;
+      }
+      // 402 is the one refusal with a machine-readable shape, and its `error`
+      // field is a code rather than a sentence. Turned into prose here so every
+      // caller — upload, persona, routine draft — reports it the same way
+      // without each one knowing about quotas.
+      if (res.status === 402 && errBody?.error === "quota_exceeded") {
+        const resets =
+          typeof errBody.resetsAt === "string"
+            ? new Date(errBody.resetsAt).toLocaleDateString(undefined, {
+                month: "long",
+                day: "numeric",
+              })
+            : null;
+        message = resets
+          ? `You've used this month's allowance. It resets on ${resets}.`
+          : "You've used this month's allowance.";
       }
     } catch {
       // ignore JSON parse failure, fall back to statusText
@@ -280,13 +302,19 @@ export const api = {
       request("POST", "/persona/suggest", { name, model }),
   },
   me: (): Promise<Me> => request("GET", "/me"),
+  profile: {
+    update: (patch: { name: string }): Promise<Me["user"]> => request("PATCH", "/me", patch),
+  },
   workspaces: {
     list: (): Promise<WorkspaceSummary[]> => request("GET", "/workspaces"),
     create: (name: string): Promise<{ id: string }> => request("POST", "/workspaces", { name }),
   },
   workspace: {
-    update: (patch: { name?: string; slug?: string }): Promise<Workspace> =>
-      request("PATCH", "/workspace", patch),
+    update: (patch: {
+      name?: string;
+      slug?: string;
+      defaultModel?: string | null;
+    }): Promise<Workspace> => request("PATCH", "/workspace", patch),
     setActive: (workspaceId: string): Promise<{ ok: true }> =>
       request("POST", "/workspace/active", { workspaceId }),
     members: {
@@ -327,6 +355,20 @@ export const api = {
     remove: (id: string): Promise<void> => request("DELETE", `/delivery-channels/${id}`),
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
+  notifications: {
+    get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
+    update: (patch: Partial<NotificationPreferences>): Promise<NotificationPreferences> =>
+      request("PATCH", "/notification-preferences", patch),
+  },
+};
+
+/**
+ * Which engine notices this person wants. Not the routine output itself — that
+ * is what a routine is for.
+ */
+export type NotificationPreferences = {
+  routinePaused: boolean;
+  quotaExhausted: boolean;
 };
 
 export type AgentUsage = {
@@ -341,8 +383,20 @@ export type AgentUsage = {
   estCostUsd: number;
 };
 
+/**
+ * What the caller may still spend this period. `limit: null` means unmetered —
+ * a self-hosted Covan brings its own OpenAI key and has no allowance to show,
+ * so the interface renders nothing at all for this.
+ */
+export type QuotaSnapshot = {
+  used: number;
+  limit: number | null;
+  resetsAt: string | null;
+};
+
 export type UsageResponse = {
   agents: AgentUsage[];
+  quota: QuotaSnapshot;
   totals: {
     messageCount: number;
     promptTokens: number;

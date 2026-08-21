@@ -13,6 +13,7 @@ import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
 import { encryptSecret, maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { DEFAULT_MODEL } from "../lib/models";
+import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
 const routines = new Hono<AppEnv>();
 
@@ -28,16 +29,23 @@ const draftBodySchema = z.object({
 // This is the only place in this file that touches an LLM: setup reasons once,
 // every execution afterwards is deterministic.
 routines.post("/routines/draft", async (c) => {
+  const denied = await guardQuota(c);
+  if (denied) return denied;
+
   const parsed = draftBodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
   const client = new OpenAI({ apiKey: c.env.OPENAI_API_KEY });
+  // parseDraft may call the model more than once. Totalled here and recorded
+  // once, whether the draft parses or is rejected — a failed parse still spent.
+  let spent = 0;
   const complete = async (prompt: string) => {
     const res = await client.chat.completions.create({
       model: DEFAULT_MODEL,
       response_format: { type: "json_object" },
       messages: [{ role: "user", content: prompt }],
     });
+    spent += res.usage?.total_tokens ?? 0;
     return res.choices[0]?.message?.content ?? "";
   };
 
@@ -50,6 +58,8 @@ routines.post("/routines/draft", async (c) => {
     return c.json(draft);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "could not read that" }, 422);
+  } finally {
+    await recordQuota(c, spent);
   }
 });
 
@@ -307,6 +317,12 @@ routines.patch("/routines/:id", async (c) => {
 // before it sends, so the second run of a pair delivers nothing.
 routines.post("/routines/:id/run", async (c) => {
   const db = c.get("db");
+
+  // The executor checks quota too, but it can only record the refusal as a
+  // skipped run. Checking here turns "nothing happened" into a 402 the person
+  // who pressed the button can read.
+  const denied = await guardQuota(c);
+  if (denied) return denied;
   // Read through the caller's own client first. RLS already limits this to
   // routines they can see; the ownership check then narrows it to their own,
   // because running a routine spends the owner's LLM budget and delivers to

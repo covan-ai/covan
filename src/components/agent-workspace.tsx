@@ -3,7 +3,6 @@ import { useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   MessageSquare,
-  Sliders,
   BookOpen,
   Repeat,
   Settings,
@@ -70,7 +69,6 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
 
   const nav = [
     { to: "/agents/$agentId/chat", label: "Chat", icon: MessageSquare },
-    { to: "/agents/$agentId/configuration", label: "Configuration", icon: Sliders },
     { to: "/agents/$agentId/knowledge", label: "Knowledge", icon: BookOpen },
     { to: "/agents/$agentId/routines", label: "Routines", icon: Repeat },
     { to: "/agents/$agentId/settings", label: "Settings", icon: Settings },

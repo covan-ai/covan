@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { getActiveWorkspaceId } from "../lib/workspace";
+import { OPENAI_MODELS } from "../lib/models";
 
 const workspace = new Hono<AppEnv>();
 
@@ -9,6 +10,11 @@ const updateWorkspaceSchema = z
   .object({
     name: z.string().min(1).optional(),
     slug: z.string().min(1).optional(),
+    // Validated against the models this build actually supports, and `null`
+    // clears the preference. Anything else is refused rather than stored — a
+    // typo here would otherwise sit in the database until someone wondered why
+    // new agents came out on the wrong model.
+    defaultModel: z.union([z.enum(OPENAI_MODELS), z.null()]).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
@@ -33,13 +39,19 @@ workspace.patch("/workspace", async (c) => {
     return c.json({ error: "no workspace found for user" }, 404);
   }
 
+  // The column is snake_case; the API is not. Mapped explicitly so a future
+  // field cannot be forwarded to PostgREST under a name that silently misses.
+  const { defaultModel, ...rest } = parsed.data;
+  const patch: Record<string, unknown> = { ...rest };
+  if (defaultModel !== undefined) patch.default_model = defaultModel;
+
   // RLS (workspaces_update_admin) permits only admins to change rows. A non-admin
   // caller matches 0 rows — surface that as 403 instead of a false "saved".
   const { data: updated, error: updateError } = await db
     .from("workspaces")
-    .update(parsed.data)
+    .update(patch)
     .eq("id", workspaceId)
-    .select("id,name,slug");
+    .select("id,name,slug,default_model");
 
   if (updateError) {
     return c.json({ error: "failed to update workspace" }, 500);
@@ -49,7 +61,12 @@ workspace.patch("/workspace", async (c) => {
   }
 
   const row = updated[0];
-  return c.json({ id: row.id, name: row.name, slug: row.slug });
+  return c.json({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    defaultModel: (row.default_model as string | null) ?? null,
+  });
 });
 
 // GET /workspaces — all workspaces the caller belongs to (for the switcher).

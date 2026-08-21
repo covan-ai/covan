@@ -4,6 +4,7 @@ import OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
 import { buildIdeaExtractionMessages, parseIdeaSuggestions } from "../lib/idea-suggest";
+import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
 const brainstorm = new Hono<AppEnv>();
 
@@ -17,6 +18,9 @@ const EXTRACT_MSG_LIMIT = 30;
 // candidate idea cards. Nothing is persisted; the client adds the ones it wants.
 brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
   const db = c.get("db");
+
+  const denied = await guardQuota(c);
+  if (denied) return denied;
 
   const parsed = suggestSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -72,6 +76,7 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
       response_format: { type: "json_object" },
       max_completion_tokens: 800,
     });
+    await recordQuota(c, completion.usage?.total_tokens ?? 0);
     const raw = completion.choices[0]?.message?.content ?? "";
     return c.json({ ideas: parseIdeaSuggestions(raw) });
   } catch (err) {

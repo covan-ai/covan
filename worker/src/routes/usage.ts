@@ -31,8 +31,18 @@ usage.get("/usage", async (c) => {
   const db = c.get("db");
   const user = c.get("user");
 
+  // What this user may still spend. `limit: null` on an unmetered install, and
+  // the interface renders nothing for it.
+  const quota = await c
+    .get("entitlements")
+    .snapshot(user.id)
+    .catch((err) => {
+      console.error("quota snapshot failed", err);
+      return { used: 0, limit: null, resetsAt: null };
+    });
+
   const workspaceId = await getActiveWorkspaceId(db, user.id);
-  if (!workspaceId) return c.json({ agents: [], totals: emptyTotals });
+  if (!workspaceId) return c.json({ agents: [], totals: emptyTotals, quota });
 
   const { data, error } = await db.rpc("workspace_usage", { p_workspace_id: workspaceId });
   if (error) {
@@ -68,7 +78,7 @@ usage.get("/usage", async (c) => {
     { ...emptyTotals },
   );
 
-  return c.json({ agents, totals });
+  return c.json({ agents, totals, quota });
 });
 
 export { usage };

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./types";
 import { authMiddleware } from "./middleware/auth";
+import { entitlementsMiddleware } from "./middleware/entitlements";
 import { runDueRoutines } from "./lib/routines/dispatcher";
 import { agents } from "./routes/agents";
 import { favorites } from "./routes/favorites";
@@ -18,6 +19,7 @@ import { workspace } from "./routes/workspace";
 import { invitations } from "./routes/invitations";
 import { usage } from "./routes/usage";
 import { routines } from "./routes/routines";
+import { notifications } from "./routes/notifications";
 
 const app = new Hono<AppEnv>();
 
@@ -59,9 +61,11 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 // Authenticated sub-router: Task 3 hangs /agents, /sessions, etc. off `api`.
 // Everything mounted here requires a valid Supabase bearer token, and gets
-// `c.get("user")` / `c.get("db")` (the request-scoped, RLS-aware client).
+// `c.get("user")`, `c.get("db")` (the request-scoped, RLS-aware client) and
+// `c.get("entitlements")` (what that user may spend).
 const api = new Hono<AppEnv>();
 api.use("/*", authMiddleware);
+api.use("/*", entitlementsMiddleware);
 
 api.route("/", agents);
 api.route("/", favorites);
@@ -78,6 +82,7 @@ api.route("/", workspace);
 api.route("/", invitations);
 api.route("/", usage);
 api.route("/", routines);
+api.route("/", notifications);
 
 app.route("/", api);
 

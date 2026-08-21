@@ -4,6 +4,7 @@ import OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
 import { buildPersonaMessages, parsePersonaSuggestion } from "../lib/persona-suggest";
+import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
 const persona = new Hono<AppEnv>();
 
@@ -16,6 +17,9 @@ const suggestSchema = z.object({
 // Nothing is persisted: the client drops the text into the persona field, and
 // the user saves (or discards) it like anything else they typed.
 persona.post("/persona/suggest", async (c) => {
+  const denied = await guardQuota(c);
+  if (denied) return denied;
+
   const parsed = suggestSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
@@ -30,6 +34,7 @@ persona.post("/persona/suggest", async (c) => {
       response_format: { type: "json_object" },
       max_completion_tokens: 400,
     });
+    await recordQuota(c, completion.usage?.total_tokens ?? 0);
     const raw = completion.choices[0]?.message?.content ?? "";
     const drafted = parsePersonaSuggestion(raw);
     if (!drafted) {

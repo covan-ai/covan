@@ -3,8 +3,17 @@ import { nextRunAt } from "./schedule";
 import { fetchSource, UpstreamError, type FetchDeps } from "./source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
+import type { Entitlements } from "../entitlements";
 
 export const MAX_FAILURES = 5;
+
+/**
+ * Written to `routine_runs.error` when a run is skipped for quota, and matched
+ * exactly on the next tick to decide whether the owner has already been told.
+ * Kept free of anything variable — a reset date in here would make every run
+ * look like a new one and the notice would repeat.
+ */
+export const QUOTA_SKIP_REASON = "skipped: the owner's monthly token quota is used up";
 
 /**
  * The same limit for failures that are the remote's fault rather than the
@@ -50,6 +59,8 @@ export type ExecutorDeps = {
   summarise: (input: SummariseInput) => Promise<{ text: string; tokens: number }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
+  /** What the routine's owner may spend. Unmetered on a self-hosted install. */
+  entitlements: Entitlements;
   now: () => Date;
 };
 
@@ -95,6 +106,29 @@ export async function runRoutine(
         error: reason,
         pause: reason,
       });
+      return { status: "skipped", itemsNew: 0 };
+    }
+
+    // Quota is checked here — after membership, before anything is fetched or
+    // claimed. It cannot move further down: past `claimItemKeys` a skipped run
+    // leaves delivery keys reserved, and `claimItemKeys` only ever returns
+    // newly-inserted ones, so those items could never be delivered again. The
+    // cursor is deliberately left unadvanced, so once the quota resets the run
+    // picks up exactly what it would have reported.
+    const verdict = await deps.entitlements.check(routine.user_id);
+    if (!verdict.allowed) {
+      // Read before `finish` writes this run: the question is whether the
+      // PREVIOUS one was also a quota skip.
+      const alreadyTold = await lastRunWasQuotaSkip(deps.db, routine.id);
+      await finish(routine, deps, startedAt, {
+        status: "skipped",
+        itemsNew: 0,
+        tokens: 0,
+        error: QUOTA_SKIP_REASON,
+      });
+      if (!alreadyTold) {
+        await announceQuotaSkip(routine, deps, verdict.resetsAt);
+      }
       return { status: "skipped", itemsNew: 0 };
     }
 
@@ -331,6 +365,19 @@ async function finish(
   });
   if (runError) throw new Error(`routine_runs insert failed: ${runError.message}`);
 
+  // Charged to the routine's owner, not to whoever happened to trigger it — a
+  // scheduled run has no caller at all. Best-effort: the run is finished and
+  // delivered, and `routine_runs.tokens` above is the durable record, so a
+  // counter that cannot be written must not turn a successful run into a failed
+  // one that retries and pays twice.
+  if (outcome.tokens > 0) {
+    try {
+      await deps.entitlements.record(routine.user_id, outcome.tokens);
+    } catch (err) {
+      console.error("failed to record routine token usage", err);
+    }
+  }
+
   const failures = outcome.status === "failed" ? routine.consecutive_failures + 1 : 0;
   const base = nextRunAt(routine.schedule_cron, routine.timezone, finishedAt);
   const naturalDelay = base.getTime() - finishedAt.getTime();
@@ -387,7 +434,62 @@ async function announcePause(
   deps: ExecutorDeps,
   reason: string,
 ): Promise<void> {
+  await notifyOwner(routine, deps, "routine_paused", {
+    subject: `Routine paused: ${routine.name}`,
+    body:
+      `"${routine.name}" has been paused after repeated failures, so it will not run again ` +
+      `until you resume it.\n\nLast error: ${reason}\n\n` +
+      `Open the routine in the app to resume it once the cause is fixed.`,
+  });
+}
+
+/**
+ * Tell the owner a run was skipped because their allowance is spent.
+ *
+ * Sent once, not once per tick: the engine wakes every five minutes, so a
+ * routine left waiting on a monthly allowance would otherwise mail its owner
+ * thousands of times before the month turned over. `lastRunWasQuotaSkip` below
+ * is what makes it once.
+ */
+async function announceQuotaSkip(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  resetsAt: string,
+): Promise<void> {
+  const when = new Date(resetsAt);
+  const readable = Number.isNaN(when.getTime())
+    ? "when your allowance resets"
+    : when.toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+
+  await notifyOwner(routine, deps, "quota_exhausted", {
+    subject: `Routine waiting on your allowance: ${routine.name}`,
+    body:
+      `"${routine.name}" did not run: your monthly token allowance is used up.\n\n` +
+      `Nothing has been lost. The routine was stopped before it read anything, so ` +
+      `whatever it would have reported is still waiting, and it will run by itself ` +
+      `once the allowance resets on ${readable}.\n\n` +
+      `You will not get this message again for this routine until then.`,
+  });
+}
+
+/**
+ * Delivers a message from the engine to a routine's owner, through the channel
+ * the routine already delivers to.
+ *
+ * Best-effort by design. Whatever prompted the message is already recorded and
+ * visible on the routine's page, and a dead delivery channel is itself a
+ * plausible reason for it, so a notice that cannot be sent must not turn into a
+ * second failure.
+ */
+async function notifyOwner(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  kind: "routine_paused" | "quota_exhausted",
+  message: { subject: string; body: string },
+): Promise<void> {
   try {
+    if (!(await wantsNotice(deps.db, routine.user_id, kind))) return;
+
     const { data: channel } = await deps.db
       .from("delivery_channels")
       .select("kind, secret_ciphertext")
@@ -396,18 +498,61 @@ async function announcePause(
       .maybeSingle();
     if (!channel) return;
 
-    await deliver(
-      channel,
-      {
-        subject: `Routine paused: ${routine.name}`,
-        body:
-          `"${routine.name}" has been paused after repeated failures, so it will not run again ` +
-          `until you resume it.\n\nLast error: ${reason}\n\n` +
-          `Open the routine in the app to resume it once the cause is fixed.`,
-      },
-      deps.deliveryDeps,
-    );
+    await deliver(channel, message, deps.deliveryDeps);
   } catch {
-    // Nothing left to do. The pause and its reason are already recorded.
+    // Nothing left to do; the reason is already recorded against the run.
+  }
+}
+
+/**
+ * Has the owner turned this notice off?
+ *
+ * A missing row means they never touched the setting, which is every user until
+ * they do — so no row means yes. A failed read means yes as well: these notices
+ * exist because a routine dying in silence is the failure that destroys trust
+ * in the feature, and a database hiccup is not a reason to add to the silence.
+ * The worst case of guessing yes is one message somebody did not want.
+ */
+async function wantsNotice(
+  db: any,
+  userId: string,
+  kind: "routine_paused" | "quota_exhausted",
+): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from("notification_preferences")
+      .select("routine_paused, quota_exhausted")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error || !data) return true;
+    return kind === "routine_paused"
+      ? data.routine_paused !== false
+      : data.quota_exhausted !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Was this routine's previous run skipped for quota?
+ *
+ * The engine has no memory between ticks, so the run history is where it looks.
+ * A failure to read is treated as "already told" — the cost of staying quiet
+ * once is a missed notice; the cost of guessing the other way is a mailbox
+ * filled every five minutes.
+ */
+async function lastRunWasQuotaSkip(db: any, routineId: string): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from("routine_runs")
+      .select("status, error")
+      .eq("routine_id", routineId)
+      .order("finished_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return true;
+    return data?.status === "skipped" && data?.error === QUOTA_SKIP_REASON;
+  } catch {
+    return true;
   }
 }

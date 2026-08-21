@@ -11,6 +11,8 @@ import { selectHistory } from "../lib/history";
 import { buildSystemPrefix, temperatureFor, maxTokensFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
 import { deferred } from "../lib/defer";
+import { guardQuota, recordQuota } from "../lib/entitlements/guard";
+import { embeddingCost } from "../lib/entitlements";
 
 const chat = new Hono<AppEnv>();
 
@@ -41,6 +43,12 @@ const RAG_MIN_SIMILARITY = 0.25;
 // POST /chat/stream
 chat.post("/chat/stream", async (c) => {
   const db = c.get("db");
+
+  // Before anything is loaded, embedded or generated. Once the stream is open
+  // the response is a 200 with an SSE body, and there is no honest way to turn
+  // that back into a 402.
+  const denied = await guardQuota(c);
+  if (denied) return denied;
 
   const parsed = streamChatSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -101,6 +109,9 @@ chat.post("/chat/stream", async (c) => {
   // the persisted history so that prefix stays byte-identical across turns and
   // OpenAI's automatic prompt cache can discount the bulk of the input.
   let ragBlock = "";
+  // Embedding the question costs tokens too. Carried to the end of the turn and
+  // recorded with the completion's, so one reply means one counter write.
+  let embeddingTokens = 0;
 
   // Load only the agent's document *names* here (newest first) — that's all the
   // manifest needs so the agent knows what it can see and never denies having
@@ -134,7 +145,9 @@ chat.post("/chat/stream", async (c) => {
   // any failure falls back to persona-only so the reply is never blocked.
   if (hasKnowledge) {
     try {
-      const [queryEmbedding] = await embedTexts(c.env.OPENAI_API_KEY, [lastMessage.content]);
+      const embedded = await embedTexts(c.env.OPENAI_API_KEY, [lastMessage.content]);
+      embeddingTokens += embedded.tokens;
+      const [queryEmbedding] = embedded.vectors;
       if (queryEmbedding) {
         const { data: matches, error: matchError } = await db.rpc("match_chunks", {
           p_agent_id: session.agent_id,
@@ -241,6 +254,19 @@ chat.post("/chat/stream", async (c) => {
       let completionTokens: number | null = null;
 
       let persisted = false;
+      let spendRecorded = false;
+
+      // One counter write per turn, on every way this stream can end — a reply
+      // that was cut off still cost what it cost. Guarded because several of
+      // those endings overlap (an abort mid-loop also lands in the catch).
+      const recordSpend = async () => {
+        if (spendRecorded) return;
+        spendRecorded = true;
+        await recordQuota(
+          c,
+          embeddingCost(embeddingTokens) + (promptTokens ?? 0) + (completionTokens ?? 0),
+        );
+      };
 
       // Assistant rows are server-authoritative — always written with the
       // service-role client (RLS forbids client-authored assistant rows).
@@ -299,15 +325,22 @@ chat.post("/chat/stream", async (c) => {
         }
 
         if (signal.aborted) {
-          if (!persisted && full.trim().length > 0) {
-            deferred(c, persistAssistant(full, { promptTokens, completionTokens }));
-          }
+          deferred(
+            c,
+            (async () => {
+              if (!persisted && full.trim().length > 0) {
+                await persistAssistant(full, { promptTokens, completionTokens });
+              }
+              await recordSpend();
+            })(),
+          );
           controller.close();
           return;
         }
 
         if (full.trim().length > 0) {
           const inserted = await persistAssistant(full, { promptTokens, completionTokens });
+          await recordSpend();
           if (!inserted) {
             send({ type: "error", error: "failed to persist assistant message" });
             controller.close();
@@ -315,6 +348,7 @@ chat.post("/chat/stream", async (c) => {
           }
           send({ type: "done", message: mapMessage(inserted) });
         } else {
+          await recordSpend();
           send({
             type: "error",
             error: "The model returned an empty response. Please try again.",
@@ -325,13 +359,20 @@ chat.post("/chat/stream", async (c) => {
       } catch (err: unknown) {
         const isAbort = (err as { name?: string } | null)?.name === "AbortError" || signal.aborted;
         if (isAbort) {
-          if (!persisted && full.trim().length > 0) {
-            deferred(c, persistAssistant(full, { promptTokens, completionTokens }));
-          }
+          deferred(
+            c,
+            (async () => {
+              if (!persisted && full.trim().length > 0) {
+                await persistAssistant(full, { promptTokens, completionTokens });
+              }
+              await recordSpend();
+            })(),
+          );
           controller.close();
           return;
         }
         console.error("chat stream error", err);
+        await recordSpend();
         send({ type: "error", error: "The assistant hit an error. Please try again." });
         controller.close();
       }

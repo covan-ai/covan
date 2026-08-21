@@ -61,7 +61,13 @@ export type IncomingInvitationDTO = {
 
 export type MeDTO = {
   user: { id: string; name: string | null; email: string | null; avatarUrl: string | null };
-  workspace: { id: string; name: string; slug: string };
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+    /** Model new agents start on. `null` means the interface picks. */
+    defaultModel: string | null;
+  };
   members: Array<{
     id: string;
     name: string | null;

@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api-client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +38,9 @@ export function CreateAgentDialog({
 }) {
   const { createAgent, createBundle, attachBundle, uploadToBundle } = useAgentsStore();
   const navigate = useNavigate();
+  // Shares the cache the dashboard already filled, so this costs no request.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const startingModel = me?.workspace.defaultModel ?? MODELS[0];
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState("");
@@ -47,11 +52,19 @@ export function CreateAgentDialog({
   // exist yet, so they can only be uploaded after createAgent returns an id.
   const [docs, setDocs] = useState<{ id: string; name: string; size: number; file: File }[]>([]);
 
+  // Seeded when the dialog opens, not on every change to the workspace default:
+  // re-running mid-session would throw away a model the user had just picked.
+  // Templates still set their own — the model is part of what a template is.
+  useEffect(() => {
+    if (open) setModel(startingModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   const reset = () => {
     setStep(1);
     setName("");
     setEmoji("🧠");
-    setModel(MODELS[0]);
+    setModel(startingModel);
     setPersona("");
     setTemplateId(null);
     setDocs([]);

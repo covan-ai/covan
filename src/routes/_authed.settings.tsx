@@ -6,6 +6,8 @@ import { PageContainer, PageHeader, SectionHeading } from "@/components/page-con
 import { SectionCard } from "@/components/section-card";
 import { UserAvatar } from "@/components/avatars";
 import { DeliveryChannelsCard } from "@/components/routines/delivery-channels-card";
+import { UsageSection } from "@/components/usage-section";
+import { PreferencesSection } from "@/components/preferences-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -30,6 +32,9 @@ function SettingsPage() {
   const [slug, setSlug] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [profileName, setProfileName] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+
   useEffect(() => {
     if (me?.workspace) {
       setName(me.workspace.name);
@@ -37,7 +42,29 @@ function SettingsPage() {
     }
   }, [me?.workspace]);
 
+  useEffect(() => {
+    setProfileName(me?.user.name ?? "");
+  }, [me?.user.name]);
+
   const dirty = !!me && (name !== me.workspace.name || slug !== me.workspace.slug);
+  const profileDirty = !!me && profileName.trim() !== (me.user.name ?? "");
+
+  const handleSaveProfile = async () => {
+    if (!profileName.trim()) return;
+    setSavingProfile(true);
+    try {
+      await api.profile.update({ name: profileName.trim() });
+      toast.success("Name saved");
+      // `me` feeds the sidebar and the member list too, so everything showing
+      // this name refreshes together rather than disagreeing until a reload.
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Failed to save your name";
+      toast.error(message);
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!me || !name.trim() || !slug.trim()) return;
@@ -102,7 +129,7 @@ function SettingsPage() {
 
         <section className="mt-16">
           <SectionHeading title="Your account" />
-          <SectionCard className="mt-6">
+          <SectionCard className="mt-6 space-y-5">
             <div className="flex items-center gap-4">
               <UserAvatar
                 name={me?.user.name}
@@ -110,18 +137,54 @@ function SettingsPage() {
                 className="h-11 w-11 text-xs"
               />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[15px] font-medium">{me?.user.name ?? "…"}</div>
                 <div className="truncate text-[13px] text-muted-foreground">
                   {me?.user.email ?? "…"}
                 </div>
               </div>
             </div>
-            <p className="mt-4 border-t border-hairline pt-4 text-xs text-muted-foreground">
-              Your name and photo come from the account you signed in with. Sign out from the menu
-              at the bottom of the sidebar.
+
+            <div className="space-y-2">
+              <Label htmlFor="profile-name">Display name</Label>
+              <Input
+                id="profile-name"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                maxLength={80}
+              />
+              <p className="text-xs text-muted-foreground">
+                What the rest of the workspace sees — on shared sessions, in the member list, next
+                to anything you send.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-hairline pt-4">
+              {profileDirty ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => setProfileName(me?.user.name ?? "")}
+                  disabled={savingProfile}
+                >
+                  Discard
+                </Button>
+              ) : null}
+              <Button
+                onClick={handleSaveProfile}
+                disabled={savingProfile || !profileDirty || !profileName.trim()}
+              >
+                {savingProfile ? "Saving…" : "Save name"}
+              </Button>
+            </div>
+
+            <p className="border-t border-hairline pt-4 text-xs text-muted-foreground">
+              Your photo still comes from the account you signed in with. Sign out from the menu at
+              the bottom of the sidebar.
             </p>
           </SectionCard>
         </section>
+
+        <PreferencesSection me={me} />
+
+        <UsageSection />
 
         <DeliveryChannelsCard />
       </PageContainer>

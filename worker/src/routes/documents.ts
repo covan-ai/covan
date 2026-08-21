@@ -4,6 +4,8 @@ import { chunkText, embedTexts } from "../lib/embeddings";
 import { extractDocumentText } from "../lib/extract";
 import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
+import { guardQuota, recordQuota } from "../lib/entitlements/guard";
+import { embeddingCost } from "../lib/entitlements";
 
 const documents = new Hono<AppEnv>();
 
@@ -87,6 +89,11 @@ documents.post("/documents/:id/reindex", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
+  // Re-embedding a large document is real spend, and this endpoint can be
+  // called repeatedly on the same one.
+  const denied = await guardQuota(c);
+  if (denied) return denied;
+
   const { data: doc, error } = await db
     .from("documents")
     .select("id,name,size,bundle_id,r2_key,content,knowledge_bundles(workspace_id)")
@@ -126,7 +133,9 @@ documents.post("/documents/:id/reindex", async (c) => {
   // a failure never leaves the document worse off than before.
   let vectors: number[][];
   try {
-    vectors = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+    const embedded = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+    vectors = embedded.vectors;
+    await recordQuota(c, embeddingCost(embedded.tokens));
   } catch (e) {
     console.error("reindex embed failed", id, e);
     return c.json({ error: "failed to embed document" }, 502);

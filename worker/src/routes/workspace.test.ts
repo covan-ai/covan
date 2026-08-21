@@ -6,6 +6,7 @@ import {
   activeWorkspaceTables,
   fakeDb,
   type FakeDbSpec,
+  type Handler,
   type QueryContext,
 } from "../test-support/fake-db";
 
@@ -471,5 +472,100 @@ describe("DELETE /workspace/members/:userId", () => {
     const { app } = appWith({ tables: NO_WORKSPACE });
 
     expect((await json(app, "DELETE", "/workspace/members/user-2")).status).toBe(404);
+  });
+});
+
+describe("DELETE /workspace/members/me", () => {
+  /**
+   * `workspace_members` is read twice on this path — once by
+   * getActiveWorkspaceId, filtered by user AND workspace, and once by the
+   * handler for every membership the caller has. Telling them apart by their
+   * filters is the point: a fake that answered both the same way would hide a
+   * handler that counted the wrong thing.
+   */
+  function memberOf(workspaceIds: string[], onDelete: () => ReturnType<Handler>) {
+    return {
+      workspace_members: {
+        select: (ctx: QueryContext) => {
+          const scoped = ctx.filters.some((f) => f.column === "workspace_id");
+          if (scoped) return { data: { workspace_id: WORKSPACE }, error: null };
+          return { data: workspaceIds.map((workspace_id) => ({ workspace_id })), error: null };
+        },
+        delete: onDelete,
+      },
+    };
+  }
+
+  it("leaves the workspace the caller is currently in", async () => {
+    const { app, callsTo } = appWith({
+      tables: memberOf([WORKSPACE, "ws-2"], () => ({
+        data: [{ user_id: USER.id }],
+        error: null,
+      })),
+    });
+
+    const res = await json(app, "DELETE", "/workspace/members/me");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true });
+
+    // "me" must never reach the database as a user id — that is what the route
+    // ordering in workspace.ts is protecting, and it is invisible from types.
+    const removal = callsTo("workspace_members").find((c) => c.op === "delete");
+    expect(removal?.filters).toEqual([
+      { column: "workspace_id", value: WORKSPACE, kind: "eq" },
+      { column: "user_id", value: USER.id, kind: "eq" },
+    ]);
+  });
+
+  it("refuses to leave the caller with nowhere to be", async () => {
+    let deleted = false;
+    const { app } = appWith({
+      tables: memberOf([WORKSPACE], () => {
+        deleted = true;
+        return { data: [{ user_id: USER.id }], error: null };
+      }),
+    });
+
+    const res = await json(app, "DELETE", "/workspace/members/me");
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error: "this is your only workspace — you would have nowhere to go",
+    });
+    expect(deleted, "the row was removed before the check could stop it").toBe(false);
+  });
+
+  it("explains the last-admin refusal instead of forwarding the trigger's wording", async () => {
+    // plpgsql `raise exception` arrives as the generic P0001, so the phrase is
+    // all there is to match on — and a message about a trigger is not something
+    // to put in front of somebody pressing "Leave".
+    const { app } = appWith({
+      tables: memberOf([WORKSPACE, "ws-2"], () => ({
+        data: null,
+        error: { message: "cannot remove the last admin of a workspace", code: "P0001" },
+      })),
+    });
+
+    const res = await json(app, "DELETE", "/workspace/members/me");
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({
+      error: "make someone else an admin first — a workspace cannot be left without one",
+    });
+  });
+
+  it("answers 404 when the membership is already gone", async () => {
+    const { app } = appWith({
+      tables: memberOf([WORKSPACE, "ws-2"], () => ({ data: [], error: null })),
+    });
+
+    expect((await json(app, "DELETE", "/workspace/members/me")).status).toBe(404);
+  });
+
+  it("answers 404 when the caller has no workspace at all", async () => {
+    const { app } = appWith({ tables: NO_WORKSPACE });
+
+    expect((await json(app, "DELETE", "/workspace/members/me")).status).toBe(404);
   });
 });

@@ -24,8 +24,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { MailPlus, Trash2, UserPlus } from "lucide-react";
+import { LogOut, MailPlus, Trash2, UserPlus } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
+import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
 import { toast } from "sonner";
 
@@ -66,7 +67,49 @@ function TeamPage() {
     enabled: isAdmin,
   });
 
+  // Already in the cache — the app shell's workspace switcher fetches it — so
+  // this reads it rather than asking again. It is here to answer one question:
+  // is there anywhere else for this person to be if they leave?
+  const { data: workspaces = [] } = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: () => api.workspaces.list(),
+  });
+
+  /**
+   * Why leaving is refused, or null when it is not.
+   *
+   * Both reasons are enforced by the server — the first by the route, the
+   * second by `trg_prevent_last_admin` — and repeated here so the dialog can
+   * say them before the button is pressed rather than after. If these ever
+   * disagree with the server, the server is right; the worst case is a dialog
+   * that explains a refusal that would not have happened.
+   */
+  const cannotLeave =
+    workspaces.length <= 1
+      ? "This is your only workspace. Leaving it would leave you nowhere to go — create or join another one first."
+      : isAdmin && adminCount === 1
+        ? "You are the only admin. Make someone else an admin first — a workspace cannot be left without one."
+        : null;
+
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+
+  const leaveWorkspace = async () => {
+    if (leaving) return;
+    setLeaving(true);
+    try {
+      await api.workspace.members.leave();
+      // Everything on screen belonged to the workspace just left. The server
+      // has already repointed the session to another membership, so refetching
+      // the workspace-scoped queries is what rebinds the app to it.
+      await invalidateWorkspaceScoped(queryClient);
+      toast.success("You have left the workspace");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't leave the workspace");
+    } finally {
+      setLeaving(false);
+    }
+  };
 
   const changeRole = async (userId: string, role: "admin" | "member") => {
     try {
@@ -202,7 +245,49 @@ function TeamPage() {
                           </AlertDialog>
                         </>
                       ) : (
-                        <RoleChip role={m.role} />
+                        <>
+                          <RoleChip role={m.role} />
+                          {isSelf ? (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <button
+                                  className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                  aria-label="Leave this workspace"
+                                >
+                                  <LogOut className="h-4 w-4" />
+                                </button>
+                              </AlertDialogTrigger>
+                              {/*
+                                The dialog opens even when leaving is refused,
+                                and explains why. A disabled button has nowhere
+                                to put the reason, and "make someone else an
+                                admin first" is the whole of what the person
+                                needs to know.
+                              */}
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>
+                                    {cannotLeave ? "You can't leave yet" : "Leave this workspace?"}
+                                  </AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    {cannotLeave ??
+                                      "You will lose access to this workspace's agents, knowledge and shared conversations. What you made stays here, and an admin can invite you back."}
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>
+                                    {cannotLeave ? "Close" : "Cancel"}
+                                  </AlertDialogCancel>
+                                  {cannotLeave ? null : (
+                                    <AlertDialogAction onClick={leaveWorkspace} disabled={leaving}>
+                                      Leave
+                                    </AlertDialogAction>
+                                  )}
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          ) : null}
+                        </>
                       )}
                     </li>
                   );

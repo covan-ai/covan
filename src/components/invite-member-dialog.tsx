@@ -35,9 +35,17 @@ export function InviteMemberDialog({
     if (!email.trim() || saving) return;
     setSaving(true);
     try {
-      await api.invitations.create({ email: email.trim(), role });
+      const invite = await api.invitations.create({ email: email.trim(), role });
       await queryClient.invalidateQueries({ queryKey: ["invitations"] });
-      toast.success(`Invite sent to ${email.trim()}`);
+      // This used to say "Invite sent" whether or not anything had been sent —
+      // for most of the product's life, nothing ever was. The invitation is the
+      // row either way; what changes is whether the person on the other end has
+      // any way of knowing about it, so say which happened.
+      toast.success(
+        invite.emailed
+          ? `Invite emailed to ${invite.email}`
+          : `${invite.email} is invited — let them know, and it will be waiting when they sign in`,
+      );
       reset();
       onOpenChange(false);
     } catch (e) {

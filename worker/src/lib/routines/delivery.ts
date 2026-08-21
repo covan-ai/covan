@@ -1,3 +1,4 @@
+import { sendEmail } from "../email";
 import { decryptSecret } from "./crypto";
 
 export type DeliveryChannel = {
@@ -32,19 +33,10 @@ export async function deliver(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: `*${message.subject}*\n${message.body}` }),
         })
-      : await deps.fetchImpl("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${deps.resendApiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from: deps.resendFrom,
-            to: [secret],
-            subject: message.subject,
-            text: message.body,
-          }),
-        });
+      : await sendEmail(
+          { to: secret, subject: message.subject, text: message.body },
+          { fetchImpl: deps.fetchImpl, apiKey: deps.resendApiKey, from: deps.resendFrom },
+        );
 
   if (!res.ok) {
     // Truncated: this string is stored in routine_runs.error and can end up in

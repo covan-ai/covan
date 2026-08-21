@@ -108,6 +108,109 @@ describe("a fellow workspace member", () => {
   });
 });
 
+describe("leaving a workspace", () => {
+  /**
+   * Fresh users throughout, so this can sit anywhere in the file: it takes
+   * memberships away, and the assertions above depend on Carol keeping hers.
+   */
+  async function join(workspaceId: string, userId: string, role: "admin" | "member") {
+    const { error } = await serviceClient()
+      .from("workspace_members")
+      .insert({ workspace_id: workspaceId, user_id: userId, role });
+    if (error) throw new Error(`could not add ${userId}: ${error.message}`);
+  }
+
+  async function membership(user: TestUser, workspaceId: string): Promise<boolean> {
+    // Read as the service role, not as the user: once they have left, the
+    // select policy stops returning the row either way, so asking as them
+    // cannot tell "gone" from "invisible".
+    const { data } = await serviceClient()
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", user.id);
+    return (data ?? []).length > 0;
+  }
+
+  it("is something a member can do for themselves", async () => {
+    // The gap: workspace_members had select-fellow, update-admin and
+    // delete-admin, all of them about what an admin does TO somebody. There was
+    // no way to remove your own row, so joining was one-way.
+    const host = await createTestUser("leave-host");
+    const guest = await createTestUser("leave-guest");
+    await join(host.workspaceId, guest.id, "member");
+
+    const { error } = await guest.db
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", host.workspaceId)
+      .eq("user_id", guest.id);
+
+    expect(error).toBeNull();
+    expect(await membership(guest, host.workspaceId), "the membership survived").toBe(false);
+    // The host's workspace is untouched — one person leaving is not a deletion.
+    expect(await membership(host, host.workspaceId)).toBe(true);
+  });
+
+  it("does not become a way to remove anybody else", async () => {
+    // The new policy is keyed to auth.uid(). If it were keyed to membership
+    // instead, every member would inherit delete-admin's reach.
+    const host = await createTestUser("evict-host");
+    const guest = await createTestUser("evict-guest");
+    const other = await createTestUser("evict-other");
+    await join(host.workspaceId, guest.id, "member");
+    await join(host.workspaceId, other.id, "member");
+
+    await guest.db
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", host.workspaceId)
+      .eq("user_id", other.id);
+
+    expect(await membership(other, host.workspaceId), "a member evicted a peer").toBe(true);
+  });
+
+  it("still refuses the last admin of a workspace that is staying", async () => {
+    // Deciding what a leaving last admin should do to the workspace is the
+    // product question 0016's header left open; the answer is that they hand
+    // the role over first. Nothing here is new — trg_prevent_last_admin has
+    // always refused this — but leaving is now a thing people can attempt, so
+    // it is worth asserting that the guard covers the new door too.
+    const solo = await createTestUser("solo-admin");
+    await join(solo.workspaceId, (await createTestUser("solo-member")).id, "member");
+
+    const { error } = await solo.db
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", solo.workspaceId)
+      .eq("user_id", solo.id);
+
+    expect(error?.message ?? "").toMatch(/last admin/);
+    expect(await membership(solo, solo.workspaceId)).toBe(true);
+  });
+
+  it("lets an admin leave once somebody else can run the place", async () => {
+    // The other half: the guard is about the workspace keeping an admin, not
+    // about admins being stuck. This one already worked before the new policy —
+    // delete-admin covers your own row as much as anybody's — so it is here as
+    // a regression guard rather than as proof of the fix. Only a plain member
+    // needed something new.
+    const host = await createTestUser("cohost-a");
+    const cohost = await createTestUser("cohost-b");
+    await join(host.workspaceId, cohost.id, "admin");
+
+    const { error } = await cohost.db
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", host.workspaceId)
+      .eq("user_id", cohost.id);
+
+    expect(error).toBeNull();
+    expect(await membership(cohost, host.workspaceId)).toBe(false);
+    expect(await membership(host, host.workspaceId)).toBe(true);
+  });
+});
+
 describe("after being removed from the workspace", () => {
   // Runs last on purpose: it takes Carol's membership away, and the assertions
   // above depend on her having it.

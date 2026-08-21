@@ -179,18 +179,20 @@ export async function createTestUser(label: string): Promise<TestUser> {
 /**
  * Removes every user this run created, and everything hanging off them.
  *
- * Teardown fights the schema on two fronts, and the order below is what gets
- * past both:
+ * The workspaces go before the people, and that ordering is the whole of it.
+ * Deleting a workspace cascades its memberships, its agents and everything
+ * under them; deleting a user then cascades what was only ever theirs, and
+ * nulls their name on anything left standing in someone else's workspace.
  *
- *  - `workspaces.created_by`, `chat_sessions.workspace_id` and
- *    `ideas.workspace_id` are NO ACTION foreign keys. The signup trigger hands
- *    every user a workspace, so a plain `auth.admin.deleteUser` is refused by
- *    `workspaces.created_by` before it starts. Dependents go first.
- *  - `trg_prevent_last_admin` on workspace_members refuses to remove a
- *    workspace's last admin — correct for the product, fatal for a cascade that
- *    is deleting the workspace anyway. `session_replication_role = replica`
- *    suppresses it for that one statement; `set local` confines the change to
- *    this transaction, and it is restored before anything relies on a cascade.
+ * `chat_sessions.workspace_id` and `ideas.workspace_id` are NO ACTION and so
+ * still have to be cleared by hand first — that is a different arrangement from
+ * the one 0016 dealt with, and unrelated to who is being deleted.
+ *
+ * This used to need `session_replication_role = replica` to get past
+ * `trg_prevent_last_admin`, which refused to remove a workspace's last admin
+ * even when the workspace itself was being deleted. 0016 taught the guard the
+ * difference, so the workaround is gone; tests/rls/deletion.test.ts is what
+ * keeps it gone.
  */
 export async function destroyTestUsers() {
   if (created.length === 0) return;
@@ -201,11 +203,6 @@ export async function destroyTestUsers() {
 
   await db.begin(async (tx) => {
     const workspaces = tx`select id from public.workspaces where created_by = any(${users}::uuid[])`;
-
-    await tx`set local session_replication_role = replica`;
-    await tx`delete from public.workspace_members
-             where user_id = any(${users}::uuid[]) or workspace_id in (${workspaces})`;
-    await tx`set local session_replication_role = origin`;
 
     await tx`delete from public.ideas where workspace_id in (${workspaces})`;
     await tx`delete from public.chat_sessions where workspace_id in (${workspaces})`;

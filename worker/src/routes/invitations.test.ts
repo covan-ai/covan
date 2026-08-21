@@ -171,20 +171,29 @@ describe("POST /invitations", () => {
     expect(inserted?.email).toBe("new@example.com");
   });
 
-  it("rejects an address with padding instead of trimming it", async () => {
-    // Documenting the current contract rather than the intended one. The
-    // handler calls `.trim()`, but `z.string().email()` has already refused a
-    // padded address by then, so that trim never runs — unlike
-    // createWorkspaceSchema in workspace.ts, which trims inside the schema.
-    // Moving `.trim()` into the schema would turn this 400 into a 201.
-    const { app } = appWith({});
+  it("trims an address rather than calling it malformed", async () => {
+    // This used to answer 400: the handler trimmed, but only after
+    // `z.string().email()` had already rejected the padding. Someone pasting an
+    // address with a trailing space was told their email was invalid.
+    let inserted: Record<string, unknown> | undefined;
+    const { app } = appWith({
+      tables: {
+        invitations: {
+          insert: (ctx: QueryContext) => {
+            inserted = ctx.values;
+            return { data: [created], error: null };
+          },
+        },
+      },
+    });
 
     const res = await json(app, "POST", "/invitations", {
-      email: "  new@example.com  ",
+      email: "  New@Example.com  ",
       role: "member",
     });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
+    expect(inserted?.email).toBe("new@example.com");
   });
 
   it.each([

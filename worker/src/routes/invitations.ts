@@ -8,7 +8,11 @@ import { getActiveWorkspaceId } from "../lib/workspace";
 const invitations = new Hono<AppEnv>();
 
 const createInviteSchema = z.object({
-  email: z.string().email(),
+  // Trimmed inside the schema, the way createWorkspaceSchema does it in
+  // workspace.ts. Validating first and trimming after — which is what this did
+  // — rejects "  a@b.com  " as malformed before the trim ever runs, so someone
+  // pasting an address with a stray space is told their email is invalid.
+  email: z.string().trim().email(),
   role: z.enum(["admin", "member"]),
 });
 
@@ -51,7 +55,7 @@ invitations.post("/invitations", async (c) => {
   const workspaceId = await getActiveWorkspaceId(db, user.id);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
-  const email = parsed.data.email.trim().toLowerCase();
+  const email = parsed.data.email.toLowerCase();
 
   const { data, error } = await db
     .from("invitations")

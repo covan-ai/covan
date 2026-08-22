@@ -126,7 +126,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detail.
 ## Documentation
 
 `docs/` is the whole of it. The same files are rendered at
-<https://co-van.vercel.app/docs> if you would rather read them there.
+<https://covan.app/docs> if you would rather read them there.
 
 | Page                                          | What it answers                                                             |
 | --------------------------------------------- | --------------------------------------------------------------------------- |

@@ -81,6 +81,26 @@ export function embeddingCost(tokens: number): number {
   return Math.ceil(tokens * EMBEDDING_TOKEN_WEIGHT);
 }
 
+/**
+ * What an audio token costs relative to a chat token.
+ *
+ * The opposite call to the one above. Embeddings are discounted because they
+ * are cheap and uploading is the behaviour the product exists to encourage;
+ * dictation is neither. `gpt-4o-mini-transcribe` bills audio input at $1.25 per
+ * million against a mixed chat token's ~$4.00, so it is charged near par — a
+ * minute of speech is roughly 2400 audio tokens, about the cost of a chat turn.
+ *
+ * Rounded up from 0.3125 so the counter errs towards the operator: a weight
+ * that undercharges is a bill nobody notices until it arrives.
+ */
+export const AUDIO_TOKEN_WEIGHT = 0.32;
+
+/** Audio tokens expressed in chat tokens, for the counter. */
+export function transcriptionCost(audioTokens: number): number {
+  if (!Number.isFinite(audioTokens) || audioTokens <= 0) return 0;
+  return Math.ceil(audioTokens * AUDIO_TOKEN_WEIGHT);
+}
+
 export const unlimitedEntitlements: Entitlements = {
   async check() {
     return { allowed: true };

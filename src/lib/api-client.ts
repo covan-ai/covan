@@ -1,4 +1,5 @@
 import { supabase } from "./supabase/client";
+import { errorMessage } from "./api-error";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
@@ -105,26 +106,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!res.ok) {
     let message = res.statusText;
     try {
-      const errBody = await res.json();
-      if (errBody && typeof errBody.error === "string") {
-        message = errBody.error;
-      }
-      // 402 is the one refusal with a machine-readable shape, and its `error`
-      // field is a code rather than a sentence. Turned into prose here so every
-      // caller — upload, persona, routine draft — reports it the same way
-      // without each one knowing about quotas.
-      if (res.status === 402 && errBody?.error === "quota_exceeded") {
-        const resets =
-          typeof errBody.resetsAt === "string"
-            ? new Date(errBody.resetsAt).toLocaleDateString(undefined, {
-                month: "long",
-                day: "numeric",
-              })
-            : null;
-        message = resets
-          ? `You've used this month's allowance. It resets on ${resets}.`
-          : "You've used this month's allowance.";
-      }
+      message = errorMessage(res.status, await res.json(), res.statusText);
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
@@ -189,8 +171,7 @@ function uploadWithProgress<T>(
           } else {
             let message = xhr.statusText;
             try {
-              const body = JSON.parse(xhr.responseText);
-              if (body && typeof body.error === "string") message = body.error;
+              message = errorMessage(xhr.status, JSON.parse(xhr.responseText), xhr.statusText);
             } catch {
               // fall back to statusText
             }
@@ -211,6 +192,14 @@ function uploadWithProgress<T>(
 }
 
 export const api = {
+  /**
+   * A recording from the composer, back as text. Sent through the multipart
+   * transport rather than `request` because it carries a file; the progress
+   * callback it offers is left unused, since a recording is under half a
+   * megabyte and finishes before a bar would mean anything.
+   */
+  transcribe: (recording: File): Promise<{ text: string }> =>
+    uploadWithProgress("/transcribe", recording),
   agents: {
     list: (): Promise<Agent[]> => request("GET", "/agents"),
     create: (input: {

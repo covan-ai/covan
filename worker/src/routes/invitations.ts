@@ -65,7 +65,7 @@ const createInviteSchema = z.object({
   // — rejects "  a@b.com  " as malformed before the trim ever runs, so someone
   // pasting an address with a stray space is told their email is invalid.
   email: z.string().trim().email(),
-  role: z.enum(["admin", "member"]),
+  role: z.enum(["admin", "member", "viewer"]),
 });
 
 // GET /invitations — pending invites for the caller's active workspace (admin).

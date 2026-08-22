@@ -27,6 +27,7 @@ import {
 import { LogOut, MailPlus, Trash2, UserPlus } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
+import { canWriteAsRole, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
 import { toast } from "sonner";
 
@@ -42,12 +43,19 @@ export const Route = createFileRoute("/_authed/team")({
 
 /**
  * A role reads as a chip, and the chip's colour carries the meaning (§7.8):
- * amber for the role that can change things, neutral for the one that can't.
- * There is no third state and no red.
+ * amber for a role that can change things, neutral for one that can't. There
+ * is no third state and no red.
+ *
+ * With three roles the tone no longer means "admin". It means what §7.8 always
+ * said it meant — can this person change things — and the word carries which
+ * role they hold. That is also the fix: the tone used to say `member` could
+ * not change things, and no policy on any shared table agreed. Now `viewer` is
+ * the only neutral one, and it is neutral because `can_write_in_workspace`
+ * refuses it.
  */
 function RoleChip({ role }: { role: string }) {
   return (
-    <Chip tone={role === "admin" ? "on" : "neutral"} className="capitalize">
+    <Chip tone={canWriteAsRole(role) ? "on" : "neutral"} className="capitalize">
       {role}
     </Chip>
   );
@@ -111,7 +119,7 @@ function TeamPage() {
     }
   };
 
-  const changeRole = async (userId: string, role: "admin" | "member") => {
+  const changeRole = async (userId: string, role: WorkspaceRole) => {
     try {
       await api.workspace.members.updateRole(userId, role);
       await queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -205,7 +213,7 @@ function TeamPage() {
                         <>
                           <Select
                             value={m.role}
-                            onValueChange={(v) => changeRole(m.id, v as "admin" | "member")}
+                            onValueChange={(v) => changeRole(m.id, v as WorkspaceRole)}
                           >
                             <SelectTrigger
                               className="h-8 w-28"
@@ -214,8 +222,11 @@ function TeamPage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="member">Member</SelectItem>
-                              <SelectItem value="admin">Admin</SelectItem>
+                              {WORKSPACE_ROLES.map((r) => (
+                                <SelectItem key={r} value={r} className="capitalize">
+                                  {r}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                           <AlertDialog>

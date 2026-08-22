@@ -1,4 +1,5 @@
 import { supabase } from "./supabase/client";
+import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
@@ -331,7 +332,7 @@ export const api = {
     setActive: (workspaceId: string): Promise<{ ok: true }> =>
       request("POST", "/workspace/active", { workspaceId }),
     members: {
-      updateRole: (userId: string, role: "admin" | "member"): Promise<{ ok: true }> =>
+      updateRole: (userId: string, role: WorkspaceRole): Promise<{ ok: true }> =>
         request("PATCH", `/workspace/members/${userId}`, { role }),
       remove: (userId: string): Promise<{ ok: true }> =>
         request("DELETE", `/workspace/members/${userId}`),
@@ -345,7 +346,7 @@ export const api = {
   },
   invitations: {
     list: (): Promise<PendingInvitation[]> => request("GET", "/invitations"),
-    create: (input: { email: string; role: "admin" | "member" }): Promise<PendingInvitation> =>
+    create: (input: { email: string; role: WorkspaceRole }): Promise<PendingInvitation> =>
       request("POST", "/invitations", input),
     revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/invitations/${id}`),
     incoming: (): Promise<IncomingInvitation[]> => request("GET", "/invitations/incoming"),

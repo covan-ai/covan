@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api-client";
+import { isAdminRole } from "@/lib/roles";
 
 export const Route = createFileRoute("/_authed/settings")({
   component: SettingsPage,
@@ -27,6 +28,10 @@ export const Route = createFileRoute("/_authed/settings")({
 function SettingsPage() {
   const queryClient = useQueryClient();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+
+  // Defaults to true while `me` loads, so the form does not visibly lock and
+  // then unlock on every cold load — mirrors the same choice in agents-store.
+  const isAdmin = me ? isAdminRole(me.members.find((m) => m.id === me.user.id)?.role) : true;
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -93,37 +98,52 @@ function SettingsPage() {
         <PageHeader badge="Settings" title="Names, and where" turn="the work gets sent." />
 
         <section className="mt-14">
-          <SectionHeading title="Workspace" />
+          <SectionHeading
+            title="Workspace"
+            description={
+              isAdmin
+                ? undefined
+                : "The name and slug are an admin's to change. They are here so you can see them."
+            }
+          />
+          {/* Read-only for everybody but an admin. `workspaces_update_admin` has
+              always refused this write, and PATCH /workspace answers 403 — but
+              the form was rendered to everyone, so a member could fill it in,
+              press Save and be told they had done something wrong. */}
           <SectionCard className="mt-6 space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="ws-name">Name</Label>
-              <Input id="ws-name" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="ws-slug">Slug</Label>
-              <Input
-                id="ws-slug"
-                value={slug}
-                onChange={(e) => setSlug(e.target.value)}
-                className="font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground">
-                Short identifier used in links. Lowercase letters, numbers and dashes.
-              </p>
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-hairline pt-4">
-              {dirty ? (
-                <Button variant="ghost" onClick={reset} disabled={saving}>
-                  Discard
+            <fieldset disabled={!isAdmin} className="contents">
+              <div className="space-y-2">
+                <Label htmlFor="ws-name">Name</Label>
+                <Input id="ws-name" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ws-slug">Slug</Label>
+                <Input
+                  id="ws-slug"
+                  value={slug}
+                  onChange={(e) => setSlug(e.target.value)}
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Short identifier used in links. Lowercase letters, numbers and dashes.
+                </p>
+              </div>
+            </fieldset>
+            {isAdmin ? (
+              <div className="flex items-center justify-end gap-2 border-t border-hairline pt-4">
+                {dirty ? (
+                  <Button variant="ghost" onClick={reset} disabled={saving}>
+                    Discard
+                  </Button>
+                ) : null}
+                <Button
+                  onClick={handleSave}
+                  disabled={saving || !dirty || !name.trim() || !slug.trim()}
+                >
+                  {saving ? "Saving…" : "Save changes"}
                 </Button>
-              ) : null}
-              <Button
-                onClick={handleSave}
-                disabled={saving || !dirty || !name.trim() || !slug.trim()}
-              >
-                {saving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
+              </div>
+            ) : null}
           </SectionCard>
         </section>
 

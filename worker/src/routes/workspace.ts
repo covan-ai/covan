@@ -149,7 +149,7 @@ workspace.post("/workspace/active", async (c) => {
   return c.json({ ok: true });
 });
 
-const updateMemberSchema = z.object({ role: z.enum(["admin", "member"]) });
+const updateMemberSchema = z.object({ role: z.enum(["admin", "member", "viewer"]) });
 
 // PATCH /workspace/members/:userId — change a member's role (admin only).
 workspace.patch("/workspace/members/:userId", async (c) => {

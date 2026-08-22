@@ -567,8 +567,11 @@ function ChatTab() {
           ) : (
             <div className="space-y-8">
               {messages.map((m, idx, arr) => {
-                const mine = m.role === "user";
-                if (mine) {
+                // `role`, not ownership — this decides the LAYOUT. A
+                // teammate's message in a shared session is still somebody's
+                // turn and still draws as one, with their name above it.
+                const isPersonsTurn = m.role === "user";
+                if (isPersonsTurn) {
                   if (editingId === m.id) {
                     return (
                       <div key={m.id} className="flex flex-col items-end gap-1.5">
@@ -615,13 +618,23 @@ function ChatTab() {
                       <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-[15px] leading-[1.45] text-primary-foreground">
                         {m.content}
                       </div>
-                      <button
-                        onClick={() => startEdit(m.id, m.content)}
-                        disabled={busy}
-                        className="flex items-center gap-1 px-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
-                      >
-                        <Pencil className="h-3 w-3" /> Edit
-                      </button>
+                      {/* Ownership, not role. This used to branch on the same
+                          flag as the layout above, so in a shared session an
+                          Edit button appeared over a colleague's message —
+                          and answered 404, because messages_update_owner is
+                          keyed to whoever owns the SESSION. Editing also
+                          discards every reply after the edited turn, which is
+                          not something to offer over somebody else's
+                          conversation even if the policy allowed it. */}
+                      {isOwner && (
+                        <button
+                          onClick={() => startEdit(m.id, m.content)}
+                          disabled={busy}
+                          className="flex items-center gap-1 px-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
+                        >
+                          <Pencil className="h-3 w-3" /> Edit
+                        </button>
+                      )}
                     </div>
                   );
                 }

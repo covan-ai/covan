@@ -44,6 +44,7 @@ function KnowledgeTab() {
     detachBundle,
     removeBundle,
     reindexDocument,
+    canWrite,
   } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId)!;
 
@@ -187,19 +188,27 @@ function KnowledgeTab() {
                       {attached ? " · attached" : ""}
                     </div>
                   </div>
+                  {/* Attaching a bundle changes what this agent knows for
+                      everyone who uses it, so it is a write to a shared thing
+                      even though no agent row moves. Left visible and disabled
+                      rather than removed: which bundles are attached is worth
+                      reading, and the state is the switch. */}
                   <Switch
                     checked={attached}
+                    disabled={!canWrite}
                     onCheckedChange={(on) => toggleBundle(b.id, on)}
                     aria-label={`Attach ${b.name} to this agent`}
                   />
-                  <button
-                    type="button"
-                    onClick={() => deleteBundle(b.id, b.name)}
-                    className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
-                    aria-label={`Delete bundle ${b.name}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      onClick={() => deleteBundle(b.id, b.name)}
+                      className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
+                      aria-label={`Delete bundle ${b.name}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -208,173 +217,192 @@ function KnowledgeTab() {
       </section>
 
       {/* Section 2 — Manage a bundle */}
-      <section className="mt-10 space-y-4">
-        <SectionHeading title="Manage a bundle" />
+      {canWrite ? (
+        <section className="mt-10 space-y-4">
+          <SectionHeading title="Manage a bundle" />
 
-        <div className="flex items-center gap-2">
-          <Input
-            placeholder="New bundle name"
-            value={newBundleName}
-            onChange={(e) => setNewBundleName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                create();
-              }
-            }}
-            disabled={creating}
-          />
-          <Button type="button" onClick={create} disabled={creating || !newBundleName.trim()}>
-            Create
-          </Button>
-        </div>
-
-        <Select value={selectedBundleId ?? undefined} onValueChange={(v) => setSelectedBundleId(v)}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select a bundle to manage" />
-          </SelectTrigger>
-          <SelectContent>
-            {bundles.map((b) => (
-              <SelectItem key={b.id} value={b.id}>
-                {b.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {selectedBundle && (
-          <>
-            <label
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragging(false);
-                addFiles(e.dataTransfer.files);
-              }}
-              className={cn(
-                "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-12 text-center transition-colors duration-200",
-                dragging
-                  ? "border-accent-orange bg-surface-hover"
-                  : "border-border bg-surface hover:bg-surface-hover",
-              )}
-            >
-              <Upload
-                className={cn(
-                  "h-6 w-6 transition-colors",
-                  dragging ? "text-accent-orange" : "text-muted-foreground",
-                )}
-              />
-              <div className="font-dm text-[17px] font-medium">
-                {dragging ? "Drop to upload" : `Drop files into `}
-              </div>
-              <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
-              <input
-                type="file"
-                multiple
-                className="hidden"
-                accept=".md,.markdown,.txt,.csv,.json,.pdf"
-                onChange={(e) => addFiles(e.target.files)}
-              />
-            </label>
-
-            {uploading.length > 0 && (
-              <div className="divide-y divide-hairline overflow-hidden rounded-xl border border-border bg-surface">
-                {uploading.map((u) => (
-                  <div key={u.id} className="px-5 py-3 text-sm">
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="flex-1 truncate">{u.name}</span>
-                      <span className="text-xs tabular-nums text-muted-foreground">
-                        {u.progress}%
-                      </span>
-                    </div>
-                    <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full bg-primary transition-all"
-                        style={{ width: `${u.progress}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div>
-              <SectionHeading
-                title="Documents"
-                meta={
-                  agent.documents.length > 0
-                    ? `${agent.documents.length} ${agent.documents.length === 1 ? "file" : "files"}`
-                    : undefined
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="New bundle name"
+              value={newBundleName}
+              onChange={(e) => setNewBundleName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  create();
                 }
-              />
-              {agent.documents.length === 0 ? (
-                <EmptyState
-                  className="mt-3"
-                  title="No documents yet"
-                  description="Drop files above and they're chunked and embedded for retrieval in chat."
+              }}
+              disabled={creating}
+            />
+            <Button type="button" onClick={create} disabled={creating || !newBundleName.trim()}>
+              Create
+            </Button>
+          </div>
+
+          <Select
+            value={selectedBundleId ?? undefined}
+            onValueChange={(v) => setSelectedBundleId(v)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select a bundle to manage" />
+            </SelectTrigger>
+            <SelectContent>
+              {bundles.map((b) => (
+                <SelectItem key={b.id} value={b.id}>
+                  {b.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {selectedBundle && (
+            <>
+              <label
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  addFiles(e.dataTransfer.files);
+                }}
+                className={cn(
+                  "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-12 text-center transition-colors duration-200",
+                  dragging
+                    ? "border-accent-orange bg-surface-hover"
+                    : "border-border bg-surface hover:bg-surface-hover",
+                )}
+              >
+                <Upload
+                  className={cn(
+                    "h-6 w-6 transition-colors",
+                    dragging ? "text-accent-orange" : "text-muted-foreground",
+                  )}
                 />
-              ) : (
-                <div className="mt-3 divide-y divide-hairline overflow-hidden rounded-xl border border-border bg-surface">
-                  {agent.documents.map((d) => (
-                    <div
-                      key={d.id}
-                      className="flex items-center gap-3 px-5 py-3.5 text-sm transition-colors duration-200 hover:bg-surface-hover"
-                    >
-                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <button
-                        type="button"
-                        onClick={() => api.documents.download(d.id, d.name)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <div className="truncate hover:underline">{d.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {(d.size / 1024).toFixed(0)} KB
-                        </div>
-                      </button>
-                      {/* Amber = indexed and retrievable; neutral = not yet.
-                          Two states, the system's whole chip vocabulary. */}
-                      {d.indexed ? (
-                        <span
-                          title={`${d.chunkCount} ${d.chunkCount === 1 ? "chunk" : "chunks"} embedded`}
-                        >
-                          <Chip tone="on">Indexed</Chip>
+                <div className="font-dm text-[17px] font-medium">
+                  {dragging ? "Drop to upload" : `Drop files into `}
+                </div>
+                <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  accept=".md,.markdown,.txt,.csv,.json,.pdf"
+                  onChange={(e) => addFiles(e.target.files)}
+                />
+              </label>
+
+              {uploading.length > 0 && (
+                <div className="divide-y divide-hairline overflow-hidden rounded-xl border border-border bg-surface">
+                  {uploading.map((u) => (
+                    <div key={u.id} className="px-5 py-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="flex-1 truncate">{u.name}</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {u.progress}%
                         </span>
-                      ) : (
-                        <span title="No embeddings yet — not retrievable in chat. Try reindexing.">
-                          <Chip tone="neutral">Not indexed</Chip>
-                        </span>
-                      )}
-                      <button
-                        onClick={() => reindex(d.id, d.name)}
-                        disabled={reindexing.has(d.id)}
-                        className="shrink-0 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                        aria-label={`Reindex ${d.name}`}
-                        title="Re-embed this document"
-                      >
-                        <RefreshCw
-                          className={cn("h-4 w-4", reindexing.has(d.id) && "animate-spin")}
+                      </div>
+                      <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all"
+                          style={{ width: `${u.progress}%` }}
                         />
-                      </button>
-                      <button
-                        onClick={() => remove(d.id)}
-                        className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
-                        aria-label={`Remove ${d.name}`}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
-            </div>
-          </>
-        )}
-      </section>
+
+              <div>
+                <SectionHeading
+                  title="Documents"
+                  meta={
+                    agent.documents.length > 0
+                      ? `${agent.documents.length} ${agent.documents.length === 1 ? "file" : "files"}`
+                      : undefined
+                  }
+                />
+                {agent.documents.length === 0 ? (
+                  <EmptyState
+                    className="mt-3"
+                    title="No documents yet"
+                    description="Drop files above and they're chunked and embedded for retrieval in chat."
+                  />
+                ) : (
+                  <div className="mt-3 divide-y divide-hairline overflow-hidden rounded-xl border border-border bg-surface">
+                    {agent.documents.map((d) => (
+                      <div
+                        key={d.id}
+                        className="flex items-center gap-3 px-5 py-3.5 text-sm transition-colors duration-200 hover:bg-surface-hover"
+                      >
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <button
+                          type="button"
+                          onClick={() => api.documents.download(d.id, d.name)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <div className="truncate hover:underline">{d.name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {(d.size / 1024).toFixed(0)} KB
+                          </div>
+                        </button>
+                        {/* Amber = indexed and retrievable; neutral = not yet.
+                            Two states, the system's whole chip vocabulary. */}
+                        {d.indexed ? (
+                          <span
+                            title={`${d.chunkCount} ${d.chunkCount === 1 ? "chunk" : "chunks"} embedded`}
+                          >
+                            <Chip tone="on">Indexed</Chip>
+                          </span>
+                        ) : (
+                          <span title="No embeddings yet — not retrievable in chat. Try reindexing.">
+                            <Chip tone="neutral">Not indexed</Chip>
+                          </span>
+                        )}
+                        <button
+                          onClick={() => reindex(d.id, d.name)}
+                          disabled={reindexing.has(d.id)}
+                          className="shrink-0 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                          aria-label={`Reindex ${d.name}`}
+                          title="Re-embed this document"
+                        >
+                          <RefreshCw
+                            className={cn("h-4 w-4", reindexing.has(d.id) && "animate-spin")}
+                          />
+                        </button>
+                        <button
+                          onClick={() => remove(d.id)}
+                          className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
+                          aria-label={`Remove ${d.name}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      ) : (
+        // Creating a bundle, uploading a document, re-indexing one and
+        // deleting one are all writes to what the workspace shares, and
+        // can_write_in_workspace refuses every one of them for a viewer. The
+        // section is replaced rather than disabled: a form with every control
+        // greyed out is a worse explanation than a sentence.
+        <section className="mt-10">
+          <SectionHeading title="Manage a bundle" />
+          <EmptyState
+            className="mt-3"
+            title="Read-only here"
+            description="You can read every bundle attached to this agent and everything in it. Adding, uploading to and deleting bundles is a member's job — ask an admin to change your role if you need it."
+          />
+        </section>
+      )}
     </PageContainer>
   );
 }

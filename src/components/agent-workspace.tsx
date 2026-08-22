@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export function AgentWorkspace({ agentId, children }: { agentId: string; children?: ReactNode }) {
-  const { agents, sessions, deleteAgent, startSession, startBrainstorm, deleteSession } =
+  const { agents, sessions, deleteAgent, startSession, startBrainstorm, deleteSession, canWrite } =
     useAgentsStore();
   const agent = agents.find((a) => a.id === agentId);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -278,45 +278,49 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
         {/* Spacer keeps the footer pinned to the bottom when the history is hidden */}
         {collapsed && <div className="hidden flex-1 lg:block" />}
 
-        {/* Delete agent */}
-        <div className="border-t border-sidebar-border p-3">
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <button
-                title="Delete agent"
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-sidebar-accent/60 hover:text-destructive",
-                  collapsed && "lg:justify-center lg:px-0",
-                )}
-              >
-                <Trash2 className="h-4 w-4 shrink-0" />
-                <span className={cn(collapsed && "lg:hidden")}>Delete agent</span>
-              </button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This removes the shared agent and all private chats across the team. This cannot
-                  be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  onClick={() => {
-                    deleteAgent(agentId);
-                    toast.success("Agent deleted");
-                    navigate({ to: "/app" });
-                  }}
+        {/* Delete agent. Absent for a viewer: deleting an agent takes every
+            session, message and routine hanging off it, across the whole team,
+            and can_write_in_workspace refuses it — so it is not offered. */}
+        {canWrite && (
+          <div className="border-t border-sidebar-border p-3">
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <button
+                  title="Delete agent"
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-sidebar-accent/60 hover:text-destructive",
+                    collapsed && "lg:justify-center lg:px-0",
+                  )}
                 >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
+                  <Trash2 className="h-4 w-4 shrink-0" />
+                  <span className={cn(collapsed && "lg:hidden")}>Delete agent</span>
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This removes the shared agent and all private chats across the team. This cannot
+                    be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={() => {
+                      deleteAgent(agentId);
+                      toast.success("Agent deleted");
+                      navigate({ to: "/app" });
+                    }}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        )}
       </aside>
 
       {open && (

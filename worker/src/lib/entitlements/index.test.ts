@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import type { RoutineEnv } from "../../types";
 import {
   embeddingCost,
+  transcriptionCost,
   entitlementsFor,
   resetEntitlements,
   unlimitedEntitlements,
@@ -59,6 +60,28 @@ describe("embeddingCost", () => {
     expect(embeddingCost(0)).toBe(0);
     expect(embeddingCost(-5)).toBe(0);
     expect(embeddingCost(Number.NaN)).toBe(0);
+  });
+});
+
+describe("transcriptionCost", () => {
+  // Unlike an embedding, dictation is genuinely expensive, so it is charged
+  // close to par. gpt-4o-mini-transcribe bills audio input at $1.25/M against a
+  // mixed chat token's ~$4.00/M — a minute of speech is roughly 2400 audio
+  // tokens, so a minute of dictation costs about 768 of the caller's tokens.
+  it("charges a minute of speech at roughly a chat turn", () => {
+    expect(transcriptionCost(2400)).toBe(768);
+    expect(transcriptionCost(1200)).toBe(384);
+  });
+
+  it("never rounds a real cost down to nothing", () => {
+    expect(transcriptionCost(1)).toBe(1);
+    expect(transcriptionCost(10)).toBe(4);
+  });
+
+  it("charges nothing for nothing", () => {
+    expect(transcriptionCost(0)).toBe(0);
+    expect(transcriptionCost(-5)).toBe(0);
+    expect(transcriptionCost(Number.NaN)).toBe(0);
   });
 });
 

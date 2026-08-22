@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,6 +26,8 @@ import { toast } from "sonner";
 import { Markdown } from "@/components/markdown";
 import { AgentAvatar } from "@/components/avatars";
 import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
+import { ChatMic } from "@/components/chat-mic";
+import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useQuota, quotaSentence } from "@/lib/quota";
 
@@ -196,6 +198,12 @@ function ChatTab() {
   }, [activeId, active?.visibility, queryClient]);
 
   const [input, setInput] = useState("");
+  // Spoken into the composer rather than typed. The transcript is appended to
+  // the draft and left there — nothing is sent until the person sends it, since
+  // a transcription is a guess and this is where they get to correct it.
+  const dictation = useDictation(
+    useCallback((text: string) => setInput((draft) => appendDictation(draft, text)), []),
+  );
   // Reply-in-progress state, scoped to the session it belongs to. `thinking`
   // shows the typing bubble; `streamText` reveals the answer character by
   // character before it's committed to the store.
@@ -819,6 +827,7 @@ function ChatTab() {
                   {agent.name}
                 </span>
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
+                <ChatMic dictation={dictation} />
               </div>
               {busy ? (
                 <button

@@ -14,12 +14,16 @@ type UsageRow = {
   message_count: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cached_tokens: number;
+  measured_prompt_tokens: number;
 };
 
 const emptyTotals = {
   messageCount: 0,
   promptTokens: 0,
   completionTokens: 0,
+  cachedTokens: 0,
+  measuredPromptTokens: 0,
   totalTokens: 0,
   estCostUsd: 0,
 };
@@ -54,6 +58,15 @@ usage.get("/usage", async (c) => {
     const model = resolveModel(r.agent_model);
     const promptTokens = Number(r.prompt_tokens) || 0;
     const completionTokens = Number(r.completion_tokens) || 0;
+    // A subset of promptTokens, so it is priced into estCostUsd rather than
+    // added to totalTokens — the total is how many tokens moved, the cost is
+    // what they were billed at, and only the second one knows about caching.
+    // Replies from before 0025 report null here and sum as 0, which reads as
+    // "no discount recorded" and leaves their historical figure unchanged.
+    const cachedTokens = Number(r.cached_tokens) || 0;
+    // Only the prompt tokens on replies that carry a cache measurement — the
+    // honest denominator for a hit rate. See 0025.
+    const measuredPromptTokens = Number(r.measured_prompt_tokens) || 0;
     return {
       agentId: r.agent_id,
       name: r.agent_name,
@@ -62,8 +75,10 @@ usage.get("/usage", async (c) => {
       messageCount: Number(r.message_count) || 0,
       promptTokens,
       completionTokens,
+      cachedTokens,
+      measuredPromptTokens,
       totalTokens: promptTokens + completionTokens,
-      estCostUsd: estimateCostUsd(model, promptTokens, completionTokens),
+      estCostUsd: estimateCostUsd(model, promptTokens, completionTokens, cachedTokens),
     };
   });
 
@@ -72,6 +87,8 @@ usage.get("/usage", async (c) => {
       messageCount: acc.messageCount + a.messageCount,
       promptTokens: acc.promptTokens + a.promptTokens,
       completionTokens: acc.completionTokens + a.completionTokens,
+      cachedTokens: acc.cachedTokens + a.cachedTokens,
+      measuredPromptTokens: acc.measuredPromptTokens + a.measuredPromptTokens,
       totalTokens: acc.totalTokens + a.totalTokens,
       estCostUsd: acc.estCostUsd + a.estCostUsd,
     }),

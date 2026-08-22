@@ -36,6 +36,15 @@ export function UsageSection() {
   const agents = usage?.agents ?? [];
   const used = agents.filter((a) => a.messageCount > 0);
 
+  // Share of measured input that OpenAI served from its prompt cache. The
+  // denominator is measuredPromptTokens, not promptTokens: replies stored
+  // before the count existed report nothing, and dividing by every prompt ever
+  // sent would show a rate that rises on its own as those age out rather than
+  // because the cache improved. Null until there is a measured reply, and the
+  // line below renders nothing at all in that window.
+  const measured = usage?.totals.measuredPromptTokens ?? 0;
+  const cacheRate = measured > 0 ? (usage?.totals.cachedTokens ?? 0) / measured : null;
+
   return (
     <section className="mt-16">
       <SectionHeading
@@ -111,6 +120,14 @@ export function UsageSection() {
       <p className="mt-3 text-xs text-muted-foreground">
         Per-agent figures cover every conversation you have had, not just this month, so they will
         not add up to the allowance above. Costs are estimates from list prices.
+        {cacheRate !== null && (
+          <>
+            {" "}
+            About {Math.round(cacheRate * 100)}% of your input was already in the model's cache and
+            billed at a reduced rate — carrying on an existing conversation caches well, while a new
+            one always starts cold.
+          </>
+        )}
       </p>
     </section>
   );

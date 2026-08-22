@@ -252,6 +252,13 @@ chat.post("/chat/stream", async (c) => {
       // stream_options.include_usage is set. Captured for the usage dashboard.
       let promptTokens: number | null = null;
       let completionTokens: number | null = null;
+      // How much of `promptTokens` OpenAI served from its automatic prompt
+      // cache — a subset of that count, not an addition. This is the only
+      // evidence that the cacheable-prefix assembly above is actually working;
+      // without it a change that silently breaks the cache costs real money and
+      // shows up nowhere. Unlike the transcription usage field, `cached_tokens`
+      // is properly typed by the pinned SDK, so no fallback is needed here.
+      let cachedTokens: number | null = null;
 
       let persisted = false;
       let spendRecorded = false;
@@ -272,7 +279,11 @@ chat.post("/chat/stream", async (c) => {
       // service-role client (RLS forbids client-authored assistant rows).
       const persistAssistant = async (
         text: string,
-        opts: { promptTokens: number | null; completionTokens: number | null },
+        opts: {
+          promptTokens: number | null;
+          completionTokens: number | null;
+          cachedTokens: number | null;
+        },
       ) => {
         if (persisted || text.trim().length === 0) return null;
         persisted = true;
@@ -286,6 +297,7 @@ chat.post("/chat/stream", async (c) => {
             sources: sourceNames.length > 0 ? sourceNames : null,
             prompt_tokens: opts.promptTokens,
             completion_tokens: opts.completionTokens,
+            cached_tokens: opts.cachedTokens,
           })
           .select("*")
           .single();
@@ -321,6 +333,7 @@ chat.post("/chat/stream", async (c) => {
           if (chunk.usage) {
             promptTokens = chunk.usage.prompt_tokens ?? null;
             completionTokens = chunk.usage.completion_tokens ?? null;
+            cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? null;
           }
         }
 
@@ -329,7 +342,7 @@ chat.post("/chat/stream", async (c) => {
             c,
             (async () => {
               if (!persisted && full.trim().length > 0) {
-                await persistAssistant(full, { promptTokens, completionTokens });
+                await persistAssistant(full, { promptTokens, completionTokens, cachedTokens });
               }
               await recordSpend();
             })(),
@@ -339,7 +352,11 @@ chat.post("/chat/stream", async (c) => {
         }
 
         if (full.trim().length > 0) {
-          const inserted = await persistAssistant(full, { promptTokens, completionTokens });
+          const inserted = await persistAssistant(full, {
+            promptTokens,
+            completionTokens,
+            cachedTokens,
+          });
           await recordSpend();
           if (!inserted) {
             send({ type: "error", error: "failed to persist assistant message" });
@@ -363,7 +380,7 @@ chat.post("/chat/stream", async (c) => {
             c,
             (async () => {
               if (!persisted && full.trim().length > 0) {
-                await persistAssistant(full, { promptTokens, completionTokens });
+                await persistAssistant(full, { promptTokens, completionTokens, cachedTokens });
               }
               await recordSpend();
             })(),

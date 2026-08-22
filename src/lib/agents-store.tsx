@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type Bundle } from "./api-client";
 import { canWriteAsRole } from "./roles";
+import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
 
 export type Agent = {
   id: string;
@@ -81,7 +82,9 @@ type Store = {
   updateAgent: (id: string, patch: Partial<Agent>) => void;
   removeDocument: (agentId: string, docId: string) => Promise<void>;
   reindexDocument: (docId: string) => Promise<Agent["documents"][number]>;
+  moveDocument: (docId: string, bundleId: string) => Promise<void>;
   createBundle: (name: string, description?: string) => Promise<Bundle>;
+  ensureChatBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
   uploadToBundle: (
     bundleId: string,
     file: File,
@@ -162,6 +165,25 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         return bundle;
       },
 
+      // The bundle a file dropped into a conversation goes to, created on the
+      // first drop and attached so the agent can read it immediately. Awaited
+      // end to end, unlike `attachBundle` above: the upload that follows needs
+      // the attachment to have actually landed, not to have been started.
+      ensureChatBundle: async (agent) => {
+        const existing = findChatBundle(bundles, agent.id);
+        const bundle =
+          existing ??
+          (await api.bundles.create(chatBundleName(agent.name), chatBundleMarker(agent.id)));
+        if (!existing) await queryClient.invalidateQueries({ queryKey: ["bundles"] });
+
+        const attached = agents.find((a) => a.id === agent.id)?.bundleIds.includes(bundle.id);
+        if (!attached) {
+          await api.bundles.attach(agent.id, bundle.id);
+          await queryClient.invalidateQueries({ queryKey: ["agents"] });
+        }
+        return bundle;
+      },
+
       uploadToBundle: async (bundleId, file, onProgress) => {
         const doc = await api.bundles.upload(bundleId, file, onProgress);
         // Refresh bundles (doc counts) and agents (the document list + per-doc
@@ -171,6 +193,14 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ["agents"] }),
         ]);
         return doc;
+      },
+
+      moveDocument: async (docId, bundleId) => {
+        await api.documents.move(docId, bundleId);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["bundles"] }),
+          queryClient.invalidateQueries({ queryKey: ["agents"] }),
+        ]);
       },
 
       reindexDocument: async (docId) => {

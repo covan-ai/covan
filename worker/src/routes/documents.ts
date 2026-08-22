@@ -43,6 +43,92 @@ documents.delete("/documents/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// PATCH /documents/:id — move a document into another bundle.
+//
+// Two writes, and the second is the one that decides anything. Retrieval scope
+// is read from `document_chunks.bundle_id` (match_chunks), not from the
+// document row, so a move that re-points the row and leaves the chunks behind
+// looks right and stops being right the moment the old bundle is detached or
+// deleted. The chunks go first for that reason, and the document row only
+// follows once they have actually moved.
+documents.patch("/documents/:id", async (c) => {
+  const db = c.get("db");
+  const id = c.req.param("id");
+
+  const body = (await c.req.json().catch(() => ({}))) as { bundleId?: unknown };
+  const bundleId = typeof body.bundleId === "string" ? body.bundleId : "";
+  if (!bundleId) return c.json({ error: "bundleId required" }, 400);
+
+  const { data: doc, error: docErr } = await db
+    .from("documents")
+    .select("id,name,size,bundle_id,knowledge_bundles(workspace_id)")
+    .eq("id", id)
+    .maybeSingle();
+  if (docErr) return c.json({ error: "failed to load document" }, 500);
+  if (!doc) return c.json({ error: "not found" }, 404);
+  if (doc.bundle_id === bundleId) return c.json(mapDocument(doc));
+
+  const { data: target, error: bundleErr } = await db
+    .from("knowledge_bundles")
+    .select("id,workspace_id")
+    .eq("id", bundleId)
+    .maybeSingle();
+  if (bundleErr) return c.json({ error: "failed to load bundle" }, 500);
+  if (!target) return c.json({ error: "not found" }, 404);
+
+  // The policies would refuse a cross-workspace move anyway; this says why.
+  const from = (doc as { knowledge_bundles?: { workspace_id?: string } | null }).knowledge_bundles
+    ?.workspace_id;
+  if (from && from !== target.workspace_id) {
+    return c.json({ error: "a document cannot move to a bundle in another workspace" }, 400);
+  }
+
+  const { count } = await db
+    .from("document_chunks")
+    .select("id", { count: "exact", head: true })
+    .eq("document_id", id);
+  const expected = count ?? 0;
+
+  if (expected > 0) {
+    const { data: movedRows, error: chunkErr } = await db
+      .from("document_chunks")
+      .update({ bundle_id: bundleId })
+      .eq("document_id", id)
+      .select("id");
+    if (chunkErr) return c.json({ error: "failed to move the document's chunks" }, 500);
+
+    // RLS answers an update it has no policy for by matching no rows and
+    // reporting no error. Without migration 0024 that is exactly what happens
+    // here, and continuing would file the document under a bundle its passages
+    // are not searchable in. Refuse instead, and leave the document where it is.
+    if ((movedRows ?? []).length < expected) {
+      console.error("chunk move affected fewer rows than expected", {
+        id,
+        expected,
+        moved: (movedRows ?? []).length,
+      });
+      return c.json(
+        { error: "could not move this document's indexed passages; nothing was changed" },
+        500,
+      );
+    }
+  }
+
+  const { data: updated, error: upErr } = await db
+    .from("documents")
+    .update({ bundle_id: bundleId })
+    .eq("id", id)
+    .select("id,name,size,document_chunks(count)")
+    .single();
+  if (upErr || !updated) {
+    // Put the passages back where the document still is.
+    await db.from("document_chunks").update({ bundle_id: doc.bundle_id }).eq("document_id", id);
+    return c.json({ error: "failed to move document" }, 500);
+  }
+
+  return c.json(mapDocument(updated));
+});
+
 // GET /documents/:id/download — stream bytes through the worker (native binding, no presign).
 documents.get("/documents/:id/download", async (c) => {
   const db = c.get("db");

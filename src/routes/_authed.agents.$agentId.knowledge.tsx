@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { FileText, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { validateUpload } from "@/lib/uploads";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/knowledge")({
@@ -23,14 +24,6 @@ export const Route = createFileRoute("/_authed/agents/$agentId/knowledge")({
 });
 
 type Uploading = { id: string; name: string; size: number; progress: number };
-
-const ALLOWED_EXT = ["md", "markdown", "txt", "csv", "json", "pdf"];
-const MAX_SIZE = 10 * 1024 * 1024;
-
-function extOf(name: string) {
-  const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return m ? m[1] : "";
-}
 
 function KnowledgeTab() {
   const { agentId } = Route.useParams();
@@ -98,13 +91,9 @@ function KnowledgeTab() {
       return;
     }
     for (const file of Array.from(files)) {
-      const ext = extOf(file.name);
-      if (!ALLOWED_EXT.includes(ext)) {
-        toast.error(`${file.name}: unsupported type (md, txt, csv, json, pdf)`);
-        continue;
-      }
-      if (file.size > MAX_SIZE) {
-        toast.error(`${file.name}: too large (max 10 MB)`);
+      const check = validateUpload(file);
+      if (!check.ok) {
+        toast.error(check.reason);
         continue;
       }
       const id = `u_${crypto.randomUUID()}`;

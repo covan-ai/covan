@@ -4,7 +4,7 @@ import type { AppEnv } from "../types";
 import { mapBundle, mapDocument } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { chunkText, embedTexts } from "../lib/embeddings";
-import { extractDocumentText } from "../lib/extract";
+import { extractDocumentText, hasIndexableText } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
@@ -161,6 +161,25 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   // here, since pdf.js can't run reliably on the Workers runtime).
   const providedText = typeof body["text"] === "string" ? (body["text"] as string) : "";
 
+  // Read the text before anything is stored, and refuse a file there is no text
+  // in. A scan and a renamed binary both used to upload successfully and land
+  // as a document that is listed, named to the model on every turn, and
+  // impossible to retrieve a sentence of. Same reasoning as the quota refusal
+  // above: the failure that looks like success is the expensive one.
+  const bytes = await file.arrayBuffer();
+  const fullText = providedText || extractDocumentText(file.name, bytes);
+  if (!hasIndexableText(fullText)) {
+    return c.json(
+      {
+        error:
+          extOf(file.name) === "pdf"
+            ? "no readable text in this PDF — it looks like a scan, so run it through OCR and upload the text"
+            : "no readable text in this file — check it is really the format its name claims",
+      },
+      422,
+    );
+  }
+
   // Resolve the bundle's workspace for chunk rows (also acts as an RLS existence check).
   const { data: bundle, error: bErr } = await db
     .from("knowledge_bundles")
@@ -172,7 +191,6 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
 
   const contentType = file.type || "application/octet-stream";
   const r2Key = `${bundleId}/${crypto.randomUUID()}-${safeName(file.name)}`;
-  const bytes = await file.arrayBuffer();
   // No document row exists yet at this point, so a failed put needs no
   // rollback — unlike the insert failure below, which cleans up a store
   // write that already landed.
@@ -183,10 +201,6 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
     return c.json({ error: "failed to store the document; check the server logs" }, 500);
   }
 
-  // Use client-provided text (PDFs) when present; otherwise decode text formats
-  // server-side. Either way the document is stored even with no text — it just
-  // lands unindexed and can be reindexed later.
-  const fullText = providedText || extractDocumentText(file.name, bytes);
   const content = fullText.slice(0, EXCERPT_LIMIT);
 
   const { data: doc, error } = await db

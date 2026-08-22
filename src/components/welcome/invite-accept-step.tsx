@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { toast } from "sonner";
 
 /**
@@ -22,19 +23,12 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
     setBusy(true);
     try {
       await api.invitations.accept(id);
-      // The same invalidation set IncomingInvitesBanner uses: accepting changes
-      // which workspace the whole app is looking at.
-      await Promise.all(
-        [
-          ["invitations", "incoming"],
-          ["me"],
-          ["workspaces"],
-          ["agents"],
-          ["sessions"],
-          ["favorites"],
-          ["messages"],
-        ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
-      );
+      // The same invalidation IncomingInvitesBanner does, and now literally the
+      // same call: accepting changes which workspace the whole app is looking
+      // at. Both were hand-written copies of the list, and both were missing
+      // `bundles` — so a new member arrived to the workspace's agents with none
+      // of its knowledge behind them.
+      await invalidateWorkspaceScoped(queryClient);
       toast.success("You've joined the workspace");
       onDone();
     } catch (e) {

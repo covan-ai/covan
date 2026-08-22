@@ -396,6 +396,20 @@ export type AgentUsage = {
   model: string;
   messageCount: number;
   promptTokens: number;
+  /**
+   * How many of `promptTokens` OpenAI served from its automatic prompt cache —
+   * a subset of that figure, not an addition, so it is already reflected in
+   * `estCostUsd` and deliberately not in `totalTokens`. Zero on replies stored
+   * before the count was recorded (migration 0025).
+   */
+  cachedTokens: number;
+  /**
+   * The prompt tokens on replies that actually carry a cache measurement — the
+   * denominator for a hit rate. Dividing `cachedTokens` by `promptTokens`
+   * instead would fold in every reply from before the count existed and report
+   * a rate that climbs on its own as those age out.
+   */
+  measuredPromptTokens: number;
   completionTokens: number;
   totalTokens: number;
   estCostUsd: number;
@@ -418,6 +432,8 @@ export type UsageResponse = {
   totals: {
     messageCount: number;
     promptTokens: number;
+    cachedTokens: number;
+    measuredPromptTokens: number;
     completionTokens: number;
     totalTokens: number;
     estCostUsd: number;

@@ -187,7 +187,22 @@ alone". Brainstorms are created shared, so a team that brainstorms was affected
 by default. `0022` moved the scoping into the join, where a later policy change
 cannot move it.
 
+`0025` had to drop and recreate the function rather than replace it — it added
+two columns, and Postgres will not let `create or replace` change a return type
+— so the `s.user_id = auth.uid()` join condition was carried across deliberately
+rather than by inheritance. The two new sums are inside that same scoped join,
+and the grants the drop removed are restored in the same file.
+
 There is still no workspace-wide view: nobody sees what a colleague spends.
+
+The figures also now account for prompt caching. Most of what Covan sends the
+model on any given turn is the same bytes as last turn — the persona, the
+document manifest, the conversation so far — so `chat.ts` assembles the prompt
+with that stable part first and the retrieved knowledge after it, and OpenAI
+serves the repeat at a reduced rate. The share that came from the cache is
+recorded per reply and priced accordingly, which makes the estimate lower and
+truer than it was, and makes a change that quietly breaks the arrangement
+visible instead of merely expensive.
 
 ## Where the work gets delivered
 

@@ -4,6 +4,7 @@ import {
   temperatureFor,
   maxTokensFor,
   BRAINSTORM_INSTRUCTIONS,
+  CONCISION_INSTRUCTIONS,
   DEFAULT_PERSONA,
 } from "./prompt";
 
@@ -36,6 +37,30 @@ describe("buildSystemPrefix", () => {
   it("omits the manifest when there are no documents", () => {
     const out = buildSystemPrefix({ persona: "P", mode: "normal", docNames: [] });
     expect(out).not.toContain("team documents");
+  });
+
+  it("asks for concision in normal mode, after the persona", () => {
+    const out = buildSystemPrefix({ persona: "You are our PM.", mode: "normal", docNames: [] });
+    const personaAt = out.indexOf("You are our PM.");
+    const concisionAt = out.indexOf(CONCISION_INSTRUCTIONS);
+    expect(concisionAt).toBeGreaterThan(personaAt); // persona reads first
+  });
+
+  it("does not ask for concision in brainstorm mode", () => {
+    // Brainstorm wants 5-10 ideas plus critique, and carries its own brevity
+    // line. Layering a general "be brief" on top would fight it.
+    const out = buildSystemPrefix({ persona: "P", mode: "brainstorm", docNames: [] });
+    expect(out).not.toContain(CONCISION_INSTRUCTIONS);
+    expect(out).toContain(BRAINSTORM_INSTRUCTIONS);
+  });
+
+  it("keeps the prefix byte-identical for identical input", () => {
+    // The prefix is what OpenAI's automatic prompt cache matches on. Anything
+    // that varies per turn belongs outside it (chat.ts keeps the RAG block out
+    // for exactly this reason), so this guards against a future addition that
+    // is not a pure function of the arguments.
+    const args = { persona: "P", mode: "normal" as const, docNames: ["a.md"] };
+    expect(buildSystemPrefix(args)).toBe(buildSystemPrefix(args));
   });
 });
 

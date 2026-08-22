@@ -219,6 +219,14 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   }
 
   // Best-effort embedding — document persists even if this fails.
+  //
+  // `chunkCount` is what the response reports. It has to be counted here rather
+  // than read off the row above, which was selected before any of this ran and
+  // without `document_chunks(count)` — so the reply used to say "0 chunks, not
+  // indexed" about a document it had just embedded. The Knowledge tab never saw
+  // it because that tab re-reads the agent, but anything trusting the reply was
+  // told every upload was unretrievable.
+  let chunkCount = 0;
   try {
     const chunks = chunkText(fullText);
     if (chunks.length > 0) {
@@ -235,12 +243,13 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
       }));
       const { error: chunkErr } = await db.from("document_chunks").insert(rows);
       if (chunkErr) console.error("failed to insert chunks", chunkErr);
+      else chunkCount = rows.length;
     }
   } catch (e) {
     console.error("embedding failed (document saved without chunks)", e);
   }
 
-  return c.json(mapDocument(doc), 201);
+  return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunkCount }] }), 201);
 });
 
 // POST /admin/backfill-embeddings — embeds documents that have content but no

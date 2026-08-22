@@ -232,6 +232,10 @@ export const api = {
     remove: (id: string): Promise<void> => request("DELETE", `/documents/${id}`),
     reindex: (id: string): Promise<Agent["documents"][number]> =>
       request("POST", `/documents/${id}/reindex`),
+    // Takes the document's chunks with it — retrieval scope is read from those,
+    // not from the document row.
+    move: (id: string, bundleId: string): Promise<Agent["documents"][number]> =>
+      request("PATCH", `/documents/${id}`, { bundleId }),
     download: async (id: string, name: string): Promise<void> => {
       const token = await getAccessToken();
       const res = await fetch(`${import.meta.env.VITE_API_URL}/documents/${id}/download`, {

@@ -82,6 +82,7 @@ type Store = {
   updateAgent: (id: string, patch: Partial<Agent>) => void;
   removeDocument: (agentId: string, docId: string) => Promise<void>;
   reindexDocument: (docId: string) => Promise<Agent["documents"][number]>;
+  moveDocument: (docId: string, bundleId: string) => Promise<void>;
   createBundle: (name: string, description?: string) => Promise<Bundle>;
   ensureChatBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
   uploadToBundle: (
@@ -192,6 +193,14 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ["agents"] }),
         ]);
         return doc;
+      },
+
+      moveDocument: async (docId, bundleId) => {
+        await api.documents.move(docId, bundleId);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["bundles"] }),
+          queryClient.invalidateQueries({ queryKey: ["agents"] }),
+        ]);
       },
 
       reindexDocument: async (docId) => {

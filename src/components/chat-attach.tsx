@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { FileText, Paperclip, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { ChevronDown, FileText, Paperclip, X } from "lucide-react";
 import { Chip } from "@/components/section-card";
 import { ALLOWED_EXT } from "@/lib/uploads";
 import type { ChatUploads } from "@/lib/use-chat-uploads";
@@ -62,6 +62,8 @@ export function ChatAttach({ uploads, canWrite }: { uploads: ChatUploads; canWri
  * after seeing that answer.
  */
 export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+
   if (uploads.receipts.length === 0) return null;
 
   return (
@@ -91,6 +93,47 @@ export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
               </span>
             ))}
           {r.state === "failed" && <span className="text-destructive">{r.reason}</span>}
+
+          {/* Where it landed, and the offer to put it somewhere better. The
+              question the upload could not answer — is this worth keeping? —
+              asked here, after the answer that settles it. */}
+          {r.state === "done" && r.bundleName && (
+            <span className="relative">
+              {uploads.destinations.length > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setOpenMenu((cur) => (cur === r.id ? null : r.id))}
+                    className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label={`Move ${r.name} to another bundle`}
+                    aria-expanded={openMenu === r.id}
+                  >
+                    <span className="max-w-[12rem] truncate">{r.bundleName}</span>
+                    <ChevronDown className="h-3 w-3 shrink-0" />
+                  </button>
+                  {openMenu === r.id && (
+                    <div className="absolute bottom-full left-0 z-30 mb-1 max-h-56 min-w-44 overflow-y-auto rounded-sm border border-border bg-popover py-1 shadow-card">
+                      {uploads.destinations.map((d) => (
+                        <button
+                          key={d.id}
+                          type="button"
+                          onClick={() => {
+                            setOpenMenu(null);
+                            void uploads.moveTo(r.id, d.id);
+                          }}
+                          className="block w-full truncate px-3 py-1.5 text-left transition-colors hover:bg-surface-hover"
+                        >
+                          {d.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <span className="max-w-[12rem] truncate text-muted-foreground">{r.bundleName}</span>
+              )}
+            </span>
+          )}
 
           <button
             type="button"

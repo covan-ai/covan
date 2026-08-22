@@ -1,12 +1,15 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { useAgentsStore } from "@/lib/agents-store";
+import { findChatBundle } from "@/lib/chat-uploads";
 import { validateUpload } from "@/lib/uploads";
 
 export type ChatUploadReceipt = {
   id: string;
   name: string;
   documentId: string | null;
+  bundleId: string | null;
+  bundleName: string | null;
   state: "uploading" | "done" | "failed";
   progress: number;
   indexed: boolean;
@@ -15,7 +18,9 @@ export type ChatUploadReceipt = {
 
 export type ChatUploads = {
   receipts: ChatUploadReceipt[];
+  destinations: { id: string; name: string }[];
   addFiles: (files: File[]) => Promise<void>;
+  moveTo: (receiptId: string, bundleId: string) => Promise<void>;
   remove: (receiptId: string) => Promise<void>;
   dismiss: (receiptId: string) => void;
 };
@@ -32,8 +37,20 @@ export type ChatUploads = {
  * answer. So the receipt stays under the composer until it is acted on.
  */
 export function useChatUploads(agent: { id: string; name: string }): ChatUploads {
-  const { ensureChatBundle, uploadToBundle, removeDocument } = useAgentsStore();
+  const { ensureChatBundle, uploadToBundle, removeDocument, moveDocument, bundles } =
+    useAgentsStore();
   const [receipts, setReceipts] = useState<ChatUploadReceipt[]>([]);
+
+  const chatBundle = findChatBundle(bundles, agent.id);
+  // Anywhere but where the file already is. The chat bundle is the default, so
+  // offering it as a destination would be offering to do nothing.
+  const destinations = bundles
+    .filter((b) => b.id !== chatBundle?.id)
+    .map((b) => ({ id: b.id, name: b.name }));
+  const nameOf = useCallback(
+    (bundleId: string | null) => bundles.find((b) => b.id === bundleId)?.name ?? null,
+    [bundles],
+  );
 
   const patch = useCallback((id: string, next: Partial<ChatUploadReceipt>) => {
     setReceipts((prev) => prev.map((r) => (r.id === id ? { ...r, ...next } : r)));
@@ -73,6 +90,8 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
           id,
           name: file.name,
           documentId: null,
+          bundleId,
+          bundleName: nameOf(bundleId),
           state: "uploading" as const,
           progress: 0,
           indexed: false,
@@ -107,7 +126,32 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
         }),
       );
     },
-    [agent, ensureChatBundle, uploadToBundle, patch],
+    [agent, ensureChatBundle, uploadToBundle, patch, nameOf],
+  );
+
+  // Promotion: the file turned out to be worth keeping, so it goes where the
+  // workspace keeps things. Deliberately offered after the answer rather than
+  // asked before the upload — see the note above the chat bundle in
+  // `chat-uploads.ts`.
+  const moveTo = useCallback(
+    async (receiptId: string, bundleId: string) => {
+      const receipt = receipts.find((r) => r.id === receiptId);
+      if (!receipt?.documentId) return;
+      try {
+        await moveDocument(receipt.documentId, bundleId);
+      } catch (e) {
+        toast.error(
+          e instanceof Error && e.message ? `Couldn't move it: ${e.message}` : "Couldn't move it.",
+        );
+        return;
+      }
+      setReceipts((prev) =>
+        prev.map((r) =>
+          r.id === receiptId ? { ...r, bundleId, bundleName: nameOf(bundleId) } : r,
+        ),
+      );
+    },
+    [receipts, moveDocument, nameOf],
   );
 
   const dismiss = useCallback((receiptId: string) => {
@@ -134,5 +178,5 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
     [agent.id, receipts, removeDocument],
   );
 
-  return { receipts, addFiles, remove, dismiss };
+  return { receipts, destinations, addFiles, moveTo, remove, dismiss };
 }

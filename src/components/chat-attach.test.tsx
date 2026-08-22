@@ -8,6 +8,8 @@ const receipt = (over: Partial<ChatUploadReceipt> = {}): ChatUploadReceipt => ({
   id: "r1",
   name: "notes.md",
   documentId: "doc-1",
+  bundleId: "chat-bundle",
+  bundleName: "Ops Assistant — chat uploads",
   state: "done",
   progress: 100,
   indexed: true,
@@ -15,10 +17,15 @@ const receipt = (over: Partial<ChatUploadReceipt> = {}): ChatUploadReceipt => ({
   ...over,
 });
 
-function uploadsWith(receipts: ChatUploadReceipt[] = []): ChatUploads {
+function uploadsWith(
+  receipts: ChatUploadReceipt[] = [],
+  destinations = [{ id: "runbooks", name: "Runbooks" }],
+): ChatUploads {
   return {
     receipts,
+    destinations,
     addFiles: vi.fn(async () => {}),
+    moveTo: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
     dismiss: vi.fn(),
   };
@@ -85,5 +92,36 @@ describe("ChatAttach", () => {
     await user.click(screen.getByRole("button", { name: /remove notes\.md/i }));
 
     expect(uploads.remove).toHaveBeenCalledWith("r1");
+  });
+
+  it("says which bundle the file went into", () => {
+    render(<ChatReceipts uploads={uploadsWith([receipt()])} />);
+
+    expect(screen.getByText(/Ops Assistant — chat uploads/)).toBeInTheDocument();
+  });
+
+  it("offers to move a finished upload into a bundle someone curates", async () => {
+    const user = userEvent.setup();
+    const uploads = uploadsWith([receipt()]);
+    render(<ChatReceipts uploads={uploads} />);
+
+    await user.click(screen.getByRole("button", { name: /^move notes\.md/i }));
+    await user.click(screen.getByRole("button", { name: "Runbooks" }));
+
+    expect(uploads.moveTo).toHaveBeenCalledWith("r1", "runbooks");
+  });
+
+  it("offers no move when there is nowhere to move it", () => {
+    render(<ChatReceipts uploads={uploadsWith([receipt()], [])} />);
+
+    expect(screen.queryByRole("button", { name: /^move notes\.md/i })).not.toBeInTheDocument();
+  });
+
+  it("offers no move for a file that is still going up", () => {
+    render(
+      <ChatReceipts uploads={uploadsWith([receipt({ state: "uploading", documentId: null })])} />,
+    );
+
+    expect(screen.queryByRole("button", { name: /^move notes\.md/i })).not.toBeInTheDocument();
   });
 });

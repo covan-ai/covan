@@ -46,9 +46,19 @@ a bundle of the agent's own, named `<Agent> — chat uploads` and created on the
 first file dropped into that agent's chat, attached immediately so the next
 question can reach it. It is an ordinary bundle: it appears on the Knowledge
 tab, it can be attached to other agents, and deleting it works like deleting any
-other. Under the composer each file leaves a receipt saying what it became, and
-the receipt's × deletes the document for the case where it was only ever meant
-to be glanced at.
+other. Under the composer each file leaves a receipt saying what it became: its
+name, whether it is indexed, and which bundle it is in. The bundle name on the
+receipt is a menu — pick another and the document moves there, which is the
+answer to "this turned out to be worth keeping" arriving at the only moment
+anyone can give it, after the reply. The × deletes the document instead, for the
+file that was only ever meant to be glanced at.
+
+A move takes the document's chunks with it, which matters more than it sounds:
+retrieval reads scope from the chunks rather than from the document row, so a
+move that left them behind would look correct until the chat bundle was detached
+and the passages quietly stopped being findable. It needs the update policy added
+in migration 0024; against a database without it the move is refused rather than
+half-done.
 
 The accepted extensions are `md`, `markdown`, `txt`, `csv`, `json` and `pdf`, up
 to 10 MB each, and the [Quickstart](quickstart.md#give-it-something-to-read) has

@@ -2,9 +2,22 @@ import { Hono } from "hono";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { bundles } from "./bundles";
+
+// Real chunking, fake vectors: these tests are about what the route does with
+// the chunks, and nothing here should reach OpenAI.
+vi.mock("../lib/embeddings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/embeddings")>();
+  return {
+    ...actual,
+    embedTexts: async (_apiKey: string, texts: string[]) => ({
+      vectors: texts.map(() => new Array(1536).fill(0) as number[]),
+      tokens: texts.length,
+    }),
+  };
+});
 
 // Minimal stand-in for the Supabase client the route pulls off `c.get("db")`.
 // Only the `knowledge_bundles` lookup is exercised before the storage write —
@@ -95,6 +108,80 @@ describe("POST /bundles/:id/documents/upload — storage failure", () => {
     // A failed put happens before the document row is ever inserted, so
     // nothing should need to be rolled back — and nothing should be inserted.
     expect(wasDocumentsTouched()).toBe(false);
+  });
+});
+
+describe("POST /bundles/:id/documents/upload — what the response says about indexing", () => {
+  // The response is a DocumentDTO, so it carries `chunkCount` and `indexed`.
+  // Both were read off a row selected before the embedding ran and without
+  // `document_chunks(count)` in the select, so the endpoint answered "0 chunks,
+  // not indexed" for every upload it had just embedded perfectly well. The
+  // Knowledge tab never noticed because it re-reads the agent; the chat
+  // composer's receipt believed it and called every file unretrievable.
+  function fakeDbCounting(chunkRows: { length: number }) {
+    const db = {
+      from(table: string) {
+        if (table === "knowledge_bundles") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { id: "bundle-1", workspace_id: "ws-1" },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "documents") {
+          return {
+            insert: () => ({
+              select: () => ({
+                single: async () => ({
+                  data: { id: "doc-1", name: "notes.md", size: 11 },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "document_chunks") {
+          return {
+            insert: async (rows: unknown[]) => {
+              chunkRows.length = (rows as unknown[]).length;
+              return { error: null };
+            },
+          };
+        }
+        throw new Error(`fakeDb: unexpected table "${table}"`);
+      },
+    };
+    return db;
+  }
+
+  it("reports the chunks it just embedded, not zero", async () => {
+    const root = await mkdtemp(join(tmpdir(), "covan-upload-indexed-"));
+    roots.push(root);
+    const inserted = { length: 0 };
+    const app = appWithDb(fakeDbCounting(inserted));
+
+    const form = new FormData();
+    form.append(
+      "file",
+      new File(["a passage worth embedding"], "notes.md", { type: "text/markdown" }),
+    );
+
+    const res = await app.request(
+      "/bundles/bundle-1/documents/upload",
+      { method: "POST", body: form },
+      { DOCS_DIR: root, OPENAI_API_KEY: "test-key" } as never,
+    );
+
+    expect(res.status).toBe(201);
+    expect(inserted.length).toBeGreaterThan(0);
+    const body = (await res.json()) as { chunkCount: number; indexed: boolean };
+    expect(body.chunkCount).toBe(inserted.length);
+    expect(body.indexed).toBe(true);
   });
 });
 

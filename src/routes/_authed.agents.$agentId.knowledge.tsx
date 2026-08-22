@@ -304,76 +304,6 @@ function KnowledgeTab() {
                   ))}
                 </div>
               )}
-
-              <div>
-                <SectionHeading
-                  title="Documents"
-                  meta={
-                    agent.documents.length > 0
-                      ? `${agent.documents.length} ${agent.documents.length === 1 ? "file" : "files"}`
-                      : undefined
-                  }
-                />
-                {agent.documents.length === 0 ? (
-                  <EmptyState
-                    className="mt-3"
-                    title="No documents yet"
-                    description="Drop files above and they're chunked and embedded for retrieval in chat."
-                  />
-                ) : (
-                  <div className="mt-3 divide-y divide-hairline overflow-hidden rounded-xl border border-border bg-surface">
-                    {agent.documents.map((d) => (
-                      <div
-                        key={d.id}
-                        className="flex items-center gap-3 px-5 py-3.5 text-sm transition-colors duration-200 hover:bg-surface-hover"
-                      >
-                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <button
-                          type="button"
-                          onClick={() => api.documents.download(d.id, d.name)}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <div className="truncate hover:underline">{d.name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {(d.size / 1024).toFixed(0)} KB
-                          </div>
-                        </button>
-                        {/* Amber = indexed and retrievable; neutral = not yet.
-                            Two states, the system's whole chip vocabulary. */}
-                        {d.indexed ? (
-                          <span
-                            title={`${d.chunkCount} ${d.chunkCount === 1 ? "chunk" : "chunks"} embedded`}
-                          >
-                            <Chip tone="on">Indexed</Chip>
-                          </span>
-                        ) : (
-                          <span title="No embeddings yet — not retrievable in chat. Try reindexing.">
-                            <Chip tone="neutral">Not indexed</Chip>
-                          </span>
-                        )}
-                        <button
-                          onClick={() => reindex(d.id, d.name)}
-                          disabled={reindexing.has(d.id)}
-                          className="shrink-0 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                          aria-label={`Reindex ${d.name}`}
-                          title="Re-embed this document"
-                        >
-                          <RefreshCw
-                            className={cn("h-4 w-4", reindexing.has(d.id) && "animate-spin")}
-                          />
-                        </button>
-                        <button
-                          onClick={() => remove(d.id)}
-                          className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
-                          aria-label={`Remove ${d.name}`}
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </>
           )}
         </section>
@@ -392,6 +322,94 @@ function KnowledgeTab() {
           />
         </section>
       )}
+
+      {/* Section 3 — What the agent actually reads.
+          Outside the `canWrite` branch, and outside the bundle selector, because
+          it answers a question neither of them is about: what does this agent
+          know? `agent.documents` is every document in every bundle attached to
+          it — it never was scoped to the bundle being managed, so nesting it
+          under the selector hid it until an unrelated control was touched, and
+          nesting it under `canWrite` hid it from the viewer whose read-only
+          notice promises it. */}
+      <section className="mt-10">
+        <SectionHeading
+          title="Documents"
+          meta={
+            agent.documents.length > 0
+              ? `${agent.documents.length} ${agent.documents.length === 1 ? "file" : "files"}`
+              : undefined
+          }
+        />
+        {agent.documents.length === 0 ? (
+          <EmptyState
+            className="mt-3"
+            title="No documents yet"
+            description={
+              canWrite
+                ? "Attach a bundle above, or drop files into one, and they're chunked and embedded for retrieval in chat."
+                : "Nothing is attached to this agent yet. A member can add a bundle for it to read."
+            }
+          />
+        ) : (
+          <div className="mt-3 divide-y divide-hairline overflow-hidden rounded-xl border border-border bg-surface">
+            {agent.documents.map((d) => (
+              <div
+                key={d.id}
+                className="flex items-center gap-3 px-5 py-3.5 text-sm transition-colors duration-200 hover:bg-surface-hover"
+              >
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <button
+                  type="button"
+                  onClick={() => api.documents.download(d.id, d.name)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <div className="truncate hover:underline">{d.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {(d.size / 1024).toFixed(0)} KB
+                  </div>
+                </button>
+                {/* Amber = indexed and retrievable; neutral = not yet.
+                    Two states, the system's whole chip vocabulary. */}
+                {d.indexed ? (
+                  <span
+                    title={`${d.chunkCount} ${d.chunkCount === 1 ? "chunk" : "chunks"} embedded`}
+                  >
+                    <Chip tone="on">Indexed</Chip>
+                  </span>
+                ) : (
+                  <span title="No embeddings yet — not retrievable in chat. Try reindexing.">
+                    <Chip tone="neutral">Not indexed</Chip>
+                  </span>
+                )}
+                {/* Reading a document is membership; re-embedding or deleting one
+                    is `can_write_in_workspace`, so a viewer gets neither button. */}
+                {canWrite && (
+                  <>
+                    <button
+                      onClick={() => reindex(d.id, d.name)}
+                      disabled={reindexing.has(d.id)}
+                      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                      aria-label={`Reindex ${d.name}`}
+                      title="Re-embed this document"
+                    >
+                      <RefreshCw
+                        className={cn("h-4 w-4", reindexing.has(d.id) && "animate-spin")}
+                      />
+                    </button>
+                    <button
+                      onClick={() => remove(d.id)}
+                      className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
+                      aria-label={`Remove ${d.name}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </PageContainer>
   );
 }

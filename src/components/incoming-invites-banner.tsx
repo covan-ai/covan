@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
+import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { toast } from "sonner";
 
 export function IncomingInvitesBanner() {
@@ -14,15 +15,12 @@ export function IncomingInvitesBanner() {
   const accept = async (id: string) => {
     try {
       await api.invitations.accept(id);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["invitations", "incoming"] }),
-        queryClient.invalidateQueries({ queryKey: ["me"] }),
-        queryClient.invalidateQueries({ queryKey: ["workspaces"] }),
-        queryClient.invalidateQueries({ queryKey: ["agents"] }),
-        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
-        queryClient.invalidateQueries({ queryKey: ["favorites"] }),
-        queryClient.invalidateQueries({ queryKey: ["messages"] }),
-      ]);
+      // Accepting changes which workspace the whole app is looking at, so it
+      // invalidates exactly what switching workspaces does — including the
+      // incoming invitations themselves, which `invitations` prefix-matches.
+      // This was a hand-written list until it had silently drifted four keys
+      // from the real one.
+      await invalidateWorkspaceScoped(queryClient);
       toast.success("You've joined the workspace");
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't accept invite");

@@ -2,7 +2,7 @@
 
 Covan is an agent a team trains together and talks to separately: everyone adds
 to what it knows, and everyone gets their own conversation with it. This is the
-path from an empty account on the hosted service at <https://co-van.vercel.app>
+path from an empty account on the hosted service at <https://covan.app>
 to an answer that names the file it came from.
 
 If you would rather run the whole thing on your own machine, start at

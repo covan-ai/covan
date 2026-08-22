@@ -70,12 +70,17 @@ not deleted — it stays as the record of who joined, when, and who let them in.
 
 ## What a role actually governs
 
-The role column takes exactly two values, `admin` and `member`. The first admin
-is made by the signup trigger, which gives every new account a workspace and an
-admin membership in it; `create_workspace()` does the same for any workspace
-somebody makes later.
+The role column takes three values. The first admin is made by the signup
+trigger, which gives every new account a workspace and an admin membership in
+it; `create_workspace()` does the same for any workspace somebody makes later.
 
-Admin governs two things and no more:
+| Role     | Runs the workspace | Changes shared things | Uses the agents |
+| -------- | ------------------ | --------------------- | --------------- |
+| `admin`  | yes                | yes                   | yes             |
+| `member` | no                 | yes                   | yes             |
+| `viewer` | no                 | no                    | yes             |
+
+**Admin** governs two things and no more:
 
 - **The workspace row.** Its name, its slug and its default model. One policy,
   `workspaces_update_admin`, covers all three, which is why the same people who
@@ -84,27 +89,31 @@ Admin governs two things and no more:
   removing a member — the invitation policies plus
   `workspace_members_update_admin` and `workspace_members_delete_admin`.
 
-Everything else asks only whether you are a member. The policies on `agents`,
-`knowledge_bundles`, `documents`, `agent_bundles` and `document_chunks` do not
-mention `role` at all: each one resolves to a membership check on the owning
-workspace and nothing further. So a plain member can create an agent, rewrite
-another agent's persona, change its model, upload to any bundle, detach a bundle
-from an agent, and **delete any agent, bundle or document in the workspace**,
-with no approval anywhere in the path. The cascades make that larger than it
-sounds: deleting an agent takes every session anybody ever had with it, every
-message in those sessions and every routine pointed at it, and deleting a bundle
-takes its documents and their embeddings. None of it is recoverable from inside
-the product.
+**Everything a workspace shares** — `agents`, `knowledge_bundles`, `documents`,
+`agent_bundles` and `document_chunks` — asks `can_write_in_workspace()`, which
+is a membership check plus `role <> 'viewer'`. So a member can create an agent,
+rewrite another agent's persona, change its model, upload to any bundle, detach
+a bundle, and delete any agent, bundle or document in the workspace, with no
+approval anywhere in the path. That is deliberate — the product's claim is that
+a team trains one agent together — but it is worth knowing how large it is: the
+cascades mean deleting an agent takes every session anybody ever had with it,
+every message in those sessions and every routine pointed at it, and deleting a
+bundle takes its documents and their embeddings. None of it is recoverable from
+inside the product. A `viewer` is refused all of it.
 
-That is worth saying plainly because the Team screen says the opposite. It
-renders `admin` as the role that can change things and `member` as the one that
-cannot, and on the only question people ask of a role — can this person destroy
-our work — it is wrong. Treat `member` as a full participant who cannot
-administer the workspace, not as a reader.
+**Everything that is yours** asks only whether you are a member: your own
+sessions, messages, brainstorm ideas, routines, delivery channels, favourites
+and notification preferences are keyed to your user id, and no role gates them.
+That is why a viewer can chat with every agent in the workspace and share a
+session with it, and why a viewer is a usable seat rather than a login with
+nothing behind it.
 
-The Settings screen has a smaller version of the same problem: it shows the
-workspace name and slug as editable fields to everyone, and a member who edits
-and saves gets a 403 back. The API is right and the form is optimistic.
+Until `0021` there was no third role and no policy on a shared table looked at
+`role` at all, while the Team screen rendered `member` as the role that could
+not change things. On the only question people ask of a role — can this person
+destroy our work — the screen was wrong. It says the true thing now, and the
+chip's colour answers "can this person change things" rather than naming one
+role, which is what DESIGN.md §7.8 asked for all along.
 
 ### The last admin
 
@@ -136,15 +145,16 @@ wrote it. Their reply drives the agent as yours would; a small `SECURITY DEFINER
 function exists solely so a non-owner's message can still bump the session's
 `updated_at`, which the owner-only update policy would otherwise refuse.
 
-One rough edge follows from that, and it is visible in the interface:
+What a colleague cannot do is **Edit**. `messages_update_owner` is keyed to the
+parent session's owner rather than to whoever wrote the message, so in a shared
+session only the owner may edit — including on their own messages, if the
+session is somebody else's. The chat used to offer the control anyway, because
+it decided to draw it from the message's role rather than from who owns the
+session, and it answered 404 wherever it was not the owner's. It now asks the
+second question. Editing is also more than it looks: it discards every reply
+after the edited turn and re-runs the agent, which is not something to offer
+over somebody else's conversation even if a policy allowed it.
 
-- The **Edit** control appears on every human message in a shared session,
-  because the chat decides to draw it from the message's role and not from who
-  owns the session. In a session you do not own it never works, on your own
-  messages either: the update policy on `messages` is keyed to the parent
-  session's owner, so the API matches zero rows, answers 404, and the interface
-  reports that it could not update the conversation. Nothing is corrupted — the
-  affordance is offered where it cannot work.
 The policy also requires `role = 'user'` on anything a client writes
 (`0018_message_authorship.sql`), so a member cannot put words into a shared
 session that render as the agent's. That matters because PostgREST is reachable
@@ -162,22 +172,22 @@ including cards somebody else wrote. Only the attribution is pinned: the insert
 policy requires `created_by` to be the caller, so a card cannot be filed under
 another person's name.
 
-### Usage figures are neither yours alone nor the team's
+### Usage figures are yours alone
 
-The usage breakdown on Settings is worth reading precisely, because it is not
-what its own heading claims. The function behind it runs as the caller and
-filters nothing itself, so what it returns is whatever the session and message
-policies would return to you anyway: every agent in the workspace is listed, and
-the tokens counted against each one come from your own conversations **plus every
-shared session in the workspace you can read**. Since a brainstorm session is
-created shared, a team that brainstorms will see each other's tokens in that
-total by default.
+The usage breakdown on Settings counts your conversations and nobody else's.
+`workspace_usage` still lists every agent in the workspace — at zero for ones
+you have not used — but the tokens against each are yours.
 
-The interface calls the figures yours alone, and a comment in the migration that
-introduced them says the same. Both were written before sessions could be shared
-at all, and neither was revisited when they could be. There is still no
-workspace-wide view — nobody sees what a colleague spends in private — but the
-number on the screen is a wider one than the screen says it is.
+That took a correction. The function runs as the caller, and `0006` relied on
+that alone: sessions were private per user, so the select policy did the
+scoping and the query never said whose rows it wanted. Then `0008` added shared
+sessions, the policy widened underneath it, and the totals silently began
+including colleagues' conversations — while the screen went on saying "Yours
+alone". Brainstorms are created shared, so a team that brainstorms was affected
+by default. `0022` moved the scoping into the join, where a later policy change
+cannot move it.
+
+There is still no workspace-wide view: nobody sees what a colleague spends.
 
 ## Where the work gets delivered
 

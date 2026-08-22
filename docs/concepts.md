@@ -55,20 +55,22 @@ own.
 ## Member
 
 A membership is a row in `workspace_members`: a workspace, a user, and a role
-that is either `admin` or `member`. The pair is the primary key, so a person is
+of `admin`, `member` or `viewer`. The pair is the primary key, so a person is
 in a workspace once or not at all. There is no general insert policy on that
 table — rows appear only through the signup trigger, through
 `accept_invitation()` when somebody takes up an invitation addressed to their
 email, and through `create_workspace()`. All three are `SECURITY DEFINER`
 functions, which is what lets a person who is not yet a member join one.
 
-The role governs less than the word suggests. Both roles can create, edit and
-delete agents, bundles and documents: the policies on all three ask only whether
-you are a member of the workspace, not which role you hold. What an admin can do
-and a member cannot is administer the workspace itself — rename it and set its
-default model, and invite, revoke, promote, demote and remove people. A trigger
-refuses to remove or demote a workspace's last admin no matter who asks, so a
-workspace cannot be left with nobody able to manage it.
+The role draws two lines, not one. An admin administers the workspace itself —
+renames it, sets its default model, and invites, revokes, promotes, demotes and
+removes people. Separately, `can_write_in_workspace()` decides who may change
+what the workspace SHARES: admins and members may create, edit and delete
+agents, bundles and documents; a viewer may not. Nobody's role gates their own
+sessions, messages, ideas or routines, which is why a viewer can still use every
+agent. A trigger refuses to remove or demote a workspace's last admin no matter
+who asks, so a workspace cannot be left with nobody able to manage it. See
+[Team](team.md) for the whole table.
 
 What invite, revoke, promote and remove look like as screens in the product —
 including what happens to someone's work when they leave — is in

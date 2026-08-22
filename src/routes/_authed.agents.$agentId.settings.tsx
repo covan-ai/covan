@@ -50,7 +50,7 @@ export const Route = createFileRoute("/_authed/agents/$agentId/settings")({
  */
 function SettingsTab() {
   const { agentId } = Route.useParams();
-  const { agents, updateAgent, deleteAgent } = useAgentsStore();
+  const { agents, updateAgent, deleteAgent, canWrite } = useAgentsStore();
   const navigate = useNavigate();
   const agent = agents.find((a) => a.id === agentId)!;
 
@@ -79,84 +79,97 @@ function SettingsTab() {
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
         <SectionCard className="space-y-5">
-          <div className="grid grid-cols-[auto_1fr] gap-3">
-            <div className="flex flex-col gap-2">
-              <Label className="text-xs">Icon</Label>
-              <Select value={emoji} onValueChange={setEmoji}>
-                <SelectTrigger className="w-16 text-lg">
+          {/* One disabled fieldset rather than a `disabled` on each control:
+              the browser disables every form element inside it, so a control
+              added here later is covered without anybody remembering to. It
+              needs `display: contents` so SectionCard's own spacing still sees
+              these as its children. */}
+          <fieldset disabled={!canWrite} className="contents">
+            <div className="grid grid-cols-[auto_1fr] gap-3">
+              <div className="flex flex-col gap-2">
+                <Label className="text-xs">Icon</Label>
+                <Select value={emoji} onValueChange={setEmoji}>
+                  <SelectTrigger className="w-16 text-lg">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EMOJIS.map((e) => (
+                      <SelectItem key={e} value={e} className="text-lg">
+                        {e}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label className="text-xs" htmlFor="a-name">
+                  Name
+                </Label>
+                <Input id="a-name" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs">Model</Label>
+              <Select value={model} onValueChange={setModel}>
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {EMOJIS.map((e) => (
-                    <SelectItem key={e} value={e} className="text-lg">
-                      {e}
+                  {MODELS.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex flex-col gap-2">
-              <Label className="text-xs" htmlFor="a-name">
-                Name
-              </Label>
-              <Input id="a-name" value={name} onChange={(e) => setName(e.target.value)} />
+            <div className="space-y-2">
+              <Label className="text-xs">Mode</Label>
+              <Select value={mode} onValueChange={(v) => setMode(v as "normal" | "brainstorm")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="brainstorm">🧠 Brainstorm</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Brainstorm mode makes this agent generate and pressure-test ideas instead of
+                answering directly — good for finding new directions.
+              </p>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Model</Label>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MODELS.map((m) => (
-                  <SelectItem key={m} value={m}>
-                    {m}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Mode</Label>
-            <Select value={mode} onValueChange={(v) => setMode(v as "normal" | "brainstorm")}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="normal">Normal</SelectItem>
-                <SelectItem value="brainstorm">🧠 Brainstorm</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Brainstorm mode makes this agent generate and pressure-test ideas instead of answering
-              directly — good for finding new directions.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs" htmlFor="a-persona">
-                Persona / system prompt
-              </Label>
-              <GeneratePersonaButton
-                name={name}
-                model={model}
-                hasPersona={persona.trim().length > 0}
-                onGenerated={setPersona}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-xs" htmlFor="a-persona">
+                  Persona / system prompt
+                </Label>
+                <GeneratePersonaButton
+                  name={name}
+                  model={model}
+                  hasPersona={persona.trim().length > 0}
+                  onGenerated={setPersona}
+                />
+              </div>
+              <Textarea
+                id="a-persona"
+                rows={8}
+                value={persona}
+                onChange={(e) => setPersona(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground">
+                Applied to every private conversation your team has with this agent.
+              </p>
             </div>
-            <Textarea
-              id="a-persona"
-              rows={8}
-              value={persona}
-              onChange={(e) => setPersona(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Applied to every private conversation your team has with this agent.
-            </p>
-          </div>
+          </fieldset>
           <div className="flex justify-end border-t border-hairline pt-4">
-            <Button onClick={save}>Save changes</Button>
+            {canWrite ? (
+              <Button onClick={save}>Save changes</Button>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                This is how the agent is set up. Changing it is a member's job.
+              </p>
+            )}
           </div>
         </SectionCard>
 
@@ -185,50 +198,52 @@ function SettingsTab() {
         </SectionCard>
       </section>
 
-      <section className="mt-10">
-        <SectionHeading
-          title="Danger zone"
-          description="Deleting the agent removes it for the entire team, along with everyone's private chats."
-        />
-        <SectionCard className="mt-3 flex items-center justify-between gap-4 border-destructive/30">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold">Delete {agent.name}</div>
-            <p className="mt-0.5 text-sm text-muted-foreground">This cannot be undone.</p>
-          </div>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="outline"
-                className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              >
-                Delete agent
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This removes the shared agent and every chat the team has had with it. This cannot
-                  be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  onClick={() => {
-                    deleteAgent(agent.id);
-                    toast.success("Agent deleted");
-                    navigate({ to: "/app" });
-                  }}
+      {canWrite && (
+        <section className="mt-10">
+          <SectionHeading
+            title="Danger zone"
+            description="Deleting the agent removes it for the entire team, along with everyone's private chats."
+          />
+          <SectionCard className="mt-3 flex items-center justify-between gap-4 border-destructive/30">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">Delete {agent.name}</div>
+              <p className="mt-0.5 text-sm text-muted-foreground">This cannot be undone.</p>
+            </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </SectionCard>
-      </section>
+                  Delete agent
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This removes the shared agent and every chat the team has had with it. This
+                    cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={() => {
+                      deleteAgent(agent.id);
+                      toast.success("Agent deleted");
+                      navigate({ to: "/app" });
+                    }}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </SectionCard>
+        </section>
+      )}
     </PageContainer>
   );
 }

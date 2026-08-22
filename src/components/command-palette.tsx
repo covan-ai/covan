@@ -21,7 +21,7 @@ import { LayoutGrid, Users, Plug, Settings, Plus, Moon, Sun } from "lucide-react
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
-  const { agents } = useAgentsStore();
+  const { agents, canWrite } = useAgentsStore();
   const { theme, toggle } = useTheme();
 
   useEffect(() => {
@@ -92,13 +92,18 @@ export function CommandPalette() {
         </CommandGroup>
 
         <CommandGroup heading="Actions">
-          <CommandItem
-            value="new agent create"
-            onSelect={() => run(() => navigate({ to: "/app", search: { new: true } }))}
-          >
-            <Plus className="h-4 w-4" />
-            <span>New agent</span>
-          </CommandItem>
+          {/* Not offered to a viewer. ⌘K is the one place a control can be
+              found without seeing the screen it lives on, so leaving it here
+              would route somebody straight to a dialog that cannot save. */}
+          {canWrite && (
+            <CommandItem
+              value="new agent create"
+              onSelect={() => run(() => navigate({ to: "/app", search: { new: true } }))}
+            >
+              <Plus className="h-4 w-4" />
+              <span>New agent</span>
+            </CommandItem>
+          )}
           <CommandItem value="toggle theme dark light" onSelect={() => run(toggle)}>
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             <span>Toggle theme</span>

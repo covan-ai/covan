@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api-client";
+import { ROLE_SUMMARY, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles";
 import { toast } from "sonner";
 
 export function InviteMemberDialog({
@@ -23,7 +24,7 @@ export function InviteMemberDialog({
 }) {
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"admin" | "member">("member");
+  const [role, setRole] = useState<WorkspaceRole>("member");
   const [saving, setSaving] = useState(false);
 
   const reset = () => {
@@ -86,13 +87,20 @@ export function InviteMemberDialog({
           </div>
           <div className="space-y-2">
             <Label className="text-xs">Role</Label>
-            <Select value={role} onValueChange={(v) => setRole(v as "admin" | "member")}>
+            <Select value={role} onValueChange={(v) => setRole(v as WorkspaceRole)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="member">Member</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
+                {/* One line each, because "viewer" is not self-explanatory and
+                    the difference between the three is the whole reason to
+                    choose. ROLE_SUMMARY is what the policies actually do. */}
+                {WORKSPACE_ROLES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    <span className="capitalize">{r}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{ROLE_SUMMARY[r]}</span>
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

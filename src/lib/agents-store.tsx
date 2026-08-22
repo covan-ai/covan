@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type Bundle } from "./api-client";
+import { canWriteAsRole } from "./roles";
 
 export type Agent = {
   id: string;
@@ -59,6 +60,23 @@ type Store = {
   sessions: ChatSession[];
   favorites: string[];
   bundles: Bundle[];
+  /**
+   * Whether the caller may change the things this workspace SHARES — agents,
+   * bundles, documents, and what knowledge an agent carries. False for a
+   * viewer, which is the only role it is false for.
+   *
+   * It sits on this store because the store is already where that line is
+   * drawn: createAgent, updateAgent, createBundle, uploadToBundle,
+   * attachBundle, detachBundle, removeBundle, removeDocument, reindexDocument
+   * and deleteAgent are exactly the calls `can_write_in_workspace` guards,
+   * while startSession, updateMessage, deleteSession and toggleFavorite are
+   * the caller's own and never gated. Consumers read one flag from somewhere
+   * they already read.
+   *
+   * It gates the CONTROLS, not the calls. The policies refuse a viewer whether
+   * or not the button was there; this is so the button is not there.
+   */
+  canWrite: boolean;
   createAgent: (a: Omit<Agent, "id" | "createdAt" | "documents" | "bundleIds">) => Promise<Agent>;
   updateAgent: (id: string, patch: Partial<Agent>) => void;
   removeDocument: (agentId: string, docId: string) => Promise<void>;
@@ -102,6 +120,15 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
     queryKey: ["bundles"],
     queryFn: () => api.bundles.list(),
   });
+  // Already in the cache; the app shell fetches it. `me.members` carries the
+  // caller's own row, so the role comes from the server rather than from
+  // anything the client could have decided for itself.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+
+  // Undefined while `me` loads. Defaulting to false would flicker every write
+  // control out of existence on each cold load, which reads as "you have been
+  // demoted" rather than as "still loading" — so an unknown role writes.
+  const canWrite = me ? canWriteAsRole(me.members.find((m) => m.id === me.user.id)?.role) : true;
 
   const value = useMemo<Store>(() => {
     return {
@@ -109,6 +136,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
       sessions,
       favorites,
       bundles,
+      canWrite,
 
       createAgent: async (input) => {
         const agent = await api.agents.create(input);
@@ -236,7 +264,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           });
       },
     };
-  }, [agents, sessions, favorites, bundles, queryClient]);
+  }, [agents, sessions, favorites, bundles, canWrite, queryClient]);
 
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
 }

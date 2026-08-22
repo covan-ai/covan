@@ -22,9 +22,13 @@ const usd = (n: number) => (n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
  * conversation ever. Putting both under one heading would make the numbers look
  * like they should add up, and they never will.
  *
- * Every figure is the caller's own. Chat sessions are private per user and row
- * level security scopes the aggregate to the caller, so this is not a view of
- * what the team is doing.
+ * Every figure is the caller's own, and `workspace_usage` says so in its own
+ * join (`0022`). It used to rely on RLS for that instead — sessions were
+ * private per user, so the select policy did the scoping by itself — and when
+ * `0008` added shared sessions the totals quietly began including colleagues'
+ * conversations while this heading still said "Yours alone". A policy answers
+ * "may this person see this row", which stopped being the same question as
+ * "is this row theirs" the moment sharing existed.
  */
 export function UsageSection() {
   const { data: usage, isLoading } = useQuery({ queryKey: ["usage"], queryFn: api.usage });

@@ -47,7 +47,7 @@ function greeting(): string {
 }
 
 function Home() {
-  const { agents, favorites, sessions } = useAgentsStore();
+  const { agents, favorites, sessions, canWrite } = useAgentsStore();
   const { new: openNew } = Route.useSearch();
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
@@ -102,6 +102,7 @@ function Home() {
           favorites={favorites}
           sessions={sessions}
           memberCount={members.length}
+          canCreate={canWrite}
           onCreate={() => setCreateOpen(true)}
         />
         <TeamActivity sessions={sessions} agents={agents} members={members} />
@@ -251,12 +252,16 @@ function AgentGallery({
   favorites,
   sessions,
   memberCount,
+  canCreate,
   onCreate,
 }: {
   agents: Agent[];
   favorites: string[];
   sessions: ChatSession[];
   memberCount: number;
+  /** False for a viewer. The policies refuse them either way; this is so the
+      button is not there to press. */
+  canCreate: boolean;
   onCreate: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("all");
@@ -296,9 +301,11 @@ function AgentGallery({
         title="Trained by everyone."
         turn="Used by you alone."
         action={
-          <Button onClick={onCreate} variant="secondary" className="gap-1.5">
-            <Plus className="h-4 w-4" /> Create agent
-          </Button>
+          canCreate ? (
+            <Button onClick={onCreate} variant="secondary" className="gap-1.5">
+              <Plus className="h-4 w-4" /> Create agent
+            </Button>
+          ) : undefined
         }
       />
 
@@ -335,13 +342,15 @@ function AgentGallery({
           }
           description={
             agents.length === 0
-              ? "Agents are shared with everyone in the workspace — create the first one and the whole team can use it."
+              ? canCreate
+                ? "Agents are shared with everyone in the workspace — create the first one and the whole team can use it."
+                : "Agents are shared with everyone in the workspace. Nobody has made one yet, and adding them is a member's job — ask an admin or a member to start one."
               : tab === "favorites"
                 ? "Star an agent to keep it at the top of this list."
                 : undefined
           }
           action={
-            agents.length === 0 ? (
+            agents.length === 0 && canCreate ? (
               <Button onClick={onCreate} className="gap-1.5">
                 <Plus className="h-4 w-4" /> Create agent
               </Button>

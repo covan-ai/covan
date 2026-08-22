@@ -97,3 +97,61 @@ describe("POST /bundles/:id/documents/upload — storage failure", () => {
     expect(wasDocumentsTouched()).toBe(false);
   });
 });
+
+describe("POST /bundles/:id/documents/upload — files with no readable text", () => {
+  // Both of these used to succeed: the file was stored, a row was written with
+  // an empty or garbage excerpt, and the document was listed as the agent's
+  // while being impossible to retrieve a word of. Refusing costs the user one
+  // sentence; accepting costs them a document they believe the agent has read.
+  async function upload(file: File, fields: Record<string, string> = {}) {
+    const root = await mkdtemp(join(tmpdir(), "covan-upload-text-"));
+    roots.push(root);
+    const { db, wasDocumentsTouched } = fakeDb({ id: "bundle-1", workspace_id: "ws-1" });
+    const app = appWithDb(db);
+
+    const form = new FormData();
+    form.append("file", file);
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+
+    const res = await app.request(
+      "/bundles/bundle-1/documents/upload",
+      { method: "POST", body: form },
+      { DOCS_DIR: root } as never,
+    );
+    return { res, wasDocumentsTouched };
+  }
+
+  it("refuses a PDF the browser could not read — the scan with no text layer", async () => {
+    // No `text` field: that is exactly what the client sends when its parser
+    // came back empty, and the server cannot parse a PDF itself.
+    const { res, wasDocumentsTouched } = await upload(
+      new File(["%PDF-1.7 binary page images"], "scan.pdf", { type: "application/pdf" }),
+    );
+
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error ?? "").toMatch(/text/i);
+    expect(wasDocumentsTouched()).toBe(false);
+  });
+
+  it("refuses a binary file wearing a text extension — the renamed .docx", async () => {
+    const zipish = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x08, 0x00, 0x00]);
+    const { res, wasDocumentsTouched } = await upload(
+      new File([zipish], "notes.txt", { type: "text/plain" }),
+    );
+
+    expect(res.status).toBe(422);
+    expect(wasDocumentsTouched()).toBe(false);
+  });
+
+  it("still accepts a PDF whose text the browser did extract", async () => {
+    const { res } = await upload(
+      new File(["%PDF-1.7 ..."], "report.pdf", { type: "application/pdf" }),
+      { text: "Quarterly report. Revenue grew across every region." },
+    );
+
+    // fakeDb returns a null document row, so the insert path 500s — the point
+    // here is only that the text gate let it through to that path at all.
+    expect(res.status).not.toBe(422);
+  });
+});

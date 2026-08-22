@@ -12,19 +12,21 @@ import {
   Copy,
   FileText,
   Lock,
-  Paperclip,
   Pencil,
   RefreshCw,
   Sparkles,
   Square,
   ThumbsDown,
   ThumbsUp,
+  Upload,
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Markdown } from "@/components/markdown";
 import { AgentAvatar } from "@/components/avatars";
+import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
+import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useQuota, quotaSentence } from "@/lib/quota";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
@@ -50,9 +52,14 @@ function ChatTab() {
   const { agentId } = Route.useParams();
   const { s: activeId } = Route.useSearch();
   const navigate = useNavigate();
-  const { agents, sessions, startSession } = useAgentsStore();
+  const { agents, sessions, startSession, canWrite } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId)!;
   const queryClient = useQueryClient();
+
+  // Files dropped, pasted or picked in this conversation. They land in the
+  // agent's chat bundle, which is created on the first one.
+  const uploads = useChatUploads(agent);
+  const [dragging, setDragging] = useState(false);
 
   // Only the hosted service meters anything; self-hosted installs answer with
   // `limit: null` and nothing below renders. Refetched by the invalidation that
@@ -475,7 +482,38 @@ function ChatTab() {
   const isEmpty = !active || messages.length === 0;
 
   const chatPane = (
-    <section className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col lg:h-screen">
+    <section
+      className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col lg:h-screen"
+      // The whole pane takes a drop, not just the composer: a file dragged at a
+      // conversation is aimed at the conversation, and a 40px target under the
+      // text is a worse answer than the obvious one.
+      onDragOver={(e) => {
+        if (!canWrite || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        // Fires on every child boundary too; only the pane itself ends the drag.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!canWrite) return;
+        e.preventDefault();
+        setDragging(false);
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length > 0) void uploads.addFiles(files);
+      }}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-xl border border-dashed border-accent-orange bg-background/80">
+          <div className="flex flex-col items-center gap-2">
+            <Upload className="h-6 w-6 text-accent-orange" />
+            <div className="font-dm text-[17px] font-medium">Drop to add to {agent.name}</div>
+            <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
+          </div>
+        </div>
+      )}
       {/* Conversation header */}
       <div className="flex items-center justify-between gap-3 border-b border-border bg-background/80 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -752,9 +790,18 @@ function ChatTab() {
             </div>
           )}
           <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">
+            <ChatReceipts uploads={uploads} />
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={(e) => {
+                // A file on the clipboard is an upload; text on the clipboard is
+                // just typing, and must fall through untouched.
+                const files = Array.from(e.clipboardData.files);
+                if (!canWrite || files.length === 0) return;
+                e.preventDefault();
+                void uploads.addFiles(files);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -771,12 +818,7 @@ function ChatTab() {
                   <span className="text-sm leading-none">{agent.emoji}</span>
                   {agent.name}
                 </span>
-                <button
-                  className="grid h-7 w-7 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  aria-label="Add attachment"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </button>
+                <ChatAttach uploads={uploads} canWrite={canWrite} />
               </div>
               {busy ? (
                 <button

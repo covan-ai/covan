@@ -72,6 +72,13 @@ one of them is instant and destroys nothing. So the order is create a bundle,
 select it, drop files into it, then flip the switch that attaches it to this
 agent. An unattached bundle is invisible to the agent.
 
+That is the deliberate route. The quick one is the conversation: drop a file onto
+the chat pane, paste it, or use the paperclip, and it goes into a bundle of the
+agent's own — created on the first file and attached straight away, so you can
+ask about it in the next message. It is a normal bundle, so anything below about
+bundles applies to it too. [Knowledge bundles](knowledge.md#uploading) has the
+longer version.
+
 Accepted file types are exactly these, up to 10 MB each:
 
 | Extension               | Read by                                   |
@@ -91,9 +98,9 @@ the system suggests. The server does not parse PDFs at all: its text extractor
 returns an empty string for them, because pdf.js does not run reliably on the
 Cloudflare Workers runtime. Instead the browser extracts the text as you pick
 the file and posts it alongside the upload. The consequence is user-visible: a
-PDF with no text layer — a scan, or a page of screenshots — uploads fine and
-downloads fine, but there is nothing to extract and therefore nothing to index,
-and the agent cannot retrieve from it.
+PDF with no text layer — a scan, or a page of screenshots — has nothing to
+extract, and an upload with no readable text in it is refused rather than stored.
+Put it through OCR elsewhere and upload the text.
 
 Indexing happens at upload and is best-effort. If chunking or embedding fails,
 the document still exists; it is listed as **Not indexed**, and the refresh

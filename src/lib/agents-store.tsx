@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type Bundle } from "./api-client";
 import { canWriteAsRole } from "./roles";
+import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
 
 export type Agent = {
   id: string;
@@ -82,6 +83,7 @@ type Store = {
   removeDocument: (agentId: string, docId: string) => Promise<void>;
   reindexDocument: (docId: string) => Promise<Agent["documents"][number]>;
   createBundle: (name: string, description?: string) => Promise<Bundle>;
+  ensureChatBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
   uploadToBundle: (
     bundleId: string,
     file: File,
@@ -159,6 +161,25 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
       createBundle: async (name, description) => {
         const bundle = await api.bundles.create(name, description);
         await queryClient.invalidateQueries({ queryKey: ["bundles"] });
+        return bundle;
+      },
+
+      // The bundle a file dropped into a conversation goes to, created on the
+      // first drop and attached so the agent can read it immediately. Awaited
+      // end to end, unlike `attachBundle` above: the upload that follows needs
+      // the attachment to have actually landed, not to have been started.
+      ensureChatBundle: async (agent) => {
+        const existing = findChatBundle(bundles, agent.id);
+        const bundle =
+          existing ??
+          (await api.bundles.create(chatBundleName(agent.name), chatBundleMarker(agent.id)));
+        if (!existing) await queryClient.invalidateQueries({ queryKey: ["bundles"] });
+
+        const attached = agents.find((a) => a.id === agent.id)?.bundleIds.includes(bundle.id);
+        if (!attached) {
+          await api.bundles.attach(agent.id, bundle.id);
+          await queryClient.invalidateQueries({ queryKey: ["agents"] });
+        }
         return bundle;
       },
 

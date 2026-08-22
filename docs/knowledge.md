@@ -32,23 +32,44 @@ approve it.
 
 ## Uploading
 
+There are two ways in, and they differ only in where the file lands.
+
 The order on the Knowledge tab is create a bundle, select it, drop files into it,
 then flip the switch that attaches it to this agent. Selecting a bundle is what
 turns the drop zone on, so the upload always knows where it is going.
 
+The other way is the conversation itself: the paperclip in the composer, a file
+dragged anywhere onto the chat pane, or one pasted from the clipboard. Nothing
+asks which bundle, because at that moment nobody knows — whether a file was
+worth keeping is something you learn from the answer it produces. So it goes to
+a bundle of the agent's own, named `<Agent> — chat uploads` and created on the
+first file dropped into that agent's chat, attached immediately so the next
+question can reach it. It is an ordinary bundle: it appears on the Knowledge
+tab, it can be attached to other agents, and deleting it works like deleting any
+other. Under the composer each file leaves a receipt saying what it became, and
+the receipt's × deletes the document for the case where it was only ever meant
+to be glanced at.
+
 The accepted extensions are `md`, `markdown`, `txt`, `csv`, `json` and `pdf`, up
 to 10 MB each, and the [Quickstart](quickstart.md#give-it-something-to-read) has
-the table. What is worth adding here is that the check reads the file **name**.
-The server takes the characters after the last dot and looks them up in a fixed
-set; it never inspects the bytes. Renaming a `.docx` to `.txt` therefore gets
-past the gate, and what happens next is not a helpful error — the file is decoded
-as UTF-8 like any text file, and the mojibake that comes out is chunked and
-embedded as though it were prose. It will not match anything sensible, and it
-will sit in the bundle looking indexed. There is no DOCX support to reach this
-way; the conversion has to happen before the upload.
+the table. The extension check reads the file **name** — the characters after
+the last dot, looked up in a fixed set, with the bytes never inspected. Renaming
+a `.docx` to `.txt` therefore gets past that gate, and is then caught by the
+next one: the text is extracted before anything is stored, and a file with no
+readable text in it is refused. What a zip container decodes to is not text —
+NUL bytes throughout and replacement characters everywhere else — so the upload
+comes back saying the file is not the format its name claims. There is no DOCX
+support to reach this way; the conversion has to happen before the upload.
 
-Something refused for its extension, its size or for being empty is refused
-before anything is stored, so a rejected upload leaves nothing behind.
+The same gate is deliberately loose about a file that is merely mangled. A
+Turkish `.txt` saved as Windows-1254 and read as UTF-8 loses its accented
+letters to replacement characters and keeps every other word, which is worth
+indexing; the line is drawn at 30% of the text, well above what a legacy
+encoding costs and well below what a binary produces.
+
+Something refused for its extension, its size, for being empty or for having no
+readable text is refused before anything is stored, so a rejected upload leaves
+nothing behind.
 
 An accepted one leaves three things: the bytes in the document store, a row
 carrying the name, the size, the storage key and an excerpt of the extracted text
@@ -66,7 +87,7 @@ can be found later: the chunks are cut from the **whole** text, however long,
 while the excerpt stops at 8000 characters. A long document is searchable to its
 end, but only its opening is available to the fallback described below.
 
-### PDFs, and the scan that indexes nothing
+### PDFs, and the scan that is refused
 
 A PDF is searchable, but not because the server reads it. Its text extractor
 returns an empty string for anything ending in `.pdf`, because pdf.js does not
@@ -76,20 +97,13 @@ as an extra form field alongside the file. The server prefers that field over it
 own extraction, so what gets indexed is what your browser managed to read.
 
 That is why the interesting case is a PDF with no text layer — a scan, or a page
-of screenshots. The extraction returns nothing, and a failed extraction is
-swallowed rather than surfaced, so nothing comes back either way. The upload then
-succeeds: the file is stored, the row is written with an empty excerpt, chunking
-an empty string produces no chunks, and the response is a normal success. The
-document is listed, it downloads back byte-for-byte, and its name is put in front
-of the model on every turn as a document the agent has. What no question can do
-is retrieve a word of it, and the fallback skips it too, because that path only
-considers documents whose stored text is non-empty. The only visible signal is
-the **Not indexed** chip beside it, and pressing refresh reports `document has no
-indexable text` rather than fixing anything. You will only see that chip while
-the bundle is attached to the agent whose tab you are on, because the document
-list on that tab is the agent's rather than the selected bundle's — a file in a
-bundle this agent has not been given is not listed there at all. A scan has to be
-put through OCR somewhere else and uploaded as text.
+of screenshots. The browser's parser returns nothing, there is no server-side
+extraction to fall back on, and the upload is refused with a sentence saying so.
+It used to succeed, which was worse in a way that took a while to see: the file
+was stored, the row written with an empty excerpt, and the document listed and
+downloadable and named to the model on every turn as something the agent has,
+while no question could retrieve a word of it. A scan has to be put through OCR
+somewhere else and uploaded as text.
 
 ### Reindexing
 
@@ -199,9 +213,13 @@ Work down the path the question takes. Is the bundle attached to this agent —
 retrieval sees nothing else, and a bundle can look full and still be out of
 scope. Is the document **Indexed** — the chip is the difference between a file
 whose passages can be matched and one whose text is reachable only through the
-fallback, so an unindexed document that does have text still contributes its
-excerpt when nothing matches, and it is only an unindexed document with no text
-at all that contributes nothing but its name. Does the question share vocabulary
+fallback, so an unindexed document still contributes its excerpt when nothing
+matches. Since uploads with no readable text are now refused, a document that
+reached the bundle has text in it, and an **Indexed** chip that never appeared
+means the embedding failed rather than that there was nothing to embed — which
+is what the refresh control is for. Documents uploaded before that refusal
+existed are the exception, and they are the ones that contribute nothing but
+their name. Does the question share vocabulary
 with the document, since matching is on meaning as the embedding model represents
 it, and a question phrased entirely in your own words about a passage phrased
 entirely in someone else's may not clear the floor. And if the reply reads like a

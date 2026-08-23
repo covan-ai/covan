@@ -28,11 +28,28 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
+/** One parsed element: a bag of children and `@_`-prefixed attributes. */
+type XmlNode = Record<string, unknown>;
+
 const text = (v: unknown): string => {
   if (v == null) return "";
-  if (typeof v === "object") return String((v as Record<string, unknown>)["#text"] ?? "");
+  if (typeof v === "object") return String((v as XmlNode)["#text"] ?? "");
   return String(v);
 };
+
+/**
+ * One-or-many. A feed with a single `<entry>` parses to the object itself
+ * rather than to an array of one, and every caller here wants the array.
+ */
+const list = (v: unknown): unknown[] => (v == null ? [] : Array.isArray(v) ? v : [v]);
+
+/**
+ * Attribute read that tolerates the element not being an element. `<link>` is
+ * an object with `@_href` in Atom and a bare string in RSS, and both reach
+ * this.
+ */
+const attr = (node: unknown, name: string): unknown =>
+  node !== null && typeof node === "object" ? (node as XmlNode)[name] : undefined;
 
 const toIso = (raw: string): string | null => {
   if (!raw) return null;
@@ -50,20 +67,22 @@ export function parseFeed(xml: string): FeedItem[] {
     throw new Error(`invalid xml: ${validation.err.msg}`);
   }
 
-  const doc = parser.parse(xml) as Record<string, any>;
+  const doc = parser.parse(xml) as XmlNode;
 
   if (doc.feed) {
-    const entries = doc.feed.entry ? [].concat(doc.feed.entry) : [];
-    return entries.map((e: any) => {
+    // An entry is always an element, so the cast holds. Its *children* are the
+    // part that varies, and `attr` is what keeps that honest.
+    const entries = list(attr(doc.feed, "entry")) as XmlNode[];
+    return entries.map((e) => {
       // Atom entries can carry several <link> elements (self, alternate,
       // replies, enclosures). Prefer rel="alternate" (or an unrelled link,
       // the common case) over whichever happens to come first in the doc.
-      const links = e.link ? [].concat(e.link) : [];
-      const alternate = links.find((l: any) => {
-        const rel = l?.["@_rel"];
+      const links = list(e.link);
+      const alternate = links.find((l) => {
+        const rel = attr(l, "@_rel");
         return rel === undefined || rel === "alternate";
       });
-      const link = text((alternate ?? links[0])?.["@_href"] ?? e.link);
+      const link = text(attr(alternate ?? links[0], "@_href") ?? e.link);
       return {
         key: text(e.id) || link,
         title: text(e.title),
@@ -74,9 +93,10 @@ export function parseFeed(xml: string): FeedItem[] {
     });
   }
 
-  if (doc.rss?.channel) {
-    const items = doc.rss.channel.item ? [].concat(doc.rss.channel.item) : [];
-    return items.map((i: any) => {
+  const channel = attr(doc.rss, "channel");
+  if (channel) {
+    const items = list(attr(channel, "item")) as XmlNode[];
+    return items.map((i) => {
       const link = text(i.link);
       return {
         key: text(i.guid) || link,

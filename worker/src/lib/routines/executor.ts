@@ -1,4 +1,5 @@
 // worker/src/lib/routines/executor.ts
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { nextRunAt } from "./schedule";
 import { fetchSource, UpstreamError, type FetchDeps } from "./source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
@@ -55,7 +56,7 @@ export type SummariseInput = {
 
 export type ExecutorDeps = {
   /** Service-role client — bypasses RLS. See the scoping note below. */
-  db: any;
+  db: SupabaseClient;
   summarise: (input: SummariseInput) => Promise<{ text: string; tokens: number }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
@@ -515,7 +516,7 @@ async function notifyOwner(
  * The worst case of guessing yes is one message somebody did not want.
  */
 async function wantsNotice(
-  db: any,
+  db: SupabaseClient,
   userId: string,
   kind: "routine_paused" | "quota_exhausted",
 ): Promise<boolean> {
@@ -542,7 +543,7 @@ async function wantsNotice(
  * once is a missed notice; the cost of guessing the other way is a mailbox
  * filled once per tick until the allowance resets.
  */
-async function lastRunWasQuotaSkip(db: any, routineId: string): Promise<boolean> {
+async function lastRunWasQuotaSkip(db: SupabaseClient, routineId: string): Promise<boolean> {
   try {
     const { data, error } = await db
       .from("routine_runs")

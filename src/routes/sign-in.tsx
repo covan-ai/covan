@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase/client";
+import { setRemember } from "@/lib/supabase/auth-storage";
 
 export const Route = createFileRoute("/sign-in")({
   component: SignIn,
@@ -17,6 +18,7 @@ function SignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [remember, setRememberChecked] = useState(true);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -26,6 +28,9 @@ function SignIn() {
 
     setError(null);
     setSubmitting(true);
+    // Before the call, not after: signing in writes the session as it returns,
+    // and the store it lands in has to be settled by then.
+    setRemember(remember);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setSubmitting(false);
 
@@ -96,8 +101,12 @@ function SignIn() {
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Checkbox id="remember" defaultChecked />
+        <label htmlFor="remember" className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox
+            id="remember"
+            checked={remember}
+            onCheckedChange={(next) => setRememberChecked(next === true)}
+          />
           Remember me
         </label>
 

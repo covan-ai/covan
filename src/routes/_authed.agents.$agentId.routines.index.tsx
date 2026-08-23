@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageContainer, PageHeader } from "@/components/page-container";
 import { RoutinesList } from "@/components/routines/routines-list";
 import { CreateRoutineDialog } from "@/components/routines/create-routine-dialog";
+import { DocsLink } from "@/components/docs-link";
 import { api } from "@/lib/api-client";
 import { useRoutines } from "@/hooks/use-routines";
 
@@ -30,7 +31,11 @@ function RoutinesTab() {
         title="Work that happens"
         turn="while nobody is watching."
         action={<CreateRoutineDialog agentId={agentId} />}
-      />
+      >
+        <DocsLink page="routines">
+          What a routine can reach, and what it does with a secret
+        </DocsLink>
+      </PageHeader>
       {isLoading ? (
         <p className="mt-8 text-sm text-muted-foreground">Loading…</p>
       ) : (

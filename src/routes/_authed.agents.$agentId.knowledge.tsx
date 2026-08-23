@@ -4,6 +4,7 @@ import { useAgentsStore } from "@/lib/agents-store";
 import { api } from "@/lib/api-client";
 import { PageContainer, PageHeader, SectionHeading } from "@/components/page-container";
 import { Chip, EmptyState } from "@/components/section-card";
+import { DocsLink } from "@/components/docs-link";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -147,7 +148,9 @@ function KnowledgeTab() {
         title="Upload once."
         turn="Every agent can read it."
         subtitle="A bundle is a group of documents. Attach one here, and the same bundle can back every other agent too."
-      />
+      >
+        <DocsLink page="knowledge">How retrieval picks a passage</DocsLink>
+      </PageHeader>
 
       {/* Section 1 — Attached bundles (plug-in / plug-out) */}
       <section className="mt-8">

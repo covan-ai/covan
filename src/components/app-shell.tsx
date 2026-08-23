@@ -1,6 +1,7 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  BookOpen,
   LayoutGrid,
   Users,
   Plug,
@@ -47,6 +48,7 @@ import type { WorkspaceMember } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
 import { useAgentsStore } from "@/lib/agents-store";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
+import { DOCS_HOME } from "@/lib/docs";
 import { IncomingInvitesBanner } from "@/components/incoming-invites-banner";
 
 const nav = [
@@ -230,6 +232,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Link to="/settings" onClick={() => setOpen(false)}>
                   <Settings className="h-4 w-4" /> Workspace settings
                 </Link>
+              </DropdownMenuItem>
+              {/* The documentation answers most of what this menu's other
+                  items lead people to guess at, and until now the app never
+                  said it existed. New tab: leaving a workspace to read about
+                  bundles and coming back to a cold app is a poor trade. */}
+              <DropdownMenuItem asChild>
+                <a href={DOCS_HOME} target="_blank" rel="noreferrer">
+                  <BookOpen className="h-4 w-4" /> Documentation
+                </a>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem

@@ -77,18 +77,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Covan — Shared AI agents for teams" },
+      { title: "Covan — The colleague who has read everything" },
       {
         name: "description",
         content:
-          "Create a shared AI agent, train it with your team's knowledge, and chat with it privately. One brain, private sessions.",
+          "One agent that has read everything your team wrote down, and a private chat with it for every person. Every answer names its source.",
       },
       { name: "author", content: "Covan" },
-      { property: "og:title", content: "Covan — Shared AI agents for teams" },
+      { property: "og:title", content: "Covan — The colleague who has read everything" },
       {
         property: "og:description",
         content:
-          "Create a shared AI agent, train it with your team's knowledge, and chat with it privately.",
+          "One agent that has read everything your team wrote down, and a private chat with it for every person.",
       },
       { property: "og:type", content: "website" },
       // Relative on purpose. An absolute URL would have to name one deployment,
@@ -97,6 +97,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:image", content: "/og.png" },
       { property: "og:image:width", content: "1200" },
       { property: "og:image:height", content: "630" },
+      // The alt still describes the old wording because the artwork does: the
+      // headline is baked into og.png. Redraw the image, then change this line
+      // — an alt that contradicts the picture it labels helps nobody.
       { property: "og:image:alt", content: "Covan — a shared AI agent for your team" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:image", content: "/og.png" },

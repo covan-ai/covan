@@ -28,7 +28,6 @@ function fakeBucket() {
   };
 }
 
-describeDocStoreContract(
-  "r2",
-  async (): Promise<DocStore> => r2DocStore(fakeBucket() as unknown as R2Bucket),
+describeDocStoreContract("r2", async (): Promise<DocStore> =>
+  r2DocStore(fakeBucket() as unknown as R2Bucket),
 );

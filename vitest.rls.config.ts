@@ -17,8 +17,15 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 60_000,
     // One file at a time, one thread. See above.
+    //
+    // `maxWorkers`/`minWorkers`, not `poolOptions.threads.singleThread`: vitest
+    // 4 removed `poolOptions` and does not error on it, it just ignores it — so
+    // the old spelling reads as "one thread" while quietly running several
+    // against the one database. That failure is a flake, not a red test, which
+    // is the worst kind. These two are the supported replacement.
     fileParallelism: false,
     pool: "threads",
-    poolOptions: { threads: { singleThread: true } },
+    maxWorkers: 1,
+    minWorkers: 1,
   },
 });

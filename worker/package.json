@@ -21,17 +21,18 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
-    "@supabase/supabase-js": "^2.45.4",
+    "@supabase/supabase-js": "^2.112.3",
     "cron-parser": "^4.9.0",
-    "fast-xml-parser": "^4.5.0",
-    "hono": "^4.6.9",
-    "openai": "^4.68.0",
-    "zod": "^3.23.8"
+    "fast-xml-parser": "^5.11.0",
+    "hono": "^4.13.3",
+    "openai": "^4.104.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241004.0",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.8",
-    "wrangler": "^3.80.0"
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.125.0"
   }
 }

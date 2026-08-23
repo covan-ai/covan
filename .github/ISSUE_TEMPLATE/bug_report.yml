@@ -1,0 +1,56 @@
+name: Bug report
+description: Something behaves differently from how it is documented or how it obviously should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things make a bug report actionable: how you are running Covan, and
+        what you did. Everything below is asking for one or the other.
+
+        **Not for vulnerabilities.** Those go to [SECURITY.md](https://github.com/covan-ai/covan/blob/main/SECURITY.md),
+        privately, not here.
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      description: The two paths differ enough that the same symptom often has different causes.
+      options:
+        - docker compose (the quick start)
+        - Cloudflare Workers + Supabase + Vercel
+        - Local dev (bun run dev / wrangler dev)
+        - Something else — described below
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        1. Uploaded a PDF to a bundle
+        2. Attached the bundle to an agent
+        3. Asked a question the PDF answers
+        4. Expected an answer citing the file; got "I don't have information about that"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything the logs said
+      description: |
+        `docker compose logs api`, or `wrangler tail`, or the browser console.
+        Redact keys before pasting — the anon key is fine, the service role key is not.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Which commit
+      description: There are no releases yet, so the commit is the version. `git rev-parse --short HEAD`.
+      placeholder: 151af55
+    validations:
+      required: true

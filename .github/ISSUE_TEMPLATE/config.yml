@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/covan-ai/covan/blob/main/SECURITY.md
+    about: Do not open a public issue. Report it privately — this explains how.
+  - name: Documentation
+    url: https://github.com/covan-ai/covan/tree/main/docs
+    about: Self-hosting, architecture, routines, knowledge bundles and the rest.

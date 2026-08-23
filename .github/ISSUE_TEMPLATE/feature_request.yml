@@ -1,0 +1,30 @@
+name: Feature request
+description: Something Covan should do and does not.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Covan is deliberately small: one agent that has read what your team wrote
+        down, and a short list of things you can do with it. A request that makes
+        it smaller-but-sharper has a better chance than one that widens it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation, not the feature. What the feature should be usually falls out of it, and sometimes something simpler does.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What do you do today instead?
+      description: Including "nothing, I gave up" — that is useful to know.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. If you already know the shape you want, describe it.

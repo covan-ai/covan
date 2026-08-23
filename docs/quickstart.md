@@ -61,7 +61,11 @@ so the first run asks once.
 
 **Invite the team.** Shown only if you said the team is more than one person.
 Three rows, none of them required, everyone invited as a member. The addresses
-go one at a time, so one that fails does not discard the others.
+go one at a time, so one that fails does not discard the others. If the
+deployment has no mail configured — `RESEND_API_KEY` is optional — the
+confirmation says so rather than claiming an email was sent: the invitation is a
+row either way, and it is waiting the moment that person signs in with the
+address you typed.
 
 If somebody invited you before you signed up, the first run ends differently:
 you are shown the invitation to accept instead of being asked to name a

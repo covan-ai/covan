@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Code2, Github, MessageSquare, NotebookPen, type LucideIcon } from "lucide-react";
+import { Code2, FolderGit2, MessageSquare, NotebookPen, type LucideIcon } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PageContainer, PageHeader, SectionHeading } from "@/components/page-container";
 import { Chip } from "@/components/section-card";
@@ -57,7 +57,10 @@ const items: Integration[] = [
   {
     name: "GitHub",
     desc: "Attach repositories as context for engineering agents.",
-    icon: Github,
+    // A repository, not the GitHub mark. lucide 1 dropped its brand icons, and
+    // this page never wanted one: Slack is a MessageSquare and Notion is a
+    // NotebookPen, so the logo was the odd entry out rather than the pattern.
+    icon: FolderGit2,
     status: "soon",
   },
 ];

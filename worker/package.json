@@ -37,7 +37,7 @@
     "fast-xml-parser": "^5.11.0",
     "hono": "^4.13.3",
     "openai": "^4.104.0",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",

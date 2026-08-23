@@ -3,7 +3,7 @@
 A shared AI agent for your team. Everyone trains it together; everyone talks to
 it privately.
 
-![Covan — a shared AI agent for your team](public/og.png)
+![Covan — the colleague who has read everything](public/og.png)
 
 <!--
   HERO SCREENSHOT — still missing, and still worth adding above this line.

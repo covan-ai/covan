@@ -76,6 +76,28 @@ export default tseslint.config(
     },
   },
   {
+    // Every file here is the same shape, and the framework decides that shape:
+    // `export const Route = createFileRoute(...)` plus the component it renders,
+    // defined locally in the same file. That is what `bun run dev` generates and
+    // what `routeTree.gen.ts` expects to find.
+    //
+    // eslint-plugin-react-refresh 0.5 began reporting it — 3 warnings became 38,
+    // one per route. `allowExportNames: ["Route"]` does not help, and it is
+    // worth knowing why rather than trying it again: 0.5 flags the *local*
+    // components, not the export. Its complaint is "this file's only export is
+    // not a component, so move the components out", which no allowlist of export
+    // names can answer.
+    //
+    // The rule is not wrong about the mechanism — fast refresh really is worse
+    // for these files. It is wrong about the remedy, which would be 34 route
+    // files split in two to satisfy a dev-server nicety. Off here; still on for
+    // `src/components/` and `src/lib/`, where the choice is actually ours.
+    files: ["src/routes/**"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
+  {
     // Vendored, not authored: `src/components/ui/` is what `shadcn add` writes.
     // Its components ship next to their `cva` variants and a few helper hooks
     // in one file, which is the upstream shape — so this rule fires on almost

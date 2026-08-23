@@ -106,6 +106,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, then rebuild `covan-web`.                                               |
 | `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.           |
 | `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.      |
+| `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. Build-time. See below.      |
 
 Three more values the API reads are set by `docker-compose.yml` rather than by
 you: `SUPABASE_URL` (`http://kong:8000` — the compose network address, not
@@ -120,6 +121,21 @@ does nothing: the Compose stack passes an explicit list of variables to
 `covan-api`, and this is not on it. To use the endpoint on the Docker stack, add
 `ADMIN_API_KEY: ${ADMIN_API_KEY:-}` to that service's `environment:` block
 first.
+
+## Terms and privacy
+
+The sign-up form asks people to agree to Terms and a Privacy Policy, so both
+have to lead somewhere. Unset, they lead to `/terms` and `/privacy` in the app:
+the AGPL and its warranty disclaimer, and a factual account of what the software
+stores and every outside service it calls. For a Covan you run for your own
+team, that is accurate and sufficient — the licence really is the agreement, and
+you are the one holding the database.
+
+If you operate Covan as a service for other people, it is not sufficient, and no
+default this repository could ship would be. Point `VITE_TERMS_URL` and
+`VITE_PRIVACY_URL` at documents written for your service, and the built-in pages
+stop being linked. They are build-time values like the other `VITE_` ones, so
+rebuild after changing them.
 
 ## Uploaded documents
 

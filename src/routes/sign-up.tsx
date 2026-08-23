@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
@@ -7,10 +7,32 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase/client";
+import { privacyLink, termsLink, type LegalLink } from "@/lib/legal";
 
 export const Route = createFileRoute("/sign-up")({
   component: SignUp,
 });
+
+/**
+ * A built-in page is a router link; an operator's own document is an ordinary
+ * anchor that opens in a new tab — leaving a half-filled signup form to read
+ * the terms and losing it would be its own small cruelty.
+ */
+function LegalAnchor({ link, children }: { link: LegalLink; children: ReactNode }) {
+  const className = "text-foreground underline underline-offset-4 hover:no-underline";
+  if (link.external) {
+    return (
+      <a href={link.href} target="_blank" rel="noreferrer" className={className}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <Link to={link.href} target="_blank" className={className}>
+      {children}
+    </Link>
+  );
+}
 
 function SignUp() {
   const navigate = useNavigate();
@@ -166,16 +188,16 @@ function SignUp() {
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <label className="flex items-start gap-2 text-sm text-muted-foreground">
-          <Checkbox id="terms" required className="mt-0.5" /> I agree to the{" "}
-          <a href="#" className="text-foreground hover:underline">
-            Terms
-          </a>{" "}
-          and{" "}
-          <a href="#" className="text-foreground hover:underline">
-            Privacy Policy
-          </a>
-          .
+        {/* These used to be `href="#"` — a required "I agree" next to two links
+            that went nowhere. Where they point is configurable, because an
+            operator running Covan for other people needs their own documents
+            and a self-hoster does not. See `src/lib/legal.ts`. */}
+        <label className="flex flex-wrap items-start gap-x-1 gap-y-2 text-sm text-muted-foreground">
+          <Checkbox id="terms" required className="mt-0.5" />
+          <span>
+            I agree to the <LegalAnchor link={termsLink()}>Terms</LegalAnchor> and{" "}
+            <LegalAnchor link={privacyLink()}>Privacy Policy</LegalAnchor>.
+          </span>
         </label>
 
         <Button type="submit" className="w-full" disabled={submitting}>

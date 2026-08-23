@@ -40,7 +40,7 @@ function SignIn() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Sign in to your team's shared brain."
+      subtitle="Ask it anything your team wrote down."
       footer={
         <>
           Don't have an account?{" "}

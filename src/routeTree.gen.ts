@@ -9,51 +9,35 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TermsRouteImport } from './routes/terms'
-import { Route as SignUpRouteImport } from './routes/sign-up'
-import { Route as SignInRouteImport } from './routes/sign-in'
-import { Route as ResetPasswordRouteImport } from './routes/reset-password'
-import { Route as PrivacyRouteImport } from './routes/privacy'
-import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
-import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
-import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
-import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
-import { Route as AuthedIntegrationsRouteImport } from './routes/_authed.integrations'
+import { Route as AuthedRouteImport } from './routes/_authed'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as AuthedAppRouteImport } from './routes/_authed.app'
+import { Route as AuthedIntegrationsRouteImport } from './routes/_authed.integrations'
+import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
+import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
+import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
 import { Route as AuthedAgentsAgentIdRouteImport } from './routes/_authed.agents.$agentId'
 import { Route as AuthedAgentsAgentIdIndexRouteImport } from './routes/_authed.agents.$agentId.index'
-import { Route as AuthedAgentsAgentIdSettingsRouteImport } from './routes/_authed.agents.$agentId.settings'
-import { Route as AuthedAgentsAgentIdKnowledgeRouteImport } from './routes/_authed.agents.$agentId.knowledge'
-import { Route as AuthedAgentsAgentIdConfigurationRouteImport } from './routes/_authed.agents.$agentId.configuration'
 import { Route as AuthedAgentsAgentIdChatRouteImport } from './routes/_authed.agents.$agentId.chat'
+import { Route as AuthedAgentsAgentIdConfigurationRouteImport } from './routes/_authed.agents.$agentId.configuration'
+import { Route as AuthedAgentsAgentIdKnowledgeRouteImport } from './routes/_authed.agents.$agentId.knowledge'
+import { Route as AuthedAgentsAgentIdSettingsRouteImport } from './routes/_authed.agents.$agentId.settings'
 import { Route as AuthedAgentsAgentIdRoutinesIndexRouteImport } from './routes/_authed.agents.$agentId.routines.index'
 import { Route as AuthedAgentsAgentIdRoutinesRoutineIdRouteImport } from './routes/_authed.agents.$agentId.routines.$routineId'
 
-const TermsRoute = TermsRouteImport.update({
-  id: '/terms',
-  path: '/terms',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SignUpRoute = SignUpRouteImport.update({
-  id: '/sign-up',
-  path: '/sign-up',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignInRoute = SignInRouteImport.update({
-  id: '/sign-in',
-  path: '/sign-in',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResetPasswordRoute = ResetPasswordRouteImport.update({
-  id: '/reset-password',
-  path: '/reset-password',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacyRoute = PrivacyRouteImport.update({
-  id: '/privacy',
-  path: '/privacy',
+const AuthedRoute = AuthedRouteImport.update({
+  id: '/_authed',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
@@ -61,28 +45,34 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthedRoute = AuthedRouteImport.update({
-  id: '/_authed',
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthedWelcomeRoute = AuthedWelcomeRouteImport.update({
-  id: '/welcome',
-  path: '/welcome',
-  getParentRoute: () => AuthedRoute,
+const SignInRoute = SignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const AuthedTeamRoute = AuthedTeamRouteImport.update({
-  id: '/team',
-  path: '/team',
-  getParentRoute: () => AuthedRoute,
+const SignUpRoute = SignUpRouteImport.update({
+  id: '/sign-up',
+  path: '/sign-up',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedAppRoute = AuthedAppRouteImport.update({
+  id: '/app',
+  path: '/app',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedIntegrationsRoute = AuthedIntegrationsRouteImport.update({
@@ -90,9 +80,19 @@ const AuthedIntegrationsRoute = AuthedIntegrationsRouteImport.update({
   path: '/integrations',
   getParentRoute: () => AuthedRoute,
 } as any)
-const AuthedAppRoute = AuthedAppRouteImport.update({
-  id: '/app',
-  path: '/app',
+const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedTeamRoute = AuthedTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedWelcomeRoute = AuthedWelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedAgentsAgentIdRoute = AuthedAgentsAgentIdRouteImport.update({
@@ -106,10 +106,15 @@ const AuthedAgentsAgentIdIndexRoute =
     path: '/',
     getParentRoute: () => AuthedAgentsAgentIdRoute,
   } as any)
-const AuthedAgentsAgentIdSettingsRoute =
-  AuthedAgentsAgentIdSettingsRouteImport.update({
-    id: '/settings',
-    path: '/settings',
+const AuthedAgentsAgentIdChatRoute = AuthedAgentsAgentIdChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => AuthedAgentsAgentIdRoute,
+} as any)
+const AuthedAgentsAgentIdConfigurationRoute =
+  AuthedAgentsAgentIdConfigurationRouteImport.update({
+    id: '/configuration',
+    path: '/configuration',
     getParentRoute: () => AuthedAgentsAgentIdRoute,
   } as any)
 const AuthedAgentsAgentIdKnowledgeRoute =
@@ -118,17 +123,12 @@ const AuthedAgentsAgentIdKnowledgeRoute =
     path: '/knowledge',
     getParentRoute: () => AuthedAgentsAgentIdRoute,
   } as any)
-const AuthedAgentsAgentIdConfigurationRoute =
-  AuthedAgentsAgentIdConfigurationRouteImport.update({
-    id: '/configuration',
-    path: '/configuration',
+const AuthedAgentsAgentIdSettingsRoute =
+  AuthedAgentsAgentIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
     getParentRoute: () => AuthedAgentsAgentIdRoute,
   } as any)
-const AuthedAgentsAgentIdChatRoute = AuthedAgentsAgentIdChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
-  getParentRoute: () => AuthedAgentsAgentIdRoute,
-} as any)
 const AuthedAgentsAgentIdRoutinesIndexRoute =
   AuthedAgentsAgentIdRoutinesIndexRouteImport.update({
     id: '/routines/',
@@ -291,46 +291,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/terms': {
-      id: '/terms'
-      path: '/terms'
-      fullPath: '/terms'
-      preLoaderRoute: typeof TermsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/sign-up': {
-      id: '/sign-up'
-      path: '/sign-up'
-      fullPath: '/sign-up'
-      preLoaderRoute: typeof SignUpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/sign-in': {
-      id: '/sign-in'
-      path: '/sign-in'
-      fullPath: '/sign-in'
-      preLoaderRoute: typeof SignInRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reset-password': {
-      id: '/reset-password'
-      path: '/reset-password'
-      fullPath: '/reset-password'
-      preLoaderRoute: typeof ResetPasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacy': {
-      id: '/privacy'
-      path: '/privacy'
-      fullPath: '/privacy'
-      preLoaderRoute: typeof PrivacyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/forgot-password': {
-      id: '/forgot-password'
-      path: '/forgot-password'
-      fullPath: '/forgot-password'
-      preLoaderRoute: typeof ForgotPasswordRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed': {
@@ -340,32 +305,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authed/welcome': {
-      id: '/_authed/welcome'
-      path: '/welcome'
-      fullPath: '/welcome'
-      preLoaderRoute: typeof AuthedWelcomeRouteImport
-      parentRoute: typeof AuthedRoute
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_authed/team': {
-      id: '/_authed/team'
-      path: '/team'
-      fullPath: '/team'
-      preLoaderRoute: typeof AuthedTeamRouteImport
-      parentRoute: typeof AuthedRoute
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_authed/settings': {
-      id: '/_authed/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof AuthedSettingsRouteImport
+    '/sign-in': {
+      id: '/sign-in'
+      path: '/sign-in'
+      fullPath: '/sign-in'
+      preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-up': {
+      id: '/sign-up'
+      path: '/sign-up'
+      fullPath: '/sign-up'
+      preLoaderRoute: typeof SignUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authed/app': {
+      id: '/_authed/app'
+      path: '/app'
+      fullPath: '/app'
+      preLoaderRoute: typeof AuthedAppRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/integrations': {
@@ -375,11 +361,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedIntegrationsRouteImport
       parentRoute: typeof AuthedRoute
     }
-    '/_authed/app': {
-      id: '/_authed/app'
-      path: '/app'
-      fullPath: '/app'
-      preLoaderRoute: typeof AuthedAppRouteImport
+    '/_authed/settings': {
+      id: '/_authed/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthedSettingsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/team': {
+      id: '/_authed/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AuthedTeamRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/welcome': {
+      id: '/_authed/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof AuthedWelcomeRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/agents/$agentId': {
@@ -396,18 +396,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAgentsAgentIdIndexRouteImport
       parentRoute: typeof AuthedAgentsAgentIdRoute
     }
-    '/_authed/agents/$agentId/settings': {
-      id: '/_authed/agents/$agentId/settings'
-      path: '/settings'
-      fullPath: '/agents/$agentId/settings'
-      preLoaderRoute: typeof AuthedAgentsAgentIdSettingsRouteImport
-      parentRoute: typeof AuthedAgentsAgentIdRoute
-    }
-    '/_authed/agents/$agentId/knowledge': {
-      id: '/_authed/agents/$agentId/knowledge'
-      path: '/knowledge'
-      fullPath: '/agents/$agentId/knowledge'
-      preLoaderRoute: typeof AuthedAgentsAgentIdKnowledgeRouteImport
+    '/_authed/agents/$agentId/chat': {
+      id: '/_authed/agents/$agentId/chat'
+      path: '/chat'
+      fullPath: '/agents/$agentId/chat'
+      preLoaderRoute: typeof AuthedAgentsAgentIdChatRouteImport
       parentRoute: typeof AuthedAgentsAgentIdRoute
     }
     '/_authed/agents/$agentId/configuration': {
@@ -417,11 +410,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAgentsAgentIdConfigurationRouteImport
       parentRoute: typeof AuthedAgentsAgentIdRoute
     }
-    '/_authed/agents/$agentId/chat': {
-      id: '/_authed/agents/$agentId/chat'
-      path: '/chat'
-      fullPath: '/agents/$agentId/chat'
-      preLoaderRoute: typeof AuthedAgentsAgentIdChatRouteImport
+    '/_authed/agents/$agentId/knowledge': {
+      id: '/_authed/agents/$agentId/knowledge'
+      path: '/knowledge'
+      fullPath: '/agents/$agentId/knowledge'
+      preLoaderRoute: typeof AuthedAgentsAgentIdKnowledgeRouteImport
+      parentRoute: typeof AuthedAgentsAgentIdRoute
+    }
+    '/_authed/agents/$agentId/settings': {
+      id: '/_authed/agents/$agentId/settings'
+      path: '/settings'
+      fullPath: '/agents/$agentId/settings'
+      preLoaderRoute: typeof AuthedAgentsAgentIdSettingsRouteImport
       parentRoute: typeof AuthedAgentsAgentIdRoute
     }
     '/_authed/agents/$agentId/routines/': {

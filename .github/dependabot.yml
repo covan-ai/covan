@@ -1,0 +1,46 @@
+version: 2
+
+# Three trees, because that is how many this repository actually has: the
+# frontend at the root, the API under worker/, and the workflow files that run
+# both. A single entry would silently watch only the first.
+#
+# The `npm` ecosystem is what reads `bun.lock` — there is no separate `bun`
+# ecosystem. Dependabot resolves through it and rewrites the lockfile in place.
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    # Grouped, or a quiet week still opens a dozen pull requests and the one
+    # that matters gets read last. Security fixes stay ungrouped and immediate:
+    # Dependabot raises those outside this schedule regardless.
+    groups:
+      radix:
+        patterns: ["@radix-ui/*"]
+      tanstack:
+        patterns: ["@tanstack/*"]
+      dev-tooling:
+        dependency-type: "development"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/worker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        dependency-type: "development"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"

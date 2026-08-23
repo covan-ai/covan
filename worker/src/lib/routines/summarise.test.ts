@@ -11,10 +11,16 @@ const createMock = vi.fn();
 // on the branch where money is actually spent, so the call shape matters.
 // vi.mock calls are hoisted above imports by vitest, so this applies before
 // `./summarise` constructs its `new OpenAI(...)` client above.
+//
+// A class, not `vi.fn().mockImplementation(() => ...)`. The call site is `new
+// OpenAI(...)`, and vitest 4 forwards `new` straight to the implementation
+// instead of calling it plainly — so an arrow function there throws "is not a
+// constructor". Nothing asserts how the constructor was called, only what
+// `create` received, so the mock does not need to be a spy.
 vi.mock("openai", () => ({
-  default: vi.fn().mockImplementation(() => ({
-    chat: { completions: { create: createMock } },
-  })),
+  default: class {
+    chat = { completions: { create: createMock } };
+  },
 }));
 
 const env = { OPENAI_API_KEY: "sk-test" } as any;

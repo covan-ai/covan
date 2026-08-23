@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "../email";
 import { decryptSecret } from "./crypto";
 
@@ -17,7 +18,7 @@ export type DeliveryDeps = {
 const MAX_ERROR_BODY = 200;
 
 /** The narrow slice of the Supabase client this module needs. */
-export type DeliveryDb = { from: (table: string) => any };
+export type DeliveryDb = Pick<SupabaseClient, "from">;
 
 export async function deliver(
   channel: DeliveryChannel,

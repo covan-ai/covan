@@ -60,12 +60,21 @@ function SettingsTab() {
   const [persona, setPersona] = useState(agent.persona);
   const [mode, setMode] = useState(agent.mode);
 
+  // Refill the form when you switch to a *different* agent, and only then.
+  //
+  // The lint rule wants agent.name, .emoji, .model, .persona and .mode in here
+  // too, and adding them would be a bug: this effect writes to the same state
+  // the inputs are bound to, so any refresh of the store — the write-back from
+  // `save`, another tab, a realtime update — would run it again and throw away
+  // whatever you had typed since. The identity of the agent is the only thing
+  // that should reset the form.
   useEffect(() => {
     setName(agent.name);
     setEmoji(agent.emoji);
     setModel(agent.model);
     setPersona(agent.persona);
     setMode(agent.mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id]);
 
   const save = () => {

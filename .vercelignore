@@ -1,4 +1,33 @@
-.output
-.tanstack
+# Deployments from git send the committed tree, so this file only matters when
+# someone runs `vercel deploy` from a working copy — which uploads whatever is
+# sitting in the directory, gitignored or not. `.dockerignore` already learned
+# this lesson; the two should say the same thing.
+
+# Dependencies and build output are produced on Vercel.
 node_modules
 worker/node_modules
+.output
+.nitro
+.tanstack
+dist
+dist-ssr
+
+# Secrets. `.env` in particular is read by Vite during the build, so leaving it
+# in the upload would bake local values into the browser JavaScript. Vercel's
+# own project environment variables are where these belong.
+.env*
+worker/.dev.vars
+worker/wrangler.toml
+worker/wrangler.cron.toml
+
+# Never ships.
+MANIFESTO.md
+docs/superpowers
+.superpowers
+.claude
+
+.git
+.github
+.wrangler
+*.log
+.DS_Store

@@ -4,7 +4,16 @@
     "lib": ["ESNext"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "types": ["@cloudflare/workers-types"],
+    // Both, because this source really does target both. `src/index.ts` runs on
+    // Workers; `src/node.ts`, `lib/env.ts` and `lib/docstore/fs.ts` run on Node
+    // and import `node:fs`, `node:path` and `process`. Until now `@types/node`
+    // arrived transitively through a dev dependency and this list did not have
+    // to admit it — which meant a lockfile change could break `tsc` in a fresh
+    // clone with nothing in the diff to explain it. Declared, so it cannot.
+    //
+    // This does not license Node APIs in a route: what keeps the two runtimes
+    // apart is the `lib/docstore/` and `lib/defer.ts` interfaces, not tsconfig.
+    "types": ["@cloudflare/workers-types", "node"],
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,

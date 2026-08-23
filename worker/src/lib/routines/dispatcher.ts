@@ -1,4 +1,5 @@
 // worker/src/lib/routines/dispatcher.ts
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
 import { runRoutine as defaultRunRoutine, type ExecutorDeps, type RoutineRow } from "./executor";
@@ -23,7 +24,7 @@ import { entitlementsFor } from "../entitlements";
 const BATCH_SIZE = 4;
 
 export type DispatcherDeps = {
-  db: any;
+  db: SupabaseClient;
   runRoutine: typeof defaultRunRoutine;
 };
 
@@ -35,7 +36,7 @@ export type DispatcherDeps = {
  * The batch is capped: a tick that cannot drain the backlog leaves the rest for
  * the next tick, rather than running until it is killed.
  */
-function executorDeps(env: RoutineEnv, db: any): ExecutorDeps {
+function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
   // WORKER_HOST is optional — on workers.dev the guard already blocks the whole
   // domain class, so it only matters once a custom domain fronts this worker.
   const ownHosts = ownHostsFrom(env);

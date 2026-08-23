@@ -211,6 +211,14 @@ things a service can offer and a repository cannot: hosting, support, an SLA.
 
 ## License
 
+Copyright (C) 2026 Mahmut Efe Dara.
+
 [AGPL-3.0](LICENSE). You can run, modify and self-host Covan freely, including
 inside your company. If you offer a modified Covan to others as a network
 service, you must publish your changes under the same license.
+
+Covan is free software: you can redistribute it and/or modify it under the terms
+of version 3 of the GNU Affero General Public License as published by the Free
+Software Foundation. It is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the [license](LICENSE) for details.

@@ -51,12 +51,39 @@ export default tseslint.config(
       ],
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": "off",
-      // Downgraded from error to warning: ~74 pre-existing `any` sites across the
-      // app and worker are known debt, not endorsed usage. Typing them properly is
-      // a real refactor with behavioural risk that is out of scope here; this keeps
-      // them visible without blocking `bun run lint`. Re-tighten to "error" once
-      // that debt is paid down.
-      "@typescript-eslint/no-explicit-any": "warn",
+      // This was a warning, with a note calling the `any` sites known debt and
+      // saying to re-tighten once they were paid down. In application and API
+      // code they are: the last of them were the Supabase client threaded
+      // through `lib/routines/` as `any`, which is now `SupabaseClient` — the
+      // type the rest of the codebase already used — and the XML feed parser,
+      // which is `unknown` behind two narrowing helpers.
+      //
+      // An error, not a warning, because the point of paying a debt down is not
+      // having to do it twice.
+      "@typescript-eslint/no-explicit-any": "error",
+    },
+  },
+  {
+    // Tests are the exception, and it is not debt. A mock exists to be the
+    // shape the code under test happens to touch — three methods of a Supabase
+    // client, a fetch that returns one canned response — and writing that as a
+    // real type means either implementing an interface the test does not use or
+    // casting through `unknown`, which is `any` with more steps. The types that
+    // matter are on the thing being tested; these are the scaffolding.
+    files: ["**/*.test.{ts,tsx}", "tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
+  {
+    // Vendored, not authored: `src/components/ui/` is what `shadcn add` writes.
+    // Its components ship next to their `cva` variants and a few helper hooks
+    // in one file, which is the upstream shape — so this rule fires on almost
+    // all of them, and the only way to satisfy it is to diverge from the
+    // generator and re-diverge after every update. Off here, on everywhere else.
+    files: ["src/components/ui/**"],
+    rules: {
+      "react-refresh/only-export-components": "off",
     },
   },
   eslintPluginPrettier,

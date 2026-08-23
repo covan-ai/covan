@@ -226,7 +226,41 @@ Before the stack faces a network:
 3. Put TLS in front of ports 3000, 8787 and 8000, and set
    `SUPABASE_PUBLIC_URL`, `VITE_API_URL`, `SITE_URL` and `ALLOWED_ORIGIN` to
    the public URLs — then rebuild `covan-web`.
-4. Consider not publishing `54322` at all.
+4. Rate-limit the API at that same proxy. See below.
+5. Consider not publishing `54322` at all.
+
+### Covan does not rate-limit itself
+
+There is no request limiter anywhere in the API, on either deployment path.
+That is a real gap and you should close it before the API is reachable from the
+internet.
+
+What the API _does_ bound is the size of a single request: 10 MB for a document
+upload, 2 MB for an audio recording. Neither bounds how _often_ someone asks,
+and this build ships no spend cap either — `worker/src/lib/entitlements/` is an
+interface with `unlimitedEntitlements` behind it, which is exactly what it
+sounds like. (`QUOTA_MONTHLY_TOKENS` exists in the environment type, but nothing
+in this repository registers a metered implementation to read it, so setting it
+changes nothing.)
+
+`POST /chat` and `POST /transcribe` both spend money at OpenAI on every call, so
+an authenticated user with a loop, or one leaked password, is an unbounded bill
+rather than a denial of service. The rest of the API is cheaper to serve but
+just as unlimited.
+
+Authentication is not the answer here: a limiter has to sit in front of the
+thing being protected, and every one of these routes is already past the door.
+
+Put it in the layer you already have:
+
+| Deployment                                       | Where the limiter goes                                                                                                                        |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker compose`, behind nginx / Caddy / Traefik | The reverse proxy from step 3. nginx's `limit_req`, Caddy's `rate_limit`, Traefik's `RateLimit` middleware — any of them, keyed on client IP. |
+| Cloudflare Workers                               | A [Rate Limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) on the zone, or the Workers rate limiting binding.         |
+
+Key on the caller's IP for anonymous routes and on the bearer token's subject
+for the rest, and be much stricter with `/chat` and `/transcribe` than with the
+others — the point is the OpenAI bill, not the traffic.
 
 ## The production path: Cloudflare, Supabase and a static host
 

@@ -30,8 +30,7 @@ function db(memberOf: string[], activeId: string | null) {
       workspace_members: {
         select: (ctx: QueryContext) => {
           const wanted = ctx.filters.find((f) => f.column === "workspace_id")?.value as
-            | string
-            | undefined;
+            string | undefined;
 
           // Two different queries land here: the membership re-check (filtered
           // by workspace_id) and the oldest-membership fallback (not filtered).

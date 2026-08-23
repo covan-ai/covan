@@ -36,7 +36,7 @@
     "cron-parser": "^5.10.0",
     "fast-xml-parser": "^5.11.0",
     "hono": "^4.13.3",
-    "openai": "^4.104.0",
+    "openai": "^7.5.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

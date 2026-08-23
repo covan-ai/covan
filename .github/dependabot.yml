@@ -16,13 +16,23 @@ updates:
     # Grouped, or a quiet week still opens a dozen pull requests and the one
     # that matters gets read last. Security fixes stay ungrouped and immediate:
     # Dependabot raises those outside this schedule regardless.
+    #
+    # `update-types` on every group, and it is the whole point rather than a
+    # detail: without it a group collects majors too, and the first run produced
+    # a friendly-looking "dev-tooling group with 10 updates" that was in fact
+    # TypeScript 5 -> 7, ESLint 9 -> 10, jsdom 25 -> 30 and seven more, in one
+    # commit that could be neither reviewed in pieces nor bisected. Majors are
+    # each their own migration and each get their own pull request.
     groups:
       radix:
         patterns: ["@radix-ui/*"]
+        update-types: ["minor", "patch"]
       tanstack:
         patterns: ["@tanstack/*"]
+        update-types: ["minor", "patch"]
       dev-tooling:
         dependency-type: "development"
+        update-types: ["minor", "patch"]
     labels:
       - "dependencies"
 
@@ -35,6 +45,7 @@ updates:
     groups:
       dev-tooling:
         dependency-type: "development"
+        update-types: ["minor", "patch"]
     labels:
       - "dependencies"
 

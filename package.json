@@ -1,6 +1,20 @@
 {
   "name": "covan",
+  "version": "0.1.0",
+  "description": "A shared AI agent for your team. Everyone trains it together; everyone talks to it privately.",
+  "//private": "Covan is deployed, not published. This keeps `npm publish` from ever succeeding by accident; it says nothing about the licence, which is the line below.",
   "private": true,
+  "//license": "AGPL-3.0-only, not -or-later: LICENSE is the bare GPL text with no 'any later version' clause attached, so -only is what the repository actually grants today. Widening it later is a decision, not a typo fix.",
+  "license": "AGPL-3.0-only",
+  "author": "Mahmut Efe Dara",
+  "homepage": "https://covan.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/covan-ai/covan.git"
+  },
+  "bugs": {
+    "url": "https://github.com/covan-ai/covan/issues"
+  },
   "sideEffects": false,
   "type": "module",
   "//engines": "Node 20 cannot run this: @supabase/supabase-js needs a global WebSocket, which arrived in Node 22, and without it every server-rendered page returns a 500. Documented in README.md and docs/self-hosting.md.",

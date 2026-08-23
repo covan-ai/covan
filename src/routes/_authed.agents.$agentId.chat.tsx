@@ -30,6 +30,7 @@ import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useQuota, quotaSentence } from "@/lib/quota";
+import { startersFor } from "@/lib/chat-starters";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
   component: ChatTab,
@@ -41,14 +42,6 @@ export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-
-// Opening prompts offered on an empty conversation.
-const STARTERS = [
-  "What can you help me with?",
-  "Summarize what you know",
-  "Walk me through an example",
-  "Draft something for me",
-];
 
 function ChatTab() {
   const { agentId } = Route.useParams();
@@ -62,6 +55,10 @@ function ChatTab() {
   // agent's chat bundle, which is created on the first one.
   const uploads = useChatUploads(agent);
   const [dragging, setDragging] = useState(false);
+
+  // Named after a real file once one is indexed, so the first tap on a fresh
+  // agent returns an answer with a citation on it rather than a general one.
+  const starters = useMemo(() => startersFor(agent.documents), [agent.documents]);
 
   // Only the hosted service meters anything; self-hosted installs answer with
   // `limit: null` and nothing below renders. Refetched by the invalidation that
@@ -599,7 +596,7 @@ function ChatTab() {
                 knowledge.
               </p>
               <div className="mt-8 grid gap-2.5 sm:grid-cols-2">
-                {STARTERS.map((s) => (
+                {starters.map((s) => (
                   <button
                     key={s}
                     onClick={() => void submit(s)}

@@ -3,9 +3,9 @@
  *
  * Kept free of React so the branching can be tested without rendering
  * anything — the same reason cron-to-prose.ts and schedule-form.ts exist. Every
- * question this module answers is a pure function of three facts: what has been
- * answered, whether this is a hosted install, and whether the account is
- * holding an invitation.
+ * question this module answers is a pure function of four facts: what has been
+ * answered, whether this is a hosted install, whether the account is holding an
+ * invitation, and whether an agent exists to hang documents on.
  */
 
 export type OnboardingStep =
@@ -15,6 +15,7 @@ export type OnboardingStep =
   | "source"
   | "workspace"
   | "agent"
+  | "knowledge"
   | "invite"
   | "invite-accept";
 
@@ -43,6 +44,15 @@ export type FlowContext = {
    * invitation can.
    */
   hasIncomingInvite: boolean;
+  /**
+   * Whether there is an agent to attach documents to.
+   *
+   * The knowledge step asks for a file and puts it in a bundle attached to an
+   * agent, so it is meaningless before one exists — and "I'll do this later" on
+   * the agent step is a real answer, not a detour. Read from the agents store
+   * rather than held in component state, so a reload mid-flow resumes correctly.
+   */
+  hasAgent: boolean;
 };
 
 /**
@@ -64,6 +74,9 @@ export function stepsFor(ctx: FlowContext): OnboardingStep[] {
   if (ctx.hasIncomingInvite) return [...survey, "invite-accept"];
 
   const setup: OnboardingStep[] = ["workspace", "agent"];
+  // Only once there is somewhere to put a document. The count this changes is
+  // already not fixed — answering "just me" drops the invite step the same way.
+  if (ctx.hasAgent) setup.push("knowledge");
   if (ctx.answers.teamSize !== "solo") setup.push("invite");
   return [...survey, ...setup];
 }
@@ -92,6 +105,27 @@ export function resolveStep(requested: string | undefined, ctx: FlowContext): On
   // No usable request. Resume at setup rather than at `source`: the referral
   // question is optional, and one that was skipped should stay skipped.
   return firstSetupStep(ctx);
+}
+
+/**
+ * The agent the knowledge step hangs its documents on.
+ *
+ * "The one just created" is what this means, and the newest is how it is found
+ * rather than by remembering an id in component state — state does not survive
+ * the reload that `?step=knowledge` is otherwise perfectly able to resume from.
+ * The two only disagree in a workspace that already had agents, and the
+ * invitee branch is the only way to reach this flow in one of those, which
+ * excludes the knowledge step entirely.
+ *
+ * Generic over the shape so this module stays free of React and of the store's
+ * types, the same reason the rest of it is.
+ */
+export function newestAgent<T extends { createdAt: number }>(agents: readonly T[]): T | null {
+  let newest: T | null = null;
+  for (const agent of agents) {
+    if (!newest || agent.createdAt > newest.createdAt) newest = agent;
+  }
+  return newest;
 }
 
 /** The step after this one, or "done" when the first run is over. */

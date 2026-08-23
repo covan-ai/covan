@@ -37,7 +37,7 @@ as you tap it rather than batched at the end, and an unanswered question beats
 any step named in the URL. Between them, that is what makes the flow resumable:
 close the tab on question two and you come back to question two.
 
-Then two or three setup screens.
+Then three or four setup screens.
 
 **Name the workspace.** The field is pre-filled with the name the signup trigger
 guessed. Leaving it alone is a valid answer and writes nothing.
@@ -51,6 +51,14 @@ has something in it. Nothing here is permanent — the agent's Settings tab
 carries the same fields, plus the model and the choice between normal and
 brainstorm mode — and "I'll do this later" skips the screen entirely.
 
+**Give it something to read.** Shown only if you actually made an agent on the
+screen before, because this is where the files are attached to it. Drop one or
+more documents in and they go into a bundle named after the agent, attached to
+it, ready to be retrieved from. Skipping is a real answer and the next section
+covers the same ground at leisure — but an agent with nothing to read answers
+out of the model's general knowledge, which is the one thing Covan is not for,
+so the first run asks once.
+
 **Invite the team.** Shown only if you said the team is more than one person.
 Three rows, none of them required, everyone invited as a member. The addresses
 go one at a time, so one that fails does not discard the others.
@@ -62,8 +70,9 @@ both.
 
 ## Give it something to read
 
-An agent has four tabs — Chat, Knowledge, Routines and Settings. Open
-**Knowledge**.
+The first run offered this once, and everything below is what that screen was a
+short version of. An agent has four tabs — Chat, Knowledge, Routines and
+Settings. Open **Knowledge**.
 
 Documents are not attached to an agent directly. They go into a **bundle**, a
 named group of documents, and the bundle attaches to the agent. That indirection

@@ -98,10 +98,16 @@ function SignUp() {
     );
   }
 
+  // The subtitle used to read "Free forever plan. No credit card required.",
+  // which implied there was a paid one to compare it against. There is not — no
+  // tiers, no checkout, nothing to upgrade to. It also has to be true on both
+  // builds, and this screen cannot tell them apart: it renders before there is a
+  // session, so the usage call that would say whether this install meters
+  // anything is not available to it. Hence a sentence that needs neither.
   return (
     <AuthLayout
       title="Create your team's brain"
-      subtitle="Free forever plan. No credit card required."
+      subtitle="No credit card, and no plans to choose between."
       footer={
         <>
           Already have an account?{" "}

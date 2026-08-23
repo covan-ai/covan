@@ -4,6 +4,7 @@ import { quotaFrom } from "@/lib/quota";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
+import { DocsLink } from "@/components/docs-link";
 
 const compact = (n: number) =>
   n >= 1_000_000
@@ -78,6 +79,22 @@ export function UsageSection() {
               : `About ${quota.repliesLeft} ${quota.repliesLeft === 1 ? "reply" : "replies"} left`}
             {quota.resetsOn ? ` · resets on ${quota.resetsOn}` : null}
           </p>
+          {/* Only once it is actually spent. Somebody with replies left does
+              not need to be told there is somewhere else to go, and this is a
+              fact rather than a nudge: the allowance exists because the
+              operator is paying OpenAI, and an install running on your own key
+              does not have one. There are no paid tiers to offer instead, so
+              waiting and self-hosting are genuinely the two answers. */}
+          {quota.level === "spent" && (
+            <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
+              Waiting is not the only option. Covan is open source, and an install running on your
+              own OpenAI key has no allowance at all — everything here works the same way.{" "}
+              <DocsLink page="self-hosting" className="text-xs">
+                Running it yourself
+              </DocsLink>
+            </p>
+          )}
+
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
             Counted in tokens, the unit the model is billed in, and converted to replies using what
             your own replies have cost so far — currently about {compact(quota.perReply)} tokens

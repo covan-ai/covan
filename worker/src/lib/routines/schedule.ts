@@ -1,4 +1,4 @@
-import parser from "cron-parser";
+import { CronExpressionParser } from "cron-parser";
 
 /**
  * The next firing of `cron` strictly after `from`, resolved in `timezone`.
@@ -10,13 +10,13 @@ import parser from "cron-parser";
  * engine.
  */
 export function nextRunAt(cron: string, timezone: string, from: Date): Date {
-  const it = parser.parseExpression(cron, { currentDate: from, tz: timezone });
+  const it = CronExpressionParser.parse(cron, { currentDate: from, tz: timezone });
   return it.next().toDate();
 }
 
 export function isValidCron(cron: string, timezone: string): boolean {
   try {
-    const it = parser.parseExpression(cron, { tz: timezone });
+    const it = CronExpressionParser.parse(cron, { tz: timezone });
     it.next(); // Trigger timezone validation
     return true;
   } catch {

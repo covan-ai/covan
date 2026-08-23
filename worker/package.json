@@ -33,11 +33,11 @@
   "dependencies": {
     "@hono/node-server": "^2.1.1",
     "@supabase/supabase-js": "^2.112.3",
-    "cron-parser": "^4.9.0",
+    "cron-parser": "^5.10.0",
     "fast-xml-parser": "^5.11.0",
     "hono": "^4.13.3",
-    "openai": "^4.104.0",
-    "zod": "^3.25.76"
+    "openai": "^7.5.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",

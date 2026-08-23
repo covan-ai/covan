@@ -94,15 +94,16 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       // Relative on purpose. An absolute URL would have to name one deployment,
       // and every self-hoster serves this from their own domain. Slack, Discord,
       // X and LinkedIn all resolve a relative og:image against the page URL.
-      { property: "og:image", content: "/og.png" },
+      // The `?v=` is the same trick the favicons use below, and for the same
+      // reason: Slack, X and LinkedIn cache a scraped card by URL and will keep
+      // serving the old artwork long after the file changes. Bump it whenever
+      // og.png is redrawn.
+      { property: "og:image", content: "/og.png?v=2" },
       { property: "og:image:width", content: "1200" },
       { property: "og:image:height", content: "630" },
-      // The alt still describes the old wording because the artwork does: the
-      // headline is baked into og.png. Redraw the image, then change this line
-      // — an alt that contradicts the picture it labels helps nobody.
-      { property: "og:image:alt", content: "Covan — a shared AI agent for your team" },
+      { property: "og:image:alt", content: "Covan — the colleague who has read everything" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:image", content: "/og.png" },
+      { name: "twitter:image", content: "/og.png?v=2" },
     ],
     links: [
       {

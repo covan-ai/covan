@@ -13,16 +13,23 @@ import { toast } from "sonner";
 /**
  * The first agent, pre-filled from what the survey learned. Smaller than
  * CreateAgentDialog on purpose: the template is already chosen, and uploading
- * documents is a thing to do once there is an agent to hang them on.
+ * documents is the step after this one — KnowledgeStep — rather than a second
+ * half of this form.
+ *
+ * The two ways out are reported separately because the flow branches on which
+ * one happened: there is a document step after this, and it has nowhere to put
+ * a file if no agent was made.
  */
 export function AgentStep({
   useCase,
   defaultModel,
-  onDone,
+  onCreated,
+  onSkip,
 }: {
   useCase: string | null;
   defaultModel: string | null;
-  onDone: () => void;
+  onCreated: () => void;
+  onSkip: () => void;
 }) {
   const template = templateForUseCase(useCase);
   const { createAgent } = useAgentsStore();
@@ -48,7 +55,7 @@ export function AgentStep({
         persona: persona.trim(),
         mode: "normal",
       });
-      onDone();
+      onCreated();
     } catch {
       toast.error("Couldn't create the agent.");
       setSaving(false);
@@ -118,7 +125,7 @@ export function AgentStep({
         </Button>
         <button
           type="button"
-          onClick={onDone}
+          onClick={onSkip}
           className="w-full text-center text-[13px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
           I'll do this later

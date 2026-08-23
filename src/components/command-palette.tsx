@@ -12,7 +12,8 @@ import {
 import { useAgentsStore } from "@/lib/agents-store";
 import { AgentAvatar } from "@/components/avatars";
 import { useTheme } from "@/lib/theme";
-import { LayoutGrid, Users, Plug, Settings, Plus, Moon, Sun } from "lucide-react";
+import { BookOpen, LayoutGrid, Users, Plug, Settings, Plus, Moon, Sun } from "lucide-react";
+import { DOCS_HOME } from "@/lib/docs";
 
 /**
  * Global ⌘K / Ctrl+K palette: jump to any agent, or run a top-level action.
@@ -107,6 +108,14 @@ export function CommandPalette() {
           <CommandItem value="toggle theme dark light" onSelect={() => run(toggle)}>
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             <span>Toggle theme</span>
+          </CommandItem>
+          {/* Searchable by "help", which is what someone stuck actually types. */}
+          <CommandItem
+            value="documentation docs help guide"
+            onSelect={() => run(() => window.open(DOCS_HOME, "_blank", "noreferrer"))}
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>Documentation</span>
           </CommandItem>
         </CommandGroup>
       </CommandList>

@@ -31,10 +31,15 @@ key to the same door.
 
 If that email fails, or if the deployment has no `RESEND_API_KEY` and
 `RESEND_FROM` — a supported configuration, not a broken one — the invitation
-still stands, and the response says `emailed: false`. The dialog then says the
-person is invited and asks you to tell them, rather than claiming a message went
-out. It used to say "Invite sent" unconditionally, in a product that had never
-sent one.
+still stands, and the response says `emailed: false`. Both surfaces that invite
+then say the person is invited and ask you to tell them, rather than claiming a
+message went out. They used to say "Invite sent" unconditionally, in a product
+that had never sent one.
+
+Both, now, because the fix landed in only one of them at first. The dialog on
+this page learned to read `emailed`; the three rows in the first run did not,
+and went on reporting "3 invitations sent" to people running an install with no
+mail at all. The sentence is now decided in one place for both of them.
 
 ### What the invitee sees
 

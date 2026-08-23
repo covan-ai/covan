@@ -17,7 +17,7 @@ vi.mock("@/components/generate-persona-button", () => ({
 
 describe("AgentStep", () => {
   it("starts from the template the survey chose", () => {
-    render(<AgentStep useCase="code" defaultModel={null} onDone={vi.fn()} />);
+    render(<AgentStep useCase="code" defaultModel={null} onCreated={vi.fn()} onSkip={vi.fn()} />);
 
     // "code" maps to the coding template, whose persona opens on being a senior
     // software engineer.
@@ -26,13 +26,30 @@ describe("AgentStep", () => {
   });
 
   it("finishes without creating anything when skipped", async () => {
-    const onDone = vi.fn();
+    const onCreated = vi.fn();
+    const onSkip = vi.fn();
     const user = userEvent.setup();
-    render(<AgentStep useCase="code" defaultModel={null} onDone={onDone} />);
+    render(<AgentStep useCase="code" defaultModel={null} onCreated={onCreated} onSkip={onSkip} />);
 
     await user.click(screen.getByRole("button", { name: /later/i }));
 
     expect(createAgent).not.toHaveBeenCalled();
-    expect(onDone).toHaveBeenCalled();
+    // The two exits are distinct on purpose — the step after this one only
+    // makes sense when an agent was actually made.
+    expect(onSkip).toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("reports a created agent through the exit the flow branches on", async () => {
+    const onCreated = vi.fn();
+    const onSkip = vi.fn();
+    const user = userEvent.setup();
+    render(<AgentStep useCase="code" defaultModel={null} onCreated={onCreated} onSkip={onSkip} />);
+
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+
+    expect(createAgent).toHaveBeenCalled();
+    expect(onCreated).toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
   });
 });

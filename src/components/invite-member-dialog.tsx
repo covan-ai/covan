@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api-client";
 import { ROLE_SUMMARY, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles";
+import { invitationNotice } from "@/lib/invitation-notice";
 import { toast } from "sonner";
 
 export function InviteMemberDialog({
@@ -41,12 +42,14 @@ export function InviteMemberDialog({
       // This used to say "Invite sent" whether or not anything had been sent —
       // for most of the product's life, nothing ever was. The invitation is the
       // row either way; what changes is whether the person on the other end has
-      // any way of knowing about it, so say which happened.
-      toast.success(
-        invite.emailed
-          ? `Invite emailed to ${invite.email}`
-          : `${invite.email} is invited — let them know, and it will be waiting when they sign in`,
-      );
+      // any way of knowing about it, so say which happened. The sentence is
+      // shared with the first-run step, which used to get this wrong on its own.
+      const notice = invitationNotice({
+        invited: [invite.email],
+        emailed: invite.emailed ? 1 : 0,
+        failed: [],
+      });
+      toast[notice.tone](notice.message);
       reset();
       onOpenChange(false);
     } catch (e) {

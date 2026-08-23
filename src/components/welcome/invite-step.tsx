@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api-client";
+import { invitationNotice } from "@/lib/invitation-notice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,25 +29,34 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
 
     setSending(true);
     // One at a time, and a failure on one address does not discard the others.
+    const invited: string[] = [];
     const failed: string[] = [];
+    let emailed = 0;
     for (const email of wanted) {
       try {
-        await api.invitations.create({ email, role: "member" });
+        const invite = await api.invitations.create({ email, role: "member" });
+        invited.push(invite.email);
+        // Undefined means "this response does not know", which is not the same
+        // as false — but no create response omits it, and counting an unknown
+        // as unsent is the error that costs nothing.
+        if (invite.emailed) emailed += 1;
       } catch (err) {
         failed.push(err instanceof ApiError ? `${email} (${err.message})` : email);
       }
     }
     await queryClient.invalidateQueries({ queryKey: ["invitations"] });
 
-    if (failed.length === wanted.length) {
-      toast.error(`Couldn't invite ${failed.join(", ")}.`);
+    // This step used to report "N invitations sent" whichever way it went. On
+    // an install with no mail configured — a supported one — that was three
+    // people invited, nobody told, and the inviter assured otherwise.
+    const notice = invitationNotice({ invited, emailed, failed });
+    toast[notice.tone](notice.message);
+
+    if (invited.length === 0) {
+      // Nothing landed. Stay put so the addresses can be corrected rather than
+      // making them retype three of them on another screen.
       setSending(false);
       return;
-    }
-    if (failed.length > 0) {
-      toast.warning(`Invited the rest, but not ${failed.join(", ")}.`);
-    } else {
-      toast.success(wanted.length === 1 ? "Invitation sent" : `${wanted.length} invitations sent`);
     }
     onDone();
   }

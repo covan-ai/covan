@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/app-shell";
 import { PageContainer, PageHeader, SectionHeading } from "@/components/page-container";
 import { Chip, DataRow, EmptyState } from "@/components/section-card";
+import { DocsLink } from "@/components/docs-link";
 import { UserAvatar } from "@/components/avatars";
 import { Button } from "@/components/ui/button";
 import {
@@ -163,7 +164,9 @@ function TeamPage() {
               </Button>
             ) : undefined
           }
-        />
+        >
+          <DocsLink page="team">What each role actually gates</DocsLink>
+        </PageHeader>
 
         <section className="mt-14">
           <SectionHeading

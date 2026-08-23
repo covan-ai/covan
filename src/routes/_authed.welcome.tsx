@@ -1,11 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Me } from "@/lib/api-client";
 import { useIsHosted } from "@/lib/quota";
 import {
   resolveStep,
   nextStep,
+  newestAgent,
   stepsFor,
   type AnswerPatch,
   type OnboardingAnswers,
@@ -17,10 +18,12 @@ import {
   TEAM_SIZE_OPTIONS,
   REFERRAL_OPTIONS,
 } from "@/lib/onboarding-options";
+import { useAgentsStore } from "@/lib/agents-store";
 import { WelcomeLayout } from "@/components/welcome/welcome-layout";
 import { QuestionCard } from "@/components/welcome/question-card";
 import { WorkspaceStep } from "@/components/welcome/workspace-step";
 import { AgentStep } from "@/components/welcome/agent-step";
+import { KnowledgeStep } from "@/components/welcome/knowledge-step";
 import { InviteStep } from "@/components/welcome/invite-step";
 import { InviteAcceptStep } from "@/components/welcome/invite-accept-step";
 
@@ -50,6 +53,11 @@ const COPY: Record<OnboardingStep, { title: string; subtitle?: string }> = {
     title: "Your first agent",
     subtitle: "Shared with everyone. Every conversation stays private.",
   },
+  knowledge: {
+    title: "Give it something to read",
+    subtitle:
+      "Answers cite the file they came from. Without one, it's guessing from general knowledge.",
+  },
   invite: {
     title: "Bring the team",
     subtitle: "Agents are shared, so they get everything you build.",
@@ -74,6 +82,23 @@ function Welcome() {
     queryFn: () => api.invitations.incoming(),
   });
   const hosted = useIsHosted();
+  const { agents } = useAgentsStore();
+  // The store hides this behind a `= []` default, and here the difference
+  // matters: "no agents yet" and "not fetched yet" resolve to different steps,
+  // and guessing wrong on a reload of ?step=knowledge sends someone back to
+  // naming their workspace. Same query key as the store's, so this is served
+  // from the cache rather than fetched twice.
+  const { isPending: agentsPending } = useQuery({
+    queryKey: ["agents"],
+    queryFn: () => api.agents.list(),
+  });
+
+  // Set the moment AgentStep reports success, and OR'd into `hasAgent` below.
+  // `createAgent` invalidates the agents query and the refetch is quick, but
+  // "quick" is not "before the next render" — and if the flow asked for
+  // ?step=knowledge while the list was still empty, resolveStep would find no
+  // such step in this flow and bounce the user back to naming their workspace.
+  const [createdAgent, setCreatedAgent] = useState(false);
 
   const { step: requested } = Route.useSearch();
 
@@ -94,13 +119,18 @@ function Welcome() {
       answers: answers ?? EMPTY_ANSWERS,
       hosted: hosted === true,
       hasIncomingInvite: incoming.length > 0,
+      hasAgent: agents.length > 0 || createdAgent,
     }),
-    [answers, hosted, incoming.length],
+    [answers, hosted, incoming.length, agents.length, createdAgent],
   );
 
-  // Wait for the two facts that change the shape of the flow. Rendering before
-  // they land would show a card and then take it away.
-  const ready = me !== undefined && hosted !== undefined;
+  // The agent the document step attaches to. Null until one exists, which is
+  // exactly when `hasAgent` turns the step on.
+  const targetAgent = useMemo(() => newestAgent(agents), [agents]);
+
+  // Wait for the three facts that change the shape of the flow. Rendering
+  // before they land would show a card and then take it away.
+  const ready = me !== undefined && hosted !== undefined && !agentsPending;
 
   if (!ready || completed) {
     return (
@@ -197,9 +227,22 @@ function Welcome() {
         <AgentStep
           useCase={ctx.answers.useCase}
           defaultModel={me.workspace.defaultModel}
-          onDone={advance}
+          onCreated={() => {
+            setCreatedAgent(true);
+            // Advanced against the fact rather than against `ctx`, for the same
+            // reason `answer` advances against the merged answers: the step
+            // this unlocks has to be reachable on the very tap that unlocks it.
+            goTo(nextStep("agent", { ...ctx, hasAgent: true }));
+          }}
+          onSkip={() => goTo(nextStep("agent", { ...ctx, hasAgent: false }))}
         />
       )}
+      {step === "knowledge" &&
+        (targetAgent ? (
+          <KnowledgeStep agent={targetAgent} onDone={advance} />
+        ) : (
+          <p className="text-center text-sm text-muted-foreground">Loading…</p>
+        ))}
       {step === "invite" && <InviteStep onDone={advance} />}
       {step === "invite-accept" && <InviteAcceptStep onDone={advance} />}
     </WelcomeLayout>

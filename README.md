@@ -5,18 +5,6 @@ it privately.
 
 ![Covan — the colleague who has read everything](public/og.png)
 
-<!--
-  HERO SCREENSHOT — still missing, and still worth adding above this line.
-
-  The banner above is artwork, not evidence. What sells this project is a real
-  conversation: run `docker compose up`, open http://localhost:3000, create an
-  agent, upload a document, ask a question the document answers, and capture the
-  chat view with the answer and its cited source both visible. Save it under
-  docs/screenshots/ and add it here with alt text describing what it shows.
-
-  An empty state sells nothing.
--->
-
 ## What is Covan?
 
 Most team AI tools are built for engineers: a Slack bot, a sandbox, a

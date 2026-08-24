@@ -5,6 +5,11 @@ it privately.
 
 ![Covan — the colleague who has read everything](public/og.png)
 
+Half a minute, uncut: start from a template, let the persona write itself from
+the name, and the agent is live in a chat that belongs to you alone.
+
+https://github.com/user-attachments/assets/450d63e3-9172-4b58-a20a-12d1da616a70
+
 ## What is Covan?
 
 Most team AI tools are built for engineers: a Slack bot, a sandbox, a

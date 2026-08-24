@@ -103,6 +103,22 @@ describe("summariseWithOpenAI", () => {
     expect(call.model).toBe(DEFAULT_MODEL);
   });
 
+  it("sends OPENAI_MODEL instead of the routine's own model, so a routine reaches a self-hosted endpoint's catalogue too", async () => {
+    const summarise = summariseWithOpenAI({
+      OPENAI_API_KEY: "sk-test",
+      OPENAI_BASE_URL: "http://localhost:11434/v1",
+      OPENAI_MODEL: "llama3.3:70b",
+    } as any);
+    await summarise({
+      persona: null,
+      model: "gpt-4o",
+      instruction: "Summarise.",
+      items: [item(1)],
+    });
+
+    expect(createMock.mock.calls[0][0].model).toBe("llama3.3:70b");
+  });
+
   it("reads tokens from usage.total_tokens, defaulting to 0 when usage is absent", async () => {
     const summarise = summariseWithOpenAI(env);
 

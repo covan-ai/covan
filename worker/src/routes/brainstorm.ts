@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
+import { createOpenAI } from "../lib/openai";
 import { buildIdeaExtractionMessages, parseIdeaSuggestions } from "../lib/idea-suggest";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
@@ -68,10 +68,10 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
     )
     .join("\n");
 
-  const openai = new OpenAI({ apiKey: c.env.OPENAI_API_KEY });
+  const openai = createOpenAI(c.env);
   try {
     const completion = await openai.chat.completions.create({
-      model: resolveModel(agent?.model ?? null),
+      model: resolveModel(agent?.model ?? null, c.env),
       messages: buildIdeaExtractionMessages(transcript),
       response_format: { type: "json_object" },
       max_completion_tokens: 800,

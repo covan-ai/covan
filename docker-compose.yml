@@ -276,6 +276,11 @@ services:
       SUPABASE_ANON_KEY: ${ANON_KEY}
       SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env — Covan cannot answer anything without it}
+      # Empty means api.openai.com. Point these at any OpenAI-compatible
+      # endpoint to keep completions off OpenAI; docs/self-hosting.md covers
+      # what still goes there regardless.
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
       ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY:?set ROUTINE_SECRET_KEY in .env}
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
       # No R2 binding off Cloudflare, so getDocStore falls to the filesystem

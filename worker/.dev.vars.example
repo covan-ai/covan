@@ -10,6 +10,13 @@ SUPABASE_ANON_KEY=replace-with-anon-key
 SUPABASE_SERVICE_ROLE_KEY=replace-with-service-role-key
 OPENAI_API_KEY=replace-with-openai-api-key
 
+# Optional. Sends completions to an OpenAI-compatible endpoint instead of
+# OpenAI. Set OPENAI_MODEL alongside it — the shipped model list is OpenAI's,
+# so on its own every agent would ask your endpoint for `gpt-4o`. Embeddings
+# and transcription still go to OpenAI; docs/self-hosting.md says why.
+# OPENAI_BASE_URL=http://localhost:11434/v1
+# OPENAI_MODEL=llama3.3:70b
+
 # Comma-separated EXACT frontend origins. Never a wildcard or a pattern —
 # docs/self-hosting.md explains what that costs. localhost is allowed in code.
 ALLOWED_ORIGIN=http://localhost:3000

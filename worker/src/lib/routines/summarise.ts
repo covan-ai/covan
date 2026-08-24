@@ -1,7 +1,7 @@
 // worker/src/lib/routines/summarise.ts
-import OpenAI from "openai";
 import type { RoutineEnv } from "../../types";
 import { resolveModel } from "../models";
+import { createOpenAI } from "../openai";
 import type { SummariseInput } from "./executor";
 
 /**
@@ -10,7 +10,7 @@ import type { SummariseInput } from "./executor";
  * a routine is the same colleague, reporting instead of answering.
  */
 export function summariseWithOpenAI(env: RoutineEnv) {
-  const client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+  const client = createOpenAI(env);
 
   return async (input: SummariseInput): Promise<{ text: string; tokens: number }> => {
     const body = input.pageText
@@ -20,7 +20,7 @@ export function summariseWithOpenAI(env: RoutineEnv) {
           .join("\n\n");
 
     const completion = await client.chat.completions.create({
-      model: resolveModel(input.model),
+      model: resolveModel(input.model, env),
       messages: [
         {
           role: "system",

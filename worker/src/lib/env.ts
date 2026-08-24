@@ -31,6 +31,10 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     SUPABASE_ANON_KEY: source.SUPABASE_ANON_KEY!,
     SUPABASE_SERVICE_ROLE_KEY: source.SUPABASE_SERVICE_ROLE_KEY!,
     OPENAI_API_KEY: source.OPENAI_API_KEY!,
+    // Optional on purpose: absent means api.openai.com and the built-in model
+    // list, which is what an operator who has not thought about it should get.
+    OPENAI_BASE_URL: source.OPENAI_BASE_URL,
+    OPENAI_MODEL: source.OPENAI_MODEL,
     ROUTINE_SECRET_KEY: source.ROUTINE_SECRET_KEY!,
     RESEND_API_KEY: source.RESEND_API_KEY ?? "",
     RESEND_FROM: source.RESEND_FROM ?? "",

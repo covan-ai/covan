@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
 import { resolveModel } from "../lib/models";
+import { createOpenAI } from "../lib/openai";
 import { embedTexts } from "../lib/embeddings";
 import { buildContextBlock } from "../lib/rag";
 import { selectHistory } from "../lib/history";
@@ -235,8 +236,8 @@ chat.post("/chat/stream", async (c) => {
     ...(latestTurn ? [latestTurn] : []),
   ];
 
-  const model = resolveModel(agent.model);
-  const openai = new OpenAI({ apiKey: c.env.OPENAI_API_KEY });
+  const model = resolveModel(agent.model, c.env);
+  const openai = createOpenAI(c.env);
   const signal = c.req.raw.signal;
   const service = serviceClient(c.env);
 

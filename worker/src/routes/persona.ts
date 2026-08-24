@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
+import { createOpenAI } from "../lib/openai";
 import { buildPersonaMessages, parsePersonaSuggestion } from "../lib/persona-suggest";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
@@ -26,10 +26,10 @@ persona.post("/persona/suggest", async (c) => {
   }
   const { name, model } = parsed.data;
 
-  const openai = new OpenAI({ apiKey: c.env.OPENAI_API_KEY });
+  const openai = createOpenAI(c.env);
   try {
     const completion = await openai.chat.completions.create({
-      model: resolveModel(model ?? null),
+      model: resolveModel(model ?? null, c.env),
       messages: buildPersonaMessages(name),
       response_format: { type: "json_object" },
       max_completion_tokens: 400,

@@ -90,6 +90,8 @@ every line in `.env.docker.example`, in the order it appears there.
 | Variable                                               | Default in the template    | What it does                                                                                                                     |
 | ------------------------------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                    |
+| `OPENAI_BASE_URL`                                      | _empty — means OpenAI_     | Optional. Sends completions to an OpenAI-compatible endpoint instead. See below — it does not move everything.                   |
+| `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.      |
 | `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                             |
 | `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                           |
 | `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. |
@@ -121,6 +123,45 @@ does nothing: the Compose stack passes an explicit list of variables to
 `covan-api`, and this is not on it. To use the endpoint on the Docker stack, add
 `ADMIN_API_KEY: ${ADMIN_API_KEY:-}` to that service's `environment:` block
 first.
+
+### Using a model that is not OpenAI's
+
+Out of the box Covan talks to `api.openai.com`. Set `OPENAI_BASE_URL` and the
+completions go somewhere else instead — Ollama, vLLM, LiteLLM, OpenRouter, or
+anything else speaking the OpenAI chat API:
+
+```bash
+# in .env, for the Docker stack
+OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_MODEL=llama3.3:70b
+OPENAI_API_KEY=ignored-by-ollama-but-still-required
+```
+
+Set both. The model list Covan ships is a list of OpenAI's names, so with only
+the base URL set every agent would ask your endpoint for `gpt-4o` and get a
+404. `OPENAI_MODEL` overrides that list outright, per-agent picker included —
+which means the model dropdown in agent settings has no effect while it is set.
+It still shows OpenAI's models; ignore it.
+
+`OPENAI_API_KEY` stays required either way. Most local servers ignore the value,
+so any non-empty string works there.
+
+**Two things this does not move, and you should know before you rely on it:**
+
+- **Embeddings.** Every document you upload is still embedded by OpenAI's
+  `text-embedding-3-small`. This is not an oversight: `knowledge_chunks.embedding`
+  is declared `vector(1536)` and both retrieval functions take that width, so an
+  endpoint serving a 768-dimension model would not fail at the request — it
+  would fail at the insert, after the upload appeared to succeed. Changing it is
+  a migration and a re-index of everything already stored, not a variable.
+- **Audio transcription.** Voice notes go to OpenAI too. Most
+  OpenAI-compatible servers do not implement `/audio/transcriptions`, so routing
+  it there would trade a working feature for a 404.
+
+So `OPENAI_BASE_URL` keeps your conversations off OpenAI. It does not yet keep
+your documents off OpenAI. If that distinction matters for your deployment —
+and for some teams it is the whole question — the honest answer today is that
+Covan is not there yet.
 
 ## Terms and privacy
 
@@ -341,6 +382,19 @@ person yourself. Set one without the other and the two paths differ: an
 invitation checks for both and quietly reports that nothing was emailed, while a
 routine posts anyway and records whatever Resend answers as a failed run. So if
 you set one, set both.
+
+Pointing this deployment at a non-OpenAI endpoint works the same way as it does
+under Docker, except that neither value is a secret — add them to the `[vars]`
+block in `wrangler.toml` beside `ALLOWED_ORIGIN`:
+
+```toml
+OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
+OPENAI_MODEL = "meta-llama/llama-3.3-70b-instruct"
+```
+
+The same two exceptions apply — embeddings and transcription still go to
+OpenAI. Set them on the routine engine too, or scheduled work will keep using
+OpenAI while chat does not.
 
 Check the build, then ship it:
 

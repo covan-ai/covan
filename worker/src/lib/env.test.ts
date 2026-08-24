@@ -39,4 +39,20 @@ describe("loadEnv", () => {
     const { RESEND_API_KEY, RESEND_FROM, ...rest } = complete;
     expect(() => loadEnv(rest)).not.toThrow();
   });
+
+  it("carries OPENAI_BASE_URL and OPENAI_MODEL through when the operator sets them", () => {
+    const env = loadEnv({
+      ...complete,
+      OPENAI_BASE_URL: "http://localhost:11434/v1",
+      OPENAI_MODEL: "llama3.3:70b",
+    });
+    expect(env.OPENAI_BASE_URL).toBe("http://localhost:11434/v1");
+    expect(env.OPENAI_MODEL).toBe("llama3.3:70b");
+  });
+
+  it("leaves the endpoint unset when the operator says nothing, so the default stays OpenAI", () => {
+    const env = loadEnv(complete);
+    expect(env.OPENAI_BASE_URL).toBeUndefined();
+    expect(env.OPENAI_MODEL).toBeUndefined();
+  });
 });

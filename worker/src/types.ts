@@ -19,6 +19,19 @@ export type RoutineEnv = {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   OPENAI_API_KEY: string;
+  /**
+   * Where completions go. Unset means api.openai.com; set it to any
+   * OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenRouter) to keep the
+   * conversation on infrastructure you control. Embeddings and transcription
+   * are not routed through it — see `lib/openai` for why.
+   */
+  OPENAI_BASE_URL?: string;
+  /**
+   * Forces one model for every completion, ignoring the per-agent picker.
+   * Needed with OPENAI_BASE_URL because `lib/models` allowlists OpenAI's
+   * catalogue, and a local endpoint serves names that are not in it.
+   */
+  OPENAI_MODEL?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   RESEND_API_KEY: string;

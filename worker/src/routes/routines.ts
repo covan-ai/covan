@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
 import { getActiveWorkspaceId } from "../lib/workspace";
@@ -12,7 +11,8 @@ import { isValidCron, nextRunAt } from "../lib/routines/schedule";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
 import { encryptSecret, maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
-import { DEFAULT_MODEL } from "../lib/models";
+import { resolveModel } from "../lib/models";
+import { createOpenAI } from "../lib/openai";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
 const routines = new Hono<AppEnv>();
@@ -35,13 +35,15 @@ routines.post("/routines/draft", async (c) => {
   const parsed = draftBodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const client = new OpenAI({ apiKey: c.env.OPENAI_API_KEY });
+  const client = createOpenAI(c.env);
   // parseDraft may call the model more than once. Totalled here and recorded
   // once, whether the draft parses or is rejected — a failed parse still spent.
   let spent = 0;
   const complete = async (prompt: string) => {
     const res = await client.chat.completions.create({
-      model: DEFAULT_MODEL,
+      // Drafting has no agent behind it, so there is no per-agent model to
+      // honour — `null` takes the default, or OPENAI_MODEL when one is set.
+      model: resolveModel(null, c.env),
       response_format: { type: "json_object" },
       messages: [{ role: "user", content: prompt }],
     });

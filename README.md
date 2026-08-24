@@ -3,8 +3,6 @@
 A shared AI agent for your team. Everyone trains it together; everyone talks to
 it privately.
 
-![Covan — the colleague who has read everything](public/og.png)
-
 Half a minute, uncut: start from a template, let the persona write itself from
 the name, and the agent is live in a chat that belongs to you alone.
 

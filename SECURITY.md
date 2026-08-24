@@ -4,7 +4,7 @@
 
 Please do not open a public issue.
 
-Email **mahmutefedara@gmail.com** with a description, reproduction steps, and the
+Email **efe@covan.app** with a description, reproduction steps, and the
 impact you believe it has. You should get an acknowledgement within 72 hours.
 
 ## Scope

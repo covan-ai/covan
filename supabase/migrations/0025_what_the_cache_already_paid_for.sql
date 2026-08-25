@@ -17,17 +17,19 @@
 --
 -- Input is roughly two thirds of the tokens and about half the bill, so the
 -- discount is worth knowing the size of before anyone tunes the history or
--- retrieval budgets against it. Measured 2026-08-23 on `the-live-project-ref`,
--- the project `VITE_SUPABASE_URL` actually points at: 10 assistant replies
--- averaging 2,248 prompt to 921 completion tokens, which on gpt-4o is about
--- $0.015 a reply.
+-- retrieval budgets against it. Measured 2026-08-23 against the project
+-- `VITE_SUPABASE_URL` actually points at: 10 assistant replies averaging 2,248
+-- prompt to 921 completion tokens, which on gpt-4o is about $0.015 a reply.
 --
--- Ten replies is a small sample and the database is days old — it was rebuilt
--- from zero on 2026-08-22 — so treat the ratio as the finding and the absolute
--- figures as provisional. The first measurement of this was taken against
--- `the-retired-proj-ref` by mistake, which is the retired predecessor and still
--- holds 91 replies of older traffic; it is reachable and healthy and looks
--- exactly like production until you check the ref, so check the ref.
+-- Ten replies is a small sample and the database was days old — rebuilt from
+-- zero on 2026-08-22 — so treat the ratio as the finding and the absolute
+-- figures as provisional.
+--
+-- One procedural note, because it cost a measurement: the first run of this was
+-- taken against a retired predecessor project by mistake. A superseded Supabase
+-- project stays reachable and healthy and answers exactly like the live one, so
+-- nothing about the response tells you that you are querying history. Resolve
+-- the ref from the environment you are actually deploying, never from memory.
 --
 -- Nullable with no default and no backfill: every reply already stored was
 -- billed under an unknown cache state, and writing 0 would assert those prompts

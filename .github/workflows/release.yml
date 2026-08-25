@@ -128,7 +128,7 @@ jobs:
       matrix:
         image: [api, web]
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: digest-${{ matrix.image }}-*
           path: ${{ runner.temp }}/digests

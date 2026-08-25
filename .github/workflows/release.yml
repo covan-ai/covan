@@ -1,0 +1,145 @@
+name: Release
+
+# Publishes the two images to GitHub's registry, so self-hosting is `docker
+# compose pull` rather than compiling a frontend on every machine that wants to
+# try it. It is also the only measurement we get: the repository is deliberately
+# free of analytics, so image pulls are the one honest signal of whether anyone
+# is running this.
+#
+#   ghcr.io/covan-ai/covan-api
+#   ghcr.io/covan-ai/covan-web
+#
+# A version tag publishes `1.2.3`, `1.2` and `latest`. A push to main publishes
+# `edge`, so there is always something current to pull between releases.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Build ${{ matrix.image }} for ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, web]
+        platform: [linux/amd64, linux/arm64]
+        # Native runners for both architectures rather than one runner and QEMU.
+        # Dockerfile.web compiles the whole frontend, and doing that under
+        # emulation turns a two-minute build into something closer to twenty.
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Each architecture is pushed as an untagged digest; the merge job below
+      # is what assembles them into one tag a `docker pull` can resolve. Building
+      # both platforms in one job would work too, but not on separate runners,
+      # which is the entire point.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.${{ matrix.image }}
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
+          # Off because it adds an `unknown/unknown` entry to the manifest list,
+          # which shows up in the package listing and in `docker manifest
+          # inspect` as a platform that does not exist. Turn it back on when
+          # signing the images is worth explaining.
+          provenance: false
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/covan-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Save the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.image }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    name: Tag ${{ matrix.image }}
+    needs: [build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [api, web]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `latest` follows semver tags only — the default `flavor: latest=auto`.
+      # A push to main is `edge`, which is what someone tracking the branch
+      # wants and is not what `latest` should ever silently become.
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/covan-${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=edge,enable={{is_default_branch}}
+
+      - name: Assemble the manifest list
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/covan-${{ matrix.image }}
+          # Through the environment rather than interpolated into the script:
+          # the tag list is derived from git ref names, and a name containing a
+          # quote would otherwise end the string and continue as shell.
+          META_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$META_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Show what was published
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/covan-${{ matrix.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"

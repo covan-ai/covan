@@ -14,6 +14,11 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test-setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    // scripts/ is in here for web-runtime-config.mjs, which runs inside the
+    // published Docker image rather than in the app, and is the one script whose
+    // failure mode is a container that starts and quietly does not work. It
+    // opts into the node environment with a docblock; everything under src/
+    // wants jsdom.
+    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.mjs"],
   },
 });

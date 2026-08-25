@@ -9,10 +9,15 @@ git clone <your fork or clone url> covan
 cd covan
 cp .env.docker.example .env
 # open .env and set OPENAI_API_KEY=sk-...
-docker compose up --build
+docker compose pull        # published images; omit to build from this checkout
+docker compose up
 ```
 
-First run builds two images and pulls six more, so give it a few minutes.
+Both Covan images are published to `ghcr.io/covan-ai` for amd64 and arm64, so
+`docker compose pull` skips compiling the frontend locally. Leave it out and
+`docker compose up` builds from source instead — the compose file declares both,
+so either works from a fresh clone. Six supporting images are pulled either way.
+
 When it settles:
 
 | What      | Where                   |
@@ -39,8 +44,8 @@ uploaded document too.
 | `realtime`  | `supabase/realtime:v2.102.3`   | Live updates for shared chats and idea boards      |
 | `kong`      | `kong/kong:3.9.3`              | One origin in front of auth/rest/realtime          |
 | `migrate`   | `postgres:17.6-alpine`         | Applies `supabase/migrations/`, then exits         |
-| `covan-api` | built from `Dockerfile.api`    | `worker/src/node.ts` — the same code as the Worker |
-| `covan-web` | built from `Dockerfile.web`    | The Vite build served by nitro's node server       |
+| `covan-api` | `ghcr.io/covan-ai/covan-api`   | `worker/src/node.ts` — the same code as the Worker |
+| `covan-web` | `ghcr.io/covan-ai/covan-web`   | The Vite build served by nitro's node server       |
 
 The Supabase services are trimmed from the [official self-host
 bundle](https://github.com/supabase/supabase/tree/master/docker), with the
@@ -70,9 +75,18 @@ work as-is on a laptop.
   `ROUTINE_SECRET_KEY` must decode to 16, 24 or 32 bytes; it is an AES-GCM key,
   and a wrong length fails when a delivery channel is saved rather than at
   boot.
-- `SUPABASE_PUBLIC_URL`, `VITE_API_URL` — **build-time** values. Vite inlines
-  them into the JavaScript the browser downloads, so changing them needs
-  `docker compose build covan-web`, not just a restart.
+- `SUPABASE_PUBLIC_URL`, `VITE_API_URL` — addresses the **browser** calls, not
+  the API container. Changing them takes effect on
+  `docker compose up -d covan-web`; no rebuild.
+
+  Vite does inline `VITE_*` into the JavaScript the browser downloads, which is
+  why these used to need a rebuild — and why there was no image worth
+  publishing, since the bundle carried whoever built it's configuration. The
+  image is now built against placeholder values and
+  `scripts/web-runtime-config.mjs` substitutes the real ones in when the
+  container starts. One image, any deployment. A missing value stops the
+  container with a message rather than serving a frontend that cannot reach
+  anything.
 
 Note the asymmetry, which is the most common way this stack gets
 misconfigured: `covan-api` reaches Supabase over the compose network at
@@ -101,14 +115,15 @@ every line in `.env.docker.example`, in the order it appears there.
 | `SECRET_KEY_BASE`                                      | local placeholder          | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                       |
 | `REALTIME_DB_ENC_KEY`                                  | `supabaserealtime`         | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                     |
 | `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to 16, 24 or 32 bytes, or saving a delivery channel fails.    |
-| `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Build-time — rebuild `covan-web` after changing it.                                      |
-| `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Build-time, same caveat.                                                            |
+| `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Applied when `covan-web` starts; no rebuild.                                             |
+| `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Same — restart, not rebuild.                                                        |
 | `SITE_URL`                                             | `http://localhost:3000`    | The origin GoTrue puts in confirmation and password-reset links.                                                                 |
 | `ALLOWED_ORIGIN`                                       | `http://localhost:3000`    | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.   |
-| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, then rebuild `covan-web`.                                               |
+| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, and update the `VITE_` URLs to match.                                    |
 | `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.           |
 | `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.      |
-| `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. Build-time. See below.      |
+| `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                  |
+| `COVAN_VERSION`                                        | `latest`                   | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.1.0` pins one.              |
 
 Three more values the API reads are set by `docker-compose.yml` rather than by
 you: `SUPABASE_URL` (`http://kong:8000` — the compose network address, not
@@ -175,8 +190,8 @@ you are the one holding the database.
 If you operate Covan as a service for other people, it is not sufficient, and no
 default this repository could ship would be. Point `VITE_TERMS_URL` and
 `VITE_PRIVACY_URL` at documents written for your service, and the built-in pages
-stop being linked. They are build-time values like the other `VITE_` ones, so
-rebuild after changing them.
+stop being linked. Like the other `VITE_` values they are applied when the
+container starts, so `docker compose up -d covan-web` is enough.
 
 ## Uploaded documents
 

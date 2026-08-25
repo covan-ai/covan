@@ -64,10 +64,8 @@ runs it.
 ### Status
 
 Covan runs, and it was extracted from a working private product rather than
-written as a demo. It is nonetheless young as an open-source project: there are
-no published images or releases yet, so upgrading means pulling the repository
-and rebuilding, the API is unversioned, and nothing is promised about
-compatibility between commits. Read
+written as a demo. It is nonetheless young as an open-source project: the API is
+unversioned and nothing is promised about compatibility between commits. Read
 [`docs/self-hosting.md`](docs/self-hosting.md) before you put it in front of
 anyone outside your team.
 
@@ -79,12 +77,23 @@ No accounts, no cloud setup. You need Docker and an OpenAI API key.
 git clone https://github.com/covan-ai/covan
 cd covan
 cp .env.docker.example .env     # set OPENAI_API_KEY
+docker compose pull             # optional: published images instead of a build
 docker compose up
 ```
 
-The first run builds two images and pulls half a dozen more, so give it a few
-minutes. Then open <http://localhost:3000> and create an account — any email and
+Then open <http://localhost:3000> and create an account — any email and
 password; there is no mail server in the stack, so confirmation is off.
+
+`docker compose pull` is worth the extra line. Without it the first run compiles
+the frontend on your machine, which is a few minutes; with it, both Covan images
+come from
+[`ghcr.io/covan-ai`](https://github.com/orgs/covan-ai/packages) prebuilt for
+amd64 and arm64. Either way the stack pulls half a dozen supporting images —
+Postgres, GoTrue, PostgREST, Kong — so give the first start a minute.
+
+Pin a release with `COVAN_VERSION=0.1.0` in `.env` — no leading `v`, since the
+image tags are semver — or track the branch with `COVAN_VERSION=edge`. The
+default is `latest`, which follows releases.
 
 Stop with `docker compose down`; add `-v` to throw away the database and the
 uploaded documents too.

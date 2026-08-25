@@ -253,6 +253,11 @@ services:
 
   covan-api:
     container_name: covan-api
+    # Both `image` and `build`, on purpose. `docker compose up` builds from
+    # source when the image is not present locally, so a fresh clone works with
+    # no registry at all; `docker compose pull` fetches the published image
+    # instead and skips the build entirely. COVAN_VERSION pins a release.
+    image: ghcr.io/covan-ai/covan-api:${COVAN_VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -303,17 +308,10 @@ services:
 
   covan-web:
     container_name: covan-web
+    image: ghcr.io/covan-ai/covan-web:${COVAN_VERSION:-latest}
     build:
       context: .
       dockerfile: Dockerfile.web
-      args:
-        # Baked into the browser bundle by Vite at BUILD time — the browser
-        # talks to these directly, so they must be host-reachable URLs, never
-        # compose service names. `http://kong:8000` here produces a frontend
-        # that cannot sign anyone in.
-        VITE_SUPABASE_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}
-        VITE_SUPABASE_ANON_KEY: ${ANON_KEY}
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8787}
     restart: unless-stopped
     init: true
     stop_grace_period: 10s
@@ -323,6 +321,20 @@ services:
     environment:
       PORT: 3000
       HOST: 0.0.0.0
+      # These used to be build args, because Vite inlines VITE_* into the bundle
+      # at build time. The image is now built against sentinel values and
+      # scripts/web-runtime-config.mjs substitutes these in at startup, which is
+      # what makes one published image usable by everybody.
+      #
+      # The browser calls these addresses itself, so they must be reachable from
+      # the browser and never compose service names. `http://kong:8000` here
+      # produces a frontend that cannot sign anyone in.
+      VITE_SUPABASE_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}
+      VITE_SUPABASE_ANON_KEY: ${ANON_KEY}
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8787}
+      # Optional. Unset means the built-in /terms and /privacy pages.
+      VITE_TERMS_URL: ${VITE_TERMS_URL:-}
+      VITE_PRIVACY_URL: ${VITE_PRIVACY_URL:-}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
       interval: 5s

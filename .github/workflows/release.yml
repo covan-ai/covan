@@ -91,7 +91,7 @@ jobs:
       # which is the entire point.
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.${{ matrix.image }}

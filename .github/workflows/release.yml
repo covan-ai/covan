@@ -11,6 +11,22 @@ name: Release
 #
 # A version tag publishes `1.2.3`, `1.2` and `latest`. A push to main publishes
 # `edge`, so there is always something current to pull between releases.
+#
+# ---------------------------------------------------------------------------
+# ONE MANUAL STEP, ONCE PER PACKAGE, and nothing here can do it.
+#
+# GitHub creates container packages **private**, whatever the repository's
+# visibility. Until each is switched to public, an anonymous `docker pull`
+# answers `401 Unauthorized` — so the quickstart in the README does not work,
+# and it fails in a way that looks like the image was never published.
+#
+#   https://github.com/orgs/covan-ai/packages/container/covan-api/settings
+#   https://github.com/orgs/covan-ai/packages/container/covan-web/settings
+#
+# Danger zone -> Change visibility -> Public. There is no workflow permission
+# that grants this and no supported API call for org container packages, which
+# is why it is written here rather than automated.
+# ---------------------------------------------------------------------------
 
 on:
   push:
@@ -57,6 +73,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Labels, chiefly `org.opencontainers.image.source`. GitHub reads that one
+      # to link the package to this repository — without it the package page is
+      # an orphan with no README, no licence and no way back to the source,
+      # which for a self-hosting image is most of what a visitor wants.
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/covan-${{ matrix.image }}
+          labels: |
+            org.opencontainers.image.title=covan-${{ matrix.image }}
+            org.opencontainers.image.description=Covan — a shared AI agent for your team
+
       # Each architecture is pushed as an untagged digest; the merge job below
       # is what assembles them into one tag a `docker pull` can resolve. Building
       # both platforms in one job would work too, but not on separate runners,
@@ -68,6 +96,7 @@ jobs:
           context: .
           file: Dockerfile.${{ matrix.image }}
           platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
           # Off because it adds an `unknown/unknown` entry to the manifest list,

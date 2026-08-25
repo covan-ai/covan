@@ -107,8 +107,11 @@ function PrivacyPage() {
         <p>
           A document, a conversation, an agent and a whole workspace can each be deleted from the
           interface, and deleting them removes the rows and the stored file rather than hiding them.
-          Deleting your account removes your profile, your private sessions and the workspaces you
-          alone owned.
+        </p>
+        <p>
+          Removing an account itself is not yet something the interface does — that is a gap being
+          closed, not a decision. Until it is, whoever operates the install can delete the user
+          through Supabase, and the rows that belong to them go with it.
         </p>
         <p>
           What you sent to OpenAI is governed by OpenAI's own retention terms and is not something

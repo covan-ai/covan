@@ -11,7 +11,13 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { closeSql, createTestUser, destroyTestUsers, serviceClient, type TestUser } from "./harness";
+import {
+  closeSql,
+  createTestUser,
+  destroyTestUsers,
+  serviceClient,
+  type TestUser,
+} from "./harness";
 import { seedWorkspace, type Seeded } from "./fixtures";
 
 let owner: TestUser;

@@ -69,39 +69,49 @@ const DEMO_ROUTINE_KEY = "Y292YW4tbG9jYWwtZGV2LXJvdXRpbmUta2V5LTAwMDE=";
 describe("published default secrets", () => {
   it("refuses to start with the demo service-role key on a non-local origin", () => {
     expect(() =>
-      loadEnv(valid({
-        ALLOWED_ORIGIN: "https://covan.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: DEMO_SERVICE_ROLE,
-      })),
+      loadEnv(
+        valid({
+          ALLOWED_ORIGIN: "https://covan.example.com",
+          SUPABASE_SERVICE_ROLE_KEY: DEMO_SERVICE_ROLE,
+        }),
+      ),
     ).toThrow(/SUPABASE_SERVICE_ROLE_KEY/);
   });
 
   it("refuses to start with the demo routine key on a non-local origin", () => {
     expect(() =>
-      loadEnv(valid({
-        ALLOWED_ORIGIN: "https://covan.example.com",
-        ROUTINE_SECRET_KEY: DEMO_ROUTINE_KEY,
-      })),
+      loadEnv(
+        valid({
+          ALLOWED_ORIGIN: "https://covan.example.com",
+          ROUTINE_SECRET_KEY: DEMO_ROUTINE_KEY,
+        }),
+      ),
     ).toThrow(/ROUTINE_SECRET_KEY/);
   });
 
   it("names every offending variable in one message", () => {
     expect(() =>
-      loadEnv(valid({
-        ALLOWED_ORIGIN: "https://covan.example.com",
-        SUPABASE_SERVICE_ROLE_KEY: DEMO_SERVICE_ROLE,
-        ROUTINE_SECRET_KEY: DEMO_ROUTINE_KEY,
-      })),
-    ).toThrow(/SUPABASE_SERVICE_ROLE_KEY.*ROUTINE_SECRET_KEY|ROUTINE_SECRET_KEY.*SUPABASE_SERVICE_ROLE_KEY/s);
+      loadEnv(
+        valid({
+          ALLOWED_ORIGIN: "https://covan.example.com",
+          SUPABASE_SERVICE_ROLE_KEY: DEMO_SERVICE_ROLE,
+          ROUTINE_SECRET_KEY: DEMO_ROUTINE_KEY,
+        }),
+      ),
+    ).toThrow(
+      /SUPABASE_SERVICE_ROLE_KEY.*ROUTINE_SECRET_KEY|ROUTINE_SECRET_KEY.*SUPABASE_SERVICE_ROLE_KEY/s,
+    );
   });
 
   it("allows the demo values on localhost, which is what they are for", () => {
     expect(() =>
-      loadEnv(valid({
-        ALLOWED_ORIGIN: "http://localhost:3000",
-        SUPABASE_SERVICE_ROLE_KEY: DEMO_SERVICE_ROLE,
-        ROUTINE_SECRET_KEY: DEMO_ROUTINE_KEY,
-      })),
+      loadEnv(
+        valid({
+          ALLOWED_ORIGIN: "http://localhost:3000",
+          SUPABASE_SERVICE_ROLE_KEY: DEMO_SERVICE_ROLE,
+          ROUTINE_SECRET_KEY: DEMO_ROUTINE_KEY,
+        }),
+      ),
     ).not.toThrow();
   });
 });

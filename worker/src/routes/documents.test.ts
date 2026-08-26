@@ -204,7 +204,10 @@ describe("PATCH /documents/:id — moving a document to another bundle", () => {
  * matters: a viewer's delete is refused by RLS as "matched no rows, no error",
  * which is indistinguishable from success unless the handler looks.
  */
-function fakeDeleteDb(opts: { row: { id: string; r2_key: string | null } | null; rowsDeleted: number }) {
+function fakeDeleteDb(opts: {
+  row: { id: string; r2_key: string | null } | null;
+  rowsDeleted: number;
+}) {
   return {
     from: () => ({
       select: () => ({
@@ -246,7 +249,10 @@ function appWith(db: unknown, deleted: string[]) {
 describe("DELETE /documents/:id", () => {
   it("removes the stored object when RLS permits the row delete", async () => {
     const deleted: string[] = [];
-    const app = appWith(fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 1 }), deleted);
+    const app = appWith(
+      fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 1 }),
+      deleted,
+    );
 
     const res = await app.request("/documents/d1", { method: "DELETE" });
 
@@ -257,7 +263,10 @@ describe("DELETE /documents/:id", () => {
 
   it("leaves the bytes alone and 403s when RLS refuses the row delete", async () => {
     const deleted: string[] = [];
-    const app = appWith(fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 0 }), deleted);
+    const app = appWith(
+      fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 0 }),
+      deleted,
+    );
 
     const res = await app.request("/documents/d1", { method: "DELETE" });
 

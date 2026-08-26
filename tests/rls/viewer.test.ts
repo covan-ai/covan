@@ -114,7 +114,10 @@ describe("a viewer changes nothing the workspace shares", () => {
     // deleted rows back rather than trusting the absence of an error.
     expect(error).toBeNull();
 
-    const { data } = await serviceClient().from("documents").select("id").eq("id", seeded.documentId);
+    const { data } = await serviceClient()
+      .from("documents")
+      .select("id")
+      .eq("id", seeded.documentId);
     expect(data).toHaveLength(1);
   });
 

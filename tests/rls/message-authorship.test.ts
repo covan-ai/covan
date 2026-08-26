@@ -209,7 +209,12 @@ describe("a client may not rewrite its own line into the agent's voice", () => {
     // reach was never needed and is now gone.
     const { data: carols } = await carol.db
       .from("messages")
-      .insert({ session_id: shared.sessionId, role: "user", content: "carol's line", sender_id: carol.id })
+      .insert({
+        session_id: shared.sessionId,
+        role: "user",
+        content: "carol's line",
+        sender_id: carol.id,
+      })
       .select("id")
       .single();
 

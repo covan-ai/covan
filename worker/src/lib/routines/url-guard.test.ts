@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { assertFetchableUrl, ownHostsFrom, isPrivateAddress, assertResolvedHostIsPublic } from "./url-guard";
+import {
+  assertFetchableUrl,
+  ownHostsFrom,
+  isPrivateAddress,
+  assertResolvedHostIsPublic,
+} from "./url-guard";
 
 const OWN = ["covan-worker.workers.dev", "api.example.com"];
 

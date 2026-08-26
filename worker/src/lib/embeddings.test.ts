@@ -160,7 +160,10 @@ describe("embedTexts batching", () => {
       usage: { total_tokens: input.length },
     }));
 
-    await embedTexts("key", Array.from({ length: 1500 }, (_, i) => String(i)));
+    await embedTexts(
+      "key",
+      Array.from({ length: 1500 }, (_, i) => String(i)),
+    );
 
     for (const call of create.mock.calls) {
       expect(call[0].input.length).toBeLessThanOrEqual(EMBED_BATCH_SIZE);

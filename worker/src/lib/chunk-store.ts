@@ -31,7 +31,9 @@ export async function insertChunkRows(
   rows: ChunkRow[],
 ): Promise<{ error: unknown | null }> {
   for (let i = 0; i < rows.length; i += CHUNK_INSERT_BATCH) {
-    const { error } = await db.from("document_chunks").insert(rows.slice(i, i + CHUNK_INSERT_BATCH));
+    const { error } = await db
+      .from("document_chunks")
+      .insert(rows.slice(i, i + CHUNK_INSERT_BATCH));
     if (error) return { error };
   }
   return { error: null };

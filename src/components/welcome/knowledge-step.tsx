@@ -84,9 +84,7 @@ export function KnowledgeStep({ agent, onDone }: { agent: Agent; onDone: () => v
         picked.map((p) => uploadToBundle(bundle.id, p.file)),
       );
       const failed = results.filter((r) => r.status === "rejected").length;
-      const unindexed = results.filter(
-        (r) => r.status === "fulfilled" && !r.value.indexed,
-      ).length;
+      const unindexed = results.filter((r) => r.status === "fulfilled" && !r.value.indexed).length;
 
       if (failed === picked.length) {
         toast.error("Couldn't upload those. You can add them from the Knowledge tab.");

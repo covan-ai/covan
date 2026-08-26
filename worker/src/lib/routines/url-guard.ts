@@ -1,10 +1,14 @@
 /**
  * Guards every outbound fetch to a user-supplied address.
  *
- * Note what this does NOT do: it cannot resolve DNS, so a hostname that
- * resolves to a private address still passes. Cloudflare's edge will not route
- * to RFC1918 space, which covers the gap for the literal cases; the checks
- * here stop the direct attempts and the redirect bounce.
+ * `assertFetchableUrl` below judges the hostname string alone, so a name that
+ * merely *resolves* to a private address — `169.254.169.254.nip.io`,
+ * `metadata.google.internal`, a bare compose service name — walks straight
+ * past it. On Cloudflare that is survivable: the edge will not route to
+ * RFC1918 space. It is not survivable on the Node runtime (`worker/src/node.ts`,
+ * the Docker image), where `fetch` resolves and connects itself. That gap is
+ * `assertResolvedHostIsPublic` below — the resolving half of the guard, wired
+ * into the Node fetch path in `source.ts`.
  */
 
 const PRIVATE_V4 = [
@@ -119,4 +123,33 @@ export function assertFetchableUrl(raw: string, ownHosts: string[]): URL {
     throw new Error(`unsafe url: ${url.host} is this service`);
   }
   return url;
+}
+
+/**
+ * The second half of the guard, for runtimes that resolve DNS themselves.
+ *
+ * `assertFetchableUrl` can only judge the hostname it was handed, so
+ * `169.254.169.254.nip.io` — or a bare compose service name like `kong` —
+ * walks straight past it. On Cloudflare that is survivable because the edge
+ * refuses to route to RFC1918 space. On the Node runtime, which is the Docker
+ * image and the whole self-host story, `fetch` resolves and connects to
+ * whatever comes back, on a network shared with the database.
+ *
+ * `resolve` is injected rather than imported so this module stays free of
+ * `node:dns` — the Workers bundle must not pull it in.
+ */
+export async function assertResolvedHostIsPublic(
+  hostname: string,
+  resolve: (host: string) => Promise<string[]>,
+): Promise<string[]> {
+  const addresses = await resolve(hostname);
+  if (addresses.length === 0) {
+    throw new Error(`unsafe url: ${hostname} does not resolve`);
+  }
+  for (const address of addresses) {
+    if (isPrivateAddress(address)) {
+      throw new Error(`unsafe url: ${hostname} resolves to ${address}, a private address`);
+    }
+  }
+  return addresses;
 }

@@ -1,5 +1,25 @@
-import { assertFetchableUrl } from "./url-guard";
+import { assertFetchableUrl, assertResolvedHostIsPublic } from "./url-guard";
 import { parseFeed, type Cursor, type FeedItem } from "./feed";
+
+/**
+ * Resolve on Node, skip on Workers.
+ *
+ * There is no DNS API in workerd, and no need for one: the edge will not route
+ * to private space. Importing `node:dns` eagerly would break the Workers
+ * build, so this is a dynamic import behind a runtime check — and the check
+ * fails safe: if `navigator` is missing or shaped unexpectedly, `onWorkers` is
+ * `false` and this runtime is treated as Node, i.e. the stricter path.
+ */
+async function resolvesPublicly(hostname: string): Promise<void> {
+  const onWorkers =
+    typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+  if (onWorkers) return;
+  const { lookup } = await import("node:dns/promises");
+  await assertResolvedHostIsPublic(hostname, async (h) => {
+    const all = await lookup(h, { all: true });
+    return all.map((a) => a.address);
+  });
+}
 
 export type SourceInput = {
   source_kind: "rss" | "web" | "none";
@@ -55,6 +75,18 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
 /**
  * `redirect: "manual"` is load-bearing: with automatic following, every check
  * in the url guard is bypassed by a single 302.
+ *
+ * `resolvesPublicly` runs after every `assertFetchableUrl`, including inside
+ * the redirect loop — a hop that resolves to link-local space is exactly as
+ * dangerous as a starting URL that does, and skipping the check on hops would
+ * leave the bypass open through a redirect.
+ *
+ * Known remainder (not closed here): this validates the address and then lets
+ * `fetch` resolve the hostname a second time to actually connect. Between the
+ * two lookups, DNS can answer differently — classic rebind. Closing that needs
+ * an undici `Agent` with a pinned `connect.lookup` so the socket connects to
+ * the address that was actually checked, which changes the fetch call shape
+ * more than this task's scope. Tracked in docs/superpowers/backlog.md.
  */
 async function guardedFetch(
   rawUrl: string,
@@ -62,6 +94,7 @@ async function guardedFetch(
   deps: FetchDeps,
 ): Promise<Response> {
   let target = assertFetchableUrl(rawUrl, deps.ownHosts);
+  await resolvesPublicly(target.hostname);
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const headers: Record<string, string> = { "User-Agent": "covan-routines/1.0" };
@@ -77,6 +110,7 @@ async function guardedFetch(
       const location = res.headers.get("Location");
       if (!location) throw new Error(`upstream ${res.status} without Location`);
       target = assertFetchableUrl(new URL(location, target).toString(), deps.ownHosts);
+      await resolvesPublicly(target.hostname);
       continue;
     }
     return res;

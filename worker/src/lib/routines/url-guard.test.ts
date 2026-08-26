@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assertFetchableUrl, ownHostsFrom, isPrivateAddress } from "./url-guard";
+import { assertFetchableUrl, ownHostsFrom, isPrivateAddress, assertResolvedHostIsPublic } from "./url-guard";
 
 const OWN = ["covan-worker.workers.dev", "api.example.com"];
 
@@ -171,5 +171,35 @@ describe("address ranges that were reachable", () => {
     expect(isPrivateAddress("::127.0.0.1")).toBe(true);
     expect(isPrivateAddress("64:ff9b::127.0.0.1")).toBe(true);
     expect(isPrivateAddress("64:ff9b::93.184.216.34")).toBe(false);
+  });
+});
+
+describe("assertResolvedHostIsPublic", () => {
+  it("rejects a public-looking name that resolves to link-local", async () => {
+    const resolve = async () => ["169.254.169.254"];
+    await expect(assertResolvedHostIsPublic("169.254.169.254.nip.io", resolve)).rejects.toThrow(
+      /resolves to 169\.254\.169\.254/,
+    );
+  });
+
+  it("rejects when only one of several answers is private", async () => {
+    const resolve = async () => ["93.184.216.34", "10.0.0.5"];
+    await expect(assertResolvedHostIsPublic("split.example.com", resolve)).rejects.toThrow(
+      /resolves to 10\.0\.0\.5/,
+    );
+  });
+
+  it("rejects a name that resolves to nothing", async () => {
+    const resolve = async () => [];
+    await expect(assertResolvedHostIsPublic("void.example.com", resolve)).rejects.toThrow(
+      /does not resolve/,
+    );
+  });
+
+  it("returns the addresses for a genuinely public host", async () => {
+    const resolve = async () => ["93.184.216.34"];
+    await expect(assertResolvedHostIsPublic("example.com", resolve)).resolves.toEqual([
+      "93.184.216.34",
+    ]);
   });
 });

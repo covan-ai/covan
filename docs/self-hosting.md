@@ -285,6 +285,17 @@ Before the stack faces a network:
 4. Rate-limit the API at that same proxy. See below.
 5. Consider not publishing `54322` at all.
 
+Every port `docker-compose.yml` publishes now binds to `127.0.0.1` by
+default, controlled by `BIND_ADDR` in `.env`. That default is doing real
+work: Docker publishes ports through `nat/PREROUTING`, which runs before
+your firewall's `INPUT` chain, so `ufw default deny incoming` does not
+touch a published port — the bind address is the only thing standing
+between the compose network and the internet until you've done the rest of
+this list. Setting `BIND_ADDR=0.0.0.0` (or any non-loopback address) to
+expose the stack is a deliberate choice, and it should never be made
+without regenerating the secrets in step 1 first — those are demo values
+published in this repository, not a guess an attacker has to make.
+
 ### Covan does not rate-limit itself
 
 There is no request limiter anywhere in the API, on either deployment path.

@@ -8,12 +8,19 @@
  */
 
 const PRIVATE_V4 = [
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^0\./,
+  /^127\./, // loopback
+  /^10\./, // RFC1918
+  /^192\.168\./, // RFC1918
+  /^172\.(1[6-9]|2\d|3[01])\./, // RFC1918
+  /^169\.254\./, // link-local — cloud metadata lives here
+  /^0\./, // "this network", and 0.0.0.0 as every local address
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT, RFC6598 — carriers and Tailscale
+  /^192\.0\.0\./, // IETF protocol assignments
+  /^192\.0\.2\./, // TEST-NET-1
+  /^198\.1[89]\./, // benchmarking, RFC2544
+  /^198\.51\.100\./, // TEST-NET-2
+  /^203\.0\.113\./, // TEST-NET-3
+  /^2(2[4-9]|[3-4]\d|5[0-5])\./, // multicast and reserved, 224.0.0.0/4 upward
 ];
 
 const PRIVATE_V6 = ["::1", "::", "0:0:0:0:0:0:0:1"];
@@ -26,7 +33,7 @@ function canonicalHost(value: string): string {
   return withoutPort.replace(/\.$/, "").toLowerCase();
 }
 
-function isPrivateHost(host: string): boolean {
+export function isPrivateAddress(host: string): boolean {
   const bare = host.startsWith("[") ? host.slice(1, -1) : host;
   const canonicalBare = bare.replace(/\.$/, "").toLowerCase();
 
@@ -45,6 +52,18 @@ function isPrivateHost(host: string): boolean {
 
   if (PRIVATE_V6.includes(canonicalBare)) return true;
   if (/^fe80:/i.test(canonicalBare) || /^f[cd][0-9a-f]{2}:/i.test(canonicalBare)) return true;
+
+  // IPv4-compatible IPv6 (::a.b.c.d) and NAT64 (64:ff9b::/96) both carry a v4
+  // address in the low bits and both route to it.
+  const embedded = /^(?:::|64:ff9b::)(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(canonicalBare);
+  if (embedded) return PRIVATE_V4.some((re) => re.test(embedded[1]));
+  const embeddedHex = /^(?:::|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(canonicalBare);
+  if (embeddedHex) {
+    const hi = parseInt(embeddedHex[1], 16);
+    const lo = parseInt(embeddedHex[2], 16);
+    return PRIVATE_V4.some((re) => re.test(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`));
+  }
+
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(canonicalBare))
     return PRIVATE_V4.some((re) => re.test(canonicalBare));
   return canonicalBare === "localhost";
@@ -88,7 +107,7 @@ export function assertFetchableUrl(raw: string, ownHosts: string[]): URL {
   }
 
   const host = canonicalHost(url.hostname);
-  if (isPrivateHost(url.hostname)) {
+  if (isPrivateAddress(url.hostname)) {
     throw new Error(`unsafe url: ${url.hostname} is a private address`);
   }
 

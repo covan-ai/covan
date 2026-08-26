@@ -76,7 +76,10 @@ function Welcome() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const { data: me, isError: meFailed } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api.me(),
+  });
   const { data: incoming = [] } = useQuery({
     queryKey: ["invitations", "incoming"],
     queryFn: () => api.invitations.incoming(),
@@ -130,7 +133,11 @@ function Welcome() {
 
   // Wait for the three facts that change the shape of the flow. Rendering
   // before they land would show a card and then take it away.
-  const ready = me !== undefined && hosted !== undefined && !agentsPending;
+  // A failed /me stops the wait rather than extending it — the same rule
+  // _authed.tsx applies. `answers` falls back to EMPTY_ANSWERS below, so the
+  // flow starts at question one instead of resuming; that is a worse first
+  // step than resuming, and a much better one than a spinner with no exit.
+  const ready = (me !== undefined || meFailed) && hosted !== undefined && !agentsPending;
 
   if (!ready || completed) {
     return (
@@ -222,8 +229,14 @@ function Welcome() {
           skipLabel="Skip this one"
         />
       )}
-      {step === "workspace" && <WorkspaceStep currentName={me.workspace.name} onDone={advance} />}
-      {step === "agent" && (
+      {/* `me &&` here is for the type checker, not the runtime: resolveStep
+          never reaches "workspace" while `me` is undefined, because a failed
+          /me falls back to EMPTY_ANSWERS, and an unanswered `role` always
+          wins over any later step. */}
+      {step === "workspace" && me && (
+        <WorkspaceStep currentName={me.workspace.name} onDone={advance} />
+      )}
+      {step === "agent" && me && (
         <AgentStep
           useCase={ctx.answers.useCase}
           defaultModel={me.workspace.defaultModel}

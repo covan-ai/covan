@@ -6,6 +6,7 @@ import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
+import { insertChunkRows } from "../lib/chunk-store";
 
 const documents = new Hono<AppEnv>();
 
@@ -238,7 +239,7 @@ documents.post("/documents/:id/reindex", async (c) => {
     content: ch,
     embedding: vectors[i],
   }));
-  const { error: insErr } = await db.from("document_chunks").insert(rows);
+  const { error: insErr } = await insertChunkRows(db, rows);
   if (insErr) return c.json({ error: "failed to save chunks" }, 500);
 
   return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunks.length }] }));

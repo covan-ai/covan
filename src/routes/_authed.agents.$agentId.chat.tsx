@@ -412,7 +412,7 @@ function ChatTab() {
   useEffect(() => {
     if (!active || busy || messages.length > 0) return;
     if (draftConsumed.current === active.id) return;
-    let draft: string | null = null;
+    let draft: string | null;
     try {
       draft = sessionStorage.getItem(`chat-draft:${active.id}`);
     } catch {

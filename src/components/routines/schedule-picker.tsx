@@ -76,7 +76,7 @@ export function SchedulePicker({
       return /^\d+$/.test(raw.trim()) && n >= 1 ? n : null;
     };
 
-    let form: ScheduleForm | null = null;
+    let form: ScheduleForm | null;
     if (m === "minutes") {
       const every = count(next.minutes ?? minutes);
       // Out-of-floor values still build a cron, so the error below can name the

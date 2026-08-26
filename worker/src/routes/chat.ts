@@ -120,7 +120,7 @@ chat.post("/chat/stream", async (c) => {
   // only used by the no-match fallback below, so we load it lazily there and
   // avoid pulling every document's full body on every single turn.
   let docNames: string[] = [];
-  let bundleIds: string[] = [];
+  let bundleIds: string[];
   {
     const { data: bundleRows, error: bundleError } = await db
       .from("agent_bundles")

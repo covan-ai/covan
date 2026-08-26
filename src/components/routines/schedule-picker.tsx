@@ -81,7 +81,14 @@ export function SchedulePicker({
       const every = count(next.minutes ?? minutes);
       // Out-of-floor values still build a cron, so the error below can name the
       // number the user actually typed instead of a silently corrected one.
-      form = every === null ? null : { mode: "minutes", every };
+      //
+      // Above 59 is a different case and must not build one. `*/60 * * * *` is
+      // not "every 60 minutes" — cron reads it as minute 0 of every hour — and
+      // the server's isValidCron accepts it, so the routine would run on a
+      // schedule nobody asked for. fromCron caps its step at 59 for the same
+      // reason, which is why typing 60 also made this picker collapse to a raw
+      // cron string mid-edit.
+      form = every === null || every > 59 ? null : { mode: "minutes", every };
     } else if (m === "hours") {
       const every = count(next.hours ?? hours);
       form = every === null || every > 23 ? null : { mode: "hours", every };

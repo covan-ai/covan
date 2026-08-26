@@ -52,6 +52,33 @@ describe("SchedulePicker", () => {
     expect(screen.getByText(/shortest interval it can honour/i)).toBeInTheDocument();
   });
 
+  it("refuses a minute interval cron cannot express", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<SchedulePicker value="*/15 * * * *" onChange={onChange} />);
+
+    const field = screen.getByLabelText(/minutes between runs/i);
+    await user.clear(field);
+    await user.type(field, "60");
+
+    // "" is how this component reports an unfinished or unusable field, and it
+    // is what blocks the save. `*/60 * * * *` would have been accepted by the
+    // server and quietly meant "hourly".
+    expect(onChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("still accepts the largest expressible interval", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<SchedulePicker value="*/15 * * * *" onChange={onChange} />);
+
+    const field = screen.getByLabelText(/minutes between runs/i);
+    await user.clear(field);
+    await user.type(field, "59");
+
+    expect(onChange).toHaveBeenLastCalledWith("*/59 * * * *");
+  });
+
   // The draft parser can emit `0 9 * * 1-5`, and routines created before this
   // picker existed carry whatever they were made with. Rounding those to the
   // nearest shape the picker knows would change a schedule without being asked.

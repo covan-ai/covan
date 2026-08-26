@@ -291,6 +291,10 @@ services:
       # No R2 binding off Cloudflare, so getDocStore falls to the filesystem
       # store rooted here. This path is a volume; see below.
       DOCS_DIR: /data/docs
+      # Requests per minute, per tier. Empty means the built-in defaults; 0 turns
+      # a tier off for an operator who limits at their own proxy instead.
+      RATE_LIMIT_STANDARD_PER_MINUTE: ${RATE_LIMIT_STANDARD_PER_MINUTE:-}
+      RATE_LIMIT_EXPENSIVE_PER_MINUTE: ${RATE_LIMIT_EXPENSIVE_PER_MINUTE:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-}
       PORT: 8787

@@ -68,6 +68,22 @@ export type Bindings = RoutineEnv & {
   /** Filesystem document root, on the Node runtime only. Absent on Cloudflare. */
   DOCS_DIR?: string;
   ADMIN_API_KEY?: string;
+  /**
+   * Rate limiting, on Cloudflare only — `[[ratelimits]]` in wrangler.toml.
+   * Their presence is what makes `getRateLimiter` use the edge counter instead
+   * of the in-process one, the same way `DOCS` chooses R2 over the filesystem.
+   * Absent on Node, where the two variables below configure the fallback.
+   */
+  RATE_LIMIT_STANDARD?: RateLimit;
+  RATE_LIMIT_EXPENSIVE?: RateLimit;
+  /**
+   * Requests per minute on the Node runtime. Unset takes the defaults in
+   * `lib/ratelimit/types.ts`; `0` disables that tier, which is what an operator
+   * who limits in nginx or Cloudflare in front of this should set rather than
+   * running two limiters that disagree.
+   */
+  RATE_LIMIT_STANDARD_PER_MINUTE?: string;
+  RATE_LIMIT_EXPENSIVE_PER_MINUTE?: string;
 };
 
 /**

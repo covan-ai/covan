@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api-client";
 import { isAdminRole } from "@/lib/roles";
+import { privacyLink, termsLink } from "@/lib/legal";
+import { LegalAnchor } from "@/components/legal-anchor";
 
 export const Route = createFileRoute("/_authed/settings")({
   component: SettingsPage,
@@ -207,6 +209,22 @@ function SettingsPage() {
         <UsageSection />
 
         <DeliveryChannelsCard />
+
+        {/* Both documents were reachable from exactly one place — the "I agree"
+            checkbox on the sign-up form — so the moment somebody had an account
+            they had no way back to what they had agreed to. Settings is where a
+            reader looks, and it is what both entries in the sidebar's account
+            menu lead to. New tab: nobody should lose a workspace to read a
+            policy. */}
+        <p className="mt-16 border-t border-hairline pt-6 text-xs text-muted-foreground">
+          <LegalAnchor link={termsLink()} newTab>
+            Terms
+          </LegalAnchor>{" "}
+          ·{" "}
+          <LegalAnchor link={privacyLink()} newTab>
+            Privacy Policy
+          </LegalAnchor>
+        </p>
       </PageContainer>
     </AppShell>
   );

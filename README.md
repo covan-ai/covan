@@ -44,6 +44,12 @@ one.
 - **Two runtimes, one source.** The same code runs on Cloudflare Workers with R2
   in production and on Node with the filesystem under `docker compose`.
 
+![A Covan chat: asked how much resolution time integration tickets take and what the biggest cause is, the agent answers with the exact figures from the uploaded review — 41% of resolution time, and a webhook secret pasted with trailing whitespace at 22% of integration tickets — and a Sources chip under each reply names the document they came from](docs/screenshots/grounded-answer.png)
+
+Every figure in that answer is in the uploaded document, and the chip under it
+says which one. That is the whole difference between this and a chat window: not
+that it answers, but that you can check it.
+
 ### How this differs from `qm`
 
 [`yc-software/qm`](https://github.com/yc-software/qm) (MIT) is the obvious

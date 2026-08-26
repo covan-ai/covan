@@ -55,4 +55,23 @@ describe("loadEnv", () => {
     expect(env.OPENAI_BASE_URL).toBeUndefined();
     expect(env.OPENAI_MODEL).toBeUndefined();
   });
+
+  it("carries the rate limits through when the operator sets them", () => {
+    const env = loadEnv({
+      ...complete,
+      RATE_LIMIT_STANDARD_PER_MINUTE: "300",
+      RATE_LIMIT_EXPENSIVE_PER_MINUTE: "0",
+    });
+    expect(env.RATE_LIMIT_STANDARD_PER_MINUTE).toBe("300");
+    expect(env.RATE_LIMIT_EXPENSIVE_PER_MINUTE).toBe("0");
+  });
+
+  it("leaves them unset when nothing is configured, so lib/ratelimit takes its defaults", () => {
+    // Unset must not mean unlimited. The defaults are what makes a stack nobody
+    // configured still bounded, which is the whole point of limiting in the API
+    // rather than only in the operator's proxy.
+    const env = loadEnv(complete);
+    expect(env.RATE_LIMIT_STANDARD_PER_MINUTE).toBeUndefined();
+    expect(env.RATE_LIMIT_EXPENSIVE_PER_MINUTE).toBeUndefined();
+  });
 });

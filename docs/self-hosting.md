@@ -282,41 +282,67 @@ Before the stack faces a network:
 3. Put TLS in front of ports 3000, 8787 and 8000, and set
    `SUPABASE_PUBLIC_URL`, `VITE_API_URL`, `SITE_URL` and `ALLOWED_ORIGIN` to
    the public URLs — then rebuild `covan-web`.
-4. Rate-limit the API at that same proxy. See below.
+4. Rate-limit the API at that same proxy, as well as the built-in limiter. See below.
 5. Consider not publishing `54322` at all.
 
-### Covan does not rate-limit itself
+### Covan rate-limits itself, and you should still limit at the proxy
 
-There is no request limiter anywhere in the API, on either deployment path.
-That is a real gap and you should close it before the API is reachable from the
-internet.
+Two tiers, on by default, on both deployment paths. They exist because
+`POST /chat/stream`, `POST /transcribe` and four other endpoints spend money at
+OpenAI on every call, so an authenticated user with a loop — or one leaked
+password — is an unbounded bill rather than a denial of service. Request _size_
+was always bounded (10 MB for a document, 2 MB for audio); that caps what one
+call costs, not how many arrive.
 
-What the API _does_ bound is the size of a single request: 10 MB for a document
-upload, 2 MB for an audio recording. Neither bounds how _often_ someone asks,
-and this build ships no spend cap either — `worker/src/lib/entitlements/` is an
-interface with `unlimitedEntitlements` behind it, which is exactly what it
-sounds like. (`QUOTA_MONTHLY_TOKENS` exists in the environment type, but nothing
-in this repository registers a metered implementation to read it, so setting it
-changes nothing.)
+| Tier        | In front of                                                                                                            | Keyed on             | Default |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------- | ------- |
+| `standard`  | everything, including the token check                                                                                  | the caller's address | 120/min |
+| `expensive` | `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`, `/routines/draft`, `/routines/:id/run` | the signed-in user   | 20/min  |
 
-`POST /chat` and `POST /transcribe` both spend money at OpenAI on every call, so
-an authenticated user with a loop, or one leaked password, is an unbounded bill
-rather than a denial of service. The rest of the API is cheaper to serve but
-just as unlimited.
+`standard` is generous on purpose: it is keyed by address, a shared office is
+one address, and its job is to bound how often the Supabase round trip in the
+token check can be provoked — not to ration ordinary use. `expensive` is keyed
+by the user, so one person's loop cannot spend a colleague's allowance, and it
+is set at more than a person can type and far less than a loop can.
 
-Authentication is not the answer here: a limiter has to sit in front of the
-thing being protected, and every one of these routes is already past the door.
+Document upload and reindex stay on `standard` deliberately. They spend on
+embeddings, which cost roughly a hundredth of what a chat token does, and 20/min
+would break bulk upload to bound a cost the generous tier already bounds.
 
-Put it in the layer you already have:
+A refused request gets `429` and a `Retry-After` header.
 
-| Deployment                                       | Where the limiter goes                                                                                                                        |
+**Under `docker compose`** the counter lives in the API process. Set
+`RATE_LIMIT_STANDARD_PER_MINUTE` and `RATE_LIMIT_EXPENSIVE_PER_MINUTE` to change
+the numbers, or either to `0` to turn that tier off. Two honest limitations:
+
+- **One process, one counter.** Run two replicas and each keeps its own, so the
+  effective limit is the configured one times the number of replicas. If you are
+  running replicas you have a proxy in front of them; set the real limit there
+  and these to `0`.
+- **A fixed window, not a sliding one.** A caller can spend the whole allowance
+  in the last second of one window and again in the first second of the next.
+  That is a factor of two on a limit whose job is to turn unbounded into bounded.
+
+**On Cloudflare Workers** the counter lives in the edge, via the two
+`[[ratelimits]]` blocks in `worker/wrangler.toml` — the limit is set there
+rather than in an environment variable, because the binding owns the counter.
+Deploy without them and the Worker falls back to the in-process counter, which
+on Cloudflare is close to no limit at all: isolates are many and short-lived, so
+each keeps its own. It logs an error saying exactly that, but it will not refuse
+to start, so check `wrangler.toml` against the example rather than the logs.
+
+**Limit at your proxy as well.** Nothing above sees a request that never reaches
+the API, and everything above runs after TLS termination and inside your
+application. A limiter in the layer you already have is cheaper per refused
+request and protects against shapes this one cannot see:
+
+| Deployment                                       | Where the second limiter goes                                                                                                                 |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker compose`, behind nginx / Caddy / Traefik | The reverse proxy from step 3. nginx's `limit_req`, Caddy's `rate_limit`, Traefik's `RateLimit` middleware — any of them, keyed on client IP. |
-| Cloudflare Workers                               | A [Rate Limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) on the zone, or the Workers rate limiting binding.         |
+| Cloudflare Workers                               | A [Rate Limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) on the zone, in front of the Worker.                       |
 
-Key on the caller's IP for anonymous routes and on the bearer token's subject
-for the rest, and be much stricter with `/chat` and `/transcribe` than with the
-others — the point is the OpenAI bill, not the traffic.
+If you do, set the built-in tiers to `0` rather than running two limiters that
+disagree about who is over.
 
 ## The production path: Cloudflare, Supabase and a static host
 

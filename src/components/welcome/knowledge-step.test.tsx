@@ -36,7 +36,7 @@ function file(name: string, contents = "hello") {
 beforeEach(() => {
   vi.clearAllMocks();
   createBundle.mockImplementation(async (name: string) => ({ id: "bundle-1", name }));
-  uploadToBundle.mockResolvedValue({ id: "doc-1" });
+  uploadToBundle.mockResolvedValue({ id: "doc-1", indexed: true });
   attach.mockResolvedValue(undefined);
   invalidateQueries.mockResolvedValue(undefined);
 });

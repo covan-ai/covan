@@ -84,12 +84,25 @@ export function KnowledgeStep({ agent, onDone }: { agent: Agent; onDone: () => v
         picked.map((p) => uploadToBundle(bundle.id, p.file)),
       );
       const failed = results.filter((r) => r.status === "rejected").length;
+      const unindexed = results.filter(
+        (r) => r.status === "fulfilled" && !r.value.indexed,
+      ).length;
 
       if (failed === picked.length) {
         toast.error("Couldn't upload those. You can add them from the Knowledge tab.");
       } else if (failed > 0) {
         toast.warning(
           `Uploaded the rest, but ${failed} file${failed === 1 ? "" : "s"} failed. Retry from the Knowledge tab.`,
+        );
+      } else if (unindexed > 0) {
+        // The same lie in the other direction: these uploaded and stored fine,
+        // and no answer will ever be grounded in them. Say so here, because
+        // this screen forwards straight into the app and there is no second
+        // chance to notice.
+        toast.warning(
+          unindexed === picked.length
+            ? "Uploaded, but nothing could be indexed — answers won't be grounded in these yet."
+            : `Uploaded, but ${unindexed} of ${picked.length} couldn't be indexed. Retry from the Knowledge tab.`,
         );
       } else {
         // Deliberately not "indexed": the reply may still be a moment away, and

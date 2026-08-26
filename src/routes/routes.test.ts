@@ -46,4 +46,19 @@ describe("route files", () => {
     expect(builtIn).not.toEqual([]);
     expect(routeFiles()).toEqual(expect.arrayContaining(builtIn));
   });
+
+  // Having the pages is not the same as being able to reach them. This build
+  // has no landing page, so for the whole beta the only link to either document
+  // anywhere was the sign-up form's "I agree" checkbox — the one surface a
+  // person passes through exactly once. This walks the source rather than
+  // rendering Settings, because the regression to catch is a deletion, and a
+  // deleted link fails no render test.
+  it("links to both documents from somewhere inside the signed-in app", () => {
+    const authed = routeFiles()
+      .filter((f) => f.startsWith("_authed"))
+      .map((f) => readFileSync(`${ROUTES_DIR}${f}`, "utf8"));
+
+    expect(authed.some((src) => src.includes("termsLink"))).toBe(true);
+    expect(authed.some((src) => src.includes("privacyLink"))).toBe(true);
+  });
 });

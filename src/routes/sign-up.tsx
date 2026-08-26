@@ -7,32 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase/client";
-import { privacyLink, termsLink, type LegalLink } from "@/lib/legal";
+import { privacyLink, termsLink } from "@/lib/legal";
+import { LegalAnchor } from "@/components/legal-anchor";
 
 export const Route = createFileRoute("/sign-up")({
   component: SignUp,
 });
-
-/**
- * A built-in page is a router link; an operator's own document is an ordinary
- * anchor that opens in a new tab — leaving a half-filled signup form to read
- * the terms and losing it would be its own small cruelty.
- */
-function LegalAnchor({ link, children }: { link: LegalLink; children: ReactNode }) {
-  const className = "text-foreground underline underline-offset-4 hover:no-underline";
-  if (link.external) {
-    return (
-      <a href={link.href} target="_blank" rel="noreferrer" className={className}>
-        {children}
-      </a>
-    );
-  }
-  return (
-    <Link to={link.href} target="_blank" className={className}>
-      {children}
-    </Link>
-  );
-}
 
 function SignUp() {
   const navigate = useNavigate();
@@ -201,8 +181,15 @@ function SignUp() {
         <label className="flex flex-wrap items-start gap-x-1 gap-y-2 text-sm text-muted-foreground">
           <Checkbox id="terms" required className="mt-0.5" />
           <span>
-            I agree to the <LegalAnchor link={termsLink()}>Terms</LegalAnchor> and{" "}
-            <LegalAnchor link={privacyLink()}>Privacy Policy</LegalAnchor>.
+            I agree to the{" "}
+            <LegalAnchor link={termsLink()} newTab>
+              Terms
+            </LegalAnchor>{" "}
+            and{" "}
+            <LegalAnchor link={privacyLink()} newTab>
+              Privacy Policy
+            </LegalAnchor>
+            .
           </span>
         </label>
 

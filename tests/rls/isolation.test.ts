@@ -9,17 +9,30 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { closeSql, createTestUser, destroyTestUsers, type TestUser } from "./harness";
+import { closeSql, createTestUser, destroyTestUsers, serviceClient, type TestUser } from "./harness";
 import { seedWorkspace, type Seeded } from "./fixtures";
 
 let alice: TestUser;
 let bob: TestUser;
 let seeded: Seeded;
+/** Bob's own workspace's worth of content — his own agent is the trick below. */
+let outsiderSeed: Seeded;
+/** A genuine member of Alice's workspace, distinct from Alice herself. */
+let member: TestUser;
 
 beforeAll(async () => {
   alice = await createTestUser("alice");
   bob = await createTestUser("bob");
   seeded = await seedWorkspace(alice);
+  outsiderSeed = await seedWorkspace(bob);
+
+  member = await createTestUser("isolation-member");
+  const { error: memberError } = await serviceClient()
+    .from("workspace_members")
+    .insert({ workspace_id: alice.workspaceId, user_id: member.id, role: "member" });
+  if (memberError) {
+    throw new Error(`could not add member to alice's workspace: ${memberError.message}`);
+  }
 });
 
 afterAll(async () => {
@@ -138,6 +151,41 @@ describe("a user from another workspace", () => {
     // share none, so Bob must not see her email address.
     const { data: profiles } = await bob.db.from("profiles").select("id").eq("id", alice.id);
     expect(profiles ?? []).toEqual([]);
+  });
+});
+
+/**
+ * chat_sessions insert checks user_id = auth.uid() and nothing else, while the
+ * select policy hands reads to every workspace member once visibility is
+ * 'shared' — keyed on workspace_id, a column the writer chooses. Foreign keys
+ * bypass RLS, so any real workspace uuid is accepted unless the policy itself
+ * reconciles workspace_id against the caller's membership and the agent's own.
+ */
+describe("chat_sessions: the workspace and the agent must agree", () => {
+  it("cannot plant a shared session inside a workspace it does not belong to", async () => {
+    const { error } = await bob.db.from("chat_sessions").insert({
+      agent_id: outsiderSeed.agentId, // bob's own agent, which is the trick
+      user_id: bob.id,
+      workspace_id: seeded.workspaceId, // alice's workspace — bob is not a member
+      visibility: "shared",
+      kind: "brainstorm",
+      title: "Q3 layoff plan",
+    });
+
+    expect(error).not.toBeNull();
+  });
+
+  it("cannot attach a session to an agent from another workspace", async () => {
+    const { error } = await member.db.from("chat_sessions").insert({
+      agent_id: outsiderSeed.agentId, // bob's agent, from bob's workspace
+      user_id: member.id,
+      workspace_id: seeded.workspaceId, // member's own workspace — mismatched agent
+      visibility: "private",
+      kind: "chat",
+      title: "mismatched",
+    });
+
+    expect(error).not.toBeNull();
   });
 });
 

@@ -190,3 +190,55 @@ describe("a viewer still uses what is there", () => {
     expect(ideaError, "a viewer cannot record an idea").toBeNull();
   });
 });
+
+/**
+ * ideas_update_session_visible specified only USING, which Postgres reuses as
+ * the WITH CHECK — undoing the INSERT policy's created_by = auth.uid() pin.
+ * Neither the update nor the delete policy called can_write_in_workspace, so
+ * unlike every other shared table 0021 touched, a viewer could edit and delete
+ * someone else's card. seeded.sessionId is the 'shared' session seedWorkspace
+ * built for `owner`, so both viewer and member can see it.
+ */
+describe("ideas: your own card is yours to change, not anyone's", () => {
+  it("cannot delete another member's idea card", async () => {
+    const { data: card } = await owner.db
+      .from("ideas")
+      .insert({
+        session_id: seeded.sessionId,
+        workspace_id: owner.workspaceId,
+        title: "owner's card",
+        created_by: owner.id,
+      })
+      .select("id")
+      .single();
+
+    await viewer.db.from("ideas").delete().eq("id", card!.id);
+
+    // Read back through the service role, so RLS masking the row cannot be
+    // mistaken for the row having been deleted.
+    const { data } = await serviceClient().from("ideas").select("id").eq("id", card!.id);
+    expect(data).toHaveLength(1);
+  });
+
+  it("cannot reattribute a card to somebody else", async () => {
+    const { data: card } = await member.db
+      .from("ideas")
+      .insert({
+        session_id: seeded.sessionId,
+        workspace_id: owner.workspaceId,
+        title: "mine",
+        created_by: member.id,
+      })
+      .select("id")
+      .single();
+
+    await member.db.from("ideas").update({ created_by: owner.id }).eq("id", card!.id);
+
+    const { data } = await serviceClient()
+      .from("ideas")
+      .select("created_by")
+      .eq("id", card!.id)
+      .single();
+    expect(data!.created_by).toBe(member.id);
+  });
+});

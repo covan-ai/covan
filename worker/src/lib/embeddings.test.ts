@@ -7,7 +7,7 @@ vi.mock("openai", () => ({
   },
 }));
 
-const { chunkText, embedTexts } = await import("./embeddings");
+const { chunkText, embedTexts, EMBED_BATCH_SIZE } = await import("./embeddings");
 
 describe("chunkText", () => {
   it("returns [] for empty or whitespace-only text", () => {
@@ -128,5 +128,54 @@ describe("embedTexts", () => {
   it("costs nothing and calls nothing for an empty input", async () => {
     await expect(embedTexts("sk-test", [])).resolves.toEqual({ vectors: [], tokens: 0 });
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("embedTexts batching", () => {
+  beforeEach(() => {
+    create.mockReset();
+  });
+
+  it("splits large inputs across requests, preserving order and summing tokens", async () => {
+    // Each vector encodes its own input string, so a reordering bug is visible.
+    create.mockImplementation(async ({ input }: { input: string[] }) => ({
+      data: input.map((t, i) => ({ index: i, embedding: [Number(t)] })),
+      usage: { total_tokens: input.length },
+    }));
+
+    const texts = Array.from({ length: 300 }, (_, i) => String(i));
+    const res = await embedTexts("key", texts);
+
+    expect(create).toHaveBeenCalledTimes(3); // 128 + 128 + 44
+    expect(res.vectors).toHaveLength(300);
+    expect(res.vectors[0]).toEqual([0]);
+    expect(res.vectors[128]).toEqual([128]); // first item of the second batch
+    expect(res.vectors[299]).toEqual([299]);
+    expect(res.tokens).toBe(300);
+  });
+
+  it("never exceeds the batch size in a single request", async () => {
+    create.mockImplementation(async ({ input }: { input: string[] }) => ({
+      data: input.map((t, i) => ({ index: i, embedding: [Number(t)] })),
+      usage: { total_tokens: input.length },
+    }));
+
+    await embedTexts("key", Array.from({ length: 1500 }, (_, i) => String(i)));
+
+    for (const call of create.mock.calls) {
+      expect(call[0].input.length).toBeLessThanOrEqual(EMBED_BATCH_SIZE);
+    }
+  });
+
+  it("still makes exactly one request when the input fits in one batch", async () => {
+    create.mockResolvedValue({
+      data: [{ index: 0, embedding: [1] }],
+      usage: { total_tokens: 7 },
+    });
+
+    const res = await embedTexts("key", ["only one"]);
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ vectors: [[1]], tokens: 7 });
   });
 });

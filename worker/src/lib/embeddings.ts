@@ -84,20 +84,46 @@ export type EmbeddingResult = {
 };
 
 /**
+ * How many chunks go in one embeddings request.
+ *
+ * OpenAI caps a single call at 2,048 array items AND 300,000 tokens, and the
+ * second limit binds first: `chunkText` emits ~1,000-char chunks, so 2,048 of
+ * them is roughly 512k tokens. 128 chunks is about 32k tokens — an order of
+ * magnitude inside both ceilings, which leaves room for a caller that raises
+ * the chunk size without having to think about this number.
+ *
+ * Before this existed, a 1 MB document produced ~1,454 chunks in one request,
+ * the request 400'd, and `bundles.ts` swallowed the error and reported the
+ * upload as successful. The document was listed, named to the model, and
+ * unretrievable.
+ */
+export const EMBED_BATCH_SIZE = 128;
+
+/**
  * Embeds each input string. Returns vectors in input order (OpenAI guarantees
- * response ordering by `index`; we sort defensively). Throws on API error.
+ * response ordering by `index`; we sort defensively within each batch, and
+ * batches are appended in order). Throws on API error.
  *
  * The token count comes back alongside the vectors because embedding is real
  * spend — a large document costs more to index than a long conversation costs
  * to answer — and a usage counter that ignored it would leave uploads free.
+ * Batches are summed, so the caller still records one total.
  */
 export async function embedTexts(apiKey: string, texts: string[]): Promise<EmbeddingResult> {
   if (texts.length === 0) return { vectors: [], tokens: 0 };
   const openai = new OpenAI({ apiKey });
-  const res = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: texts });
-  const vectors = res.data
-    .slice()
-    .sort((a, b) => a.index - b.index)
-    .map((d) => d.embedding as number[]);
-  return { vectors, tokens: res.usage?.total_tokens ?? 0 };
+
+  const vectors: number[][] = [];
+  let tokens = 0;
+
+  for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {
+    const batch = texts.slice(i, i + EMBED_BATCH_SIZE);
+    const res = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: batch });
+    for (const d of res.data.slice().sort((a, b) => a.index - b.index)) {
+      vectors.push(d.embedding as number[]);
+    }
+    tokens += res.usage?.total_tokens ?? 0;
+  }
+
+  return { vectors, tokens };
 }

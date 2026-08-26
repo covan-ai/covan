@@ -296,6 +296,25 @@ expose the stack is a deliberate choice, and it should never be made
 without regenerating the secrets in step 1 first — those are demo values
 published in this repository, not a guess an attacker has to make.
 
+`covan-api` now enforces part of step 1 itself: at boot, if `ALLOWED_ORIGIN`
+is not a localhost URL, it refuses to start when `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY` or `ROUTINE_SECRET_KEY` still hold the exact
+values `.env.docker.example` ships, naming every offending variable in the
+error. It also refuses to start on any `ROUTINE_SECRET_KEY` that does not
+decode to 16, 24 or 32 bytes, so a bad key is caught at boot instead of the
+first time a delivery channel is saved.
+
+What it cannot enforce is the rest of step 1. `JWT_SECRET` and
+`POSTGRES_PASSWORD` are consumed by Kong, GoTrue, PostgREST and Postgres —
+none of which run `loadEnv`, and none of which this repository can add a
+startup check to. Regenerating `SUPABASE_ANON_KEY` and
+`SUPABASE_SERVICE_ROLE_KEY` while leaving `JWT_SECRET` at its published
+default achieves nothing: those two keys are JWTs signed with `JWT_SECRET`,
+and anyone who has read this repository already knows that secret and can
+mint their own `{"role":"service_role"}` token, bypassing row level security
+the same way the shipped key would have. Regenerate `JWT_SECRET` first, then
+the two keys it signs.
+
 ### Covan does not rate-limit itself
 
 There is no request limiter anywhere in the API, on either deployment path.

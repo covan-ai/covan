@@ -101,7 +101,28 @@ describe("GET /invitations", () => {
     expect(callsTo("invitations")[0].filters).toEqual([
       { column: "workspace_id", value: WORKSPACE, kind: "eq" },
       { column: "status", value: "pending", kind: "eq" },
+      { column: "expires_at", value: expect.any(String), kind: "gt" },
     ]);
+  });
+
+  it("excludes invitations past their expiry from the pending list", async () => {
+    // status = 'pending' alone is not enough once invitations expire: 0029
+    // backfilled expires_at onto every pre-existing pending row rather than
+    // voiding it, so an old, unexpired-looking row is exactly the case this
+    // filter has to catch going forward.
+    const { app, callsTo } = appWith({
+      tables: {
+        invitations: { select: () => ({ data: [], error: null }) },
+      },
+    });
+
+    await json(app, "GET", "/invitations");
+
+    expect(callsTo("invitations")[0].filters).toContainEqual({
+      column: "expires_at",
+      value: expect.any(String),
+      kind: "gt",
+    });
   });
 
   it("answers 404 when the caller has no workspace at all", async () => {

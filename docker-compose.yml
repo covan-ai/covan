@@ -104,7 +104,7 @@ services:
       # arrive and nobody could ever sign in. Matches `enable_confirmations =
       # false` in supabase/config.toml. Turn this off (and configure
       # GOTRUE_SMTP_*) before putting the stack on a network.
-      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_SMS_AUTOCONFIRM: "false"
 

@@ -83,6 +83,7 @@ invitations.get("/invitations", async (c) => {
     .select("id, email, role, created_at")
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);
@@ -226,6 +227,7 @@ invitations.get("/invitations/incoming", async (c) => {
     .from("invitations")
     .select("id, workspace_id, role, created_at, workspaces(name)")
     .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);

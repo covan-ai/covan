@@ -26,7 +26,7 @@ export type QueryResult = {
   error: { message: string; code?: string } | null;
 };
 
-export type Filter = { column: string; value: unknown; kind: "eq" | "in" };
+export type Filter = { column: string; value: unknown; kind: "eq" | "in" | "gt" };
 
 export type QueryContext = {
   table: string;
@@ -75,6 +75,11 @@ class Chain implements PromiseLike<QueryResult> {
 
   in(column: string, value: unknown) {
     this.ctx.filters.push({ column, value, kind: "in" });
+    return this;
+  }
+
+  gt(column: string, value: unknown) {
+    this.ctx.filters.push({ column, value, kind: "gt" });
     return this;
   }
 

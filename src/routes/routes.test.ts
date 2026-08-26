@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
+import { privacyLink, termsLink } from "@/lib/legal";
 
 // TanStack Router's flat file routing makes `a.tsx` the PARENT of `a.b.tsx`.
 // A parent renders its child through <Outlet />, so a parent without one
@@ -28,5 +29,21 @@ describe("route files", () => {
       .filter((name) => !readFileSync(`${ROUTES_DIR}${name}.tsx`, "utf8").includes("<Outlet"));
 
     expect(parentsMissingOutlet).toEqual([]);
+  });
+
+  // src/lib/legal.ts falls back to a built-in page whenever VITE_TERMS_URL or
+  // VITE_PRIVACY_URL is unset, which is every deployment that has not gone out
+  // of its way to set one — so the fallback is the common case here, not the
+  // edge one. A fallback naming a route that does not exist is a 404 reached
+  // from a required "I agree" checkbox, and nothing else would catch it: the
+  // link is resolved by one module and the page is owned by another, so
+  // neither side is wrong on its own.
+  it("has a page behind every legal link that falls back to a built-in one", () => {
+    const builtIn = [termsLink(), privacyLink()]
+      .filter((link) => !link.external)
+      .map((link) => `${link.href.replace(/^\//, "")}.tsx`);
+
+    expect(builtIn).not.toEqual([]);
+    expect(routeFiles()).toEqual(expect.arrayContaining(builtIn));
   });
 });

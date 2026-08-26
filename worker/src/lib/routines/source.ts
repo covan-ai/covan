@@ -86,7 +86,7 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
  * two lookups, DNS can answer differently — classic rebind. Closing that needs
  * an undici `Agent` with a pinned `connect.lookup` so the socket connects to
  * the address that was actually checked, which changes the fetch call shape
- * more than this task's scope. Tracked in docs/superpowers/backlog.md.
+ * more than this task's scope. Tracked internally.
  */
 async function guardedFetch(
   rawUrl: string,

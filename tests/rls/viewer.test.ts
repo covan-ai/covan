@@ -103,6 +103,21 @@ describe("a viewer changes nothing the workspace shares", () => {
     expect(await stillThere("knowledge_bundles", seeded.bundleId)).toBe(true);
   });
 
+  it("cannot delete a document", async () => {
+    const { error } = await viewer.db
+      .from("documents")
+      .delete()
+      .eq("id", seeded.documentId)
+      .select("id");
+
+    // RLS refuses by matching nothing, which is why the route has to read the
+    // deleted rows back rather than trusting the absence of an error.
+    expect(error).toBeNull();
+
+    const { data } = await serviceClient().from("documents").select("id").eq("id", seeded.documentId);
+    expect(data).toHaveLength(1);
+  });
+
   it("cannot attach knowledge to an agent", async () => {
     // Changing what an agent knows without editing its row — the case that is
     // easy to miss, because it is a write to a join table rather than to

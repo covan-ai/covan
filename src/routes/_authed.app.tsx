@@ -84,7 +84,13 @@ function Home() {
             </p>
           ) : null}
         </div>
-        <HomeComposer agents={agents} favorites={favorites} className="mt-10" />
+        <HomeComposer
+          agents={agents}
+          favorites={favorites}
+          canCreate={canWrite}
+          onCreate={() => setCreateOpen(true)}
+          className="mt-10"
+        />
         {/* Directly under the composer, because this is the moment before
             spending — not buried in settings, where nobody looks until the
             replies have already stopped. Renders nothing when self-hosted. */}
@@ -119,10 +125,16 @@ function Home() {
 function HomeComposer({
   agents,
   favorites,
+  canCreate,
+  onCreate,
   className,
 }: {
   agents: Agent[];
   favorites: string[];
+  /** False for a viewer — same meaning as in the gallery below: the policies
+      refuse them either way, this is so the button is not there to press. */
+  canCreate: boolean;
+  onCreate: () => void;
   className?: string;
 }) {
   const { startSession } = useAgentsStore();
@@ -146,7 +158,11 @@ function HomeComposer({
     const body = text.trim();
     if (sending) return;
     if (!selected) {
-      navigate({ to: "/app", search: { new: true } });
+      // Reachable only if the disabled states below ever come off — the button
+      // in the empty row is the real path now. Straight to the dialog rather
+      // than a ?new=true round trip through the URL, since the handler that
+      // opens it is in scope here.
+      if (canCreate) onCreate();
       return;
     }
     setSending(true);
@@ -187,7 +203,11 @@ function HomeComposer({
             }
           }}
           placeholder={
-            empty ? "Create an agent to get started…" : `Message ${selected?.name ?? "your agent"}…`
+            empty
+              ? canCreate
+                ? "Create an agent to get started…"
+                : "No agents yet — a member has to make the first one…"
+              : `Message ${selected?.name ?? "your agent"}…`
           }
           disabled={empty}
           rows={3}
@@ -195,7 +215,25 @@ function HomeComposer({
         />
         <div className="flex items-center justify-between gap-2 px-4 pb-4">
           {empty ? (
-            <span className="px-1 text-sm text-muted-foreground">No agents yet</span>
+            // This slot used to hold the words "No agents yet" and nothing to
+            // press, on the one card that owns the fold — so the first screen
+            // of an empty workspace told you what was wrong and left the only
+            // way to fix it below the fold, in the gallery. Same control as the
+            // agent picker it replaces, deliberately: the row is the row, only
+            // its contents change. Not a `Button`, because a default-size one
+            // carries the amber chip and send is the single amber fill here.
+            canCreate ? (
+              <button
+                onClick={onCreate}
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors duration-200 hover:bg-surface"
+              >
+                <Plus className="h-4 w-4" /> Create agent
+              </button>
+            ) : (
+              <span className="px-1 text-sm text-muted-foreground">
+                Ask an admin or a member to create one.
+              </span>
+            )
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

@@ -103,6 +103,10 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     ALLOWED_ORIGIN: source.ALLOWED_ORIGIN!,
     WORKER_HOST: source.WORKER_HOST,
     ADMIN_API_KEY: source.ADMIN_API_KEY,
+    // Optional on purpose: absent means the defaults in lib/ratelimit, so a
+    // stack that was never configured is still bounded. `0` turns a tier off.
+    RATE_LIMIT_STANDARD_PER_MINUTE: source.RATE_LIMIT_STANDARD_PER_MINUTE,
+    RATE_LIMIT_EXPENSIVE_PER_MINUTE: source.RATE_LIMIT_EXPENSIVE_PER_MINUTE,
     DOCS_DIR: source.DOCS_DIR!,
     // DOCS stays undefined: there is no R2 binding off Cloudflare, and its
     // absence is what makes getDocStore choose the filesystem.

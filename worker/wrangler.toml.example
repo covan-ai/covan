@@ -41,6 +41,32 @@ ALLOWED_ORIGIN = "https://your-app.example.com"
 # blocked); set it once a custom domain fronts this worker.
 
 # Create the bucket before your first deploy: wrangler r2 bucket create covan-docs
+# How often one caller may ask, backing `lib/ratelimit` on Cloudflare. Without
+# these the Worker falls back to an in-process counter — correct under Docker,
+# close to meaningless here, because isolates are many and short-lived. The
+# fallback logs an error saying so rather than failing quietly, but the error is
+# in a log nobody is reading at 3am. Declare both.
+#
+# `namespace_id` is any string unique within this Worker; it names the counter,
+# not a resource you have to create. `period` accepts only 10 or 60, and
+# lib/ratelimit fixes it at 60 so both runtimes agree what a limit means.
+#
+# standard: in front of everything including the token check, keyed by address.
+# Generous, because a shared office is one address and this exists to bound how
+# often the Supabase round trip in authMiddleware can be provoked.
+[[ratelimits]]
+name = "RATE_LIMIT_STANDARD"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+# expensive: in front of the six endpoints that buy a completion or a
+# transcription, keyed by the authenticated user. More than a person can type,
+# far less than a loop can.
+[[ratelimits]]
+name = "RATE_LIMIT_EXPENSIVE"
+namespace_id = "1002"
+simple = { limit = 20, period = 60 }
+
 [[r2_buckets]]
 binding = "DOCS"
 bucket_name = "covan-docs"

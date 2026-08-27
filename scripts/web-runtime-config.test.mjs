@@ -6,6 +6,8 @@ import {
   resolveValues,
   substitute,
   assertNothingLeftOver,
+  assetEtag,
+  updateAssetManifest,
 } from "./web-runtime-config.mjs";
 
 /*
@@ -93,5 +95,97 @@ describe("the check that runs after substituting", () => {
     expect(() => assertNothingLeftOver(`x="${SENTINELS.VITE_API_URL}"`, "client.js")).toThrow(
       /client\.js/,
     );
+  });
+});
+
+/*
+ * The bug that made the whole idea not work, and which every check anyone would
+ * think to run missed. Nitro bakes a manifest of every public asset — including
+ * its size — into the server bundle and serves Content-Length from it.
+ * Substituting a 38-character sentinel for a 21-character URL leaves the file
+ * shorter than the manifest promises, the browser aborts the response with
+ * ERR_CONTENT_LENGTH_MISMATCH, and React never hydrates. The page renders. The
+ * health check passes. Every button does nothing.
+ */
+
+/**
+ * Shaped like the real thing. Nitro writes this as JavaScript source, and the
+ * etag *value* itself contains quotes — `"etag": "\"9c3-hash\""` — so the
+ * fixture builds it the same way the code does rather than by hand-escaping,
+ * which is how the first version of this test managed to be wrong.
+ */
+const manifest = (size, etag) => `
+const assets = {
+  "/assets/index-AbC123.js": {
+    "type": "text/javascript; charset=utf-8",
+    "etag": ${JSON.stringify('"9c3-otherhashotherhashotherh"')},
+    "mtime": "2026-08-26T09:01:08.854Z",
+    "size": 2499,
+    "path": "../public/assets/index-AbC123.js"
+  },
+  "/assets/api-client-XyZ.js": {
+    "type": "text/javascript; charset=utf-8",
+    "etag": ${JSON.stringify(etag)},
+    "mtime": "2026-08-26T09:01:08.854Z",
+    "size": ${size},
+    "path": "../public/assets/api-client-XyZ.js"
+  }
+};
+`;
+
+describe("the recorded size of a substituted asset", () => {
+  const bytes = Buffer.from("const API='https://api.example.com';", "utf8");
+
+  it("is corrected to what the file now weighs", () => {
+    const out = updateAssetManifest(manifest(9999, '"270f-stalehashstalehashstaleh"'), [
+      ["/assets/api-client-XyZ.js", bytes],
+    ]);
+    expect(out).toContain(`"size": ${bytes.length}`);
+    expect(out).not.toContain('"size": 9999');
+  });
+
+  it("gets a matching etag, not merely a valid one", () => {
+    // A stale etag serves a 304 for content that changed, which is the same
+    // class of failure arriving a day later through a cache.
+    const out = updateAssetManifest(manifest(9999, '"270f-stalehashstalehashstaleh"'), [
+      ["/assets/api-client-XyZ.js", bytes],
+    ]);
+    // The manifest holds the etag as a JS string whose value carries quotes, so
+    // compare against the same encoding the file actually contains.
+    expect(out).toContain(JSON.stringify(assetEtag(bytes)));
+    expect(out).not.toContain("stalehashstalehashstaleh");
+  });
+
+  it("leaves every other entry alone", () => {
+    const out = updateAssetManifest(manifest(9999, '"270f-stalehashstalehashstaleh"'), [
+      ["/assets/api-client-XyZ.js", bytes],
+    ]);
+    expect(out).toContain('"size": 2499');
+    expect(out).toContain("otherhashotherhashotherh");
+  });
+
+  it("refuses to start when an asset has no entry, rather than shipping the bug again", () => {
+    // If a future nitro keeps this manifest somewhere else, that has to fail
+    // here — loudly — instead of producing another image that looks fine until
+    // somebody clicks something.
+    expect(() =>
+      updateAssetManifest(manifest(9999, '"270f-x"'), [["/assets/not-there.js", bytes]]),
+    ).toThrow(/no manifest entry/);
+  });
+
+  it("refuses when the entry has no size to correct", () => {
+    const shapeless = `const assets = { "/assets/api-client-XyZ.js": { "type": "text/javascript" } };`;
+    expect(() => updateAssetManifest(shapeless, [["/assets/api-client-XyZ.js", bytes]])).toThrow(
+      /no size or etag/,
+    );
+  });
+});
+
+describe("assetEtag", () => {
+  it("reproduces the format nitro records", () => {
+    // "<length in hex>-<27 chars of base64 sha1>", verified against an
+    // untouched entry in a real build.
+    const etag = assetEtag(Buffer.alloc(646, 0x61));
+    expect(etag).toMatch(/^"286-[A-Za-z0-9+/]{27}"$/);
   });
 });

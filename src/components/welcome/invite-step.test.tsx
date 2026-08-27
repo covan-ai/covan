@@ -3,10 +3,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { InviteStep } from "./invite-step";
 
-const { create, invalidateQueries, toast } = vi.hoisted(() => ({
+const { create, invalidateQueries, toast, copyInviteText } = vi.hoisted(() => ({
   create: vi.fn(),
   invalidateQueries: vi.fn(),
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  copyInviteText: vi.fn(),
 }));
 
 vi.mock("@/lib/api-client", () => ({
@@ -16,6 +17,7 @@ vi.mock("@/lib/api-client", () => ({
 
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ invalidateQueries }) }));
 vi.mock("sonner", () => ({ toast }));
+vi.mock("@/lib/invite-text", () => ({ copyInviteText }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,17 +42,38 @@ describe("InviteStep", () => {
 
     await invite(["a@x.com", "b@x.com"]);
 
-    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("no email went out"));
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining("no email went out"),
+      expect.anything(),
+    );
     expect(onDone).toHaveBeenCalled();
   });
 
-  it("says plainly that they were emailed when they were", async () => {
+  // Telling someone to "let them know" and then moving to the next step forever
+  // is a job with no tool. This is the surface where that hurts most: the first
+  // run, on an install with no mail, where the Team page has not been seen yet.
+  it("hands over the text for exactly the people no email reached", async () => {
+    create.mockImplementation(async ({ email }: { email: string }) => ({
+      email,
+      emailed: email === "a@x.com",
+    }));
+    render(<InviteStep onDone={vi.fn()} />);
+
+    await invite(["a@x.com", "b@x.com"]);
+
+    const [, options] = toast.warning.mock.calls[0] ?? toast.success.mock.calls[0];
+    expect(options.action.label).toBe("Copy invite text");
+    options.action.onClick();
+    expect(copyInviteText).toHaveBeenCalledWith(["b@x.com"]);
+  });
+
+  it("says plainly that they were emailed when they were, and offers nothing to copy", async () => {
     create.mockImplementation(async ({ email }: { email: string }) => ({ email, emailed: true }));
     render(<InviteStep onDone={vi.fn()} />);
 
     await invite(["a@x.com", "b@x.com"]);
 
-    expect(toast.success).toHaveBeenCalledWith("2 invitations emailed.");
+    expect(toast.success).toHaveBeenCalledWith("2 invitations emailed.", undefined);
   });
 
   it("stays put when every address was refused", async () => {

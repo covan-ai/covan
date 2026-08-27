@@ -19,6 +19,25 @@
 name: covan
 
 services:
+  # --------------------------------------------------------------- Guardrail
+  secrets-check:
+    container_name: covan-secrets-check
+    # postgres:17.6-alpine, not a new image — `migrate` below already pulls
+    # this one, so a fresh `docker compose up` gains no extra download.
+    image: postgres:17.6-alpine
+    volumes:
+      - ./docker/check-secrets.sh:/check-secrets.sh:ro
+    environment:
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY}
+    entrypoint: ["/bin/sh", "/check-secrets.sh"]
+    restart: "no"
+
   # ---------------------------------------------------------------- Supabase
   db:
     container_name: covan-db
@@ -27,6 +46,18 @@ services:
     # ships both plus the roles GoTrue, PostgREST and Realtime log in as.
     image: supabase/postgres:17.6.1.136
     restart: unless-stopped
+    # Every other service in this file descends from db — auth, rest and
+    # realtime directly; kong from auth+rest; migrate from db+auth; covan-api
+    # from migrate+kong; covan-web from covan-api. Gating db therefore gates
+    # the entire stack. Kong looks like the obvious choke point (it fronts
+    # every request supabase-js makes) but db publishes its own port
+    # (54322) and sits upstream of Kong, so that placement would leave
+    # Postgres itself unguarded. Making db depend on covan-api instead is not
+    # an option: covan-api depends on kong, which depends on auth, which
+    # depends on db — that would be circular.
+    depends_on:
+      secrets-check:
+        condition: service_completed_successfully
     volumes:
       - covan-db-data:/var/lib/postgresql/data
       # Persist the pgsodium root key across restarts.

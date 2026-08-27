@@ -368,6 +368,7 @@ export const api = {
     remove: (id: string): Promise<void> => request("DELETE", `/delivery-channels/${id}`),
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
+  workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
   notifications: {
     get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
     update: (patch: Partial<NotificationPreferences>): Promise<NotificationPreferences> =>
@@ -426,16 +427,47 @@ export type QuotaSnapshot = {
   resetsAt: string | null;
 };
 
+export type UsageTotals = {
+  messageCount: number;
+  promptTokens: number;
+  cachedTokens: number;
+  measuredPromptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estCostUsd: number;
+};
+
 export type UsageResponse = {
   agents: AgentUsage[];
   quota: QuotaSnapshot;
-  totals: {
-    messageCount: number;
-    promptTokens: number;
-    cachedTokens: number;
-    measuredPromptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-    estCostUsd: number;
-  };
+  totals: UsageTotals;
+};
+
+/**
+ * One month of the workspace's traffic. No cost: `messages` records no model,
+ * so pricing a month would mean assuming every reply in it came from whatever
+ * the agent is set to today. The per-agent rows carry the money.
+ */
+export type UsageMonth = {
+  /** First day of the month, ISO. Oldest first, so it draws left to right. */
+  month: string;
+  messageCount: number;
+  totalTokens: number;
+  cachedTokens: number;
+};
+
+/**
+ * The workspace's own figures, for an admin. Aggregated by agent and by month
+ * and never by person — that is a property of the functions in `0032`, which
+ * do not select, group by or return a `user_id` at all.
+ *
+ * `available` is false in exactly one situation: the API is deployed and
+ * `0032` has not been applied yet. CI does not run migrations, so that window
+ * is real, and it renders as the section being absent rather than as an error.
+ */
+export type WorkspaceUsageResponse = {
+  available: boolean;
+  agents: AgentUsage[];
+  totals: UsageTotals;
+  months: UsageMonth[];
 };

@@ -7,6 +7,7 @@ import { SectionCard } from "@/components/section-card";
 import { UserAvatar } from "@/components/avatars";
 import { DeliveryChannelsCard } from "@/components/routines/delivery-channels-card";
 import { UsageSection } from "@/components/usage-section";
+import { WorkspaceUsageSection } from "@/components/workspace-usage-section";
 import { PreferencesSection } from "@/components/preferences-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -207,6 +208,13 @@ function SettingsPage() {
         <PreferencesSection me={me} />
 
         <UsageSection />
+
+        {/* Directly under the caller's own figures, because the two answer the
+            same question at different scopes and reading one without the other
+            is how "Yours alone" got mistaken for the whole bill. Admin only:
+            the functions behind it refuse anybody else anyway, so this is so
+            the section is not there to be confused by. */}
+        {isAdmin && <WorkspaceUsageSection />}
 
         <DeliveryChannelsCard />
 

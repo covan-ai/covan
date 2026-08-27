@@ -108,7 +108,7 @@ it; `create_workspace()` does the same for any workspace somebody makes later.
 | `member` | no                 | yes                   | yes             |
 | `viewer` | no                 | no                    | yes             |
 
-**Admin** governs two things and no more:
+**Admin** controls two things and no more:
 
 - **The workspace row.** Its name, its slug and its default model. One policy,
   `workspaces_update_admin`, covers all three, which is why the same people who
@@ -116,6 +116,10 @@ it; `create_workspace()` does the same for any workspace somebody makes later.
 - **The people in it.** Creating and revoking invitations, changing a role, and
   removing a member — the invitation policies plus
   `workspace_members_update_admin` and `workspace_members_delete_admin`.
+
+It also *sees* one thing nobody else does — what the workspace as a whole has
+spent, by agent and by month — which is a read and not a control, and is
+described under [Usage figures](#usage-figures-are-yours-alone) below.
 
 **Everything a workspace shares** — `agents`, `knowledge_bundles`, `documents`,
 `agent_bundles` and `document_chunks` — asks `can_write_in_workspace()`, which
@@ -221,7 +225,32 @@ two columns, and Postgres will not let `create or replace` change a return type
 rather than by inheritance. The two new sums are inside that same scoped join,
 and the grants the drop removed are restored in the same file.
 
-There is still no workspace-wide view: nobody sees what a colleague spends.
+**An admin can see what the workspace spends, and still not what a colleague
+spends.** `0032` adds two functions next to it — `workspace_usage_all`, the
+same per-agent shape across everybody's conversations, and
+`workspace_usage_monthly`, six buckets of tokens so "are we spending more than
+we were" has an answer. Both are `security definer`, because reading past RLS
+is the entire point: an admin's own view of `chat_sessions` excludes exactly
+the private sessions being asked about. So each checks
+`is_workspace_admin()` for itself before reading anything, and raises `42501`
+rather than returning no rows — a silent empty result is indistinguishable from
+a workspace that has never sent a message.
+
+Aggregated **by agent and by month, never by person**. That is a property of
+their shape rather than a rule the screens are asked to follow: `user_id` is
+not selected, not grouped by, and not returned, so there is no per-person
+breakdown for a later screen to render. Token counts are not conversation
+content, but a table of who spent what is still the wrong thing to hand an
+admin in a product that promises private rooms.
+
+The monthly buckets carry tokens and no money. `messages` records no model, so
+pricing a month would mean assuming every reply in it came from whatever the
+agent is set to today. The per-agent rows do carry a cost, with the same
+caveat named on the screen: changing an agent's model re-prices its history.
+
+This is the third thing admin governs, and the list above says two. Read it as
+"the workspace row, the people in it, and what the workspace costs" — the first
+two are what admin *controls*, and this one is only something it can *see*.
 
 The figures also now account for prompt caching. Most of what Covan sends the
 model on any given turn is the same bytes as last turn — the persona, the

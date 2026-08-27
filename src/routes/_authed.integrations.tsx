@@ -15,7 +15,12 @@ export const Route = createFileRoute("/_authed/integrations")({
   }),
 });
 
-type Status = "available" | "beta" | "soon";
+// No "beta" rung. The REST API was the only row that ever carried it, and it
+// has moved to the roadmap; a chip nothing renders is a chip nobody notices has
+// gone wrong. It belongs back the day there is a key you can hold. (No issue
+// number here on purpose: this file is byte-identical in covan-ai/covan, where
+// the same number is a different thing entirely.)
+type Status = "available" | "soon";
 
 type Integration = {
   name: string;
@@ -26,10 +31,17 @@ type Integration = {
 
 const items: Integration[] = [
   {
+    // On the roadmap even though the API exists and every screen in Covan runs
+    // on it, because what a caller needs is a credential they can hold, and
+    // there isn't one. `worker/src/middleware/auth.ts` accepts a Supabase JWT
+    // and nothing else; no migration defines an api_keys table, no route issues
+    // or revokes anything. So the only way in is to lift your own session token
+    // out of a browser, and it expires in an hour. That is not something a
+    // cron job can do, and listing it as available asked people to try.
     name: "REST API",
-    desc: "Call any shared agent programmatically, with the same knowledge it uses in chat.",
+    desc: "Call any shared agent programmatically, once there is a key you can hold.",
     icon: Code2,
-    status: "beta",
+    status: "soon",
   },
   {
     // Shipped, but narrower than "Slack" sounds: an incoming-webhook URL you
@@ -74,7 +86,7 @@ function StatusChip({ status }: { status: Status }) {
   // "Available", not "Connected": this list says what Covan can do, not what
   // this workspace has set up. Whether a webhook URL actually exists is a
   // question for Settings, and answering it here would be a guess.
-  const label = status === "beta" ? "Beta" : status === "available" ? "Available" : "Coming soon";
+  const label = status === "available" ? "Available" : "Coming soon";
   return <Chip tone={status === "soon" ? "neutral" : "on"}>{label}</Chip>;
 }
 
@@ -85,11 +97,7 @@ function IntegrationsPage() {
   return (
     <AppShell>
       <PageContainer width="list">
-        <PageHeader
-          badge="Integrations"
-          title="The API is here."
-          turn="The connectors are coming."
-        />
+        <PageHeader badge="Integrations" title="One thing is wired." turn="The rest is coming." />
 
         <section className="mt-14">
           <SectionHeading title="Available now" />

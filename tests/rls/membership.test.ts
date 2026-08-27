@@ -211,6 +211,153 @@ describe("leaving a workspace", () => {
   });
 });
 
+describe("a removed member's own conversation", () => {
+  /**
+   * The half `after being removed` below never built. It removes Carol, who
+   * owns nothing in Alice's workspace, so it proves she loses sight of other
+   * people's rows and says nothing about her own.
+   *
+   * The rows here are the ones that matter: a private session the guest opened
+   * against the HOST's agent. They wrote the questions, so keeping those is
+   * arguable — but every assistant reply in the thread was grounded in the
+   * workspace's knowledge bundles, so a readable transcript is a readable copy
+   * of what those documents said. Removing somebody has to take it back.
+   *
+   * Fresh users throughout: this takes a membership away, and the assertions
+   * elsewhere in the file depend on Carol keeping hers.
+   */
+  let host: TestUser;
+  let guest: TestUser;
+  let seeded: Seeded;
+  let ownSessionId: string;
+  let ownMessageId: string;
+  let cardInSharedSessionId: string;
+
+  async function setMembership(present: boolean) {
+    const members = serviceClient().from("workspace_members");
+    const { error } = present
+      ? await members.insert({
+          workspace_id: host.workspaceId,
+          user_id: guest.id,
+          role: "member",
+        })
+      : await members.delete().eq("workspace_id", host.workspaceId).eq("user_id", guest.id);
+    if (error) throw new Error(`could not set membership: ${error.message}`);
+  }
+
+  /** Reads as the service role, so "gone" is distinguishable from "invisible". */
+  async function stillExists(table: string, id: string): Promise<boolean> {
+    const { data } = await serviceClient().from(table).select("id").eq("id", id);
+    return (data ?? []).length > 0;
+  }
+
+  beforeAll(async () => {
+    host = await createTestUser("keeps-host");
+    guest = await createTestUser("keeps-guest");
+    seeded = await seedWorkspace(host, "shared");
+    await setMembership(true);
+
+    const { data: session, error: sessionError } = await guest.db
+      .from("chat_sessions")
+      .insert({
+        agent_id: seeded.agentId,
+        user_id: guest.id,
+        workspace_id: host.workspaceId,
+        visibility: "private",
+        title: "What the guest asked the workspace's agent",
+      })
+      .select("id")
+      .single();
+    if (sessionError) throw new Error(`guest could not open a session: ${sessionError.message}`);
+    ownSessionId = session.id as string;
+
+    const { data: message, error: messageError } = await guest.db
+      .from("messages")
+      .insert({
+        session_id: ownSessionId,
+        sender_id: guest.id,
+        role: "user",
+        content: "what does the pricing document say?",
+      })
+      .select("id")
+      .single();
+    if (messageError) throw new Error(`guest could not write a message: ${messageError.message}`);
+    ownMessageId = message.id as string;
+
+    // A card of their own on somebody else's shared board — same shape, one
+    // table further out, and the policy there carries the same open branch.
+    const { data: card, error: cardError } = await guest.db
+      .from("ideas")
+      .insert({
+        session_id: seeded.sessionId,
+        workspace_id: host.workspaceId,
+        title: "The guest's card",
+        created_by: guest.id,
+      })
+      .select("id")
+      .single();
+    if (cardError) throw new Error(`guest could not add a card: ${cardError.message}`);
+    cardInSharedSessionId = card.id as string;
+
+    await setMembership(false);
+  });
+
+  it("stops being readable, along with what the agent answered in it", async () => {
+    expect(await visible(guest, "chat_sessions", ownSessionId)).toBe(false);
+    expect(await visible(guest, "messages", ownMessageId)).toBe(false);
+    expect(await visible(guest, "ideas", cardInSharedSessionId)).toBe(false);
+  });
+
+  it("cannot be appended to", async () => {
+    // Harmless on its own — the agent is unreachable, so nothing answers — but
+    // it is a write into a workspace they are no longer in.
+    const { error } = await guest.db.from("messages").insert({
+      session_id: ownSessionId,
+      sender_id: guest.id,
+      role: "user",
+      content: "are you still there?",
+    });
+    expect(error, "an ex-member appended to a workspace thread").not.toBeNull();
+  });
+
+  it("cannot be edited or deleted either", async () => {
+    const { data: edited } = await guest.db
+      .from("messages")
+      .update({ content: "rewritten from outside the workspace" })
+      .eq("id", ownMessageId)
+      .select("id");
+    expect(edited ?? []).toEqual([]);
+
+    const { data: deleted } = await guest.db
+      .from("chat_sessions")
+      .delete()
+      .eq("id", ownSessionId)
+      .select("id");
+    expect(deleted ?? []).toEqual([]);
+    // Deleting is not obviously harmful, but a shared thread the team relies on
+    // is not an ex-member's to destroy, and the rows have to survive for the
+    // re-invitation below to mean anything.
+    expect(await stillExists("chat_sessions", ownSessionId)).toBe(true);
+  });
+
+  it("comes back if they are invited back", async () => {
+    // Nothing is deleted by removal — the rows are simply out of reach, which
+    // is what makes this reversible and what the removal dialog promises.
+    await setMembership(true);
+    expect(await visible(guest, "chat_sessions", ownSessionId)).toBe(true);
+    expect(await visible(guest, "messages", ownMessageId)).toBe(true);
+    expect(await visible(guest, "ideas", cardInSharedSessionId)).toBe(true);
+    await setMembership(false);
+  });
+
+  it("does not take the workspace's own copy with it", async () => {
+    // The other half of the invariant: the guest's card sits on the host's
+    // shared board, and the host keeps reading it after the guest is gone.
+    expect(await visible(host, "ideas", cardInSharedSessionId)).toBe(true);
+    expect(await visible(host, "chat_sessions", seeded.sessionId)).toBe(true);
+  });
+});
+
 describe("after being removed from the workspace", () => {
   // Runs last on purpose: it takes Carol's membership away, and the assertions
   // above depend on her having it.

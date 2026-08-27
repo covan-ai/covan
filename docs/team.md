@@ -41,6 +41,29 @@ this page learned to read `emailed`; the three rows in the first run did not,
 and went on reporting "3 invitations sent" to people running an install with no
 mail at all. The sentence is now decided in one place for both of them.
 
+**"Tell them" comes with the words.** When nothing was emailed, the notice
+carries a *Copy invite text* action, and every waiting invitation on this page
+has a *Copy invite* button of its own — the durable version, for whenever the
+notice is long gone. What you get is a short message naming your Covan's address
+and the one address that will work:
+
+> You've been invited to Covan — a shared AI agent our team trains together.
+> Sign up at `https://covan.app/sign-up` with `ali@example.com` and the
+> invitation will be waiting.
+
+The URL is the front door, not a key. It carries no token and does not pre-fill
+the address, for the reason above and one more: a link that fills the field in
+gets forwarded in place of the address, and then somebody signs up as themselves
+and cannot see why nothing is waiting. Naming the address in prose keeps it
+visibly the thing that matters. Self-hosted installs get their own origin in
+that sentence, so it reads `http://localhost:3000/sign-up` where that is true.
+
+The button is offered whether or not the email went out, because this list
+cannot tell: `emailed` is only ever known about the invitation you have just
+created, nothing stores it, and a second nudge is a normal thing to send anyway.
+For the same reason a waiting invitation says when it was sent rather than
+claiming an email reached anyone.
+
 ### What the invitee sees
 
 When that person signs in with the address the invitation names, two places offer

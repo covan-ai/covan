@@ -29,6 +29,8 @@ import { LogOut, MailPlus, Trash2, UserPlus } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { canWriteAsRole, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles";
+import { copyInviteText } from "@/lib/invite-text";
+import { formatRelative } from "@/lib/relative-time";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
 import { toast } from "sonner";
 
@@ -342,10 +344,26 @@ function TeamPage() {
                         </span>
                       }
                       title={inv.email}
-                      meta="Invitation sent"
+                      // Not "Invitation sent". `PendingInvitation.emailed` is
+                      // only on the invitation you just created — nothing
+                      // stores it, so this list cannot answer whether mail
+                      // went anywhere, and with no RESEND_API_KEY the answer
+                      // is no. What the row does know is that it is waiting.
+                      meta={`Invited ${formatRelative(inv.createdAt)}`}
                       trailing={
                         <span className="flex shrink-0 items-center gap-2">
                           <RoleChip role={inv.role} />
+                          {/* The durable half of "let them know" — unconditional,
+                              because a nudge is a normal thing to send even when
+                              the email did go out, and this list could not tell
+                              the difference anyway. */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyInviteText([inv.email])}
+                          >
+                            Copy invite
+                          </Button>
                           <Button variant="ghost" size="sm" onClick={() => revokeInvite(inv.id)}>
                             Revoke
                           </Button>

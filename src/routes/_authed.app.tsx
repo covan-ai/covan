@@ -12,6 +12,8 @@ import { Badge, Headline, SectionHeading } from "@/components/page-container";
 import { Chip, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar, UserAvatar } from "@/components/avatars";
 import { useQuota, quotaSentence } from "@/lib/quota";
+import { FirstWeekChecklist } from "@/components/first-week-checklist";
+import { firstWeekSteps, firstWeekRemaining, useChecklistDismissed } from "@/lib/first-week";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,6 +58,24 @@ function Home() {
   const members = me?.members ?? [];
   const quota = useQuota();
 
+  // The one fact the checklist needs that the home screen does not already
+  // hold. Asked for only while it could still change the answer, so a
+  // settled workspace stops paying for it on every visit.
+  const { dismissed, dismiss } = useChecklistDismissed(me?.workspace.id);
+  const showChecklist = canWrite && !dismissed && agents.length > 0;
+  const { data: routines = [] } = useQuery({
+    queryKey: ["routines"],
+    queryFn: () => api.routines.list(),
+    enabled: showChecklist,
+  });
+
+  const steps = firstWeekSteps({
+    agents,
+    sessions,
+    memberCount: members.length,
+    routineCount: routines.length,
+  });
+
   // The ⌘K "New agent" action deep-links here with ?new=true.
   useEffect(() => {
     if (openNew) {
@@ -99,6 +119,14 @@ function Home() {
             {quota.level !== "fine" && <span className="h-2 w-2 shrink-0 bg-accent-orange" />}
             {quotaSentence(quota)}
           </p>
+        )}
+        {/* Under the composer, never over it: the composer is the product and
+            this is scaffolding. Hidden from a viewer, since the policies refuse
+            them three of the four steps, and hidden while the workspace has no
+            agents at all — that screen has one job and the composer above is
+            already saying it. */}
+        {showChecklist && firstWeekRemaining(steps) > 0 && (
+          <FirstWeekChecklist steps={steps} agentId={agents[0].id} onDismiss={dismiss} />
         )}
       </div>
 

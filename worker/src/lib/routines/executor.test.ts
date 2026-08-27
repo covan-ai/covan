@@ -9,6 +9,16 @@ import {
 } from "./executor";
 import { encryptSecret } from "./crypto";
 
+// Task 11 wires a real DNS lookup into the Node fetch path so a hostname that
+// merely resolves to a private address is still caught. That lookup is a
+// dynamic `import("node:dns/promises")`, which vi.mock intercepts the same as
+// a static one. Stub it so these tests keep exercising the fixture hostname
+// "e.com" without depending on a real network round trip — the same reason
+// fetchImpl itself is mocked rather than left to hit the network.
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+}));
+
 // Same fixture key used in delivery.test.ts. The stubbed `delivery_channels`
 // row below must round-trip through the real decryptSecret (this module does
 // not mock crypto), so the ciphertext has to be real AES-GCM output for this

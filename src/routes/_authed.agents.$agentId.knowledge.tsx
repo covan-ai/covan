@@ -102,9 +102,17 @@ function KnowledgeTab() {
       uploadToBundle(selectedBundleId, file, (pct) =>
         setUploading((prev) => prev.map((u) => (u.id === id ? { ...u, progress: pct } : u))),
       )
-        .then(() => {
+        .then((doc) => {
           setUploading((prev) => prev.filter((u) => u.id !== id));
-          toast.success(`Added ${file.name}`);
+          if (doc.indexed) {
+            toast.success(`Added ${file.name}`);
+          } else {
+            // Same wording as the chat composer's warning in use-chat-uploads:
+            // stored and listed, but no passage in it can be matched.
+            toast.warning(
+              `${file.name} went in but could not be indexed, so answers won't be grounded in it.`,
+            );
+          }
         })
         .catch((err) => {
           setUploading((prev) => prev.filter((u) => u.id !== id));

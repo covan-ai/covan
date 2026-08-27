@@ -173,8 +173,12 @@ workspace.patch("/workspace/members/:userId", async (c) => {
     .select("user_id, role");
 
   if (error) {
-    // Trigger violations surface as errors; return a friendly 400.
-    return c.json({ error: error.message || "failed to update member" }, 400);
+    // 22P02 is Postgres's "invalid input syntax" — a malformed uuid in the
+    // path. Everything else here is a trigger violation, and the driver's own
+    // sentence for it names columns and constraints that are ours to know and
+    // not the caller's.
+    if (error.code === "22P02") return c.json({ error: "invalid member id" }, 400);
+    return c.json({ error: "failed to update member" }, 400);
   }
   if (!updated || updated.length === 0) {
     return c.json({ error: "only workspace admins can manage members" }, 403);
@@ -270,7 +274,8 @@ workspace.delete("/workspace/members/:userId", async (c) => {
     .select("user_id");
 
   if (error) {
-    return c.json({ error: error.message || "failed to remove member" }, 400);
+    if (error.code === "22P02") return c.json({ error: "invalid member id" }, 400);
+    return c.json({ error: "failed to remove member" }, 400);
   }
   if (!deleted || deleted.length === 0) {
     return c.json({ error: "only workspace admins can manage members" }, 403);

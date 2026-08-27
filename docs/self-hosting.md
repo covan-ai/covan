@@ -285,6 +285,36 @@ Before the stack faces a network:
 4. Rate-limit the API at that same proxy, as well as the built-in limiter. See below.
 5. Consider not publishing `54322` at all.
 
+Every port `docker-compose.yml` publishes now binds to `127.0.0.1` by
+default, controlled by `BIND_ADDR` in `.env`. That default is doing real
+work: Docker publishes ports through `nat/PREROUTING`, which runs before
+your firewall's `INPUT` chain, so `ufw default deny incoming` does not
+touch a published port — the bind address is the only thing standing
+between the compose network and the internet until you've done the rest of
+this list. Setting `BIND_ADDR=0.0.0.0` (or any non-loopback address) to
+expose the stack is a deliberate choice, and it should never be made
+without regenerating the secrets in step 1 first — those are demo values
+published in this repository, not a guess an attacker has to make.
+
+`covan-api` now enforces part of step 1 itself: at boot, if `ALLOWED_ORIGIN`
+is not a localhost URL, it refuses to start when `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY` or `ROUTINE_SECRET_KEY` still hold the exact
+values `.env.docker.example` ships, naming every offending variable in the
+error. It also refuses to start on any `ROUTINE_SECRET_KEY` that does not
+decode to 16, 24 or 32 bytes, so a bad key is caught at boot instead of the
+first time a delivery channel is saved.
+
+What it cannot enforce is the rest of step 1. `JWT_SECRET` and
+`POSTGRES_PASSWORD` are consumed by Kong, GoTrue, PostgREST and Postgres —
+none of which run `loadEnv`, and none of which this repository can add a
+startup check to. Regenerating `SUPABASE_ANON_KEY` and
+`SUPABASE_SERVICE_ROLE_KEY` while leaving `JWT_SECRET` at its published
+default achieves nothing: those two keys are JWTs signed with `JWT_SECRET`,
+and anyone who has read this repository already knows that secret and can
+mint their own `{"role":"service_role"}` token, bypassing row level security
+the same way the shipped key would have. Regenerate `JWT_SECRET` first, then
+the two keys it signs.
+
 ### Covan rate-limits itself, and you should still limit at the proxy
 
 Two tiers, on by default, on both deployment paths. They exist because

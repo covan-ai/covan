@@ -8,6 +8,7 @@ import { extractDocumentText, hasIndexableText } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
+import { insertChunkRows } from "../lib/chunk-store";
 
 const bundles = new Hono<AppEnv>();
 
@@ -241,7 +242,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
         content: ch,
         embedding: vectors[i],
       }));
-      const { error: chunkErr } = await db.from("document_chunks").insert(rows);
+      const { error: chunkErr } = await insertChunkRows(db, rows);
       if (chunkErr) console.error("failed to insert chunks", chunkErr);
       else chunkCount = rows.length;
     }
@@ -311,7 +312,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
         content: ch,
         embedding: vectors[i],
       }));
-      const { error: insErr } = await db.from("document_chunks").insert(rows);
+      const { error: insErr } = await insertChunkRows(db, rows);
       if (insErr) {
         console.error("backfill insert failed", d.id, insErr);
         skipped++;

@@ -198,3 +198,90 @@ describe("PATCH /documents/:id — moving a document to another bundle", () => {
     expect(res.status).toBe(200);
   });
 });
+
+/**
+ * The caller's client for the delete path. `rowsDeleted` is the knob that
+ * matters: a viewer's delete is refused by RLS as "matched no rows, no error",
+ * which is indistinguishable from success unless the handler looks.
+ */
+function fakeDeleteDb(opts: {
+  row: { id: string; r2_key: string | null } | null;
+  rowsDeleted: number;
+}) {
+  return {
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: opts.row, error: null }) }),
+      }),
+      delete: () => ({
+        eq: () => ({
+          select: async () => ({
+            data: opts.row && opts.rowsDeleted > 0 ? [opts.row] : [],
+            error: null,
+          }),
+        }),
+      }),
+    }),
+  } as never;
+}
+
+function appWith(db: unknown, deleted: string[]) {
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("db", db as never);
+    // Stand in for the R2/fs store, recording what it was asked to remove.
+    // (c.env is undefined in this test harness unless something sets it — see
+    // transcribe.test.ts for the same pattern — so this assigns the whole
+    // object rather than mutating a DOCS property off of undefined.)
+    c.env = {
+      DOCS: {
+        delete: async (key: string) => {
+          deleted.push(key);
+        },
+      },
+    } as never;
+    await next();
+  });
+  app.route("/", documents);
+  return app;
+}
+
+describe("DELETE /documents/:id", () => {
+  it("removes the stored object when RLS permits the row delete", async () => {
+    const deleted: string[] = [];
+    const app = appWith(
+      fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 1 }),
+      deleted,
+    );
+
+    const res = await app.request("/documents/d1", { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(deleted).toEqual(["b1/obj"]);
+  });
+
+  it("leaves the bytes alone and 403s when RLS refuses the row delete", async () => {
+    const deleted: string[] = [];
+    const app = appWith(
+      fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 0 }),
+      deleted,
+    );
+
+    const res = await app.request("/documents/d1", { method: "DELETE" });
+
+    expect(res.status).toBe(403);
+    // The whole point: a viewer must not be able to destroy the content.
+    expect(deleted).toEqual([]);
+  });
+
+  it("404s for a document the caller cannot see", async () => {
+    const deleted: string[] = [];
+    const app = appWith(fakeDeleteDb({ row: null, rowsDeleted: 0 }), deleted);
+
+    const res = await app.request("/documents/nope", { method: "DELETE" });
+
+    expect(res.status).toBe(404);
+    expect(deleted).toEqual([]);
+  });
+});

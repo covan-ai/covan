@@ -6,10 +6,18 @@ import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
+import { insertChunkRows } from "../lib/chunk-store";
 
 const documents = new Hono<AppEnv>();
 
-// DELETE /documents/:id — remove from DB (authoritative) + best-effort R2 delete.
+// DELETE /documents/:id — the row is the authority, and it goes first.
+//
+// This used to delete the stored object and then the row. RLS answers a delete
+// it has no policy for by matching no rows and reporting no error, so a viewer
+// — who passes documents_select_member but fails documents_delete_member —
+// destroyed the bytes and got {ok:true} back, leaving a row pointing at a key
+// that no longer exists. Deleting the row first, and reading back what was
+// actually deleted, makes the refusal visible before anything is lost.
 documents.delete("/documents/:id", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
@@ -27,17 +35,31 @@ documents.delete("/documents/:id", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  if (row.r2_key) {
-    try {
-      await getDocStore(c.env).delete(row.r2_key);
-    } catch (e) {
-      console.error("r2 delete failed", e);
-    }
-  }
+  const { data: deleted, error: delErr } = await db
+    .from("documents")
+    .delete()
+    .eq("id", id)
+    .select("id,r2_key");
 
-  const { error: delErr } = await db.from("documents").delete().eq("id", id);
   if (delErr) {
     return c.json({ error: "failed to delete document" }, 500);
+  }
+  // Visible above, not deletable: RLS refused. Not "already gone" — the select
+  // two calls up found it.
+  if (!deleted || deleted.length === 0) {
+    return c.json({ error: "you do not have permission to delete this document" }, 403);
+  }
+
+  const key = deleted[0].r2_key;
+  if (key) {
+    try {
+      await getDocStore(c.env).delete(key);
+    } catch (e) {
+      // Best-effort by design: the row is gone, so the document is gone as far
+      // as the product is concerned. An orphaned object is a storage cost, not
+      // a correctness problem, and failing the request here would be a lie.
+      console.error("document store delete failed", e);
+    }
   }
 
   return c.json({ ok: true });
@@ -238,7 +260,7 @@ documents.post("/documents/:id/reindex", async (c) => {
     content: ch,
     embedding: vectors[i],
   }));
-  const { error: insErr } = await db.from("document_chunks").insert(rows);
+  const { error: insErr } = await insertChunkRows(db, rows);
   if (insErr) return c.json({ error: "failed to save chunks" }, 500);
 
   return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunks.length }] }));

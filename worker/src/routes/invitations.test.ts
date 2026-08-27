@@ -101,7 +101,28 @@ describe("GET /invitations", () => {
     expect(callsTo("invitations")[0].filters).toEqual([
       { column: "workspace_id", value: WORKSPACE, kind: "eq" },
       { column: "status", value: "pending", kind: "eq" },
+      { column: "expires_at", value: expect.any(String), kind: "gt" },
     ]);
+  });
+
+  it("excludes invitations past their expiry from the pending list", async () => {
+    // status = 'pending' alone is not enough once invitations expire: 0029
+    // backfilled expires_at onto every pre-existing pending row rather than
+    // voiding it, so an old, unexpired-looking row is exactly the case this
+    // filter has to catch going forward.
+    const { app, callsTo } = appWith({
+      tables: {
+        invitations: { select: () => ({ data: [], error: null }) },
+      },
+    });
+
+    await json(app, "GET", "/invitations");
+
+    expect(callsTo("invitations")[0].filters).toContainEqual({
+      column: "expires_at",
+      value: expect.any(String),
+      kind: "gt",
+    });
   });
 
   it("answers 404 when the caller has no workspace at all", async () => {
@@ -229,6 +250,80 @@ describe("POST /invitations", () => {
     const { app } = appWith({});
 
     expect((await json(app, "POST", "/invitations", body)).status).toBe(400);
+  });
+
+  it("409s rather than inviting somebody who is already in the workspace", async () => {
+    const { app } = appWith({
+      existingMemberEmails: [{ email: "bob@corp.com", workspaceId: WORKSPACE }],
+      tables: {
+        invitations: {
+          insert: () => ({
+            data: [{ ...created, email: "bob@corp.com" }],
+            error: null,
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "POST", "/invitations", {
+      email: "bob@corp.com",
+      role: "member",
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: "they're already in this workspace" });
+  });
+
+  it("does not block an invite to someone who belongs to a different workspace", async () => {
+    // Proves the check is scoped to the caller's active workspace (WORKSPACE)
+    // rather than "any workspace this address happens to be a member of": if
+    // the production `.eq("workspace_id", workspaceId)` were dropped, or
+    // pointed at the wrong workspace, this would 409 instead of succeeding.
+    const { app } = appWith({
+      existingMemberEmails: [{ email: "carol@corp.com", workspaceId: "ws-2" }],
+      tables: {
+        invitations: {
+          insert: () => ({
+            data: [{ ...created, email: "carol@corp.com" }],
+            error: null,
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "POST", "/invitations", {
+      email: "carol@corp.com",
+      role: "member",
+    });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("escapes ILIKE wildcards in the address before the membership lookup", async () => {
+    // '_' is a valid character in a real local part (bob_smith@corp.com) but
+    // an ILIKE single-character wildcard when unescaped — a stray wildcard in
+    // a lookup built from user input is exactly what this route should never
+    // send. Asserting on the recorded filter (rather than on a fake that
+    // understands ILIKE semantics) is deliberate: the fake stays a strict
+    // recorder of what was sent, not a second implementation of Postgres.
+    const { app, callsTo } = appWith({
+      tables: {
+        invitations: {
+          insert: () => ({ data: [{ ...created, email: "bob_smith@corp.com" }], error: null }),
+        },
+      },
+    });
+
+    await json(app, "POST", "/invitations", { email: "bob_smith@corp.com", role: "member" });
+
+    const profileLookup = callsTo("profiles").find((c) =>
+      c.filters.some((f) => f.kind === "ilike"),
+    );
+    expect(profileLookup?.filters).toContainEqual({
+      column: "email",
+      value: "bob\\_smith@corp.com",
+      kind: "ilike",
+    });
   });
 
   it("reports a duplicate as a conflict, not a failure", async () => {

@@ -145,3 +145,92 @@ describe("deleting someone who wrote in a shared session", () => {
     expect(message.sender_id).toBeNull();
   });
 });
+
+describe("a client may not rewrite its own line into the agent's voice", () => {
+  // Alice, not Carol: Alice owns `shared`, so the *old* messages_update_owner
+  // ("the parent session is mine") already lets her through on USING. That is
+  // exactly the exploit path — the policy that was supposed to gate this
+  // never looked at `role` or `sender_id` at all. Carol would be blocked by
+  // ownership alone, which would prove nothing about the column check.
+  it("refuses an update that changes role to assistant", async () => {
+    const { data: mine } = await alice.db
+      .from("messages")
+      .insert({ session_id: shared.sessionId, role: "user", content: "mine", sender_id: alice.id })
+      .select("id")
+      .single();
+
+    const { error } = await alice.db
+      .from("messages")
+      .update({ role: "assistant", sender_id: null, content: "Legal signed off." })
+      .eq("id", mine!.id)
+      .select("id");
+
+    // WITH CHECK refuses by matching nothing; either shape is a pass, a
+    // successfully rewritten row is not.
+    const { data: after } = await serviceClient()
+      .from("messages")
+      .select("role,sender_id,content")
+      .eq("id", mine!.id)
+      .single();
+
+    expect(after!.role).toBe("user");
+    expect(after!.sender_id).toBe(alice.id);
+    expect(after!.content).toBe("mine");
+    expect(error === null || error.code === "42501").toBe(true);
+  });
+
+  it("still allows editing the content of your own user message", async () => {
+    const { data: mine } = await alice.db
+      .from("messages")
+      .insert({ session_id: shared.sessionId, role: "user", content: "typo", sender_id: alice.id })
+      .select("id")
+      .single();
+
+    const { error } = await alice.db
+      .from("messages")
+      .update({ content: "fixed" })
+      .eq("id", mine!.id);
+
+    expect(error).toBeNull();
+
+    const { data: after } = await serviceClient()
+      .from("messages")
+      .select("content")
+      .eq("id", mine!.id)
+      .single();
+    expect(after!.content).toBe("fixed");
+  });
+
+  it("no longer lets the session owner rewrite a message someone else wrote", async () => {
+    // This is the narrowing 0026 makes deliberately: the old USING clause was
+    // "any row in a session I own", which let Alice, as owner of a shared
+    // session, edit a line Carol wrote in it. The route this policy serves
+    // (PATCH /messages/:id) only ever edits the caller's own line, so that
+    // reach was never needed and is now gone.
+    const { data: carols } = await carol.db
+      .from("messages")
+      .insert({
+        session_id: shared.sessionId,
+        role: "user",
+        content: "carol's line",
+        sender_id: carol.id,
+      })
+      .select("id")
+      .single();
+
+    const { error } = await alice.db
+      .from("messages")
+      .update({ content: "alice edited this" })
+      .eq("id", carols!.id)
+      .select("id");
+
+    const { data: after } = await serviceClient()
+      .from("messages")
+      .select("content")
+      .eq("id", carols!.id)
+      .single();
+
+    expect(after!.content).toBe("carol's line");
+    expect(error === null || error.code === "42501").toBe(true);
+  });
+});

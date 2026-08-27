@@ -83,6 +83,7 @@ invitations.get("/invitations", async (c) => {
     .select("id, email, role, created_at")
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);
@@ -108,6 +109,41 @@ invitations.post("/invitations", async (c) => {
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   const email = parsed.data.email.toLowerCase();
+
+  // Re-inviting an existing member is not harmless: accept_invitation does
+  // `on conflict do nothing` on the membership, but it still switches their
+  // active workspace — so a mistyped address can pull a colleague out of
+  // whatever they were working in.
+  //
+  // No FK links workspace_members to profiles (both reference auth.users
+  // independently), so PostgREST cannot embed one through the other — this is
+  // a plain two-step lookup rather than a single embedded select.
+  //
+  // ilike, not eq: profiles.email is copied verbatim from auth.users.email at
+  // signup and never lowercased, so an exact eq would miss "Bob@Corp.com"
+  // against a stored "bob@corp.com". The address itself is user input, so its
+  // ILIKE metacharacters (%, _) are escaped first — this is the first
+  // ilike/or/filter built from user input in this codebase, and it should
+  // only ever narrow to an exact case-insensitive match, never pattern-match.
+  const escapedEmail = email.replace(/[%_]/g, "\\$&");
+  const { data: matchingProfile } = await db
+    .from("profiles")
+    .select("id")
+    .ilike("email", escapedEmail)
+    .maybeSingle();
+
+  if (matchingProfile) {
+    const { data: existingMembership } = await db
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", matchingProfile.id as string)
+      .maybeSingle();
+
+    if (existingMembership) {
+      return c.json({ error: "they're already in this workspace" }, 409);
+    }
+  }
 
   const { data, error } = await db
     .from("invitations")
@@ -226,6 +262,7 @@ invitations.get("/invitations/incoming", async (c) => {
     .from("invitations")
     .select("id, workspace_id, role, created_at, workspaces(name)")
     .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);

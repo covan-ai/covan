@@ -397,16 +397,18 @@ describe("PATCH /workspace/members/:userId", () => {
     });
   });
 
-  it("passes the last-admin trigger's message back to the caller", async () => {
-    // Demoting the only admin raises in Postgres. The message explains why, so
-    // it should reach the person who tried.
+  it("answers in its own words when the last-admin trigger fires, not the driver's", async () => {
+    // Demoting the only admin raises in Postgres. The trigger's own sentence is
+    // fine to read, but reflecting driver messages verbatim is what this route
+    // no longer does for any error — see "member routes do not echo the
+    // database" below — so this one gets the same static answer as the rest.
     const { app } = appWith({
       tables: {
         workspace_members: {
           select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
           update: () => ({
             data: null,
-            error: { message: "cannot remove the last admin of a workspace" },
+            error: { code: "P0001", message: "cannot remove the last admin of a workspace" },
           }),
         },
       },
@@ -415,9 +417,7 @@ describe("PATCH /workspace/members/:userId", () => {
     const res = await json(app, "PATCH", "/workspace/members/user-1", { role: "member" });
 
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toEqual({
-      error: "cannot remove the last admin of a workspace",
-    });
+    await expect(res.json()).resolves.toEqual({ error: "failed to update member" });
   });
 
   it.each([
@@ -472,6 +472,68 @@ describe("DELETE /workspace/members/:userId", () => {
     const { app } = appWith({ tables: NO_WORKSPACE });
 
     expect((await json(app, "DELETE", "/workspace/members/user-2")).status).toBe(404);
+  });
+});
+
+describe("member routes do not echo the database", () => {
+  // 22P02 is Postgres's "invalid input syntax" — reachable here because the
+  // path segment goes straight into an `.eq("user_id", ...)` with no format
+  // check in front of it. The driver's own sentence for it ("invalid input
+  // syntax for type uuid: \"notauuid\"") is harmless on its own, but it is the
+  // same code path that would otherwise echo a constraint name for any
+  // constraint added later — see the file-level test above.
+  it("returns our own sentence for a malformed member id on update", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          update: () => ({
+            data: null,
+            error: { code: "22P02", message: 'invalid input syntax for type uuid: "notauuid"' },
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "PATCH", "/workspace/members/notauuid", { role: "member" });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid member id" });
+  });
+
+  it("returns our own sentence for a malformed member id on delete", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({
+            data: null,
+            error: { code: "22P02", message: 'invalid input syntax for type uuid: "notauuid"' },
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "DELETE", "/workspace/members/notauuid");
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid member id" });
+  });
+
+  it("still says something useful for an error it does not recognise", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({ data: null, error: { code: "XX000", message: "internal detail" } }),
+        },
+      },
+    });
+
+    const res = await json(app, "DELETE", "/workspace/members/user-2");
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "failed to remove member" });
   });
 });
 

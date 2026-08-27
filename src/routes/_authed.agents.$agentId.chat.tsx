@@ -369,6 +369,10 @@ function ChatTab() {
     if (!replyingIn) return;
     const sessionId = replyingIn;
     streamAbort.current?.abort();
+    // Cleared here as well as in the stream's own finally: that runs a
+    // microtask later, and a resend started in between would find a stale
+    // handle and return without doing anything.
+    streamAbort.current = null;
     setThinking(false);
     setReplyingIn(null);
     if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);

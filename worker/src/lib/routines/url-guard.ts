@@ -1,19 +1,30 @@
 /**
  * Guards every outbound fetch to a user-supplied address.
  *
- * Note what this does NOT do: it cannot resolve DNS, so a hostname that
- * resolves to a private address still passes. Cloudflare's edge will not route
- * to RFC1918 space, which covers the gap for the literal cases; the checks
- * here stop the direct attempts and the redirect bounce.
+ * `assertFetchableUrl` below judges the hostname string alone, so a name that
+ * merely *resolves* to a private address — `169.254.169.254.nip.io`,
+ * `metadata.google.internal`, a bare compose service name — walks straight
+ * past it. On Cloudflare that is survivable: the edge will not route to
+ * RFC1918 space. It is not survivable on the Node runtime (`worker/src/node.ts`,
+ * the Docker image), where `fetch` resolves and connects itself. That gap is
+ * `assertResolvedHostIsPublic` below — the resolving half of the guard, wired
+ * into the Node fetch path in `source.ts`.
  */
 
 const PRIVATE_V4 = [
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^0\./,
+  /^127\./, // loopback
+  /^10\./, // RFC1918
+  /^192\.168\./, // RFC1918
+  /^172\.(1[6-9]|2\d|3[01])\./, // RFC1918
+  /^169\.254\./, // link-local — cloud metadata lives here
+  /^0\./, // "this network", and 0.0.0.0 as every local address
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT, RFC6598 — carriers and Tailscale
+  /^192\.0\.0\./, // IETF protocol assignments
+  /^192\.0\.2\./, // TEST-NET-1
+  /^198\.1[89]\./, // benchmarking, RFC2544
+  /^198\.51\.100\./, // TEST-NET-2
+  /^203\.0\.113\./, // TEST-NET-3
+  /^2(2[4-9]|[3-4]\d|5[0-5])\./, // multicast and reserved, 224.0.0.0/4 upward
 ];
 
 const PRIVATE_V6 = ["::1", "::", "0:0:0:0:0:0:0:1"];
@@ -26,7 +37,7 @@ function canonicalHost(value: string): string {
   return withoutPort.replace(/\.$/, "").toLowerCase();
 }
 
-function isPrivateHost(host: string): boolean {
+export function isPrivateAddress(host: string): boolean {
   const bare = host.startsWith("[") ? host.slice(1, -1) : host;
   const canonicalBare = bare.replace(/\.$/, "").toLowerCase();
 
@@ -45,6 +56,18 @@ function isPrivateHost(host: string): boolean {
 
   if (PRIVATE_V6.includes(canonicalBare)) return true;
   if (/^fe80:/i.test(canonicalBare) || /^f[cd][0-9a-f]{2}:/i.test(canonicalBare)) return true;
+
+  // IPv4-compatible IPv6 (::a.b.c.d) and NAT64 (64:ff9b::/96) both carry a v4
+  // address in the low bits and both route to it.
+  const embedded = /^(?:::|64:ff9b::)(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(canonicalBare);
+  if (embedded) return PRIVATE_V4.some((re) => re.test(embedded[1]));
+  const embeddedHex = /^(?:::|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(canonicalBare);
+  if (embeddedHex) {
+    const hi = parseInt(embeddedHex[1], 16);
+    const lo = parseInt(embeddedHex[2], 16);
+    return PRIVATE_V4.some((re) => re.test(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`));
+  }
+
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(canonicalBare))
     return PRIVATE_V4.some((re) => re.test(canonicalBare));
   return canonicalBare === "localhost";
@@ -88,7 +111,7 @@ export function assertFetchableUrl(raw: string, ownHosts: string[]): URL {
   }
 
   const host = canonicalHost(url.hostname);
-  if (isPrivateHost(url.hostname)) {
+  if (isPrivateAddress(url.hostname)) {
     throw new Error(`unsafe url: ${url.hostname} is a private address`);
   }
 
@@ -100,4 +123,33 @@ export function assertFetchableUrl(raw: string, ownHosts: string[]): URL {
     throw new Error(`unsafe url: ${url.host} is this service`);
   }
   return url;
+}
+
+/**
+ * The second half of the guard, for runtimes that resolve DNS themselves.
+ *
+ * `assertFetchableUrl` can only judge the hostname it was handed, so
+ * `169.254.169.254.nip.io` — or a bare compose service name like `kong` —
+ * walks straight past it. On Cloudflare that is survivable because the edge
+ * refuses to route to RFC1918 space. On the Node runtime, which is the Docker
+ * image and the whole self-host story, `fetch` resolves and connects to
+ * whatever comes back, on a network shared with the database.
+ *
+ * `resolve` is injected rather than imported so this module stays free of
+ * `node:dns` — the Workers bundle must not pull it in.
+ */
+export async function assertResolvedHostIsPublic(
+  hostname: string,
+  resolve: (host: string) => Promise<string[]>,
+): Promise<string[]> {
+  const addresses = await resolve(hostname);
+  if (addresses.length === 0) {
+    throw new Error(`unsafe url: ${hostname} does not resolve`);
+  }
+  for (const address of addresses) {
+    if (isPrivateAddress(address)) {
+      throw new Error(`unsafe url: ${hostname} resolves to ${address}, a private address`);
+    }
+  }
+  return addresses;
 }

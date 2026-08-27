@@ -304,16 +304,23 @@ error. It also refuses to start on any `ROUTINE_SECRET_KEY` that does not
 decode to 16, 24 or 32 bytes, so a bad key is caught at boot instead of the
 first time a delivery channel is saved.
 
-What it cannot enforce is the rest of step 1. `JWT_SECRET` and
-`POSTGRES_PASSWORD` are consumed by Kong, GoTrue, PostgREST and Postgres —
-none of which run `loadEnv`, and none of which this repository can add a
-startup check to. Regenerating `SUPABASE_ANON_KEY` and
-`SUPABASE_SERVICE_ROLE_KEY` while leaving `JWT_SECRET` at its published
-default achieves nothing: those two keys are JWTs signed with `JWT_SECRET`,
-and anyone who has read this repository already knows that secret and can
-mint their own `{"role":"service_role"}` token, bypassing row level security
-the same way the shipped key would have. Regenerate `JWT_SECRET` first, then
-the two keys it signs.
+`loadEnv` cannot see `JWT_SECRET` and `POSTGRES_PASSWORD` — they are consumed
+by Kong, GoTrue, PostgREST and Postgres, none of which run it — so
+`docker-compose.yml` carries a second, independent guard for the rest of
+step 1: a `secrets-check` service that runs `docker/check-secrets.sh` and
+that `db` depends on with `condition: service_completed_successfully`. Every
+other service descends from `db`, so this one check gates the whole stack.
+Its logic mirrors `loadEnv`'s — same localhost carve-out, same "still holds
+the published default" test — but over `JWT_SECRET`, `POSTGRES_PASSWORD`,
+`SECRET_KEY_BASE`, `ANON_KEY`, `SERVICE_ROLE_KEY` and `ROUTINE_SECRET_KEY`,
+naming every offending variable the same way. Regenerating
+`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` while leaving
+`JWT_SECRET` at its published default still achieves nothing, and both
+checks will say so: those two keys are JWTs signed with `JWT_SECRET`, and
+anyone who has read this repository already knows that secret and can mint
+their own `{"role":"service_role"}` token, bypassing row level security the
+same way the shipped key would have. Regenerate `JWT_SECRET` first, then the
+two keys it signs.
 
 ### Covan rate-limits itself, and you should still limit at the proxy
 

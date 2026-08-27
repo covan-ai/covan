@@ -245,3 +245,69 @@ describe("ideas: your own card is yours to change, not anyone's", () => {
     expect(data!.created_by).toBe(member.id);
   });
 });
+
+/**
+ * 0028's WITH CHECK pins workspace_id to the parent session's, but that
+ * subquery runs against the NEW row — after a re-parent the new session is
+ * the parent, so the check passes against the very row that just moved.
+ * ideas.session_id itself was left unpinned by any policy. 0030 closes it
+ * with a trigger, since a WITH CHECK predicate never sees the old row and so
+ * cannot compare the new session_id against it.
+ */
+describe("ideas: a card cannot be moved to a different board", () => {
+  it("refuses to re-parent a card to another session, but a normal edit still works", async () => {
+    const { data: otherSession } = await owner.db
+      .from("chat_sessions")
+      .insert({
+        agent_id: seeded.agentId,
+        user_id: owner.id,
+        workspace_id: owner.workspaceId,
+        visibility: "shared",
+        title: "A different board",
+      })
+      .select("id")
+      .single();
+
+    const { data: card } = await member.db
+      .from("ideas")
+      .insert({
+        session_id: seeded.sessionId,
+        workspace_id: owner.workspaceId,
+        title: "stay put",
+        created_by: member.id,
+      })
+      .select("id")
+      .single();
+
+    const { error: moveError } = await member.db
+      .from("ideas")
+      .update({ session_id: otherSession!.id })
+      .eq("id", card!.id);
+    expect(moveError, "a card was re-parented to a different session").not.toBeNull();
+
+    // Read back through the service role: RLS and the trigger refuse in
+    // different ways, and an error alone does not prove the column held.
+    const { data: afterMove } = await serviceClient()
+      .from("ideas")
+      .select("session_id")
+      .eq("id", card!.id)
+      .single();
+    expect(afterMove!.session_id).toBe(seeded.sessionId);
+
+    // The trigger's `is distinct from` must not catch an ordinary edit that
+    // leaves session_id untouched.
+    const { error: editError } = await member.db
+      .from("ideas")
+      .update({ title: "still stays put" })
+      .eq("id", card!.id);
+    expect(editError, "a normal card edit was blocked").toBeNull();
+
+    const { data: afterEdit } = await serviceClient()
+      .from("ideas")
+      .select("title, session_id")
+      .eq("id", card!.id)
+      .single();
+    expect(afterEdit!.title).toBe("still stays put");
+    expect(afterEdit!.session_id).toBe(seeded.sessionId);
+  });
+});

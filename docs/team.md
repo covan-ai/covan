@@ -72,6 +72,21 @@ new account meets the same invitation as a step in the welcome flow instead —
 somebody who was invited already has a workspace waiting, so walking them through
 furnishing another one they are about to abandon would be the wrong order.
 
+**Only the invitee.** `invitations_select_admin_or_invitee` admits a row when the
+caller is an admin of the workspace *or* the row is addressed to them, which is
+right — the pending list on this page needs the first half. It is the wrong
+scope for the incoming banner, and that route used to lean on the policy for its
+scoping instead of saying which rows it meant. So an admin met their own
+outgoing invitations in it: *"You've been invited to \<your own workspace\> as
+\<the role you just granted somebody else\>"*, with an Accept button
+`accept_invitation()` was always going to refuse, because it compares the
+address against the caller's own. The query now filters on the caller's address;
+the policy is untouched.
+
+That is the same mistake as the usage figures below, one table over. A policy
+answers "may this person see this row", which stops being the same question as
+"is this row theirs" the moment anybody else is added to the `or`.
+
 Accepting runs `accept_invitation()`, a `SECURITY DEFINER` function, because the
 person accepting is by definition not yet a member and no policy would let them
 insert their own membership row. It compares the invitation's address with the

@@ -26,15 +26,18 @@ const USER = { id: "user-1", email: "admin@example.com" };
 const WORKSPACE = "ws-1";
 const CREATED_AT = "2026-08-01T09:00:00.000Z";
 
-function appWith(spec: FakeDbSpec) {
+/** `user` overrides the caller — only the incoming-invitations case needs it,
+    to check an address whose capitals survived signup. */
+function appWith(spec: FakeDbSpec & { user?: { id: string; email: string } }) {
+  const { user = USER, ...dbSpec } = spec;
   const fake = fakeDb({
-    ...spec,
-    tables: { ...activeWorkspaceTables(USER.id, WORKSPACE), ...spec.tables },
+    ...dbSpec,
+    tables: { ...activeWorkspaceTables(user.id, WORKSPACE), ...dbSpec.tables },
   });
 
   const app = new Hono<AppEnv>();
   app.use("/*", async (c, next) => {
-    c.set("user", USER as never);
+    c.set("user", user as never);
     c.set("db", fake.db as never);
     await next();
   });
@@ -476,6 +479,60 @@ describe("GET /invitations/incoming", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual([expect.objectContaining({ workspaceName: "" })]);
+  });
+
+  /**
+   * The route used to lean entirely on `invitations_select_admin_or_invitee`,
+   * which admits a row when the caller is an admin of the workspace OR the row
+   * is addressed to them. So it answered "invitations you can see" to a
+   * question that asked "invitations addressed to you", and an admin met their
+   * own outgoing invitations in the incoming banner — "You've been invited to
+   * <your own workspace> as <the role you just granted somebody else>", with an
+   * Accept button `accept_invitation()` was always going to refuse.
+   *
+   * Asserted on the filter rather than on the rows, because the fake client
+   * cannot enforce a policy: a test that only checked the response would pass
+   * with the filter deleted.
+   */
+  it("asks only for invitations addressed to the caller, not every one they may read", async () => {
+    let filters: { column: string; value: unknown }[] = [];
+    const { app } = appWith({
+      tables: {
+        invitations: {
+          select: (ctx) => {
+            filters = ctx.filters as typeof filters;
+            return { data: [], error: null };
+          },
+        },
+      },
+    });
+
+    await json(app, "GET", "/invitations/incoming");
+
+    expect(filters).toContainEqual(expect.objectContaining({ column: "email", value: USER.email }));
+  });
+
+  it("lowercases the caller's own address, since the stored one always is", async () => {
+    let filters: { column: string; value: unknown }[] = [];
+    const { app } = appWith({
+      user: { id: USER.id, email: "Admin@Example.com" },
+      tables: {
+        invitations: {
+          select: (ctx) => {
+            filters = ctx.filters as typeof filters;
+            return { data: [], error: null };
+          },
+        },
+      },
+    });
+
+    await json(app, "GET", "/invitations/incoming");
+
+    // POST /invitations lowercases on the way in, so a caller whose auth record
+    // kept its capitals would otherwise match none of their own invitations.
+    expect(filters).toContainEqual(
+      expect.objectContaining({ column: "email", value: "admin@example.com" }),
+    );
   });
 });
 

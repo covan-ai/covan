@@ -298,26 +298,29 @@ More than the word "remove" suggests:
   the select policy tests the _reader's_ membership, not the owner's, so a
   conversation somebody shared before they left goes on being visible to everyone
   who is still there.
-- **Their own sessions and routines still exist, are still theirs, and are still
-  reachable.** Both tables key off `auth.users` and carry no membership foreign
-  key, so nothing about them cascades — and the owner branch of each select
-  policy tests only `user_id = auth.uid()`, with no membership check beside it.
-  What removal takes away is the _list_: `GET /sessions` is scoped to the
-  caller's active workspace, and a workspace they have been removed from cannot
-  be made active, so the conversation stops appearing. It does not stop
-  existing. Reading a session's messages is filtered on the session id alone,
-  and the insert policy admits its owner on the same terms, so somebody who
-  still has the id — a bookmark, an open tab, a URL in their history — can read
-  the whole transcript back and append to it. What they cannot do is get an
-  answer: the reply path loads the agent first, that read is membership-gated,
-  and it returns a 404. Treat removal as ending their access to the workspace,
-  not as sealing the conversations they had in it.
+- **Their own sessions still exist, and stop being readable.** `chat_sessions`
+  keys off `auth.users` and carries no membership foreign key, so nothing about
+  it cascades and the rows survive removal untouched. Reaching them is another
+  matter: since `0031` every policy on `chat_sessions`, `messages` and `ideas`
+  requires membership of the workspace before it asks who owns the row, so a
+  conversation in a workspace somebody has left is refused however they come at
+  it — the workspace-scoped list, a bookmarked session id, an open tab, or a
+  PATCH straight to PostgREST. The questions in it were theirs; the answers were
+  grounded in the workspace's knowledge bundles, and leaving the transcript
+  readable would leave a readable copy of what those documents said. Nothing is
+  destroyed, and re-inviting them brings all of it back.
 - **Their routines stop at the next tick, not at the moment of removal.** The
   engine holds a service-role client that row level security does not constrain,
   so it re-checks the owner's membership before every single run and pauses the
   routine with a recorded reason when it has gone. Until that tick arrives the
   routine is still scheduled. The owner is deliberately not notified — see
-  [runs that send nothing](routines.md#runs-that-send-nothing).
+  [runs that send nothing](routines.md#runs-that-send-nothing). The routine row
+  itself stays readable to its owner: `routines_select_visible` keeps the plain
+  owner branch that `0031` closed on sessions, because the recorded pause reason
+  is the only explanation they will ever be given, and a routine that vanished
+  would be indistinguishable from one that quietly stopped working. There is
+  nothing of the workspace's in it — the instruction is theirs, and
+  `routine_runs` records counts and status, never content.
 - **Their delivery channels survive** — they were never the workspace's to take.
 
 Re-inviting the person gives all of it back, because none of it was destroyed.

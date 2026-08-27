@@ -246,7 +246,9 @@ function TeamPage() {
                                 <AlertDialogTitle>Remove member?</AlertDialogTitle>
                                 <AlertDialogDescription>
                                   {m.name ?? m.email ?? "This member"} will lose access to this
-                                  workspace and its agents. You can re-invite them later.
+                                  workspace, its agents, and their own conversations here —
+                                  including what the agents answered from your knowledge. Nothing is
+                                  deleted: invite them back and it all returns.
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
@@ -285,7 +287,7 @@ function TeamPage() {
                                   </AlertDialogTitle>
                                   <AlertDialogDescription>
                                     {cannotLeave ??
-                                      "You will lose access to this workspace's agents, knowledge and shared conversations. What you made stays here, and an admin can invite you back."}
+                                      "You will lose access to this workspace's agents and knowledge, and to the conversations you had with them here — your own private ones included. Nothing is deleted: what you made stays, and it all comes back if an admin invites you back."}
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>

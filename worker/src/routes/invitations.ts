@@ -255,13 +255,39 @@ invitations.delete("/invitations/:id", async (c) => {
 // GET /invitations/incoming — pending invites addressed to the caller's email.
 invitations.get("/invitations/incoming", async (c) => {
   const db = c.get("db");
+  const user = c.get("user");
 
-  // RLS select policy already limits rows to invites whose email == caller's JWT
-  // email (or workspaces they admin); filter to pending and join the name.
+  // The address filter is this query's job, not the policy's.
+  //
+  // `invitations_select_admin_or_invitee` (0003) admits a row when the caller
+  // is an admin of the workspace OR the row is addressed to them. That is the
+  // right policy — an admin has to be able to read the pending invitations the
+  // Team page lists. It is the wrong scope for this route, which used to lean
+  // on it entirely and so answered "invitations you can see" when it was asked
+  // "invitations addressed to you". An admin therefore met their own outgoing
+  // invitations in the incoming banner: "You've been invited to <your own
+  // workspace> as <the role you just granted somebody else>". Accepting one
+  // could never work either, because `accept_invitation()` compares the
+  // address against the caller's own — so the banner offered an action that
+  // was guaranteed to be refused.
+  //
+  // Exactly the mistake 0022 spent a header on: a policy answers "may this
+  // person see this row", which stopped being the same question as "is this
+  // row theirs" the moment admins were added to the `or`. The policy is left
+  // alone; the query says which rows it means.
+  //
+  // `.eq` rather than the `ilike` the create path needs: `invitations.email`
+  // is lowercased on insert, while `profiles.email` is copied verbatim from
+  // auth and is not. Lowercasing the caller's own address matches what the
+  // policy already does with `lower(auth.jwt() ->> 'email')`, and an absent
+  // one narrows to nothing rather than widening to everything.
+  const callerEmail = (user.email ?? "").toLowerCase();
+
   const { data, error } = await db
     .from("invitations")
     .select("id, workspace_id, role, created_at, workspaces(name)")
     .eq("status", "pending")
+    .eq("email", callerEmail)
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 

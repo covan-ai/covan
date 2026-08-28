@@ -32,6 +32,7 @@ import { canWriteAsRole, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles
 import { copyInviteText } from "@/lib/invite-text";
 import { formatRelative } from "@/lib/relative-time";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
+import { LiveKeyWarning } from "@/components/live-key-warning";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/team")({
@@ -252,6 +253,11 @@ function TeamPage() {
                                   including what the agents answered from your knowledge. Nothing is
                                   deleted: invite them back and it all returns.
                                 </AlertDialogDescription>
+                                {/* The exception to "nothing is deleted", and the
+                                    one nobody expects. A key acts as its owner, so
+                                    it stops working the moment they do — and a
+                                    script running on one just goes quiet. */}
+                                <LiveKeyWarning userId={m.id} />
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancel</AlertDialogCancel>

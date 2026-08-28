@@ -631,3 +631,79 @@ describe("DELETE /workspace/members/me", () => {
     expect((await json(app, "DELETE", "/workspace/members/me")).status).toBe(404);
   });
 });
+
+/**
+ * The one number an admin can learn about somebody else's credentials.
+ *
+ * `api_keys` is own-keys-only in 0033, deliberately and with the header to say
+ * why. This route is the exception carved for the removal dialog, and it is
+ * carved in the database rather than here — so what these tests are about is
+ * that the route does not add a second opinion on top of a definer function
+ * that already refused, and does not leak anything but the count.
+ */
+describe("GET /workspace/members/:userId/key-count", () => {
+  const rpcReturning = (result: { data: unknown; error: unknown }) => ({
+    workspace_api_key_count: () => result as never,
+  });
+
+  it("answers with the count and nothing that identifies a key", async () => {
+    const { app } = appWith({ rpc: rpcReturning({ data: 3, error: null }) });
+
+    const res = await json(app, "GET", "/workspace/members/user-2/key-count");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ count: 3 });
+  });
+
+  it("asks about the caller's own workspace, never one named in the URL", async () => {
+    let args: Record<string, unknown> = {};
+    const { app } = appWith({
+      rpc: {
+        workspace_api_key_count: (received) => {
+          args = received;
+          return { data: 0, error: null } as never;
+        },
+      },
+    });
+
+    await json(app, "GET", "/workspace/members/user-2/key-count");
+
+    expect(args.p_workspace_id).toBe(WORKSPACE);
+    expect(args.p_user_id).toBe("user-2");
+  });
+
+  it("passes the function's own refusal through as a 403", async () => {
+    // 0033 raises rather than answering zero, precisely so this is not
+    // indistinguishable from somebody who has no keys.
+    const { app } = appWith({
+      rpc: rpcReturning({ data: null, error: { code: "42501", message: "not an admin" } }),
+    });
+
+    expect((await json(app, "GET", "/workspace/members/user-2/key-count")).status).toBe(403);
+  });
+
+  it.each(["PGRST202", "42883"])(
+    "answers a null count while the migration is unapplied (%s)",
+    async (code) => {
+      // CI does not apply migrations. A count the dialog cannot get is a
+      // sentence it leaves out, not an error it puts in front of somebody
+      // trying to remove a member.
+      const { app } = appWith({
+        rpc: rpcReturning({ data: null, error: { code, message: "no such function" } }),
+      });
+
+      const res = await json(app, "GET", "/workspace/members/user-2/key-count");
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ count: null });
+    },
+  );
+
+  it("still fails loudly on anything else", async () => {
+    const { app } = appWith({
+      rpc: rpcReturning({ data: null, error: { code: "57014", message: "canceling statement" } }),
+    });
+
+    expect((await json(app, "GET", "/workspace/members/user-2/key-count")).status).toBe(500);
+  });
+});

@@ -330,6 +330,13 @@ export const api = {
       remove: (userId: string): Promise<{ ok: true }> =>
         request("DELETE", `/workspace/members/${userId}`),
       /**
+       * How many live API keys somebody has, for the sentence in the removal
+       * dialog. `null` means the deployment cannot answer — the migration is not
+       * applied yet — which the dialog treats as "say nothing" rather than "none".
+       */
+      keyCount: (userId: string): Promise<{ count: number | null }> =>
+        request("GET", `/workspace/members/${userId}/key-count`),
+      /**
        * Leave the workspace you are currently in. `me` is a literal, not a user
        * id — the server resolves the caller from the session, so this cannot be
        * pointed at anybody else.
@@ -369,6 +376,13 @@ export const api = {
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
   workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
+  apiKeys: {
+    list: (): Promise<ApiKeyList> => request("GET", "/api-keys"),
+    /** The only response that carries the key itself. Nothing can return it again. */
+    create: (name: string): Promise<ApiKey & { token: string }> =>
+      request("POST", "/api-keys", { name }),
+    revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/api-keys/${id}`),
+  },
   notifications: {
     get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
     update: (patch: Partial<NotificationPreferences>): Promise<NotificationPreferences> =>
@@ -471,3 +485,19 @@ export type WorkspaceUsageResponse = {
   totals: UsageTotals;
   months: UsageMonth[];
 };
+
+export type ApiKey = {
+  id: string;
+  name: string;
+  /** The visible head of the key. All of it that anything will ever show again. */
+  prefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+};
+
+/**
+ * `available: false` means this deployment cannot sign the token an API key is
+ * exchanged for — no `SUPABASE_JWT_SECRET` — so keys are off rather than empty.
+ * Two different sentences, and the section renders nothing for the first.
+ */
+export type ApiKeyList = { available: boolean; keys: ApiKey[] };

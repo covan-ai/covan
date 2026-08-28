@@ -108,7 +108,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.      |
 | `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                             |
 | `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                           |
-| `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. |
+| `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. Also passed to the API as `SUPABASE_JWT_SECRET`, which is what makes API keys work — see [The API](api.md). |
 | `ANON_KEY`                                             | Supabase demo key          | The public API key. It reaches the browser by design; row level security is what protects the data behind it.                    |
 | `SERVICE_ROLE_KEY`                                     | Supabase demo key          | Bypasses row level security entirely. Server-side only — it must never reach a browser.                                          |
 | `JWT_EXPIRY`                                           | `3600`                     | Access-token lifetime in seconds. Refresh is automatic in the client.                                                            |
@@ -449,6 +449,7 @@ bunx wrangler secret put OPENAI_API_KEY
 bunx wrangler secret put ROUTINE_SECRET_KEY
 bunx wrangler secret put RESEND_API_KEY
 bunx wrangler secret put RESEND_FROM
+bunx wrangler secret put SUPABASE_JWT_SECRET
 ```
 
 `ROUTINE_SECRET_KEY` must decode to 16, 24 or 32 bytes — `openssl rand -base64
@@ -460,6 +461,15 @@ person yourself. Set one without the other and the two paths differ: an
 invitation checks for both and quietly reports that nothing was emailed, while a
 routine posts anyway and records whatever Resend answers as a failed run. So if
 you set one, set both.
+
+`SUPABASE_JWT_SECRET` is the project's JWT signing secret — Supabase dashboard,
+Settings → API — and it is what turns on [API keys](api.md). A key carries no
+identity of its own, so the API exchanges it for a sixty-second token belonging
+to the key's owner, and signing that needs this secret. Leave it out and the
+feature is simply absent: the section does not appear in Settings and the
+endpoints answer `available: false`, rather than anything failing. On a compose
+stack there is nothing to do — `docker-compose.yml` already passes the
+`JWT_SECRET` the rest of the stack uses.
 
 Pointing this deployment at a non-OpenAI endpoint works the same way as it does
 under Docker, except that neither value is a secret — add them to the `[vars]`

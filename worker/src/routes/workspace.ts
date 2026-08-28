@@ -283,4 +283,43 @@ workspace.delete("/workspace/members/:userId", async (c) => {
   return c.json({ ok: true });
 });
 
+// GET /workspace/members/:userId/key-count — how many live API keys somebody has.
+//
+// One number, for the dialog above it. A key acts as its owner, so removing
+// somebody stops their keys at the same moment it stops them — correct, and the
+// thing people are surprised by, so it is said before the button rather than
+// discovered when a script goes quiet overnight.
+//
+// The admin check is inside `workspace_api_key_count`, not here: `api_keys` is
+// own-keys-only by design and nothing else may read across it. The function
+// raises rather than answering zero, so "you are not an admin" and "they have no
+// keys" stay different answers — 0032's rule, and 0033 follows it.
+//
+// Nothing identifying comes back. A name or a prefix would put one person's
+// credentials on another person's screen for a question that only needs a count.
+workspace.get("/workspace/members/:userId/key-count", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
+
+  const { data, error } = await db.rpc("workspace_api_key_count", {
+    p_workspace_id: workspaceId,
+    p_user_id: c.req.param("userId"),
+  });
+
+  if (error) {
+    if (error.code === "42501") return c.json({ error: "admins only" }, 403);
+    // The window between deploying this and hand-applying 0033. A count the
+    // dialog cannot get is a sentence it leaves out, not an error it shows.
+    if (error.code === "PGRST202" || error.code === "42883") {
+      return c.json({ count: null });
+    }
+    return c.json({ error: "failed to count api keys" }, 500);
+  }
+
+  return c.json({ count: Number(data) || 0 });
+});
+
 export { workspace };

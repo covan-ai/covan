@@ -9,6 +9,7 @@ import { DeliveryChannelsCard } from "@/components/routines/delivery-channels-ca
 import { UsageSection } from "@/components/usage-section";
 import { WorkspaceUsageSection } from "@/components/workspace-usage-section";
 import { PreferencesSection } from "@/components/preferences-section";
+import { ApiKeysSection } from "@/components/api-keys-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -217,6 +218,12 @@ function SettingsPage() {
         {isAdmin && <WorkspaceUsageSection />}
 
         <DeliveryChannelsCard />
+
+        {/* Not gated on `isAdmin`: a key can do only what its holder can, so a
+            viewer holding one is a viewer, and there is nothing an admin needs
+            to approve. The section hides itself where the deployment cannot
+            honour a key at all. */}
+        <ApiKeysSection />
 
         {/* Both documents were reachable from exactly one place — the "I agree"
             checkbox on the sign-up form — so the moment somebody had an account

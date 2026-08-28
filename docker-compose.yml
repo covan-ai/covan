@@ -328,6 +328,12 @@ services:
       RATE_LIMIT_EXPENSIVE_PER_MINUTE: ${RATE_LIMIT_EXPENSIVE_PER_MINUTE:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-}
+      # The same secret GoTrue signs sessions with, passed through so the API can
+      # exchange an API key for a short-lived token belonging to the key's owner.
+      # It is already in .env for the auth service, so a self-hosted stack gets
+      # API keys with no extra configuration; leaving it out turns them off
+      # rather than breaking anything.
+      SUPABASE_JWT_SECRET: ${JWT_SECRET}
       PORT: 8787
       ROUTINE_TICK_MS: ${ROUTINE_TICK_MS:-60000}
     volumes:

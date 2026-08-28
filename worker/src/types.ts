@@ -63,6 +63,20 @@ export type RoutineEnv = {
  */
 export type Bindings = RoutineEnv & {
   SUPABASE_ANON_KEY: string;
+  /**
+   * The project's JWT signing secret, and the one thing that makes API keys
+   * possible: a key is exchanged for a short-lived JWT for its owner, so the
+   * request reaches Postgres as that person and RLS decides as it always does.
+   * See `lib/api-keys.ts`.
+   *
+   * Optional, and its absence is a supported configuration rather than a
+   * misconfiguration — a deployment that never sets it simply has no API keys,
+   * and says so instead of failing. On Cloudflare: `wrangler secret put
+   * SUPABASE_JWT_SECRET`. On a self-hosted stack it is the same `JWT_SECRET` the
+   * rest of the compose file already uses, which is why `lib/env.ts` accepts
+   * either name.
+   */
+  SUPABASE_JWT_SECRET?: string;
   /** The R2 bucket, on Cloudflare only. Absent on the Node/Docker runtime. */
   DOCS?: R2Bucket;
   /** Filesystem document root, on the Node runtime only. Absent on Cloudflare. */
@@ -96,6 +110,12 @@ export type Variables = {
   db: SupabaseClient;
   /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
   entitlements: Entitlements;
+  /**
+   * Set only when the caller proved themselves with an API key rather than a
+   * browser session. Routes read it to refuse the things a key must not do —
+   * chiefly creating another key, which would make revocation meaningless.
+   */
+  apiKeyId?: string;
 };
 
 export type AppEnv = {

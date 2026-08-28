@@ -34,6 +34,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "lib/routines/dispatcher.ts",
     "the scheduled Worker runs on a cron with no caller, so there is no JWT for RLS to resolve",
   ],
+  [
+    "lib/api-keys.ts",
+    "authentication, the same exemption authClient has: an API key is looked up before there is a caller for RLS to resolve, so there is no user client to do it with — it reads one row by hash and writes that row's last_used_at, and nothing else",
+  ],
 ]);
 
 /**

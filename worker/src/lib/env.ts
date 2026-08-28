@@ -103,6 +103,13 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     ALLOWED_ORIGIN: source.ALLOWED_ORIGIN!,
     WORKER_HOST: source.WORKER_HOST,
     ADMIN_API_KEY: source.ADMIN_API_KEY,
+    // Optional, and either name works. `SUPABASE_JWT_SECRET` is what the
+    // Cloudflare deployment sets; `JWT_SECRET` is what a self-hosted stack
+    // already has, because GoTrue and PostgREST are configured with it in the
+    // same .env. Accepting both means docker-compose gets API keys without the
+    // operator having to copy a value they already set once. Absent means the
+    // feature is simply off — see routes/api-keys.ts.
+    SUPABASE_JWT_SECRET: source.SUPABASE_JWT_SECRET || source.JWT_SECRET,
     // Optional on purpose: absent means the defaults in lib/ratelimit, so a
     // stack that was never configured is still bounded. `0` turns a tier off.
     RATE_LIMIT_STANDARD_PER_MINUTE: source.RATE_LIMIT_STANDARD_PER_MINUTE,

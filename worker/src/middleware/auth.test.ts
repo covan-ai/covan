@@ -24,11 +24,30 @@ vi.mock("../lib/supabase", () => ({
   userClient: (env: unknown, token: string) => userClient(env, token),
 }));
 
+const resolveApiKey = vi.fn(async (..._args: unknown[]): Promise<unknown> => null);
+const mintUserToken = vi.fn(async (..._args: unknown[]) => "minted-jwt");
+const touchApiKey = vi.fn(async (..._args: unknown[]) => {});
+
+vi.mock("../lib/api-keys", async () => {
+  // `looksLikeApiKey` is the real one: the branch it decides is the subject of
+  // half these tests, and a mocked predicate would be asserting on the mock.
+  const actual = await vi.importActual<typeof import("../lib/api-keys")>("../lib/api-keys");
+  return {
+    ...actual,
+    resolveApiKey: (...args: unknown[]) => resolveApiKey(...args),
+    mintUserToken: (...args: unknown[]) => mintUserToken(...args),
+    touchApiKey: (...args: unknown[]) => touchApiKey(...args),
+  };
+});
+
 const { authMiddleware } = await import("./auth");
+const { API_KEY_PREFIX } = await import("../lib/api-keys");
 
 /** Records what the middleware put on the context, if it let the request past. */
 function app() {
-  const seen: { user?: unknown; db?: unknown; reached: boolean } = { reached: false };
+  const seen: { user?: unknown; db?: unknown; apiKeyId?: unknown; reached: boolean } = {
+    reached: false,
+  };
 
   const server = new Hono<AppEnv>();
   server.use("/*", authMiddleware);
@@ -36,6 +55,7 @@ function app() {
     seen.reached = true;
     seen.user = c.get("user");
     seen.db = c.get("db");
+    seen.apiKeyId = c.get("apiKeyId");
     return c.json({ ok: true });
   });
 
@@ -44,6 +64,9 @@ function app() {
 
 /** Stands in for the Worker bindings; only its identity is asserted on. */
 const ENV = { SUPABASE_URL: "https://example.supabase.co" };
+
+/** The same, for a deployment that can mint tokens for API keys. */
+const KEYED_ENV = { ...ENV, SUPABASE_JWT_SECRET: "a-signing-secret" };
 
 const get = (server: Hono<AppEnv>, headers: Record<string, string> = {}) =>
   server.request("/probe", { headers }, ENV);
@@ -139,5 +162,116 @@ describe("authMiddleware", () => {
 
     expect(authGetUser).toHaveBeenCalledWith("padded-token");
     expect(userClient).toHaveBeenCalledWith(ENV, "padded-token");
+  });
+});
+
+/**
+ * The API-key branch.
+ *
+ * A key is not a second authorization model — it is a way to become the person
+ * who owns it, so that everything downstream, and every policy in Postgres, goes
+ * on working exactly as it does for a browser. These tests are about the seam:
+ * that a key is told apart from a session token without either being parsed,
+ * that the client handed on is built from the *minted* token rather than from
+ * the key, and that nothing gets through when the key does not resolve.
+ */
+describe("authMiddleware, with an API key", () => {
+  const KEY = `${API_KEY_PREFIX}0123456789abcdef`;
+  const USER = { id: "user-1", email: "a@example.com" };
+  const RESOLVED = { keyId: "key-1", workspaceId: "ws-1", user: USER, lastUsedAt: null };
+
+  const withKey = (server: Hono<AppEnv>, env: Record<string, unknown> = KEYED_ENV) =>
+    server.request("/probe", { headers: { Authorization: `Bearer ${KEY}` } }, env);
+
+  it("does not send a key to Supabase as if it were a session token", async () => {
+    resolveApiKey.mockResolvedValue(RESOLVED);
+    const { server } = app();
+
+    await withKey(server);
+
+    // getUser would answer 401 for a `covan_sk_` string, which is the right
+    // answer to the wrong question and would make every key look invalid.
+    expect(authGetUser).not.toHaveBeenCalled();
+    expect(resolveApiKey).toHaveBeenCalledWith(KEYED_ENV, KEY);
+  });
+
+  it("builds the data client from the minted token, never from the key", async () => {
+    resolveApiKey.mockResolvedValue(RESOLVED);
+    const { server, seen } = app();
+
+    await withKey(server);
+
+    expect(mintUserToken).toHaveBeenCalledWith("a-signing-secret", USER);
+    expect(userClient).toHaveBeenCalledWith(KEYED_ENV, "minted-jwt");
+    expect(seen.db).toEqual({ marker: "user-client", token: "minted-jwt" });
+    // The key is a credential, not a token any database would accept.
+    expect(userClient).not.toHaveBeenCalledWith(expect.anything(), KEY);
+  });
+
+  it("carries the key's owner as the caller", async () => {
+    resolveApiKey.mockResolvedValue(RESOLVED);
+    const { server, seen } = app();
+
+    const res = await withKey(server);
+
+    expect(res.status).toBe(200);
+    expect(seen.user).toEqual(USER);
+  });
+
+  it("marks the request as key-authenticated, so a route can refuse", async () => {
+    // Nothing here uses it; routes/api-keys.ts does, and without this flag a
+    // leaked key could write itself successors that revocation would not reach.
+    resolveApiKey.mockResolvedValue(RESOLVED);
+    const { server, seen } = app();
+
+    await withKey(server);
+
+    expect(seen.apiKeyId).toBe("key-1");
+  });
+
+  it.each([
+    ["an unknown or revoked key", null],
+    ["a key whose owner is gone", null],
+  ])("refuses %s", async (_label, resolved) => {
+    resolveApiKey.mockResolvedValue(resolved);
+    const { server, seen } = app();
+
+    const res = await withKey(server);
+
+    expect(res.status).toBe(401);
+    expect(seen.reached).toBe(false);
+    expect(userClient).not.toHaveBeenCalled();
+  });
+
+  it("refuses a key on a deployment that cannot sign a token for it", async () => {
+    const { server, seen } = app();
+
+    const res = await withKey(server, ENV);
+
+    expect(res.status).toBe(401);
+    expect(seen.reached).toBe(false);
+    // Not even looked up: without a secret there is nothing to do with a hit.
+    expect(resolveApiKey).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toEqual({
+      error: "api keys are not enabled on this deployment",
+    });
+  });
+
+  it("records the use after the response rather than before it", async () => {
+    resolveApiKey.mockResolvedValue(RESOLVED);
+    const { server } = app();
+
+    await withKey(server);
+
+    expect(touchApiKey).toHaveBeenCalledWith(KEYED_ENV, RESOLVED);
+  });
+
+  it("does not record a use for a key it refused", async () => {
+    resolveApiKey.mockResolvedValue(null);
+    const { server } = app();
+
+    await withKey(server);
+
+    expect(touchApiKey).not.toHaveBeenCalled();
   });
 });

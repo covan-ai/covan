@@ -36,8 +36,8 @@ const KEY = {
   lastUsedAt: null,
 };
 
-function renderWith(data: ApiKeyList | undefined, isLoading = false) {
-  useQuery.mockReturnValue({ data, isLoading });
+function renderWith(data: ApiKeyList | undefined, isLoading = false, isError = false) {
+  useQuery.mockReturnValue({ data, isLoading, isError });
   render(<ApiKeysSection />);
 }
 
@@ -72,6 +72,18 @@ describe("ApiKeysSection", () => {
 
     expect(screen.queryByRole("button", { name: /new key/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/API keys/i)).not.toBeInTheDocument();
+  });
+
+  it("says something broke rather than hiding, when the request fails", () => {
+    // The two used to be one branch, and that is why a missing table grant on
+    // production looked like a feature that had never shipped. "Not available"
+    // and "not working" are different sentences.
+    renderWith(undefined, false, true);
+
+    expect(screen.getByText(/couldn't load your keys/i)).toBeInTheDocument();
+    expect(screen.getByText(/fault rather than a setting/i)).toBeInTheDocument();
+    // And no create button, because there is nothing to create against.
+    expect(screen.queryByRole("button", { name: /new key/i })).not.toBeInTheDocument();
   });
 
   it("renders nothing while the answer is still unknown", () => {

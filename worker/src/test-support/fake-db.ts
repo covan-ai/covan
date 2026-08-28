@@ -26,7 +26,7 @@ export type QueryResult = {
   error: { message: string; code?: string } | null;
 };
 
-export type Filter = { column: string; value: unknown; kind: "eq" | "in" | "gt" | "ilike" };
+export type Filter = { column: string; value: unknown; kind: "eq" | "in" | "gt" | "ilike" | "is" };
 
 export type QueryContext = {
   table: string;
@@ -106,6 +106,15 @@ class Chain implements PromiseLike<QueryResult> {
 
   ilike(column: string, value: unknown) {
     this.ctx.filters.push({ column, value, kind: "ilike" });
+    return this;
+  }
+
+  // `.is(column, null)` is how PostgREST asks for a NULL, and it is not the
+  // same query as `.eq(column, null)` — which sends the literal string "null".
+  // Recorded as its own kind so a test can tell the two apart, because a route
+  // that reached for `eq` here would silently stop excluding revoked rows.
+  is(column: string, value: unknown) {
+    this.ctx.filters.push({ column, value, kind: "is" });
     return this;
   }
 

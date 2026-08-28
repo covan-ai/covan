@@ -63,6 +63,20 @@ export type PendingInvitationDTO = {
   emailed?: boolean;
 };
 
+export type ApiKeyDTO = {
+  id: string;
+  name: string;
+  /** The visible head of the key, so a row can be told from its neighbours. */
+  prefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  /**
+   * The key itself, present exactly once: on the row returned when it is
+   * created. Nothing stores it, so no later request can put it back.
+   */
+  token?: string;
+};
+
 export type IncomingInvitationDTO = {
   id: string;
   workspaceId: string;

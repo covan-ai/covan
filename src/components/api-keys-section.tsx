@@ -28,9 +28,34 @@ import { toast } from "sonner";
  */
 export function ApiKeysSection() {
   const [creating, setCreating] = useState(false);
-  const { data, isLoading } = useQuery({ queryKey: ["api-keys"], queryFn: api.apiKeys.list });
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: api.apiKeys.list,
+  });
 
-  if (isLoading || !data?.available) return null;
+  if (isLoading) return null;
+
+  // A failure is not the same as "this deployment does not do that", and the
+  // first version of this component treated them alike — one `!data?.available`
+  // covered both, so when the API answered 500 the section rendered nothing and
+  // the feature looked unshipped rather than broken. It took a probe against
+  // production to find out otherwise. Whatever went wrong, say that something
+  // did.
+  if (isError) {
+    return (
+      <section className="mt-16">
+        <SectionHeading title="API keys" />
+        <SectionCard className="mt-6">
+          <p className="text-sm text-muted-foreground">
+            Couldn't load your keys. This is a fault rather than a setting — try again, and tell
+            whoever runs this deployment if it persists.
+          </p>
+        </SectionCard>
+      </section>
+    );
+  }
+
+  if (!data?.available) return null;
 
   return (
     <section className="mt-16">

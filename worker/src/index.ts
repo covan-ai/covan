@@ -24,6 +24,7 @@ import { routines } from "./routes/routines";
 import { notifications } from "./routes/notifications";
 import { onboarding } from "./routes/onboarding";
 import { apiKeys } from "./routes/api-keys";
+import { account } from "./routes/account";
 
 const app = new Hono<AppEnv>();
 
@@ -126,6 +127,7 @@ api.route("/", routines);
 api.route("/", notifications);
 api.route("/", onboarding);
 api.route("/", apiKeys);
+api.route("/", account);
 
 app.route("/", api);
 

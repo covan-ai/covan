@@ -10,6 +10,7 @@ import { UsageSection } from "@/components/usage-section";
 import { WorkspaceUsageSection } from "@/components/workspace-usage-section";
 import { PreferencesSection } from "@/components/preferences-section";
 import { ApiKeysSection } from "@/components/api-keys-section";
+import { CloseAccountSection } from "@/components/close-account-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -224,6 +225,12 @@ function SettingsPage() {
             to approve. The section hides itself where the deployment cannot
             honour a key at all. */}
         <ApiKeysSection />
+
+        {/* Last on the page, under everything it would destroy. Not gated on a
+            role: erasure is the caller's own right and an admin has no say in
+            it — the only thing that can refuse is a workspace that would be
+            left without an admin, and the server says so by name. */}
+        <CloseAccountSection email={me?.user.email} />
 
         {/* Both documents were reachable from exactly one place — the "I agree"
             checkbox on the sign-up form — so the moment somebody had an account

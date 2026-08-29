@@ -22,6 +22,11 @@ import { LegalLayout, LegalSection, LegalList, LegalItem } from "@/components/le
  * — but that migration cleared the way, and nobody built the door. A page that
  * describes a permission as though it were a feature is wrong about the
  * product while being right about the database.
+ *
+ * The rule cuts both ways and the account paragraph is the proof: it said for
+ * months that erasure had no button, which was true when written and became
+ * false the day `worker/src/routes/account.ts` shipped. Building a capability
+ * puts this page in the change exactly as adding an outbound host does.
  */
 export const Route = createFileRoute("/privacy")({
   component: PrivacyPage,
@@ -117,14 +122,15 @@ function PrivacyPage() {
           deleting them removes the rows and the stored file rather than hiding them.
         </p>
         <p>
-          A whole workspace cannot. You can leave one, and an admin can remove someone from one, but
-          nothing in the interface deletes the workspace itself. The database is arranged so that it
-          could be; the route to ask for it has not been written.
+          Closing your account is in Settings, and it takes your conversations, your API keys and
+          any workspace you are the last person in with it. A workspace other people are still in
+          keeps running: what you made there stays and your name comes off it, which is why the one
+          case that is refused is being its last admin — hand the role over first.
         </p>
         <p>
-          Removing an account itself is not yet something the interface does either — that is a gap
-          being closed, not a decision. Until it is, whoever operates the install can delete the
-          user through Supabase, and the rows that belong to them go with it.
+          There is no separate button for deleting a shared workspace. You can leave one, and an
+          admin can remove someone from one, but dismantling a room other people are in is not
+          something one person does from this interface.
         </p>
         <p>
           What you sent to OpenAI is governed by OpenAI's own retention terms and is not something

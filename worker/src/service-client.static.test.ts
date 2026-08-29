@@ -38,6 +38,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "lib/api-keys.ts",
     "authentication, the same exemption authClient has: an API key is looked up before there is a caller for RLS to resolve, so there is no user client to do it with — it reads one row by hash and writes that row's last_used_at, and nothing else",
   ],
+  [
+    "routes/account.ts",
+    "erasure is the one thing a caller cannot do as themselves: auth.users is outside RLS entirely, so deleting your own account needs auth.admin.deleteUser, and the workspaces left with nobody in them have no DELETE policy for the same reason nobody has ever needed one. Both writes are keyed to the caller's own id, and the survey that decides which workspaces those are is done through the user client on purpose",
+  ],
 ]);
 
 /**

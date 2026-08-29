@@ -383,6 +383,18 @@ export const api = {
       request("POST", "/api-keys", { name }),
     revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/api-keys/${id}`),
   },
+  account: {
+    /**
+     * Closes the caller's own account. The path carries no id — the server
+     * resolves the person from the session, so this cannot be pointed at
+     * anybody else, the same arrangement `members.leave` uses.
+     *
+     * A 409 is not a failure to retry: it means a workspace would be left
+     * without an admin, and the message names which. Nothing has been deleted
+     * when it arrives.
+     */
+    close: (): Promise<{ ok: true }> => request("DELETE", "/account"),
+  },
   notifications: {
     get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
     update: (patch: Partial<NotificationPreferences>): Promise<NotificationPreferences> =>

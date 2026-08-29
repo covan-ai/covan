@@ -14,6 +14,14 @@ import { LegalLayout, LegalSection, LegalList, LegalItem } from "@/components/le
  *
  * Every destination below is a real call in this codebase. If you add another
  * one, this page is part of the change.
+ *
+ * The same rule binds the other direction, and it is the one that broke: every
+ * capability named below has to be a registered route, not a schema that would
+ * allow one. This page claimed a whole workspace could be deleted from the
+ * interface because `0016_deletable_users_and_workspaces.sql` made it deletable
+ * — but that migration cleared the way, and nobody built the door. A page that
+ * describes a permission as though it were a feature is wrong about the
+ * product while being right about the database.
  */
 export const Route = createFileRoute("/privacy")({
   component: PrivacyPage,
@@ -105,13 +113,18 @@ function PrivacyPage() {
 
       <LegalSection title="Deleting things">
         <p>
-          A document, a conversation, an agent and a whole workspace can each be deleted from the
-          interface, and deleting them removes the rows and the stored file rather than hiding them.
+          A document, a conversation and an agent can each be deleted from the interface, and
+          deleting them removes the rows and the stored file rather than hiding them.
         </p>
         <p>
-          Removing an account itself is not yet something the interface does — that is a gap being
-          closed, not a decision. Until it is, whoever operates the install can delete the user
-          through Supabase, and the rows that belong to them go with it.
+          A whole workspace cannot. You can leave one, and an admin can remove someone from one, but
+          nothing in the interface deletes the workspace itself. The database is arranged so that it
+          could be; the route to ask for it has not been written.
+        </p>
+        <p>
+          Removing an account itself is not yet something the interface does either — that is a gap
+          being closed, not a decision. Until it is, whoever operates the install can delete the
+          user through Supabase, and the rows that belong to them go with it.
         </p>
         <p>
           What you sent to OpenAI is governed by OpenAI's own retention terms and is not something

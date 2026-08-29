@@ -413,7 +413,10 @@ left to enter it.
 Two of the references to a workspace do not cascade. `chat_sessions.workspace_id`
 and `ideas.workspace_id` were both added after the original schema and are plain
 references, so the tested procedure clears those two tables for the workspace
-first and then deletes the workspace row. A third,
+first and then deletes the workspace row. Account closure follows the same
+procedure for the same reason — a workspace with a single conversation in it
+cannot be deleted until that row is gone, which is every workspace anybody has
+actually used. A third,
 `profiles.active_workspace_id`, sets itself to null, which is the same state a
 fresh account is in and resolves to the person's oldest remaining membership.
 

@@ -286,13 +286,21 @@ describe("deleting a person", () => {
     // the ordering below has become decoration and the comment above is wrong.
     await expect(db`delete from auth.users where id = ${erin.id}`).rejects.toThrow(/last admin/);
 
+    // The two references that do not cascade, cleared first — the same order
+    // the route uses, and the reason it has to. This is what the test caught:
+    // without it `delete from workspaces` fails on
+    // `chat_sessions_workspace_id_fkey` for every workspace anybody has used.
+    await db`delete from public.ideas where workspace_id = ${erin.workspaceId}`;
+    await db`delete from public.chat_sessions where workspace_id = ${erin.workspaceId}`;
     await db`delete from public.workspaces where id = ${erin.workspaceId}`;
     await db`delete from auth.users where id = ${erin.id}`;
 
+    // `chat_sessions` is not asserted here — it was deleted by name two lines
+    // up, so its absence would prove nothing. The test above it covers the
+    // cascade case.
     for (const [table, id] of [
       ["api_keys", key.id],
       ["profiles", erin.id],
-      ["chat_sessions", seeded.sessionId],
     ] as const) {
       const [{ count }] = await db<{ count: string }[]>`
         select count(*) from ${db(`public.${table}`)} where id = ${id}`;

@@ -23,7 +23,7 @@ function serviceTables(spec: {
   bundles?: { id: string }[];
   documents?: { r2_key: string | null }[];
   deleteError?: { message: string };
-  onDelete?: (id: string) => void;
+  onDelete?: (table: string, id: string) => void;
   readError?: boolean;
 }) {
   return (table: string) => {
@@ -39,7 +39,7 @@ function serviceTables(spec: {
       in: () => link,
       delete: () => link,
       eq: (_column: string, value: string) => {
-        spec.onDelete?.(value);
+        spec.onDelete?.(table, value);
         return link;
       },
       then: (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve),
@@ -231,10 +231,10 @@ describe("DELETE /account", () => {
     expect(deleteUser).not.toHaveBeenCalled();
   });
 
-  it("deletes the empty workspaces before the user, not after", async () => {
+  it("clears what does not cascade, then the workspace, then the user", async () => {
     const order: string[] = [];
     serviceFrom.mockImplementation(
-      serviceTables({ onDelete: (id) => order.push(`workspace:${id}`) }),
+      serviceTables({ onDelete: (table, id) => order.push(`${table}:${id}`) }),
     );
     deleteUser.mockImplementation(async () => {
       order.push("user");
@@ -248,12 +248,15 @@ describe("DELETE /account", () => {
 
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true });
-    // The trigger refuses the membership row while its workspace still stands,
-    // so this order is the whole reason the route works at all.
-    expect(order).toEqual(["workspace:solo", "user"]);
+    // Three orderings in one list, and each is load-bearing. `ideas` and
+    // `chat_sessions` reference a workspace without cascading, so the workspace
+    // delete fails on a foreign key until they are cleared — CI found that, not
+    // this file. The workspace goes before the user because the last-admin
+    // trigger refuses the membership row while its workspace still stands.
+    expect(order).toEqual(["ideas:solo", "chat_sessions:solo", "workspaces:solo", "user"]);
   });
 
-  it("leaves the account alone when a workspace delete fails", async () => {
+  it("leaves the account alone when a workspace cannot be cleared or deleted", async () => {
     serviceFrom.mockImplementation(serviceTables({ deleteError: { message: "nope" } }));
     const app = appWith({
       members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],

@@ -1,12 +1,16 @@
 /**
  * What happens when a workspace or a person goes away.
  *
- * Unlike the rest of this suite these are not policy tests — no user can delete
- * a workspace through the API, because `workspaces` has no delete policy, and
- * nobody can delete an account because there is no route for it. They run as
- * the operator does, over SQL, and they exist because 0016 fixed two things
- * that were impossible before it and could only have been discovered by
- * someone with a legal deadline.
+ * Unlike the rest of this suite these are not policy tests — `workspaces` has
+ * no delete policy and `auth.users` is outside RLS entirely, so both deletions
+ * happen with the service role. They run as `DELETE /account` does, over SQL,
+ * and they exist because 0016 fixed two things that were impossible before it
+ * and could only have been discovered by someone with a legal deadline.
+ *
+ * There is now a route on top of this — `worker/src/routes/account.ts` — and
+ * the order it uses is the subject of the last test here: the empty workspaces
+ * have to go first, or `trg_prevent_last_admin` refuses the membership row that
+ * the user's own cascade depends on.
  *
  * The other half of each test matters as much as the first: `trg_prevent_last_admin`
  * still has to refuse a member leaving a workspace un-owned. Making deletion
@@ -246,6 +250,57 @@ describe("deleting a person", () => {
       ["chat_sessions", seeded.sessionId],
       ["delivery_channels", seeded.channelId],
       ["routines", seeded.routineId],
+    ] as const) {
+      const [{ count }] = await db<{ count: string }[]>`
+        select count(*) from ${db(`public.${table}`)} where id = ${id}`;
+      expect(Number(count), `${table} outlived its owner`).toBe(0);
+    }
+  });
+
+  it("takes their API keys, in the order the route deletes things", async () => {
+    // Two claims in one test, because they are the same claim from either end.
+    //
+    // First: a key is a person, so it has to die with them. `0033` says so with
+    // `on delete cascade` and nothing else in the codebase asserts it — a later
+    // migration that recreated the table with a different clause would leave a
+    // working credential belonging to somebody who no longer exists, and every
+    // request it made would resolve to a user id that is gone.
+    //
+    // Second: the order. `prevent_last_admin_removal` asks only whether the
+    // workspace still stands and whether another admin remains — it never asks
+    // how many members are left, and everybody starts as the sole admin of
+    // their own. Deleting the user first is therefore refused for essentially
+    // every account there will ever be, which is why the route empties the
+    // workspaces nobody is left in before it touches `auth.users`.
+    const db = sql();
+    const erin = await createTestUser("erin");
+    const seeded = await seedWorkspace(erin);
+
+    const [key] = await db<{ id: string }[]>`
+      insert into public.api_keys (workspace_id, user_id, name, token_hash, prefix)
+      values (${erin.workspaceId}, ${erin.id}, 'Nightly report',
+              ${`hash-${erin.id}`}, 'covan_sk_ab12cd')
+      returning id`;
+
+    // The refusal, proven rather than assumed — if this ever stops throwing,
+    // the ordering below has become decoration and the comment above is wrong.
+    await expect(db`delete from auth.users where id = ${erin.id}`).rejects.toThrow(/last admin/);
+
+    // The two references that do not cascade, cleared first — the same order
+    // the route uses, and the reason it has to. This is what the test caught:
+    // without it `delete from workspaces` fails on
+    // `chat_sessions_workspace_id_fkey` for every workspace anybody has used.
+    await db`delete from public.ideas where workspace_id = ${erin.workspaceId}`;
+    await db`delete from public.chat_sessions where workspace_id = ${erin.workspaceId}`;
+    await db`delete from public.workspaces where id = ${erin.workspaceId}`;
+    await db`delete from auth.users where id = ${erin.id}`;
+
+    // `chat_sessions` is not asserted here — it was deleted by name two lines
+    // up, so its absence would prove nothing. The test above it covers the
+    // cascade case.
+    for (const [table, id] of [
+      ["api_keys", key.id],
+      ["profiles", erin.id],
     ] as const) {
       const [{ count }] = await db<{ count: string }[]>`
         select count(*) from ${db(`public.${table}`)} where id = ${id}`;

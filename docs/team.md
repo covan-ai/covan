@@ -42,8 +42,8 @@ and went on reporting "3 invitations sent" to people running an install with no
 mail at all. The sentence is now decided in one place for both of them.
 
 **"Tell them" comes with the words.** When nothing was emailed, the notice
-carries a *Copy invite text* action, and every waiting invitation on this page
-has a *Copy invite* button of its own — the durable version, for whenever the
+carries a _Copy invite text_ action, and every waiting invitation on this page
+has a _Copy invite_ button of its own — the durable version, for whenever the
 notice is long gone. What you get is a short message naming your Covan's address
 and the one address that will work:
 
@@ -73,12 +73,12 @@ somebody who was invited already has a workspace waiting, so walking them throug
 furnishing another one they are about to abandon would be the wrong order.
 
 **Only the invitee.** `invitations_select_admin_or_invitee` admits a row when the
-caller is an admin of the workspace *or* the row is addressed to them, which is
+caller is an admin of the workspace _or_ the row is addressed to them, which is
 right — the pending list on this page needs the first half. It is the wrong
 scope for the incoming banner, and that route used to lean on the policy for its
 scoping instead of saying which rows it meant. So an admin met their own
-outgoing invitations in it: *"You've been invited to \<your own workspace\> as
-\<the role you just granted somebody else\>"*, with an Accept button
+outgoing invitations in it: _"You've been invited to \<your own workspace\> as
+\<the role you just granted somebody else\>"_, with an Accept button
 `accept_invitation()` was always going to refuse, because it compares the
 address against the caller's own. The query now filters on the caller's address;
 the policy is untouched.
@@ -132,7 +132,7 @@ it; `create_workspace()` does the same for any workspace somebody makes later.
   removing a member — the invitation policies plus
   `workspace_members_update_admin` and `workspace_members_delete_admin`.
 
-It also *sees* one thing nobody else does — what the workspace as a whole has
+It also _sees_ one thing nobody else does — what the workspace as a whole has
 spent, by agent and by month — which is a read and not a control, and is
 described under [Usage figures](#usage-figures-are-yours-alone) below.
 
@@ -265,7 +265,7 @@ caveat named on the screen: changing an agent's model re-prices its history.
 
 This is the third thing admin governs, and the list above says two. Read it as
 "the workspace row, the people in it, and what the workspace costs" — the first
-two are what admin *controls*, and this one is only something it can *see*.
+two are what admin _controls_, and this one is only something it can _see_.
 
 The figures also now account for prompt caching. Most of what Covan sends the
 model on any given turn is the same bytes as last turn — the persona, the
@@ -396,17 +396,27 @@ pause outlives the rejoining, and only its owner can clear it.
 
 ## Deleting a workspace
 
-Not from the app. `workspaces` has select, update and insert policies and no
-delete policy at all, and no route anywhere calls for one, so there is no request
-any account can make that removes a workspace. It is an operator action, taken
-against the database, and the migration that made it possible says why it went
-unnoticed for so long: the first person to need it would have been somebody
-exercising a legal right to erasure.
+Not directly. `workspaces` has select, update and insert policies and no delete
+policy at all, so no request made _as you_ can remove one — deleting a workspace
+is an operator action taken against the database. The migration that made it
+possible says why it went unnoticed for so long: the first person to need it
+would have been somebody exercising a legal right to erasure.
+
+There is one indirect route, and it exists because of that same person. Closing
+your account (`DELETE /account`) deletes any workspace you were the last member
+of, with the service role rather than with your own credentials. It is not a
+"delete workspace" feature wearing a different hat: a workspace anybody else is
+still in is never touched, and being the last _admin_ of one refuses the whole
+deletion until the role is handed over. What it removes is a room with nobody
+left to enter it.
 
 Two of the references to a workspace do not cascade. `chat_sessions.workspace_id`
 and `ideas.workspace_id` were both added after the original schema and are plain
 references, so the tested procedure clears those two tables for the workspace
-first and then deletes the workspace row. A third,
+first and then deletes the workspace row. Account closure follows the same
+procedure for the same reason — a workspace with a single conversation in it
+cannot be deleted until that row is gone, which is every workspace anybody has
+actually used. A third,
 `profiles.active_workspace_id`, sets itself to null, which is the same state a
 fresh account is in and resolves to the person's oldest remaining membership.
 
@@ -425,6 +435,13 @@ are then cleaned up is a question about the storage itself — a lifecycle rule 
 the bucket, or a sweep somebody runs — not one this codebase answers. If it is
 the latter, collect the keys before the rows go, because afterwards there is
 nothing left to enumerate them by.
+
+Account closure is the one place that does it for you, and it follows exactly
+that advice: `worker/src/routes/account.ts` reads the keys of every document in
+the workspaces it is about to remove, deletes the rows, and then deletes the
+objects. The difference is not technical but legal — for an ordinary delete an
+orphaned object is a storage cost, and for an erasure request it is the file
+still being there.
 
 What survives is the people. Deleting a workspace deletes no accounts, and the
 last-admin trigger stands aside for exactly this case rather than blocking it —

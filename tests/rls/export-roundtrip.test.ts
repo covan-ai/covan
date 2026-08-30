@@ -108,6 +108,19 @@ describe("the restore", () => {
     const { error: dropError } = await service.from("workspaces").delete().eq("id", workspaceId);
     if (dropError) throw new Error(`deleting the workspace failed: ${dropError.message}`);
 
+    // Delivery channels outlive their workspace on purpose — 0019 made the
+    // reference `on delete set null` because a channel belongs to a person, so
+    // deleting the workspace leaves the row with a null `workspace_id` rather
+    // than removing it. Restoring into a database that still holds it would hit
+    // `on conflict do nothing` and keep the original, which is the right
+    // behaviour there and the wrong fixture here: this test stands in for a
+    // fresh install, where the row does not exist.
+    const channelIds = (before.delivery_channels ?? []).map((c) => c.id as string);
+    if (channelIds.length > 0) {
+      const { error } = await service.from("delivery_channels").delete().in("id", channelIds);
+      if (error) throw new Error(`clearing delivery_channels failed: ${error.message}`);
+    }
+
     const [gone] = await sql()`select count(*)::int as n from workspaces where id = ${workspaceId}`;
     expect(gone.n, "the workspace should be gone before the restore proves anything").toBe(0);
 

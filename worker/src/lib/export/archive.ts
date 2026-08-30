@@ -85,7 +85,7 @@ echo "Restored. Run POST /admin/backfill-embeddings to rebuild retrieval."
 `;
 
 export async function* archiveEntries(ctx: ArchiveContext): AsyncGenerator<ZipEntry> {
-  const { sql, droppedReferences } = renderSql(ctx.tables);
+  const { sql, droppedReferences, usedPlaceholderChannel } = renderSql(ctx.tables);
   const documents = (ctx.tables.documents ?? []) as Row[];
   const missing: { id: string; name: string; reason: string }[] = [];
 
@@ -110,6 +110,17 @@ export async function* archiveEntries(ctx: ArchiveContext): AsyncGenerator<ZipEn
     counts: Object.fromEntries(Object.entries(ctx.tables).map(([t, rows]) => [t, rows.length])),
     excluded: EXCLUDED,
     droppedReferences,
+    ...(usedPlaceholderChannel
+      ? {
+          placeholderChannel:
+            "At least one routine here points at a delivery channel belonging to " +
+            "somebody else — channels belong to people rather than to workspaces — " +
+            "so it could not be read into this archive. Those routines are restored " +
+            "pointing at a single stand-in channel, labelled as such. They come back " +
+            "paused like all the others; pick or create a real channel before " +
+            "resuming them.",
+        }
+      : {}),
     afterRestore:
       `Retrieval will not work until the chunks are rebuilt: POST /admin/backfill-embeddings ` +
       `with the new install's ADMIN_API_KEY. Delivery channels come back without their ` +

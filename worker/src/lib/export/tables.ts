@@ -41,8 +41,15 @@ export type TableSpec = {
 };
 
 /**
- * In insert order. Each table's foreign keys point only at tables above it, so
- * `workspace.sql` can be replayed top to bottom without deferring anything.
+ * Collection order, which is also insert order.
+ *
+ * Each table is scoped by ids collected above it, and — with one exception —
+ * its foreign keys point only at tables above it too, so `workspace.sql` can be
+ * replayed top to bottom. The exception is `routines.delivery_channel_id`,
+ * which points *down* at `delivery_channels`: the channels can only be found
+ * through the routines that use them, and 0012 made that constraint DEFERRABLE
+ * INITIALLY DEFERRED, so it is checked at commit rather than at the insert.
+ * That is the whole reason the two orders can stay one list.
  */
 export const EXPORTED: TableSpec[] = [
   { table: "workspaces", scope: { kind: "workspace", column: "id" }, order: "created_at" },
@@ -95,13 +102,33 @@ export const EXPORTED: TableSpec[] = [
     scope: { kind: "in", column: "agent_id", from: { table: "agents", column: "id" } },
     order: "created_at",
   },
+  { table: "routines", scope: { kind: "workspace", column: "workspace_id" }, order: "created_at" },
   {
+    // Scoped by the routines that reference it, not by `workspace_id` — and
+    // that is a correction rather than a preference. 0019 spells out that a
+    // delivery channel belongs to a PERSON: `workspace_id` is written once from
+    // whichever workspace was active when it was added and never read again,
+    // which is why the column became nullable and stopped cascading.
+    //
+    // Scoping by it therefore got both directions wrong. It exported channels
+    // this workspace does not use, and — the part that broke restores — it
+    // missed the channel a routine here actually points at when that channel
+    // was added from another workspace. `delivery_channel_id` is `not null`, so
+    // a missing one is not a null column, it is a failed transaction.
+    //
+    // Reading it after `routines` is safe for the restore because
+    // `routines_delivery_channel_id_fkey` is DEFERRABLE INITIALLY DEFERRED
+    // (0012), so the check happens at commit and the insert order inside the
+    // transaction does not matter for this one reference.
     table: "delivery_channels",
-    scope: { kind: "workspace", column: "workspace_id" },
+    scope: {
+      kind: "in",
+      column: "id",
+      from: { table: "routines", column: "delivery_channel_id" },
+    },
     order: "created_at",
     columns: "id,workspace_id,user_id,kind,label,created_at",
   },
-  { table: "routines", scope: { kind: "workspace", column: "workspace_id" }, order: "created_at" },
   {
     table: "routine_runs",
     scope: { kind: "in", column: "routine_id", from: { table: "routines", column: "id" } },

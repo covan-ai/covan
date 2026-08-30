@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderSql, MISSING_SECRET, PAUSED_ON_RESTORE } from "./sql";
+import { renderSql, MISSING_SECRET, PAUSED_ON_RESTORE, PLACEHOLDER_CHANNEL_ID } from "./sql";
 import type { Collected } from "./collect";
 
 const base = (over: Partial<Collected> = {}): Collected => ({
@@ -213,6 +213,76 @@ describe("what the database will not let a restore say honestly", () => {
     const { sql } = withRoutine();
     expect(sql).toContain("'Morning digest'");
     expect(sql).toContain("'c1'");
+  });
+});
+
+describe("a routine whose delivery channel could not be exported", () => {
+  // A channel belongs to a person (0019), so a workspace where two people each
+  // built routines has routines pointing at channels only their own author can
+  // read. `delivery_channel_id` is `not null` with a DEFERRABLE INITIALLY
+  // DEFERRED constraint, so an unreachable one is a foreign key violation **at
+  // commit** — after every other row has already gone in.
+  const orphaned = () =>
+    renderSql(
+      base({
+        routines: [
+          {
+            id: "r1",
+            workspace_id: "w1",
+            user_id: "u1",
+            name: "Somebody else's digest",
+            delivery_channel_id: "channel-of-another-person",
+            status: "active",
+            paused_reason: null,
+          },
+        ],
+      }),
+    );
+
+  it("is pointed at a stand-in rather than left to fail the commit", () => {
+    const { sql, droppedReferences, usedPlaceholderChannel } = orphaned();
+
+    expect(sql).not.toContain("channel-of-another-person");
+    expect(sql).toContain(PLACEHOLDER_CHANNEL_ID);
+    expect(droppedReferences["routines.delivery_channel_id"]).toBe(1);
+    expect(usedPlaceholderChannel).toBe(true);
+  });
+
+  it("gets the stand-in written even when no channel was collected at all", () => {
+    // The likely shape of this: a member exporting a workspace whose routines
+    // all belong to other people. Nothing comes back in delivery_channels, and
+    // the section still has to exist.
+    const { sql } = orphaned();
+    const inserts = sql
+      .split("\n")
+      .filter((l) => l.startsWith("insert into public.delivery_channels"));
+
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]).toContain(PLACEHOLDER_CHANNEL_ID);
+    expect(inserts[0]).toContain("secret_ciphertext");
+    expect(inserts[0]).toContain(MISSING_SECRET.replace(/'/g, "''"));
+  });
+
+  it("still comes back paused, like every other restored routine", () => {
+    const row = orphaned()
+      .sql.split("\n")
+      .find((l) => l.startsWith("insert into public.routines"))!;
+    expect(row).toContain("'paused'");
+  });
+
+  it("is not invented when the real channel is in the archive", () => {
+    const { sql, droppedReferences, usedPlaceholderChannel } = renderSql(
+      base({
+        delivery_channels: [{ id: "c1", workspace_id: "w1", user_id: "u1", kind: "email" }],
+        routines: [
+          { id: "r1", workspace_id: "w1", user_id: "u1", delivery_channel_id: "c1", name: "x" },
+        ],
+      }),
+    );
+
+    expect(sql).not.toContain(PLACEHOLDER_CHANNEL_ID);
+    expect(droppedReferences).toEqual({});
+    expect(usedPlaceholderChannel).toBe(false);
   });
 });
 

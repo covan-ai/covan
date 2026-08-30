@@ -59,8 +59,14 @@ const SKIP = new Set(["profiles"]);
  */
 const OPTIONAL_REFS: Record<string, string> = {
   "ideas.source_message_id": "messages",
-  "routines.delivery_channel_id": "delivery_channels",
-  "documents.agent_id": "agents",
+  // `routines.delivery_channel_id` was here and should never have been: the
+  // column is `not null`, so nulling an unreachable reference does not rescue
+  // the restore, it fails it in a less obvious place. That case is handled
+  // below instead, by giving the routine a channel to point at.
+  //
+  // `documents.agent_id` was here too and no longer exists — 0004 made
+  // `bundle_id` authoritative and a later migration dropped the column, so the
+  // entry had been describing nothing for some time.
 };
 
 /** A Postgres literal. `standard_conforming_strings` is on, so doubling `'` is enough. */
@@ -75,10 +81,31 @@ function literal(value: unknown): string {
   return `'${text.replace(/'/g, "''")}'`;
 }
 
+/**
+ * The channel a routine points at when its real one could not be exported.
+ *
+ * A channel belongs to a person (0019), so a workspace where two people each
+ * built routines has routines pointing at channels only their own author can
+ * read. Exporting as one of them leaves the other's reference unreachable — and
+ * `delivery_channel_id` is `not null` with a DEFERRABLE INITIALLY DEFERRED
+ * constraint, so the failure is a foreign key violation **at commit**, after
+ * every other row has already gone in. The worst place to discover anything.
+ *
+ * One synthesised row is the answer. It is labelled as what it is, carries the
+ * same non-credential as every other restored channel, and the routines that
+ * use it come back paused like all the rest — so nothing is silently delivering
+ * to a channel somebody did not choose.
+ */
+export const PLACEHOLDER_CHANNEL_ID = "00000000-0000-4000-8000-000000000001";
+export const PLACEHOLDER_CHANNEL_LABEL =
+  "unavailable — this routine's channel belonged to someone else";
+
 export type RenderedSql = {
   sql: string;
   /** `table.column` → how many references were dropped as unreachable. */
   droppedReferences: Record<string, number>;
+  /** True when a routine had to be pointed at the synthesised channel. */
+  usedPlaceholderChannel: boolean;
 };
 
 export function renderSql(tables: Collected): RenderedSql {
@@ -87,6 +114,13 @@ export function renderSql(tables: Collected): RenderedSql {
   for (const [table, rows] of Object.entries(tables)) {
     known.set(table, new Set(rows.map((r) => String(r.id ?? "")).filter(Boolean)));
   }
+
+  // Decided before anything is written, because it changes two sections: the
+  // routines that point at it, and the channel list that has to contain it.
+  const channels = known.get("delivery_channels") ?? new Set<string>();
+  const usedPlaceholderChannel = (tables.routines ?? []).some(
+    (r) => typeof r.delivery_channel_id === "string" && !channels.has(r.delivery_channel_id),
+  );
 
   const out: string[] = [
     "-- workspace.sql — replay this workspace into a fresh Covan.",
@@ -109,19 +143,40 @@ export function renderSql(tables: Collected): RenderedSql {
   for (const spec of EXPORTED) {
     if (SKIP.has(spec.table)) continue;
     const rows = rewriteForRestore(spec.table, tables[spec.table] ?? []);
-    if (rows.length === 0) {
+    const needsPlaceholder = spec.table === "delivery_channels" && usedPlaceholderChannel;
+
+    if (rows.length === 0 && !needsPlaceholder) {
       out.push(`-- ${spec.table}: nothing to restore`, "");
       continue;
     }
 
-    const columns = Object.keys(rows[0]);
+    // From the rows when there are any, and from the spec when there are not —
+    // which is the case that matters here: a member exporting a workspace whose
+    // routines all belong to somebody else collects no channels at all, and
+    // still needs the synthesised one written or the commit fails.
+    const columns = rows.length > 0 ? Object.keys(rows[0]) : declaredColumns(spec.columns);
     out.push(`-- ${spec.table} (${rows.length})`);
+    if (needsPlaceholder) {
+      out.push(placeholderChannelInsert(columns, tables));
+    }
     for (const row of rows) {
       const values = columns.map((column) => {
         if (USER_COLUMNS.has(column)) return ":'owner'";
 
-        const ref = OPTIONAL_REFS[`${spec.table}.${column}`];
         const value = row[column];
+
+        // Not nullable, so it is redirected rather than dropped.
+        if (spec.table === "routines" && column === "delivery_channel_id") {
+          const reachable = typeof value === "string" && channels.has(value);
+          if (!reachable) {
+            dropped["routines.delivery_channel_id"] =
+              (dropped["routines.delivery_channel_id"] ?? 0) + 1;
+            return literal(PLACEHOLDER_CHANNEL_ID);
+          }
+          return literal(value);
+        }
+
+        const ref = OPTIONAL_REFS[`${spec.table}.${column}`];
         if (ref && typeof value === "string" && !known.get(ref)?.has(value)) {
           const key = `${spec.table}.${column}`;
           dropped[key] = (dropped[key] ?? 0) + 1;
@@ -139,7 +194,48 @@ export function renderSql(tables: Collected): RenderedSql {
   }
 
   out.push("commit;", "");
-  return { sql: out.join("\n"), droppedReferences: dropped };
+  return { sql: out.join("\n"), droppedReferences: dropped, usedPlaceholderChannel };
+}
+
+/**
+ * The columns a table's rows would have had, when none came back.
+ *
+ * `delivery_channels` is the only spec that names its columns, and
+ * `secret_ciphertext` is deliberately not among them — the export cannot read
+ * it. The restore has to write it anyway, so it is added here.
+ */
+function declaredColumns(columns: string | undefined): string[] {
+  const named = (columns ?? "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+  return named.includes("secret_ciphertext") ? named : [...named, "secret_ciphertext"];
+}
+
+/**
+ * The synthesised channel, written with the same columns as the real ones so
+ * the section stays one shape.
+ *
+ * `workspace_id` is provenance and nothing reads it (0019), but pointing it at
+ * this workspace is the truthful answer to "where did this come from".
+ */
+function placeholderChannelInsert(columns: string[], tables: Collected): string {
+  const workspaceId = tables.workspaces?.[0]?.id ?? null;
+  const values = columns.map((column) => {
+    if (USER_COLUMNS.has(column)) return ":'owner'";
+    if (column === "id") return literal(PLACEHOLDER_CHANNEL_ID);
+    if (column === "workspace_id") return literal(workspaceId);
+    if (column === "kind") return literal("email");
+    if (column === "label") return literal(PLACEHOLDER_CHANNEL_LABEL);
+    if (column === "secret_ciphertext") return literal(MISSING_SECRET);
+    // created_at, and anything a later migration adds: let the default decide
+    // rather than invent a value for a row that is itself a stand-in.
+    return "default";
+  });
+  return (
+    `insert into public.delivery_channels (${columns.join(", ")}) ` +
+    `values (${values.join(", ")}) on conflict do nothing;`
+  );
 }
 
 /**

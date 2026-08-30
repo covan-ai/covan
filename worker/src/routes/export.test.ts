@@ -142,14 +142,31 @@ describe("how it reads", () => {
     expect(messages?.filters).toEqual([{ column: "session_id", value: ["s1", "s2"], kind: "in" }]);
   });
 
-  it("never asks for delivery_channels' secret column", async () => {
-    // 0023 withheld it from `authenticated`, and PostgREST expands `*` to every
-    // column — so a `select *` here is a 42501 for the whole table rather than
-    // a row with one field missing.
-    const { app, calls } = appWith();
+  it("finds delivery channels through the routines that use them, not by workspace", async () => {
+    // 0019: a channel belongs to a person, and `workspace_id` on it is
+    // provenance nothing reads. Scoping by that column missed the channel a
+    // routine here actually points at whenever it was added from another
+    // workspace — and `delivery_channel_id` is `not null`, so a missing one is
+    // a failed restore rather than a null column.
+    //
+    // It also never asks for `secret_ciphertext`: 0023 withheld that column
+    // from `authenticated`, and PostgREST expands `*` to every column, so a
+    // `select *` is a 42501 for the whole table rather than a row with one
+    // field missing.
+    const { app, calls } = appWith({
+      tables: {
+        routines: {
+          select: () => ({
+            data: [{ id: "r1", workspace_id: WORKSPACE, delivery_channel_id: "c1" }],
+            error: null,
+          }),
+        },
+      },
+    });
     await get(app);
 
     const channels = calls.find((c) => c.table === "delivery_channels");
+    expect(channels?.filters).toEqual([{ column: "id", value: ["c1"], kind: "in" }]);
     expect(channels?.columns).toBeDefined();
     expect(channels?.columns).not.toContain("secret_ciphertext");
   });

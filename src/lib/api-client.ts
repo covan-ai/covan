@@ -86,6 +86,25 @@ export async function getAccessToken(): Promise<string | undefined> {
   return data.session?.access_token;
 }
 
+/**
+ * The filename a `Content-Disposition` asked for, or null.
+ *
+ * Only the RFC 5987 `filename*=UTF-8''...` form, which is what the Worker
+ * sends and the only one that survives a non-ASCII workspace name. A header
+ * that does not match returns null and the caller names the file itself,
+ * rather than this half-parsing something and producing a name with quotes in
+ * it.
+ */
+function filenameFrom(header: string | null): string | null {
+  const match = header?.match(/filename\*=UTF-8''([^;]+)/i);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = await getAccessToken();
 
@@ -324,6 +343,44 @@ export const api = {
     }): Promise<Workspace> => request("PATCH", "/workspace", patch),
     setActive: (workspaceId: string): Promise<{ ok: true }> =>
       request("POST", "/workspace/active", { workspaceId }),
+    /**
+     * Downloads the whole workspace as one archive.
+     *
+     * Fetched with the bearer token and handed to the browser as a blob, the
+     * same way a document download works — an `<a href>` cannot carry an
+     * Authorization header, and putting the token in a query string would put
+     * it in every log between here and the Worker.
+     *
+     * The filename comes from the response rather than from here: the server
+     * knows the workspace slug and the date it actually built the archive, and
+     * two files called `export.zip` in a downloads folder are two files nobody
+     * can tell apart.
+     */
+    exportArchive: async (workspaceId: string): Promise<void> => {
+      const token = await getAccessToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/workspaces/${workspaceId}/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        let message = res.statusText;
+        try {
+          message = errorMessage(res.status, await res.json(), res.statusText);
+        } catch {
+          // A failure that is not JSON is still a failure; keep the status text.
+        }
+        throw new ApiError(res.status, message);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filenameFrom(res.headers.get("Content-Disposition")) ?? "covan-export.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
     members: {
       updateRole: (userId: string, role: WorkspaceRole): Promise<{ ok: true }> =>
         request("PATCH", `/workspace/members/${userId}`, { role }),

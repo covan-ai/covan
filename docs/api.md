@@ -44,20 +44,26 @@ Scopes would be a second permission system standing next to that one, and two
 systems that disagree about the same question are worse than one. What a key
 gives up in granularity it gains in there being nothing to get wrong.
 
-Two things a key cannot do, both by explicit refusal:
+Three things a key cannot do, each by explicit refusal:
 
 - **Create another key.** Otherwise a leaked key writes itself permanent
   successors and revoking the original achieves nothing.
 - **Revoke a key.** Otherwise a leaked key takes down the keys you are relying
   on.
+- **Close the account.** Otherwise a leaked key ends the account it came from in
+  one call, destroying the evidence and the account together, and no revocation
+  afterwards can undo it.
 
-Both need a signed-in session. Everything else is open to a key.
+All three need a signed-in session. Everything else is open to a key —
+including `GET /workspaces/:id/export`, which is not refused because it is a
+read: a key that can reach `/agents` and `/messages` can already assemble the
+same archive with a loop, so a refusal would be a gate with a door beside it.
 
 ### A key belongs to a person
 
 Not to the workspace. When you leave a workspace — or an admin removes you —
 your keys stop working at the same moment your own access does, because they
-*are* your access. A script running on a departed colleague's key goes quiet.
+_are_ your access. A script running on a departed colleague's key goes quiet.
 
 That is the correct behaviour and it is also the one that surprises people, so
 the removal dialog on the Team page says how many live keys somebody has before
@@ -90,15 +96,15 @@ server-sent events — the same stream the chat window reads.
 
 ### Errors
 
-| Status | What it means |
-| --- | --- |
-| `400` | The body failed validation. The response names the fields. |
-| `401` | No key, an unknown key, a revoked key, or a key on a deployment that cannot honour one. All four look the same on purpose. |
-| `403` | A policy refused. You are authenticated; you are not permitted. |
-| `404` | Not there, or not yours — Row Level Security returns nothing rather than admitting a row exists. |
-| `409` | A conflict, e.g. inviting somebody who is already a member. |
-| `429` | Rate limited. |
-| `501` | The deployment has not enabled this feature. |
+| Status | What it means                                                                                                              |
+| ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | The body failed validation. The response names the fields.                                                                 |
+| `401`  | No key, an unknown key, a revoked key, or a key on a deployment that cannot honour one. All four look the same on purpose. |
+| `403`  | A policy refused. You are authenticated; you are not permitted.                                                            |
+| `404`  | Not there, or not yours — Row Level Security returns nothing rather than admitting a row exists.                           |
+| `409`  | A conflict, e.g. inviting somebody who is already a member.                                                                |
+| `429`  | Rate limited.                                                                                                              |
+| `501`  | The deployment has not enabled this feature.                                                                               |
 
 A `403` and a `404` are often the same underlying refusal seen from different
 angles: when a policy hides a row, the route cannot tell "you may not" from "it
@@ -125,27 +131,27 @@ client for all of it.
 
 ### Agents
 
-| | |
-| --- | --- |
-| `GET /agents` | Every agent in the workspace |
-| `POST /agents` | Create one |
-| `PATCH /agents/:id` | Rename, re-persona, change model |
-| `DELETE /agents/:id` | Delete |
-| `POST /agents/:id/bundles/:bundleId` | Attach a knowledge bundle |
-| `DELETE /agents/:id/bundles/:bundleId` | Detach it |
-| `GET /favorites` · `POST /agents/:id/favorite` | Your own shortcuts |
+|                                                |                                  |
+| ---------------------------------------------- | -------------------------------- |
+| `GET /agents`                                  | Every agent in the workspace     |
+| `POST /agents`                                 | Create one                       |
+| `PATCH /agents/:id`                            | Rename, re-persona, change model |
+| `DELETE /agents/:id`                           | Delete                           |
+| `POST /agents/:id/bundles/:bundleId`           | Attach a knowledge bundle        |
+| `DELETE /agents/:id/bundles/:bundleId`         | Detach it                        |
+| `GET /favorites` · `POST /agents/:id/favorite` | Your own shortcuts               |
 
 ### Conversations
 
-| | |
-| --- | --- |
-| `GET /sessions` · `POST /sessions` | List and open conversations |
-| `PATCH /sessions/:id` · `DELETE /sessions/:id` | Rename, share, delete |
-| `GET /sessions/:id/messages` | The transcript |
-| `POST /messages` · `PATCH /messages/:id` | Write and edit your own lines |
-| `DELETE /messages/after/:id` | Truncate, for a re-ask |
-| `POST /chat/stream` | Ask. Streams SSE. |
-| `POST /transcribe` | Audio to text |
+|                                                |                               |
+| ---------------------------------------------- | ----------------------------- |
+| `GET /sessions` · `POST /sessions`             | List and open conversations   |
+| `PATCH /sessions/:id` · `DELETE /sessions/:id` | Rename, share, delete         |
+| `GET /sessions/:id/messages`                   | The transcript                |
+| `POST /messages` · `PATCH /messages/:id`       | Write and edit your own lines |
+| `DELETE /messages/after/:id`                   | Truncate, for a re-ask        |
+| `POST /chat/stream`                            | Ask. Streams SSE.             |
+| `POST /transcribe`                             | Audio to text                 |
 
 A session is private to you unless its `visibility` is `shared`, in which case
 the workspace can read it. Assistant replies cannot be written by any client,
@@ -153,47 +159,49 @@ including this one — see [Your team](team.md).
 
 ### Knowledge
 
-| | |
-| --- | --- |
-| `GET /bundles` · `POST /bundles` | Subjects |
-| `PATCH /bundles/:id` · `DELETE /bundles/:id` | Rename, delete |
-| `POST /bundles/:id/documents/upload` | Upload a document |
-| `PATCH /documents/:id` · `DELETE /documents/:id` | Rename, move, delete |
-| `GET /documents/:id/download` | The original file |
-| `POST /documents/:id/reindex` | Re-chunk and re-embed |
+|                                                  |                       |
+| ------------------------------------------------ | --------------------- |
+| `GET /bundles` · `POST /bundles`                 | Subjects              |
+| `PATCH /bundles/:id` · `DELETE /bundles/:id`     | Rename, delete        |
+| `POST /bundles/:id/documents/upload`             | Upload a document     |
+| `PATCH /documents/:id` · `DELETE /documents/:id` | Rename, move, delete  |
+| `GET /documents/:id/download`                    | The original file     |
+| `POST /documents/:id/reindex`                    | Re-chunk and re-embed |
 
 ### Routines
 
-| | |
-| --- | --- |
-| `GET /routines` · `POST /routines` | Scheduled work |
-| `PATCH /routines/:id` · `DELETE /routines/:id` | Change, delete |
-| `POST /routines/:id/run` | Run now, rather than on schedule |
-| `GET /routines/:id/runs` | What happened |
-| `POST /routines/draft` | Turn a sentence into a routine |
-| `GET`/`POST`/`DELETE /delivery-channels` | Where output goes |
+|                                                |                                  |
+| ---------------------------------------------- | -------------------------------- |
+| `GET /routines` · `POST /routines`             | Scheduled work                   |
+| `PATCH /routines/:id` · `DELETE /routines/:id` | Change, delete                   |
+| `POST /routines/:id/run`                       | Run now, rather than on schedule |
+| `GET /routines/:id/runs`                       | What happened                    |
+| `POST /routines/draft`                         | Turn a sentence into a routine   |
+| `GET`/`POST`/`DELETE /delivery-channels`       | Where output goes                |
 
 ### Workspace and people
 
-| | |
-| --- | --- |
-| `GET /me` · `PATCH /me` | You, and your display name |
-| `GET /workspaces` · `POST /workspaces` | Every workspace you are in |
-| `POST /workspace/active` | Switch which one requests are scoped to |
-| `PATCH /workspace` | Name, slug, default model. Admin. |
-| `PATCH`/`DELETE /workspace/members/:userId` | Change a role, remove somebody. Admin. |
-| `DELETE /workspace/members/me` | Leave |
-| `GET`/`POST`/`DELETE /invitations` | Invite and revoke. Admin. |
-| `GET /invitations/incoming` · `POST /invitations/:id/accept` | Yours to accept |
+|                                                              |                                                                                                                |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `GET /me` · `PATCH /me`                                      | You, and your display name                                                                                     |
+| `GET /workspaces` · `POST /workspaces`                       | Every workspace you are in                                                                                     |
+| `POST /workspace/active`                                     | Switch which one requests are scoped to                                                                        |
+| `PATCH /workspace`                                           | Name, slug, default model. Admin.                                                                              |
+| `PATCH`/`DELETE /workspace/members/:userId`                  | Change a role, remove somebody. Admin.                                                                         |
+| `DELETE /workspace/members/me`                               | Leave                                                                                                          |
+| `GET`/`POST`/`DELETE /invitations`                           | Invite and revoke. Admin.                                                                                      |
+| `GET /invitations/incoming` · `POST /invitations/:id/accept` | Yours to accept                                                                                                |
+| `GET /workspaces/:id/export`                                 | The whole workspace as one zip — [Taking it with you](export.md)                                               |
+| `DELETE /account`                                            | Close your own account. Session only. Refused while you are the last admin of a workspace others are still in. |
 
 ### Usage and keys
 
-| | |
-| --- | --- |
-| `GET /usage` | Your own totals and what is left of your allowance |
-| `GET /usage/workspace` | Everyone's, by agent and by month. Admin. Never by person. |
-| `GET /api-keys` | Your own live keys. Never anyone else's. |
-| `POST /api-keys` · `DELETE /api-keys/:id` | Session only, as above |
+|                                           |                                                            |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `GET /usage`                              | Your own totals and what is left of your allowance         |
+| `GET /usage/workspace`                    | Everyone's, by agent and by month. Admin. Never by person. |
+| `GET /api-keys`                           | Your own live keys. Never anyone else's.                   |
+| `POST /api-keys` · `DELETE /api-keys/:id` | Session only, as above                                     |
 
 ### Other
 

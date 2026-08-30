@@ -38,6 +38,8 @@ export type QueryContext = {
   filters: Filter[];
   /** True when the caller ended the chain with `.single()`/`.maybeSingle()`. */
   single: boolean;
+  /** Set when the caller ended the chain with `.range(from, to)`, as paged reads do. */
+  range?: { from: number; to: number };
 };
 
 export type Handler = (ctx: QueryContext) => QueryResult | Promise<QueryResult>;
@@ -127,6 +129,15 @@ class Chain implements PromiseLike<QueryResult> {
 
   limit() {
     return this;
+  }
+
+  // A terminator, unlike order() and limit(). The export pages every read
+  // because PostgREST caps a response at a thousand rows and says nothing about
+  // it, so a fake that swallowed range() would let an unpaged read pass here
+  // and lose the thousand-and-first message in production.
+  range(from: number, to: number): Promise<QueryResult> {
+    this.ctx.range = { from, to };
+    return this.run(this.ctx);
   }
 
   maybeSingle(): Promise<QueryResult> {

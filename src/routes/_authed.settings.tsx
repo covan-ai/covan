@@ -10,6 +10,7 @@ import { UsageSection } from "@/components/usage-section";
 import { WorkspaceUsageSection } from "@/components/workspace-usage-section";
 import { PreferencesSection } from "@/components/preferences-section";
 import { ApiKeysSection } from "@/components/api-keys-section";
+import { ExportWorkspaceSection } from "@/components/export-workspace-section";
 import { CloseAccountSection } from "@/components/close-account-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -225,6 +226,13 @@ function SettingsPage() {
             to approve. The section hides itself where the deployment cannot
             honour a key at all. */}
         <ApiKeysSection />
+
+        {/* Above closing the account, and that order is the argument: somebody
+            reading this page because they are leaving should meet the way to
+            take their work with them before they meet the way to destroy it.
+            Not gated on a role — an export is a read, and it contains only what
+            this person could already see. */}
+        <ExportWorkspaceSection workspaceId={me?.workspace.id} workspaceName={me?.workspace.name} />
 
         {/* Last on the page, under everything it would destroy. Not gated on a
             role: erasure is the caller's own right and an admin has no say in

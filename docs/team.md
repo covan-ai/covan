@@ -394,6 +394,16 @@ Re-inviting the person gives all of it back, because none of it was destroyed.
 The one thing that does not resume itself is a routine the engine paused: the
 pause outlives the rejoining, and only its owner can clear it.
 
+## Taking a workspace with you
+
+Before the section below, because it is the thing to do first. Settings →
+**Take it with you** downloads the workspace as one archive: agents, bundles,
+documents and their original files, chats and messages, ideas, routines — plus
+the SQL to replay all of it into a Covan you run yourself. Not gated on a role,
+because it is a read: your archive holds what you could already see, and
+somebody else's private sessions are not in it. [Taking it with you](export.md)
+covers what is left out and why, and how to put it back.
+
 ## Deleting a workspace
 
 Not directly. `workspaces` has select, update and insert policies and no delete

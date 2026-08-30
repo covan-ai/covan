@@ -12,7 +12,15 @@ export type Agent = {
   model: string;
   persona: string;
   mode: "normal" | "brainstorm";
-  documents: { id: string; name: string; size: number; chunkCount: number; indexed: boolean }[];
+  documents: {
+    id: string;
+    name: string;
+    size: number;
+    /** When it was uploaded, which for a document is the whole of its freshness. */
+    createdAt: number;
+    chunkCount: number;
+    indexed: boolean;
+  }[];
   bundleIds: string[];
   createdAt: number;
 };
@@ -22,9 +30,16 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   createdAt: number;
-  // Names of the documents that grounded an assistant reply (real RAG
-  // citations). Absent/empty when the reply used no retrieved knowledge.
-  sources?: string[];
+  /**
+   * The documents that grounded an assistant reply — real citations, absent or
+   * empty when the reply used no retrieved knowledge.
+   *
+   * `id` is null on every reply written before ids were stored: the column held
+   * bare names then, and a name cannot be resolved back to a document without
+   * guessing. Those citations still render, they just cannot say how old the
+   * document was.
+   */
+  sources?: { id: string | null; name: string }[];
   // In a shared session, the human author of a user message. Absent for
   // assistant messages and for one's own optimistic messages before refetch.
   sender?: { id: string; name: string | null; avatarUrl: string | null };

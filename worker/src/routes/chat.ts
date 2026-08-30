@@ -103,7 +103,23 @@ chat.post("/chat/stream", async (c) => {
 
   // Documents that actually grounded this reply, deduped in relevance order.
   // Persisted with the assistant message so the UI can show real citations.
-  const sourceNames: string[] = [];
+  /**
+   * The documents that grounded this reply, by id as well as by name.
+   *
+   * Names alone were what the column held until now, and a name is not a link:
+   * two documents can share one, a rename detaches every answer that cited it,
+   * and a delete leaves a string pointing at nothing. `match_chunks` has
+   * returned `document_id` since 0005 and this route was discarding it — so the
+   * chat screen could say which file an answer came from and never how old it
+   * was. Keyed by id here so a document retrieved through two chunks is cited
+   * once.
+   */
+  const sources = new Map<string, { id: string | null; name: string }>();
+  const addSource = (id: string | null, name: string) => {
+    if (!name) return;
+    const key = id ?? `name:${name}`;
+    if (!sources.has(key)) sources.set(key, { id, name });
+  };
   // Retrieved knowledge for this turn. Kept OUT of the persona/system prefix and
   // the persisted history so that prefix stays byte-identical across turns and
   // OpenAI's automatic prompt cache can discount the bulk of the input.
@@ -161,16 +177,16 @@ chat.post("/chat/stream", async (c) => {
         if (matchError) {
           console.error("match_chunks failed", matchError);
         } else if (matches && matches.length > 0) {
-          const typed = matches as Array<{ document_name: string; content: string }>;
+          const typed = matches as Array<{
+            document_id: string;
+            document_name: string;
+            content: string;
+          }>;
           ragBlock = buildContextBlock(
             typed.map((m) => ({ documentName: m.document_name, content: m.content })),
           );
           if (ragBlock) {
-            for (const m of typed) {
-              if (m.document_name && !sourceNames.includes(m.document_name)) {
-                sourceNames.push(m.document_name);
-              }
-            }
+            for (const m of typed) addSource(m.document_id ?? null, m.document_name);
           }
         }
       }
@@ -187,12 +203,12 @@ chat.post("/chat/stream", async (c) => {
   if (!ragBlock && hasKnowledge) {
     const { data: docRows, error: docError } = await db
       .from("documents")
-      .select("name,content")
+      .select("id,name,content")
       .in("bundle_id", bundleIds)
       .order("created_at", { ascending: false });
     const withContent = docError
       ? []
-      : ((docRows ?? []) as Array<{ name: string; content: string | null }>).filter(
+      : ((docRows ?? []) as Array<{ id: string; name: string; content: string | null }>).filter(
           (d) => d.content && d.content.trim().length > 0,
         );
     if (withContent.length > 0) {
@@ -200,9 +216,7 @@ chat.post("/chat/stream", async (c) => {
         withContent.map((d) => ({ documentName: d.name, content: d.content as string })),
       );
       if (ragBlock) {
-        for (const d of withContent) {
-          if (!sourceNames.includes(d.name)) sourceNames.push(d.name);
-        }
+        for (const d of withContent) addSource(d.id ?? null, d.name);
       }
     }
   }
@@ -297,7 +311,7 @@ chat.post("/chat/stream", async (c) => {
             role: "assistant",
             content: text,
             sender_id: null,
-            sources: sourceNames.length > 0 ? sourceNames : null,
+            sources: sources.size > 0 ? [...sources.values()] : null,
             prompt_tokens: opts.promptTokens,
             completion_tokens: opts.completionTokens,
             cached_tokens: opts.cachedTokens,

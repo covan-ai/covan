@@ -207,7 +207,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   const { data: doc, error } = await db
     .from("documents")
     .insert({ bundle_id: bundleId, name: file.name, size: file.size, r2_key: r2Key, content })
-    .select("id,name,size")
+    .select("id,name,size,created_at")
     .single();
   if (error || !doc) {
     try {

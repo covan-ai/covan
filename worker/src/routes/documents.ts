@@ -83,7 +83,7 @@ documents.patch("/documents/:id", async (c) => {
 
   const { data: doc, error: docErr } = await db
     .from("documents")
-    .select("id,name,size,bundle_id,knowledge_bundles(workspace_id)")
+    .select("id,name,size,created_at,bundle_id,knowledge_bundles(workspace_id)")
     .eq("id", id)
     .maybeSingle();
   if (docErr) return c.json({ error: "failed to load document" }, 500);
@@ -140,7 +140,7 @@ documents.patch("/documents/:id", async (c) => {
     .from("documents")
     .update({ bundle_id: bundleId })
     .eq("id", id)
-    .select("id,name,size,document_chunks(count)")
+    .select("id,name,size,created_at,document_chunks(count)")
     .single();
   if (upErr || !updated) {
     // Put the passages back where the document still is.
@@ -204,7 +204,7 @@ documents.post("/documents/:id/reindex", async (c) => {
 
   const { data: doc, error } = await db
     .from("documents")
-    .select("id,name,size,bundle_id,r2_key,content,knowledge_bundles(workspace_id)")
+    .select("id,name,size,created_at,bundle_id,r2_key,content,knowledge_bundles(workspace_id)")
     .eq("id", id)
     .maybeSingle();
   if (error) return c.json({ error: "failed to load document" }, 500);

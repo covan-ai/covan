@@ -204,11 +204,31 @@ failing.
 
 ### Sources
 
-The document names that grounded a reply are written onto the message when it is
-saved, deduplicated and kept in relevance order, and shown as chips beneath the
-answer. Because they are stored rather than recomputed, they survive a reload and
-they are what actually went into that specific turn — not a fresh search run
-against whatever the bundles hold today.
+The documents that grounded a reply are written onto the message when it is
+saved — by id and by name, deduplicated and kept in relevance order — and shown
+as chips beneath the answer. Because they are stored rather than recomputed,
+they survive a reload and they are what actually went into that specific turn,
+not a fresh search run against whatever the bundles hold today.
+
+Each chip also carries the document's age, and warns past ninety days. That is
+there because retrieval working correctly is the whole problem: a process
+document written in January is still the best match for a January question in
+September, and the agent will quote it with the same confidence it quotes
+anything. The chip made the answer checkable and said which file; it could not
+say that the file is nine months old. An onboarding document written once and
+wrong a quarter later is exactly what teams upload first and exactly what nobody
+remembers to revisit.
+
+The age is the upload date, and for a document that is the whole of freshness:
+nothing updates one in place. A re-upload creates a new document, and
+**Reindex** re-embeds the same stored text. So there is no "last edited" to
+want — the January file is the January file.
+
+A chip with no date is not a fault. Replies written before ids were stored cite
+by name alone, and a name cannot be resolved back to a document without
+guessing; the same is true of a document that has since been deleted. Both keep
+their citation and say nothing about age, which is the honest half of the
+answer.
 
 Read them as what was in scope, not as what the model saw, because the two are
 not the same list. The names are collected from every match — and on the fallback

@@ -7,7 +7,7 @@ import { getActiveWorkspaceId } from "../lib/workspace";
 const agents = new Hono<AppEnv>();
 
 const AGENT_SELECT =
-  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,document_chunks(count))))";
+  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,document_chunks(count))))";
 
 const createAgentSchema = z.object({
   name: z.string().min(1),

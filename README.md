@@ -37,10 +37,13 @@ one.
 - **Collaborative sessions.** Bring the team into one conversation, or one
   brainstorm board, when the question is shared.
 - **Bring your own endpoint.** Set `OPENAI_BASE_URL` and completions go to
-  Ollama, vLLM, LiteLLM or OpenRouter instead of OpenAI. Embeddings and
-  transcription still don't — the embedding column is `vector(1536)`, so that
-  half is a migration rather than a variable, and
-  [`docs/self-hosting.md`](docs/self-hosting.md) says so plainly.
+  Ollama, vLLM, LiteLLM or OpenRouter instead of OpenAI. Set
+  `EMBEDDING_BASE_URL` and your documents go there too — a separate variable,
+  because embedding is where the whole text of every file is sent and moving it
+  also means moving the width of the vector column
+  ([`docs/self-hosting.md`](docs/self-hosting.md) walks through both). Audio
+  transcription is the one thing that stays: hardly any compatible server
+  implements it.
 - **Two runtimes, one source.** The same code runs on Cloudflare Workers with R2
   in production and on Node with the filesystem under `docker compose`.
 

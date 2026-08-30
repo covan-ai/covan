@@ -7,7 +7,27 @@ vi.mock("openai", () => ({
   },
 }));
 
-const { chunkText, embedTexts, EMBED_BATCH_SIZE } = await import("./embeddings");
+const {
+  chunkText,
+  embedTexts,
+  embeddingModel,
+  embeddingDimensions,
+  EMBED_BATCH_SIZE,
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_DIMENSIONS,
+} = await import("./embeddings");
+
+/**
+ * Every mocked response below returns one-element vectors, so the tests declare
+ * a one-dimensional database. Stating it beats making the guard tolerant: a
+ * width check that let short vectors through would pass every test here and
+ * still let a 768-dimension model reach a 1536-wide column in production.
+ */
+const env = (extra: Record<string, string> = {}) => ({
+  OPENAI_API_KEY: "sk-test",
+  EMBEDDING_DIMENSIONS: "1",
+  ...extra,
+});
 
 describe("chunkText", () => {
   it("returns [] for empty or whitespace-only text", () => {
@@ -91,8 +111,18 @@ describe("chunkText", () => {
   });
 });
 
+/**
+ * Braces, not a bare arrow. `mockReset()` returns the mock, an arrow body
+ * returns it, and Vitest treats anything a `beforeEach` returns as a teardown
+ * function — so `() => create.mockReset()` quietly registers the mock itself as
+ * a cleanup hook and calls it with no arguments after every test. Harmless
+ * while every implementation ignores its arguments, and a TypeError from inside
+ * a cleanup hook the moment one destructures them.
+ */
 describe("embedTexts", () => {
-  beforeEach(() => create.mockReset());
+  beforeEach(() => {
+    create.mockReset();
+  });
 
   it("returns vectors in input order, however the API orders them", async () => {
     create.mockResolvedValue({
@@ -103,7 +133,7 @@ describe("embedTexts", () => {
       usage: { total_tokens: 42 },
     });
 
-    const { vectors } = await embedTexts("sk-test", ["first", "second"]);
+    const { vectors } = await embedTexts(env(), ["first", "second"]);
 
     expect(vectors).toEqual([[0.1], [0.2]]);
   });
@@ -116,17 +146,17 @@ describe("embedTexts", () => {
       usage: { total_tokens: 42 },
     });
 
-    await expect(embedTexts("sk-test", ["hello"])).resolves.toMatchObject({ tokens: 42 });
+    await expect(embedTexts(env(), ["hello"])).resolves.toMatchObject({ tokens: 42 });
   });
 
   it("reports zero when the API omits usage", async () => {
     create.mockResolvedValue({ data: [{ index: 0, embedding: [0.1] }] });
 
-    await expect(embedTexts("sk-test", ["hello"])).resolves.toMatchObject({ tokens: 0 });
+    await expect(embedTexts(env(), ["hello"])).resolves.toMatchObject({ tokens: 0 });
   });
 
   it("costs nothing and calls nothing for an empty input", async () => {
-    await expect(embedTexts("sk-test", [])).resolves.toEqual({ vectors: [], tokens: 0 });
+    await expect(embedTexts(env(), [])).resolves.toEqual({ vectors: [], tokens: 0 });
     expect(create).not.toHaveBeenCalled();
   });
 });
@@ -144,7 +174,7 @@ describe("embedTexts batching", () => {
     }));
 
     const texts = Array.from({ length: 300 }, (_, i) => String(i));
-    const res = await embedTexts("key", texts);
+    const res = await embedTexts(env(), texts);
 
     expect(create).toHaveBeenCalledTimes(3); // 128 + 128 + 44
     expect(res.vectors).toHaveLength(300);
@@ -161,7 +191,7 @@ describe("embedTexts batching", () => {
     }));
 
     await embedTexts(
-      "key",
+      env(),
       Array.from({ length: 1500 }, (_, i) => String(i)),
     );
 
@@ -176,9 +206,113 @@ describe("embedTexts batching", () => {
       usage: { total_tokens: 7 },
     });
 
-    const res = await embedTexts("key", ["only one"]);
+    const res = await embedTexts(env(), ["only one"]);
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(res).toEqual({ vectors: [[1]], tokens: 7 });
+  });
+});
+
+describe("which model embeds", () => {
+  beforeEach(() => {
+    create.mockReset();
+    create.mockResolvedValue({ data: [{ index: 0, embedding: [0.1] }], usage: {} });
+  });
+
+  it("is OpenAI's unless the operator names another", async () => {
+    await embedTexts(env(), ["hello"]);
+    expect(create.mock.calls[0][0].model).toBe(DEFAULT_EMBEDDING_MODEL);
+  });
+
+  it("is whatever the operator named", async () => {
+    await embedTexts(env({ EMBEDDING_MODEL: "nomic-embed-text" }), ["hello"]);
+    expect(create.mock.calls[0][0].model).toBe("nomic-embed-text");
+  });
+
+  it("treats an empty EMBEDDING_MODEL as unset, the way a .env line does", () => {
+    // A variable declared and left blank arrives as "", not undefined, and ""
+    // as a model name is a 400 from every endpoint there is.
+    expect(embeddingModel({ EMBEDDING_MODEL: "" })).toBe(DEFAULT_EMBEDDING_MODEL);
+    expect(embeddingModel({ EMBEDDING_MODEL: "  " })).toBe(DEFAULT_EMBEDDING_MODEL);
+  });
+});
+
+describe("the width this database stores", () => {
+  it("is 1536 unless the operator changed the column", () => {
+    expect(embeddingDimensions({})).toBe(DEFAULT_EMBEDDING_DIMENSIONS);
+    expect(embeddingDimensions({ EMBEDDING_DIMENSIONS: "" })).toBe(DEFAULT_EMBEDDING_DIMENSIONS);
+  });
+
+  it("is whatever they set it to", () => {
+    expect(embeddingDimensions({ EMBEDDING_DIMENSIONS: "768" })).toBe(768);
+    expect(embeddingDimensions({ EMBEDDING_DIMENSIONS: " 1024 " })).toBe(1024);
+  });
+
+  it.each(["nope", "768.5", "-1", "0"])("refuses %s rather than falling back", (value) => {
+    // Falling back would be the dangerous kindness: a typo'd width silently
+    // reverting to 1536 is how a 768-dimension model gets as far as the insert.
+    expect(() => embeddingDimensions({ EMBEDDING_DIMENSIONS: value })).toThrow(
+      /EMBEDDING_DIMENSIONS/,
+    );
+  });
+});
+
+/**
+ * The guard the whole change hangs on.
+ *
+ * Without it a mismatched model does not fail at the request — it fails at the
+ * insert, and both upload paths log an insert failure and still report the
+ * document as saved. The operator's symptom is documents that upload cleanly
+ * and answer nothing.
+ */
+describe("a model of the wrong width", () => {
+  beforeEach(() => {
+    create.mockReset();
+  });
+
+  it("is refused, naming both numbers and the endpoint", async () => {
+    create.mockResolvedValue({
+      data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }],
+      usage: { total_tokens: 5 },
+    });
+
+    await expect(
+      embedTexts(
+        env({ EMBEDDING_DIMENSIONS: "1536", EMBEDDING_BASE_URL: "http://ollama:11434/v1" }),
+        ["hello"],
+      ),
+    ).rejects.toThrow(/returned 3 dimensions, but this database stores 1536/);
+  });
+
+  it("says where the request went, because that is the setting to change", async () => {
+    create.mockResolvedValue({ data: [{ index: 0, embedding: [0.1, 0.2] }], usage: {} });
+
+    await expect(
+      embedTexts(env({ EMBEDDING_BASE_URL: "http://ollama:11434/v1" }), ["hello"]),
+    ).rejects.toThrow(/http:\/\/ollama:11434\/v1/);
+  });
+
+  it("names OpenAI when no endpoint was configured", async () => {
+    create.mockResolvedValue({ data: [{ index: 0, embedding: [0.1, 0.2] }], usage: {} });
+
+    await expect(embedTexts(env(), ["hello"])).rejects.toThrow(/api\.openai\.com/);
+  });
+
+  it("is caught on a later batch too, not just the first", async () => {
+    // A server that serves two models behind one name, or truncates under load,
+    // would otherwise put short vectors into a column that accepted the first
+    // batch. Checking every vector costs nothing next to the request itself.
+    create.mockImplementation(async ({ input }: { input: string[] }) => ({
+      data: input.map((_, i) => ({ index: i, embedding: input[0] === "128" ? [1, 2] : [1] })),
+      usage: { total_tokens: input.length },
+    }));
+
+    await expect(
+      embedTexts(
+        env(),
+        Array.from({ length: 200 }, (_, i) => String(i)),
+      ),
+    ).rejects.toThrow(/returned 2 dimensions/);
+    expect(create).toHaveBeenCalledTimes(2);
   });
 });

@@ -12,10 +12,26 @@ OPENAI_API_KEY=replace-with-openai-api-key
 
 # Optional. Sends completions to an OpenAI-compatible endpoint instead of
 # OpenAI. Set OPENAI_MODEL alongside it — the shipped model list is OpenAI's,
-# so on its own every agent would ask your endpoint for `gpt-4o`. Embeddings
-# and transcription still go to OpenAI; docs/self-hosting.md says why.
+# so on its own every agent would ask your endpoint for `gpt-4o`. Transcription
+# still goes to OpenAI; docs/self-hosting.md says why.
 # OPENAI_BASE_URL=http://localhost:11434/v1
 # OPENAI_MODEL=llama3.3:70b
+
+# Optional, and separate from the two above on purpose: this is where the text
+# of every uploaded document goes, which is a bigger decision than where the
+# conversation goes, so it does not inherit from OPENAI_BASE_URL.
+# EMBEDDING_DIMENSIONS must match both the model and the width
+# document_chunks.embedding was declared with — 1536 unless you ran
+# supabase/optional/embedding_width.sql, which is also where the procedure for
+# changing it lives.
+# EMBEDDING_BASE_URL=http://localhost:11434/v1
+# EMBEDDING_MODEL=nomic-embed-text
+# EMBEDDING_DIMENSIONS=768
+
+# Optional. Cosine-similarity floor for retrieval; unset means 0.25, which was
+# tuned for text-embedding-3-small. Set your own if you change the embedding
+# model — a wrong floor does not error, it just returns the wrong chunks.
+# RAG_MIN_SIMILARITY=0.3
 
 # Comma-separated EXACT frontend origins. Never a wildcard or a pattern —
 # docs/self-hosting.md explains what that costs. localhost is allowed in code.

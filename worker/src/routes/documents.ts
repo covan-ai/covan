@@ -241,7 +241,7 @@ documents.post("/documents/:id/reindex", async (c) => {
   // a failure never leaves the document worse off than before.
   let vectors: number[][];
   try {
-    const embedded = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+    const embedded = await embedTexts(c.env, chunks);
     vectors = embedded.vectors;
     await recordQuota(c, embeddingCost(embedded.tokens));
   } catch (e) {

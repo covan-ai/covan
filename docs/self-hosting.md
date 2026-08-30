@@ -106,6 +106,10 @@ every line in `.env.docker.example`, in the order it appears there.
 | `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                    |
 | `OPENAI_BASE_URL`                                      | _empty — means OpenAI_     | Optional. Sends completions to an OpenAI-compatible endpoint instead. See below — it does not move everything.                   |
 | `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.      |
+| `EMBEDDING_BASE_URL`                                   | _empty — means OpenAI_     | Optional. Sends document embeddings to an OpenAI-compatible endpoint. Deliberately does **not** follow `OPENAI_BASE_URL`.        |
+| `EMBEDDING_MODEL`                                      | _empty_                    | Optional. Defaults to `text-embedding-3-small`. Set it whenever `EMBEDDING_BASE_URL` is set.                                     |
+| `EMBEDDING_DIMENSIONS`                                 | _empty — means 1536_       | Optional. The width `document_chunks.embedding` was declared with. Changing it is a schema change — see below. Refuses to boot on anything but a positive whole number. |
+| `RAG_MIN_SIMILARITY`                                   | _empty — means 0.25_       | Optional. Cosine-similarity floor below which a retrieved chunk is dropped. `0` disables it. Tuned for `text-embedding-3-small`; another model wants its own. |
 | `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                             |
 | `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                           |
 | `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. Also passed to the API as `SUPABASE_JWT_SECRET`, which is what makes API keys work — see [The API](api.md). |
@@ -161,22 +165,69 @@ It still shows OpenAI's models; ignore it.
 `OPENAI_API_KEY` stays required either way. Most local servers ignore the value,
 so any non-empty string works there.
 
-**Two things this does not move, and you should know before you rely on it:**
+**`OPENAI_BASE_URL` moves conversations, and only conversations.** Documents
+have a setting of their own, immediately below, and audio transcription cannot
+be moved at all: most OpenAI-compatible servers do not implement
+`/audio/transcriptions`, so routing voice notes there would trade a working
+feature for a 404. Voice notes go to OpenAI.
 
-- **Embeddings.** Every document you upload is still embedded by OpenAI's
-  `text-embedding-3-small`. This is not an oversight: `knowledge_chunks.embedding`
-  is declared `vector(1536)` and both retrieval functions take that width, so an
-  endpoint serving a 768-dimension model would not fail at the request — it
-  would fail at the insert, after the upload appeared to succeed. Changing it is
-  a migration and a re-index of everything already stored, not a variable.
-- **Audio transcription.** Voice notes go to OpenAI too. Most
-  OpenAI-compatible servers do not implement `/audio/transcriptions`, so routing
-  it there would trade a working feature for a 404.
+### Keeping your documents off OpenAI too
 
-So `OPENAI_BASE_URL` keeps your conversations off OpenAI. It does not yet keep
-your documents off OpenAI. If that distinction matters for your deployment —
-and for some teams it is the whole question — the honest answer today is that
-Covan is not there yet.
+Embedding is where the whole text of an uploaded document is sent. A deployment
+that routes its chat to a local model and still embeds at OpenAI has kept its
+conversations in-house and shipped every contract, policy and meeting note out
+anyway — which for some teams is the entire reason they were self-hosting.
+
+`EMBEDDING_BASE_URL` closes that:
+
+```bash
+EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_DIMENSIONS=768
+```
+
+**It does not inherit from `OPENAI_BASE_URL`, on purpose.** Two reasons pointing
+the same way. An install that has had `OPENAI_BASE_URL` set for months works
+today — chat local, embeddings at OpenAI — and inheriting would move its
+documents to a new endpoint on an upgrade nobody asked for. And serving
+completions is table stakes for a compatible server, while serving embeddings at
+the width your database column expects is not. So you set both, knowingly.
+
+That width is the part that takes work. pgvector fixes a vector column's
+dimension at declaration time, and migration 0004 declared
+`document_chunks.embedding` as `vector(1536)` because that is what
+`text-embedding-3-small` returns. Common local models do not match:
+`nomic-embed-text` is 768, `mxbai-embed-large` and `bge-m3` are 1024. The
+column, its HNSW index and the `match_chunks` function all have to move
+together, and existing vectors cannot come with them — there is no arithmetic
+that converts a vector from one model's space into another's.
+
+`supabase/optional/embedding_width.sql` does the schema half and documents the
+whole procedure. Deliberately **not** a migration: it is outside
+`supabase/migrations/`, `migrate` never mounts it, and the number in it is a
+fact about the model you chose rather than about Covan. In short:
+
+1. Set `EMBEDDING_BASE_URL` and `EMBEDDING_MODEL`, then upload one small
+   document. It will fail, and the error names the width your model actually
+   returned — use that number rather than one from a README, since several
+   models serve more than one.
+2. Edit `v_dims` in that file and run it. It refuses to run twice on the same
+   width, so it cannot quietly discard your embeddings for nothing.
+3. Set `EMBEDDING_DIMENSIONS` to the same number and restart the API.
+4. Re-embed: `POST /admin/backfill-embeddings` with your `ADMIN_API_KEY`. It
+   walks every document that has stored text and no chunks, so running it again
+   is safe and picks up only what was missed. Until it finishes, answers fall
+   back to the agent's persona alone — degraded, not broken.
+5. Revisit `RAG_MIN_SIMILARITY`. It defaults to 0.25, chosen against
+   `text-embedding-3-small`. Another model's similarity scores sit somewhere
+   else, and a floor that is wrong for it never errors — too high starves
+   genuine matches, too low fills every prompt with noise. Both just look like
+   the answers got worse.
+
+The API refuses to start on an `EMBEDDING_DIMENSIONS` that is not a positive
+whole number, or a `RAG_MIN_SIMILARITY` outside 0–1, naming the variable. A
+width that is merely *wrong* rather than malformed is caught at the first
+embedding call instead, which is why step 1 is an upload rather than a restart.
 
 ## Terms and privacy
 
@@ -480,9 +531,17 @@ OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
 OPENAI_MODEL = "meta-llama/llama-3.3-70b-instruct"
 ```
 
-The same two exceptions apply — embeddings and transcription still go to
-OpenAI. Set them on the routine engine too, or scheduled work will keep using
-OpenAI while chat does not.
+Set them on the routine engine too, or scheduled work will keep using OpenAI
+while chat does not. Documents are separate, and go in the same `[vars]` block:
+
+```toml
+EMBEDDING_BASE_URL = "https://your-endpoint.example/v1"
+EMBEDDING_MODEL    = "nomic-embed-text"
+EMBEDDING_DIMENSIONS = "768"
+```
+
+Those three belong on the API Worker only — nothing the routine engine does
+embeds. Transcription remains at OpenAI regardless.
 
 Check the build, then ship it:
 

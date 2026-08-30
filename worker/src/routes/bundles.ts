@@ -231,7 +231,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   try {
     const chunks = chunkText(fullText);
     if (chunks.length > 0) {
-      const embedded = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+      const embedded = await embedTexts(c.env, chunks);
       const vectors = embedded.vectors;
       await recordQuota(c, embeddingCost(embedded.tokens));
       const rows = chunks.map((ch, i) => ({
@@ -303,7 +303,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
     try {
       // Not charged to anyone's quota: this is the operator repairing their own
       // data, not a user asking for work. It is gated by ADMIN_API_KEY above.
-      const { vectors } = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+      const { vectors } = await embedTexts(c.env, chunks);
       const rows = chunks.map((ch, i) => ({
         document_id: d.id,
         bundle_id: d.bundle_id,

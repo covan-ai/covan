@@ -132,7 +132,9 @@ under in the document store, and an excerpt of the extracted text — the first
 The searchable form is separate. At upload the text is split into chunks of up to
 1000 characters with roughly 150 characters of overlap, and each chunk is
 embedded with `text-embedding-3-small` and stored as a `vector(1536)` in
-`document_chunks`. That step is best-effort: if chunking or embedding fails the
+`document_chunks` — the default, and changeable together if you self-host and
+would rather your documents were not embedded by OpenAI at all
+([self-hosting](self-hosting.md)). That step is best-effort: if chunking or embedding fails the
 document still exists, and it stays unindexed until somebody re-embeds it. The
 accepted file types and the reason PDFs are handled in the browser are in the
 [Quickstart](quickstart.md).

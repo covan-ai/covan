@@ -1,4 +1,6 @@
 import type { Bindings } from "../types";
+import { embeddingDimensions } from "./embeddings";
+import { ragMinSimilarity } from "./rag";
 
 /** Absent or empty means unset — a blank line in a .env file is not a value. */
 const REQUIRED = [
@@ -88,6 +90,14 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     );
   }
 
+  // Same reasoning as the key above, one step earlier: a bad retrieval number
+  // does not announce itself. A wrong width surfaces as documents that upload
+  // and answer nothing; a wrong floor surfaces as answers that got vaguer.
+  // Both resolvers throw with the correction in the message, so the operator
+  // reads it at `docker compose up` instead of inferring it a week later.
+  embeddingDimensions(source);
+  ragMinSimilarity(source);
+
   return {
     SUPABASE_URL: source.SUPABASE_URL!,
     SUPABASE_ANON_KEY: source.SUPABASE_ANON_KEY!,
@@ -97,6 +107,12 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // list, which is what an operator who has not thought about it should get.
     OPENAI_BASE_URL: source.OPENAI_BASE_URL,
     OPENAI_MODEL: source.OPENAI_MODEL,
+    // Separate from the two above on purpose — `lib/openai` explains why an
+    // endpoint for completions is not automatically an endpoint for documents.
+    EMBEDDING_BASE_URL: source.EMBEDDING_BASE_URL,
+    EMBEDDING_MODEL: source.EMBEDDING_MODEL,
+    EMBEDDING_DIMENSIONS: source.EMBEDDING_DIMENSIONS,
+    RAG_MIN_SIMILARITY: source.RAG_MIN_SIMILARITY,
     ROUTINE_SECRET_KEY: source.ROUTINE_SECRET_KEY!,
     RESEND_API_KEY: source.RESEND_API_KEY ?? "",
     RESEND_FROM: source.RESEND_FROM ?? "",

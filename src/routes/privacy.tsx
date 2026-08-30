@@ -83,7 +83,11 @@ function PrivacyPage() {
             <strong className="font-medium text-foreground">OpenAI</strong> — your messages, the
             persona of the agent, and the passages retrieved from your documents are sent so a reply
             can be generated. Document text is sent when it is first indexed. Audio is sent when you
-            dictate. This is the one call the product cannot work without.
+            dictate. This is the one call the product cannot work without — though where it goes is
+            the operator's to change: <code>OPENAI_BASE_URL</code> moves the conversation and{" "}
+            <code>EMBEDDING_BASE_URL</code> moves the document text, each to any OpenAI-compatible
+            endpoint, and they are set independently. Dictation cannot be moved. Ask whoever runs
+            this install which of them are set; nothing on this page can tell you.
           </LegalItem>
           <LegalItem>
             <strong className="font-medium text-foreground">Resend</strong> — invitation emails and

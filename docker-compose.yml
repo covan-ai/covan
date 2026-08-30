@@ -317,6 +317,17 @@ services:
       # what still goes there regardless.
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
+      # Documents, separately. Empty means api.openai.com — and it means that
+      # even when OPENAI_BASE_URL above is set, which is the point: moving your
+      # conversations is not the same decision as moving every file you upload.
+      # EMBEDDING_DIMENSIONS must match the width document_chunks.embedding was
+      # declared with; see supabase/optional/embedding_width.sql.
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-}
+      # Retrieval's relevance floor. Empty means 0.25, tuned for
+      # text-embedding-3-small; another embedding model wants its own.
+      RAG_MIN_SIMILARITY: ${RAG_MIN_SIMILARITY:-}
       ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY:?set ROUTINE_SECRET_KEY in .env}
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
       # No R2 binding off Cloudflare, so getDocStore falls to the filesystem

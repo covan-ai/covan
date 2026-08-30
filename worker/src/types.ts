@@ -22,8 +22,9 @@ export type RoutineEnv = {
   /**
    * Where completions go. Unset means api.openai.com; set it to any
    * OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenRouter) to keep the
-   * conversation on infrastructure you control. Embeddings and transcription
-   * are not routed through it — see `lib/openai` for why.
+   * conversation on infrastructure you control. Transcription is not routed
+   * through it, and embeddings have a variable of their own — see `lib/openai`
+   * for why they are two decisions rather than one.
    */
   OPENAI_BASE_URL?: string;
   /**
@@ -63,6 +64,32 @@ export type RoutineEnv = {
  */
 export type Bindings = RoutineEnv & {
   SUPABASE_ANON_KEY: string;
+  /**
+   * Where document embeddings go. Unset means api.openai.com, which is also
+   * what `OPENAI_BASE_URL` on its own leaves them at — the two do not inherit
+   * from each other, deliberately (`lib/openai`).
+   *
+   * On `Bindings` rather than `RoutineEnv` because nothing the cron Worker does
+   * embeds: it summarises and delivers, and retrieval belongs to a request.
+   */
+  EMBEDDING_BASE_URL?: string;
+  /** Unset means `text-embedding-3-small`. Set it whenever the endpoint is. */
+  EMBEDDING_MODEL?: string;
+  /**
+   * The width of `document_chunks.embedding`. Unset means 1536, which is what
+   * migration 0004 declares. Changing this without changing the column — or the
+   * other way round — is caught at the first embedding call rather than at the
+   * insert; see `lib/embeddings`.
+   */
+  EMBEDDING_DIMENSIONS?: string;
+  /**
+   * The cosine-similarity floor below which a retrieved chunk is dropped as
+   * irrelevant. Unset means 0.25, which is tuned against
+   * `text-embedding-3-small` — an operator who changes the embedding model
+   * needs their own floor, because a wrong one does not break retrieval, it
+   * quietly makes it worse.
+   */
+  RAG_MIN_SIMILARITY?: string;
   /**
    * The project's JWT signing secret, and the one thing that makes API keys
    * possible: a key is exchanged for a short-lived JWT for its owner, so the

@@ -61,6 +61,42 @@ describe("loadEnv", () => {
     expect(env.OPENAI_MODEL).toBeUndefined();
   });
 
+  it("carries the embedding endpoint through separately from the completions one", () => {
+    const env = loadEnv({
+      ...complete,
+      OPENAI_BASE_URL: "http://localhost:11434/v1",
+      EMBEDDING_BASE_URL: "http://localhost:8080/v1",
+      EMBEDDING_MODEL: "nomic-embed-text",
+      EMBEDDING_DIMENSIONS: "768",
+      RAG_MIN_SIMILARITY: "0.35",
+    });
+    expect(env.EMBEDDING_BASE_URL).toBe("http://localhost:8080/v1");
+    expect(env.EMBEDDING_MODEL).toBe("nomic-embed-text");
+    expect(env.EMBEDDING_DIMENSIONS).toBe("768");
+    expect(env.RAG_MIN_SIMILARITY).toBe("0.35");
+  });
+
+  it("leaves embeddings on OpenAI when only the completions endpoint moved", () => {
+    // The upgrade case. An install that has had OPENAI_BASE_URL set for months
+    // must not find its documents going somewhere new because this shipped.
+    const env = loadEnv({ ...complete, OPENAI_BASE_URL: "http://localhost:11434/v1" });
+    expect(env.EMBEDDING_BASE_URL).toBeUndefined();
+    expect(env.EMBEDDING_DIMENSIONS).toBeUndefined();
+  });
+
+  // Both of these are wrong in ways that produce no error later — a width that
+  // fails at the insert, a floor that returns nothing — so they are worth a
+  // refusal at boot rather than a discovery in a week.
+  it("refuses to start on a width that is not a positive whole number", () => {
+    expect(() => loadEnv({ ...complete, EMBEDDING_DIMENSIONS: "768.5" })).toThrow(
+      /EMBEDDING_DIMENSIONS/,
+    );
+  });
+
+  it("refuses to start on a similarity floor outside 0..1", () => {
+    expect(() => loadEnv({ ...complete, RAG_MIN_SIMILARITY: "25" })).toThrow(/RAG_MIN_SIMILARITY/);
+  });
+
   it("carries the rate limits through when the operator sets them", () => {
     const env = loadEnv({
       ...complete,

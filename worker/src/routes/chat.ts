@@ -7,7 +7,7 @@ import { serviceClient } from "../lib/supabase";
 import { resolveModel } from "../lib/models";
 import { createOpenAI } from "../lib/openai";
 import { embedTexts } from "../lib/embeddings";
-import { buildContextBlock } from "../lib/rag";
+import { buildContextBlock, ragMinSimilarity } from "../lib/rag";
 import { selectHistory } from "../lib/history";
 import { buildSystemPrefix, temperatureFor, maxTokensFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
@@ -32,14 +32,12 @@ const MSG_HISTORY_LIMIT = 40;
 const HISTORY_CHAR_BUDGET = 16000;
 const PER_MESSAGE_CHAR_CAP = 4000;
 
-// How many chunks to retrieve, and the cosine-similarity floor below which a
-// chunk is treated as irrelevant and dropped. text-embedding-3-small scores
-// on-topic content well above this and clearly-unrelated content below it, so
-// the floor removes noise without starving genuine matches. The RAG block is
-// re-sent every turn and rides after the cacheable prefix, so it never caches —
-// keeping the count tight cuts recurring input directly.
+// How many chunks to retrieve. The RAG block is re-sent every turn and rides
+// after the cacheable prefix, so it never caches — keeping the count tight cuts
+// recurring input directly. The floor that goes with it is `ragMinSimilarity`,
+// which is configurable because it is a property of the embedding model rather
+// than of this route.
 const RAG_MATCH_COUNT = 6;
-const RAG_MIN_SIMILARITY = 0.25;
 
 // POST /chat/stream
 chat.post("/chat/stream", async (c) => {
@@ -143,10 +141,14 @@ chat.post("/chat/stream", async (c) => {
   const hasKnowledge = docNames.length > 0;
 
   // Semantic retrieval over the bundles attached to this agent. Best-effort:
-  // any failure falls back to persona-only so the reply is never blocked.
+  // any failure falls back to persona-only so the reply is never blocked. That
+  // includes a misconfigured EMBEDDING_DIMENSIONS or RAG_MIN_SIMILARITY, which
+  // land here as a throw and are logged rather than 500'd — an ungrounded
+  // answer beats no answer, and `loadEnv` is where a bad value is meant to be
+  // caught, at boot, before anybody asks anything.
   if (hasKnowledge) {
     try {
-      const embedded = await embedTexts(c.env.OPENAI_API_KEY, [lastMessage.content]);
+      const embedded = await embedTexts(c.env, [lastMessage.content]);
       embeddingTokens += embedded.tokens;
       const [queryEmbedding] = embedded.vectors;
       if (queryEmbedding) {
@@ -154,7 +156,7 @@ chat.post("/chat/stream", async (c) => {
           p_agent_id: session.agent_id,
           p_query_embedding: queryEmbedding,
           p_match_count: RAG_MATCH_COUNT,
-          p_min_similarity: RAG_MIN_SIMILARITY,
+          p_min_similarity: ragMinSimilarity(c.env),
         });
         if (matchError) {
           console.error("match_chunks failed", matchError);

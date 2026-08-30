@@ -159,6 +159,12 @@ The floor drops them instead. `text-embedding-3-small` puts genuinely on-topic
 content well above 0.25 and clearly unrelated content below it, so the effect in
 practice is to remove noise rather than to starve real matches.
 
+0.25 is therefore a fact about that model, not about retrieval, and a
+self-hosted Covan that embeds with something else needs its own — which is what
+`RAG_MIN_SIMILARITY` is for. It is worth setting deliberately: a floor that is
+wrong for the model in use produces no error at all, only answers that are
+vaguer or emptier than they should be.
+
 What survives is assembled in similarity order under a 4000-character budget and
 sent as its own system message, positioned after the earlier turns and just
 before the latest one. Two details of that block matter when you read a reply.

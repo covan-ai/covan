@@ -99,6 +99,17 @@ api.use("/*", entitlementsMiddleware);
 // upload — the one behaviour this product exists to encourage — to bound a cost
 // the generous tier already bounds.
 //
+// The workspace export stays on `standard` too, and that is the least obvious
+// of these. It buys no completion, so it does not belong in the list above,
+// whose whole claim is derived from `createOpenAI` appearing in a route file.
+// But it is the one endpoint where a single request fans out into as many
+// object reads as the workspace has documents, so `standard`'s per-minute
+// allowance is an amplified one here in a way it is nowhere else. It bounds a
+// bandwidth bill rather than a model bill, and no allowance bounds the month
+// for it at all. Worth revisiting the moment anyone sees it abused — the reason
+// not to pre-emptively move it is that "expensive" currently means "buys a
+// completion", and putting something else there would make that list a lie.
+//
 // Entitlements bound the month and this bounds the minute. They are not
 // substitutes: a monthly allowance is a ceiling on the bill, not on the rate at
 // which it is reached, and the open build ships no allowance at all.

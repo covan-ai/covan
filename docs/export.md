@@ -97,6 +97,14 @@ the filenames under `documents/` still match their rows. Every statement is
 `on conflict do nothing`, so a restore interrupted half way can simply be run
 again.
 
+The same clause has a consequence worth knowing: **restoring into a database
+that already holds a row with the same id keeps the row that is already there.**
+Usually that is what you want — a delivery channel outlives the workspace it was
+added from (migration 0019), so re-restoring in the same install keeps the real
+channel with its real secret rather than replacing it with this archive's
+stand-in. It also means a restore is not a way to roll a workspace back to an
+earlier state: for that, restore into an empty database.
+
 ### The documents
 
 `workspace.sql` restores the rows. The files are separate, and where they go

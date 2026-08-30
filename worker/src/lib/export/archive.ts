@@ -113,8 +113,10 @@ export async function* archiveEntries(ctx: ArchiveContext): AsyncGenerator<ZipEn
     afterRestore:
       `Retrieval will not work until the chunks are rebuilt: POST /admin/backfill-embeddings ` +
       `with the new install's ADMIN_API_KEY. Delivery channels come back without their ` +
-      `secrets — the ciphertext is bound to the old install's ROUTINE_SECRET_KEY — so any ` +
-      `routine that posts to Slack or a webhook needs its credential entered again.`,
+      `secrets — the ciphertext is bound to the old install's ROUTINE_SECRET_KEY and cannot ` +
+      `be read by an export in the first place — so every routine is restored PAUSED, with ` +
+      `the reason on its own row. Re-enter the channel's credential, then resume it. A ` +
+      `routine that came back running would fail on a schedule, somewhere nobody is looking.`,
   });
 
   yield { name: "workspace.sql", data: encoder.encode(sql) };

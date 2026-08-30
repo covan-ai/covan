@@ -129,11 +129,12 @@ describe("what the page promises about the file", () => {
     expect(screen.getByText(/private chats are not in your copy/)).toBeInTheDocument();
   });
 
-  it("warns that delivery secrets do not travel", () => {
+  it("warns that delivery secrets do not travel, and what that costs", () => {
     // Somebody restoring a workspace and finding their Slack routine silently
     // dead should have been told here, not have worked it out.
     render(<ExportWorkspaceSection {...WORKSPACE} />);
     expect(screen.getByText(/without their secrets/)).toBeInTheDocument();
+    expect(screen.getByText(/waiting for its credential/)).toBeInTheDocument();
   });
 
   it("says the chunks are left out and why", () => {

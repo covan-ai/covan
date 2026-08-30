@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestUser, serviceClient, sql, closeSql, type TestUser } from "./harness";
 import { seedWorkspace } from "./fixtures";
 import { collectWorkspace, type Collected } from "../../worker/src/lib/export/collect";
-import { renderSql } from "../../worker/src/lib/export/sql";
+import { renderSql, MISSING_SECRET } from "../../worker/src/lib/export/sql";
 
 /**
  * Export a workspace, destroy it, put it back, and count.
@@ -155,6 +155,27 @@ describe("the restore", () => {
     expect(after.documents[0].name).toBe(before.documents[0].name);
     expect(after.routines[0].source_config).toEqual(before.routines[0].source_config);
     expect(after.agents[0].id).toBe(before.agents[0].id);
+  });
+
+  it("brings routines back paused, not running on a credential it does not have", async () => {
+    // The restore has to write *something* into `secret_ciphertext` — the
+    // column is `not null` and the export cannot read it — and skipping the
+    // channels was never available, because `routines.delivery_channel_id` is
+    // `not null` too. Pausing is what keeps the placeholder honest: a routine
+    // restored still running would fail on a schedule, somewhere nobody looks.
+    const after = await collectWorkspace(restorer.db, workspaceId);
+
+    expect(after.routines[0].status).toBe("paused");
+    expect(String(after.routines[0].paused_reason)).toMatch(/credential/i);
+  });
+
+  it("leaves a secret nothing could mistake for a credential", async () => {
+    const [row] = await sql()`
+      select secret_ciphertext from delivery_channels where workspace_id = ${workspaceId}
+    `;
+    expect(row.secret_ciphertext).toBe(MISSING_SECRET);
+    // Not the `v1.<iv>.<ct>` envelope lib/routines/crypto produces.
+    expect(String(row.secret_ciphertext).startsWith("v1.")).toBe(false);
   });
 
   it("can be run twice without doubling anything", async () => {

@@ -67,10 +67,12 @@ export function ExportWorkspaceSection({
         </p>
         <p className="text-sm text-muted-foreground">
           It holds what <span className="text-foreground">you</span> can see. Somebody else&rsquo;s
-          private chats are not in your copy, and delivery channels come back without their secrets
-          — those are encrypted with a key that belongs to this install and would be unreadable
-          anywhere else. The archive&rsquo;s <code className="text-xs">manifest.json</code> repeats
-          all of this, so the file explains itself later, when nobody remembers this page.
+          private chats are not in your copy. Delivery channels come back without their secrets —
+          those are encrypted with a key belonging to this install — so a restore brings every
+          routine back <span className="text-foreground">paused</span>, waiting for its credential
+          rather than failing on a schedule. The archive&rsquo;s{" "}
+          <code className="text-xs">manifest.json</code> repeats all of this, so the file explains
+          itself later, when nobody remembers this page.
         </p>
         <div className="flex items-center gap-3">
           <Button onClick={download} disabled={busy || !workspaceId} variant="outline">

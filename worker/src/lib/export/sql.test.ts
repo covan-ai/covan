@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderSql } from "./sql";
+import { renderSql, MISSING_SECRET, PAUSED_ON_RESTORE } from "./sql";
 import type { Collected } from "./collect";
 
 const base = (over: Partial<Collected> = {}): Collected => ({
@@ -159,6 +159,60 @@ describe("references that point outside what the caller could see", () => {
     );
     expect(sql).toContain("'c1'");
     expect(droppedReferences).toEqual({});
+  });
+});
+
+describe("what the database will not let a restore say honestly", () => {
+  const withRoutine = () =>
+    renderSql(
+      base({
+        delivery_channels: [
+          { id: "c1", workspace_id: "w1", user_id: "u1", kind: "slack_webhook", label: "#ops" },
+        ],
+        routines: [
+          {
+            id: "r1",
+            workspace_id: "w1",
+            user_id: "u1",
+            name: "Morning digest",
+            delivery_channel_id: "c1",
+            status: "active",
+            paused_reason: null,
+          },
+        ],
+      }),
+    );
+
+  it("gives a delivery channel a secret that is visibly not one", () => {
+    // `secret_ciphertext` is `not null` and the export cannot read it, so the
+    // restore has to write something. Before this, every workspace with a
+    // delivery channel failed the whole transaction on a not-null violation —
+    // which no mocked test could have shown, and the round trip did.
+    const { sql } = withRoutine();
+    expect(sql).toContain("secret_ciphertext");
+    expect(sql).toContain(MISSING_SECRET.replace(/'/g, "''"));
+    // Not the shape `lib/routines/crypto` produces, so nothing can mistake it
+    // for a credential.
+    expect(MISSING_SECRET.startsWith("v1.")).toBe(false);
+  });
+
+  it("brings the routine back paused, with the reason on its own row", () => {
+    // The placeholder above is only tolerable because of this. A routine whose
+    // channel holds no real secret cannot deliver, and one that ran on schedule
+    // and failed somewhere nobody is looking would be worse than one that is
+    // visibly switched off.
+    const { sql } = withRoutine();
+    const row = sql.split("\n").find((l) => l.startsWith("insert into public.routines"))!;
+
+    expect(row).toContain("'paused'");
+    expect(row).toContain(PAUSED_ON_RESTORE.replace(/'/g, "''"));
+    expect(row).not.toContain("'active'");
+  });
+
+  it("keeps the rest of the routine exactly as it was", () => {
+    const { sql } = withRoutine();
+    expect(sql).toContain("'Morning digest'");
+    expect(sql).toContain("'c1'");
   });
 });
 

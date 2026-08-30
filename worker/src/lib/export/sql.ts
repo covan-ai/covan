@@ -108,7 +108,7 @@ export function renderSql(tables: Collected): RenderedSql {
 
   for (const spec of EXPORTED) {
     if (SKIP.has(spec.table)) continue;
-    const rows = collapse(spec.table, tables[spec.table] ?? []);
+    const rows = rewriteForRestore(spec.table, tables[spec.table] ?? []);
     if (rows.length === 0) {
       out.push(`-- ${spec.table}: nothing to restore`, "");
       continue;
@@ -143,16 +143,51 @@ export function renderSql(tables: Collected): RenderedSql {
 }
 
 /**
- * One membership row, not many.
+ * The value a restored delivery channel carries where its secret was.
  *
- * Everybody collapses to the same account, so replaying five members would be
- * five inserts of the same primary key — four silently swallowed by `on
- * conflict do nothing` and the surviving one carrying whichever role happened
- * to sort first. That could hand the restorer a `member` row in their own
- * workspace and lock them out of it. So it is decided here instead: one row,
- * admin, keeping every other column from the earliest membership.
+ * `delivery_channels.secret_ciphertext` is `not null`, and the export cannot
+ * read it — 0023 withholds that column from `authenticated`, and it would be
+ * undecryptable under another install's `ROUTINE_SECRET_KEY` even if it could.
+ * So something has to go in the column, and this is it: deliberately not the
+ * `v1.<iv>.<ct>` shape `lib/routines/crypto` produces, so it cannot be mistaken
+ * for a working credential by anything that reads it.
  */
-function collapse(table: string, rows: Row[]): Row[] {
-  if (table !== "workspace_members" || rows.length === 0) return rows;
-  return [{ ...rows[0], role: "admin" }];
+export const MISSING_SECRET = "not-exported: re-enter this channel's credential";
+
+/** Why every restored routine arrives switched off. */
+export const PAUSED_ON_RESTORE =
+  "Restored from an export. The delivery credential could not travel between " +
+  "installs — re-enter it on this channel, then resume.";
+
+/**
+ * Rows the restore cannot replay as they were read.
+ *
+ * Three of them, each because the database refuses the honest version:
+ *
+ * - **Memberships.** Everybody collapses to one account, so replaying five
+ *   members would be five inserts of the same primary key — four swallowed by
+ *   `on conflict do nothing` and the survivor carrying whichever role sorted
+ *   first. That can hand the restorer a `member` row in their own workspace and
+ *   lock them out of it. One row, admin, every other column from the earliest.
+ * - **Delivery channels.** The secret is `not null` and cannot be exported, so
+ *   the column gets a value that is visibly not a credential. Skipping the
+ *   table instead was not available: `routines.delivery_channel_id` is `not
+ *   null` too, so a workspace with any routine would have had nothing to
+ *   restore at all.
+ * - **Routines.** Which is what makes the line above tolerable rather than a
+ *   trap. A routine whose channel holds no real secret cannot deliver, so it
+ *   comes back paused with the reason on its own row — where the person looking
+ *   at it will actually read it — instead of running on schedule and failing
+ *   somewhere they are not looking.
+ */
+function rewriteForRestore(table: string, rows: Row[]): Row[] {
+  if (rows.length === 0) return rows;
+  if (table === "workspace_members") return [{ ...rows[0], role: "admin" }];
+  if (table === "delivery_channels") {
+    return rows.map((r) => ({ ...r, secret_ciphertext: MISSING_SECRET }));
+  }
+  if (table === "routines") {
+    return rows.map((r) => ({ ...r, status: "paused", paused_reason: PAUSED_ON_RESTORE }));
+  }
+  return rows;
 }

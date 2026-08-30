@@ -39,11 +39,19 @@ routines and their run history.
   become one of its members. An archive carrying them would be a key store that
   people email to each other.
 - **Delivery secrets.** `delivery_channels` comes back with its label and its
-  kind, and without `secret_ciphertext`. That column is encrypted with the
-  install's `ROUTINE_SECRET_KEY` and would be undecryptable noise anywhere else
-  — and the export could not read it even if it wanted to, because migration
-  0023 withholds that column from `authenticated`. **Any routine that posts to
-  Slack or a webhook needs its credential entered again after a restore.**
+  kind, and without a real `secret_ciphertext`. That column is encrypted with
+  the install's `ROUTINE_SECRET_KEY` and would be undecryptable noise anywhere
+  else — and the export could not read it even if it wanted to, because
+  migration 0023 withholds that column from `authenticated`.
+
+  The column is `not null`, so the restore writes a placeholder that is visibly
+  not a credential. **Every routine therefore comes back paused**, with the
+  reason on its own row: re-enter the channel's credential, then resume it. A
+  routine restored still running would fail on a schedule, somewhere nobody is
+  looking. Skipping the channels instead was not an option —
+  `routines.delivery_channel_id` is `not null` too, so a workspace with any
+  routine would have had nothing to restore at all.
+
 - **Invitations, notification preferences and onboarding state.** An invitation
   is an offer to somebody who has not accepted, scoped to an install's tokens.
   The other two follow a person rather than a workspace.

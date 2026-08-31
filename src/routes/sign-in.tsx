@@ -55,7 +55,22 @@ function SignIn() {
         </>
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      {/* `method="post"` matters even though `handleSubmit` calls
+          preventDefault and this form is never posted anywhere.
+          There is a window between the HTML arriving and React attaching that
+          handler, and a submit inside it gets the browser's default — which,
+          with no method, is a GET. The password ends up in the query string, in
+          the address bar and in history:
+
+            /sign-in?email=someone%40example.com&password=hunter2
+
+          Not hypothetical; it happened on the first automated pass over the
+          deployed site, filling and clicking faster than hydration. A cold
+          cache or a slow connection is the same race with a person in it.
+          POST puts it in a request body instead, where the page answers 200 and
+          nothing is written down. The three other credential forms carry this
+          for the same reason. */}
+      <form method="post" onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="email">Work email</Label>
           <div className="relative">

@@ -106,6 +106,34 @@ describe("resolveStep", () => {
     // would strand the flow on a card the user already declined.
     expect(resolveStep(undefined, ctx())).toBe("workspace");
   });
+
+  it("resumes after the agent step once an agent exists", () => {
+    // Walked in a browser and this is what it did: a reload with no `?step=`
+    // went back to naming the workspace even though the agent was already
+    // created, and clicking forward through a step with no idempotency made a
+    // SECOND agent. `hasAgent` is the one part of setup that leaves a row
+    // behind, so it is the only thing a cold return can key on.
+    expect(resolveStep(undefined, ctx({ hasAgent: true }))).toBe("knowledge");
+  });
+
+  it("resumes the same way when this flow has no invite step at all", () => {
+    // No knowledge step is not a case: it exists exactly when an agent does.
+    // This is the shape where the step AFTER it is missing instead.
+    const solo = { ...ANSWERED, teamSize: "solo" };
+    expect(resolveStep(undefined, ctx({ hasAgent: true, answers: solo }))).toBe("knowledge");
+  });
+
+  it("refuses to show the agent step again once one exists", () => {
+    // Not only the cold return: the back button asks for `?step=agent` by
+    // name. Every other step can be re-shown harmlessly — this is the only one
+    // that creates something, so it is the only one a request cannot reopen.
+    expect(resolveStep("agent", ctx({ hasAgent: true }))).toBe("knowledge");
+  });
+
+  it("still honours a request for a step that creates nothing", () => {
+    expect(resolveStep("workspace", ctx({ hasAgent: true }))).toBe("workspace");
+    expect(resolveStep("invite", ctx({ hasAgent: true }))).toBe("invite");
+  });
 });
 
 describe("nextStep", () => {

@@ -420,15 +420,15 @@ still in is never touched, and being the last _admin_ of one refuses the whole
 deletion until the role is handed over. What it removes is a room with nobody
 left to enter it.
 
-Two of the references to a workspace do not cascade. `chat_sessions.workspace_id`
-and `ideas.workspace_id` were both added after the original schema and are plain
-references, so the tested procedure clears those two tables for the workspace
-first and then deletes the workspace row. Account closure follows the same
-procedure for the same reason — a workspace with a single conversation in it
-cannot be deleted until that row is gone, which is every workspace anybody has
-actually used. A third,
-`profiles.active_workspace_id`, sets itself to null, which is the same state a
-fresh account is in and resolves to the person's oldest remaining membership.
+Deleting the workspace row is the whole procedure. It was not until `0035`:
+`chat_sessions.workspace_id` and `ideas.workspace_id` were added after the
+original schema as plain references with no delete rule, so the delete failed on
+a foreign key while a single conversation remained — which was every workspace
+anybody had actually used — and the operator, the route and two tests each
+carried their own copy of "clear those two tables first". Both cascade now.
+One reference still does not: `profiles.active_workspace_id` sets itself to
+null, which is the same state a fresh account is in and resolves to the person's
+oldest remaining membership.
 
 What goes with it is everything that hangs off it, directly or through something
 that does: memberships, agents, and through the agents every session, message and

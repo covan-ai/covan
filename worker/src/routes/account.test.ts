@@ -231,7 +231,7 @@ describe("DELETE /account", () => {
     expect(deleteUser).not.toHaveBeenCalled();
   });
 
-  it("clears what does not cascade, then the workspace, then the user", async () => {
+  it("deletes the workspace before the user", async () => {
     const order: string[] = [];
     serviceFrom.mockImplementation(
       serviceTables({ onDelete: (table, id) => order.push(`${table}:${id}`) }),
@@ -248,15 +248,21 @@ describe("DELETE /account", () => {
 
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true });
-    // Three orderings in one list, and each is load-bearing. `ideas` and
-    // `chat_sessions` reference a workspace without cascading, so the workspace
-    // delete fails on a foreign key until they are cleared — CI found that, not
-    // this file. The workspace goes before the user because the last-admin
-    // trigger refuses the membership row while its workspace still stands.
-    expect(order).toEqual(["ideas:solo", "chat_sessions:solo", "workspaces:solo", "user"]);
+    // One ordering left, and it is the one this file can actually see: the
+    // workspace goes before the user, because the last-admin trigger refuses
+    // the membership row while its workspace still stands.
+    //
+    // This list used to open with `ideas:solo` and `chat_sessions:solo`,
+    // because neither reference cascaded and the workspace delete failed on a
+    // foreign key until they were cleared. **CI found that, not this file** —
+    // these mocks answer whatever they are told to and cannot see a
+    // constraint. 0035 made both cascade; the guarantee now lives in
+    // `tests/rls/deletion.test.ts`, against a real database, which is the only
+    // place it could ever have lived.
+    expect(order).toEqual(["workspaces:solo", "user"]);
   });
 
-  it("leaves the account alone when a workspace cannot be cleared or deleted", async () => {
+  it("leaves the account alone when a workspace cannot be deleted", async () => {
     serviceFrom.mockImplementation(serviceTables({ deleteError: { message: "nope" } }));
     const app = appWith({
       members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],

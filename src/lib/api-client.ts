@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { errorMessage } from "./api-error";
+import { ApiError, errorMessage } from "./api-error";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
@@ -68,15 +68,9 @@ export type Bundle = {
 
 export type IdeaSuggestion = { title: string; detail: string | null };
 
-export class ApiError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
+// Defined in api-error.ts and re-exported here, so every call site keeps its
+// one import. See the note there for why it moved.
+export { ApiError };
 
 // Exposed so callers that need a raw `fetch` (e.g. SSE streaming, which the
 // JSON-only `request()` helper below doesn't support) can attach the same

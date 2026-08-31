@@ -130,7 +130,23 @@ export function assetEtag(bytes) {
  * Throwing when an entry is missing is the point. If a future nitro keeps this
  * manifest somewhere else, that has to fail loudly here rather than ship another
  * image that looks fine until somebody clicks something.
+ *
+ * What must NOT throw is a manifest that is already right. The container runs
+ * this on every start and substitutes from the pristine `.covan-tmpl` copies,
+ * so a restart with unchanged environment variables produces byte-identical
+ * assets and therefore the size and etag already recorded. Asking whether the
+ * replacement changed anything cannot tell that apart from a manifest this
+ * script cannot read — and it got it backwards in both directions: every
+ * restart threw, while an entry genuinely missing its `size` passed, because
+ * rewriting the etag alone counted as a change. That second one is the failure
+ * in the paragraph above, arriving silently.
+ *
+ * So the question is whether the fields are THERE, asked before anything is
+ * replaced.
  */
+const SIZE_FIELD = /"size":\s*\d+/;
+const ETAG_FIELD = /"etag":\s*"(?:[^"\\]|\\.)*"/;
+
 export function updateAssetManifest(manifestText, entries) {
   let out = manifestText;
 
@@ -150,17 +166,23 @@ export function updateAssetManifest(manifestText, entries) {
     const end = out.indexOf("}", start);
     const before = out.slice(start, end);
 
-    const updated = before
-      .replace(/"size":\s*\d+/, `"size": ${bytes.length}`)
-      .replace(/"etag":\s*"(?:[^"\\]|\\.)*"/, `"etag": ${JSON.stringify(assetEtag(bytes))}`);
+    const missing = [
+      SIZE_FIELD.test(before) ? null : "size",
+      ETAG_FIELD.test(before) ? null : "etag",
+    ].filter(Boolean);
 
-    if (updated === before) {
+    if (missing.length > 0) {
       throw new Error(
-        `Cannot start: manifest entry for ${urlPath} has no size or etag to correct.\n` +
+        `Cannot start: manifest entry for ${urlPath} has no ${missing.join(" and no ")} to correct.\n` +
           "Its shape is not what this script expects, and guessing would ship a\n" +
           "bundle that fails in the browser rather than here.",
       );
     }
+
+    const updated = before
+      .replace(SIZE_FIELD, `"size": ${bytes.length}`)
+      .replace(ETAG_FIELD, `"etag": ${JSON.stringify(assetEtag(bytes))}`);
+
     out = out.slice(0, start) + updated + out.slice(end);
   }
 

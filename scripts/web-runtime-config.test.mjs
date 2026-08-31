@@ -164,6 +164,40 @@ describe("the recorded size of a substituted asset", () => {
     expect(out).toContain("otherhashotherhashotherh");
   });
 
+  it("accepts a manifest that is already correct", () => {
+    // The restart case, and it is the ordinary one. The container runs this
+    // script on every start, substituting from the pristine .covan-tmpl copies,
+    // so a restart with UNCHANGED environment variables produces byte-identical
+    // assets — and therefore the size and etag the manifest already holds.
+    //
+    // Treating "the replacement changed nothing" as "the entry has no size or
+    // etag" made that indistinguishable from a manifest this script cannot
+    // read, so the second start of any web container threw and the third and
+    // every one after it did too. Measured against a running covan-web: four
+    // .covan-tmpl copies present, the asset already substituted, and the
+    // container in a restart loop with "Its shape is not what this script
+    // expects".
+    const already = updateAssetManifest(manifest(9999, '"270f-stalehashstalehashstaleh"'), [
+      ["/assets/api-client-XyZ.js", bytes],
+    ]);
+    expect(() =>
+      updateAssetManifest(already, [["/assets/api-client-XyZ.js", bytes]]),
+    ).not.toThrow();
+    expect(updateAssetManifest(already, [["/assets/api-client-XyZ.js", bytes]])).toBe(already);
+  });
+
+  it("refuses an entry missing only its size, which used to pass", () => {
+    // The dangerous half. Under the old check this threw nothing, because
+    // rewriting the etag alone counted as "something changed" — so the size
+    // stayed stale and the browser got a Content-Length it could not satisfy,
+    // which is the exact failure this function exists to prevent. It has to
+    // fail here instead, and it has to say which field.
+    const noSize = manifest(9999, '"270f-stalehashstalehashstaleh"').replace('"size": 9999,', "");
+    expect(() => updateAssetManifest(noSize, [["/assets/api-client-XyZ.js", bytes]])).toThrow(
+      /no size to correct/,
+    );
+  });
+
   it("refuses to start when an asset has no entry, rather than shipping the bug again", () => {
     // If a future nitro keeps this manifest somewhere else, that has to fail
     // here — loudly — instead of producing another image that looks fine until
@@ -173,10 +207,10 @@ describe("the recorded size of a substituted asset", () => {
     ).toThrow(/no manifest entry/);
   });
 
-  it("refuses when the entry has no size to correct", () => {
+  it("refuses when the entry has neither field to correct", () => {
     const shapeless = `const assets = { "/assets/api-client-XyZ.js": { "type": "text/javascript" } };`;
     expect(() => updateAssetManifest(shapeless, [["/assets/api-client-XyZ.js", bytes]])).toThrow(
-      /no size or etag/,
+      /no size and no etag/,
     );
   });
 });

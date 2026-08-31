@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, type Bundle } from "./api-client";
 import { canWriteAsRole } from "./roles";
 import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
+import { useHasSession } from "./session-presence";
 
 export type Agent = {
   id: string;
@@ -122,26 +123,39 @@ const StoreCtx = createContext<Store | null>(null);
 export function AgentsProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
+  // This provider wraps every route, public ones included — the command
+  // palette lives inside it and is rendered at the root. So the five queries
+  // below have to ask whether there is anybody to ask FOR. Without this they
+  // ran on `/`, `/privacy`, `/sign-in` and `/sign-up`, answered 401, and were
+  // retried three times each: twenty requests to the API before the visitor
+  // had an account. `=== true` and not `!== false` on purpose — see
+  // useHasSession for why the third state matters.
+  const signedIn = useHasSession() === true;
+
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: () => api.agents.list(),
+    enabled: signedIn,
   });
   const { data: sessions = [] } = useQuery({
     queryKey: ["sessions"],
     queryFn: () => api.sessions.list(),
+    enabled: signedIn,
   });
   const { data: favorites = [] } = useQuery({
     queryKey: ["favorites"],
     queryFn: () => api.favorites.list(),
+    enabled: signedIn,
   });
   const { data: bundles = [] } = useQuery({
     queryKey: ["bundles"],
     queryFn: () => api.bundles.list(),
+    enabled: signedIn,
   });
   // Already in the cache; the app shell fetches it. `me.members` carries the
   // caller's own row, so the role comes from the server rather than from
   // anything the client could have decided for itself.
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me(), enabled: signedIn });
 
   // Undefined while `me` loads. Defaulting to false would flicker every write
   // control out of existence on each cold load, which reads as "you have been

@@ -201,28 +201,15 @@ account.delete("/account", async (c) => {
   // because a failure part-way through should leave the rest of the account
   // intact and the caller told, rather than half a person in the database.
   for (const id of deletable) {
-    // Two references to a workspace do not cascade, and this is the procedure
-    // `docs/team.md` documents for an operator deleting one by hand.
-    // `chat_sessions.workspace_id` and `ideas.workspace_id` were both added
-    // after the original schema as plain references, so a workspace with a
-    // single conversation in it cannot be deleted until they are cleared —
-    // which is every workspace anybody has used. Scoped by workspace rather
-    // than by user on purpose: a session belonging to somebody who was removed
-    // from this workspace still carries its `workspace_id` and would hold the
-    // delete open just the same.
+    // One statement per workspace, and it was three until 0035. `chat_sessions.
+    // workspace_id` and `ideas.workspace_id` were plain references with no
+    // delete rule, so this loop cleared both tables first — as the operator
+    // procedure in `docs/team.md` and two RLS tests separately did. 0035 makes
+    // both cascade and all four copies of that paragraph are gone with it.
     //
-    // Better fixed as a migration that makes both cascade, which would also
-    // simplify the operator procedure. Done here instead because the route has
-    // to work against a database that has not had that migration applied, and
-    // migrations reach production by hand.
-    for (const table of ["ideas", "chat_sessions"] as const) {
-      const { error } = await admin.from(table).delete().eq("workspace_id", id);
-      if (error) {
-        console.error(`account deletion: failed to clear ${table}`, id, error);
-        return c.json({ error: "failed to close your account" }, 500);
-      }
-    }
-
+    // A failure here still leaves the rest of the account intact rather than
+    // half a person in the database, which is why the loop is one workspace at
+    // a time rather than one `in (…)` delete.
     const { error } = await admin.from("workspaces").delete().eq("id", id);
     if (error) {
       console.error("account deletion: failed to delete empty workspace", id, error);

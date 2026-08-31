@@ -97,14 +97,11 @@ describe("the restore", () => {
   it("puts back every row the export took", async () => {
     const service = serviceClient();
 
-    // Cleared before the workspace, and this is not incidental: neither
-    // reference cascades, so `delete from workspaces` fails the foreign key
-    // while a single session or idea remains. The same order `routes/account.ts`
-    // learned the hard way.
-    for (const table of ["ideas", "chat_sessions"] as const) {
-      const { error } = await service.from(table).delete().eq("workspace_id", workspaceId);
-      if (error) throw new Error(`clearing ${table} failed: ${error.message}`);
-    }
+    // One delete, and it takes the conversations and the ideas with it. Until
+    // 0035 it took three, because neither reference cascaded and this one
+    // failed the foreign key while a single session or idea remained — the
+    // same order `routes/account.ts` learned the hard way and has now also
+    // forgotten.
     const { error: dropError } = await service.from("workspaces").delete().eq("id", workspaceId);
     if (dropError) throw new Error(`deleting the workspace failed: ${dropError.message}`);
 

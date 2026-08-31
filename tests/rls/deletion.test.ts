@@ -49,10 +49,12 @@ describe("deleting a workspace", () => {
     const seeded = await seedWorkspace(alice);
     const db = sql();
 
-    // chat_sessions.workspace_id and ideas.workspace_id are NO ACTION, so they
-    // still go first — that is a separate arrangement from the one 0016 fixed.
-    await db`delete from public.ideas where workspace_id = ${alice.workspaceId}`;
-    await db`delete from public.chat_sessions where workspace_id = ${alice.workspaceId}`;
+    // One statement, and until 0035 it could not be. `chat_sessions.
+    // workspace_id` and `ideas.workspace_id` were plain references with no
+    // delete rule, so NO ACTION refused the workspace while a single row named
+    // it — and this test used to clear both tables first, as three other places
+    // did. The seeded workspace has a conversation and an idea in it, which is
+    // what makes deleting it in one line an assertion rather than a shortcut.
     await db`delete from public.workspaces where id = ${alice.workspaceId}`;
 
     const [{ count: workspaces }] = await db<{ count: string }[]>`
@@ -64,28 +66,9 @@ describe("deleting a workspace", () => {
       select count(*) from public.agents where id = ${seeded.agentId}`;
     expect(Number(agents)).toBe(0);
 
-    const [{ count: users }] = await db<{ count: string }[]>`
-      select count(*) from auth.users where id = ${alice.id}`;
-    expect(Number(users)).toBe(1);
-  });
-
-  it("takes the conversation and the idea that used to hold it open", async () => {
-    // The two deletes the test above still performs are the subject of this
-    // one. Before 0035, `chat_sessions.workspace_id` and `ideas.workspace_id`
-    // were plain references with no delete rule, so NO ACTION refused the
-    // workspace while a single row named it — and four places carried the same
-    // procedure for getting past that: the test above, `routes/account.ts`,
-    // `export-roundtrip.test.ts`, and `docs/team.md`.
-    //
-    // So: a workspace with a conversation and an idea still in it, deleted
-    // with nothing cleared first. This is the assertion the workarounds exist
-    // in place of, which is why it is worth having before they go.
-    const gwen = await createTestUser("gwen");
-    const seeded = await seedWorkspace(gwen);
-    const db = sql();
-
-    await db`delete from public.workspaces where id = ${gwen.workspaceId}`;
-
+    // The two that used to hold it open, named individually: a count over the
+    // whole table would pass just as well if the cascade stopped working and
+    // the fixture had never inserted them.
     const [{ count: sessions }] = await db<{ count: string }[]>`
       select count(*) from public.chat_sessions where id = ${seeded.sessionId}`;
     expect(Number(sessions)).toBe(0);
@@ -93,6 +76,10 @@ describe("deleting a workspace", () => {
     const [{ count: ideas }] = await db<{ count: string }[]>`
       select count(*) from public.ideas where id = ${seeded.ideaId}`;
     expect(Number(ideas)).toBe(0);
+
+    const [{ count: users }] = await db<{ count: string }[]>`
+      select count(*) from auth.users where id = ${alice.id}`;
+    expect(Number(users)).toBe(1);
   });
 
   it("still refuses to leave a surviving workspace without an admin", async () => {
@@ -266,8 +253,6 @@ describe("deleting a person", () => {
     const dave = await createTestUser("dave");
     const seeded = await seedWorkspace(dave);
 
-    await db`delete from public.ideas where workspace_id = ${dave.workspaceId}`;
-    await db`delete from public.chat_sessions where workspace_id = ${dave.workspaceId}`;
     await db`delete from public.workspaces where created_by = ${dave.id}`;
     await db`delete from auth.users where id = ${dave.id}`;
 
@@ -312,20 +297,19 @@ describe("deleting a person", () => {
     // the ordering below has become decoration and the comment above is wrong.
     await expect(db`delete from auth.users where id = ${erin.id}`).rejects.toThrow(/last admin/);
 
-    // The two references that do not cascade, cleared first — the same order
-    // the route uses, and the reason it has to. This is what the test caught:
-    // without it `delete from workspaces` fails on
-    // `chat_sessions_workspace_id_fkey` for every workspace anybody has used.
-    await db`delete from public.ideas where workspace_id = ${erin.workspaceId}`;
-    await db`delete from public.chat_sessions where workspace_id = ${erin.workspaceId}`;
+    // The workspace first and then the person, which is the order the route
+    // uses and the only one the last-admin trigger permits. Until 0035 there
+    // were two more deletes above this pair, clearing `ideas` and
+    // `chat_sessions` by hand, because `delete from workspaces` failed on
+    // `chat_sessions_workspace_id_fkey` for every workspace anybody had used.
     await db`delete from public.workspaces where id = ${erin.workspaceId}`;
     await db`delete from auth.users where id = ${erin.id}`;
 
-    // `chat_sessions` is not asserted here — it was deleted by name two lines
-    // up, so its absence would prove nothing. The test above it covers the
-    // cascade case.
+    // `chat_sessions` joins the list now that nothing deletes it by name: its
+    // absence proves the cascade rather than the line above it.
     for (const [table, id] of [
       ["api_keys", key.id],
+      ["chat_sessions", seeded.sessionId],
       ["profiles", erin.id],
     ] as const) {
       const [{ count }] = await db<{ count: string }[]>`

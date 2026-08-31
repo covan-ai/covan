@@ -69,6 +69,32 @@ describe("deleting a workspace", () => {
     expect(Number(users)).toBe(1);
   });
 
+  it("takes the conversation and the idea that used to hold it open", async () => {
+    // The two deletes the test above still performs are the subject of this
+    // one. Before 0035, `chat_sessions.workspace_id` and `ideas.workspace_id`
+    // were plain references with no delete rule, so NO ACTION refused the
+    // workspace while a single row named it — and four places carried the same
+    // procedure for getting past that: the test above, `routes/account.ts`,
+    // `export-roundtrip.test.ts`, and `docs/team.md`.
+    //
+    // So: a workspace with a conversation and an idea still in it, deleted
+    // with nothing cleared first. This is the assertion the workarounds exist
+    // in place of, which is why it is worth having before they go.
+    const gwen = await createTestUser("gwen");
+    const seeded = await seedWorkspace(gwen);
+    const db = sql();
+
+    await db`delete from public.workspaces where id = ${gwen.workspaceId}`;
+
+    const [{ count: sessions }] = await db<{ count: string }[]>`
+      select count(*) from public.chat_sessions where id = ${seeded.sessionId}`;
+    expect(Number(sessions)).toBe(0);
+
+    const [{ count: ideas }] = await db<{ count: string }[]>`
+      select count(*) from public.ideas where id = ${seeded.ideaId}`;
+    expect(Number(ideas)).toBe(0);
+  });
+
   it("still refuses to leave a surviving workspace without an admin", async () => {
     // The guard, doing its job. Bob is the only admin of his own workspace, and
     // that workspace is not going anywhere.

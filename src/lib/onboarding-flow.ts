@@ -74,11 +74,36 @@ export function stepsFor(ctx: FlowContext): OnboardingStep[] {
   if (ctx.hasIncomingInvite) return [...survey, "invite-accept"];
 
   const setup: OnboardingStep[] = ["workspace", "agent"];
-  // Only once there is somewhere to put a document. The count this changes is
-  // already not fixed — answering "just me" drops the invite step the same way.
+  // Only once there is somewhere to put a document.
   if (ctx.hasAgent) setup.push("knowledge");
   if (ctx.answers.teamSize !== "solo") setup.push("invite");
   return [...survey, ...setup];
+}
+
+/**
+ * The same run, as long as it can turn out to be. What the progress indicator
+ * counts.
+ *
+ * `stepsFor` answers "where does this go next", and `hasAgent` belongs in that
+ * answer: there is nowhere to put a document until an agent exists. It does not
+ * belong in "how long is this", and using one list for both jobs is what made
+ * the dots grow. Walked in a browser on 2026-08-31: the agent step read
+ * **Step 6 of 7**, and creating the agent — the most work anyone does in the
+ * whole flow — made it **Step 7 of 8**. The finish line moved away at the
+ * moment it should have come closer.
+ *
+ * So the count assumes the agent will exist, because from any point at or
+ * before the agent step that is the ordinary outcome. Someone who taps "I'll do
+ * this later" then ends one short of the total, which is the honest shape of
+ * having skipped a step and is nothing like a step appearing out of nowhere.
+ *
+ * `teamSize` is deliberately still allowed to shorten it. That one is a
+ * question the person just answered, and a flow that gets shorter when you say
+ * you are working alone is legible in a way that a step arriving after you
+ * finished one is not.
+ */
+export function plannedStepsFor(ctx: FlowContext): OnboardingStep[] {
+  return stepsFor({ ...ctx, hasAgent: true });
 }
 
 /**

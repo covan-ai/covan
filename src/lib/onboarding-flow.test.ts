@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   stepsFor,
+  plannedStepsFor,
   resolveStep,
   nextStep,
   newestAgent,
@@ -70,6 +71,45 @@ describe("stepsFor", () => {
     // They are joining a workspace that already has agents and bundles. The
     // knowledge they were invited to is somebody else's already.
     expect(stepsFor(ctx({ hasIncomingInvite: true, hasAgent: true }))).not.toContain("knowledge");
+  });
+});
+
+describe("plannedStepsFor", () => {
+  it("does not get longer when the agent is created", () => {
+    // The bug, as one assertion. Walked in a browser: the agent step said
+    // "Step 6 of 7", and creating the agent made it "Step 7 of 8" — the finish
+    // line moved away at the moment the hardest step was finished.
+    const before = plannedStepsFor(ctx({ hasAgent: false }));
+    const after = plannedStepsFor(ctx({ hasAgent: true }));
+    expect(before).toEqual(after);
+  });
+
+  it("counts the knowledge step before there is anything to put in it", () => {
+    // `stepsFor` must not — there is nowhere to put a document until an agent
+    // exists — and that difference is the whole reason there are two functions.
+    expect(stepsFor(ctx({ hasAgent: false }))).not.toContain("knowledge");
+    expect(plannedStepsFor(ctx({ hasAgent: false }))).toContain("knowledge");
+  });
+
+  it("still gets shorter for someone working alone", () => {
+    // Deliberately not fixed. A flow that shortens when you say you are working
+    // alone is a consequence of an answer just given; a step that appears after
+    // you finished one is not.
+    const solo = { ...ANSWERED, teamSize: "solo" };
+    expect(plannedStepsFor(ctx({ answers: solo }))).not.toContain("invite");
+  });
+
+  it("leaves the invited person's much shorter run alone", () => {
+    expect(plannedStepsFor(ctx({ hasIncomingInvite: true }))).toEqual(
+      stepsFor(ctx({ hasIncomingInvite: true })),
+    );
+  });
+
+  it("keeps every step of the real flow, in the same order", () => {
+    // The indicator takes its index from this list, so a step the flow can
+    // reach and the plan does not know about would be `indexOf` === -1.
+    const real = stepsFor(ctx({ hasAgent: true }));
+    expect(plannedStepsFor(ctx({ hasAgent: false }))).toEqual(real);
   });
 });
 

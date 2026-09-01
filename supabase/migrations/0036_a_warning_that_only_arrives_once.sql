@@ -26,8 +26,6 @@
 -- the same question twice.
 -- =========================================================================
 
-begin;
-
 alter table public.notification_preferences
   add column if not exists quota_warned_for timestamptz;
 
@@ -37,10 +35,13 @@ comment on column public.notification_preferences.quota_warned_for is
 -- The row is written by the API on the caller's behalf, so the existing
 -- own-row insert and update policies from 0015 already cover it. Stated here
 -- rather than assumed, because a column that nothing may write is the failure
--- 0023 exists to explain.
-
-insert into covan_meta.migrations (filename)
-values ('0036_a_warning_that_only_arrives_once.sql')
-on conflict do nothing;
-
-commit;
+-- 0023 exists to explain, and `tests/rls/notification-preferences.test.ts` is
+-- where it is held down.
+--
+-- No `begin`/`commit` and no ledger insert in this file, which is the convention
+-- every migration here follows: `docker/migrate.sh` wraps each file in its own
+-- transaction and records it in `covan_meta.migrations` itself. Doing either
+-- here fails loudly — the transaction warns that one is already in progress, and
+-- the insert violates the ledger's primary key. Applying this to the hosted
+-- database by hand is the case that DOES need both, since there is no script
+-- there; that wrapper belongs in the pasted SQL, not in this file.

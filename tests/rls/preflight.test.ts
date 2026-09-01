@@ -1,6 +1,15 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, it, expect } from "vitest";
 
-import { missingMigrations, unknownToCheckout, type Ledger, type MigrationFile } from "./preflight";
+import {
+  migrationFilesOnDisk,
+  missingMigrations,
+  unknownToCheckout,
+  type Ledger,
+  type MigrationFile,
+} from "./preflight";
 
 /*
  * The comparison behind the preflight check in `preflight.ts`, tested without a
@@ -84,6 +93,39 @@ describe("missingMigrations", () => {
     expect(
       missingMigrations(tree, ledger({ filenames: [...NAMES, "0001_user_usage.sql"] })),
     ).toEqual([]);
+  });
+});
+
+describe("migrationFilesOnDisk", () => {
+  /*
+   * Read against the repository this is running in, so the assertions have to
+   * hold in both trees. In the open-source one `supabase/cloud/` does not
+   * exist and the second half is vacuous; in the hosted one it is the whole
+   * point, and `0001_user_usage.sql` is the file that has to come back
+   * `cli: false`.
+   */
+  const files = migrationFilesOnDisk();
+
+  it("finds the schema", () => {
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.every((file) => file.name.endsWith(".sql"))).toBe(true);
+  });
+
+  it("comes back sorted, so a message names the files in the order they apply", () => {
+    expect(files.map((file) => file.name)).toEqual([...files.map((file) => file.name)].sort());
+  });
+
+  it("has no two files with the same name", () => {
+    // docker/migrate.sh refuses this outright — its ledger keys on the
+    // filename and could not tell two of them apart. Asserted here too,
+    // because this check keys on the same thing.
+    expect(new Set(files.map((file) => file.name)).size).toBe(files.length);
+  });
+
+  it("marks a file CLI-applicable exactly when it is one the CLI reads", () => {
+    for (const file of files) {
+      expect(file.cli).toBe(existsSync(join("supabase/migrations", file.name)));
+    }
   });
 });
 

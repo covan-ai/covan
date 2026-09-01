@@ -52,7 +52,8 @@ export type MigrationFile = {
   cli: boolean;
 };
 
-function migrationFilesOnDisk(): MigrationFile[] {
+/** Exported so a test can check the wiring against the real directories. */
+export function migrationFilesOnDisk(): MigrationFile[] {
   const files: MigrationFile[] = [];
   for (const dir of MIGRATION_DIRS) {
     if (!existsSync(dir.path)) continue;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import type { Agent, ChatSession } from "./agents-store";
 
 /**
@@ -74,40 +74,82 @@ export function firstWeekRemaining(steps: FirstWeekStep[]): number {
   return steps.filter((s) => !s.done).length;
 }
 
-/**
- * Dismissal, remembered per workspace — a second workspace is a second setup,
- * and being told once about this one should not silence the next.
+/*
+ * The dismissal flag lives in `localStorage`, which is not React's to hold. So
+ * it is read during render through `useSyncExternalStore` rather than copied
+ * into state after mount, the same move `theme.tsx` makes and for the same
+ * reason (#68).
  *
- * The read is in an effect rather than a lazy initialiser because the workspace
- * id arrives from `api.me()` a beat after the first render: an initialiser
- * would run against `undefined` and never look again, so a dismissed checklist
- * would come back on every load. It also keeps the server render out of
- * `localStorage`, which does not exist there.
+ * The old comment here explained why the read could not be a lazy initialiser:
+ * the workspace id arrives from `api.me()` a beat after the first render, so an
+ * initialiser would run against `undefined` and never look again. That is still
+ * true, and it is precisely what a snapshot function handles — it is called on
+ * every render, so the render where the id shows up is the render that reads
+ * the right key. No effect required to notice.
+ *
+ * `localStorage` has no change event of its own within a tab, so `dismiss`
+ * tells the subscribers itself. `storage` covers the other tabs, which the
+ * effect this replaces never listened for: dismissing the checklist in one tab
+ * left it on screen in the next until a reload.
+ */
+const dismissListeners = new Set<() => void>();
+
+/** Dismissals this tab has made, for when the write above them fails. Storage
+    throwing used to be survivable because `dismiss` set React state first and
+    the checklist went away regardless; with the store as the only source of
+    truth, without this the button would visibly do nothing in private mode. */
+const dismissedHere = new Set<string>();
+
+function subscribeDismissed(onStoreChange: () => void) {
+  dismissListeners.add(onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+  return () => {
+    dismissListeners.delete(onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
+
+/** The key is per workspace: a second workspace is a second setup, and being
+    told once about this one should not silence the next. */
+function dismissKey(workspaceId: string | undefined) {
+  return workspaceId ? `covan:first-week-dismissed:${workspaceId}` : null;
+}
+
+/**
+ * Whether the first-week checklist has been dismissed for this workspace.
  *
  * Storage can throw — private mode, quota — and the answer is a checklist that
- * shows up again, which is the harmless direction.
+ * shows up again, which is the harmless direction. The server snapshot is
+ * `false` for the same reason: `localStorage` does not exist there, and a
+ * checklist that appears and then disappears is better than one that never
+ * appears because we guessed.
  */
 export function useChecklistDismissed(workspaceId: string | undefined) {
-  const key = workspaceId ? `covan:first-week-dismissed:${workspaceId}` : null;
-  const [dismissed, setDismissed] = useState(false);
+  const key = dismissKey(workspaceId);
 
-  useEffect(() => {
-    if (!key) return;
-    try {
-      setDismissed(window.localStorage.getItem(key) === "1");
-    } catch {
-      setDismissed(false);
-    }
-  }, [key]);
+  const dismissed = useSyncExternalStore(
+    subscribeDismissed,
+    () => {
+      if (!key) return false;
+      if (dismissedHere.has(key)) return true;
+      try {
+        return window.localStorage.getItem(key) === "1";
+      } catch {
+        return false;
+      }
+    },
+    () => false,
+  );
 
   const dismiss = () => {
-    setDismissed(true);
     if (!key) return;
+    dismissedHere.add(key);
     try {
       window.localStorage.setItem(key, "1");
     } catch {
       /* back next reload; see above */
     }
+    for (const listener of dismissListeners) listener();
   };
 
   return { dismissed, dismiss };

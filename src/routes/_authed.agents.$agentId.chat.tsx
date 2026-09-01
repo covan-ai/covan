@@ -439,6 +439,15 @@ function ChatTab() {
     } catch {
       /* ignore */
     }
+    // The last of the eleven in #68, and the one that stays. The other ten were
+    // effects copying something into state that could have been read or derived
+    // instead; this one sends a message. `submit` sets state on the way — that
+    // is what the rule sees — but the state is a consequence of the send, not
+    // the point of the effect, and there is nothing to derive it from: the
+    // draft is a handoff from another route, it is deleted as it is read, and
+    // it can only go once the session is loaded and still empty. Doing it
+    // during render would send a message twice under StrictMode.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void submit(draft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, messages.length, busy]);

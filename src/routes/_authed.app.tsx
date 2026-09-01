@@ -77,8 +77,23 @@ function Home() {
   });
 
   // The ⌘K "New agent" action deep-links here with ?new=true.
+  //
+  // One of the eleven in #68, and the second of the two that stay. It is not a
+  // copy of anything: the URL is a request, and this consumes it — opens the
+  // dialog, then takes the request back out of the address bar so closing and
+  // reopening does not reopen it. Synchronising React with the URL is what the
+  // rule's own guidance calls an effect's job.
+  //
+  // Deriving it instead — `createOpen || !!openNew`, and clearing the search
+  // param on close — was tried and is worse. The dialog would then stay open
+  // until the router's update lands, and TanStack does that in a transition,
+  // so React is free to defer it: closing the dialog would visibly lag on the
+  // ⌘K path and only on the ⌘K path. Both palette entries can also fire while
+  // already on /app, so a `useState(!!openNew)` initialiser never sees the
+  // second press.
   useEffect(() => {
     if (openNew) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCreateOpen(true);
       navigate({ to: "/app", search: {}, replace: true });
     }

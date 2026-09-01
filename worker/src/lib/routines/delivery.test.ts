@@ -48,6 +48,48 @@ describe("deliver", () => {
     expect(payload.subject).toBe("r/saas");
   });
 
+  // The summary is whatever the model wrote, and models write Markdown. Until
+  // this was rendered, a digest arrived with its asterisks and dashes intact —
+  // the routine's own output looked like a draft of itself.
+  it("renders the summary's markdown into the HTML half", async () => {
+    const fetchImpl = vi.fn(ok);
+    const channel = {
+      kind: "email" as const,
+      secret_ciphertext: await encryptSecret("deniz@example.com", KEY),
+    };
+    await deliver(
+      channel,
+      { subject: "r/saas", body: "## Today\n\n- **Pricing** changed\n- Nothing else" },
+      deps(fetchImpl),
+    );
+
+    const payload = JSON.parse(
+      (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+    );
+    expect(payload.html).toContain("<strong>Pricing</strong>");
+    expect(payload.html).toContain("<li");
+    expect(payload.html).not.toContain("##");
+    // The text half stays the summary exactly as the model wrote it.
+    expect(payload.text).toBe("## Today\n\n- **Pricing** changed\n- Nothing else");
+  });
+
+  // Slack renders its own markup from the text field and has no HTML half to
+  // send, so the rendering above must not follow the message down this path.
+  it("leaves the slack payload as text", async () => {
+    const fetchImpl = vi.fn(ok);
+    const channel = {
+      kind: "slack_webhook" as const,
+      secret_ciphertext: await encryptSecret("https://hooks.slack.com/services/E/E/E", KEY),
+    };
+    await deliver(channel, { subject: "r/saas", body: "**bold**" }, deps(fetchImpl));
+
+    const body = JSON.parse(
+      (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+    );
+    expect(body).not.toHaveProperty("html");
+    expect(body.text).toContain("**bold**");
+  });
+
   it("throws when the channel rejects the message", async () => {
     const fetchImpl = vi.fn(async () => new Response("invalid_token", { status: 403 }));
     const channel = {

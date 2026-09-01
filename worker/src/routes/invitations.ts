@@ -5,6 +5,8 @@ import { toEpochMs } from "../lib/dto";
 import type { PendingInvitationDTO, IncomingInvitationDTO } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { canSendEmail, sendEmail } from "../lib/email";
+import { emailShell } from "../lib/email-layout";
+import { escapeHtml } from "../lib/escape-html";
 
 const invitations = new Hono<AppEnv>();
 
@@ -17,8 +19,12 @@ const invitations = new Hono<AppEnv>();
  * in a URL would be a second, weaker one guarding the same door. What the
  * recipient needs to know is which address to use; that is what this says.
  *
- * Plain text, no HTML part: it is four sentences, and an HTML mail that renders
- * as a blank card in a client that strips styles is worse than no HTML at all.
+ * Two halves, not two mails. The text below was the whole message for as long as
+ * this route existed, on the reasoning that an HTML mail which renders as a
+ * blank card in a client that strips styles is worse than no HTML at all. That
+ * reasoning still holds and is why `text` is unchanged and still says
+ * everything: the HTML is an addition Resend carries in the same request, and a
+ * client that drops it falls back to prose that was never a fallback.
  */
 function invitationEmail(args: {
   workspaceName: string;
@@ -56,8 +62,26 @@ function invitationEmail(args: {
       "If you were not expecting this, you can ignore it. Nothing happens until",
       "you accept.",
     ].join("\n"),
+    html: emailShell({
+      preheader: `${args.inviterName} invited you to ${args.workspaceName} on Covan.`,
+      heading: `${args.inviterName} invited you to ${args.workspaceName}`,
+      // Written here rather than run through `email-markdown`: this prose is
+      // ours and fixed, so it needs no parser — only the two interpolated names,
+      // which the shell escapes for us.
+      bodyHtml: [
+        `<p style="${P}">You have been invited as ${asRole}.</p>`,
+        `<p style="${P}">Covan is where a team keeps its AI agents: the agents and the knowledge they read are shared, and your own conversations stay yours.</p>`,
+        `<p style="${P}">Sign in with <strong>${escapeHtml(args.email)}</strong> — that address is what the invitation is matched to, so a different one will not find it. If you do not have an account yet, sign up with that same address.</p>`,
+      ].join(""),
+      action: { label: "Sign in to accept", url: args.appUrl },
+      footnote:
+        "If you were not expecting this, you can ignore it. Nothing happens until you accept.",
+    }),
   };
 }
+
+/** The body paragraph rule, inline for the same reason every other rule is. */
+const P = "margin:0 0 16px;font-size:15px;line-height:1.55;color:#251f19";
 
 const createInviteSchema = z.object({
   // Trimmed inside the schema, the way createWorkspaceSchema does it in

@@ -647,6 +647,29 @@ describe("POST /invitations — telling the invitee", () => {
     );
   });
 
+  it("sends an HTML half that carries the same facts as the text one", async () => {
+    let sent: { url: string; body: Record<string, unknown> } | undefined;
+    const { app } = appWithMail(async (input, init) => {
+      sent = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return new Response("{}", { status: 200 });
+    });
+
+    await json(app, "POST", "/invitations", { email: "new@example.com", role: "member" }, MAIL_ENV);
+
+    const html = String(sent?.body.html);
+    // Same three facts the text half is held to, because the two halves are one
+    // message and a reader sees only one of them.
+    expect(html).toContain("Acme");
+    expect(html).toContain("new@example.com");
+    expect(html).toContain(MAIL_ENV.ALLOWED_ORIGIN);
+    expect(html, "the HTML mail offered a link that accepts the invitation").not.toMatch(
+      /\/invitations?\/[\w-]+\/accept|token=/,
+    );
+    // The text half is not replaced by the HTML one; a client that strips
+    // styles still has the whole message.
+    expect(String(sent?.body.text)).toContain("new@example.com");
+  });
+
   it("still creates the invitation when Resend refuses", async () => {
     const { app } = appWithMail(async () => new Response("nope", { status: 422 }));
 

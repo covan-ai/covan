@@ -8,6 +8,7 @@ import {
   nextStep,
   newestAgent,
   stepsFor,
+  plannedStepsFor,
   type AnswerPatch,
   type OnboardingAnswers,
   type OnboardingStep,
@@ -148,7 +149,10 @@ function Welcome() {
   }
 
   const step = resolveStep(requested, ctx);
+  // Two lists on purpose: `stepsFor` is where the flow goes, `plannedStepsFor`
+  // is how long it is. See the note on plannedStepsFor for why they differ.
   const steps = stepsFor(ctx);
+  const planned = plannedStepsFor(ctx);
 
   const goTo = (next: OnboardingStep | "done") => {
     if (next === "done") {
@@ -192,8 +196,8 @@ function Welcome() {
     <WelcomeLayout
       title={copy.title}
       subtitle={copy.subtitle}
-      stepIndex={Math.max(0, steps.indexOf(step))}
-      stepCount={steps.length}
+      stepIndex={Math.max(0, planned.indexOf(step))}
+      stepCount={planned.length}
     >
       {step === "role" && (
         <QuestionCard

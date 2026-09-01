@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "../email";
+import { emailShell } from "../email-layout";
+import { renderMarkdown } from "../email-markdown";
 import { decryptSecret } from "./crypto";
 
 export type DeliveryChannel = {
@@ -16,6 +18,25 @@ export type DeliveryDeps = {
 
 /** How much of a failing upstream's body reaches routine_runs.error. */
 const MAX_ERROR_BODY = 200;
+
+/** How much of the summary an inbox gets to show beside the subject. */
+const MAX_PREHEADER = 140;
+
+/**
+ * The inbox preview line.
+ *
+ * Taken from the summary's own first line, with its Markdown stripped: left
+ * unset, a client takes the opening of the HTML body, which for a digest that
+ * starts with a heading is the heading — the subject again, twice on one row.
+ */
+function preheaderOf(body: string): string {
+  const firstLine =
+    body
+      .split("\n")
+      .map((line) => line.replace(/^[#>\-*\s]+/, "").trim())
+      .find((line) => line.length > 0) ?? "";
+  return firstLine.replace(/[*_`]/g, "").slice(0, MAX_PREHEADER);
+}
 
 /** The narrow slice of the Supabase client this module needs. */
 export type DeliveryDb = Pick<SupabaseClient, "from">;
@@ -35,7 +56,24 @@ export async function deliver(
           body: JSON.stringify({ text: `*${message.subject}*\n${message.body}` }),
         })
       : await sendEmail(
-          { to: secret, subject: message.subject, text: message.body },
+          {
+            to: secret,
+            subject: message.subject,
+            text: message.body,
+            // The summary is model output and arrives as Markdown, because
+            // nothing in `summarise.ts` asks it not to. Rendering it here rather
+            // than constraining the prompt keeps the text half exactly what the
+            // model wrote — which is what Slack and the run record already show.
+            html: emailShell({
+              preheader: preheaderOf(message.body),
+              heading: message.subject,
+              bodyHtml: renderMarkdown(message.body),
+              // Not "Sent by a Covan routine": the shell's own footer already
+              // opens with "Sent by Covan", and the two stack into one column
+              // that says it twice.
+              footnote: "This digest was produced by a routine running on its schedule.",
+            }),
+          },
           { fetchImpl: deps.fetchImpl, apiKey: deps.resendApiKey, from: deps.resendFrom },
         );
 

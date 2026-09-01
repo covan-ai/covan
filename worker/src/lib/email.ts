@@ -21,6 +21,15 @@ export type Email = {
   to: string;
   subject: string;
   text: string;
+  /**
+   * The optional HTML half.
+   *
+   * Optional rather than required, and an addition rather than a replacement:
+   * `text` remains what every caller must supply, so a client that strips HTML —
+   * or a caller that has nothing worth styling — is never left with an empty
+   * message. Resend takes both in one request and lets the client choose.
+   */
+  html?: string;
 };
 
 /**
@@ -52,6 +61,10 @@ export function sendEmail(email: Email, deps: EmailDeps): Promise<Response> {
       to: [email.to],
       subject: email.subject,
       text: email.text,
+      // `JSON.stringify` drops an undefined value, so a caller with no HTML
+      // sends the same request it always did rather than an explicit null that
+      // Resend would have to interpret.
+      html: email.html,
     }),
   });
 }

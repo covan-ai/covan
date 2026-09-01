@@ -101,33 +101,33 @@ anyone in.
 The four notes above are the ones that bite. This is the complete reference —
 every line in `.env.docker.example`, in the order it appears there.
 
-| Variable                                               | Default in the template    | What it does                                                                                                                     |
-| ------------------------------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                    |
-| `OPENAI_BASE_URL`                                      | _empty — means OpenAI_     | Optional. Sends completions to an OpenAI-compatible endpoint instead. See below — it does not move everything.                   |
-| `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.      |
-| `EMBEDDING_BASE_URL`                                   | _empty — means OpenAI_     | Optional. Sends document embeddings to an OpenAI-compatible endpoint. Deliberately does **not** follow `OPENAI_BASE_URL`.        |
-| `EMBEDDING_MODEL`                                      | _empty_                    | Optional. Defaults to `text-embedding-3-small`. Set it whenever `EMBEDDING_BASE_URL` is set.                                     |
-| `EMBEDDING_DIMENSIONS`                                 | _empty — means 1536_       | Optional. The width `document_chunks.embedding` was declared with. Changing it is a schema change — see below. Refuses to boot on anything but a positive whole number. |
-| `RAG_MIN_SIMILARITY`                                   | _empty — means 0.25_       | Optional. Cosine-similarity floor below which a retrieved chunk is dropped. `0` disables it. Tuned for `text-embedding-3-small`; another model wants its own. |
-| `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                             |
-| `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                           |
+| Variable                                               | Default in the template    | What it does                                                                                                                                                                                                                                 |
+| ------------------------------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                                                                                                                                |
+| `OPENAI_BASE_URL`                                      | _empty — means OpenAI_     | Optional. Sends completions to an OpenAI-compatible endpoint instead. See below — it does not move everything.                                                                                                                               |
+| `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.                                                                                                                  |
+| `EMBEDDING_BASE_URL`                                   | _empty — means OpenAI_     | Optional. Sends document embeddings to an OpenAI-compatible endpoint. Deliberately does **not** follow `OPENAI_BASE_URL`.                                                                                                                    |
+| `EMBEDDING_MODEL`                                      | _empty_                    | Optional. Defaults to `text-embedding-3-small`. Set it whenever `EMBEDDING_BASE_URL` is set.                                                                                                                                                 |
+| `EMBEDDING_DIMENSIONS`                                 | _empty — means 1536_       | Optional. The width `document_chunks.embedding` was declared with. Changing it is a schema change — see below. Refuses to boot on anything but a positive whole number.                                                                      |
+| `RAG_MIN_SIMILARITY`                                   | _empty — means 0.25_       | Optional. Cosine-similarity floor below which a retrieved chunk is dropped. `0` disables it. Tuned for `text-embedding-3-small`; another model wants its own.                                                                                |
+| `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                                                                                                                                         |
+| `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                                                                                                                                       |
 | `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. Also passed to the API as `SUPABASE_JWT_SECRET`, which is what makes API keys work — see [The API](api.md). |
-| `ANON_KEY`                                             | Supabase demo key          | The public API key. It reaches the browser by design; row level security is what protects the data behind it.                    |
-| `SERVICE_ROLE_KEY`                                     | Supabase demo key          | Bypasses row level security entirely. Server-side only — it must never reach a browser.                                          |
-| `JWT_EXPIRY`                                           | `3600`                     | Access-token lifetime in seconds. Refresh is automatic in the client.                                                            |
-| `SECRET_KEY_BASE`                                      | local placeholder          | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                       |
-| `REALTIME_DB_ENC_KEY`                                  | `supabaserealtime`         | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                     |
-| `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to 16, 24 or 32 bytes, or saving a delivery channel fails.    |
-| `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Applied when `covan-web` starts; no rebuild.                                             |
-| `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Same — restart, not rebuild.                                                        |
-| `SITE_URL`                                             | `http://localhost:3000`    | The origin GoTrue puts in confirmation and password-reset links.                                                                 |
-| `ALLOWED_ORIGIN`                                       | `http://localhost:3000`    | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.   |
-| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, and update the `VITE_` URLs to match.                                   |
-| `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.           |
-| `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.      |
-| `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                  |
-| `COVAN_VERSION`                                        | `latest`                   | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.1.0` pins one.              |
+| `ANON_KEY`                                             | Supabase demo key          | The public API key. It reaches the browser by design; row level security is what protects the data behind it.                                                                                                                                |
+| `SERVICE_ROLE_KEY`                                     | Supabase demo key          | Bypasses row level security entirely. Server-side only — it must never reach a browser.                                                                                                                                                      |
+| `JWT_EXPIRY`                                           | `3600`                     | Access-token lifetime in seconds. Refresh is automatic in the client.                                                                                                                                                                        |
+| `SECRET_KEY_BASE`                                      | local placeholder          | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                                                                                                                                   |
+| `REALTIME_DB_ENC_KEY`                                  | `supabaserealtime`         | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                                                                                                                                 |
+| `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to 16, 24 or 32 bytes, or saving a delivery channel fails.                                                                                                                |
+| `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Applied when `covan-web` starts; no rebuild.                                                                                                                                                         |
+| `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Same — restart, not rebuild.                                                                                                                                                                    |
+| `SITE_URL`                                             | `http://localhost:3000`    | The origin GoTrue puts in confirmation and password-reset links.                                                                                                                                                                             |
+| `ALLOWED_ORIGIN`                                       | `http://localhost:3000`    | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.                                                                                                               |
+| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, and update the `VITE_` URLs to match.                                                                                                                                               |
+| `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.                                                                                                                       |
+| `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.                                                                                                                  |
+| `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                                                                                                                              |
+| `COVAN_VERSION`                                        | `latest`                   | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.1.0` pins one.                                                                                                                          |
 
 Three more values the API reads are set by `docker-compose.yml` rather than by
 you: `SUPABASE_URL` (`http://kong:8000` — the compose network address, not
@@ -157,8 +157,7 @@ OPENAI_API_KEY=ignored-by-ollama-but-still-required
 ```
 
 Set both. The model list Covan ships is a list of OpenAI's names, so with only
-the base URL set every agent would ask your endpoint for `gpt-4o` and get a
-404. `OPENAI_MODEL` overrides that list outright, per-agent picker included —
+the base URL set every agent would ask your endpoint for `gpt-4o` and get a 404. `OPENAI_MODEL` overrides that list outright, per-agent picker included —
 which means the model dropdown in agent settings has no effect while it is set.
 It still shows OpenAI's models; ignore it.
 
@@ -226,7 +225,7 @@ fact about the model you chose rather than about Covan. In short:
 
 The API refuses to start on an `EMBEDDING_DIMENSIONS` that is not a positive
 whole number, or a `RAG_MIN_SIMILARITY` outside 0–1, naming the variable. A
-width that is merely *wrong* rather than malformed is caught at the first
+width that is merely _wrong_ rather than malformed is caught at the first
 embedding call instead, which is why step 1 is an upload rather than a restart.
 
 ## Terms and privacy
@@ -512,6 +511,31 @@ person yourself. Set one without the other and the two paths differ: an
 invitation checks for both and quietly reports that nothing was emailed, while a
 routine posts anyway and records whatever Resend answers as a failed run. So if
 you set one, set both.
+
+### The two emails Supabase sends, and where their design lives
+
+Confirming an address and resetting a password are sent by Supabase, not by this
+Worker, so no secret above affects them and nothing in this repository is on
+their path at runtime. Their default is unstyled — a sentence and a bare link —
+and it is the first thing a new account ever receives.
+
+`supabase/templates/` holds a styled version of each, rendered from the same
+shell as every other Covan email:
+
+| File                  | Paste into                                   |
+| --------------------- | -------------------------------------------- |
+| `confirm-signup.html` | Authentication → Emails → **Confirm signup** |
+| `reset-password.html` | Authentication → Emails → **Reset password** |
+
+The subject lines that go with them are in
+`worker/src/lib/emails/auth.ts`. Both files keep Supabase's
+`{{ .ConfirmationURL }}` placeholder, which is what the button points at — change
+anything else you like, but not that, or the button leads nowhere.
+
+Edit the source rather than the files: `bun run build:email-templates` in
+`worker/` rewrites them, and a test fails if the checked-in copies drift from it.
+`supabase/config.toml` can point a **local** stack at template files, but there is
+no way to push a template to a hosted project — pasting is the whole procedure.
 
 `SUPABASE_JWT_SECRET` is the project's JWT signing secret — Supabase dashboard,
 Settings → API — and it is what turns on [API keys](api.md). A key carries no

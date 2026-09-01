@@ -42,21 +42,23 @@ export default tseslint.config(
       // two that did not — `static-components` and `refs` — were fixed rather
       // than silenced, because each was one site and each was a real defect.
       //
-      // This one is different, and the difference is worth writing down. It
-      // reports eleven sites, and every one of them is the same shape: read
-      // something that only exists in a browser — `matchMedia`, `localStorage`,
-      // the theme the init script chose, a form field seeded from a query that
-      // resolves a beat after first render — and put it into state after mount.
-      // The rule is right that this costs a second render, and right that
-      // `useSyncExternalStore` is the answer for most of them. It is a
-      // behavioural refactor of eleven call sites across the chat, settings,
-      // theme and onboarding surfaces, and it does not belong in the commit
-      // that upgrades the plugin: a dependency bump that quietly rewrites how
-      // the theme loads is a dependency bump nobody can review.
+      // This one arrived reporting eleven sites, which was too many to fix in
+      // the commit that upgraded the plugin — a dependency bump that quietly
+      // rewrites how the theme loads is a dependency bump nobody can review.
+      // It sat at `warn` while covan#68 worked through them, and the rule was
+      // right about nine: they read something that only exists in a browser —
+      // `matchMedia`, `localStorage`, the theme the init script chose, a form
+      // field seeded from a query — and copied it into state after mount.
+      // `useSyncExternalStore`, a `key`, and in two cases deleting the effect
+      // outright. One of them was a live bug rather than an extra render.
       //
-      // A warning, not off, so the count stays visible and a twelfth site
-      // announces itself. The eleven are enumerated in covan#68.
-      "react-hooks/set-state-in-effect": "warn",
+      // `error` now, because the two that remain are not oversights and say so
+      // where they are: `chat.tsx` sends a draft handed over from another
+      // route, and `_authed.app.tsx` consumes a `?new=true` deep link. Both
+      // carry a targeted disable and the reasoning for it. A twelfth site is
+      // now a build failure, which is the right answer — the fix is either an
+      // hour's work or a sentence explaining why it is the exception.
+      "react-hooks/set-state-in-effect": "error",
       "no-restricted-imports": [
         "error",
         {

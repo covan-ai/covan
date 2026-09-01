@@ -12,6 +12,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/rls/**/*.test.ts"],
+    // Reads the migration ledger before the first test file and refuses to run
+    // against a database that is behind the checkout. `globalSetup`, not a
+    // test: a stale schema makes the whole suite lie, so the right answer is
+    // one sentence instead of a dozen failures blaming the policies.
+    globalSetup: ["tests/rls/preflight.ts"],
     environment: "node",
     globals: true,
     testTimeout: 30_000,

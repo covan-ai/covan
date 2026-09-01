@@ -62,6 +62,25 @@ describe("the people", () => {
     expect(sql).toContain(":'owner'");
   });
 
+  it("includes an uploader, which is a column that did not exist when this was written", () => {
+    // `USER_COLUMNS` matches on the column name, so `documents.created_by`
+    // (0037) was handled the moment it shipped and nothing had to be added
+    // here. Asserted rather than assumed: it is a foreign key to `auth.users`,
+    // and a restore that carried the old id would fail on it — after the
+    // workspace and the bundles had already been written.
+    const { sql } = renderSql(
+      base({
+        knowledge_bundles: [{ id: "b1", workspace_id: "w1", name: "Docs", created_at: "t" }],
+        documents: [
+          { id: "d1", bundle_id: "b1", name: "note.txt", created_by: "u9", created_at: "t" },
+        ],
+      }),
+    );
+
+    expect(sql).toContain("insert into public.documents");
+    expect(sql).not.toContain("'u9'");
+  });
+
   it("collapse to exactly one membership row, as an admin", () => {
     // Five members all becoming one account would be five inserts of the same
     // primary key: four swallowed by `on conflict do nothing` and the survivor

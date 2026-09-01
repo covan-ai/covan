@@ -36,10 +36,15 @@ let secondDocumentId: string;
 async function replyCiting(user: TestUser, documentIds: string[]) {
   const { data: session, error: sessionErr } = await user.db
     .from("chat_sessions")
+    // `owner.workspaceId`, not the caller's — 0028 requires the session's
+    // workspace to be the agent's, and the colleague's own workspace is the one
+    // their signup made, not the one they were invited into. Every conversation
+    // here happens in the room the agent lives in, which is also the only shape
+    // the count is ever asked about.
     .insert({
       agent_id: seeded.agentId,
       user_id: user.id,
-      workspace_id: user.workspaceId,
+      workspace_id: owner.workspaceId,
       visibility: "private",
     })
     .select("id")

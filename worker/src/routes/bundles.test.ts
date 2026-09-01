@@ -242,3 +242,132 @@ describe("POST /bundles/:id/documents/upload — files with no readable text", (
     expect(res.status).not.toBe(422);
   });
 });
+
+/*
+ * GET /bundles/citations
+ *
+ * The route's own job is small — resolve the workspace, hand its bundle ids to
+ * two RPCs, and shape what comes back. The counting itself is in 0038 and is
+ * tested against a real database in tests/rls/. What is worth pinning here is
+ * the shaping, because every mistake in it is silent: a bigint arriving as a
+ * string sorts as text, and a missing `since` reads as "counted from the
+ * beginning" rather than "counted from nowhere".
+ */
+function citationsDb(options: {
+  bundleIds?: string[];
+  counts?: Array<{ document_id: string; citations: number | string }>;
+  since?: string | null;
+  bundleError?: boolean;
+  rpcError?: boolean;
+}) {
+  const calls: { rpc: Array<[string, Record<string, unknown>]> } = { rpc: [] };
+  const db = {
+    from(table: string) {
+      if (table === "profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { active_workspace_id: "ws-1" }, error: null }),
+            }),
+          }),
+        };
+      }
+      // `getActiveWorkspaceId` confirms the active workspace is still one the
+      // caller belongs to before it trusts the profile.
+      if (table === "workspace_members") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: { workspace_id: "ws-1" }, error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "knowledge_bundles") {
+        return {
+          select: () => ({
+            eq: async () => ({
+              data: options.bundleError
+                ? null
+                : (options.bundleIds ?? ["bundle-1"]).map((id) => ({ id })),
+              error: options.bundleError ? { message: "boom" } : null,
+            }),
+          }),
+        };
+      }
+      throw new Error(`citationsDb: unexpected table "${table}"`);
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.rpc.push([name, args]);
+      if (options.rpcError) return { data: null, error: { message: "boom" } };
+      if (name === "document_citation_counts") return { data: options.counts ?? [], error: null };
+      return { data: options.since ?? null, error: null };
+    },
+  };
+  return { db, calls };
+}
+
+describe("GET /bundles/citations", () => {
+  it("counts against every bundle in the workspace, not only the ones on one agent", async () => {
+    const { db, calls } = citationsDb({ bundleIds: ["b1", "b2"] });
+    const res = await appWithDb(db).request("/bundles/citations");
+
+    expect(res.status).toBe(200);
+    const counting = calls.rpc.find(([name]) => name === "document_citation_counts");
+    expect(counting?.[1]).toEqual({ p_bundle_ids: ["b1", "b2"] });
+  });
+
+  it("turns a bigint count into a number, whichever way PostgREST sends it", async () => {
+    // Counts are bigint. PostgREST sends small ones as JSON numbers and large
+    // ones as strings, and a string would sort as text — "9" above "41".
+    const { db } = citationsDb({
+      counts: [
+        { document_id: "d1", citations: "41" },
+        { document_id: "d2", citations: 9 },
+      ],
+    });
+    const res = await appWithDb(db).request("/bundles/citations");
+    const body = (await res.json()) as { counts: Record<string, number> };
+
+    expect(body.counts).toEqual({ d1: 41, d2: 9 });
+    expect(typeof body.counts.d1).toBe("number");
+  });
+
+  it("reports the window as a timestamp", async () => {
+    const { db } = citationsDb({ since: "2026-08-24T09:15:00.000Z" });
+    const res = await appWithDb(db).request("/bundles/citations");
+    const body = (await res.json()) as { since: number | null };
+
+    expect(body.since).toBe(Date.parse("2026-08-24T09:15:00.000Z"));
+  });
+
+  it("says null rather than a date when nothing has ever been countable", async () => {
+    // Not zero, and not the epoch. "No reply has carried a document id yet" is
+    // a different screen from "the count starts in 1970".
+    const { db } = citationsDb({ since: null });
+    const res = await appWithDb(db).request("/bundles/citations");
+    const body = (await res.json()) as { since: number | null };
+
+    expect(body.since).toBeNull();
+  });
+
+  it("asks nothing of the database when the workspace has no bundles", async () => {
+    const { db, calls } = citationsDb({ bundleIds: [] });
+    const res = await appWithDb(db).request("/bundles/citations");
+
+    expect(await res.json()).toEqual({ since: null, counts: {} });
+    expect(calls.rpc).toHaveLength(0);
+  });
+
+  it("fails loudly rather than reporting an empty count", async () => {
+    // The failure mode worth avoiding: an error swallowed into `{}` would draw
+    // a panel saying nothing needs revisiting, which is a claim rather than an
+    // absence of one.
+    const { db } = citationsDb({ rpcError: true });
+    const res = await appWithDb(db).request("/bundles/citations");
+
+    expect(res.status).toBe(500);
+  });
+});

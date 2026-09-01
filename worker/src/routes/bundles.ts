@@ -62,6 +62,55 @@ bundles.get("/bundles", async (c) => {
   return c.json((data ?? []).map(mapBundle));
 });
 
+// GET /bundles/citations — how many answers cite each document, workspace-wide.
+//
+// Two calls rather than one because they answer two different questions, and
+// the second one is the caveat on the first: `since` is the oldest reply that
+// could be counted at all. Replies written before ids were stored cite by name
+// alone (#54), so every number here is over a window and the interface has to
+// be able to say which. Sending the counts without it would print a census and
+// mean a sample.
+//
+// Both are RPCs into `security definer` functions because the count has to
+// cross private sessions — see 0038. What comes back is a number per document
+// and a timestamp; who asked and what they asked stay where they are.
+bundles.get("/bundles/citations", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  if (!workspaceId) return c.json({ since: null, counts: {} });
+
+  const { data: bundleRows, error: bundleError } = await db
+    .from("knowledge_bundles")
+    .select("id")
+    .eq("workspace_id", workspaceId);
+  if (bundleError) return c.json({ error: "failed to load bundles" }, 500);
+
+  const bundleIds = (bundleRows ?? []).map((b) => b.id as string);
+  if (bundleIds.length === 0) return c.json({ since: null, counts: {} });
+
+  const [counted, sinceResult] = await Promise.all([
+    db.rpc("document_citation_counts", { p_bundle_ids: bundleIds }),
+    db.rpc("citations_counted_since", { p_workspace_id: workspaceId }),
+  ]);
+
+  if (counted.error || sinceResult.error) {
+    return c.json({ error: "failed to count citations" }, 500);
+  }
+
+  const counts: Record<string, number> = {};
+  for (const row of (counted.data ?? []) as Array<{ document_id: string; citations: number }>) {
+    // Postgres counts are bigint, which PostgREST sends as a JSON number here
+    // and as a string once it exceeds 2^53. Coerced rather than trusted: a
+    // string would sort as text, and "9" would outrank "41".
+    counts[row.document_id] = Number(row.citations);
+  }
+
+  const since = (sinceResult.data as string | null) ?? null;
+  return c.json({ since: since ? Date.parse(since) : null, counts });
+});
+
 // POST /bundles
 bundles.post("/bundles", async (c) => {
   const db = c.get("db");

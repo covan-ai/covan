@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { missingMigrations, unknownToCheckout, type Ledger } from "./preflight";
+import { missingMigrations, unknownToCheckout, type Ledger, type MigrationFile } from "./preflight";
 
 /*
  * The comparison behind the preflight check in `preflight.ts`, tested without a
@@ -16,17 +16,23 @@ const ledger = (patch: Partial<{ filenames: string[]; versions: string[] }> = {}
   versions: new Set(patch.versions ?? []),
 });
 
-const FILES = ["0001_init.sql", "0002_policies.sql", "0003_api_keys.sql"];
+/** Under `supabase/migrations/` — the one directory the CLI reads. */
+const shared = (...names: string[]): MigrationFile[] => names.map((name) => ({ name, cli: true }));
+/** Under `supabase/cloud/`, which only `docker/migrate.sh` applies. */
+const hosted = (...names: string[]): MigrationFile[] => names.map((name) => ({ name, cli: false }));
+
+const FILES = shared("0001_init.sql", "0002_policies.sql", "0003_api_keys.sql");
+const NAMES = FILES.map((file) => file.name);
 
 describe("missingMigrations", () => {
   it("finds nothing when the compose ledger has every file", () => {
-    expect(missingMigrations(FILES, ledger({ filenames: FILES }))).toEqual([]);
+    expect(missingMigrations(FILES, ledger({ filenames: NAMES }))).toEqual([]);
   });
 
   it("names the files a compose stack has not applied", () => {
     // The shape of the failure this whole check exists for: the database was at
     // 0029, the repository at 0034, and `api_keys` did not exist.
-    expect(missingMigrations(FILES, ledger({ filenames: FILES.slice(0, 1) }))).toEqual([
+    expect(missingMigrations(FILES, ledger({ filenames: NAMES.slice(0, 1) }))).toEqual([
       "0002_policies.sql",
       "0003_api_keys.sql",
     ]);
@@ -55,26 +61,47 @@ describe("missingMigrations", () => {
   });
 
   it("reports everything when both ledgers are empty", () => {
-    expect(missingMigrations(FILES, ledger())).toEqual(FILES);
+    expect(missingMigrations(FILES, ledger())).toEqual(NAMES);
+  });
+
+  it("does not let a shared prefix vouch for a hosted-only file", () => {
+    // The hosted tree numbers supabase/cloud/ from 0001 of its own, so
+    // `0001_user_usage.sql` and `0001_init.sql` have the same version and are
+    // different migrations. `supabase start` never reads supabase/cloud/ at
+    // all, so its `0001` can only ever mean the shared one — and treating the
+    // prefix as an answer for both would report a database as up to date while
+    // `user_usage` did not exist.
+    const tree = [...FILES, ...hosted("0001_user_usage.sql")];
+    expect(missingMigrations(tree, ledger({ versions: ["0001", "0002", "0003"] }))).toEqual([
+      "0001_user_usage.sql",
+    ]);
+  });
+
+  it("takes the compose ledger's word for a hosted-only file", () => {
+    // The route that does apply it keys on the filename, where there is no
+    // collision — migrate.sh refuses one outright.
+    const tree = [...FILES, ...hosted("0001_user_usage.sql")];
+    expect(
+      missingMigrations(tree, ledger({ filenames: [...NAMES, "0001_user_usage.sql"] })),
+    ).toEqual([]);
   });
 });
 
 describe("unknownToCheckout", () => {
   it("says nothing when the database matches", () => {
-    expect(unknownToCheckout(FILES, ledger({ filenames: FILES }))).toEqual([]);
+    expect(unknownToCheckout(FILES, ledger({ filenames: NAMES }))).toEqual([]);
   });
 
   it("names a migration the database has and the branch does not", () => {
     expect(
-      unknownToCheckout(FILES, ledger({ filenames: [...FILES, "0004_from_another_branch.sql"] })),
+      unknownToCheckout(FILES, ledger({ filenames: [...NAMES, "0004_from_another_branch.sql"] })),
     ).toEqual(["0004_from_another_branch.sql"]);
   });
 
-  it("does not mistake a hosted-only migration for a missing one", () => {
-    // In the cloud tree `supabase/cloud/` is on disk too, so its files are in
-    // `onDisk` and must not be reported in either direction.
-    const withCloud = [...FILES, "0100_metered_usage.sql"];
-    expect(unknownToCheckout(withCloud, ledger({ filenames: withCloud }))).toEqual([]);
-    expect(missingMigrations(withCloud, ledger({ filenames: withCloud }))).toEqual([]);
+  it("does not read a hosted-only file as a stray ledger entry", () => {
+    const tree = [...FILES, ...hosted("0001_user_usage.sql")];
+    expect(
+      unknownToCheckout(tree, ledger({ filenames: [...NAMES, "0001_user_usage.sql"] })),
+    ).toEqual([]);
   });
 });

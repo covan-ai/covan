@@ -36,19 +36,47 @@ import { sql, closeSql } from "./harness";
  * gets, and a deployment's own additions. The second is absent in the
  * open-source tree, which is why it is checked for rather than assumed — the
  * same file then works in both.
+ *
+ * `cli` marks the one directory `supabase start` knows about. It matters
+ * because the two ledgers key on different things, and only one of them can
+ * speak for a hosted-only file. See `versionOf`.
  */
-const MIGRATION_DIRS = ["supabase/migrations", "supabase/cloud"];
+const MIGRATION_DIRS = [
+  { path: "supabase/migrations", cli: true },
+  { path: "supabase/cloud", cli: false },
+];
 
-function migrationFilesOnDisk(): string[] {
-  const files: string[] = [];
+export type MigrationFile = {
+  name: string;
+  /** Whether a CLI stack would have applied this file, had one been used. */
+  cli: boolean;
+};
+
+function migrationFilesOnDisk(): MigrationFile[] {
+  const files: MigrationFile[] = [];
   for (const dir of MIGRATION_DIRS) {
-    if (!existsSync(dir)) continue;
-    files.push(...readdirSync(dir).filter((name) => name.endsWith(".sql")));
+    if (!existsSync(dir.path)) continue;
+    for (const name of readdirSync(dir.path)) {
+      if (name.endsWith(".sql")) files.push({ name, cli: dir.cli });
+    }
   }
-  return files.sort();
+  return files.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** `0034_something.sql` → `0034`. What the Supabase CLI stores as a version. */
+/**
+ * `0034_something.sql` → `0034`. What the Supabase CLI stores as a version.
+ *
+ * A prefix is only unique inside one directory. The hosted tree numbers
+ * `supabase/cloud/` from 0001 of its own, so `0001_user_usage.sql` and
+ * `0001_init.sql` share a version while being different migrations —
+ * `docker/migrate.sh` gets away with it because its ledger keys on the full
+ * filename, and it refuses a genuine filename collision outright.
+ *
+ * So a version only ever answers for a file the CLI could have applied, which
+ * is `supabase/migrations/` and nothing else. Without that restriction a CLI
+ * stack in the hosted tree would count `0001_user_usage.sql` as applied on the
+ * strength of `0001_init.sql` — and it is a file the CLI never even reads.
+ */
 function versionOf(filename: string): string {
   return filename.split("_")[0];
 }
@@ -66,10 +94,14 @@ export type Ledger = {
  * A file counts as applied if either ledger knows it, because the two stacks
  * record it differently and a developer has only ever used one of them.
  */
-export function missingMigrations(onDisk: string[], ledger: Ledger): string[] {
-  return onDisk.filter(
-    (name) => !ledger.filenames.has(name) && !ledger.versions.has(versionOf(name)),
-  );
+export function missingMigrations(onDisk: MigrationFile[], ledger: Ledger): string[] {
+  return onDisk
+    .filter(
+      (file) =>
+        !ledger.filenames.has(file.name) &&
+        !(file.cli && ledger.versions.has(versionOf(file.name))),
+    )
+    .map((file) => file.name);
 }
 
 /**
@@ -79,9 +111,9 @@ export function missingMigrations(onDisk: string[], ledger: Ledger): string[] {
  * It means the branch is older than the database, which is worth one line
  * before somebody reads a green run as a statement about this branch.
  */
-export function unknownToCheckout(onDisk: string[], ledger: Ledger): string[] {
-  const names = new Set(onDisk);
-  const versions = new Set(onDisk.map(versionOf));
+export function unknownToCheckout(onDisk: MigrationFile[], ledger: Ledger): string[] {
+  const names = new Set(onDisk.map((file) => file.name));
+  const versions = new Set(onDisk.filter((file) => file.cli).map((file) => versionOf(file.name)));
   return [
     ...[...ledger.filenames].filter((name) => !names.has(name)),
     ...[...ledger.versions].filter((version) => !versions.has(version)),
@@ -92,7 +124,7 @@ export async function setup() {
   const onDisk = migrationFilesOnDisk();
   if (onDisk.length === 0) {
     throw new Error(
-      `No .sql files under ${MIGRATION_DIRS.join(" or ")}. ` +
+      `No .sql files under ${MIGRATION_DIRS.map((dir) => dir.path).join(" or ")}. ` +
         "The suite is being run from somewhere that is not the repository root.",
     );
   }

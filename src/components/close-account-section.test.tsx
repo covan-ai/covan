@@ -53,6 +53,15 @@ describe("CloseAccountSection", () => {
     expect(screen.getByText(/keep running without you/i)).toBeInTheDocument();
   });
 
+  it("says to ask before closing, on the screen where the decision is made", async () => {
+    render(<CloseAccountSection email={EMAIL} />);
+    // A file that stays is only an acceptable answer if there is a way to ask
+    // for the other one, and the asking has to happen first: closing the
+    // account is what removes the record of who uploaded what (covan#56). A
+    // page somebody would have to already be reading is not where that goes.
+    expect(screen.getByText(/ask before you close/i)).toBeInTheDocument();
+  });
+
   it("refuses to enable the button until the address is typed exactly", async () => {
     render(<CloseAccountSection email={EMAIL} />);
     await openDialog();

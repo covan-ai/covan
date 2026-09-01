@@ -89,6 +89,19 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
           what you wrote there stays, because it belongs to the workspace rather than to you; your
           name simply comes off it.
         </p>
+        {/* The way out of the paragraph above, and it has to be here rather than
+            only on /privacy — this is the screen where somebody decides, and a
+            page they would have to already be reading is not where you put the
+            one thing that has to happen first. Deliberately not a button: a
+            document that has been indexed is what other people's answers are
+            grounded on, and "delete the 14 files you uploaded" on the way out
+            is a way to damage a team. Asking puts a person in the loop, which
+            is the right amount of friction for something irreversible that
+            affects somebody other than the asker. See covan#56. */}
+        <p className="text-sm leading-[1.5] text-muted-foreground">
+          If you want a file you uploaded removed rather than anonymous, ask before you close, not
+          after — once the account is gone there is nothing left to tell which files were yours.
+        </p>
 
         <div className="border-t border-hairline pt-4">
           <AlertDialog open={open} onOpenChange={reset}>

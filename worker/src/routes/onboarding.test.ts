@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { onboarding } from "./onboarding";
 
@@ -51,6 +51,30 @@ function appWithDb(db: unknown) {
   app.route("/", onboarding);
   return app;
 }
+
+const MAIL_ENV = {
+  RESEND_API_KEY: "re_test",
+  RESEND_FROM: "Covan <hello@covan.test>",
+  ALLOWED_ORIGIN: "https://covan.test",
+};
+
+/**
+ * What reached Resend. Every one of these sends is deferred past the response,
+ * so the assertions read the request body rather than a return value — there is
+ * nothing for the route to return about a message it did not wait for.
+ */
+function captureSends() {
+  const calls: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((async (_input: unknown, init?: RequestInit) => {
+    calls.push(JSON.parse(String(init?.body)));
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch);
+  return { calls };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function patch(app: Hono<AppEnv>, body: unknown) {
   return app.request("/onboarding", {
@@ -131,5 +155,50 @@ describe("POST /onboarding/complete", () => {
     expect(res.status).toBe(200);
     // The row already carried a stamp, so nothing was written over it.
     expect(upserts).toEqual([]);
+  });
+
+  /**
+   * The welcome email.
+   *
+   * This route is the only moment the product knows a person has arrived.
+   * Supabase sends the confirmation and nothing tells this Worker when it was
+   * clicked, so "just after confirming" is not a hook we have — and finishing
+   * the first run is the better moment anyway, because by then there is
+   * something to say that is not just "hello".
+   */
+  it("welcomes somebody the first time they finish", async () => {
+    const { db } = fakeDb({ row: { completed_at: null }, error: null });
+    const sent = captureSends();
+
+    const res = await appWithDb(db).request("/onboarding/complete", { method: "POST" }, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent.calls).toHaveLength(1);
+    expect(sent.calls[0].to).toEqual([USER.email]);
+    expect(String(sent.calls[0].subject)).toMatch(/covan/i);
+  });
+
+  // The route already refuses to re-stamp a finished onboarding. The email has
+  // to follow that same guard, or every reload of the last step is another
+  // welcome.
+  it("does not welcome the same person twice", async () => {
+    const { db } = fakeDb({ row: { completed_at: "2026-01-01T00:00:00.000Z" }, error: null });
+    const sent = captureSends();
+
+    await appWithDb(db).request("/onboarding/complete", { method: "POST" }, MAIL_ENV);
+
+    expect(sent.calls).toEqual([]);
+  });
+
+  // Mail is optional configuration, not a dependency: a self-hosted Covan with
+  // no Resend keys still finishes onboarding.
+  it("finishes onboarding when no mail is configured", async () => {
+    const { db } = fakeDb({ row: { completed_at: null }, error: null });
+    const sent = captureSends();
+
+    const res = await appWithDb(db).request("/onboarding/complete", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(sent.calls).toEqual([]);
   });
 });

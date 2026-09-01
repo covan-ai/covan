@@ -1,5 +1,7 @@
 import type { Context } from "hono";
 import type { AppEnv } from "../../types";
+import { deferred } from "../defer";
+import { warnIfLow } from "./warn";
 
 /**
  * Pre-flight check for a route that is about to spend tokens.
@@ -51,4 +53,16 @@ export async function recordQuota(c: Context<AppEnv>, tokens: number): Promise<v
   } catch (err) {
     console.error("failed to record token usage", err);
   }
+
+  // Here rather than in each of the six routes that spend: this function is
+  // already the one thing they all call afterwards, and a seventh paid endpoint
+  // added a year from now gets the warning without anybody remembering to wire
+  // it. `warnIfLow` returns before it reads anything when there is no allowance,
+  // which is every self-hosted deployment.
+  //
+  // Deferred rather than awaited. On a metered deployment this is a snapshot and
+  // a preferences read, and awaiting it would put two queries between the last
+  // token of a reply and the person seeing it — on every reply, to send at most
+  // one message a month.
+  deferred(c, warnIfLow(c));
 }

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { workspace } from "./workspace";
 import {
@@ -43,12 +43,40 @@ function appWith(spec: FakeDbSpec) {
   return { app, ...fake };
 }
 
-const json = (app: Hono<AppEnv>, method: string, path: string, body?: unknown) =>
-  app.request(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+const json = (
+  app: Hono<AppEnv>,
+  method: string,
+  path: string,
+  body?: unknown,
+  env?: Record<string, string>,
+) =>
+  app.request(
+    path,
+    {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    // Hono's third argument is the Bindings object, and leaving it undefined is
+    // what a deployment with no mail configured looks like from in here.
+    env,
+  );
+
+const MAIL_ENV = {
+  RESEND_API_KEY: "re_test",
+  RESEND_FROM: "Covan <hello@covan.test>",
+  ALLOWED_ORIGIN: "https://covan.test",
+};
+
+/** What reached Resend. These sends are deferred, so there is no return value. */
+function captureSends() {
+  const calls: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((async (_i: unknown, init?: RequestInit) => {
+    calls.push(JSON.parse(String(init?.body)));
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch);
+  return calls;
+}
 
 /** A caller whose profile points nowhere and who belongs to no workspace. */
 const NO_WORKSPACE = {
@@ -353,6 +381,40 @@ describe("POST /workspace/active", () => {
 });
 
 describe("PATCH /workspace/members/:userId", () => {
+  /**
+   * A demotion to viewer is the quietest change this API makes. The person keeps
+   * every screen they had and simply cannot write on them any more — a save that
+   * refuses with nothing to explain it. The note says what the role means rather
+   * than only naming it, because "you are now a viewer" is not information to
+   * somebody who has never read the docs.
+   */
+  it("tells the member what their new role lets them do", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          update: () => ({ data: [{ user_id: "user-2", role: "viewer" }], error: null }),
+        },
+        workspaces: { select: () => ({ data: { name: "Acme" }, error: null }) },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { email: "deniz@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+    const sent = captureSends();
+
+    const res = await json(app, "PATCH", "/workspace/members/user-2", { role: "viewer" }, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toEqual(["deniz@example.com"]);
+    // Not just the word "viewer": the sentence that says chatting still works.
+    expect(String(sent[0].text)).toMatch(/chat with every agent/);
+  });
+
   it("changes a role within the caller's own workspace", async () => {
     let ctx: QueryContext | undefined;
     const { app } = appWith({
@@ -453,6 +515,71 @@ describe("DELETE /workspace/members/:userId", () => {
       { column: "workspace_id", value: WORKSPACE, kind: "eq" },
       { column: "user_id", value: "user-2", kind: "eq" },
     ]);
+  });
+
+  /**
+   * Losing access is not self-announcing.
+   *
+   * Somebody removed from a workspace finds out by opening Covan and seeing
+   * their colleagues' agents gone, or by a question that used to work coming
+   * back empty. The same is true of a demotion to viewer, which turns every
+   * write into a refusal with no visible cause. Both are the product changing
+   * what a person may do without telling them, which is the failure this
+   * codebase already treats as worth fixing.
+   *
+   * The profile is read BEFORE the delete, because afterwards they are no longer
+   * a fellow member and the row is no longer ours to read.
+   */
+  it("tells the person they were removed", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({ data: [{ user_id: "user-2" }], error: null }),
+        },
+        workspaces: { select: () => ({ data: { name: "Acme" }, error: null }) },
+        profiles: (() => {
+          const answer = (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { email: "deniz@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null };
+          return { select: answer };
+        })(),
+      },
+    });
+    const sent = captureSends();
+
+    const res = await json(app, "DELETE", "/workspace/members/user-2", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toEqual(["deniz@example.com"]);
+    expect(String(sent[0].subject)).toContain("Acme");
+  });
+
+  // Nobody was removed, so there is nobody to tell. A 403 that still sent a
+  // "you were removed" note would be the worst possible combination.
+  it("sends nothing when the removal was refused", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({ data: [], error: null }),
+        },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { email: "deniz@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+    const sent = captureSends();
+
+    const res = await json(app, "DELETE", "/workspace/members/user-2", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(403);
+    expect(sent).toEqual([]);
   });
 
   it("answers 403 rather than pretending to have removed someone", async () => {

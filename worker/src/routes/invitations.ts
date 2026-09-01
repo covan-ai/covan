@@ -5,83 +5,11 @@ import { toEpochMs } from "../lib/dto";
 import type { PendingInvitationDTO, IncomingInvitationDTO } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { canSendEmail, sendEmail } from "../lib/email";
-import { emailShell } from "../lib/email-layout";
-import { escapeHtml } from "../lib/escape-html";
+import { invitationEmail } from "../lib/emails/invitation";
+import { joinedEmail } from "../lib/emails/joined";
+import { appUrlOf, notify } from "../lib/emails/send";
 
 const invitations = new Hono<AppEnv>();
-
-/**
- * The invitation email.
- *
- * Deliberately not a link that accepts anything. Acceptance runs through
- * `accept_invitation`, which matches the invitation's email against the
- * caller's verified JWT email — so the address IS the credential, and a token
- * in a URL would be a second, weaker one guarding the same door. What the
- * recipient needs to know is which address to use; that is what this says.
- *
- * Two halves, not two mails. The text below was the whole message for as long as
- * this route existed, on the reasoning that an HTML mail which renders as a
- * blank card in a client that strips styles is worse than no HTML at all. That
- * reasoning still holds and is why `text` is unchanged and still says
- * everything: the HTML is an addition Resend carries in the same request, and a
- * client that drops it falls back to prose that was never a fallback.
- */
-function invitationEmail(args: {
-  workspaceName: string;
-  inviterName: string;
-  role: string;
-  email: string;
-  appUrl: string;
-}) {
-  const asRole = args.role === "admin" ? "an admin" : "a member";
-  return {
-    to: args.email,
-    subject: `${args.inviterName} invited you to ${args.workspaceName} on Covan`,
-    // Hard-wrapped, and every interpolated value sits on a line of its own —
-    // an address or a workspace name in the middle of a sentence pushes the
-    // wrap around and turns a tidy paragraph into a ragged one for exactly the
-    // people whose names are longest.
-    text: [
-      `${args.inviterName} invited you to join ${args.workspaceName} on Covan,`,
-      `as ${asRole}.`,
-      "",
-      "Covan is where a team keeps its AI agents: the agents and the knowledge",
-      "they read are shared, and your own conversations stay yours.",
-      "",
-      "To accept, sign in and the invitation will be waiting:",
-      "",
-      `  ${args.appUrl}`,
-      "",
-      "Sign in with the address this was sent to:",
-      "",
-      `  ${args.email}`,
-      "",
-      "If you do not have an account yet, sign up with that same address — it is",
-      "what the invitation is matched to, so a different one will not find it.",
-      "",
-      "If you were not expecting this, you can ignore it. Nothing happens until",
-      "you accept.",
-    ].join("\n"),
-    html: emailShell({
-      preheader: `${args.inviterName} invited you to ${args.workspaceName} on Covan.`,
-      heading: `${args.inviterName} invited you to ${args.workspaceName}`,
-      // Written here rather than run through `email-markdown`: this prose is
-      // ours and fixed, so it needs no parser — only the two interpolated names,
-      // which the shell escapes for us.
-      bodyHtml: [
-        `<p style="${P}">You have been invited as ${asRole}.</p>`,
-        `<p style="${P}">Covan is where a team keeps its AI agents: the agents and the knowledge they read are shared, and your own conversations stay yours.</p>`,
-        `<p style="${P}">Sign in with <strong>${escapeHtml(args.email)}</strong> — that address is what the invitation is matched to, so a different one will not find it. If you do not have an account yet, sign up with that same address.</p>`,
-      ].join(""),
-      action: { label: "Sign in to accept", url: args.appUrl },
-      footnote:
-        "If you were not expecting this, you can ignore it. Nothing happens until you accept.",
-    }),
-  };
-}
-
-/** The body paragraph rule, inline for the same reason every other rule is. */
-const P = "margin:0 0 16px;font-size:15px;line-height:1.55;color:#251f19";
 
 const createInviteSchema = z.object({
   // Trimmed inside the schema, the way createWorkspaceSchema does it in
@@ -336,12 +264,71 @@ invitations.post("/invitations/:id/accept", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
+  // Read before accepting. `accept_invitation` consumes the row — afterwards it
+  // is no longer pending, and being addressed to the caller is the only reason
+  // row level security lets them see it at all.
+  //
+  // Guarded, because this read exists only to address a courtesy email. Accepting
+  // an invitation is the one action in this file that grants somebody access, and
+  // it must not become conditional on a lookup that nothing else needs.
+  const invite = await Promise.resolve(
+    db.from("invitations").select("invited_by, workspaces(name)").eq("id", id).maybeSingle(),
+  )
+    .then((r) => r.data)
+    .catch(() => null);
+
   const { data, error } = await db.rpc("accept_invitation", { p_invite_id: id });
 
   if (error) {
     return c.json({ error: error.message || "failed to accept invitation" }, 400);
   }
+
+  await notifyInviter(c, invite);
+
   return c.json({ workspaceId: data as string });
 });
+
+/**
+ * Tell the inviter their invitation was taken up.
+ *
+ * Best-effort throughout, and deliberately so: the membership exists whether or
+ * not this note arrives, and a mail failure that propagated would report a join
+ * that really happened as a failure to join. Every unknown — no invitation row,
+ * no `invited_by`, a profile without an address — is a reason to send nothing
+ * rather than to guess a recipient.
+ */
+async function notifyInviter(
+  c: Context<AppEnv>,
+  invite: { invited_by?: unknown; workspaces?: unknown } | null,
+): Promise<void> {
+  try {
+    const joiner = c.get("user").email;
+    const inviterId = invite?.invited_by as string | undefined;
+    if (!joiner || !inviterId) return;
+
+    const { data: inviter } = await c
+      .get("db")
+      .from("profiles")
+      .select("name, email")
+      .eq("id", inviterId)
+      .maybeSingle();
+
+    const inviterEmail = inviter?.email as string | undefined;
+    if (!inviterEmail) return;
+
+    // PostgREST answers an embedded one-to-one as an object and an embedded
+    // list as an array, and which one you get depends on how it reads the
+    // relationship rather than on anything visible here.
+    const ws = invite?.workspaces as { name?: string } | { name?: string }[] | null;
+    const workspaceName = (Array.isArray(ws) ? ws[0]?.name : ws?.name) || "your workspace";
+
+    notify(
+      c,
+      joinedEmail({ inviterEmail, joinerEmail: joiner, workspaceName, appUrl: appUrlOf(c) }),
+    );
+  } catch {
+    // The join succeeded. There is nothing here worth failing it for.
+  }
+}
 
 export { invitations };

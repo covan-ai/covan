@@ -89,7 +89,7 @@
     "nitro": "3.0.260603-beta",
     "postgres": "^3.4.9",
     "prettier": "^3.9.6",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.67.0",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"

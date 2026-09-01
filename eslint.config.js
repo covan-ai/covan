@@ -93,6 +93,15 @@ export default tseslint.config(
     files: ["**/*.test.{ts,tsx}", "tests/**/*.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
+      // Same argument, for a rule that arrived with react-hooks 7. A test
+      // harness component exists to hand its innards back to the test —
+      // `mermaid-blocks.test.tsx` renders a div, keeps a ref to it, and passes
+      // that ref out through an `onRef` prop so the assertions can reach the
+      // DOM the component under test is given. That is a callback during
+      // render, which `react-hooks/refs` reports and is right to report in
+      // application code. Here the alternative is an effect that fires after
+      // the child has already rendered, which is later than the test needs it.
+      "react-hooks/refs": "off",
     },
   },
   {

@@ -63,6 +63,13 @@
     "unpdf": "^1.8.1",
     "vite-tsconfig-paths": "^6.1.1"
   },
+  "//overrides": "Every entry is a leaf package with a published fix inside its own major, reached only through somebody else's dependency: the parent already allows the fixed version, the lockfile just pinned an older one and nothing on our side moves it. Raising the floor is therefore not a version bump, and `bun update` does not do it — it walks the ranges we declare, and we declare none of these. Each is a development dependency and none is reachable from anything we ship, so this buys a clean `bun audit` rather than a fix to production. Delete an entry the moment its parent ships a release that resolves past it; an override that is no longer doing anything is one that silently holds a package back later.",
+  "overrides": {
+    "@babel/core": "^7.29.6",
+    "brace-expansion": "^5.0.6",
+    "browserslist": "^4.28.7",
+    "js-yaml": "^4.2.0"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^7.0.0",

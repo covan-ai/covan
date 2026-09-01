@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -9,7 +10,15 @@ vi.mock("@tanstack/react-router", () => ({
   }),
 }));
 
-vi.mock("@/lib/api-client", () => ({ api: { documents: { download: vi.fn() } } }));
+// `bundles.citations` is here because the tab now renders RevisitPanel, which
+// asks for it. Answering with nothing to revisit keeps these two tests about
+// what they were about — the panel has its own file.
+vi.mock("@/lib/api-client", () => ({
+  api: {
+    documents: { download: vi.fn() },
+    bundles: { citations: vi.fn().mockResolvedValue({ since: null, counts: {} }) },
+  },
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const store = {
@@ -40,7 +49,12 @@ async function renderTab(canWrite: boolean) {
   store.canWrite = canWrite;
   const { Route } = await import("./_authed.agents.$agentId.knowledge");
   const Component = (Route as unknown as { component: () => React.ReactElement }).component;
-  render(<Component />);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <Component />
+    </QueryClientProvider>,
+  );
 }
 
 describe("the Knowledge tab", () => {

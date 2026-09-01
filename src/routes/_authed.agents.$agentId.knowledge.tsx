@@ -5,6 +5,7 @@ import { api } from "@/lib/api-client";
 import { PageContainer, PageHeader, SectionHeading } from "@/components/page-container";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocsLink } from "@/components/docs-link";
+import { RevisitPanel } from "@/components/revisit-panel";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -351,6 +352,10 @@ function KnowledgeTab() {
               : undefined
           }
         />
+        {/* Above the list rather than inside it. Sorting the file list by
+            staleness would move a document somebody is looking for, so the
+            ranked answer gets its own place and the list stays a list. */}
+        <RevisitPanel documents={agent.documents} className="mt-3" />
         {agent.documents.length === 0 ? (
           <EmptyState
             className="mt-3"

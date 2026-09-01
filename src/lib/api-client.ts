@@ -66,6 +66,17 @@ export type Bundle = {
   createdAt: number;
 };
 
+export type DocumentCitations = {
+  /**
+   * The oldest reply that could be counted, as a timestamp — or null when there
+   * is none. Not "when we started counting": it is read from the data, so it
+   * moves as old conversations are deleted and stays honest either way.
+   */
+  since: number | null;
+  /** Document id to the number of answers citing it. A document with none is absent. */
+  counts: Record<string, number>;
+};
+
 export type IdeaSuggestion = { title: string; detail: string | null };
 
 // Defined in api-error.ts and re-exported here, so every call site keeps its
@@ -257,6 +268,17 @@ export const api = {
   },
   bundles: {
     list: (): Promise<Bundle[]> => request("GET", "/bundles"),
+    /**
+     * How many answers cite each document in the workspace, and how far back
+     * the counting reaches.
+     *
+     * `since` is not decoration. Replies written before citations carried ids
+     * cannot be matched to a document at all, so every count is over a window —
+     * showing the numbers without saying which window turns a sample into a
+     * census. `null` means nothing has been counted yet, which is a different
+     * screen from every document scoring zero.
+     */
+    citations: (): Promise<DocumentCitations> => request("GET", "/bundles/citations"),
     create: (name: string, description?: string): Promise<Bundle> =>
       request("POST", "/bundles", { name, description }),
     remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/bundles/${id}`),

@@ -175,10 +175,14 @@ function HomeComposer({
     () => agents.find((a) => favorites.includes(a.id)) ?? agents[0],
     [agents, favorites],
   );
-  const [agentId, setAgentId] = useState<string | undefined>(defaultAgent?.id);
-  useEffect(() => {
-    if (!agentId && defaultAgent) setAgentId(defaultAgent.id);
-  }, [agentId, defaultAgent]);
+  // Holds a pick, and only a pick. `undefined` is not "not loaded yet" — it is
+  // "nobody has chosen", which is the state this composer opens in and the one
+  // the line below already knows what to do with. Seeding it from defaultAgent
+  // (in the initialiser, or in an effect once the agents arrive) would say the
+  // same thing twice and let the two copies disagree: an agent that is deleted
+  // leaves its id behind here, where `?? defaultAgent` recovers and a stored id
+  // does not. Everything the dropdown renders reads `selected`, never this.
+  const [agentId, setAgentId] = useState<string | undefined>(undefined);
 
   const selected = agents.find((a) => a.id === agentId) ?? defaultAgent;
 

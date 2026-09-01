@@ -46,12 +46,18 @@ async function replyCiting(user: TestUser, documentIds: string[]) {
     .single();
   if (sessionErr || !session) throw new Error(`could not seed a session: ${sessionErr?.message}`);
 
-  const { error } = await user.db.from("messages").insert({
-    session_id: session.id,
-    role: "assistant",
-    content: "An answer.",
-    sources: documentIds.map((id) => ({ id, name: "seeded.txt" })),
-  });
+  // The session is the user's own, inserted as them. The reply is not: 0031
+  // pins a user's insert to `role = 'user'`, so an assistant message is
+  // written by the service role — which is exactly how the chat route writes
+  // one, and the only rows this count ever looks at.
+  const { error } = await serviceClient()
+    .from("messages")
+    .insert({
+      session_id: session.id,
+      role: "assistant",
+      content: "An answer.",
+      sources: documentIds.map((id) => ({ id, name: "seeded.txt" })),
+    });
   if (error) throw new Error(`could not seed a message: ${error.message}`);
 }
 
@@ -179,12 +185,14 @@ describe("document_citation_counts", () => {
       })
       .select("id")
       .single();
-    await owner.db.from("messages").insert({
-      session_id: session!.id,
-      role: "assistant",
-      content: "An older answer.",
-      sources: [{ name: "cited-by-name-only.txt" }],
-    });
+    await serviceClient()
+      .from("messages")
+      .insert({
+        session_id: session!.id,
+        role: "assistant",
+        content: "An older answer.",
+        sources: [{ name: "cited-by-name-only.txt" }],
+      });
 
     const { map } = await counts(owner);
     expect(map[doc!.id as string]).toBeUndefined();

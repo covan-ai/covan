@@ -37,6 +37,26 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // `eslint-plugin-react-hooks` 7 brought the React Compiler rules into
+      // `recommended`: two rules became sixteen. Fourteen of them pass, and the
+      // two that did not — `static-components` and `refs` — were fixed rather
+      // than silenced, because each was one site and each was a real defect.
+      //
+      // This one is different, and the difference is worth writing down. It
+      // reports eleven sites, and every one of them is the same shape: read
+      // something that only exists in a browser — `matchMedia`, `localStorage`,
+      // the theme the init script chose, a form field seeded from a query that
+      // resolves a beat after first render — and put it into state after mount.
+      // The rule is right that this costs a second render, and right that
+      // `useSyncExternalStore` is the answer for most of them. It is a
+      // behavioural refactor of eleven call sites across the chat, settings,
+      // theme and onboarding surfaces, and it does not belong in the commit
+      // that upgrades the plugin: a dependency bump that quietly rewrites how
+      // the theme loads is a dependency bump nobody can review.
+      //
+      // A warning, not off, so the count stays visible and a twelfth site
+      // announces itself. The eleven are enumerated in covan#68.
+      "react-hooks/set-state-in-effect": "warn",
       "no-restricted-imports": [
         "error",
         {

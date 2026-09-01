@@ -132,6 +132,14 @@ function PrivacyPage() {
           case that is refused is being its last admin — hand the role over first.
         </p>
         <p>
+          A file you uploaded is part of what stays, and it is worth being exact about why. The
+          moment it was indexed it became the workspace's knowledge: other people's answers are
+          grounded on it and cite it by name, so removing it on your way out would quietly change
+          what their agents know. It is anonymised rather than deleted. If you would rather it were
+          deleted, ask before you close the account and not after — a document records who uploaded
+          it, and closing the account is what takes that away.
+        </p>
+        <p>
           There is no separate button for deleting a shared workspace. You can leave one, and an
           admin can remove someone from one, but dismantling a room other people are in is not
           something one person does from this interface.

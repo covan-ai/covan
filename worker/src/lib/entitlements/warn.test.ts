@@ -102,6 +102,25 @@ describe("warnIfLow", () => {
     expect(sent).toEqual([]);
   });
 
+  /**
+   * The stamp comes back in Postgres's spelling, not ours.
+   *
+   * `quota_warned_for` is a `timestamptz`. It is written from `toISOString()`
+   * — `2026-10-01T00:00:00.000Z` — and PostgREST hands it back as
+   * `2026-10-01T00:00:00+00:00`. Same instant, different string, so comparing
+   * the two as text is always false and the warning fires on every reply for
+   * the rest of the period: exactly the behaviour `0036` exists to prevent,
+   * reintroduced by the check that reads it.
+   */
+  it("recognises its own stamp in the format the database returns it", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    captureSends(sent);
+
+    await warnIfLow(ctx({ used: 900, limit: 1000, warnedFor: "2026-10-01T00:00:00+00:00", sent }));
+
+    expect(sent).toEqual([]);
+  });
+
   it("warns again once the period has rolled over", async () => {
     const sent: Array<Record<string, unknown>> = [];
     captureSends(sent);

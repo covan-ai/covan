@@ -14,6 +14,20 @@ import { appUrlOf, notify } from "../emails/send";
 export const WARN_AT = 0.75;
 
 /**
+ * Whether two timestamps name the same moment, whatever they are spelled like.
+ *
+ * An unparseable or missing value answers false — "we have not warned yet" — so
+ * a corrupt stamp costs one extra message rather than silencing the warning for
+ * good.
+ */
+function sameInstant(a: string | null | undefined, b: string): boolean {
+  if (!a) return false;
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  return Number.isFinite(left) && Number.isFinite(right) && left === right;
+}
+
+/**
  * Say something before the allowance is gone, once per period.
  *
  * Until this existed the first news anybody had of their quota was `guardQuota`
@@ -55,7 +69,13 @@ export async function warnIfLow(c: Context<AppEnv>): Promise<void> {
     // that keeps somebody who has never opened the settings screen hearing about
     // their own allowance.
     if (prefs?.quota_exhausted === false) return;
-    if (prefs?.quota_warned_for === resetsAt) return;
+
+    // Compared as instants, not as text. The column is a `timestamptz`: it is
+    // written from `toISOString()` — `…T00:00:00.000Z` — and PostgREST returns
+    // it as `…T00:00:00+00:00`. The same moment spelled two ways, so `===` is
+    // always false and the warning would fire on every reply for the rest of
+    // the period, which is precisely what the column was added to prevent.
+    if (sameInstant(prefs?.quota_warned_for as string | null | undefined, resetsAt)) return;
 
     // Stamped before the send rather than after it. The two orders fail
     // differently: this way a Resend outage costs one missed warning, while the

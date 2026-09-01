@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { useAgentsStore } from "@/lib/agents-store";
+import { useState } from "react";
+import { useAgentsStore, type Agent } from "@/lib/agents-store";
 import {
   PageContainer,
   PageHeader,
@@ -50,32 +50,32 @@ export const Route = createFileRoute("/_authed/agents/$agentId/settings")({
  */
 function SettingsTab() {
   const { agentId } = Route.useParams();
-  const { agents, updateAgent, deleteAgent, canWrite } = useAgentsStore();
-  const navigate = useNavigate();
+  const { agents } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId)!;
+
+  // Switching to a different agent remounts the form, which is the only event
+  // that should discard a half-typed edit.
+  //
+  // This replaces an effect that copied the five fields into state whenever
+  // `agent.id` changed, with a disable for the exhaustive-deps rule and a
+  // paragraph explaining that adding the other five dependencies would be a
+  // bug — any refresh of the store (the write-back from `save`, another tab, a
+  // realtime update) would have run it again and thrown away what you had
+  // typed. All of that reasoning survives; `key` is just the spelling of it
+  // React can enforce, and it does not need an effect, a disable, or a comment
+  // asking the next person not to "fix" the dependency array. #68.
+  return <AgentSettingsForm key={agent.id} agent={agent} />;
+}
+
+function AgentSettingsForm({ agent }: { agent: Agent }) {
+  const { updateAgent, deleteAgent, canWrite } = useAgentsStore();
+  const navigate = useNavigate();
 
   const [name, setName] = useState(agent.name);
   const [emoji, setEmoji] = useState(agent.emoji);
   const [model, setModel] = useState(agent.model);
   const [persona, setPersona] = useState(agent.persona);
   const [mode, setMode] = useState(agent.mode);
-
-  // Refill the form when you switch to a *different* agent, and only then.
-  //
-  // The lint rule wants agent.name, .emoji, .model, .persona and .mode in here
-  // too, and adding them would be a bug: this effect writes to the same state
-  // the inputs are bound to, so any refresh of the store — the write-back from
-  // `save`, another tab, a realtime update — would run it again and throw away
-  // whatever you had typed since. The identity of the agent is the only thing
-  // that should reset the form.
-  useEffect(() => {
-    setName(agent.name);
-    setEmoji(agent.emoji);
-    setModel(agent.model);
-    setPersona(agent.persona);
-    setMode(agent.mode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.id]);
 
   const save = () => {
     updateAgent(agent.id, { name: name.trim() || agent.name, emoji, model, persona, mode });

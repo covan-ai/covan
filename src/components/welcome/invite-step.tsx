@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api-client";
 import { invitationNotice } from "@/lib/invitation-notice";
+import { copyInviteText } from "@/lib/invite-text";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +32,9 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
     // One at a time, and a failure on one address does not discard the others.
     const invited: string[] = [];
     const failed: string[] = [];
-    let emailed = 0;
+    // Which ones, not just how many: these are the addresses the copy action
+    // below has to name, and each person needs their own.
+    const unmailed: string[] = [];
     for (const email of wanted) {
       try {
         const invite = await api.invitations.create({ email, role: "member" });
@@ -39,7 +42,7 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
         // Undefined means "this response does not know", which is not the same
         // as false — but no create response omits it, and counting an unknown
         // as unsent is the error that costs nothing.
-        if (invite.emailed) emailed += 1;
+        if (!invite.emailed) unmailed.push(invite.email);
       } catch (err) {
         failed.push(err instanceof ApiError ? `${email} (${err.message})` : email);
       }
@@ -49,8 +52,23 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
     // This step used to report "N invitations sent" whichever way it went. On
     // an install with no mail configured — a supported one — that was three
     // people invited, nobody told, and the inviter assured otherwise.
-    const notice = invitationNotice({ invited, emailed, failed });
-    toast[notice.tone](notice.message);
+    const notice = invitationNotice({ invited, emailed: invited.length - unmailed.length, failed });
+    // This is the surface where the gap hurts most: the first run, on an
+    // install with no mail configured, invites three people and then moves on
+    // to the next step forever. The Team page keeps a copy button per waiting
+    // invitation, but nobody has seen the Team page yet.
+    toast[notice.tone](
+      notice.message,
+      unmailed.length === 0
+        ? undefined
+        : {
+            duration: 12000,
+            action: {
+              label: unmailed.length === 1 ? "Copy invite text" : "Copy invite texts",
+              onClick: () => copyInviteText(unmailed),
+            },
+          },
+    );
 
     if (invited.length === 0) {
       // Nothing landed. Stay put so the addresses can be corrected rather than

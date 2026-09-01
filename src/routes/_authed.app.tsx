@@ -12,6 +12,8 @@ import { Badge, Headline, SectionHeading } from "@/components/page-container";
 import { Chip, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar, UserAvatar } from "@/components/avatars";
 import { useQuota, quotaSentence } from "@/lib/quota";
+import { FirstWeekChecklist } from "@/components/first-week-checklist";
+import { firstWeekSteps, firstWeekRemaining, useChecklistDismissed } from "@/lib/first-week";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,9 +58,42 @@ function Home() {
   const members = me?.members ?? [];
   const quota = useQuota();
 
+  // The one fact the checklist needs that the home screen does not already
+  // hold. Asked for only while it could still change the answer, so a
+  // settled workspace stops paying for it on every visit.
+  const { dismissed, dismiss } = useChecklistDismissed(me?.workspace.id);
+  const showChecklist = canWrite && !dismissed && agents.length > 0;
+  const { data: routines = [] } = useQuery({
+    queryKey: ["routines"],
+    queryFn: () => api.routines.list(),
+    enabled: showChecklist,
+  });
+
+  const steps = firstWeekSteps({
+    agents,
+    sessions,
+    memberCount: members.length,
+    routineCount: routines.length,
+  });
+
   // The ⌘K "New agent" action deep-links here with ?new=true.
+  //
+  // One of the eleven in #68, and the second of the two that stay. It is not a
+  // copy of anything: the URL is a request, and this consumes it — opens the
+  // dialog, then takes the request back out of the address bar so closing and
+  // reopening does not reopen it. Synchronising React with the URL is what the
+  // rule's own guidance calls an effect's job.
+  //
+  // Deriving it instead — `createOpen || !!openNew`, and clearing the search
+  // param on close — was tried and is worse. The dialog would then stay open
+  // until the router's update lands, and TanStack does that in a transition,
+  // so React is free to defer it: closing the dialog would visibly lag on the
+  // ⌘K path and only on the ⌘K path. Both palette entries can also fire while
+  // already on /app, so a `useState(!!openNew)` initialiser never sees the
+  // second press.
   useEffect(() => {
     if (openNew) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCreateOpen(true);
       navigate({ to: "/app", search: {}, replace: true });
     }
@@ -84,7 +119,13 @@ function Home() {
             </p>
           ) : null}
         </div>
-        <HomeComposer agents={agents} favorites={favorites} className="mt-10" />
+        <HomeComposer
+          agents={agents}
+          favorites={favorites}
+          canCreate={canWrite}
+          onCreate={() => setCreateOpen(true)}
+          className="mt-10"
+        />
         {/* Directly under the composer, because this is the moment before
             spending — not buried in settings, where nobody looks until the
             replies have already stopped. Renders nothing when self-hosted. */}
@@ -93,6 +134,14 @@ function Home() {
             {quota.level !== "fine" && <span className="h-2 w-2 shrink-0 bg-accent-orange" />}
             {quotaSentence(quota)}
           </p>
+        )}
+        {/* Under the composer, never over it: the composer is the product and
+            this is scaffolding. Hidden from a viewer, since the policies refuse
+            them three of the four steps, and hidden while the workspace has no
+            agents at all — that screen has one job and the composer above is
+            already saying it. */}
+        {showChecklist && firstWeekRemaining(steps) > 0 && (
+          <FirstWeekChecklist steps={steps} agentId={agents[0].id} onDismiss={dismiss} />
         )}
       </div>
 
@@ -119,10 +168,16 @@ function Home() {
 function HomeComposer({
   agents,
   favorites,
+  canCreate,
+  onCreate,
   className,
 }: {
   agents: Agent[];
   favorites: string[];
+  /** False for a viewer — same meaning as in the gallery below: the policies
+      refuse them either way, this is so the button is not there to press. */
+  canCreate: boolean;
+  onCreate: () => void;
   className?: string;
 }) {
   const { startSession } = useAgentsStore();
@@ -135,10 +190,14 @@ function HomeComposer({
     () => agents.find((a) => favorites.includes(a.id)) ?? agents[0],
     [agents, favorites],
   );
-  const [agentId, setAgentId] = useState<string | undefined>(defaultAgent?.id);
-  useEffect(() => {
-    if (!agentId && defaultAgent) setAgentId(defaultAgent.id);
-  }, [agentId, defaultAgent]);
+  // Holds a pick, and only a pick. `undefined` is not "not loaded yet" — it is
+  // "nobody has chosen", which is the state this composer opens in and the one
+  // the line below already knows what to do with. Seeding it from defaultAgent
+  // (in the initialiser, or in an effect once the agents arrive) would say the
+  // same thing twice and let the two copies disagree: an agent that is deleted
+  // leaves its id behind here, where `?? defaultAgent` recovers and a stored id
+  // does not. Everything the dropdown renders reads `selected`, never this.
+  const [agentId, setAgentId] = useState<string | undefined>(undefined);
 
   const selected = agents.find((a) => a.id === agentId) ?? defaultAgent;
 
@@ -146,7 +205,11 @@ function HomeComposer({
     const body = text.trim();
     if (sending) return;
     if (!selected) {
-      navigate({ to: "/app", search: { new: true } });
+      // Reachable only if the disabled states below ever come off — the button
+      // in the empty row is the real path now. Straight to the dialog rather
+      // than a ?new=true round trip through the URL, since the handler that
+      // opens it is in scope here.
+      if (canCreate) onCreate();
       return;
     }
     setSending(true);
@@ -187,7 +250,11 @@ function HomeComposer({
             }
           }}
           placeholder={
-            empty ? "Create an agent to get started…" : `Message ${selected?.name ?? "your agent"}…`
+            empty
+              ? canCreate
+                ? "Create an agent to get started…"
+                : "No agents yet — a member has to make the first one…"
+              : `Message ${selected?.name ?? "your agent"}…`
           }
           disabled={empty}
           rows={3}
@@ -195,7 +262,25 @@ function HomeComposer({
         />
         <div className="flex items-center justify-between gap-2 px-4 pb-4">
           {empty ? (
-            <span className="px-1 text-sm text-muted-foreground">No agents yet</span>
+            // This slot used to hold the words "No agents yet" and nothing to
+            // press, on the one card that owns the fold — so the first screen
+            // of an empty workspace told you what was wrong and left the only
+            // way to fix it below the fold, in the gallery. Same control as the
+            // agent picker it replaces, deliberately: the row is the row, only
+            // its contents change. Not a `Button`, because a default-size one
+            // carries the amber chip and send is the single amber fill here.
+            canCreate ? (
+              <button
+                onClick={onCreate}
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors duration-200 hover:bg-surface"
+              >
+                <Plus className="h-4 w-4" /> Create agent
+              </button>
+            ) : (
+              <span className="px-1 text-sm text-muted-foreground">
+                Ask an admin or a member to create one.
+              </span>
+            )
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

@@ -14,6 +14,7 @@
     "url": "https://github.com/covan-ai/covan/issues"
   },
   "type": "module",
+  "//build:email-templates": "Rewrites supabase/templates/*.html from src/lib/emails/auth.ts. Those files are pasted into the hosted project's dashboard by hand; auth-files.test.ts fails when they drift from the source.",
   "//engines": "Matches the frontend's floor so one `node` satisfies both halves of the repo, even though the API itself runs on Workers or Bun. See README.md.",
   "engines": {
     "node": ">=22"
@@ -25,6 +26,7 @@
     "dry:cron": "wrangler deploy -c wrangler.cron.toml --dry-run",
     "tail:cron": "wrangler tail -c wrangler.cron.toml",
     "typecheck": "tsc --noEmit",
+    "build:email-templates": "bun run scripts/build-email-templates.ts",
     "dry": "wrangler deploy --dry-run",
     "test": "vitest run",
     "test:watch": "vitest",

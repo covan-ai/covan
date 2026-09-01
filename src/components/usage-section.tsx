@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { quotaFrom } from "@/lib/quota";
+import { quotaFrom, approximateReplies } from "@/lib/quota";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
@@ -34,6 +34,9 @@ const usd = (n: number) => (n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
 export function UsageSection() {
   const { data: usage, isLoading } = useQuery({ queryKey: ["usage"], queryFn: api.usage });
   const quota = quotaFrom(usage);
+  // Rounded the same way the composer's banner rounds it, so the two surfaces
+  // cannot disagree by a digit that neither of them means.
+  const shown = quota ? approximateReplies(quota.repliesLeft) : 0;
   const agents = usage?.agents ?? [];
   const used = agents.filter((a) => a.messageCount > 0);
 
@@ -76,7 +79,7 @@ export function UsageSection() {
           <p className="mt-3 text-xs text-muted-foreground">
             {quota.level === "spent"
               ? "Used up — new replies are paused"
-              : `About ${quota.repliesLeft} ${quota.repliesLeft === 1 ? "reply" : "replies"} left`}
+              : `About ${shown} ${shown === 1 ? "reply" : "replies"} left`}
             {quota.resetsOn ? ` · resets on ${quota.resetsOn}` : null}
           </p>
           {/* Only once it is actually spent. Somebody with replies left does
@@ -96,10 +99,13 @@ export function UsageSection() {
           )}
 
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
-            Counted in tokens, the unit the model is billed in, and converted to replies using what
-            your own replies have cost so far — currently about {compact(quota.perReply)} tokens
-            each. A long conversation with documents attached costs more than a short question, so
-            the estimate moves.
+            Counted in tokens, the unit the model is billed in, and converted to replies at about{" "}
+            {compact(quota.perReply)} tokens each.{" "}
+            {quota.repliesSeen === 0
+              ? "That is a starting assumption until you have sent something; it shifts towards what your own replies actually cost as you go."
+              : "That is mostly what your own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
+            A long conversation with documents attached costs more than a short question, so the
+            estimate moves.
           </p>
         </SectionCard>
       )}

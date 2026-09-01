@@ -14,6 +14,19 @@ import { LegalLayout, LegalSection, LegalList, LegalItem } from "@/components/le
  *
  * Every destination below is a real call in this codebase. If you add another
  * one, this page is part of the change.
+ *
+ * The same rule binds the other direction, and it is the one that broke: every
+ * capability named below has to be a registered route, not a schema that would
+ * allow one. This page claimed a whole workspace could be deleted from the
+ * interface because `0016_deletable_users_and_workspaces.sql` made it deletable
+ * — but that migration cleared the way, and nobody built the door. A page that
+ * describes a permission as though it were a feature is wrong about the
+ * product while being right about the database.
+ *
+ * The rule cuts both ways and the account paragraph is the proof: it said for
+ * months that erasure had no button, which was true when written and became
+ * false the day `worker/src/routes/account.ts` shipped. Building a capability
+ * puts this page in the change exactly as adding an outbound host does.
  */
 export const Route = createFileRoute("/privacy")({
   component: PrivacyPage,
@@ -70,7 +83,11 @@ function PrivacyPage() {
             <strong className="font-medium text-foreground">OpenAI</strong> — your messages, the
             persona of the agent, and the passages retrieved from your documents are sent so a reply
             can be generated. Document text is sent when it is first indexed. Audio is sent when you
-            dictate. This is the one call the product cannot work without.
+            dictate. This is the one call the product cannot work without — though where it goes is
+            the operator's to change: <code>OPENAI_BASE_URL</code> moves the conversation and{" "}
+            <code>EMBEDDING_BASE_URL</code> moves the document text, each to any OpenAI-compatible
+            endpoint, and they are set independently. Dictation cannot be moved. Ask whoever runs
+            this install which of them are set; nothing on this page can tell you.
           </LegalItem>
           <LegalItem>
             <strong className="font-medium text-foreground">Resend</strong> — invitation emails and
@@ -105,13 +122,27 @@ function PrivacyPage() {
 
       <LegalSection title="Deleting things">
         <p>
-          A document, a conversation, an agent and a whole workspace can each be deleted from the
-          interface, and deleting them removes the rows and the stored file rather than hiding them.
+          A document, a conversation and an agent can each be deleted from the interface, and
+          deleting them removes the rows and the stored file rather than hiding them.
         </p>
         <p>
-          Removing an account itself is not yet something the interface does — that is a gap being
-          closed, not a decision. Until it is, whoever operates the install can delete the user
-          through Supabase, and the rows that belong to them go with it.
+          Closing your account is in Settings, and it takes your conversations, your API keys and
+          any workspace you are the last person in with it. A workspace other people are still in
+          keeps running: what you made there stays and your name comes off it, which is why the one
+          case that is refused is being its last admin — hand the role over first.
+        </p>
+        <p>
+          A file you uploaded is part of what stays, and it is worth being exact about why. The
+          moment it was indexed it became the workspace's knowledge: other people's answers are
+          grounded on it and cite it by name, so removing it on your way out would quietly change
+          what their agents know. It is anonymised rather than deleted. If you would rather it were
+          deleted, ask before you close the account and not after — a document records who uploaded
+          it, and closing the account is what takes that away.
+        </p>
+        <p>
+          There is no separate button for deleting a shared workspace. You can leave one, and an
+          admin can remove someone from one, but dismantling a room other people are in is not
+          something one person does from this interface.
         </p>
         <p>
           What you sent to OpenAI is governed by OpenAI's own retention terms and is not something

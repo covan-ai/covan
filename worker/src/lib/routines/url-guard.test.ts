@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { assertFetchableUrl, ownHostsFrom } from "./url-guard";
+import {
+  assertFetchableUrl,
+  ownHostsFrom,
+  isPrivateAddress,
+  assertResolvedHostIsPublic,
+} from "./url-guard";
 
 const OWN = ["covan-worker.workers.dev", "api.example.com"];
 
@@ -119,5 +124,87 @@ describe("ownHostsFrom", () => {
 
   it("returns an empty list when nothing is configured", () => {
     expect(ownHostsFrom({ ALLOWED_ORIGIN: "" })).toEqual([]);
+  });
+});
+
+describe("address ranges that were reachable", () => {
+  const blocked = [
+    "http://100.64.0.1/", // CGNAT — carrier and Tailscale space
+    "http://100.127.255.255/",
+    "http://192.0.0.1/", // IETF protocol assignments
+    "http://192.0.2.1/", // TEST-NET-1
+    "http://198.18.0.1/", // benchmarking
+    "http://198.51.100.1/", // TEST-NET-2
+    "http://203.0.113.1/", // TEST-NET-3
+    "http://224.0.0.1/", // multicast
+    "http://255.255.255.255/", // broadcast
+    "http://[::127.0.0.1]/", // IPv4-compatible IPv6 -> loopback
+    "http://[64:ff9b::7f00:1]/", // NAT64 -> loopback
+  ];
+
+  for (const url of blocked) {
+    it(`rejects ${url}`, () => {
+      expect(() => assertFetchableUrl(url, [])).toThrow(/private address/);
+    });
+  }
+
+  it("still allows ordinary public addresses", () => {
+    expect(() => assertFetchableUrl("http://93.184.216.34/", [])).not.toThrow();
+    expect(() => assertFetchableUrl("https://example.com/feed", [])).not.toThrow();
+  });
+
+  it("still allows addresses just outside the CGNAT range", () => {
+    expect(() => assertFetchableUrl("http://100.63.0.1/", [])).not.toThrow();
+    expect(() => assertFetchableUrl("http://100.128.0.1/", [])).not.toThrow();
+  });
+
+  it("still allows the address just below the multicast/reserved range", () => {
+    expect(() => assertFetchableUrl("http://223.255.255.255/", [])).not.toThrow();
+  });
+
+  it("still allows addresses just outside the benchmarking range", () => {
+    expect(() => assertFetchableUrl("http://198.17.0.1/", [])).not.toThrow();
+    expect(() => assertFetchableUrl("http://198.20.0.1/", [])).not.toThrow();
+  });
+
+  it("exports the address test for the resolving guard to reuse", () => {
+    expect(isPrivateAddress("10.0.0.1")).toBe(true);
+    expect(isPrivateAddress("93.184.216.34")).toBe(false);
+  });
+
+  it("catches the dotted-quad IPv6 embedding when called directly, since Task 11 hands it a resolved address that never passes through new URL()", () => {
+    expect(isPrivateAddress("::127.0.0.1")).toBe(true);
+    expect(isPrivateAddress("64:ff9b::127.0.0.1")).toBe(true);
+    expect(isPrivateAddress("64:ff9b::93.184.216.34")).toBe(false);
+  });
+});
+
+describe("assertResolvedHostIsPublic", () => {
+  it("rejects a public-looking name that resolves to link-local", async () => {
+    const resolve = async () => ["169.254.169.254"];
+    await expect(assertResolvedHostIsPublic("169.254.169.254.nip.io", resolve)).rejects.toThrow(
+      /resolves to 169\.254\.169\.254/,
+    );
+  });
+
+  it("rejects when only one of several answers is private", async () => {
+    const resolve = async () => ["93.184.216.34", "10.0.0.5"];
+    await expect(assertResolvedHostIsPublic("split.example.com", resolve)).rejects.toThrow(
+      /resolves to 10\.0\.0\.5/,
+    );
+  });
+
+  it("rejects a name that resolves to nothing", async () => {
+    const resolve = async () => [];
+    await expect(assertResolvedHostIsPublic("void.example.com", resolve)).rejects.toThrow(
+      /does not resolve/,
+    );
+  });
+
+  it("returns the addresses for a genuinely public host", async () => {
+    const resolve = async () => ["93.184.216.34"];
+    await expect(assertResolvedHostIsPublic("example.com", resolve)).resolves.toEqual([
+      "93.184.216.34",
+    ]);
   });
 });

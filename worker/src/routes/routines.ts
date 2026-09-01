@@ -228,7 +228,11 @@ routines.post("/routines", async (c) => {
       delivery_channel_id: body.deliveryChannelId,
       schedule_cron: body.scheduleCron,
       timezone: body.timezone,
-      next_run_at: new Date().toISOString(),
+      // The first run is scheduled, not immediate. Creating "every day at
+      // 09:00" used to send a real message within one 5-minute tick, because
+      // claim_due_routines claims anything already due and `now()` is. Use
+      // the Run now button for an instant first result.
+      next_run_at: nextRunAt(body.scheduleCron, body.timezone, new Date()).toISOString(),
     })
     .select("*")
     .single();

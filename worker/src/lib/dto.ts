@@ -7,6 +7,16 @@ export type DocumentDTO = {
   id: string;
   name: string;
   size: number;
+  /**
+   * When it was uploaded — and, for a document, the whole of what "how fresh is
+   * this" can mean. Nothing updates a document in place: a re-upload creates a
+   * new row, and `POST /documents/:id/reindex` re-embeds the same stored text.
+   * So there is no `updated_at` to want, and this date is not a proxy for
+   * freshness, it is freshness. An onboarding file uploaded in January is
+   * exactly the January file in September, which is why the chat screen puts
+   * this under an answer.
+   */
+  createdAt: number;
   // How many embedded chunks back this document. `indexed` is false when the
   // count is 0 — the document exists but isn't retrievable yet (embedding
   // pending or failed), which the UI surfaces with a reindex action.
@@ -26,12 +36,26 @@ export type AgentDTO = {
   createdAt: number;
 };
 
+/**
+ * One document that grounded an answer.
+ *
+ * `id` is null for every reply written before the id was stored. The column
+ * held bare display names until then — which is not a link: two documents can
+ * share a name, a rename detaches the history, and a delete leaves a string
+ * pointing at nothing. `match_chunks` has returned `document_id` since 0005 and
+ * `routes/chat.ts` was throwing it away.
+ *
+ * Old rows keep working and simply cannot say how old their sources are, which
+ * is the honest answer rather than a guess made by matching on a name.
+ */
+export type SourceDTO = { id: string | null; name: string };
+
 export type MessageDTO = {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: number;
-  sources?: string[];
+  sources?: SourceDTO[];
   sender?: { id: string; name: string | null; avatarUrl: string | null };
 };
 
@@ -61,6 +85,20 @@ export type PendingInvitationDTO = {
    * invite dialog uses it to describe what happened instead of assuming.
    */
   emailed?: boolean;
+};
+
+export type ApiKeyDTO = {
+  id: string;
+  name: string;
+  /** The visible head of the key, so a row can be told from its neighbours. */
+  prefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  /**
+   * The key itself, present exactly once: on the row returned when it is
+   * created. Nothing stores it, so no later request can put it back.
+   */
+  token?: string;
 };
 
 export type IncomingInvitationDTO = {
@@ -114,6 +152,10 @@ export function mapDocument(row: {
   id: string;
   name: string;
   size: number | null;
+  // Required, not optional: every caller has to fetch it, and a `?? 0` fallback
+  // would render a missing date as 1970 — "55 years ago" under an answer, which
+  // is worse than the bare filename this replaces.
+  created_at: string;
   document_chunks?: Array<{ count: number }> | null;
 }): DocumentDTO {
   const chunkCount = row.document_chunks?.[0]?.count ?? 0;
@@ -121,6 +163,7 @@ export function mapDocument(row: {
     id: row.id,
     name: row.name,
     size: row.size ?? 0,
+    createdAt: toEpochMs(row.created_at),
     chunkCount,
     indexed: chunkCount > 0,
   };
@@ -141,6 +184,7 @@ export function mapAgent(row: {
         id: string;
         name: string;
         size: number | null;
+        created_at: string;
         document_chunks?: Array<{ count: number }> | null;
       }> | null;
     } | null;
@@ -168,6 +212,23 @@ function firstEmbedded<T>(value: unknown): T | null {
   return null;
 }
 
+/**
+ * Reads either shape out of `messages.sources`, which is jsonb and therefore
+ * holds both: bare strings from before ids were stored, `{id, name}` since.
+ */
+function mapSource(value: unknown): SourceDTO | null {
+  if (typeof value === "string") return value ? { id: null, name: value } : null;
+  if (value && typeof value === "object") {
+    const row = value as { id?: unknown; name?: unknown };
+    if (typeof row.name === "string" && row.name) {
+      return { id: typeof row.id === "string" ? row.id : null, name: row.name };
+    }
+  }
+  return null;
+}
+
+const isSource = (s: SourceDTO | null): s is SourceDTO => s !== null;
+
 export function mapMessage(row: {
   id: string;
   role: string;
@@ -185,9 +246,7 @@ export function mapMessage(row: {
     role: row.role === "assistant" ? "assistant" : "user",
     content: row.content,
     createdAt: toEpochMs(row.created_at),
-    sources: Array.isArray(row.sources)
-      ? row.sources.filter((s): s is string => typeof s === "string")
-      : undefined,
+    sources: Array.isArray(row.sources) ? row.sources.map(mapSource).filter(isSource) : undefined,
     sender: sender ? { id: sender.id, name: sender.name, avatarUrl: sender.avatar_url } : undefined,
   };
 }

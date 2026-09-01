@@ -15,7 +15,13 @@ export const Route = createFileRoute("/_authed/integrations")({
   }),
 });
 
-type Status = "available" | "beta" | "soon";
+// No "beta" rung. The REST API was the only row that ever carried it; it went to
+// the roadmap on the day there was no key you could hold, and came back on the
+// day there was. It came back as "Available" rather than as a beta, because a
+// chip nothing else renders is a chip nobody notices has gone wrong. (No issue
+// number here on purpose: this file is byte-identical in covan-ai/covan, where
+// the same number is a different thing entirely.)
+type Status = "available" | "soon";
 
 type Integration = {
   name: string;
@@ -26,10 +32,21 @@ type Integration = {
 
 const items: Integration[] = [
   {
+    // This row said "soon" for one reason — a caller needs a credential they
+    // can hold, and the only way in was a session token lifted out of a browser
+    // that expired in an hour. That reason is gone: `api_keys` exists,
+    // `worker/src/middleware/auth.ts` accepts a `covan_sk_` bearer token beside
+    // the Supabase JWT, and Settings mints and revokes them.
+    //
+    // Still "Call any shared agent", not "do anything": a key mints a short
+    // token for the person who owns it, so every policy that applies to them
+    // applies to it. The two things it cannot do — mint another key, revoke one
+    // — are refusals in `routes/api-keys.ts` rather than a smaller status, and
+    // `docs/api.md` is where a caller reads about them.
     name: "REST API",
-    desc: "Call any shared agent programmatically, with the same knowledge it uses in chat.",
+    desc: "Call any shared agent programmatically, with a key you mint in Settings.",
     icon: Code2,
-    status: "beta",
+    status: "available",
   },
   {
     // Shipped, but narrower than "Slack" sounds: an incoming-webhook URL you
@@ -74,7 +91,7 @@ function StatusChip({ status }: { status: Status }) {
   // "Available", not "Connected": this list says what Covan can do, not what
   // this workspace has set up. Whether a webhook URL actually exists is a
   // question for Settings, and answering it here would be a guess.
-  const label = status === "beta" ? "Beta" : status === "available" ? "Available" : "Coming soon";
+  const label = status === "available" ? "Available" : "Coming soon";
   return <Chip tone={status === "soon" ? "neutral" : "on"}>{label}</Chip>;
 }
 
@@ -85,11 +102,10 @@ function IntegrationsPage() {
   return (
     <AppShell>
       <PageContainer width="list">
-        <PageHeader
-          badge="Integrations"
-          title="The API is here."
-          turn="The connectors are coming."
-        />
+        {/* The count is written out, so it has to be edited when a row moves.
+            It said "One thing" while two were live, which is the same mistake
+            the REST API row was making three lines up. */}
+        <PageHeader badge="Integrations" title="Two things are wired." turn="The rest is coming." />
 
         <section className="mt-14">
           <SectionHeading title="Available now" />

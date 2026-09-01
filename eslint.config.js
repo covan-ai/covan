@@ -37,6 +37,28 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // `eslint-plugin-react-hooks` 7 brought the React Compiler rules into
+      // `recommended`: two rules became sixteen. Fourteen of them pass, and the
+      // two that did not — `static-components` and `refs` — were fixed rather
+      // than silenced, because each was one site and each was a real defect.
+      //
+      // This one arrived reporting eleven sites, which was too many to fix in
+      // the commit that upgraded the plugin — a dependency bump that quietly
+      // rewrites how the theme loads is a dependency bump nobody can review.
+      // It sat at `warn` while covan#68 worked through them, and the rule was
+      // right about nine: they read something that only exists in a browser —
+      // `matchMedia`, `localStorage`, the theme the init script chose, a form
+      // field seeded from a query — and copied it into state after mount.
+      // `useSyncExternalStore`, a `key`, and in two cases deleting the effect
+      // outright. One of them was a live bug rather than an extra render.
+      //
+      // `error` now, because the two that remain are not oversights and say so
+      // where they are: `chat.tsx` sends a draft handed over from another
+      // route, and `_authed.app.tsx` consumes a `?new=true` deep link. Both
+      // carry a targeted disable and the reasoning for it. A twelfth site is
+      // now a build failure, which is the right answer — the fix is either an
+      // hour's work or a sentence explaining why it is the exception.
+      "react-hooks/set-state-in-effect": "error",
       "no-restricted-imports": [
         "error",
         {
@@ -73,6 +95,15 @@ export default tseslint.config(
     files: ["**/*.test.{ts,tsx}", "tests/**/*.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
+      // Same argument, for a rule that arrived with react-hooks 7. A test
+      // harness component exists to hand its innards back to the test —
+      // `mermaid-blocks.test.tsx` renders a div, keeps a ref to it, and passes
+      // that ref out through an `onRef` prop so the assertions can reach the
+      // DOM the component under test is given. That is a callback during
+      // render, which `react-hooks/refs` reports and is right to report in
+      // application code. Here the alternative is an effect that fires after
+      // the child has already rendered, which is later than the test needs it.
+      "react-hooks/refs": "off",
     },
   },
   {

@@ -19,6 +19,25 @@
 name: covan
 
 services:
+  # --------------------------------------------------------------- Guardrail
+  secrets-check:
+    container_name: covan-secrets-check
+    # postgres:17.6-alpine, not a new image — `migrate` below already pulls
+    # this one, so a fresh `docker compose up` gains no extra download.
+    image: postgres:17.6-alpine
+    volumes:
+      - ./docker/check-secrets.sh:/check-secrets.sh:ro
+    environment:
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
+      JWT_SECRET: ${JWT_SECRET}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY}
+    entrypoint: ["/bin/sh", "/check-secrets.sh"]
+    restart: "no"
+
   # ---------------------------------------------------------------- Supabase
   db:
     container_name: covan-db
@@ -27,6 +46,18 @@ services:
     # ships both plus the roles GoTrue, PostgREST and Realtime log in as.
     image: supabase/postgres:17.6.1.136
     restart: unless-stopped
+    # Every other service in this file descends from db — auth, rest and
+    # realtime directly; kong from auth+rest; migrate from db+auth; covan-api
+    # from migrate+kong; covan-web from covan-api. Gating db therefore gates
+    # the entire stack. Kong looks like the obvious choke point (it fronts
+    # every request supabase-js makes) but db publishes its own port
+    # (54322) and sits upstream of Kong, so that placement would leave
+    # Postgres itself unguarded. Making db depend on covan-api instead is not
+    # an option: covan-api depends on kong, which depends on auth, which
+    # depends on db — that would be circular.
+    depends_on:
+      secrets-check:
+        condition: service_completed_successfully
     volumes:
       - covan-db-data:/var/lib/postgresql/data
       # Persist the pgsodium root key across restarts.
@@ -58,7 +89,7 @@ services:
       # Host access for psql / a GUI client. 54322 is the port
       # supabase/config.toml gives the CLI's database, so one habit covers both
       # paths — they are alternatives and cannot both run at once.
-      - "${POSTGRES_PORT:-54322}:5432"
+      - "${BIND_ADDR:-127.0.0.1}:${POSTGRES_PORT:-54322}:5432"
     command:
       - postgres
       - -c
@@ -104,7 +135,7 @@ services:
       # arrive and nobody could ever sign in. Matches `enable_confirmations =
       # false` in supabase/config.toml. Turn this off (and configure
       # GOTRUE_SMTP_*) before putting the stack on a network.
-      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_SMS_AUTOCONFIRM: "false"
 
@@ -200,7 +231,7 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      - "${KONG_HTTP_PORT:-8000}:8000/tcp"
+      - "${BIND_ADDR:-127.0.0.1}:${KONG_HTTP_PORT:-8000}:8000/tcp"
     volumes:
       - ./docker/kong.yml:/home/kong/temp.yml:ro
       - ./docker/kong-entrypoint.sh:/home/kong/kong-entrypoint.sh:ro
@@ -286,13 +317,34 @@ services:
       # what still goes there regardless.
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
+      # Documents, separately. Empty means api.openai.com — and it means that
+      # even when OPENAI_BASE_URL above is set, which is the point: moving your
+      # conversations is not the same decision as moving every file you upload.
+      # EMBEDDING_DIMENSIONS must match the width document_chunks.embedding was
+      # declared with; see supabase/optional/embedding_width.sql.
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-}
+      # Retrieval's relevance floor. Empty means 0.25, tuned for
+      # text-embedding-3-small; another embedding model wants its own.
+      RAG_MIN_SIMILARITY: ${RAG_MIN_SIMILARITY:-}
       ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY:?set ROUTINE_SECRET_KEY in .env}
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
       # No R2 binding off Cloudflare, so getDocStore falls to the filesystem
       # store rooted here. This path is a volume; see below.
       DOCS_DIR: /data/docs
+      # Requests per minute, per tier. Empty means the built-in defaults; 0 turns
+      # a tier off for an operator who limits at their own proxy instead.
+      RATE_LIMIT_STANDARD_PER_MINUTE: ${RATE_LIMIT_STANDARD_PER_MINUTE:-}
+      RATE_LIMIT_EXPENSIVE_PER_MINUTE: ${RATE_LIMIT_EXPENSIVE_PER_MINUTE:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-}
+      # The same secret GoTrue signs sessions with, passed through so the API can
+      # exchange an API key for a short-lived token belonging to the key's owner.
+      # It is already in .env for the auth service, so a self-hosted stack gets
+      # API keys with no extra configuration; leaving it out turns them off
+      # rather than breaking anything.
+      SUPABASE_JWT_SECRET: ${JWT_SECRET}
       PORT: 8787
       ROUTINE_TICK_MS: ${ROUTINE_TICK_MS:-60000}
     volumes:
@@ -304,7 +356,7 @@ services:
       retries: 10
       start_period: 10s
     ports:
-      - "${COVAN_API_PORT:-8787}:8787"
+      - "${BIND_ADDR:-127.0.0.1}:${COVAN_API_PORT:-8787}:8787"
 
   covan-web:
     container_name: covan-web
@@ -342,7 +394,7 @@ services:
       retries: 10
       start_period: 10s
     ports:
-      - "${COVAN_WEB_PORT:-3000}:3000"
+      - "${BIND_ADDR:-127.0.0.1}:${COVAN_WEB_PORT:-3000}:3000"
 
 volumes:
   covan-db-data:

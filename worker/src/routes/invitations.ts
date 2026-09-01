@@ -5,59 +5,11 @@ import { toEpochMs } from "../lib/dto";
 import type { PendingInvitationDTO, IncomingInvitationDTO } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { canSendEmail, sendEmail } from "../lib/email";
+import { invitationEmail } from "../lib/emails/invitation";
+import { joinedEmail } from "../lib/emails/joined";
+import { appUrlOf, notify } from "../lib/emails/send";
 
 const invitations = new Hono<AppEnv>();
-
-/**
- * The invitation email.
- *
- * Deliberately not a link that accepts anything. Acceptance runs through
- * `accept_invitation`, which matches the invitation's email against the
- * caller's verified JWT email — so the address IS the credential, and a token
- * in a URL would be a second, weaker one guarding the same door. What the
- * recipient needs to know is which address to use; that is what this says.
- *
- * Plain text, no HTML part: it is four sentences, and an HTML mail that renders
- * as a blank card in a client that strips styles is worse than no HTML at all.
- */
-function invitationEmail(args: {
-  workspaceName: string;
-  inviterName: string;
-  role: string;
-  email: string;
-  appUrl: string;
-}) {
-  const asRole = args.role === "admin" ? "an admin" : "a member";
-  return {
-    to: args.email,
-    subject: `${args.inviterName} invited you to ${args.workspaceName} on Covan`,
-    // Hard-wrapped, and every interpolated value sits on a line of its own —
-    // an address or a workspace name in the middle of a sentence pushes the
-    // wrap around and turns a tidy paragraph into a ragged one for exactly the
-    // people whose names are longest.
-    text: [
-      `${args.inviterName} invited you to join ${args.workspaceName} on Covan,`,
-      `as ${asRole}.`,
-      "",
-      "Covan is where a team keeps its AI agents: the agents and the knowledge",
-      "they read are shared, and your own conversations stay yours.",
-      "",
-      "To accept, sign in and the invitation will be waiting:",
-      "",
-      `  ${args.appUrl}`,
-      "",
-      "Sign in with the address this was sent to:",
-      "",
-      `  ${args.email}`,
-      "",
-      "If you do not have an account yet, sign up with that same address — it is",
-      "what the invitation is matched to, so a different one will not find it.",
-      "",
-      "If you were not expecting this, you can ignore it. Nothing happens until",
-      "you accept.",
-    ].join("\n"),
-  };
-}
 
 const createInviteSchema = z.object({
   // Trimmed inside the schema, the way createWorkspaceSchema does it in
@@ -83,6 +35,7 @@ invitations.get("/invitations", async (c) => {
     .select("id, email, role, created_at")
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);
@@ -108,6 +61,41 @@ invitations.post("/invitations", async (c) => {
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   const email = parsed.data.email.toLowerCase();
+
+  // Re-inviting an existing member is not harmless: accept_invitation does
+  // `on conflict do nothing` on the membership, but it still switches their
+  // active workspace — so a mistyped address can pull a colleague out of
+  // whatever they were working in.
+  //
+  // No FK links workspace_members to profiles (both reference auth.users
+  // independently), so PostgREST cannot embed one through the other — this is
+  // a plain two-step lookup rather than a single embedded select.
+  //
+  // ilike, not eq: profiles.email is copied verbatim from auth.users.email at
+  // signup and never lowercased, so an exact eq would miss "Bob@Corp.com"
+  // against a stored "bob@corp.com". The address itself is user input, so its
+  // ILIKE metacharacters (%, _) are escaped first — this is the first
+  // ilike/or/filter built from user input in this codebase, and it should
+  // only ever narrow to an exact case-insensitive match, never pattern-match.
+  const escapedEmail = email.replace(/[%_]/g, "\\$&");
+  const { data: matchingProfile } = await db
+    .from("profiles")
+    .select("id")
+    .ilike("email", escapedEmail)
+    .maybeSingle();
+
+  if (matchingProfile) {
+    const { data: existingMembership } = await db
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", matchingProfile.id as string)
+      .maybeSingle();
+
+    if (existingMembership) {
+      return c.json({ error: "they're already in this workspace" }, 409);
+    }
+  }
 
   const { data, error } = await db
     .from("invitations")
@@ -219,13 +207,40 @@ invitations.delete("/invitations/:id", async (c) => {
 // GET /invitations/incoming — pending invites addressed to the caller's email.
 invitations.get("/invitations/incoming", async (c) => {
   const db = c.get("db");
+  const user = c.get("user");
 
-  // RLS select policy already limits rows to invites whose email == caller's JWT
-  // email (or workspaces they admin); filter to pending and join the name.
+  // The address filter is this query's job, not the policy's.
+  //
+  // `invitations_select_admin_or_invitee` (0003) admits a row when the caller
+  // is an admin of the workspace OR the row is addressed to them. That is the
+  // right policy — an admin has to be able to read the pending invitations the
+  // Team page lists. It is the wrong scope for this route, which used to lean
+  // on it entirely and so answered "invitations you can see" when it was asked
+  // "invitations addressed to you". An admin therefore met their own outgoing
+  // invitations in the incoming banner: "You've been invited to <your own
+  // workspace> as <the role you just granted somebody else>". Accepting one
+  // could never work either, because `accept_invitation()` compares the
+  // address against the caller's own — so the banner offered an action that
+  // was guaranteed to be refused.
+  //
+  // Exactly the mistake 0022 spent a header on: a policy answers "may this
+  // person see this row", which stopped being the same question as "is this
+  // row theirs" the moment admins were added to the `or`. The policy is left
+  // alone; the query says which rows it means.
+  //
+  // `.eq` rather than the `ilike` the create path needs: `invitations.email`
+  // is lowercased on insert, while `profiles.email` is copied verbatim from
+  // auth and is not. Lowercasing the caller's own address matches what the
+  // policy already does with `lower(auth.jwt() ->> 'email')`, and an absent
+  // one narrows to nothing rather than widening to everything.
+  const callerEmail = (user.email ?? "").toLowerCase();
+
   const { data, error } = await db
     .from("invitations")
     .select("id, workspace_id, role, created_at, workspaces(name)")
     .eq("status", "pending")
+    .eq("email", callerEmail)
+    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);
@@ -249,12 +264,71 @@ invitations.post("/invitations/:id/accept", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
+  // Read before accepting. `accept_invitation` consumes the row — afterwards it
+  // is no longer pending, and being addressed to the caller is the only reason
+  // row level security lets them see it at all.
+  //
+  // Guarded, because this read exists only to address a courtesy email. Accepting
+  // an invitation is the one action in this file that grants somebody access, and
+  // it must not become conditional on a lookup that nothing else needs.
+  const invite = await Promise.resolve(
+    db.from("invitations").select("invited_by, workspaces(name)").eq("id", id).maybeSingle(),
+  )
+    .then((r) => r.data)
+    .catch(() => null);
+
   const { data, error } = await db.rpc("accept_invitation", { p_invite_id: id });
 
   if (error) {
     return c.json({ error: error.message || "failed to accept invitation" }, 400);
   }
+
+  await notifyInviter(c, invite);
+
   return c.json({ workspaceId: data as string });
 });
+
+/**
+ * Tell the inviter their invitation was taken up.
+ *
+ * Best-effort throughout, and deliberately so: the membership exists whether or
+ * not this note arrives, and a mail failure that propagated would report a join
+ * that really happened as a failure to join. Every unknown — no invitation row,
+ * no `invited_by`, a profile without an address — is a reason to send nothing
+ * rather than to guess a recipient.
+ */
+async function notifyInviter(
+  c: Context<AppEnv>,
+  invite: { invited_by?: unknown; workspaces?: unknown } | null,
+): Promise<void> {
+  try {
+    const joiner = c.get("user").email;
+    const inviterId = invite?.invited_by as string | undefined;
+    if (!joiner || !inviterId) return;
+
+    const { data: inviter } = await c
+      .get("db")
+      .from("profiles")
+      .select("name, email")
+      .eq("id", inviterId)
+      .maybeSingle();
+
+    const inviterEmail = inviter?.email as string | undefined;
+    if (!inviterEmail) return;
+
+    // PostgREST answers an embedded one-to-one as an object and an embedded
+    // list as an array, and which one you get depends on how it reads the
+    // relationship rather than on anything visible here.
+    const ws = invite?.workspaces as { name?: string } | { name?: string }[] | null;
+    const workspaceName = (Array.isArray(ws) ? ws[0]?.name : ws?.name) || "your workspace";
+
+    notify(
+      c,
+      joinedEmail({ inviterEmail, joinerEmail: joiner, workspaceName, appUrl: appUrlOf(c) }),
+    );
+  } catch {
+    // The join succeeded. There is nothing here worth failing it for.
+  }
+}
 
 export { invitations };

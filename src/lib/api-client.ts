@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { errorMessage } from "./api-error";
+import { ApiError, errorMessage } from "./api-error";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
@@ -66,17 +66,22 @@ export type Bundle = {
   createdAt: number;
 };
 
+export type DocumentCitations = {
+  /**
+   * The oldest reply that could be counted, as a timestamp — or null when there
+   * is none. Not "when we started counting": it is read from the data, so it
+   * moves as old conversations are deleted and stays honest either way.
+   */
+  since: number | null;
+  /** Document id to the number of answers citing it. A document with none is absent. */
+  counts: Record<string, number>;
+};
+
 export type IdeaSuggestion = { title: string; detail: string | null };
 
-export class ApiError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
+// Defined in api-error.ts and re-exported here, so every call site keeps its
+// one import. See the note there for why it moved.
+export { ApiError };
 
 // Exposed so callers that need a raw `fetch` (e.g. SSE streaming, which the
 // JSON-only `request()` helper below doesn't support) can attach the same
@@ -84,6 +89,25 @@ export class ApiError extends Error {
 export async function getAccessToken(): Promise<string | undefined> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token;
+}
+
+/**
+ * The filename a `Content-Disposition` asked for, or null.
+ *
+ * Only the RFC 5987 `filename*=UTF-8''...` form, which is what the Worker
+ * sends and the only one that survives a non-ASCII workspace name. A header
+ * that does not match returns null and the caller names the file itself,
+ * rather than this half-parsing something and producing a name with quotes in
+ * it.
+ */
+function filenameFrom(header: string | null): string | null {
+  const match = header?.match(/filename\*=UTF-8''([^;]+)/i);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -244,6 +268,17 @@ export const api = {
   },
   bundles: {
     list: (): Promise<Bundle[]> => request("GET", "/bundles"),
+    /**
+     * How many answers cite each document in the workspace, and how far back
+     * the counting reaches.
+     *
+     * `since` is not decoration. Replies written before citations carried ids
+     * cannot be matched to a document at all, so every count is over a window —
+     * showing the numbers without saying which window turns a sample into a
+     * census. `null` means nothing has been counted yet, which is a different
+     * screen from every document scoring zero.
+     */
+    citations: (): Promise<DocumentCitations> => request("GET", "/bundles/citations"),
     create: (name: string, description?: string): Promise<Bundle> =>
       request("POST", "/bundles", { name, description }),
     remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/bundles/${id}`),
@@ -324,11 +359,56 @@ export const api = {
     }): Promise<Workspace> => request("PATCH", "/workspace", patch),
     setActive: (workspaceId: string): Promise<{ ok: true }> =>
       request("POST", "/workspace/active", { workspaceId }),
+    /**
+     * Downloads the whole workspace as one archive.
+     *
+     * Fetched with the bearer token and handed to the browser as a blob, the
+     * same way a document download works — an `<a href>` cannot carry an
+     * Authorization header, and putting the token in a query string would put
+     * it in every log between here and the Worker.
+     *
+     * The filename comes from the response rather than from here: the server
+     * knows the workspace slug and the date it actually built the archive, and
+     * two files called `export.zip` in a downloads folder are two files nobody
+     * can tell apart.
+     */
+    exportArchive: async (workspaceId: string): Promise<void> => {
+      const token = await getAccessToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/workspaces/${workspaceId}/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        let message = res.statusText;
+        try {
+          message = errorMessage(res.status, await res.json(), res.statusText);
+        } catch {
+          // A failure that is not JSON is still a failure; keep the status text.
+        }
+        throw new ApiError(res.status, message);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filenameFrom(res.headers.get("Content-Disposition")) ?? "covan-export.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
     members: {
       updateRole: (userId: string, role: WorkspaceRole): Promise<{ ok: true }> =>
         request("PATCH", `/workspace/members/${userId}`, { role }),
       remove: (userId: string): Promise<{ ok: true }> =>
         request("DELETE", `/workspace/members/${userId}`),
+      /**
+       * How many live API keys somebody has, for the sentence in the removal
+       * dialog. `null` means the deployment cannot answer — the migration is not
+       * applied yet — which the dialog treats as "say nothing" rather than "none".
+       */
+      keyCount: (userId: string): Promise<{ count: number | null }> =>
+        request("GET", `/workspace/members/${userId}/key-count`),
       /**
        * Leave the workspace you are currently in. `me` is a literal, not a user
        * id — the server resolves the caller from the session, so this cannot be
@@ -368,6 +448,26 @@ export const api = {
     remove: (id: string): Promise<void> => request("DELETE", `/delivery-channels/${id}`),
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
+  workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
+  apiKeys: {
+    list: (): Promise<ApiKeyList> => request("GET", "/api-keys"),
+    /** The only response that carries the key itself. Nothing can return it again. */
+    create: (name: string): Promise<ApiKey & { token: string }> =>
+      request("POST", "/api-keys", { name }),
+    revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/api-keys/${id}`),
+  },
+  account: {
+    /**
+     * Closes the caller's own account. The path carries no id — the server
+     * resolves the person from the session, so this cannot be pointed at
+     * anybody else, the same arrangement `members.leave` uses.
+     *
+     * A 409 is not a failure to retry: it means a workspace would be left
+     * without an admin, and the message names which. Nothing has been deleted
+     * when it arrives.
+     */
+    close: (): Promise<{ ok: true }> => request("DELETE", "/account"),
+  },
   notifications: {
     get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
     update: (patch: Partial<NotificationPreferences>): Promise<NotificationPreferences> =>
@@ -426,16 +526,63 @@ export type QuotaSnapshot = {
   resetsAt: string | null;
 };
 
+export type UsageTotals = {
+  messageCount: number;
+  promptTokens: number;
+  cachedTokens: number;
+  measuredPromptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estCostUsd: number;
+};
+
 export type UsageResponse = {
   agents: AgentUsage[];
   quota: QuotaSnapshot;
-  totals: {
-    messageCount: number;
-    promptTokens: number;
-    cachedTokens: number;
-    measuredPromptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-    estCostUsd: number;
-  };
+  totals: UsageTotals;
 };
+
+/**
+ * One month of the workspace's traffic. No cost: `messages` records no model,
+ * so pricing a month would mean assuming every reply in it came from whatever
+ * the agent is set to today. The per-agent rows carry the money.
+ */
+export type UsageMonth = {
+  /** First day of the month, ISO. Oldest first, so it draws left to right. */
+  month: string;
+  messageCount: number;
+  totalTokens: number;
+  cachedTokens: number;
+};
+
+/**
+ * The workspace's own figures, for an admin. Aggregated by agent and by month
+ * and never by person — that is a property of the functions in `0032`, which
+ * do not select, group by or return a `user_id` at all.
+ *
+ * `available` is false in exactly one situation: the API is deployed and
+ * `0032` has not been applied yet. CI does not run migrations, so that window
+ * is real, and it renders as the section being absent rather than as an error.
+ */
+export type WorkspaceUsageResponse = {
+  available: boolean;
+  agents: AgentUsage[];
+  totals: UsageTotals;
+  months: UsageMonth[];
+};
+
+export type ApiKey = {
+  id: string;
+  name: string;
+  /** The visible head of the key. All of it that anything will ever show again. */
+  prefix: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+};
+
+/**
+ * `available: false` means this deployment cannot sign the token an API key is
+ * exchanged for — no `SUPABASE_JWT_SECRET` — so keys are off rather than empty.
+ * Two different sentences, and the section renders nothing for the first.
+ */
+export type ApiKeyList = { available: boolean; keys: ApiKey[] };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
@@ -29,6 +29,18 @@ function extOf(name: string) {
   return m ? m[1] : "";
 }
 
+/**
+ * The dialog itself owns nothing but whether it is open.
+ *
+ * Everything else lives in `CreateAgentForm` below, which `DialogContent`
+ * mounts on open and unmounts on close — so a fresh dialog is a fresh
+ * component, and there is no state left over to clear. That replaces two
+ * things (#68): an effect that re-seeded the model whenever `open` went true,
+ * with a disabled dependency rule to stop it re-running, and a `reset()` that
+ * had to name all seven pieces of state and be called from both of the two
+ * ways the dialog can close. Either could fall behind a field added later;
+ * neither can now, because neither exists.
+ */
 export function CreateAgentDialog({
   open,
   onOpenChange,
@@ -36,6 +48,16 @@ export function CreateAgentDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <CreateAgentForm onDone={() => onOpenChange(false)} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateAgentForm({ onDone }: { onDone: () => void }) {
   const { createAgent, createBundle, attachBundle, uploadToBundle } = useAgentsStore();
   const navigate = useNavigate();
   // Shares the cache the dashboard already filled, so this costs no request.
@@ -45,30 +67,16 @@ export function CreateAgentDialog({
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState("");
   const [emoji, setEmoji] = useState("🧠");
-  const [model, setModel] = useState<string>(MODELS[0]);
+  // Seeded once, when the dialog opens and this component mounts with it — not
+  // on every change to the workspace default, which would throw away a model
+  // the user had just picked. Templates still set their own; the model is part
+  // of what a template is.
+  const [model, setModel] = useState<string>(startingModel);
   const [persona, setPersona] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
   // Hold the real File objects picked in the Train step. The agent doesn't
   // exist yet, so they can only be uploaded after createAgent returns an id.
   const [docs, setDocs] = useState<{ id: string; name: string; size: number; file: File }[]>([]);
-
-  // Seeded when the dialog opens, not on every change to the workspace default:
-  // re-running mid-session would throw away a model the user had just picked.
-  // Templates still set their own — the model is part of what a template is.
-  useEffect(() => {
-    if (open) setModel(startingModel);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  const reset = () => {
-    setStep(1);
-    setName("");
-    setEmoji("🧠");
-    setModel(startingModel);
-    setPersona("");
-    setTemplateId(null);
-    setDocs([]);
-  };
 
   const applyTemplate = (id: string) => {
     const t = PERSONA_TEMPLATES.find((x) => x.id === id);
@@ -144,8 +152,7 @@ export function CreateAgentDialog({
       } else {
         toast.success(`${name.trim()} is live for your team`);
       }
-      reset();
-      onOpenChange(false);
+      onDone();
       navigate({ to: "/agents/$agentId", params: { agentId: agent.id } });
     } catch {
       toast.error("Couldn't create agent");
@@ -155,185 +162,177 @@ export function CreateAgentDialog({
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        onOpenChange(v);
-        if (!v) reset();
-      }}
-    >
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Create agent</DialogTitle>
-          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-            <StepDot n={1} active={step === 1} done={step > 1} label="Configure" />
-            <div className="h-px w-6 bg-border" />
-            <StepDot n={2} active={step === 2} done={false} label="Train" />
-          </div>
-        </DialogHeader>
+    <>
+      <DialogHeader>
+        <DialogTitle>Create agent</DialogTitle>
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <StepDot n={1} active={step === 1} done={step > 1} label="Configure" />
+          <div className="h-px w-6 bg-border" />
+          <StepDot n={2} active={step === 2} done={false} label="Train" />
+        </div>
+      </DialogHeader>
 
-        {step === 1 ? (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label className="flex items-center gap-1.5 text-xs">
-                <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-                Start from a template
-              </Label>
-              <div className="flex flex-wrap gap-1.5">
-                {PERSONA_TEMPLATES.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => applyTemplate(t.id)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium transition-colors duration-200",
-                      // Selection is a filled ink chip. Amber marks state that
-                      // is live in the product, not a transient UI selection.
-                      templateId === t.id
-                        ? "border-transparent bg-primary text-primary-foreground"
-                        : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-                    )}
-                  >
-                    <span className="text-sm leading-none">{t.emoji}</span>
-                    {t.label}
-                  </button>
-                ))}
-              </div>
+      {step === 1 ? (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5 text-xs">
+              <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+              Start from a template
+            </Label>
+            <div className="flex flex-wrap gap-1.5">
+              {PERSONA_TEMPLATES.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => applyTemplate(t.id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium transition-colors duration-200",
+                    // Selection is a filled ink chip. Amber marks state that
+                    // is live in the product, not a transient UI selection.
+                    templateId === t.id
+                      ? "border-transparent bg-primary text-primary-foreground"
+                      : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+                  )}
+                >
+                  <span className="text-sm leading-none">{t.emoji}</span>
+                  {t.label}
+                </button>
+              ))}
             </div>
-            <div className="grid grid-cols-[auto_1fr] gap-3">
-              <div className="flex flex-col gap-2">
-                <Label className="text-xs">Icon</Label>
-                <Select value={emoji} onValueChange={setEmoji}>
-                  <SelectTrigger className="w-16 text-lg">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EMOJIS.map((e) => (
-                      <SelectItem key={e} value={e} className="text-lg">
-                        {e}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label className="text-xs" htmlFor="agent-name">
-                  Name
-                </Label>
-                <Input
-                  id="agent-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Growth Copywriter"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs">Model</Label>
-              <Select value={model} onValueChange={setModel}>
-                <SelectTrigger>
+          </div>
+          <div className="grid grid-cols-[auto_1fr] gap-3">
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs">Icon</Label>
+              <Select value={emoji} onValueChange={setEmoji}>
+                <SelectTrigger className="w-16 text-lg">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {MODELS.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
+                  {EMOJIS.map((e) => (
+                    <SelectItem key={e} value={e} className="text-lg">
+                      {e}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <Label className="text-xs" htmlFor="persona">
-                  Persona / system prompt
-                </Label>
-                <GeneratePersonaButton
-                  name={name}
-                  model={model}
-                  hasPersona={persona.trim().length > 0}
-                  onGenerated={(p) => {
-                    setPersona(p);
-                    setTemplateId(null);
-                  }}
-                />
-              </div>
-              <Textarea
-                id="persona"
-                value={persona}
-                onChange={(e) => setPersona(e.target.value)}
-                placeholder="You are a senior…"
-                rows={5}
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs" htmlFor="agent-name">
+                Name
+              </Label>
+              <Input
+                id="agent-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Growth Copywriter"
               />
             </div>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <label
-              className={cn(
-                "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border py-10 text-center transition-colors hover:bg-accent/40",
-              )}
-            >
-              <Upload className="h-6 w-6 text-muted-foreground" />
-              <div className="text-sm font-medium">Drop files or click to upload</div>
-              <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
-              <input
-                type="file"
-                multiple
-                className="hidden"
-                accept=".md,.markdown,.txt,.csv,.json,.pdf"
-                onChange={(e) => handleFiles(e.target.files)}
-              />
-            </label>
-            {docs.length > 0 && (
-              <div className="space-y-1">
-                <Label className="text-xs">Knowledge base ({docs.length})</Label>
-                <div className="max-h-48 space-y-1 overflow-y-auto">
-                  {docs.map((d) => (
-                    <div
-                      key={d.id}
-                      className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm"
-                    >
-                      <FileText className="h-4 w-4 text-muted-foreground" />
-                      <span className="flex-1 truncate">{d.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {(d.size / 1024).toFixed(0)} KB
-                      </span>
-                      <button
-                        onClick={() => setDocs((p) => p.filter((x) => x.id !== d.id))}
-                        className="text-muted-foreground hover:text-destructive"
-                        aria-label="Remove"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+          <div className="space-y-2">
+            <Label className="text-xs">Model</Label>
+            <Select value={model} onValueChange={setModel}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MODELS.map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {m}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        )}
-
-        <div className="mt-4 flex justify-between">
-          {step === 2 ? (
-            <Button variant="ghost" onClick={() => setStep(1)}>
-              <ChevronLeft className="h-4 w-4" /> Back
-            </Button>
-          ) : (
-            <div />
-          )}
-          {step === 1 ? (
-            <Button onClick={() => setStep(2)} disabled={!name.trim()}>
-              Next <ChevronRight className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button onClick={save} disabled={saving}>
-              {saving ? "Publishing…" : "Save & publish"}
-            </Button>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs" htmlFor="persona">
+                Persona / system prompt
+              </Label>
+              <GeneratePersonaButton
+                name={name}
+                model={model}
+                hasPersona={persona.trim().length > 0}
+                onGenerated={(p) => {
+                  setPersona(p);
+                  setTemplateId(null);
+                }}
+              />
+            </div>
+            <Textarea
+              id="persona"
+              value={persona}
+              onChange={(e) => setPersona(e.target.value)}
+              placeholder="You are a senior…"
+              rows={5}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <label
+            className={cn(
+              "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border py-10 text-center transition-colors hover:bg-accent/40",
+            )}
+          >
+            <Upload className="h-6 w-6 text-muted-foreground" />
+            <div className="text-sm font-medium">Drop files or click to upload</div>
+            <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              accept=".md,.markdown,.txt,.csv,.json,.pdf"
+              onChange={(e) => handleFiles(e.target.files)}
+            />
+          </label>
+          {docs.length > 0 && (
+            <div className="space-y-1">
+              <Label className="text-xs">Knowledge base ({docs.length})</Label>
+              <div className="max-h-48 space-y-1 overflow-y-auto">
+                {docs.map((d) => (
+                  <div
+                    key={d.id}
+                    className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm"
+                  >
+                    <FileText className="h-4 w-4 text-muted-foreground" />
+                    <span className="flex-1 truncate">{d.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {(d.size / 1024).toFixed(0)} KB
+                    </span>
+                    <button
+                      onClick={() => setDocs((p) => p.filter((x) => x.id !== d.id))}
+                      className="text-muted-foreground hover:text-destructive"
+                      aria-label="Remove"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+      )}
+
+      <div className="mt-4 flex justify-between">
+        {step === 2 ? (
+          <Button variant="ghost" onClick={() => setStep(1)}>
+            <ChevronLeft className="h-4 w-4" /> Back
+          </Button>
+        ) : (
+          <div />
+        )}
+        {step === 1 ? (
+          <Button onClick={() => setStep(2)} disabled={!name.trim()}>
+            Next <ChevronRight className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button onClick={save} disabled={saving}>
+            {saving ? "Publishing…" : "Save & publish"}
+          </Button>
+        )}
+      </div>
+    </>
   );
 }
 

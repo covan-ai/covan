@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { workspace } from "./workspace";
 import {
@@ -43,12 +43,40 @@ function appWith(spec: FakeDbSpec) {
   return { app, ...fake };
 }
 
-const json = (app: Hono<AppEnv>, method: string, path: string, body?: unknown) =>
-  app.request(path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+const json = (
+  app: Hono<AppEnv>,
+  method: string,
+  path: string,
+  body?: unknown,
+  env?: Record<string, string>,
+) =>
+  app.request(
+    path,
+    {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    },
+    // Hono's third argument is the Bindings object, and leaving it undefined is
+    // what a deployment with no mail configured looks like from in here.
+    env,
+  );
+
+const MAIL_ENV = {
+  RESEND_API_KEY: "re_test",
+  RESEND_FROM: "Covan <hello@covan.test>",
+  ALLOWED_ORIGIN: "https://covan.test",
+};
+
+/** What reached Resend. These sends are deferred, so there is no return value. */
+function captureSends() {
+  const calls: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation((async (_i: unknown, init?: RequestInit) => {
+    calls.push(JSON.parse(String(init?.body)));
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch);
+  return calls;
+}
 
 /** A caller whose profile points nowhere and who belongs to no workspace. */
 const NO_WORKSPACE = {
@@ -353,6 +381,40 @@ describe("POST /workspace/active", () => {
 });
 
 describe("PATCH /workspace/members/:userId", () => {
+  /**
+   * A demotion to viewer is the quietest change this API makes. The person keeps
+   * every screen they had and simply cannot write on them any more — a save that
+   * refuses with nothing to explain it. The note says what the role means rather
+   * than only naming it, because "you are now a viewer" is not information to
+   * somebody who has never read the docs.
+   */
+  it("tells the member what their new role lets them do", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          update: () => ({ data: [{ user_id: "user-2", role: "viewer" }], error: null }),
+        },
+        workspaces: { select: () => ({ data: { name: "Acme" }, error: null }) },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { email: "deniz@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+    const sent = captureSends();
+
+    const res = await json(app, "PATCH", "/workspace/members/user-2", { role: "viewer" }, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toEqual(["deniz@example.com"]);
+    // Not just the word "viewer": the sentence that says chatting still works.
+    expect(String(sent[0].text)).toMatch(/chat with every agent/);
+  });
+
   it("changes a role within the caller's own workspace", async () => {
     let ctx: QueryContext | undefined;
     const { app } = appWith({
@@ -397,16 +459,18 @@ describe("PATCH /workspace/members/:userId", () => {
     });
   });
 
-  it("passes the last-admin trigger's message back to the caller", async () => {
-    // Demoting the only admin raises in Postgres. The message explains why, so
-    // it should reach the person who tried.
+  it("answers in its own words when the last-admin trigger fires, not the driver's", async () => {
+    // Demoting the only admin raises in Postgres. The trigger's own sentence is
+    // fine to read, but reflecting driver messages verbatim is what this route
+    // no longer does for any error — see "member routes do not echo the
+    // database" below — so this one gets the same static answer as the rest.
     const { app } = appWith({
       tables: {
         workspace_members: {
           select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
           update: () => ({
             data: null,
-            error: { message: "cannot remove the last admin of a workspace" },
+            error: { code: "P0001", message: "cannot remove the last admin of a workspace" },
           }),
         },
       },
@@ -415,9 +479,7 @@ describe("PATCH /workspace/members/:userId", () => {
     const res = await json(app, "PATCH", "/workspace/members/user-1", { role: "member" });
 
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toEqual({
-      error: "cannot remove the last admin of a workspace",
-    });
+    await expect(res.json()).resolves.toEqual({ error: "failed to update member" });
   });
 
   it.each([
@@ -455,6 +517,71 @@ describe("DELETE /workspace/members/:userId", () => {
     ]);
   });
 
+  /**
+   * Losing access is not self-announcing.
+   *
+   * Somebody removed from a workspace finds out by opening Covan and seeing
+   * their colleagues' agents gone, or by a question that used to work coming
+   * back empty. The same is true of a demotion to viewer, which turns every
+   * write into a refusal with no visible cause. Both are the product changing
+   * what a person may do without telling them, which is the failure this
+   * codebase already treats as worth fixing.
+   *
+   * The profile is read BEFORE the delete, because afterwards they are no longer
+   * a fellow member and the row is no longer ours to read.
+   */
+  it("tells the person they were removed", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({ data: [{ user_id: "user-2" }], error: null }),
+        },
+        workspaces: { select: () => ({ data: { name: "Acme" }, error: null }) },
+        profiles: (() => {
+          const answer = (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { email: "deniz@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null };
+          return { select: answer };
+        })(),
+      },
+    });
+    const sent = captureSends();
+
+    const res = await json(app, "DELETE", "/workspace/members/user-2", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toEqual(["deniz@example.com"]);
+    expect(String(sent[0].subject)).toContain("Acme");
+  });
+
+  // Nobody was removed, so there is nobody to tell. A 403 that still sent a
+  // "you were removed" note would be the worst possible combination.
+  it("sends nothing when the removal was refused", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({ data: [], error: null }),
+        },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { email: "deniz@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+    const sent = captureSends();
+
+    const res = await json(app, "DELETE", "/workspace/members/user-2", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(403);
+    expect(sent).toEqual([]);
+  });
+
   it("answers 403 rather than pretending to have removed someone", async () => {
     const { app } = appWith({
       tables: {
@@ -472,6 +599,68 @@ describe("DELETE /workspace/members/:userId", () => {
     const { app } = appWith({ tables: NO_WORKSPACE });
 
     expect((await json(app, "DELETE", "/workspace/members/user-2")).status).toBe(404);
+  });
+});
+
+describe("member routes do not echo the database", () => {
+  // 22P02 is Postgres's "invalid input syntax" — reachable here because the
+  // path segment goes straight into an `.eq("user_id", ...)` with no format
+  // check in front of it. The driver's own sentence for it ("invalid input
+  // syntax for type uuid: \"notauuid\"") is harmless on its own, but it is the
+  // same code path that would otherwise echo a constraint name for any
+  // constraint added later — see the file-level test above.
+  it("returns our own sentence for a malformed member id on update", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          update: () => ({
+            data: null,
+            error: { code: "22P02", message: 'invalid input syntax for type uuid: "notauuid"' },
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "PATCH", "/workspace/members/notauuid", { role: "member" });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid member id" });
+  });
+
+  it("returns our own sentence for a malformed member id on delete", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({
+            data: null,
+            error: { code: "22P02", message: 'invalid input syntax for type uuid: "notauuid"' },
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "DELETE", "/workspace/members/notauuid");
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid member id" });
+  });
+
+  it("still says something useful for an error it does not recognise", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          delete: () => ({ data: null, error: { code: "XX000", message: "internal detail" } }),
+        },
+      },
+    });
+
+    const res = await json(app, "DELETE", "/workspace/members/user-2");
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "failed to remove member" });
   });
 });
 
@@ -567,5 +756,81 @@ describe("DELETE /workspace/members/me", () => {
     const { app } = appWith({ tables: NO_WORKSPACE });
 
     expect((await json(app, "DELETE", "/workspace/members/me")).status).toBe(404);
+  });
+});
+
+/**
+ * The one number an admin can learn about somebody else's credentials.
+ *
+ * `api_keys` is own-keys-only in 0033, deliberately and with the header to say
+ * why. This route is the exception carved for the removal dialog, and it is
+ * carved in the database rather than here — so what these tests are about is
+ * that the route does not add a second opinion on top of a definer function
+ * that already refused, and does not leak anything but the count.
+ */
+describe("GET /workspace/members/:userId/key-count", () => {
+  const rpcReturning = (result: { data: unknown; error: unknown }) => ({
+    workspace_api_key_count: () => result as never,
+  });
+
+  it("answers with the count and nothing that identifies a key", async () => {
+    const { app } = appWith({ rpc: rpcReturning({ data: 3, error: null }) });
+
+    const res = await json(app, "GET", "/workspace/members/user-2/key-count");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ count: 3 });
+  });
+
+  it("asks about the caller's own workspace, never one named in the URL", async () => {
+    let args: Record<string, unknown> = {};
+    const { app } = appWith({
+      rpc: {
+        workspace_api_key_count: (received) => {
+          args = received;
+          return { data: 0, error: null } as never;
+        },
+      },
+    });
+
+    await json(app, "GET", "/workspace/members/user-2/key-count");
+
+    expect(args.p_workspace_id).toBe(WORKSPACE);
+    expect(args.p_user_id).toBe("user-2");
+  });
+
+  it("passes the function's own refusal through as a 403", async () => {
+    // 0033 raises rather than answering zero, precisely so this is not
+    // indistinguishable from somebody who has no keys.
+    const { app } = appWith({
+      rpc: rpcReturning({ data: null, error: { code: "42501", message: "not an admin" } }),
+    });
+
+    expect((await json(app, "GET", "/workspace/members/user-2/key-count")).status).toBe(403);
+  });
+
+  it.each(["PGRST202", "42883"])(
+    "answers a null count while the migration is unapplied (%s)",
+    async (code) => {
+      // CI does not apply migrations. A count the dialog cannot get is a
+      // sentence it leaves out, not an error it puts in front of somebody
+      // trying to remove a member.
+      const { app } = appWith({
+        rpc: rpcReturning({ data: null, error: { code, message: "no such function" } }),
+      });
+
+      const res = await json(app, "GET", "/workspace/members/user-2/key-count");
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ count: null });
+    },
+  );
+
+  it("still fails loudly on anything else", async () => {
+    const { app } = appWith({
+      rpc: rpcReturning({ data: null, error: { code: "57014", message: "canceling statement" } }),
+    });
+
+    expect((await json(app, "GET", "/workspace/members/user-2/key-count")).status).toBe(500);
   });
 });

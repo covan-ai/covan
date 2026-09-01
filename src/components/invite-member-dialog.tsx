@@ -14,6 +14,7 @@ import {
 import { api, ApiError } from "@/lib/api-client";
 import { ROLE_SUMMARY, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles";
 import { invitationNotice } from "@/lib/invitation-notice";
+import { copyInviteText } from "@/lib/invite-text";
 import { toast } from "sonner";
 
 export function InviteMemberDialog({
@@ -49,7 +50,22 @@ export function InviteMemberDialog({
         emailed: invite.emailed ? 1 : 0,
         failed: [],
       });
-      toast[notice.tone](notice.message);
+      // Nothing went out, so "let them know" is now a job with a tool attached.
+      // Twelve seconds rather than the default four: an action nobody has time
+      // to read is the same as no action. The durable copy is on the Team page,
+      // one button per waiting invitation, for whenever this toast is gone.
+      toast[notice.tone](
+        notice.message,
+        invite.emailed
+          ? undefined
+          : {
+              duration: 12000,
+              action: {
+                label: "Copy invite text",
+                onClick: () => copyInviteText([invite.email]),
+              },
+            },
+      );
       reset();
       onOpenChange(false);
     } catch (e) {

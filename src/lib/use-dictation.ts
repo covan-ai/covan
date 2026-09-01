@@ -87,8 +87,18 @@ export function useDictation(onText: (text: string) => void): Dictation {
   // The composer re-renders on every keystroke, so the callback it passes is a
   // new function each time. Held in a ref, the recorder's handlers can be set up
   // once and still call the current one.
+  //
+  // The assignment is in an effect rather than in the render body, where it used
+  // to be. Writing a ref during render makes the render impure: React may run it
+  // twice, or throw it away and run it again, and a ref written on a render that
+  // was discarded is a value nothing put there. It is harmless here today — the
+  // ref is only read from a MediaRecorder callback, long after any render has
+  // settled — and it is still the sort of thing that is only harmless until the
+  // hook is used somewhere else. `react-hooks/refs` reports it in v7.
   const onTextRef = useRef(onText);
-  onTextRef.current = onText;
+  useEffect(() => {
+    onTextRef.current = onText;
+  }, [onText]);
 
   const release = useCallback(() => {
     if (tickRef.current !== null) {

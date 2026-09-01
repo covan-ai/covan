@@ -27,6 +27,7 @@ export const DOC_SLUGS = [
   "knowledge",
   "routines",
   "team",
+  "api",
   "self-hosting",
   "architecture",
 ] as const;

@@ -123,3 +123,71 @@ describe("the usage figures", () => {
     expect(Number(row.prompt_tokens)).toBe(0);
   });
 });
+
+/**
+ * The other direction, added with `0032`: an admin asking what the whole
+ * workspace costs.
+ *
+ * `workspace_usage_all` is SECURITY DEFINER because it has to be — an admin's
+ * own view of `chat_sessions` deliberately excludes their colleagues' private
+ * sessions, which is exactly the traffic being asked about. A definer function
+ * that reads past RLS is only as safe as the check it makes for itself, and
+ * that check is the thing worth a live database rather than a fake one.
+ */
+describe("the workspace-wide figures", () => {
+  const bothPeople = OWNERS_TOKENS + COLLEAGUES_TOKENS;
+
+  async function allFor(user: TestUser) {
+    return user.db.rpc("workspace_usage_all", { p_workspace_id: owner.workspaceId });
+  }
+
+  it("count everybody's conversations for an admin, private ones included", async () => {
+    const { data, error } = await allFor(owner);
+    expect(error, error?.message).toBeNull();
+
+    const row = (data ?? []).find((r: { agent_id: string }) => r.agent_id === seeded.agentId);
+    // The colleague's session is shared and the owner's is private. The point
+    // of the definer function is that neither of those facts changes the total.
+    expect(Number(row.prompt_tokens)).toBe(bothPeople);
+  });
+
+  it("refuse a member outright rather than quietly returning their own", async () => {
+    const { error } = await allFor(colleague);
+
+    // A silent empty result is indistinguishable from a workspace that has
+    // never sent a message, and the route has to tell 403 from "nothing yet".
+    expect(error).not.toBeNull();
+    expect(error?.code).toBe("42501");
+  });
+
+  it("say nothing about who spent it", async () => {
+    const { data } = await allFor(owner);
+
+    // Not a rule the interface is asked to follow: there is no user_id in the
+    // function's return type, so no screen can break this by choosing to.
+    expect(Object.keys((data ?? [])[0] ?? {})).not.toContain("user_id");
+  });
+
+  it("bucket the same total by month for an admin, and refuse a member the same way", async () => {
+    const { data, error } = await owner.db.rpc("workspace_usage_monthly", {
+      p_workspace_id: owner.workspaceId,
+      p_months: 6,
+    });
+    expect(error, error?.message).toBeNull();
+
+    // Six buckets whether or not anybody used them — a month that closes up
+    // silently makes a fall in spend look like a flat line.
+    expect(data).toHaveLength(6);
+    const total = (data ?? []).reduce(
+      (n: number, m: { prompt_tokens: number }) => n + Number(m.prompt_tokens),
+      0,
+    );
+    expect(total).toBe(bothPeople);
+
+    const refused = await colleague.db.rpc("workspace_usage_monthly", {
+      p_workspace_id: owner.workspaceId,
+      p_months: 6,
+    });
+    expect(refused.error?.code).toBe("42501");
+  });
+});

@@ -103,6 +103,24 @@ describe("a viewer changes nothing the workspace shares", () => {
     expect(await stillThere("knowledge_bundles", seeded.bundleId)).toBe(true);
   });
 
+  it("cannot delete a document", async () => {
+    const { error } = await viewer.db
+      .from("documents")
+      .delete()
+      .eq("id", seeded.documentId)
+      .select("id");
+
+    // RLS refuses by matching nothing, which is why the route has to read the
+    // deleted rows back rather than trusting the absence of an error.
+    expect(error).toBeNull();
+
+    const { data } = await serviceClient()
+      .from("documents")
+      .select("id")
+      .eq("id", seeded.documentId);
+    expect(data).toHaveLength(1);
+  });
+
   it("cannot attach knowledge to an agent", async () => {
     // Changing what an agent knows without editing its row — the case that is
     // easy to miss, because it is a write to a join table rather than to
@@ -173,5 +191,123 @@ describe("a viewer still uses what is there", () => {
       created_by: viewer.id,
     });
     expect(ideaError, "a viewer cannot record an idea").toBeNull();
+  });
+});
+
+/**
+ * ideas_update_session_visible specified only USING, which Postgres reuses as
+ * the WITH CHECK — undoing the INSERT policy's created_by = auth.uid() pin.
+ * Neither the update nor the delete policy called can_write_in_workspace, so
+ * unlike every other shared table 0021 touched, a viewer could edit and delete
+ * someone else's card. seeded.sessionId is the 'shared' session seedWorkspace
+ * built for `owner`, so both viewer and member can see it.
+ */
+describe("ideas: your own card is yours to change, not anyone's", () => {
+  it("cannot delete another member's idea card", async () => {
+    const { data: card } = await owner.db
+      .from("ideas")
+      .insert({
+        session_id: seeded.sessionId,
+        workspace_id: owner.workspaceId,
+        title: "owner's card",
+        created_by: owner.id,
+      })
+      .select("id")
+      .single();
+
+    await viewer.db.from("ideas").delete().eq("id", card!.id);
+
+    // Read back through the service role, so RLS masking the row cannot be
+    // mistaken for the row having been deleted.
+    const { data } = await serviceClient().from("ideas").select("id").eq("id", card!.id);
+    expect(data).toHaveLength(1);
+  });
+
+  it("cannot reattribute a card to somebody else", async () => {
+    const { data: card } = await member.db
+      .from("ideas")
+      .insert({
+        session_id: seeded.sessionId,
+        workspace_id: owner.workspaceId,
+        title: "mine",
+        created_by: member.id,
+      })
+      .select("id")
+      .single();
+
+    await member.db.from("ideas").update({ created_by: owner.id }).eq("id", card!.id);
+
+    const { data } = await serviceClient()
+      .from("ideas")
+      .select("created_by")
+      .eq("id", card!.id)
+      .single();
+    expect(data!.created_by).toBe(member.id);
+  });
+});
+
+/**
+ * 0028's WITH CHECK pins workspace_id to the parent session's, but that
+ * subquery runs against the NEW row — after a re-parent the new session is
+ * the parent, so the check passes against the very row that just moved.
+ * ideas.session_id itself was left unpinned by any policy. 0030 closes it
+ * with a trigger, since a WITH CHECK predicate never sees the old row and so
+ * cannot compare the new session_id against it.
+ */
+describe("ideas: a card cannot be moved to a different board", () => {
+  it("refuses to re-parent a card to another session, but a normal edit still works", async () => {
+    const { data: otherSession } = await owner.db
+      .from("chat_sessions")
+      .insert({
+        agent_id: seeded.agentId,
+        user_id: owner.id,
+        workspace_id: owner.workspaceId,
+        visibility: "shared",
+        title: "A different board",
+      })
+      .select("id")
+      .single();
+
+    const { data: card } = await member.db
+      .from("ideas")
+      .insert({
+        session_id: seeded.sessionId,
+        workspace_id: owner.workspaceId,
+        title: "stay put",
+        created_by: member.id,
+      })
+      .select("id")
+      .single();
+
+    const { error: moveError } = await member.db
+      .from("ideas")
+      .update({ session_id: otherSession!.id })
+      .eq("id", card!.id);
+    expect(moveError, "a card was re-parented to a different session").not.toBeNull();
+
+    // Read back through the service role: RLS and the trigger refuse in
+    // different ways, and an error alone does not prove the column held.
+    const { data: afterMove } = await serviceClient()
+      .from("ideas")
+      .select("session_id")
+      .eq("id", card!.id)
+      .single();
+    expect(afterMove!.session_id).toBe(seeded.sessionId);
+
+    // The trigger's `is distinct from` must not catch an ordinary edit that
+    // leaves session_id untouched.
+    const { error: editError } = await member.db
+      .from("ideas")
+      .update({ title: "still stays put" })
+      .eq("id", card!.id);
+    expect(editError, "a normal card edit was blocked").toBeNull();
+
+    const { data: afterEdit } = await serviceClient()
+      .from("ideas")
+      .select("title, session_id")
+      .eq("id", card!.id)
+      .single();
+    expect(afterEdit!.title).toBe("still stays put");
+    expect(afterEdit!.session_id).toBe(seeded.sessionId);
   });
 });

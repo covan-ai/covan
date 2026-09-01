@@ -71,6 +71,13 @@ describe("fromCron", () => {
     expect(fromCron("60 9 * * *")).toBeNull();
     expect(fromCron("0 24 * * *")).toBeNull();
   });
+
+  it("cannot represent a minute step above 59, which is why the picker must not build one", () => {
+    expect(fromCron("*/60 * * * *")).toBeNull();
+    expect(fromCron("*/90 * * * *")).toBeNull();
+    // 59 is the largest one that round-trips.
+    expect(fromCron("*/59 * * * *")).toEqual({ mode: "minutes", every: 59 });
+  });
 });
 
 describe("MIN_MINUTES", () => {

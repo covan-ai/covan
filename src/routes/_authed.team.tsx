@@ -29,7 +29,10 @@ import { LogOut, MailPlus, Trash2, UserPlus } from "lucide-react";
 import { api, ApiError } from "@/lib/api-client";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { canWriteAsRole, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles";
+import { copyInviteText } from "@/lib/invite-text";
+import { formatRelative } from "@/lib/relative-time";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
+import { LiveKeyWarning } from "@/components/live-key-warning";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/team")({
@@ -246,8 +249,15 @@ function TeamPage() {
                                 <AlertDialogTitle>Remove member?</AlertDialogTitle>
                                 <AlertDialogDescription>
                                   {m.name ?? m.email ?? "This member"} will lose access to this
-                                  workspace and its agents. You can re-invite them later.
+                                  workspace, its agents, and their own conversations here —
+                                  including what the agents answered from your knowledge. Nothing is
+                                  deleted: invite them back and it all returns.
                                 </AlertDialogDescription>
+                                {/* The exception to "nothing is deleted", and the
+                                    one nobody expects. A key acts as its owner, so
+                                    it stops working the moment they do — and a
+                                    script running on one just goes quiet. */}
+                                <LiveKeyWarning userId={m.id} />
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -285,7 +295,7 @@ function TeamPage() {
                                   </AlertDialogTitle>
                                   <AlertDialogDescription>
                                     {cannotLeave ??
-                                      "You will lose access to this workspace's agents, knowledge and shared conversations. What you made stays here, and an admin can invite you back."}
+                                      "You will lose access to this workspace's agents and knowledge, and to the conversations you had with them here — your own private ones included. Nothing is deleted: what you made stays, and it all comes back if an admin invites you back."}
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
@@ -340,10 +350,26 @@ function TeamPage() {
                         </span>
                       }
                       title={inv.email}
-                      meta="Invitation sent"
+                      // Not "Invitation sent". `PendingInvitation.emailed` is
+                      // only on the invitation you just created — nothing
+                      // stores it, so this list cannot answer whether mail
+                      // went anywhere, and with no RESEND_API_KEY the answer
+                      // is no. What the row does know is that it is waiting.
+                      meta={`Invited ${formatRelative(inv.createdAt)}`}
                       trailing={
                         <span className="flex shrink-0 items-center gap-2">
                           <RoleChip role={inv.role} />
+                          {/* The durable half of "let them know" — unconditional,
+                              because a nudge is a normal thing to send even when
+                              the email did go out, and this list could not tell
+                              the difference anyway. */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyInviteText([inv.email])}
+                          >
+                            Copy invite
+                          </Button>
                           <Button variant="ghost" size="sm" onClick={() => revokeInvite(inv.id)}>
                             Revoke
                           </Button>

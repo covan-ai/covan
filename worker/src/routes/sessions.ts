@@ -126,6 +126,15 @@ sessions.delete("/sessions/:id", async (c) => {
 });
 
 // GET /sessions/:id/messages
+//
+// Filtered on the session id alone, and that is the whole of it: what a caller
+// may read is `messages_select_session_visible`, which since 0031 defers to
+// `session_is_visible` — membership of the session's workspace first, then owner
+// or shared. Adding a workspace scope here would be a second query guarding
+// something the database already refuses, and it is the policy people would go
+// on trusting anyway. It was not always so: the same route with the same
+// filter handed an ex-member their old transcripts until 0031 closed the owner
+// branch above it.
 sessions.get("/sessions/:id/messages", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");

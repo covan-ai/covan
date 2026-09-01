@@ -31,6 +31,7 @@ import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
+import { SourceChip } from "@/components/source-chip";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
   component: ChatTab,
@@ -59,6 +60,15 @@ function ChatTab() {
   // Named after a real file once one is indexed, so the first tap on a fresh
   // agent returns an answer with a citation on it rather than a general one.
   const starters = useMemo(() => startersFor(agent.documents), [agent.documents]);
+
+  // Citations carry a document id; the age lives on the agent's document list,
+  // which this screen already has. Resolved by id rather than by name on
+  // purpose — two documents can share a name, and a chip that dated an answer
+  // from the wrong file would be worse than one that says nothing.
+  const uploadedAt = useMemo(
+    () => new Map(agent.documents.map((d) => [d.id, d.createdAt])),
+    [agent.documents],
+  );
 
   // Only the hosted service meters anything; self-hosted installs answer with
   // `limit: null` and nothing below renders. Refetched by the invalidation that
@@ -369,6 +379,10 @@ function ChatTab() {
     if (!replyingIn) return;
     const sessionId = replyingIn;
     streamAbort.current?.abort();
+    // Cleared here as well as in the stream's own finally: that runs a
+    // microtask later, and a resend started in between would find a stale
+    // handle and return without doing anything.
+    streamAbort.current = null;
     setThinking(false);
     setReplyingIn(null);
     if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);
@@ -425,6 +439,15 @@ function ChatTab() {
     } catch {
       /* ignore */
     }
+    // The last of the eleven in #68, and the one that stays. The other ten were
+    // effects copying something into state that could have been read or derived
+    // instead; this one sends a message. `submit` sets state on the way — that
+    // is what the rule sees — but the state is a consequence of the send, not
+    // the point of the effect, and there is nothing to derive it from: the
+    // draft is a handoff from another route, it is deleted as it is read, and
+    // it can only go once the session is loaded and still empty. Doing it
+    // during render would send a message twice under StrictMode.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void submit(draft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, messages.length, busy]);
@@ -703,15 +726,12 @@ function ChatTab() {
                       {sources.length > 0 && (
                         <div className="mt-3 flex flex-wrap items-center gap-1.5">
                           <span className="text-xs text-muted-foreground">Sources</span>
-                          {sources.map((name) => (
-                            <span
-                              key={name}
-                              title={name}
-                              className="inline-flex max-w-[180px] items-center gap-1.5 rounded-md border border-hairline bg-popover px-2 py-1 text-[11px] text-muted-foreground"
-                            >
-                              <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-                              <span className="truncate">{name}</span>
-                            </span>
+                          {sources.map((source, i) => (
+                            <SourceChip
+                              key={source.id ?? `${source.name}:${i}`}
+                              source={source}
+                              uploadedAt={source.id ? uploadedAt.get(source.id) : undefined}
+                            />
                           ))}
                         </div>
                       )}

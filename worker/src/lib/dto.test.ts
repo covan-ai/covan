@@ -3,40 +3,94 @@ import { mapDocument, mapMessage, mapAgent, mapChatSession, mapIdea, mapRoutine 
 
 describe("mapDocument", () => {
   it("marks a document indexed when it has embedded chunks", () => {
-    const d = mapDocument({ id: "d1", name: "a.md", size: 20, document_chunks: [{ count: 3 }] });
+    const d = mapDocument({
+      id: "d1",
+      name: "a.md",
+      size: 20,
+      created_at: "2026-01-05T00:00:00Z",
+      document_chunks: [{ count: 3 }],
+    });
     expect(d).toMatchObject({ id: "d1", name: "a.md", size: 20, chunkCount: 3, indexed: true });
   });
 
   it("marks a document not indexed when it has zero chunks", () => {
     expect(
-      mapDocument({ id: "d2", name: "b.md", size: 5, document_chunks: [{ count: 0 }] }),
+      mapDocument({
+        id: "d2",
+        name: "b.md",
+        size: 5,
+        created_at: "2026-01-05T00:00:00Z",
+        document_chunks: [{ count: 0 }],
+      }),
     ).toMatchObject({ chunkCount: 0, indexed: false });
-    expect(mapDocument({ id: "d3", name: "c.md", size: 5, document_chunks: [] })).toMatchObject({
+    expect(
+      mapDocument({
+        id: "d3",
+        name: "c.md",
+        size: 5,
+        created_at: "2026-01-05T00:00:00Z",
+        document_chunks: [],
+      }),
+    ).toMatchObject({
       chunkCount: 0,
       indexed: false,
     });
-    expect(mapDocument({ id: "d4", name: "d.md", size: 5 })).toMatchObject({
+    expect(
+      mapDocument({ id: "d4", name: "d.md", size: 5, created_at: "2026-01-05T00:00:00Z" }),
+    ).toMatchObject({
       chunkCount: 0,
       indexed: false,
     });
   });
 
   it("defaults a null size to 0", () => {
-    expect(mapDocument({ id: "d5", name: "e.md", size: null }).size).toBe(0);
+    expect(
+      mapDocument({ id: "d5", name: "e.md", size: null, created_at: "2026-01-05T00:00:00Z" }).size,
+    ).toBe(0);
   });
 });
 
 describe("mapMessage", () => {
   const base = { id: "m1", role: "assistant", content: "hi", created_at: "2026-01-01T00:00:00Z" };
 
-  it("surfaces a string[] sources array", () => {
-    expect(mapMessage({ ...base, sources: ["a.md", "b.md"] }).sources).toEqual(["a.md", "b.md"]);
+  it("reads the ids stored with a source", () => {
+    expect(
+      mapMessage({
+        ...base,
+        sources: [
+          { id: "d1", name: "a.md" },
+          { id: "d2", name: "b.md" },
+        ],
+      }).sources,
+    ).toEqual([
+      { id: "d1", name: "a.md" },
+      { id: "d2", name: "b.md" },
+    ]);
   });
 
-  it("drops non-string entries and yields undefined when absent", () => {
-    expect(mapMessage({ ...base, sources: ["a.md", 3, null] }).sources).toEqual(["a.md"]);
+  it("still reads the bare names written before ids were stored", () => {
+    // The column is jsonb and holds both shapes forever: every reply given
+    // before `routes/chat.ts` started keeping `document_id` is a list of
+    // strings. Those answers keep their citations and simply cannot say how old
+    // the document was — which beats guessing by matching on a name.
+    expect(mapMessage({ ...base, sources: ["a.md", "b.md"] }).sources).toEqual([
+      { id: null, name: "a.md" },
+      { id: null, name: "b.md" },
+    ]);
+  });
+
+  it("drops entries that are neither, and yields undefined when absent", () => {
+    expect(mapMessage({ ...base, sources: ["a.md", 3, null, {}, { id: "d" }] }).sources).toEqual([
+      { id: null, name: "a.md" },
+    ]);
     expect(mapMessage({ ...base }).sources).toBeUndefined();
     expect(mapMessage({ ...base, sources: "nope" }).sources).toBeUndefined();
+  });
+
+  it("keeps a name whose id is not a string, rather than losing the citation", () => {
+    expect(mapMessage({ ...base, sources: [{ id: 7, name: "a.md" }] }).sources).toEqual([
+      { id: null, name: "a.md" },
+    ]);
   });
 });
 
@@ -53,21 +107,38 @@ describe("mapAgent", () => {
         {
           bundle_id: "b1",
           knowledge_bundles: {
-            documents: [{ id: "d1", name: "x.md", size: 10, document_chunks: [{ count: 2 }] }],
+            documents: [
+              {
+                id: "d1",
+                name: "x.md",
+                size: 10,
+                created_at: "2026-01-05T00:00:00Z",
+                document_chunks: [{ count: 2 }],
+              },
+            ],
           },
         },
         {
           bundle_id: "b2",
           knowledge_bundles: {
-            documents: [{ id: "d2", name: "y.md", size: null, document_chunks: [] }],
+            documents: [
+              {
+                id: "d2",
+                name: "y.md",
+                size: null,
+                created_at: "2026-01-05T00:00:00Z",
+                document_chunks: [],
+              },
+            ],
           },
         },
       ],
     });
     expect(agent.bundleIds).toEqual(["b1", "b2"]);
+    const uploaded = Date.parse("2026-01-05T00:00:00Z");
     expect(agent.documents).toEqual([
-      { id: "d1", name: "x.md", size: 10, chunkCount: 2, indexed: true },
-      { id: "d2", name: "y.md", size: 0, chunkCount: 0, indexed: false },
+      { id: "d1", name: "x.md", size: 10, createdAt: uploaded, chunkCount: 2, indexed: true },
+      { id: "d2", name: "y.md", size: 0, createdAt: uploaded, chunkCount: 0, indexed: false },
     ]);
   });
 

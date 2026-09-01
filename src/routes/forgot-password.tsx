@@ -77,7 +77,10 @@ function ForgotPassword() {
         </Link>
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      {/* method="post" for the reason spelled out in sign-in.tsx: submitted before
+          hydration, a form with no method is a GET and puts what was typed in
+          the URL. */}
+      <form method="post" onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="email">Work email</Label>
           <div className="relative">

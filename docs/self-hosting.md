@@ -101,29 +101,33 @@ anyone in.
 The four notes above are the ones that bite. This is the complete reference —
 every line in `.env.docker.example`, in the order it appears there.
 
-| Variable                                               | Default in the template    | What it does                                                                                                                     |
-| ------------------------------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                    |
-| `OPENAI_BASE_URL`                                      | _empty — means OpenAI_     | Optional. Sends completions to an OpenAI-compatible endpoint instead. See below — it does not move everything.                   |
-| `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.      |
-| `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                             |
-| `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                           |
-| `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. |
-| `ANON_KEY`                                             | Supabase demo key          | The public API key. It reaches the browser by design; row level security is what protects the data behind it.                    |
-| `SERVICE_ROLE_KEY`                                     | Supabase demo key          | Bypasses row level security entirely. Server-side only — it must never reach a browser.                                          |
-| `JWT_EXPIRY`                                           | `3600`                     | Access-token lifetime in seconds. Refresh is automatic in the client.                                                            |
-| `SECRET_KEY_BASE`                                      | local placeholder          | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                       |
-| `REALTIME_DB_ENC_KEY`                                  | `supabaserealtime`         | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                     |
-| `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to 16, 24 or 32 bytes, or saving a delivery channel fails.    |
-| `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Applied when `covan-web` starts; no rebuild.                                             |
-| `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Same — restart, not rebuild.                                                        |
-| `SITE_URL`                                             | `http://localhost:3000`    | The origin GoTrue puts in confirmation and password-reset links.                                                                 |
-| `ALLOWED_ORIGIN`                                       | `http://localhost:3000`    | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.   |
-| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, and update the `VITE_` URLs to match.                                   |
-| `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.           |
-| `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.      |
-| `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                  |
-| `COVAN_VERSION`                                        | `latest`                   | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.1.0` pins one.              |
+| Variable                                               | Default in the template    | What it does                                                                                                                                                                                                                                 |
+| ------------------------------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                                                                                                                                |
+| `OPENAI_BASE_URL`                                      | _empty — means OpenAI_     | Optional. Sends completions to an OpenAI-compatible endpoint instead. See below — it does not move everything.                                                                                                                               |
+| `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.                                                                                                                  |
+| `EMBEDDING_BASE_URL`                                   | _empty — means OpenAI_     | Optional. Sends document embeddings to an OpenAI-compatible endpoint. Deliberately does **not** follow `OPENAI_BASE_URL`.                                                                                                                    |
+| `EMBEDDING_MODEL`                                      | _empty_                    | Optional. Defaults to `text-embedding-3-small`. Set it whenever `EMBEDDING_BASE_URL` is set.                                                                                                                                                 |
+| `EMBEDDING_DIMENSIONS`                                 | _empty — means 1536_       | Optional. The width `document_chunks.embedding` was declared with. Changing it is a schema change — see below. Refuses to boot on anything but a positive whole number.                                                                      |
+| `RAG_MIN_SIMILARITY`                                   | _empty — means 0.25_       | Optional. Cosine-similarity floor below which a retrieved chunk is dropped. `0` disables it. Tuned for `text-embedding-3-small`; another model wants its own.                                                                                |
+| `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                                                                                                                                         |
+| `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                                                                                                                                       |
+| `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. Also passed to the API as `SUPABASE_JWT_SECRET`, which is what makes API keys work — see [The API](api.md). |
+| `ANON_KEY`                                             | Supabase demo key          | The public API key. It reaches the browser by design; row level security is what protects the data behind it.                                                                                                                                |
+| `SERVICE_ROLE_KEY`                                     | Supabase demo key          | Bypasses row level security entirely. Server-side only — it must never reach a browser.                                                                                                                                                      |
+| `JWT_EXPIRY`                                           | `3600`                     | Access-token lifetime in seconds. Refresh is automatic in the client.                                                                                                                                                                        |
+| `SECRET_KEY_BASE`                                      | local placeholder          | Realtime's Phoenix session/cookie signing base. `openssl rand -base64 48`.                                                                                                                                                                   |
+| `REALTIME_DB_ENC_KEY`                                  | `supabaserealtime`         | Realtime's own column encryption key. Upstream's default; regenerate for anything networked.                                                                                                                                                 |
+| `ROUTINE_SECRET_KEY`                                   | local placeholder          | AES-GCM key for `delivery_channels.secret_ciphertext`. Must decode to 16, 24 or 32 bytes, or saving a delivery channel fails.                                                                                                                |
+| `SUPABASE_PUBLIC_URL`                                  | `http://localhost:8000`    | Where the **browser** reaches Supabase. Applied when `covan-web` starts; no rebuild.                                                                                                                                                         |
+| `VITE_API_URL`                                         | `http://localhost:8787`    | Where the **browser** reaches the Covan API. Same — restart, not rebuild.                                                                                                                                                                    |
+| `SITE_URL`                                             | `http://localhost:3000`    | The origin GoTrue puts in confirmation and password-reset links.                                                                                                                                                                             |
+| `ALLOWED_ORIGIN`                                       | `http://localhost:3000`    | Comma-separated **exact** origins the API accepts credentialed requests from. Also feeds the routine SSRF guard. No wildcards.                                                                                                               |
+| `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, and update the `VITE_` URLs to match.                                                                                                                                               |
+| `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether any routine is due. Per-routine frequency lives in the database, not here.                                                                                                                       |
+| `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.                                                                                                                  |
+| `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                                                                                                                              |
+| `COVAN_VERSION`                                        | `latest`                   | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.1.0` pins one.                                                                                                                          |
 
 Three more values the API reads are set by `docker-compose.yml` rather than by
 you: `SUPABASE_URL` (`http://kong:8000` — the compose network address, not
@@ -153,30 +157,76 @@ OPENAI_API_KEY=ignored-by-ollama-but-still-required
 ```
 
 Set both. The model list Covan ships is a list of OpenAI's names, so with only
-the base URL set every agent would ask your endpoint for `gpt-4o` and get a
-404. `OPENAI_MODEL` overrides that list outright, per-agent picker included —
+the base URL set every agent would ask your endpoint for `gpt-4o` and get a 404. `OPENAI_MODEL` overrides that list outright, per-agent picker included —
 which means the model dropdown in agent settings has no effect while it is set.
 It still shows OpenAI's models; ignore it.
 
 `OPENAI_API_KEY` stays required either way. Most local servers ignore the value,
 so any non-empty string works there.
 
-**Two things this does not move, and you should know before you rely on it:**
+**`OPENAI_BASE_URL` moves conversations, and only conversations.** Documents
+have a setting of their own, immediately below, and audio transcription cannot
+be moved at all: most OpenAI-compatible servers do not implement
+`/audio/transcriptions`, so routing voice notes there would trade a working
+feature for a 404. Voice notes go to OpenAI.
 
-- **Embeddings.** Every document you upload is still embedded by OpenAI's
-  `text-embedding-3-small`. This is not an oversight: `knowledge_chunks.embedding`
-  is declared `vector(1536)` and both retrieval functions take that width, so an
-  endpoint serving a 768-dimension model would not fail at the request — it
-  would fail at the insert, after the upload appeared to succeed. Changing it is
-  a migration and a re-index of everything already stored, not a variable.
-- **Audio transcription.** Voice notes go to OpenAI too. Most
-  OpenAI-compatible servers do not implement `/audio/transcriptions`, so routing
-  it there would trade a working feature for a 404.
+### Keeping your documents off OpenAI too
 
-So `OPENAI_BASE_URL` keeps your conversations off OpenAI. It does not yet keep
-your documents off OpenAI. If that distinction matters for your deployment —
-and for some teams it is the whole question — the honest answer today is that
-Covan is not there yet.
+Embedding is where the whole text of an uploaded document is sent. A deployment
+that routes its chat to a local model and still embeds at OpenAI has kept its
+conversations in-house and shipped every contract, policy and meeting note out
+anyway — which for some teams is the entire reason they were self-hosting.
+
+`EMBEDDING_BASE_URL` closes that:
+
+```bash
+EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_DIMENSIONS=768
+```
+
+**It does not inherit from `OPENAI_BASE_URL`, on purpose.** Two reasons pointing
+the same way. An install that has had `OPENAI_BASE_URL` set for months works
+today — chat local, embeddings at OpenAI — and inheriting would move its
+documents to a new endpoint on an upgrade nobody asked for. And serving
+completions is table stakes for a compatible server, while serving embeddings at
+the width your database column expects is not. So you set both, knowingly.
+
+That width is the part that takes work. pgvector fixes a vector column's
+dimension at declaration time, and migration 0004 declared
+`document_chunks.embedding` as `vector(1536)` because that is what
+`text-embedding-3-small` returns. Common local models do not match:
+`nomic-embed-text` is 768, `mxbai-embed-large` and `bge-m3` are 1024. The
+column, its HNSW index and the `match_chunks` function all have to move
+together, and existing vectors cannot come with them — there is no arithmetic
+that converts a vector from one model's space into another's.
+
+`supabase/optional/embedding_width.sql` does the schema half and documents the
+whole procedure. Deliberately **not** a migration: it is outside
+`supabase/migrations/`, `migrate` never mounts it, and the number in it is a
+fact about the model you chose rather than about Covan. In short:
+
+1. Set `EMBEDDING_BASE_URL` and `EMBEDDING_MODEL`, then upload one small
+   document. It will fail, and the error names the width your model actually
+   returned — use that number rather than one from a README, since several
+   models serve more than one.
+2. Edit `v_dims` in that file and run it. It refuses to run twice on the same
+   width, so it cannot quietly discard your embeddings for nothing.
+3. Set `EMBEDDING_DIMENSIONS` to the same number and restart the API.
+4. Re-embed: `POST /admin/backfill-embeddings` with your `ADMIN_API_KEY`. It
+   walks every document that has stored text and no chunks, so running it again
+   is safe and picks up only what was missed. Until it finishes, answers fall
+   back to the agent's persona alone — degraded, not broken.
+5. Revisit `RAG_MIN_SIMILARITY`. It defaults to 0.25, chosen against
+   `text-embedding-3-small`. Another model's similarity scores sit somewhere
+   else, and a floor that is wrong for it never errors — too high starves
+   genuine matches, too low fills every prompt with noise. Both just look like
+   the answers got worse.
+
+The API refuses to start on an `EMBEDDING_DIMENSIONS` that is not a positive
+whole number, or a `RAG_MIN_SIMILARITY` outside 0–1, naming the variable. A
+width that is merely _wrong_ rather than malformed is caught at the first
+embedding call instead, which is why step 1 is an upload rather than a restart.
 
 ## Terms and privacy
 
@@ -282,41 +332,104 @@ Before the stack faces a network:
 3. Put TLS in front of ports 3000, 8787 and 8000, and set
    `SUPABASE_PUBLIC_URL`, `VITE_API_URL`, `SITE_URL` and `ALLOWED_ORIGIN` to
    the public URLs — then rebuild `covan-web`.
-4. Rate-limit the API at that same proxy. See below.
+4. Rate-limit the API at that same proxy, as well as the built-in limiter. See below.
 5. Consider not publishing `54322` at all.
 
-### Covan does not rate-limit itself
+Every port `docker-compose.yml` publishes now binds to `127.0.0.1` by
+default, controlled by `BIND_ADDR` in `.env`. That default is doing real
+work: Docker publishes ports through `nat/PREROUTING`, which runs before
+your firewall's `INPUT` chain, so `ufw default deny incoming` does not
+touch a published port — the bind address is the only thing standing
+between the compose network and the internet until you've done the rest of
+this list. Setting `BIND_ADDR=0.0.0.0` (or any non-loopback address) to
+expose the stack is a deliberate choice, and it should never be made
+without regenerating the secrets in step 1 first — those are demo values
+published in this repository, not a guess an attacker has to make.
 
-There is no request limiter anywhere in the API, on either deployment path.
-That is a real gap and you should close it before the API is reachable from the
-internet.
+`covan-api` now enforces part of step 1 itself: at boot, if `ALLOWED_ORIGIN`
+is not a localhost URL, it refuses to start when `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY` or `ROUTINE_SECRET_KEY` still hold the exact
+values `.env.docker.example` ships, naming every offending variable in the
+error. It also refuses to start on any `ROUTINE_SECRET_KEY` that does not
+decode to 16, 24 or 32 bytes, so a bad key is caught at boot instead of the
+first time a delivery channel is saved.
 
-What the API _does_ bound is the size of a single request: 10 MB for a document
-upload, 2 MB for an audio recording. Neither bounds how _often_ someone asks,
-and this build ships no spend cap either — `worker/src/lib/entitlements/` is an
-interface with `unlimitedEntitlements` behind it, which is exactly what it
-sounds like. (`QUOTA_MONTHLY_TOKENS` exists in the environment type, but nothing
-in this repository registers a metered implementation to read it, so setting it
-changes nothing.)
+`loadEnv` cannot see `JWT_SECRET` and `POSTGRES_PASSWORD` — they are consumed
+by Kong, GoTrue, PostgREST and Postgres, none of which run it — so
+`docker-compose.yml` carries a second, independent guard for the rest of
+step 1: a `secrets-check` service that runs `docker/check-secrets.sh` and
+that `db` depends on with `condition: service_completed_successfully`. Every
+other service descends from `db`, so this one check gates the whole stack.
+Its logic mirrors `loadEnv`'s — same localhost carve-out, same "still holds
+the published default" test — but over `JWT_SECRET`, `POSTGRES_PASSWORD`,
+`SECRET_KEY_BASE`, `ANON_KEY`, `SERVICE_ROLE_KEY` and `ROUTINE_SECRET_KEY`,
+naming every offending variable the same way. Regenerating
+`SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` while leaving
+`JWT_SECRET` at its published default still achieves nothing, and both
+checks will say so: those two keys are JWTs signed with `JWT_SECRET`, and
+anyone who has read this repository already knows that secret and can mint
+their own `{"role":"service_role"}` token, bypassing row level security the
+same way the shipped key would have. Regenerate `JWT_SECRET` first, then the
+two keys it signs.
 
-`POST /chat` and `POST /transcribe` both spend money at OpenAI on every call, so
-an authenticated user with a loop, or one leaked password, is an unbounded bill
-rather than a denial of service. The rest of the API is cheaper to serve but
-just as unlimited.
+### Covan rate-limits itself, and you should still limit at the proxy
 
-Authentication is not the answer here: a limiter has to sit in front of the
-thing being protected, and every one of these routes is already past the door.
+Two tiers, on by default, on both deployment paths. They exist because
+`POST /chat/stream`, `POST /transcribe` and four other endpoints spend money at
+OpenAI on every call, so an authenticated user with a loop — or one leaked
+password — is an unbounded bill rather than a denial of service. Request _size_
+was always bounded (10 MB for a document, 2 MB for audio); that caps what one
+call costs, not how many arrive.
 
-Put it in the layer you already have:
+| Tier        | In front of                                                                                                            | Keyed on             | Default |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------- | ------- |
+| `standard`  | everything, including the token check                                                                                  | the caller's address | 120/min |
+| `expensive` | `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`, `/routines/draft`, `/routines/:id/run` | the signed-in user   | 20/min  |
 
-| Deployment                                       | Where the limiter goes                                                                                                                        |
+`standard` is generous on purpose: it is keyed by address, a shared office is
+one address, and its job is to bound how often the Supabase round trip in the
+token check can be provoked — not to ration ordinary use. `expensive` is keyed
+by the user, so one person's loop cannot spend a colleague's allowance, and it
+is set at more than a person can type and far less than a loop can.
+
+Document upload and reindex stay on `standard` deliberately. They spend on
+embeddings, which cost roughly a hundredth of what a chat token does, and 20/min
+would break bulk upload to bound a cost the generous tier already bounds.
+
+A refused request gets `429` and a `Retry-After` header.
+
+**Under `docker compose`** the counter lives in the API process. Set
+`RATE_LIMIT_STANDARD_PER_MINUTE` and `RATE_LIMIT_EXPENSIVE_PER_MINUTE` to change
+the numbers, or either to `0` to turn that tier off. Two honest limitations:
+
+- **One process, one counter.** Run two replicas and each keeps its own, so the
+  effective limit is the configured one times the number of replicas. If you are
+  running replicas you have a proxy in front of them; set the real limit there
+  and these to `0`.
+- **A fixed window, not a sliding one.** A caller can spend the whole allowance
+  in the last second of one window and again in the first second of the next.
+  That is a factor of two on a limit whose job is to turn unbounded into bounded.
+
+**On Cloudflare Workers** the counter lives in the edge, via the two
+`[[ratelimits]]` blocks in `worker/wrangler.toml` — the limit is set there
+rather than in an environment variable, because the binding owns the counter.
+Deploy without them and the Worker falls back to the in-process counter, which
+on Cloudflare is close to no limit at all: isolates are many and short-lived, so
+each keeps its own. It logs an error saying exactly that, but it will not refuse
+to start, so check `wrangler.toml` against the example rather than the logs.
+
+**Limit at your proxy as well.** Nothing above sees a request that never reaches
+the API, and everything above runs after TLS termination and inside your
+application. A limiter in the layer you already have is cheaper per refused
+request and protects against shapes this one cannot see:
+
+| Deployment                                       | Where the second limiter goes                                                                                                                 |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `docker compose`, behind nginx / Caddy / Traefik | The reverse proxy from step 3. nginx's `limit_req`, Caddy's `rate_limit`, Traefik's `RateLimit` middleware — any of them, keyed on client IP. |
-| Cloudflare Workers                               | A [Rate Limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) on the zone, or the Workers rate limiting binding.         |
+| Cloudflare Workers                               | A [Rate Limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) on the zone, in front of the Worker.                       |
 
-Key on the caller's IP for anonymous routes and on the bearer token's subject
-for the rest, and be much stricter with `/chat` and `/transcribe` than with the
-others — the point is the OpenAI bill, not the traffic.
+If you do, set the built-in tiers to `0` rather than running two limiters that
+disagree about who is over.
 
 ## The production path: Cloudflare, Supabase and a static host
 
@@ -386,6 +499,7 @@ bunx wrangler secret put OPENAI_API_KEY
 bunx wrangler secret put ROUTINE_SECRET_KEY
 bunx wrangler secret put RESEND_API_KEY
 bunx wrangler secret put RESEND_FROM
+bunx wrangler secret put SUPABASE_JWT_SECRET
 ```
 
 `ROUTINE_SECRET_KEY` must decode to 16, 24 or 32 bytes — `openssl rand -base64
@@ -398,6 +512,48 @@ invitation checks for both and quietly reports that nothing was emailed, while a
 routine posts anyway and records whatever Resend answers as a failed run. So if
 you set one, set both.
 
+### The two emails Supabase sends, and where their design lives
+
+Confirming an address and resetting a password are sent by Supabase, not by this
+Worker, so no secret above affects them and nothing in this repository is on
+their path at runtime. Their default is unstyled — a sentence and a bare link —
+and it is the first thing a new account ever receives.
+
+`supabase/templates/` holds a styled version of each, rendered from the same
+shell as every other Covan email:
+
+| File                    | Paste into                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| `confirm-signup.html`   | Authentication → Emails → **Confirm signup**                                                 |
+| `reset-password.html`   | Authentication → Emails → **Reset password**                                                 |
+| `password-changed.html` | Authentication → Emails → **Password changed** — and enable it; Supabase ships it turned off |
+
+The third is worth the extra click. It is the only message in the set somebody
+reads in order to discover they have been broken into: a password change nobody
+asked for is the first visible evidence of a stolen session. It carries no link,
+deliberately — it announces something already done, and a credential email with
+a link in it is the exact shape of the phishing this message exists to help
+someone notice.
+
+The subject lines that go with them are in
+`worker/src/lib/emails/auth.ts`. Both files keep Supabase's
+`{{ .ConfirmationURL }}` placeholder, which is what the button points at — change
+anything else you like, but not that, or the button leads nowhere.
+
+Edit the source rather than the files: `bun run build:email-templates` in
+`worker/` rewrites them, and a test fails if the checked-in copies drift from it.
+`supabase/config.toml` can point a **local** stack at template files, but there is
+no way to push a template to a hosted project — pasting is the whole procedure.
+
+`SUPABASE_JWT_SECRET` is the project's JWT signing secret — Supabase dashboard,
+Settings → API — and it is what turns on [API keys](api.md). A key carries no
+identity of its own, so the API exchanges it for a sixty-second token belonging
+to the key's owner, and signing that needs this secret. Leave it out and the
+feature is simply absent: the section does not appear in Settings and the
+endpoints answer `available: false`, rather than anything failing. On a compose
+stack there is nothing to do — `docker-compose.yml` already passes the
+`JWT_SECRET` the rest of the stack uses.
+
 Pointing this deployment at a non-OpenAI endpoint works the same way as it does
 under Docker, except that neither value is a secret — add them to the `[vars]`
 block in `wrangler.toml` beside `ALLOWED_ORIGIN`:
@@ -407,9 +563,17 @@ OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
 OPENAI_MODEL = "meta-llama/llama-3.3-70b-instruct"
 ```
 
-The same two exceptions apply — embeddings and transcription still go to
-OpenAI. Set them on the routine engine too, or scheduled work will keep using
-OpenAI while chat does not.
+Set them on the routine engine too, or scheduled work will keep using OpenAI
+while chat does not. Documents are separate, and go in the same `[vars]` block:
+
+```toml
+EMBEDDING_BASE_URL = "https://your-endpoint.example/v1"
+EMBEDDING_MODEL    = "nomic-embed-text"
+EMBEDDING_DIMENSIONS = "768"
+```
+
+Those three belong on the API Worker only — nothing the routine engine does
+embeds. Transcription remains at OpenAI regardless.
 
 Check the build, then ship it:
 

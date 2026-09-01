@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, type Bundle } from "./api-client";
 import { canWriteAsRole } from "./roles";
 import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
+import { useHasSession } from "./session-presence";
 
 export type Agent = {
   id: string;
@@ -12,7 +13,15 @@ export type Agent = {
   model: string;
   persona: string;
   mode: "normal" | "brainstorm";
-  documents: { id: string; name: string; size: number; chunkCount: number; indexed: boolean }[];
+  documents: {
+    id: string;
+    name: string;
+    size: number;
+    /** When it was uploaded, which for a document is the whole of its freshness. */
+    createdAt: number;
+    chunkCount: number;
+    indexed: boolean;
+  }[];
   bundleIds: string[];
   createdAt: number;
 };
@@ -22,9 +31,16 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   createdAt: number;
-  // Names of the documents that grounded an assistant reply (real RAG
-  // citations). Absent/empty when the reply used no retrieved knowledge.
-  sources?: string[];
+  /**
+   * The documents that grounded an assistant reply — real citations, absent or
+   * empty when the reply used no retrieved knowledge.
+   *
+   * `id` is null on every reply written before ids were stored: the column held
+   * bare names then, and a name cannot be resolved back to a document without
+   * guessing. Those citations still render, they just cannot say how old the
+   * document was.
+   */
+  sources?: { id: string | null; name: string }[];
   // In a shared session, the human author of a user message. Absent for
   // assistant messages and for one's own optimistic messages before refetch.
   sender?: { id: string; name: string | null; avatarUrl: string | null };
@@ -107,26 +123,39 @@ const StoreCtx = createContext<Store | null>(null);
 export function AgentsProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
+  // This provider wraps every route, public ones included — the command
+  // palette lives inside it and is rendered at the root. So the five queries
+  // below have to ask whether there is anybody to ask FOR. Without this they
+  // ran on `/`, `/privacy`, `/sign-in` and `/sign-up`, answered 401, and were
+  // retried three times each: twenty requests to the API before the visitor
+  // had an account. `=== true` and not `!== false` on purpose — see
+  // useHasSession for why the third state matters.
+  const signedIn = useHasSession() === true;
+
   const { data: agents = [] } = useQuery({
     queryKey: ["agents"],
     queryFn: () => api.agents.list(),
+    enabled: signedIn,
   });
   const { data: sessions = [] } = useQuery({
     queryKey: ["sessions"],
     queryFn: () => api.sessions.list(),
+    enabled: signedIn,
   });
   const { data: favorites = [] } = useQuery({
     queryKey: ["favorites"],
     queryFn: () => api.favorites.list(),
+    enabled: signedIn,
   });
   const { data: bundles = [] } = useQuery({
     queryKey: ["bundles"],
     queryFn: () => api.bundles.list(),
+    enabled: signedIn,
   });
   // Already in the cache; the app shell fetches it. `me.members` carries the
   // caller's own row, so the role comes from the server rather than from
   // anything the client could have decided for itself.
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me(), enabled: signedIn });
 
   // Undefined while `me` loads. Defaulting to false would flicker every write
   // control out of existence on each cold load, which reads as "you have been

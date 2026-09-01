@@ -26,7 +26,7 @@ export type QueryResult = {
   error: { message: string; code?: string } | null;
 };
 
-export type Filter = { column: string; value: unknown; kind: "eq" | "in" };
+export type Filter = { column: string; value: unknown; kind: "eq" | "in" | "gt" | "ilike" | "is" };
 
 export type QueryContext = {
   table: string;
@@ -38,6 +38,8 @@ export type QueryContext = {
   filters: Filter[];
   /** True when the caller ended the chain with `.single()`/`.maybeSingle()`. */
   single: boolean;
+  /** Set when the caller ended the chain with `.range(from, to)`, as paged reads do. */
+  range?: { from: number; to: number };
 };
 
 export type Handler = (ctx: QueryContext) => QueryResult | Promise<QueryResult>;
@@ -47,6 +49,27 @@ export type TableHandlers = Partial<Record<QueryContext["op"], Handler>>;
 export type FakeDbSpec = {
   tables?: Record<string, TableHandlers>;
   rpc?: Record<string, (args: Record<string, unknown>) => QueryResult | Promise<QueryResult>>;
+  /**
+   * Email/workspace pairs standing in for existing `profiles` +
+   * `workspace_members` rows, for the two-step "is this person already a
+   * member" lookup in POST /invitations: a `profiles` select filtered by
+   * `ilike("email", ...)`, followed by a `workspace_members` select filtered
+   * by the resolved user id AND the queried workspace_id.
+   *
+   * The workspace_id matters: a fixture entry only answers a
+   * `workspace_members` query whose `workspace_id` filter equals that entry's
+   * `workspaceId`, so a test can assert that a match in one workspace does
+   * NOT block an invite scoped to another — that's what proves the route
+   * scopes to the caller's active workspace rather than any workspace the
+   * address happens to belong to.
+   *
+   * This intercepts those two specific query shapes ahead of the ordinary
+   * per-table handlers (including the ones `activeWorkspaceTables` installs
+   * for `getActiveWorkspaceId`'s unrelated queries against the same two
+   * tables), so it never has to know what handlers a test also registered for
+   * those tables.
+   */
+  existingMemberEmails?: Array<{ email: string; workspaceId: string }>;
 };
 
 /** Every query the fake served, in order. Useful for asserting what was sent. */
@@ -78,6 +101,25 @@ class Chain implements PromiseLike<QueryResult> {
     return this;
   }
 
+  gt(column: string, value: unknown) {
+    this.ctx.filters.push({ column, value, kind: "gt" });
+    return this;
+  }
+
+  ilike(column: string, value: unknown) {
+    this.ctx.filters.push({ column, value, kind: "ilike" });
+    return this;
+  }
+
+  // `.is(column, null)` is how PostgREST asks for a NULL, and it is not the
+  // same query as `.eq(column, null)` — which sends the literal string "null".
+  // Recorded as its own kind so a test can tell the two apart, because a route
+  // that reached for `eq` here would silently stop excluding revoked rows.
+  is(column: string, value: unknown) {
+    this.ctx.filters.push({ column, value, kind: "is" });
+    return this;
+  }
+
   // Ordering and limiting change which rows come back, not whether the route is
   // allowed to see them. Handlers return a fixed set, so these are no-ops that
   // exist only so the chain does not break.
@@ -87,6 +129,15 @@ class Chain implements PromiseLike<QueryResult> {
 
   limit() {
     return this;
+  }
+
+  // A terminator, unlike order() and limit(). The export pages every read
+  // because PostgREST caps a response at a thousand rows and says nothing about
+  // it, so a fake that swallowed range() would let an unpaged read pass here
+  // and lose the thousand-and-first message in production.
+  range(from: number, to: number): Promise<QueryResult> {
+    this.ctx.range = { from, to };
+    return this.run(this.ctx);
   }
 
   maybeSingle(): Promise<QueryResult> {
@@ -110,7 +161,58 @@ class Chain implements PromiseLike<QueryResult> {
 export function fakeDb(spec: FakeDbSpec) {
   const calls: Recorded[] = [];
 
+  const MEMBER_ID_PREFIX = "member-id:";
+  // The email survives round-trip inside the synthetic id (rather than an
+  // opaque counter) so the workspace_members step below can look the fixture
+  // entry back up by email without a second map.
+  const memberIdForEmail = (email: string) => `${MEMBER_ID_PREFIX}${email.toLowerCase()}`;
+
   const run = async (ctx: QueryContext): Promise<QueryResult> => {
+    if (spec.existingMemberEmails) {
+      const emailFilter = ctx.filters.find((f) => f.kind === "ilike" && f.column === "email");
+      if (ctx.table === "profiles" && ctx.op === "select" && emailFilter) {
+        // The route escapes ILIKE metacharacters before sending the pattern;
+        // undo that here so the fixture matches on the plain address, the way
+        // Postgres would after applying the ESCAPE clause.
+        const email = String(emailFilter.value)
+          .replace(/\\([%_])/g, "$1")
+          .toLowerCase();
+        const isMember = spec.existingMemberEmails.some((m) => m.email.toLowerCase() === email);
+        const result: QueryResult = {
+          data: isMember ? { id: memberIdForEmail(email) } : null,
+          error: null,
+        };
+        calls.push({ ...ctx, result });
+        return result;
+      }
+
+      const memberIdFilter = ctx.filters.find(
+        (f) =>
+          f.kind === "eq" &&
+          f.column === "user_id" &&
+          typeof f.value === "string" &&
+          f.value.startsWith(MEMBER_ID_PREFIX),
+      );
+      if (ctx.table === "workspace_members" && ctx.op === "select" && memberIdFilter) {
+        const email = String(memberIdFilter.value).slice(MEMBER_ID_PREFIX.length);
+        const workspaceFilter = ctx.filters.find(
+          (f) => f.kind === "eq" && f.column === "workspace_id",
+        );
+        // A fixture entry only answers for the workspace it names — a match
+        // recorded against some other workspace must not satisfy a query
+        // scoped to this one.
+        const match = spec.existingMemberEmails.find(
+          (m) => m.email.toLowerCase() === email && m.workspaceId === workspaceFilter?.value,
+        );
+        const result: QueryResult = {
+          data: match ? { user_id: memberIdFilter.value } : null,
+          error: null,
+        };
+        calls.push({ ...ctx, result });
+        return result;
+      }
+    }
+
     const handlers = spec.tables?.[ctx.table];
     if (!handlers) {
       throw new Error(`fakeDb: unexpected table "${ctx.table}"`);

@@ -162,7 +162,13 @@ word boundary. A hard cut happens only when there is no boundary at all, such as
 one unbroken token.
 
 Embeddings are `text-embedding-3-small`, 1536 dimensions, stored in
-`document_chunks.embedding` as `vector(1536)`.
+`document_chunks.embedding` as `vector(1536)` — all three by default rather than
+by construction. `EMBEDDING_BASE_URL` and `EMBEDDING_MODEL` move them to any
+OpenAI-compatible endpoint, and the column width follows via
+`supabase/optional/embedding_width.sql`; `EMBEDDING_DIMENSIONS` is what keeps the
+two in agreement, and `lib/embeddings.ts` refuses a vector that disagrees with it
+rather than letting Postgres refuse the insert later. See
+[self-hosting](self-hosting.md).
 
 ### Retrieval, at chat time
 

@@ -36,19 +36,33 @@ one.
   Slack.
 - **Collaborative sessions.** Bring the team into one conversation, or one
   brainstorm board, when the question is shared.
+- **Take it with you.** One button in Settings downloads the whole workspace
+  as an archive — agents, documents and their files, chats, routines — with
+  the SQL to replay it into a Covan you run yourself. "Nothing is held
+  hostage" should be checkable by the team, not only by whoever runs the
+  server ([`docs/export.md`](docs/export.md)).
 - **Bring your own endpoint.** Set `OPENAI_BASE_URL` and completions go to
-  Ollama, vLLM, LiteLLM or OpenRouter instead of OpenAI. Embeddings and
-  transcription still don't — the embedding column is `vector(1536)`, so that
-  half is a migration rather than a variable, and
-  [`docs/self-hosting.md`](docs/self-hosting.md) says so plainly.
+  Ollama, vLLM, LiteLLM or OpenRouter instead of OpenAI. Set
+  `EMBEDDING_BASE_URL` and your documents go there too — a separate variable,
+  because embedding is where the whole text of every file is sent and moving it
+  also means moving the width of the vector column
+  ([`docs/self-hosting.md`](docs/self-hosting.md) walks through both). Audio
+  transcription is the one thing that stays: hardly any compatible server
+  implements it.
 - **Two runtimes, one source.** The same code runs on Cloudflare Workers with R2
   in production and on Node with the filesystem under `docker compose`.
+
+![A Covan chat: asked how much resolution time integration tickets take and what the biggest cause is, the agent answers with the exact figures from the uploaded review — 41% of resolution time, and a webhook secret pasted with trailing whitespace at 22% of integration tickets — and a Sources chip under each reply names the document they came from](docs/screenshots/grounded-answer.png)
+
+Every figure in that answer is in the uploaded document, and the chip under it
+says which one. That is the whole difference between this and a chat window: not
+that it answers, but that you can check it.
 
 ### How this differs from `qm`
 
 [`yc-software/qm`](https://github.com/yc-software/qm) (MIT) is the obvious
 alternative and a good project. It describes itself as a multiplayer agent
-*harness* for work: an isolated agent workspace per employee, shared channels
+_harness_ for work: an isolated agent workspace per employee, shared channels
 and projects, Slack and web, and a pluggable choice of model. If your team is
 mostly engineers, that is very likely what you want, and it is better to say so
 than to pretend the comparison isn't there.
@@ -133,25 +147,26 @@ See [`docs/architecture.md`](docs/architecture.md) for detail.
 `docs/` is the whole of it. The same files are rendered at
 <https://covan.app/docs> if you would rather read them there.
 
-| Page                                          | What it answers                                                             |
-| --------------------------------------------- | --------------------------------------------------------------------------- |
-| [Quickstart](docs/quickstart.md)              | From an empty account to an answer that names the file it came from         |
-| [Core concepts](docs/concepts.md)             | Workspace, agent, bundle, session, routine — what each is and how they nest |
-| [Knowledge bundles](docs/knowledge.md)        | Uploading, grouping, attaching, and why a question finds the passage it does |
-| [Routines](docs/routines.md)                  | Scheduled work, what it can reach, and what it does with the secret you give it |
-| [Your team](docs/team.md)                     | Invitations, what a role actually gates, shared sessions, deletion          |
-| [Self-hosting](docs/self-hosting.md)          | Running it on your own machine, and deploying it somewhere real             |
-| [Architecture](docs/architecture.md)          | How a request reaches a row, and the two seams that serve both runtimes     |
+| Page                                   | What it answers                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| [Quickstart](docs/quickstart.md)       | From an empty account to an answer that names the file it came from             |
+| [Core concepts](docs/concepts.md)      | Workspace, agent, bundle, session, routine — what each is and how they nest     |
+| [Knowledge bundles](docs/knowledge.md) | Uploading, grouping, attaching, and why a question finds the passage it does    |
+| [Routines](docs/routines.md)           | Scheduled work, what it can reach, and what it does with the secret you give it |
+| [Your team](docs/team.md)              | Invitations, what a role actually gates, shared sessions, deletion              |
+| [Taking it with you](docs/export.md)   | Exporting a workspace, and putting it back into a Covan you run                 |
+| [Self-hosting](docs/self-hosting.md)   | Running it on your own machine, and deploying it somewhere real                 |
+| [Architecture](docs/architecture.md)   | How a request reaches a row, and the two seams that serve both runtimes         |
 
 ## Repository layout
 
-| Path                   | What it is                                              |
-| ---------------------- | ------------------------------------------------------- |
-| `src/`                 | TanStack Start frontend — file-based routes, shadcn/ui  |
+| Path                   | What it is                                                 |
+| ---------------------- | ---------------------------------------------------------- |
+| `src/`                 | TanStack Start frontend — file-based routes, shadcn/ui     |
 | `worker/`              | Hono API; `src/index.ts` is the Worker, `src/node.ts` Node |
-| `supabase/migrations/` | Numbered SQL, applied in order                          |
-| `docker/`              | Compose support files (Kong config, DB init hooks)      |
-| `docs/`                | The documentation above, in markdown                    |
+| `supabase/migrations/` | Numbered SQL, applied in order                             |
+| `docker/`              | Compose support files (Kong config, DB init hooks)         |
+| `docs/`                | The documentation above, in markdown                       |
 
 ## Development
 

@@ -22,8 +22,9 @@ export type RoutineEnv = {
   /**
    * Where completions go. Unset means api.openai.com; set it to any
    * OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, OpenRouter) to keep the
-   * conversation on infrastructure you control. Embeddings and transcription
-   * are not routed through it — see `lib/openai` for why.
+   * conversation on infrastructure you control. Transcription is not routed
+   * through it, and embeddings have a variable of their own — see `lib/openai`
+   * for why they are two decisions rather than one.
    */
   OPENAI_BASE_URL?: string;
   /**
@@ -63,11 +64,67 @@ export type RoutineEnv = {
  */
 export type Bindings = RoutineEnv & {
   SUPABASE_ANON_KEY: string;
+  /**
+   * Where document embeddings go. Unset means api.openai.com, which is also
+   * what `OPENAI_BASE_URL` on its own leaves them at — the two do not inherit
+   * from each other, deliberately (`lib/openai`).
+   *
+   * On `Bindings` rather than `RoutineEnv` because nothing the cron Worker does
+   * embeds: it summarises and delivers, and retrieval belongs to a request.
+   */
+  EMBEDDING_BASE_URL?: string;
+  /** Unset means `text-embedding-3-small`. Set it whenever the endpoint is. */
+  EMBEDDING_MODEL?: string;
+  /**
+   * The width of `document_chunks.embedding`. Unset means 1536, which is what
+   * migration 0004 declares. Changing this without changing the column — or the
+   * other way round — is caught at the first embedding call rather than at the
+   * insert; see `lib/embeddings`.
+   */
+  EMBEDDING_DIMENSIONS?: string;
+  /**
+   * The cosine-similarity floor below which a retrieved chunk is dropped as
+   * irrelevant. Unset means 0.25, which is tuned against
+   * `text-embedding-3-small` — an operator who changes the embedding model
+   * needs their own floor, because a wrong one does not break retrieval, it
+   * quietly makes it worse.
+   */
+  RAG_MIN_SIMILARITY?: string;
+  /**
+   * The project's JWT signing secret, and the one thing that makes API keys
+   * possible: a key is exchanged for a short-lived JWT for its owner, so the
+   * request reaches Postgres as that person and RLS decides as it always does.
+   * See `lib/api-keys.ts`.
+   *
+   * Optional, and its absence is a supported configuration rather than a
+   * misconfiguration — a deployment that never sets it simply has no API keys,
+   * and says so instead of failing. On Cloudflare: `wrangler secret put
+   * SUPABASE_JWT_SECRET`. On a self-hosted stack it is the same `JWT_SECRET` the
+   * rest of the compose file already uses, which is why `lib/env.ts` accepts
+   * either name.
+   */
+  SUPABASE_JWT_SECRET?: string;
   /** The R2 bucket, on Cloudflare only. Absent on the Node/Docker runtime. */
   DOCS?: R2Bucket;
   /** Filesystem document root, on the Node runtime only. Absent on Cloudflare. */
   DOCS_DIR?: string;
   ADMIN_API_KEY?: string;
+  /**
+   * Rate limiting, on Cloudflare only — `[[ratelimits]]` in wrangler.toml.
+   * Their presence is what makes `getRateLimiter` use the edge counter instead
+   * of the in-process one, the same way `DOCS` chooses R2 over the filesystem.
+   * Absent on Node, where the two variables below configure the fallback.
+   */
+  RATE_LIMIT_STANDARD?: RateLimit;
+  RATE_LIMIT_EXPENSIVE?: RateLimit;
+  /**
+   * Requests per minute on the Node runtime. Unset takes the defaults in
+   * `lib/ratelimit/types.ts`; `0` disables that tier, which is what an operator
+   * who limits in nginx or Cloudflare in front of this should set rather than
+   * running two limiters that disagree.
+   */
+  RATE_LIMIT_STANDARD_PER_MINUTE?: string;
+  RATE_LIMIT_EXPENSIVE_PER_MINUTE?: string;
 };
 
 /**
@@ -80,6 +137,12 @@ export type Variables = {
   db: SupabaseClient;
   /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
   entitlements: Entitlements;
+  /**
+   * Set only when the caller proved themselves with an API key rather than a
+   * browser session. Routes read it to refuse the things a key must not do —
+   * chiefly creating another key, which would make revocation meaningless.
+   */
+  apiKeyId?: string;
 };
 
 export type AppEnv = {

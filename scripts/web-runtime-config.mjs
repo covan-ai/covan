@@ -30,7 +30,8 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
+import { createHash } from "node:crypto";
 
 /** Build-time placeholder for each variable the browser bundle needs. */
 export const SENTINELS = {
@@ -96,6 +97,98 @@ export function assertNothingLeftOver(text, file) {
   }
 }
 
+/**
+ * The etag nitro records for a public asset.
+ *
+ * Reproduces the `etag` package's format exactly — `"<hex length>-<27 chars of
+ * base64 sha1>"` — because the value has to match what nitro would have written
+ * for the substituted bytes, not merely be a valid etag. Verified against an
+ * untouched entry in a real build.
+ */
+export function assetEtag(bytes) {
+  const hash = createHash("sha1").update(bytes).digest("base64").substring(0, 27);
+  return `"${bytes.length.toString(16)}-${hash}"`;
+}
+
+/**
+ * Tell nitro the substituted files are the size they now are.
+ *
+ * This is the bug that made the whole idea not work, and it was invisible from
+ * everything anyone would think to check. Nitro bakes a manifest of every public
+ * asset — type, etag, mtime, **size** — into `.output/server/index.mjs` at build
+ * time, and serves `Content-Length` from it. Substituting a 38-character
+ * sentinel for a 21-character URL leaves the file 17 bytes shorter than the
+ * manifest claims, so the browser receives fewer bytes than it was promised and
+ * aborts the response with `ERR_CONTENT_LENGTH_MISMATCH`.
+ *
+ * The HTML document is unaffected — it holds no sentinels — so the page renders,
+ * the health check passes, and the container is green. What fails is the
+ * JavaScript: React never hydrates, and every button on the page does nothing.
+ * A container that starts, serves pages and cannot sign anyone in, which is the
+ * exact failure this script's header says it exists to prevent.
+ *
+ * Throwing when an entry is missing is the point. If a future nitro keeps this
+ * manifest somewhere else, that has to fail loudly here rather than ship another
+ * image that looks fine until somebody clicks something.
+ *
+ * What must NOT throw is a manifest that is already right. The container runs
+ * this on every start and substitutes from the pristine `.covan-tmpl` copies,
+ * so a restart with unchanged environment variables produces byte-identical
+ * assets and therefore the size and etag already recorded. Asking whether the
+ * replacement changed anything cannot tell that apart from a manifest this
+ * script cannot read — and it got it backwards in both directions: every
+ * restart threw, while an entry genuinely missing its `size` passed, because
+ * rewriting the etag alone counted as a change. That second one is the failure
+ * in the paragraph above, arriving silently.
+ *
+ * So the question is whether the fields are THERE, asked before anything is
+ * replaced.
+ */
+const SIZE_FIELD = /"size":\s*\d+/;
+const ETAG_FIELD = /"etag":\s*"(?:[^"\\]|\\.)*"/;
+
+export function updateAssetManifest(manifestText, entries) {
+  let out = manifestText;
+
+  for (const [urlPath, bytes] of entries) {
+    const key = JSON.stringify(urlPath);
+    const start = out.indexOf(`${key}: {`);
+    if (start === -1) {
+      throw new Error(
+        `Cannot start: no manifest entry for ${urlPath}.\n` +
+          "The server bundle records a size for every public asset and serves\n" +
+          "Content-Length from it. Rewriting the file without correcting that\n" +
+          "size produces a bundle the browser refuses to finish downloading, so\n" +
+          "the page renders and nothing on it works. If nitro has moved this\n" +
+          "manifest, this script has to move with it.",
+      );
+    }
+    const end = out.indexOf("}", start);
+    const before = out.slice(start, end);
+
+    const missing = [
+      SIZE_FIELD.test(before) ? null : "size",
+      ETAG_FIELD.test(before) ? null : "etag",
+    ].filter(Boolean);
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Cannot start: manifest entry for ${urlPath} has no ${missing.join(" and no ")} to correct.\n` +
+          "Its shape is not what this script expects, and guessing would ship a\n" +
+          "bundle that fails in the browser rather than here.",
+      );
+    }
+
+    const updated = before
+      .replace(SIZE_FIELD, `"size": ${bytes.length}`)
+      .replace(ETAG_FIELD, `"etag": ${JSON.stringify(assetEtag(bytes))}`);
+
+    out = out.slice(0, start) + updated + out.slice(end);
+  }
+
+  return out;
+}
+
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
     const path = join(dir, entry);
@@ -145,14 +238,31 @@ function main() {
   const root = process.argv[2] ?? ".output";
   const values = resolveValues(process.env);
 
+  const publicRoot = join(root, "public");
+  const manifestPath = join(root, "server", "index.mjs");
+  /** Public assets whose recorded size is now wrong. See updateAssetManifest. */
+  const resized = [];
+
   let count = 0;
   for (const template of walk(root)) {
     if (!template.endsWith(TEMPLATE_SUFFIX)) continue;
     const target = template.slice(0, -TEMPLATE_SUFFIX.length);
     const rendered = substitute(readFileSync(template, "utf8"), values);
     assertNothingLeftOver(rendered, target);
-    writeFileSync(target, rendered);
+    const bytes = Buffer.from(rendered, "utf8");
+    writeFileSync(target, bytes);
+    if (target.startsWith(publicRoot + sep)) {
+      resized.push(["/" + relative(publicRoot, target).split(sep).join("/"), bytes]);
+    }
     count += 1;
+  }
+
+  // After every substitution, never during: the manifest lives in the server
+  // bundle, which may itself be one of the templates above and be restored from
+  // pristine partway through the loop.
+  if (resized.length > 0) {
+    writeFileSync(manifestPath, updateAssetManifest(readFileSync(manifestPath, "utf8"), resized));
+    console.log(`covan: corrected the recorded size of ${resized.length} asset(s)`);
   }
 
   // Zero is not "nothing needed doing", it is "the templates are not in this

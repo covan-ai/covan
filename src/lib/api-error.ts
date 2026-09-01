@@ -6,6 +6,26 @@
  * down the other is the kind of difference nobody notices until someone is
  * looking at it.
  */
+/**
+ * A refusal that reached a server and came back with a number.
+ *
+ * Lives here rather than in `api-client.ts`, which it did until anything
+ * needed to reason about a status without also wanting a Supabase client:
+ * that module constructs one at import time from `VITE_` variables, so
+ * importing the error class pulled the whole authenticated transport — and its
+ * configuration — into a plain unit test. `api-client` re-exports it, so every
+ * existing call site is unchanged.
+ */
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export function errorMessage(status: number, body: unknown, fallback: string): string {
   const shape = body as { error?: unknown; resetsAt?: unknown } | null | undefined;
   const stated = typeof shape?.error === "string" ? shape.error : null;

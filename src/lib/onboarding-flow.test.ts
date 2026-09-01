@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   stepsFor,
+  plannedStepsFor,
   resolveStep,
   nextStep,
   newestAgent,
@@ -73,6 +74,45 @@ describe("stepsFor", () => {
   });
 });
 
+describe("plannedStepsFor", () => {
+  it("does not get longer when the agent is created", () => {
+    // The bug, as one assertion. Walked in a browser: the agent step said
+    // "Step 6 of 7", and creating the agent made it "Step 7 of 8" — the finish
+    // line moved away at the moment the hardest step was finished.
+    const before = plannedStepsFor(ctx({ hasAgent: false }));
+    const after = plannedStepsFor(ctx({ hasAgent: true }));
+    expect(before).toEqual(after);
+  });
+
+  it("counts the knowledge step before there is anything to put in it", () => {
+    // `stepsFor` must not — there is nowhere to put a document until an agent
+    // exists — and that difference is the whole reason there are two functions.
+    expect(stepsFor(ctx({ hasAgent: false }))).not.toContain("knowledge");
+    expect(plannedStepsFor(ctx({ hasAgent: false }))).toContain("knowledge");
+  });
+
+  it("still gets shorter for someone working alone", () => {
+    // Deliberately not fixed. A flow that shortens when you say you are working
+    // alone is a consequence of an answer just given; a step that appears after
+    // you finished one is not.
+    const solo = { ...ANSWERED, teamSize: "solo" };
+    expect(plannedStepsFor(ctx({ answers: solo }))).not.toContain("invite");
+  });
+
+  it("leaves the invited person's much shorter run alone", () => {
+    expect(plannedStepsFor(ctx({ hasIncomingInvite: true }))).toEqual(
+      stepsFor(ctx({ hasIncomingInvite: true })),
+    );
+  });
+
+  it("keeps every step of the real flow, in the same order", () => {
+    // The indicator takes its index from this list, so a step the flow can
+    // reach and the plan does not know about would be `indexOf` === -1.
+    const real = stepsFor(ctx({ hasAgent: true }));
+    expect(plannedStepsFor(ctx({ hasAgent: false }))).toEqual(real);
+  });
+});
+
 describe("resolveStep", () => {
   it("starts a fresh account at the first question", () => {
     expect(resolveStep(undefined, ctx({ answers: NO_ANSWERS }))).toBe("role");
@@ -105,6 +145,34 @@ describe("resolveStep", () => {
     // Referral was skipped, so it stays null forever. Defaulting back to it
     // would strand the flow on a card the user already declined.
     expect(resolveStep(undefined, ctx())).toBe("workspace");
+  });
+
+  it("resumes after the agent step once an agent exists", () => {
+    // Walked in a browser and this is what it did: a reload with no `?step=`
+    // went back to naming the workspace even though the agent was already
+    // created, and clicking forward through a step with no idempotency made a
+    // SECOND agent. `hasAgent` is the one part of setup that leaves a row
+    // behind, so it is the only thing a cold return can key on.
+    expect(resolveStep(undefined, ctx({ hasAgent: true }))).toBe("knowledge");
+  });
+
+  it("resumes the same way when this flow has no invite step at all", () => {
+    // No knowledge step is not a case: it exists exactly when an agent does.
+    // This is the shape where the step AFTER it is missing instead.
+    const solo = { ...ANSWERED, teamSize: "solo" };
+    expect(resolveStep(undefined, ctx({ hasAgent: true, answers: solo }))).toBe("knowledge");
+  });
+
+  it("refuses to show the agent step again once one exists", () => {
+    // Not only the cold return: the back button asks for `?step=agent` by
+    // name. Every other step can be re-shown harmlessly — this is the only one
+    // that creates something, so it is the only one a request cannot reopen.
+    expect(resolveStep("agent", ctx({ hasAgent: true }))).toBe("knowledge");
+  });
+
+  it("still honours a request for a step that creates nothing", () => {
+    expect(resolveStep("workspace", ctx({ hasAgent: true }))).toBe("workspace");
+    expect(resolveStep("invite", ctx({ hasAgent: true }))).toBe("invite");
   });
 });
 

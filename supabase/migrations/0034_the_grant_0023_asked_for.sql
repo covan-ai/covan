@@ -1,0 +1,45 @@
+-- 0034_the_grant_0023_asked_for.sql
+--
+-- `api_keys` was created in 0033 without the table grants it needs, and 0033 is
+-- the first migration to add a table since 0023 wrote the rule it broke:
+--
+--   "From here on a migration that adds a table grants for it, in the same file.
+--    Forgetting is loud — PostgREST returns 42501 — and a loud failure is worth
+--    more than an inherited grant nobody re-reads."
+--
+-- It was loud in the wrong place. Supabase stopped handing new tables to `anon`,
+-- `authenticated` and `service_role` — 0023 has the details — so on the hosted
+-- project every request to `api_keys` came back `42501 permission denied`, which
+-- routes/api-keys.ts turns into a 500, which the Settings section renders as
+-- nothing at all. The feature looked unshipped rather than broken.
+--
+-- ---- why nothing caught it -----------------------------------------------
+--
+-- The whole test suite is green, including tests/rls/api-keys.test.ts, which
+-- inserts and reads these rows for real. 0023 says why: the compose stack's
+-- Postgres image "still sets the wide default", and so does the Supabase CLI
+-- stack that CI runs the RLS job against. Both hand out the grant this file
+-- restores, so both hide its absence.
+--
+-- That is not something the RLS suite can be made to catch — it would have to
+-- run against a database configured the way production is, which is the one
+-- database it must never run against. So the tripwire is a static one over these
+-- files instead: src/lib/migration-grants.test.ts fails on a migration that
+-- creates a table in `public` and does not grant for it in the same file. It
+-- reads the directory, not a database, so it is right wherever it runs.
+--
+-- ---- the grant -----------------------------------------------------------
+--
+-- Not `anon`, which 0023's blanket statement did include. An API key belongs to
+-- a person and every policy on this table gates on `auth.uid()`, so there is no
+-- row a signed-out caller could ever be shown — and a grant that permits a read
+-- RLS will always refuse is a grant that only makes the next reader wonder.
+--
+-- `service_role` does need it: the key lookup in worker/src/lib/api-keys.ts runs
+-- before there is a caller for RLS to resolve, and BYPASSRLS skips the policies,
+-- not the grants.
+--
+-- Idempotent, like 0023: a database that already holds these is unchanged.
+
+grant select, insert, update, delete on public.api_keys to authenticated;
+grant select, insert, update, delete on public.api_keys to service_role;

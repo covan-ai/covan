@@ -8,6 +8,7 @@ import { extractDocumentText, hasIndexableText } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
+import { insertChunkRows } from "../lib/chunk-store";
 
 const bundles = new Hono<AppEnv>();
 
@@ -59,6 +60,55 @@ bundles.get("/bundles", async (c) => {
     .order("created_at");
   if (error) return c.json({ error: "failed to load bundles" }, 500);
   return c.json((data ?? []).map(mapBundle));
+});
+
+// GET /bundles/citations — how many answers cite each document, workspace-wide.
+//
+// Two calls rather than one because they answer two different questions, and
+// the second one is the caveat on the first: `since` is the oldest reply that
+// could be counted at all. Replies written before ids were stored cite by name
+// alone (#54), so every number here is over a window and the interface has to
+// be able to say which. Sending the counts without it would print a census and
+// mean a sample.
+//
+// Both are RPCs into `security definer` functions because the count has to
+// cross private sessions — see 0038. What comes back is a number per document
+// and a timestamp; who asked and what they asked stay where they are.
+bundles.get("/bundles/citations", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  if (!workspaceId) return c.json({ since: null, counts: {} });
+
+  const { data: bundleRows, error: bundleError } = await db
+    .from("knowledge_bundles")
+    .select("id")
+    .eq("workspace_id", workspaceId);
+  if (bundleError) return c.json({ error: "failed to load bundles" }, 500);
+
+  const bundleIds = (bundleRows ?? []).map((b) => b.id as string);
+  if (bundleIds.length === 0) return c.json({ since: null, counts: {} });
+
+  const [counted, sinceResult] = await Promise.all([
+    db.rpc("document_citation_counts", { p_bundle_ids: bundleIds }),
+    db.rpc("citations_counted_since", { p_workspace_id: workspaceId }),
+  ]);
+
+  if (counted.error || sinceResult.error) {
+    return c.json({ error: "failed to count citations" }, 500);
+  }
+
+  const counts: Record<string, number> = {};
+  for (const row of (counted.data ?? []) as Array<{ document_id: string; citations: number }>) {
+    // Postgres counts are bigint, which PostgREST sends as a JSON number here
+    // and as a string once it exceeds 2^53. Coerced rather than trusted: a
+    // string would sort as text, and "9" would outrank "41".
+    counts[row.document_id] = Number(row.citations);
+  }
+
+  const since = (sinceResult.data as string | null) ?? null;
+  return c.json({ since: since ? Date.parse(since) : null, counts });
 });
 
 // POST /bundles
@@ -206,7 +256,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   const { data: doc, error } = await db
     .from("documents")
     .insert({ bundle_id: bundleId, name: file.name, size: file.size, r2_key: r2Key, content })
-    .select("id,name,size")
+    .select("id,name,size,created_at")
     .single();
   if (error || !doc) {
     try {
@@ -230,7 +280,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   try {
     const chunks = chunkText(fullText);
     if (chunks.length > 0) {
-      const embedded = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+      const embedded = await embedTexts(c.env, chunks);
       const vectors = embedded.vectors;
       await recordQuota(c, embeddingCost(embedded.tokens));
       const rows = chunks.map((ch, i) => ({
@@ -241,7 +291,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
         content: ch,
         embedding: vectors[i],
       }));
-      const { error: chunkErr } = await db.from("document_chunks").insert(rows);
+      const { error: chunkErr } = await insertChunkRows(db, rows);
       if (chunkErr) console.error("failed to insert chunks", chunkErr);
       else chunkCount = rows.length;
     }
@@ -302,7 +352,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
     try {
       // Not charged to anyone's quota: this is the operator repairing their own
       // data, not a user asking for work. It is gated by ADMIN_API_KEY above.
-      const { vectors } = await embedTexts(c.env.OPENAI_API_KEY, chunks);
+      const { vectors } = await embedTexts(c.env, chunks);
       const rows = chunks.map((ch, i) => ({
         document_id: d.id,
         bundle_id: d.bundle_id,
@@ -311,7 +361,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
         content: ch,
         embedding: vectors[i],
       }));
-      const { error: insErr } = await db.from("document_chunks").insert(rows);
+      const { error: insErr } = await insertChunkRows(db, rows);
       if (insErr) {
         console.error("backfill insert failed", d.id, insErr);
         skipped++;

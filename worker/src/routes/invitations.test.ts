@@ -26,15 +26,18 @@ const USER = { id: "user-1", email: "admin@example.com" };
 const WORKSPACE = "ws-1";
 const CREATED_AT = "2026-08-01T09:00:00.000Z";
 
-function appWith(spec: FakeDbSpec) {
+/** `user` overrides the caller — only the incoming-invitations case needs it,
+    to check an address whose capitals survived signup. */
+function appWith(spec: FakeDbSpec & { user?: { id: string; email: string } }) {
+  const { user = USER, ...dbSpec } = spec;
   const fake = fakeDb({
-    ...spec,
-    tables: { ...activeWorkspaceTables(USER.id, WORKSPACE), ...spec.tables },
+    ...dbSpec,
+    tables: { ...activeWorkspaceTables(user.id, WORKSPACE), ...dbSpec.tables },
   });
 
   const app = new Hono<AppEnv>();
   app.use("/*", async (c, next) => {
-    c.set("user", USER as never);
+    c.set("user", user as never);
     c.set("db", fake.db as never);
     await next();
   });
@@ -101,7 +104,28 @@ describe("GET /invitations", () => {
     expect(callsTo("invitations")[0].filters).toEqual([
       { column: "workspace_id", value: WORKSPACE, kind: "eq" },
       { column: "status", value: "pending", kind: "eq" },
+      { column: "expires_at", value: expect.any(String), kind: "gt" },
     ]);
+  });
+
+  it("excludes invitations past their expiry from the pending list", async () => {
+    // status = 'pending' alone is not enough once invitations expire: 0029
+    // backfilled expires_at onto every pre-existing pending row rather than
+    // voiding it, so an old, unexpired-looking row is exactly the case this
+    // filter has to catch going forward.
+    const { app, callsTo } = appWith({
+      tables: {
+        invitations: { select: () => ({ data: [], error: null }) },
+      },
+    });
+
+    await json(app, "GET", "/invitations");
+
+    expect(callsTo("invitations")[0].filters).toContainEqual({
+      column: "expires_at",
+      value: expect.any(String),
+      kind: "gt",
+    });
   });
 
   it("answers 404 when the caller has no workspace at all", async () => {
@@ -229,6 +253,80 @@ describe("POST /invitations", () => {
     const { app } = appWith({});
 
     expect((await json(app, "POST", "/invitations", body)).status).toBe(400);
+  });
+
+  it("409s rather than inviting somebody who is already in the workspace", async () => {
+    const { app } = appWith({
+      existingMemberEmails: [{ email: "bob@corp.com", workspaceId: WORKSPACE }],
+      tables: {
+        invitations: {
+          insert: () => ({
+            data: [{ ...created, email: "bob@corp.com" }],
+            error: null,
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "POST", "/invitations", {
+      email: "bob@corp.com",
+      role: "member",
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: "they're already in this workspace" });
+  });
+
+  it("does not block an invite to someone who belongs to a different workspace", async () => {
+    // Proves the check is scoped to the caller's active workspace (WORKSPACE)
+    // rather than "any workspace this address happens to be a member of": if
+    // the production `.eq("workspace_id", workspaceId)` were dropped, or
+    // pointed at the wrong workspace, this would 409 instead of succeeding.
+    const { app } = appWith({
+      existingMemberEmails: [{ email: "carol@corp.com", workspaceId: "ws-2" }],
+      tables: {
+        invitations: {
+          insert: () => ({
+            data: [{ ...created, email: "carol@corp.com" }],
+            error: null,
+          }),
+        },
+      },
+    });
+
+    const res = await json(app, "POST", "/invitations", {
+      email: "carol@corp.com",
+      role: "member",
+    });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("escapes ILIKE wildcards in the address before the membership lookup", async () => {
+    // '_' is a valid character in a real local part (bob_smith@corp.com) but
+    // an ILIKE single-character wildcard when unescaped — a stray wildcard in
+    // a lookup built from user input is exactly what this route should never
+    // send. Asserting on the recorded filter (rather than on a fake that
+    // understands ILIKE semantics) is deliberate: the fake stays a strict
+    // recorder of what was sent, not a second implementation of Postgres.
+    const { app, callsTo } = appWith({
+      tables: {
+        invitations: {
+          insert: () => ({ data: [{ ...created, email: "bob_smith@corp.com" }], error: null }),
+        },
+      },
+    });
+
+    await json(app, "POST", "/invitations", { email: "bob_smith@corp.com", role: "member" });
+
+    const profileLookup = callsTo("profiles").find((c) =>
+      c.filters.some((f) => f.kind === "ilike"),
+    );
+    expect(profileLookup?.filters).toContainEqual({
+      column: "email",
+      value: "bob\\_smith@corp.com",
+      kind: "ilike",
+    });
   });
 
   it("reports a duplicate as a conflict, not a failure", async () => {
@@ -382,6 +480,60 @@ describe("GET /invitations/incoming", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual([expect.objectContaining({ workspaceName: "" })]);
   });
+
+  /**
+   * The route used to lean entirely on `invitations_select_admin_or_invitee`,
+   * which admits a row when the caller is an admin of the workspace OR the row
+   * is addressed to them. So it answered "invitations you can see" to a
+   * question that asked "invitations addressed to you", and an admin met their
+   * own outgoing invitations in the incoming banner — "You've been invited to
+   * <your own workspace> as <the role you just granted somebody else>", with an
+   * Accept button `accept_invitation()` was always going to refuse.
+   *
+   * Asserted on the filter rather than on the rows, because the fake client
+   * cannot enforce a policy: a test that only checked the response would pass
+   * with the filter deleted.
+   */
+  it("asks only for invitations addressed to the caller, not every one they may read", async () => {
+    let filters: { column: string; value: unknown }[] = [];
+    const { app } = appWith({
+      tables: {
+        invitations: {
+          select: (ctx) => {
+            filters = ctx.filters as typeof filters;
+            return { data: [], error: null };
+          },
+        },
+      },
+    });
+
+    await json(app, "GET", "/invitations/incoming");
+
+    expect(filters).toContainEqual(expect.objectContaining({ column: "email", value: USER.email }));
+  });
+
+  it("lowercases the caller's own address, since the stored one always is", async () => {
+    let filters: { column: string; value: unknown }[] = [];
+    const { app } = appWith({
+      user: { id: USER.id, email: "Admin@Example.com" },
+      tables: {
+        invitations: {
+          select: (ctx) => {
+            filters = ctx.filters as typeof filters;
+            return { data: [], error: null };
+          },
+        },
+      },
+    });
+
+    await json(app, "GET", "/invitations/incoming");
+
+    // POST /invitations lowercases on the way in, so a caller whose auth record
+    // kept its capitals would otherwise match none of their own invitations.
+    expect(filters).toContainEqual(
+      expect.objectContaining({ column: "email", value: "admin@example.com" }),
+    );
+  });
 });
 
 describe("POST /invitations/:id/accept", () => {
@@ -423,6 +575,68 @@ describe("POST /invitations/:id/accept", () => {
     await expect(res.json()).resolves.toEqual({
       error: "invitation is not addressed to you",
     });
+  });
+
+  /**
+   * Telling the admin somebody arrived.
+   *
+   * An invitation is the one thing in this product that ends somewhere other
+   * than where it started: an admin sends it and then has no way of knowing
+   * whether it worked, short of checking the member list. The pending list even
+   * empties on acceptance, so the only visible trace is an absence.
+   *
+   * The invitation row is read BEFORE the function consumes it — afterwards it
+   * is no longer pending, and the whole reason we can read it at all is that it
+   * is addressed to the caller.
+   */
+  function acceptingApp(fetchImpl: typeof fetch) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchImpl);
+    return appWith({
+      rpc: { accept_invitation: () => ({ data: "ws-2", error: null }) },
+      tables: {
+        invitations: {
+          select: () => ({
+            data: { invited_by: "admin-1", workspaces: { name: "Acme" } },
+            error: null,
+          }),
+        },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { name: "Ada Lovelace", email: "ada@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+  }
+
+  it("tells the person who invited them that they joined", async () => {
+    let sent: Record<string, unknown> | undefined;
+    const { app } = acceptingApp(async (_input, init) => {
+      sent = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    });
+
+    const res = await json(app, "POST", "/invitations/inv-1/accept", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent?.to).toEqual(["ada@example.com"]);
+    expect(String(sent?.subject)).toContain("Acme");
+    // The person who joined is named by the address the invitation was sent to,
+    // which is the only thing about them the inviter already knew.
+    expect(String(sent?.text)).toContain(USER.email);
+  });
+
+  // The membership is real whether or not the courtesy note arrives. A mail
+  // failure that turned this into a 400 would tell somebody who HAS joined that
+  // they have not.
+  it("still reports the join when the notice cannot be sent", async () => {
+    const { app } = acceptingApp(async () => new Response("nope", { status: 500 }));
+
+    const res = await json(app, "POST", "/invitations/inv-1/accept", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ workspaceId: "ws-2" });
   });
 });
 
@@ -493,6 +707,29 @@ describe("POST /invitations — telling the invitee", () => {
     expect(text, "the mail offered a link that accepts the invitation").not.toMatch(
       /\/invitations?\/[\w-]+\/accept|token=/,
     );
+  });
+
+  it("sends an HTML half that carries the same facts as the text one", async () => {
+    let sent: { url: string; body: Record<string, unknown> } | undefined;
+    const { app } = appWithMail(async (input, init) => {
+      sent = { url: String(input), body: JSON.parse(String(init?.body)) };
+      return new Response("{}", { status: 200 });
+    });
+
+    await json(app, "POST", "/invitations", { email: "new@example.com", role: "member" }, MAIL_ENV);
+
+    const html = String(sent?.body.html);
+    // Same three facts the text half is held to, because the two halves are one
+    // message and a reader sees only one of them.
+    expect(html).toContain("Acme");
+    expect(html).toContain("new@example.com");
+    expect(html).toContain(MAIL_ENV.ALLOWED_ORIGIN);
+    expect(html, "the HTML mail offered a link that accepts the invitation").not.toMatch(
+      /\/invitations?\/[\w-]+\/accept|token=/,
+    );
+    // The text half is not replaced by the HTML one; a client that strips
+    // styles still has the whole message.
+    expect(String(sent?.body.text)).toContain("new@example.com");
   });
 
   it("still creates the invitation when Resend refuses", async () => {

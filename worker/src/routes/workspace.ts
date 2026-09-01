@@ -1,8 +1,12 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AppEnv } from "../types";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { OPENAI_MODELS } from "../lib/models";
+import { canSendEmail } from "../lib/email";
+import { removedFromWorkspaceEmail, roleChangedEmail } from "../lib/emails/membership";
+import { notify } from "../lib/emails/send";
 
 const workspace = new Hono<AppEnv>();
 
@@ -173,14 +177,65 @@ workspace.patch("/workspace/members/:userId", async (c) => {
     .select("user_id, role");
 
   if (error) {
-    // Trigger violations surface as errors; return a friendly 400.
-    return c.json({ error: error.message || "failed to update member" }, 400);
+    // 22P02 is Postgres's "invalid input syntax" — a malformed uuid in the
+    // path. Everything else here is a trigger violation, and the driver's own
+    // sentence for it names columns and constraints that are ours to know and
+    // not the caller's.
+    if (error.code === "22P02") return c.json({ error: "invalid member id" }, 400);
+    return c.json({ error: "failed to update member" }, 400);
   }
   if (!updated || updated.length === 0) {
     return c.json({ error: "only workspace admins can manage members" }, 403);
   }
+
+  const affected = await affectedMember(c, db, workspaceId, targetUserId);
+  if (affected) {
+    notify(
+      c,
+      roleChangedEmail({
+        email: affected.email,
+        workspaceName: affected.workspaceName,
+        role: parsed.data.role,
+      }),
+    );
+  }
+
   return c.json({ ok: true });
 });
+
+/**
+ * The address and workspace name a membership notice needs.
+ *
+ * Entirely best-effort: every unknown answers null, and the caller sends nothing
+ * rather than guessing a recipient. Neither of the two actions that use this is
+ * conditional on it — a removal that happened must not be reported as a failure
+ * because a name lookup did not come back.
+ */
+async function affectedMember(
+  c: Context<AppEnv>,
+  db: SupabaseClient,
+  workspaceId: string,
+  targetUserId: string,
+): Promise<{ email: string; workspaceName: string } | null> {
+  if (!canSendEmail(c.env)) return null;
+
+  try {
+    const [{ data: profile }, { data: ws }] = await Promise.all([
+      db.from("profiles").select("email").eq("id", targetUserId).maybeSingle(),
+      db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
+    ]);
+
+    const email = profile?.email as string | undefined;
+    if (!email) return null;
+
+    return {
+      email,
+      workspaceName: (ws?.name as string | null) || "a workspace",
+    };
+  } catch {
+    return null;
+  }
+}
 
 // DELETE /workspace/members/me — leave the workspace you are currently in.
 //
@@ -262,6 +317,11 @@ workspace.delete("/workspace/members/:userId", async (c) => {
   const workspaceId = await getActiveWorkspaceId(db, user.id);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
+  // Read before the delete. Afterwards they are not a fellow member any more,
+  // and `workspace_members_select_fellow_members` is the only reason their
+  // profile was ever ours to read.
+  const affected = await affectedMember(c, db, workspaceId, targetUserId);
+
   const { data: deleted, error } = await db
     .from("workspace_members")
     .delete()
@@ -270,12 +330,65 @@ workspace.delete("/workspace/members/:userId", async (c) => {
     .select("user_id");
 
   if (error) {
-    return c.json({ error: error.message || "failed to remove member" }, 400);
+    if (error.code === "22P02") return c.json({ error: "invalid member id" }, 400);
+    return c.json({ error: "failed to remove member" }, 400);
   }
   if (!deleted || deleted.length === 0) {
     return c.json({ error: "only workspace admins can manage members" }, 403);
   }
+
+  // Only on the path where a row actually went. A refusal that still sent "you
+  // were removed" would be the worst combination available here.
+  if (affected) {
+    notify(
+      c,
+      removedFromWorkspaceEmail({
+        email: affected.email,
+        workspaceName: affected.workspaceName,
+      }),
+    );
+  }
+
   return c.json({ ok: true });
+});
+
+// GET /workspace/members/:userId/key-count — how many live API keys somebody has.
+//
+// One number, for the dialog above it. A key acts as its owner, so removing
+// somebody stops their keys at the same moment it stops them — correct, and the
+// thing people are surprised by, so it is said before the button rather than
+// discovered when a script goes quiet overnight.
+//
+// The admin check is inside `workspace_api_key_count`, not here: `api_keys` is
+// own-keys-only by design and nothing else may read across it. The function
+// raises rather than answering zero, so "you are not an admin" and "they have no
+// keys" stay different answers — 0032's rule, and 0033 follows it.
+//
+// Nothing identifying comes back. A name or a prefix would put one person's
+// credentials on another person's screen for a question that only needs a count.
+workspace.get("/workspace/members/:userId/key-count", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
+
+  const { data, error } = await db.rpc("workspace_api_key_count", {
+    p_workspace_id: workspaceId,
+    p_user_id: c.req.param("userId"),
+  });
+
+  if (error) {
+    if (error.code === "42501") return c.json({ error: "admins only" }, 403);
+    // The window between deploying this and hand-applying 0033. A count the
+    // dialog cannot get is a sentence it leaves out, not an error it shows.
+    if (error.code === "PGRST202" || error.code === "42883") {
+      return c.json({ count: null });
+    }
+    return c.json({ error: "failed to count api keys" }, 500);
+  }
+
+  return c.json({ count: Number(data) || 0 });
 });
 
 export { workspace };

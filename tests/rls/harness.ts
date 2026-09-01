@@ -184,9 +184,11 @@ export async function createTestUser(label: string): Promise<TestUser> {
  * under them; deleting a user then cascades what was only ever theirs, and
  * nulls their name on anything left standing in someone else's workspace.
  *
- * `chat_sessions.workspace_id` and `ideas.workspace_id` are NO ACTION and so
- * still have to be cleared by hand first — that is a different arrangement from
- * the one 0016 dealt with, and unrelated to who is being deleted.
+ * Until 0035 this also had to clear `chat_sessions` and `ideas` by workspace
+ * first, because neither reference cascaded. Both do now, and the only session
+ * delete left is the one scoped by person: a private session in somebody
+ * else's workspace belongs to the user, not to the room, so nothing above
+ * reaches it.
  *
  * This used to need `session_replication_role = replica` to get past
  * `trg_prevent_last_admin`, which refused to remove a workspace's last admin
@@ -202,10 +204,6 @@ export async function destroyTestUsers() {
   const users = db.array(ids);
 
   await db.begin(async (tx) => {
-    const workspaces = tx`select id from public.workspaces where created_by = any(${users}::uuid[])`;
-
-    await tx`delete from public.ideas where workspace_id in (${workspaces})`;
-    await tx`delete from public.chat_sessions where workspace_id in (${workspaces})`;
     await tx`delete from public.chat_sessions where user_id = any(${users}::uuid[])`;
     await tx`delete from public.workspaces where created_by = any(${users}::uuid[])`;
     await tx`delete from auth.users where id = any(${users}::uuid[])`;

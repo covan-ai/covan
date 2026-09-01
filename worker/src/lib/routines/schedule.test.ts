@@ -30,6 +30,24 @@ describe("nextRunAt", () => {
   });
 });
 
+describe("nextRunAt as the first scheduled run", () => {
+  it("returns a future instant, never the current one", () => {
+    const from = new Date("2026-08-26T14:32:00Z");
+    const next = nextRunAt("0 9 * * *", "UTC", from);
+
+    expect(next.getTime()).toBeGreaterThan(from.getTime());
+    expect(next.toISOString()).toBe("2026-08-27T09:00:00.000Z");
+  });
+
+  it("does not fire immediately for a frequent schedule either", () => {
+    const from = new Date("2026-08-26T14:32:00Z");
+    const next = nextRunAt("*/15 * * * *", "UTC", from);
+
+    expect(next.getTime()).toBeGreaterThan(from.getTime());
+    expect(next.toISOString()).toBe("2026-08-26T14:45:00.000Z");
+  });
+});
+
 describe("isValidCron", () => {
   it("accepts well-formed expressions", () => {
     expect(isValidCron("*/15 * * * *", "UTC")).toBe(true);

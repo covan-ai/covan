@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import type { AppEnv, Bindings } from "./types";
 import { authMiddleware } from "./middleware/auth";
 import { entitlementsMiddleware } from "./middleware/entitlements";
+import { rateLimit } from "./middleware/ratelimit";
 import { runDueRoutines } from "./lib/routines/dispatcher";
 import { agents } from "./routes/agents";
 import { favorites } from "./routes/favorites";
@@ -22,6 +23,9 @@ import { usage } from "./routes/usage";
 import { routines } from "./routes/routines";
 import { notifications } from "./routes/notifications";
 import { onboarding } from "./routes/onboarding";
+import { apiKeys } from "./routes/api-keys";
+import { account } from "./routes/account";
+import { exportRoutes } from "./routes/export";
 
 const app = new Hono<AppEnv>();
 
@@ -58,6 +62,16 @@ app.use(
   }),
 );
 
+// After cors, so a preflight is answered rather than counted: an OPTIONS that
+// gets a 429 makes the browser report the real request as a CORS failure, which
+// is the least legible way this could go wrong.
+//
+// Keyed by address here, because nothing above has validated a token yet — and
+// that is the point. authMiddleware below spends a round trip to Supabase on
+// every request, valid or not, so without this the cheapest thing to attack is
+// the check that stands in front of everything else.
+app.use("/*", rateLimit("standard"));
+
 // Unauthenticated — used for uptime checks / boot verification.
 app.get("/health", (c) => c.json({ ok: true }));
 
@@ -68,6 +82,43 @@ app.get("/health", (c) => c.json({ ok: true }));
 const api = new Hono<AppEnv>();
 api.use("/*", authMiddleware);
 api.use("/*", entitlementsMiddleware);
+
+// Every route that buys a completion or a transcription, which is the only
+// reason any of this exists. Keyed by user rather than by address, because
+// after authMiddleware there is one — a per-address limit would punish a shared
+// office for one person's loop and reward anyone with a second address.
+//
+// `ratelimit.static.test.ts` holds this list to the code: it fails if a route
+// file starts buying completions without appearing here, which is the way this
+// goes stale — the seventh paid endpoint, added a year from now for one
+// feature, quietly outside the limit.
+//
+// Document upload and reindex deliberately stay on `standard`. They spend on
+// embeddings, which `lib/entitlements` weights at a hundredth of a chat token
+// because that is roughly the real price ratio, and 20/min would break bulk
+// upload — the one behaviour this product exists to encourage — to bound a cost
+// the generous tier already bounds.
+//
+// The workspace export stays on `standard` too, and that is the least obvious
+// of these. It buys no completion, so it does not belong in the list above,
+// whose whole claim is derived from `createOpenAI` appearing in a route file.
+// But it is the one endpoint where a single request fans out into as many
+// object reads as the workspace has documents, so `standard`'s per-minute
+// allowance is an amplified one here in a way it is nowhere else. It bounds a
+// bandwidth bill rather than a model bill, and no allowance bounds the month
+// for it at all. Worth revisiting the moment anyone sees it abused — the reason
+// not to pre-emptively move it is that "expensive" currently means "buys a
+// completion", and putting something else there would make that list a lie.
+//
+// Entitlements bound the month and this bounds the minute. They are not
+// substitutes: a monthly allowance is a ceiling on the bill, not on the rate at
+// which it is reached, and the open build ships no allowance at all.
+api.use("/chat/stream", rateLimit("expensive"));
+api.use("/transcribe", rateLimit("expensive"));
+api.use("/brainstorm/ideas/suggest", rateLimit("expensive"));
+api.use("/persona/suggest", rateLimit("expensive"));
+api.use("/routines/draft", rateLimit("expensive"));
+api.use("/routines/:id/run", rateLimit("expensive"));
 
 api.route("/", agents);
 api.route("/", favorites);
@@ -87,6 +138,9 @@ api.route("/", usage);
 api.route("/", routines);
 api.route("/", notifications);
 api.route("/", onboarding);
+api.route("/", apiKeys);
+api.route("/", account);
+api.route("/", exportRoutes);
 
 app.route("/", api);
 

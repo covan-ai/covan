@@ -41,6 +41,29 @@ this page learned to read `emailed`; the three rows in the first run did not,
 and went on reporting "3 invitations sent" to people running an install with no
 mail at all. The sentence is now decided in one place for both of them.
 
+**"Tell them" comes with the words.** When nothing was emailed, the notice
+carries a _Copy invite text_ action, and every waiting invitation on this page
+has a _Copy invite_ button of its own — the durable version, for whenever the
+notice is long gone. What you get is a short message naming your Covan's address
+and the one address that will work:
+
+> You've been invited to Covan — a shared AI agent our team trains together.
+> Sign up at `https://covan.app/sign-up` with `ali@example.com` and the
+> invitation will be waiting.
+
+The URL is the front door, not a key. It carries no token and does not pre-fill
+the address, for the reason above and one more: a link that fills the field in
+gets forwarded in place of the address, and then somebody signs up as themselves
+and cannot see why nothing is waiting. Naming the address in prose keeps it
+visibly the thing that matters. Self-hosted installs get their own origin in
+that sentence, so it reads `http://localhost:3000/sign-up` where that is true.
+
+The button is offered whether or not the email went out, because this list
+cannot tell: `emailed` is only ever known about the invitation you have just
+created, nothing stores it, and a second nudge is a normal thing to send anyway.
+For the same reason a waiting invitation says when it was sent rather than
+claiming an email reached anyone.
+
 ### What the invitee sees
 
 When that person signs in with the address the invitation names, two places offer
@@ -48,6 +71,21 @@ it. A banner sits above the app with the workspace's name and the role, and a
 new account meets the same invitation as a step in the welcome flow instead —
 somebody who was invited already has a workspace waiting, so walking them through
 furnishing another one they are about to abandon would be the wrong order.
+
+**Only the invitee.** `invitations_select_admin_or_invitee` admits a row when the
+caller is an admin of the workspace _or_ the row is addressed to them, which is
+right — the pending list on this page needs the first half. It is the wrong
+scope for the incoming banner, and that route used to lean on the policy for its
+scoping instead of saying which rows it meant. So an admin met their own
+outgoing invitations in it: _"You've been invited to \<your own workspace\> as
+\<the role you just granted somebody else\>"_, with an Accept button
+`accept_invitation()` was always going to refuse, because it compares the
+address against the caller's own. The query now filters on the caller's address;
+the policy is untouched.
+
+That is the same mistake as the usage figures below, one table over. A policy
+answers "may this person see this row", which stops being the same question as
+"is this row theirs" the moment anybody else is added to the `or`.
 
 Accepting runs `accept_invitation()`, a `SECURITY DEFINER` function, because the
 person accepting is by definition not yet a member and no policy would let them
@@ -85,7 +123,7 @@ it; `create_workspace()` does the same for any workspace somebody makes later.
 | `member` | no                 | yes                   | yes             |
 | `viewer` | no                 | no                    | yes             |
 
-**Admin** governs two things and no more:
+**Admin** controls two things and no more:
 
 - **The workspace row.** Its name, its slug and its default model. One policy,
   `workspaces_update_admin`, covers all three, which is why the same people who
@@ -93,6 +131,10 @@ it; `create_workspace()` does the same for any workspace somebody makes later.
 - **The people in it.** Creating and revoking invitations, changing a role, and
   removing a member — the invitation policies plus
   `workspace_members_update_admin` and `workspace_members_delete_admin`.
+
+It also _sees_ one thing nobody else does — what the workspace as a whole has
+spent, by agent and by month — which is a read and not a control, and is
+described under [Usage figures](#usage-figures-are-yours-alone) below.
 
 **Everything a workspace shares** — `agents`, `knowledge_bundles`, `documents`,
 `agent_bundles` and `document_chunks` — asks `can_write_in_workspace()`, which
@@ -198,7 +240,32 @@ two columns, and Postgres will not let `create or replace` change a return type
 rather than by inheritance. The two new sums are inside that same scoped join,
 and the grants the drop removed are restored in the same file.
 
-There is still no workspace-wide view: nobody sees what a colleague spends.
+**An admin can see what the workspace spends, and still not what a colleague
+spends.** `0032` adds two functions next to it — `workspace_usage_all`, the
+same per-agent shape across everybody's conversations, and
+`workspace_usage_monthly`, six buckets of tokens so "are we spending more than
+we were" has an answer. Both are `security definer`, because reading past RLS
+is the entire point: an admin's own view of `chat_sessions` excludes exactly
+the private sessions being asked about. So each checks
+`is_workspace_admin()` for itself before reading anything, and raises `42501`
+rather than returning no rows — a silent empty result is indistinguishable from
+a workspace that has never sent a message.
+
+Aggregated **by agent and by month, never by person**. That is a property of
+their shape rather than a rule the screens are asked to follow: `user_id` is
+not selected, not grouped by, and not returned, so there is no per-person
+breakdown for a later screen to render. Token counts are not conversation
+content, but a table of who spent what is still the wrong thing to hand an
+admin in a product that promises private rooms.
+
+The monthly buckets carry tokens and no money. `messages` records no model, so
+pricing a month would mean assuming every reply in it came from whatever the
+agent is set to today. The per-agent rows do carry a cost, with the same
+caveat named on the screen: changing an agent's model re-prices its history.
+
+This is the third thing admin governs, and the list above says two. Read it as
+"the workspace row, the people in it, and what the workspace costs" — the first
+two are what admin _controls_, and this one is only something it can _see_.
 
 The figures also now account for prompt caching. Most of what Covan sends the
 model on any given turn is the same bytes as last turn — the persona, the
@@ -298,47 +365,70 @@ More than the word "remove" suggests:
   the select policy tests the _reader's_ membership, not the owner's, so a
   conversation somebody shared before they left goes on being visible to everyone
   who is still there.
-- **Their own sessions and routines still exist, are still theirs, and are still
-  reachable.** Both tables key off `auth.users` and carry no membership foreign
-  key, so nothing about them cascades — and the owner branch of each select
-  policy tests only `user_id = auth.uid()`, with no membership check beside it.
-  What removal takes away is the _list_: `GET /sessions` is scoped to the
-  caller's active workspace, and a workspace they have been removed from cannot
-  be made active, so the conversation stops appearing. It does not stop
-  existing. Reading a session's messages is filtered on the session id alone,
-  and the insert policy admits its owner on the same terms, so somebody who
-  still has the id — a bookmark, an open tab, a URL in their history — can read
-  the whole transcript back and append to it. What they cannot do is get an
-  answer: the reply path loads the agent first, that read is membership-gated,
-  and it returns a 404. Treat removal as ending their access to the workspace,
-  not as sealing the conversations they had in it.
+- **Their own sessions still exist, and stop being readable.** `chat_sessions`
+  keys off `auth.users` and carries no membership foreign key, so nothing about
+  it cascades and the rows survive removal untouched. Reaching them is another
+  matter: since `0031` every policy on `chat_sessions`, `messages` and `ideas`
+  requires membership of the workspace before it asks who owns the row, so a
+  conversation in a workspace somebody has left is refused however they come at
+  it — the workspace-scoped list, a bookmarked session id, an open tab, or a
+  PATCH straight to PostgREST. The questions in it were theirs; the answers were
+  grounded in the workspace's knowledge bundles, and leaving the transcript
+  readable would leave a readable copy of what those documents said. Nothing is
+  destroyed, and re-inviting them brings all of it back.
 - **Their routines stop at the next tick, not at the moment of removal.** The
   engine holds a service-role client that row level security does not constrain,
   so it re-checks the owner's membership before every single run and pauses the
   routine with a recorded reason when it has gone. Until that tick arrives the
   routine is still scheduled. The owner is deliberately not notified — see
-  [runs that send nothing](routines.md#runs-that-send-nothing).
+  [runs that send nothing](routines.md#runs-that-send-nothing). The routine row
+  itself stays readable to its owner: `routines_select_visible` keeps the plain
+  owner branch that `0031` closed on sessions, because the recorded pause reason
+  is the only explanation they will ever be given, and a routine that vanished
+  would be indistinguishable from one that quietly stopped working. There is
+  nothing of the workspace's in it — the instruction is theirs, and
+  `routine_runs` records counts and status, never content.
 - **Their delivery channels survive** — they were never the workspace's to take.
 
 Re-inviting the person gives all of it back, because none of it was destroyed.
 The one thing that does not resume itself is a routine the engine paused: the
 pause outlives the rejoining, and only its owner can clear it.
 
+## Taking a workspace with you
+
+Before the section below, because it is the thing to do first. Settings →
+**Take it with you** downloads the workspace as one archive: agents, bundles,
+documents and their original files, chats and messages, ideas, routines — plus
+the SQL to replay all of it into a Covan you run yourself. Not gated on a role,
+because it is a read: your archive holds what you could already see, and
+somebody else's private sessions are not in it. [Taking it with you](export.md)
+covers what is left out and why, and how to put it back.
+
 ## Deleting a workspace
 
-Not from the app. `workspaces` has select, update and insert policies and no
-delete policy at all, and no route anywhere calls for one, so there is no request
-any account can make that removes a workspace. It is an operator action, taken
-against the database, and the migration that made it possible says why it went
-unnoticed for so long: the first person to need it would have been somebody
-exercising a legal right to erasure.
+Not directly. `workspaces` has select, update and insert policies and no delete
+policy at all, so no request made _as you_ can remove one — deleting a workspace
+is an operator action taken against the database. The migration that made it
+possible says why it went unnoticed for so long: the first person to need it
+would have been somebody exercising a legal right to erasure.
 
-Two of the references to a workspace do not cascade. `chat_sessions.workspace_id`
-and `ideas.workspace_id` were both added after the original schema and are plain
-references, so the tested procedure clears those two tables for the workspace
-first and then deletes the workspace row. A third,
-`profiles.active_workspace_id`, sets itself to null, which is the same state a
-fresh account is in and resolves to the person's oldest remaining membership.
+There is one indirect route, and it exists because of that same person. Closing
+your account (`DELETE /account`) deletes any workspace you were the last member
+of, with the service role rather than with your own credentials. It is not a
+"delete workspace" feature wearing a different hat: a workspace anybody else is
+still in is never touched, and being the last _admin_ of one refuses the whole
+deletion until the role is handed over. What it removes is a room with nobody
+left to enter it.
+
+Deleting the workspace row is the whole procedure. It was not until `0035`:
+`chat_sessions.workspace_id` and `ideas.workspace_id` were added after the
+original schema as plain references with no delete rule, so the delete failed on
+a foreign key while a single conversation remained — which was every workspace
+anybody had actually used — and the operator, the route and two tests each
+carried their own copy of "clear those two tables first". Both cascade now.
+One reference still does not: `profiles.active_workspace_id` sets itself to
+null, which is the same state a fresh account is in and resolves to the person's
+oldest remaining membership.
 
 What goes with it is everything that hangs off it, directly or through something
 that does: memberships, agents, and through the agents every session, message and
@@ -355,6 +445,13 @@ are then cleaned up is a question about the storage itself — a lifecycle rule 
 the bucket, or a sweep somebody runs — not one this codebase answers. If it is
 the latter, collect the keys before the rows go, because afterwards there is
 nothing left to enumerate them by.
+
+Account closure is the one place that does it for you, and it follows exactly
+that advice: `worker/src/routes/account.ts` reads the keys of every document in
+the workspaces it is about to remove, deletes the rows, and then deletes the
+objects. The difference is not technical but legal — for an ordinary delete an
+orphaned object is a storage cost, and for an erasure request it is the file
+still being there.
 
 What survives is the people. Deleting a workspace deletes no accounts, and the
 last-admin trigger stands aside for exactly this case rather than blocking it —

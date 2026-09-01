@@ -132,7 +132,9 @@ under in the document store, and an excerpt of the extracted text — the first
 The searchable form is separate. At upload the text is split into chunks of up to
 1000 characters with roughly 150 characters of overlap, and each chunk is
 embedded with `text-embedding-3-small` and stored as a `vector(1536)` in
-`document_chunks`. That step is best-effort: if chunking or embedding fails the
+`document_chunks` — the default, and changeable together if you self-host and
+would rather your documents were not embedded by OpenAI at all
+([self-hosting](self-hosting.md)). That step is best-effort: if chunking or embedding fails the
 document still exists, and it stays unindexed until somebody re-embeds it. The
 accepted file types and the reason PDFs are handled in the browser are in the
 [Quickstart](quickstart.md).
@@ -176,13 +178,20 @@ does the work here is `chat_sessions_select_owner_or_shared`:
 create policy "chat_sessions_select_owner_or_shared"
   on public.chat_sessions for select
   using (
-    user_id = auth.uid()
-    or (visibility = 'shared' and public.is_workspace_member(workspace_id))
+    public.is_workspace_member(workspace_id)
+    and (user_id = auth.uid() or visibility = 'shared')
   );
 ```
 
-Messages do not repeat that rule; `messages_select_session_visible` defers to the
-parent session, so a message is readable exactly when its session is.
+Read it in that order, because the order is the rule: membership first and
+unconditionally, then ownership to decide which member. Being the person who
+opened a session is not on its own a reason to be shown it — the answers in it
+came from the workspace's knowledge, so access to it ends when membership does.
+Until `0031` the first branch stood alone and it did not.
+
+Messages do not repeat that rule and neither do idea cards; both defer to
+`session_is_visible`, which holds the expression above once, so a message is
+readable exactly when its session is.
 
 What this guarantees is narrow and worth stating exactly: a `select` carrying
 another person's token returns no row for a private session that is not theirs,

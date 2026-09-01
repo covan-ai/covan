@@ -23,18 +23,22 @@ function readUrlError(): string | null {
 function ResetPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<"checking" | "ready" | "invalid" | "done">("checking");
+  // Supabase puts a rejected link's reason in the URL fragment before this
+  // component ever renders, so it is known at mount and read here rather than
+  // announced by an effect afterwards (#68). The rest of the effect below —
+  // the auth subscription — is what an effect is for, and stays.
+  const [urlError] = useState(readUrlError);
+  const [error, setError] = useState<string | null>(urlError);
+  const [status, setStatus] = useState<"checking" | "ready" | "invalid" | "done">(
+    urlError ? "invalid" : "checking",
+  );
 
   useEffect(() => {
-    let active = true;
+    // An expired or already-used link. There is no token to wait for, so
+    // subscribing would only keep a listener alive to hear nothing.
+    if (urlError) return;
 
-    const urlError = readUrlError();
-    if (urlError) {
-      setStatus("invalid");
-      setError(urlError);
-      return;
-    }
+    let active = true;
 
     // The reset email link redirects here with a recovery token. supabase-js
     // (detectSessionInUrl, on by default) parses it and fires PASSWORD_RECOVERY,
@@ -61,7 +65,7 @@ function ResetPassword() {
       active = false;
       subscription.subscription.unsubscribe();
     };
-  }, []);
+  }, [urlError]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

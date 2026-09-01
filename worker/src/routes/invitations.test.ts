@@ -576,6 +576,68 @@ describe("POST /invitations/:id/accept", () => {
       error: "invitation is not addressed to you",
     });
   });
+
+  /**
+   * Telling the admin somebody arrived.
+   *
+   * An invitation is the one thing in this product that ends somewhere other
+   * than where it started: an admin sends it and then has no way of knowing
+   * whether it worked, short of checking the member list. The pending list even
+   * empties on acceptance, so the only visible trace is an absence.
+   *
+   * The invitation row is read BEFORE the function consumes it — afterwards it
+   * is no longer pending, and the whole reason we can read it at all is that it
+   * is addressed to the caller.
+   */
+  function acceptingApp(fetchImpl: typeof fetch) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetchImpl);
+    return appWith({
+      rpc: { accept_invitation: () => ({ data: "ws-2", error: null }) },
+      tables: {
+        invitations: {
+          select: () => ({
+            data: { invited_by: "admin-1", workspaces: { name: "Acme" } },
+            error: null,
+          }),
+        },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("email")
+              ? { data: { name: "Ada Lovelace", email: "ada@example.com" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+  }
+
+  it("tells the person who invited them that they joined", async () => {
+    let sent: Record<string, unknown> | undefined;
+    const { app } = acceptingApp(async (_input, init) => {
+      sent = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    });
+
+    const res = await json(app, "POST", "/invitations/inv-1/accept", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent?.to).toEqual(["ada@example.com"]);
+    expect(String(sent?.subject)).toContain("Acme");
+    // The person who joined is named by the address the invitation was sent to,
+    // which is the only thing about them the inviter already knew.
+    expect(String(sent?.text)).toContain(USER.email);
+  });
+
+  // The membership is real whether or not the courtesy note arrives. A mail
+  // failure that turned this into a 400 would tell somebody who HAS joined that
+  // they have not.
+  it("still reports the join when the notice cannot be sent", async () => {
+    const { app } = acceptingApp(async () => new Response("nope", { status: 500 }));
+
+    const res = await json(app, "POST", "/invitations/inv-1/accept", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ workspaceId: "ws-2" });
+  });
 });
 
 describe("POST /invitations — telling the invitee", () => {

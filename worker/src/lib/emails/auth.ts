@@ -54,4 +54,27 @@ export const authEmailTemplates = [
         "If this was not you, ignore this message — your password has not changed and nobody was let in.",
     }),
   },
+  {
+    // Supabase can send this and does not by default: it is
+    // `auth.email.notification.password_changed`, off until somebody turns it
+    // on. Worth turning on. It is the only message in the whole set that a
+    // person reads in order to find out they have been broken into — a password
+    // change nobody asked for is the first evidence of a stolen session, and
+    // silence there is the difference between an hour and a month.
+    //
+    // No button, and deliberately: it announces something already done. A link
+    // in a mail about credentials is also exactly the shape of the phishing this
+    // message would otherwise help somebody fall for.
+    filename: "password-changed.html",
+    subject: "Your Covan password was changed",
+    html: emailShell({
+      preheader: "The password on your Covan account was just changed.",
+      heading: "Your password was changed",
+      bodyHtml: [
+        `<p style="${P}">The password on your Covan account has just been changed, and the new one is in use from now on.</p>`,
+        `<p style="${P}">If that was you, there is nothing to do.</p>`,
+        `<p style="${P}"><strong>If it was not you</strong>, somebody else has access to this account. Use "Forgot password" on the sign-in page to take it back — that sends a link to this address, which they cannot read.</p>`,
+      ].join(""),
+    }),
+  },
 ];

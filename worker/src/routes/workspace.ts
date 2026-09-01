@@ -1,8 +1,12 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AppEnv } from "../types";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { OPENAI_MODELS } from "../lib/models";
+import { canSendEmail } from "../lib/email";
+import { removedFromWorkspaceEmail, roleChangedEmail } from "../lib/emails/membership";
+import { notify } from "../lib/emails/send";
 
 const workspace = new Hono<AppEnv>();
 
@@ -183,8 +187,55 @@ workspace.patch("/workspace/members/:userId", async (c) => {
   if (!updated || updated.length === 0) {
     return c.json({ error: "only workspace admins can manage members" }, 403);
   }
+
+  const affected = await affectedMember(c, db, workspaceId, targetUserId);
+  if (affected) {
+    notify(
+      c,
+      roleChangedEmail({
+        email: affected.email,
+        workspaceName: affected.workspaceName,
+        role: parsed.data.role,
+      }),
+    );
+  }
+
   return c.json({ ok: true });
 });
+
+/**
+ * The address and workspace name a membership notice needs.
+ *
+ * Entirely best-effort: every unknown answers null, and the caller sends nothing
+ * rather than guessing a recipient. Neither of the two actions that use this is
+ * conditional on it — a removal that happened must not be reported as a failure
+ * because a name lookup did not come back.
+ */
+async function affectedMember(
+  c: Context<AppEnv>,
+  db: SupabaseClient,
+  workspaceId: string,
+  targetUserId: string,
+): Promise<{ email: string; workspaceName: string } | null> {
+  if (!canSendEmail(c.env)) return null;
+
+  try {
+    const [{ data: profile }, { data: ws }] = await Promise.all([
+      db.from("profiles").select("email").eq("id", targetUserId).maybeSingle(),
+      db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
+    ]);
+
+    const email = profile?.email as string | undefined;
+    if (!email) return null;
+
+    return {
+      email,
+      workspaceName: (ws?.name as string | null) || "a workspace",
+    };
+  } catch {
+    return null;
+  }
+}
 
 // DELETE /workspace/members/me — leave the workspace you are currently in.
 //
@@ -266,6 +317,11 @@ workspace.delete("/workspace/members/:userId", async (c) => {
   const workspaceId = await getActiveWorkspaceId(db, user.id);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
+  // Read before the delete. Afterwards they are not a fellow member any more,
+  // and `workspace_members_select_fellow_members` is the only reason their
+  // profile was ever ours to read.
+  const affected = await affectedMember(c, db, workspaceId, targetUserId);
+
   const { data: deleted, error } = await db
     .from("workspace_members")
     .delete()
@@ -280,6 +336,19 @@ workspace.delete("/workspace/members/:userId", async (c) => {
   if (!deleted || deleted.length === 0) {
     return c.json({ error: "only workspace admins can manage members" }, 403);
   }
+
+  // Only on the path where a row actually went. A refusal that still sent "you
+  // were removed" would be the worst combination available here.
+  if (affected) {
+    notify(
+      c,
+      removedFromWorkspaceEmail({
+        email: affected.email,
+        workspaceName: affected.workspaceName,
+      }),
+    );
+  }
+
   return c.json({ ok: true });
 });
 

@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
 import { getDocStore } from "../lib/docstore";
+import { accountClosedEmail } from "../lib/emails/closed";
+import { notify } from "../lib/emails/send";
 
 /**
  * Closing an account.
@@ -226,6 +228,15 @@ account.delete("/account", async (c) => {
     // told their account is gone and it is not.
     console.error("account deletion: deleteUser failed", deleteError);
     return c.json({ error: "failed to close your account" }, 500);
+  }
+
+  // After the deletion succeeded, never before it. A receipt for an erasure that
+  // did not happen is worse than no receipt: it tells somebody their data is
+  // gone while it is still there. The address comes from the token rather than
+  // from the database, which is what makes it still readable now that the
+  // profile row is not.
+  if (user.email) {
+    notify(c, accountClosedEmail({ email: user.email }));
   }
 
   // Last, and best-effort, in that order for the same reason `documents.ts`

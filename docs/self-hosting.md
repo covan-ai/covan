@@ -522,10 +522,18 @@ and it is the first thing a new account ever receives.
 `supabase/templates/` holds a styled version of each, rendered from the same
 shell as every other Covan email:
 
-| File                  | Paste into                                   |
-| --------------------- | -------------------------------------------- |
-| `confirm-signup.html` | Authentication → Emails → **Confirm signup** |
-| `reset-password.html` | Authentication → Emails → **Reset password** |
+| File                    | Paste into                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| `confirm-signup.html`   | Authentication → Emails → **Confirm signup**                                                 |
+| `reset-password.html`   | Authentication → Emails → **Reset password**                                                 |
+| `password-changed.html` | Authentication → Emails → **Password changed** — and enable it; Supabase ships it turned off |
+
+The third is worth the extra click. It is the only message in the set somebody
+reads in order to discover they have been broken into: a password change nobody
+asked for is the first visible evidence of a stolen session. It carries no link,
+deliberately — it announces something already done, and a credential email with
+a link in it is the exact shape of the phishing this message exists to help
+someone notice.
 
 The subject lines that go with them are in
 `worker/src/lib/emails/auth.ts`. Both files keep Supabase's

@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { ROLES, USE_CASES, TEAM_SIZES, REFERRAL_SOURCES } from "../lib/onboarding";
+import { welcomeEmail } from "../lib/emails/welcome";
+import { appUrlOf, notify } from "../lib/emails/send";
 
 const onboarding = new Hono<AppEnv>();
 
@@ -115,6 +117,12 @@ onboarding.post("/onboarding/complete", async (c) => {
   if (error || !data) {
     console.error("failed to finish onboarding", error);
     return c.json({ error: "failed to finish onboarding" }, 500);
+  }
+
+  // After the stamp, and only on the path that wrote one: the early return above
+  // is what keeps a reload of the last step from being a second welcome.
+  if (user.email) {
+    notify(c, welcomeEmail({ email: user.email, appUrl: appUrlOf(c) }));
   }
 
   return c.json({ completed: true });

@@ -7,6 +7,8 @@ import { account, planWorkspaces } from "./account";
 const USER = { id: "user-1", email: "a@example.com" };
 
 const deleteUser = vi.fn();
+
+const MAIL_ENV = { RESEND_API_KEY: "re_test", RESEND_FROM: "Covan <hello@covan.test>" };
 const serviceFrom = vi.fn();
 const storeDelete = vi.fn();
 vi.mock("../lib/supabase", () => ({
@@ -282,6 +284,47 @@ describe("DELETE /account", () => {
 
     expect(status).toBe(500);
     expect(body.error).toMatch(/failed to close your account/);
+  });
+
+  /**
+   * The one receipt a closed account gets.
+   *
+   * Everything else about this action disappears with it: there is no row left
+   * to check, no screen to come back to, and no way to sign in and confirm.
+   * Under the KVKK and the GDPR the erasure is the obligation and the record of
+   * it is what makes the obligation demonstrable — for the person as much as for
+   * the operator.
+   */
+  it("sends a receipt once the account is really gone", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (_i: unknown, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)));
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch);
+
+    const app = appWith({ members: [] });
+    const res = await app.request("/account", { method: "DELETE" }, MAIL_ENV as never);
+
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toEqual([USER.email]);
+  });
+
+  // A receipt for a deletion that did not happen is worse than none: it tells
+  // somebody their data is gone while it is still there.
+  it("sends no receipt when the deletion failed", async () => {
+    const sent: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((async () => {
+      sent.push(1);
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch);
+    deleteUser.mockResolvedValue({ data: null, error: { message: "still referenced" } });
+
+    const app = appWith({ members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }] });
+    const res = await app.request("/account", { method: "DELETE" }, MAIL_ENV as never);
+
+    expect(res.status).toBe(500);
+    expect(sent).toEqual([]);
   });
 
   it("closes an account that belongs to no workspace at all", async () => {

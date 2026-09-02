@@ -186,7 +186,11 @@ function blockToMarkdown(block: NotionBlock): string {
 }
 
 /** Blocks under one parent, flattened to Markdown, following nesting to a depth. */
-async function readBlocks(ctx: ProviderContext, parentId: string, depth: number): Promise<string[]> {
+async function readBlocks(
+  ctx: ProviderContext,
+  parentId: string,
+  depth: number,
+): Promise<string[]> {
   const lines: string[] = [];
   let cursor: string | undefined;
 

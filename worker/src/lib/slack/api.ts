@@ -122,7 +122,10 @@ export async function lookupEmail(
     // rather than a failure of this request: an app installed without
     // users:read.email cannot identify anybody, and the caller turns that into
     // a message a person can act on.
-    if (err instanceof SlackError && (err.code === "missing_scope" || err.code === "users_not_found")) {
+    if (
+      err instanceof SlackError &&
+      (err.code === "missing_scope" || err.code === "users_not_found")
+    ) {
       return null;
     }
     throw err;

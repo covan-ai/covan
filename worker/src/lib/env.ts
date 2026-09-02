@@ -119,6 +119,17 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     ALLOWED_ORIGIN: source.ALLOWED_ORIGIN!,
     WORKER_HOST: source.WORKER_HOST,
     ADMIN_API_KEY: source.ADMIN_API_KEY,
+    // Connected sources and the Slack app. Every one is optional, and absence
+    // is a supported configuration rather than a misconfiguration: a build with
+    // none of them set offers no connections and no Slack, and says so on the
+    // Integrations page instead of failing at boot.
+    NOTION_CLIENT_ID: source.NOTION_CLIENT_ID,
+    NOTION_CLIENT_SECRET: source.NOTION_CLIENT_SECRET,
+    GOOGLE_CLIENT_ID: source.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: source.GOOGLE_CLIENT_SECRET,
+    SLACK_CLIENT_ID: source.SLACK_CLIENT_ID,
+    SLACK_CLIENT_SECRET: source.SLACK_CLIENT_SECRET,
+    SLACK_SIGNING_SECRET: source.SLACK_SIGNING_SECRET,
     // Optional, and either name works. `SUPABASE_JWT_SECRET` is what the
     // Cloudflare deployment sets; `JWT_SECRET` is what a self-hosted stack
     // already has, because GoTrue and PostgREST are configured with it in the

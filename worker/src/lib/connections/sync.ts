@@ -256,7 +256,14 @@ export async function runConnection(
     let added = 0;
     let updated = 0;
     for (const file of changed.slice(0, MAX_DOCUMENTS_PER_RUN)) {
-      const result = await importOne(connection, deps, provider, ctx, file, byId.get(file.externalId));
+      const result = await importOne(
+        connection,
+        deps,
+        provider,
+        ctx,
+        file,
+        byId.get(file.externalId),
+      );
       tokens += result.tokens;
       if (result.imported === "added") added++;
       if (result.imported === "updated") updated++;

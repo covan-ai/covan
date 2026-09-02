@@ -90,13 +90,19 @@ function db(options: { documents?: Array<Record<string, unknown>>; member?: bool
   return fakeDb({
     tables: {
       workspace_members: {
-        select: () => ({ data: options.member === false ? null : { user_id: "user-1" }, error: null }),
+        select: () => ({
+          data: options.member === false ? null : { user_id: "user-1" },
+          error: null,
+        }),
       },
       connections: { update: () => ({ data: null, error: null }) },
       connection_runs: { insert: () => ({ data: null, error: null }) },
       documents: {
         select: () => ({ data: documents, error: null }),
-        insert: (ctx: QueryContext) => ({ data: { id: `doc-${ctx.values?.external_id}` }, error: null }),
+        insert: (ctx: QueryContext) => ({
+          data: { id: `doc-${ctx.values?.external_id}` },
+          error: null,
+        }),
         update: (ctx: QueryContext) => ({
           data: ctx.single ? { id: "doc-existing" } : [],
           error: null,
@@ -222,7 +228,11 @@ describe("syncing a connection", () => {
     const adoption = fake
       .callsTo("documents")
       .find((c) => c.op === "update" && c.values?.connection_id === "conn-1");
-    expect(adoption?.filters).toContainEqual({ column: "bundle_id", value: "bundle-1", kind: "eq" });
+    expect(adoption?.filters).toContainEqual({
+      column: "bundle_id",
+      value: "bundle-1",
+      kind: "eq",
+    });
     expect(adoption?.filters).toContainEqual({ column: "connection_id", value: null, kind: "is" });
     expect(adoption?.filters).toContainEqual({
       column: "external_id",
@@ -307,10 +317,7 @@ describe("syncing a connection", () => {
     fakeProvider.listFiles.mockRejectedValue(new ProviderError("Notion returned HTTP 503", true));
     const fake = db();
 
-    const outcome = await runConnection(
-      await connection({ consecutive_failures: 19 }),
-      deps(fake),
-    );
+    const outcome = await runConnection(await connection({ consecutive_failures: 19 }), deps(fake));
 
     expect(outcome.status).toBe("failed");
     expect(fake.callsTo("connections").find((c) => c.op === "update")?.values).toMatchObject({
@@ -364,9 +371,9 @@ describe("syncing a connection", () => {
     const outcome = await runConnection(await connection(), deps(fake));
 
     expect(outcome.status).toBe("failed");
-    expect(fake.callsTo("connections").find((c) => c.op === "update")?.values?.paused_reason).toMatch(
-      /not configured/,
-    );
+    expect(
+      fake.callsTo("connections").find((c) => c.op === "update")?.values?.paused_reason,
+    ).toMatch(/not configured/);
   });
 
   it("records the run, whatever happened", async () => {

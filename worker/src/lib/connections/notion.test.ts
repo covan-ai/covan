@@ -42,7 +42,9 @@ describe("notion provider", () => {
     expect(url.origin + url.pathname).toBe("https://api.notion.com/v1/oauth/authorize");
     expect(url.searchParams.get("state")).toBe("the-state");
     expect(url.searchParams.get("owner")).toBe("user");
-    expect(url.searchParams.get("redirect_uri")).toBe("https://api.example.com/connections/callback");
+    expect(url.searchParams.get("redirect_uri")).toBe(
+      "https://api.example.com/connections/callback",
+    );
   });
 
   it("names the connection after the Notion workspace it was given", async () => {
@@ -132,7 +134,11 @@ describe("notion provider", () => {
           type: "bulleted_list_item",
           bulleted_list_item: { rich_text: [{ plain_text: "Ask in advance" }] },
         },
-        { id: "b4", type: "to_do", to_do: { rich_text: [{ plain_text: "Sign it" }], checked: true } },
+        {
+          id: "b4",
+          type: "to_do",
+          to_do: { rich_text: [{ plain_text: "Sign it" }], checked: true },
+        },
         // Found by `search` in its own right, so following it here would index
         // the same text twice.
         { id: "b5", type: "child_page", child_page: { title: "Sub page" }, has_children: true },
@@ -149,9 +155,14 @@ describe("notion provider", () => {
     });
 
     expect(text).toBe(
-      ["# Handbook", "", "## Leave", "Twenty days a year.", "- Ask in advance", "- [x] Sign it"].join(
-        "\n",
-      ),
+      [
+        "# Handbook",
+        "",
+        "## Leave",
+        "Twenty days a year.",
+        "- Ask in advance",
+        "- [x] Sign it",
+      ].join("\n"),
     );
     // The child page contributed nothing, so nothing was fetched for it.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -208,7 +219,9 @@ describe("notion provider", () => {
   });
 
   it("refuses a token exchange that produced no token", async () => {
-    const fetchImpl = vi.fn(async () => json({ workspace_name: "Covan HQ" })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () =>
+      json({ workspace_name: "Covan HQ" }),
+    ) as unknown as typeof fetch;
     await expect(
       notionProvider.exchangeCode(
         { NOTION_CLIENT_ID: "id", NOTION_CLIENT_SECRET: "shh" },

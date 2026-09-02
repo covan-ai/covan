@@ -92,7 +92,9 @@ connections.get("/connections/:id/runs", async (c) => {
   const { data, error } = await c
     .get("db")
     .from("connection_runs")
-    .select("id,status,documents_added,documents_updated,documents_removed,error,duration_ms,started_at")
+    .select(
+      "id,status,documents_added,documents_updated,documents_removed,error,duration_ms,started_at",
+    )
     .eq("connection_id", c.req.param("id"))
     .order("started_at", { ascending: false })
     .limit(10);
@@ -112,10 +114,7 @@ connections.post("/connections/:provider/start", async (c) => {
   const provider = providerFor(c.req.param("provider"));
   if (!provider) return c.json({ error: "unknown provider" }, 404);
   if (!provider.isConfigured(c.env)) {
-    return c.json(
-      { error: `${provider.label} is not configured on this deployment` },
-      501,
-    );
+    return c.json({ error: `${provider.label} is not configured on this deployment` }, 501);
   }
 
   const parsed = startSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -426,11 +425,7 @@ connections.delete("/connections/:id", async (c) => {
     }
   }
 
-  const { data: deleted, error } = await db
-    .from("connections")
-    .delete()
-    .eq("id", id)
-    .select("id");
+  const { data: deleted, error } = await db.from("connections").delete().eq("id", id).select("id");
   if (error) return c.json({ error: "failed to disconnect" }, 500);
   if (!deleted || deleted.length === 0) {
     return c.json({ error: "you do not have permission to remove this connection" }, 403);
@@ -458,7 +453,9 @@ async function loadForCaller(
   const { data, error } = await c
     .get("db")
     .from("connections")
-    .select("id,workspace_id,bundle_id,user_id,provider,account_label,config,status,sync_interval_minutes,consecutive_failures")
+    .select(
+      "id,workspace_id,bundle_id,user_id,provider,account_label,config,status,sync_interval_minutes,consecutive_failures",
+    )
     .eq("id", id)
     .maybeSingle();
 

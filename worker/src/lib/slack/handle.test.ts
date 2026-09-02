@@ -4,7 +4,11 @@ type PostedMessage = { channel: string; threadTs: string; text: string };
 
 const { postMessage, lookupEmail } = vi.hoisted(() => ({
   postMessage: vi.fn(
-    async (_fetch: unknown, _token: string, _message: { channel: string; threadTs: string; text: string }) => {},
+    async (
+      _fetch: unknown,
+      _token: string,
+      _message: { channel: string; threadTs: string; text: string },
+    ) => {},
   ),
   lookupEmail: vi.fn(async () => "deniz@covan.app" as string | null),
 }));
@@ -99,7 +103,10 @@ function db(
         select: () => ({ data: options.profile === false ? null : { id: "user-1" }, error: null }),
       },
       workspace_members: {
-        select: () => ({ data: options.member === false ? null : { user_id: "user-1" }, error: null }),
+        select: () => ({
+          data: options.member === false ? null : { user_id: "user-1" },
+          error: null,
+        }),
       },
       agents: {
         select: () => ({

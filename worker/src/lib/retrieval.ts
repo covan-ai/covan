@@ -130,25 +130,22 @@ export async function retrieveForAgent(
   // only used by the no-match fallback below, so we load it lazily there and
   // avoid pulling every document's full body on every single turn.
   let docNames: string[] = [];
-  let bundleIds: string[];
-  {
-    const { data: bundleRows, error: bundleError } = await db
-      .from("agent_bundles")
-      .select("bundle_id")
-      .eq("agent_id", agentId);
-    bundleIds = bundleError
-      ? []
-      : (bundleRows ?? []).map((r: { bundle_id: string }) => r.bundle_id);
-    if (bundleIds.length > 0) {
-      const { data: docRows, error: docError } = await db
-        .from("documents")
-        .select("name")
-        .in("bundle_id", bundleIds)
-        .order("created_at", { ascending: false });
-      if (!docError) {
-        docNames = (docRows ?? []).map((r: { name: string }) => r.name);
-      }
-    }
+
+  const { data: bundleRows, error: bundleError } = await db
+    .from("agent_bundles")
+    .select("bundle_id")
+    .eq("agent_id", agentId);
+  const bundleIds = bundleError
+    ? []
+    : (bundleRows ?? []).map((r: { bundle_id: string }) => r.bundle_id);
+
+  if (bundleIds.length > 0) {
+    const { data: docRows, error: docError } = await db
+      .from("documents")
+      .select("name")
+      .in("bundle_id", bundleIds)
+      .order("created_at", { ascending: false });
+    if (!docError) docNames = (docRows ?? []).map((r: { name: string }) => r.name);
   }
   const hasKnowledge = docNames.length > 0;
 

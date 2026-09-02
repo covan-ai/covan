@@ -219,21 +219,14 @@ export async function handleSlackEvent(
     ...(latestTurn ? [latestTurn] : []),
   ];
 
-  let answer = "";
-  let promptTokens = 0;
-  let completionTokens = 0;
-  let cachedTokens = 0;
+  let completion;
   try {
-    const completion = await createOpenAI(deps.env).chat.completions.create({
+    completion = await createOpenAI(deps.env).chat.completions.create({
       model: resolveModel(agent.model, deps.env),
       messages,
       temperature: temperatureFor(mode),
       max_tokens: maxTokensFor(mode),
     });
-    answer = completion.choices[0]?.message?.content?.trim() ?? "";
-    promptTokens = completion.usage?.prompt_tokens ?? 0;
-    completionTokens = completion.usage?.completion_tokens ?? 0;
-    cachedTokens = completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
   } catch (err) {
     console.error("slack completion failed", err);
     // The spend still happened up to the failure — the embedding, at least.
@@ -241,6 +234,14 @@ export async function handleSlackEvent(
     await say("Something went wrong reaching the model. Try again in a moment.");
     return;
   }
+
+  const answer = completion.choices[0]?.message?.content?.trim() ?? "";
+  const promptTokens = completion.usage?.prompt_tokens ?? 0;
+  const completionTokens = completion.usage?.completion_tokens ?? 0;
+  // How much of `promptTokens` OpenAI served from its own cache — a subset of
+  // that count, not an addition. It is the only evidence that the cacheable
+  // prefix assembled above is actually working.
+  const cachedTokens = completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
 
   // One counter write per turn, whichever way the rest of this goes.
   await deps.entitlements.record(

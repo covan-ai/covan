@@ -15,6 +15,13 @@ workers_dev = true
 # Secrets — set with `wrangler secret put <NAME>` (never commit real values):
 #   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
 #   OPENAI_API_KEY, ROUTINE_SECRET_KEY, RESEND_API_KEY, RESEND_FROM
+#
+# Optional, per integration. Leave a pair unset and that integration is simply
+# not offered; the Integrations page names the variables rather than hiding the
+# row. See docs/integrations.md for the redirect URLs and scopes to register.
+#   NOTION_CLIENT_ID, NOTION_CLIENT_SECRET
+#   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+#   SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET
 # -----------------------------------------------------------------------------
 
 [vars]
@@ -78,3 +85,18 @@ bucket_name = "covan-docs"
 # frees up; `src/index.ts` still exports `scheduled`. Running it alongside a
 # second cron Worker is safe: `claim_due_routines` uses
 # `for update skip locked`, so two ticks can never claim the same routine.
+#
+# READ THIS BEFORE CONNECTING NOTION OR DRIVE. A connection sync writes
+# documents, so it needs the R2 bucket bound above — and that bucket lives in
+# THIS account. `wrangler.cron.toml` deploys the engine to a second account
+# precisely because this one is out of trigger slots, and a Worker there cannot
+# reach this bucket. It notices (`canSyncConnections` in src/types.ts) and skips
+# with one line in `wrangler tail`, rather than failing every connection and
+# pausing them.
+#
+# So on Cloudflare, connected sources sync only when THIS Worker has a cron
+# trigger. Routines are unaffected either way. If you connect a source and it
+# never syncs, this is why — free a slot or move to Workers Paid, then:
+#
+# [triggers]
+# crons = ["*/5 * * * *"]

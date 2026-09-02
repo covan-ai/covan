@@ -1,7 +1,7 @@
 /**
  * Where the documentation lives, stated once.
  *
- * `docs/` in this repository holds seven markdown files that answer the
+ * `docs/` in this repository holds the markdown files that answer the
  * questions people actually arrive with — what a bundle is, why a question
  * found the passage it did, what a role gates — and until now nothing in the
  * application linked to any of them. Two thousand lines of good writing, and
@@ -26,6 +26,7 @@ export const DOC_SLUGS = [
   "concepts",
   "knowledge",
   "routines",
+  "integrations",
   "team",
   "api",
   "self-hosting",

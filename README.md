@@ -153,6 +153,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detail.
 | [Core concepts](docs/concepts.md)      | Workspace, agent, bundle, session, routine — what each is and how they nest     |
 | [Knowledge bundles](docs/knowledge.md) | Uploading, grouping, attaching, and why a question finds the passage it does    |
 | [Routines](docs/routines.md)           | Scheduled work, what it can reach, and what it does with the secret you give it |
+| [Integrations](docs/integrations.md)   | Syncing a bundle from Notion or Drive, and asking an agent from Slack           |
 | [Your team](docs/team.md)              | Invitations, what a role actually gates, shared sessions, deletion              |
 | [Taking it with you](docs/export.md)   | Exporting a workspace, and putting it back into a Covan you run                 |
 | [Self-hosting](docs/self-hosting.md)   | Running it on your own machine, and deploying it somewhere real                 |

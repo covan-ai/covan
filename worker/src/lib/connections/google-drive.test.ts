@@ -23,7 +23,11 @@ describe("what Drive can import", () => {
       }),
     ).toBe("Handbook.md");
     expect(
-      importableName({ id: "2", name: "Budget", mimeType: "application/vnd.google-apps.spreadsheet" }),
+      importableName({
+        id: "2",
+        name: "Budget",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+      }),
     ).toBe("Budget.csv");
   });
 
@@ -45,7 +49,9 @@ describe("what Drive can import", () => {
   // — so importing one would produce a document that is listed, named to the
   // model, and impossible to retrieve a sentence of.
   it("refuses the formats it could not read a word of", () => {
-    expect(importableName({ id: "5", name: "contract.pdf", mimeType: "application/pdf" })).toBeNull();
+    expect(
+      importableName({ id: "5", name: "contract.pdf", mimeType: "application/pdf" }),
+    ).toBeNull();
     expect(
       importableName({
         id: "6",
@@ -65,7 +71,9 @@ describe("google drive provider", () => {
   // Without both of these Google issues no refresh token for somebody who has
   // granted the app before, and the connection works for exactly one hour.
   it("asks for offline access and a fresh consent", () => {
-    const url = new URL(googleDriveProvider.authorizeUrl(env, "state", "https://api.example.com/cb"));
+    const url = new URL(
+      googleDriveProvider.authorizeUrl(env, "state", "https://api.example.com/cb"),
+    );
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/drive.readonly");
@@ -203,7 +211,11 @@ describe("google drive provider", () => {
         return new Response("no", { status: 400 });
       }
       if (url.includes("export")) return new Response("Plain body", { status: 200 });
-      return json({ id: "doc-1", name: "Handbook", mimeType: "application/vnd.google-apps.document" });
+      return json({
+        id: "doc-1",
+        name: "Handbook",
+        mimeType: "application/vnd.google-apps.document",
+      });
     }) as unknown as typeof fetch;
 
     const text = await googleDriveProvider.readFile(ctx(fetchImpl, { folderId: "f" }), {

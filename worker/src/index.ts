@@ -31,6 +31,7 @@ import { trash } from "./routes/trash";
 import { events } from "./routes/events";
 import { runPurge } from "./lib/purge";
 import { connections, connectionsPublic } from "./routes/connections";
+import { slack, slackPublic } from "./routes/slack";
 
 const app = new Hono<AppEnv>();
 
@@ -150,6 +151,7 @@ api.route("/", feedback);
 api.route("/", trash);
 api.route("/", events);
 api.route("/", connections);
+api.route("/", slack);
 
 // Outside the authenticated router, and the only route that is. A browser
 // coming back from Notion's or Google's consent screen carries no bearer token;
@@ -157,6 +159,7 @@ api.route("/", connections);
 // explains why that is safe. Mounted before `api` so the authenticated
 // catch-all never sees it.
 app.route("/", connectionsPublic);
+app.route("/", slackPublic);
 
 app.route("/", api);
 

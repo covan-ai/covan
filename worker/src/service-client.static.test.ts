@@ -31,6 +31,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "connections has no INSERT grant and its secret_ciphertext is selectable by no client, for the reasons 0039 gives: the row holds an OAuth token this route encrypts before the database sees it, and the callback that writes it has no caller for RLS to resolve at all. Every claim in that callback's state is re-checked against workspace_members and knowledge_bundles before the insert, and the reads that decide permission everywhere else in the file go through the caller's own client",
   ],
   [
+    "routes/slack.ts",
+    "the same two reasons as routes/connections.ts, plus a third: an event delivered by Slack has no Covan caller at all, so RLS has nobody to resolve. What stands in for it is the signature (lib/slack/verify.ts) and the identity lookup in lib/slack/handle.ts, which answers as the Covan account matching the asker's email and as nobody otherwise",
+  ],
+  [
     "routes/chat.ts",
     "writes assistant messages, which 0009_lock_assistant_messages deliberately forbids the authenticated caller from writing",
   ],

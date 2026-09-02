@@ -145,6 +145,18 @@ export type Bindings = SyncEnv & {
   SUPABASE_JWT_SECRET?: string;
   ADMIN_API_KEY?: string;
   /**
+   * The Slack app this deployment owns. All three or none: a client pair with
+   * no signing secret could install and then reject every event it was sent,
+   * which is the configuration mistake that looks like a Slack outage.
+   *
+   * On `Bindings` rather than `SyncEnv` because Slack is a surface, not a
+   * source — it is served by the API Worker and there is nothing for a cron
+   * tick to do with it.
+   */
+  SLACK_CLIENT_ID?: string;
+  SLACK_CLIENT_SECRET?: string;
+  SLACK_SIGNING_SECRET?: string;
+  /**
    * Rate limiting, on Cloudflare only — `[[ratelimits]]` in wrangler.toml.
    * Their presence is what makes `getRateLimiter` use the edge counter instead
    * of the in-process one, the same way `DOCS` chooses R2 over the filesystem.

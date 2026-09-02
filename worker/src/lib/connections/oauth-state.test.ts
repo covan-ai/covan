@@ -46,8 +46,8 @@ describe("oauth state", () => {
     const issued = Date.parse("2026-09-02T10:00:00Z");
     const raw = await signState(state, KEY, issued);
 
-    expect(await readState(raw, KEY, issued + 14 * 60_000)).toMatchObject(state);
-    expect(await readState(raw, KEY, issued + 16 * 60_000)).toBeNull();
+    expect(await readState(raw, KEY, issued + 9 * 60_000)).toMatchObject(state);
+    expect(await readState(raw, KEY, issued + 11 * 60_000)).toBeNull();
   });
 
   // An `issuedAt` in the future is what a replay from a machine with a wrong

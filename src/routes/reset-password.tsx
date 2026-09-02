@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase/client";
+import { readSession } from "@/lib/supabase/session";
 
 export const Route = createFileRoute("/reset-password")({
   component: ResetPassword,
@@ -20,6 +21,9 @@ function readUrlError(): string | null {
   return desc ? decodeURIComponent(desc.replace(/\+/g, " ")) : null;
 }
 
+/** Matches the pause `_authed` takes between attempts, for the same reason. */
+const RETRY_AFTER_MS = 3000;
+
 function ResetPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -32,6 +36,9 @@ function ResetPassword() {
   const [status, setStatus] = useState<"checking" | "ready" | "invalid" | "done">(
     urlError ? "invalid" : "checking",
   );
+  const [attempt, setAttempt] = useState(0);
+  /** True while the link could be neither confirmed nor ruled out. */
+  const [unreachable, setUnreachable] = useState(false);
 
   useEffect(() => {
     // An expired or already-used link. There is no token to wait for, so
@@ -50,22 +57,47 @@ function ResetPassword() {
       }
     });
 
-    // getSession() awaits client initialization, so the recovery token in the
-    // URL has already been processed by the time this resolves.
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      if (data.session) {
-        setStatus("ready");
-      } else {
-        setStatus((s) => (s === "checking" ? "invalid" : s));
-      }
-    });
-
     return () => {
       active = false;
       subscription.subscription.unsubscribe();
     };
   }, [urlError]);
+
+  useEffect(() => {
+    if (urlError) return;
+
+    let active = true;
+
+    // readSession() awaits client initialization, so the recovery token in the
+    // URL has already been processed by the time this resolves.
+    void readSession().then((answer) => {
+      if (!active) return;
+      if (answer.kind === "session") {
+        setUnreachable(false);
+        setStatus("ready");
+        return;
+      }
+      // "Could not tell" is not "expired". Sending somebody to request a second
+      // link because the check could not reach the server wastes the perfectly
+      // good link in their hand — and reset links only last fifteen minutes.
+      if (answer.kind === "unknown") {
+        setUnreachable(true);
+        return;
+      }
+      setUnreachable(false);
+      setStatus((s) => (s === "checking" ? "invalid" : s));
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [urlError, attempt]);
+
+  useEffect(() => {
+    if (!unreachable) return;
+    const timer = setTimeout(() => setAttempt((n) => n + 1), RETRY_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [unreachable, attempt]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

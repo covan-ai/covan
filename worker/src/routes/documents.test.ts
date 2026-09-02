@@ -200,29 +200,26 @@ describe("PATCH /documents/:id — moving a document to another bundle", () => {
 });
 
 /**
- * The caller's client for the delete path. `rowsDeleted` is the knob that
- * matters: a viewer's delete is refused by RLS as "matched no rows, no error",
- * which is indistinguishable from success unless the handler looks.
+ * The caller's client for the delete path, which is now one RPC.
+ *
+ * `soft_delete_document` checks `can_write_in_workspace` for itself and raises,
+ * so the knob that matters is the SQLSTATE. That is the improvement worth
+ * keeping in mind while reading these: RLS used to refuse a viewer's delete as
+ * "matched no rows, no error", which is indistinguishable from success unless
+ * the handler goes looking. A raised exception cannot be mistaken for anything.
  */
-function fakeDeleteDb(opts: {
-  row: { id: string; r2_key: string | null } | null;
-  rowsDeleted: number;
-}) {
-  return {
-    from: () => ({
-      select: () => ({
-        eq: () => ({ maybeSingle: async () => ({ data: opts.row, error: null }) }),
-      }),
-      delete: () => ({
-        eq: () => ({
-          select: async () => ({
-            data: opts.row && opts.rowsDeleted > 0 ? [opts.row] : [],
-            error: null,
-          }),
-        }),
-      }),
-    }),
+function fakeDeleteDb(opts: { code?: string; message?: string } = {}) {
+  const calls: { fn: string; args: Record<string, unknown> }[] = [];
+  const db = {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      return {
+        data: null,
+        error: opts.code ? { code: opts.code, message: opts.message ?? "refused" } : null,
+      };
+    },
   } as never;
+  return { db, calls };
 }
 
 function appWith(db: unknown, deleted: string[]) {
@@ -247,41 +244,53 @@ function appWith(db: unknown, deleted: string[]) {
 }
 
 describe("DELETE /documents/:id", () => {
-  it("removes the stored object when RLS permits the row delete", async () => {
+  it("marks the row and leaves the stored object exactly where it is", async () => {
     const deleted: string[] = [];
-    const app = appWith(
-      fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 1 }),
-      deleted,
-    );
+    const { db, calls } = fakeDeleteDb();
+    const app = appWith(db, deleted);
 
     const res = await app.request("/documents/d1", { method: "DELETE" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(deleted).toEqual(["b1/obj"]);
+    expect(calls).toEqual([{ fn: "soft_delete_document", args: { p_document_id: "d1" } }]);
+
+    // The reason the bytes stay: a restored document that came back as a row
+    // pointing at a missing file is worse than either outcome on its own. The
+    // sweeper deletes both, thirty days later.
+    expect(deleted).toEqual([]);
   });
 
-  it("leaves the bytes alone and 403s when RLS refuses the row delete", async () => {
+  it("403s when the database refuses, and still touches nothing", async () => {
     const deleted: string[] = [];
-    const app = appWith(
-      fakeDeleteDb({ row: { id: "d1", r2_key: "b1/obj" }, rowsDeleted: 0 }),
-      deleted,
-    );
+    const { db } = fakeDeleteDb({ code: "42501" });
+    const app = appWith(db, deleted);
 
     const res = await app.request("/documents/d1", { method: "DELETE" });
 
     expect(res.status).toBe(403);
-    // The whole point: a viewer must not be able to destroy the content.
     expect(deleted).toEqual([]);
   });
 
-  it("404s for a document the caller cannot see", async () => {
+  it("404s for a document the caller cannot see, or that is already deleted", async () => {
     const deleted: string[] = [];
-    const app = appWith(fakeDeleteDb({ row: null, rowsDeleted: 0 }), deleted);
+    const { db } = fakeDeleteDb({ code: "P0002" });
+    const app = appWith(db, deleted);
 
     const res = await app.request("/documents/nope", { method: "DELETE" });
 
     expect(res.status).toBe(404);
+    expect(deleted).toEqual([]);
+  });
+
+  it("500s on anything else rather than reporting a delete that did not happen", async () => {
+    const deleted: string[] = [];
+    const { db } = fakeDeleteDb({ code: "08006", message: "connection failure" });
+    const app = appWith(db, deleted);
+
+    const res = await app.request("/documents/d1", { method: "DELETE" });
+
+    expect(res.status).toBe(500);
     expect(deleted).toEqual([]);
   });
 });

@@ -62,7 +62,7 @@ function KnowledgeTab() {
   const deleteBundle = (bundleId: string, name: string) => {
     if (
       !confirm(
-        `Delete "${name}"? This permanently removes its documents and detaches it from every agent. This cannot be undone.`,
+        `Delete "${name}"? Its documents go with it and it detaches from every agent. It waits 30 days in Settings → Recently deleted, and restoring it brings the documents back too.`,
       )
     ) {
       return;

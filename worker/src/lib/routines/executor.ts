@@ -245,6 +245,12 @@ export async function runRoutine(
       .select("persona, model")
       .eq("id", routine.agent_id)
       .eq("workspace_id", routine.workspace_id)
+      // Service-role client, so RLS is not filtering this. `claim_due_routines`
+      // already skips routines marked by their agent's deletion and this should
+      // therefore be unreachable — it is written because "should be
+      // unreachable" is how a deleted agent's persona ends up in a Slack
+      // message some Tuesday.
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (agentError) throw new Error(`agent lookup failed: ${agentError.message}`);

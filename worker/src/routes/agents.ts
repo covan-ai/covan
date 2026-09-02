@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapAgent } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
+import { callDeletionFn } from "../lib/deletion";
 
 const agents = new Hono<AppEnv>();
 
@@ -119,15 +120,24 @@ agents.patch("/agents/:id", async (c) => {
 });
 
 // DELETE /agents/:id
+//
+// No longer a delete. `soft_delete_agent` marks the agent and, in the same
+// statement, the sessions and routines that hung off it — which the foreign
+// keys used to destroy outright, taking every message with them. The sweeper
+// finishes the job thirty days later if nobody asks for it back.
+//
+// The refusal now arrives as a raised exception rather than as a delete that
+// matched no rows. That is the improvement: RLS answers an unpermitted delete
+// with silence and `{ok:true}`, which is how a viewer used to be told they had
+// succeeded at something the database had just refused.
 agents.delete("/agents/:id", async (c) => {
-  const db = c.get("db");
-  const id = c.req.param("id");
-
-  const { error } = await db.from("agents").delete().eq("id", id);
-
-  if (error) {
-    return c.json({ error: "failed to delete agent" }, 500);
-  }
+  const failure = await callDeletionFn(
+    c.get("db"),
+    "soft_delete_agent",
+    { p_agent_id: c.req.param("id") },
+    "failed to delete agent",
+  );
+  if (failure) return c.json({ error: failure.message }, failure.status);
 
   return c.json({ ok: true });
 });

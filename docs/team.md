@@ -154,11 +154,16 @@ is a membership check plus `role <> 'viewer'`. So a member can create an agent,
 rewrite another agent's persona, change its model, upload to any bundle, detach
 a bundle, and delete any agent, bundle or document in the workspace, with no
 approval anywhere in the path. That is deliberate — the product's claim is that
-a team trains one agent together — but it is worth knowing how large it is: the
-cascades mean deleting an agent takes every session anybody ever had with it,
-every message in those sessions and every routine pointed at it, and deleting a
-bundle takes its documents and their embeddings. None of it is recoverable from
-inside the product. A `viewer` is refused all of it.
+a team trains one agent together — but it is worth knowing how large it is:
+deleting an agent takes every session anybody ever had with it, every message in
+those sessions and every routine pointed at it, and deleting a bundle takes its
+documents and their embeddings. A `viewer` is refused all of it.
+
+Until `0039` none of that was recoverable from inside the product, and this page
+said so. [Deleting, and taking it back](#deleting-and-taking-it-back) is the
+change: those three deletions now wait thirty days, and
+[the record of who did it](#the-record-of-who-did-it) says whose decision it was
+either way.
 
 **Everything that is yours** asks only whether you are a member: your own
 sessions, messages, brainstorm ideas, routines, delivery channels, favourites
@@ -318,6 +323,115 @@ a spent allowance — is also yours alone, a row in `notification_preferences` w
 your user id as its primary key. A missing row means everything is on, which is
 why turning a notice off is an update rather than a delete.
 
+## Deleting, and taking it back
+
+Three things wait rather than go: an **agent**, a **knowledge bundle** and a
+**document**. Each carries `deleted_at`, `deleted_by` and `deleted_via`, and
+deleting one is `soft_delete_agent()`, `soft_delete_bundle()` or
+`soft_delete_document()` rather than a `DELETE`. Thirty days later a sweeper on
+the API Worker deletes the row for real, and the foreign keys do what they
+always did.
+
+**`deleted_via` is what makes a restore exact.** Foreign keys cascade on a real
+delete and do nothing at all on a soft one, so a marked agent would otherwise
+leave its sessions and routines on screen pointing at something gone. Deleting
+an agent therefore also marks its `chat_sessions` and `routines` with
+`deleted_via = <agent id>`; deleting a bundle marks its documents the same way.
+Restoring X clears X and exactly the rows carrying `deleted_via = X` — so a
+document you deleted on its own does _not_ come back when its bundle is
+restored, and restoring a document into a still-deleted bundle is refused with
+a message naming which button to press first.
+
+Bundles are untouched when an agent is deleted. A bundle is workspace-level and
+may be attached to several agents, so this is unchanged from before: the
+`agent_bundles` link goes, the bundle stays, including the per-agent
+`covan:chat-uploads:<agentId>` bundle.
+
+### Deleted means invisible, to everybody
+
+Every select policy on those tables gained `deleted_at is null`, with **no**
+branch admitting the people who could restore it. That was written the other way
+first. The obvious shape — `deleted_at is null or can_write_in_workspace(...)` —
+lets a trash screen read the rows through the ordinary policy, and its cost is
+that every other SELECT in the codebase becomes wrong unless it also says
+`.is("deleted_at", null)`, because a member is exactly who runs the agent list,
+the bundle page, retrieval and export. That is thirty call sites today and an
+unbounded number forever, and the failure mode is showing deleted things rather
+than erroring, so nothing catches it.
+
+Two policies needed more than the clause, and both are where a deletion would
+otherwise have been cosmetic:
+
+- **`document_chunks`.** The chunks hold the document's text, and their policy
+  asked only about workspace membership — so a deleted document's contents
+  stayed readable straight from PostgREST by any member. They now require the
+  parent document to be alive, for everyone, with no exception for the person
+  who could restore it.
+- **`session_is_visible`** (`0031`) gained `cs.deleted_at is null`. Because
+  `messages` and `ideas` name that function and nothing else, one line hides a
+  deleted agent's entire conversation history.
+
+`match_chunks` asks twice — that the document is alive _and_ that the bundle the
+chunk is filed under is alive. Retrieval scope lives on `document_chunks.bundle_id`
+rather than on the document row, which is what makes moving a document between
+bundles a re-pointing of its chunks (`0024`), so a chunk can name a bundle its
+document has left. Without this an agent goes on quoting a file somebody
+deleted, which is the worst way the feature can fail: it looks like the deletion
+did nothing.
+
+### The trash
+
+Settings → **Recently deleted**, for anyone who can write. It reads
+`workspace_trash()` — `security definer`, checking `can_write_in_workspace` for
+itself and raising `42501`, the arrangement `workspace_usage_all` already uses —
+because the policies above hide the rows from the ordinary path. A viewer gets
+an error rather than an empty list, since an empty list would tell them there
+was nothing to recover.
+
+It lists only rows with `deleted_via is null`: decisions somebody made, not
+their consequences. A bundle of two hundred documents is one entry.
+
+**A deleted bundle still costs storage.** Its chunks are still rows and its
+files are still objects until the sweeper reaches them. Against Supabase's
+500 MB that is a real number, and it is the price of the window. It is also why
+`DELETE /documents/:id` no longer removes the stored object: a restored document
+that came back as a row pointing at a missing file would be worse than either
+outcome alone. The sweeper does both, in the order account closure already
+uses — collect the keys, delete the rows, then delete the objects — because
+afterwards there is nothing left to enumerate the keys by.
+
+## The record of who did it
+
+`workspace_events` holds twelve actions: the six deletions and restores above,
+`member.role_changed`, `member.removed`, `member.left`, `member.joined`, and
+invitations created and revoked. Team → **Activity** shows it, and
+`workspace_events_select_admin` means only an admin can read it.
+
+**Nothing writes to it through the API.** The rows come from `security definer`
+triggers on the tables the events are about, and the table has no insert policy
+for anybody — nor an INSERT grant. An audit log the API writes can be skipped by
+anything that does not go through the API, and PostgREST, reachable with the
+anon key in the browser bundle, does not. A trigger cannot be routed around.
+
+Three details decide whether it is readable:
+
+- **`subject_label` stores the name as it was.** Thirty days after a deletion the
+  sweeper takes the row and `subject_id` points nowhere; a log that can only say
+  "an agent was deleted" is not a log.
+- **Cascaded marks emit nothing.** The trigger fires only when `deleted_via is
+null`, so deleting that bundle of two hundred documents writes one event.
+- **`member.removed` and `member.left` are the same DELETE**, told apart by
+  whether `auth.uid()` is the row's own `user_id`. Being removed and choosing to
+  go are different events to everyone involved.
+
+The membership trigger stands aside when the workspace itself is being deleted —
+the same exception `trg_prevent_last_admin` makes, and for the same reason.
+
+Not a change feed: editing an agent's persona is not here. Twelve deliberate
+actions produce tens of rows a month in a busy ten-person workspace, so no
+retention policy is written; a sweeper that deletes audit history is something
+to add on purpose.
+
 ## Removing a member
 
 Only an admin can remove somebody: the delete policy on `workspace_members` is
@@ -450,15 +564,22 @@ delivery records; and the delivery channels filed under that workspace.
 
 One thing the application does not do, and an operator should know it. The
 cascade is a database cascade, and the uploaded files themselves live in object
-storage under the key on each `documents` row. Deleting a single document removes
-its object; deleting a bundle, an agent or a workspace deletes the rows that
-named those keys and nothing in Covan touches the store. Whether those objects
-are then cleaned up is a question about the storage itself — a lifecycle rule on
-the bucket, or a sweep somebody runs — not one this codebase answers. If it is
-the latter, collect the keys before the rows go, because afterwards there is
-nothing left to enumerate them by.
+storage under the key on each `documents` row. Deleting a _workspace_ deletes the
+rows that named those keys and nothing in Covan touches the store. Whether those
+objects are then cleaned up is a question about the storage itself — a lifecycle
+rule on the bucket, or a sweep somebody runs — not one this codebase answers. If
+it is the latter, collect the keys before the rows go, because afterwards there
+is nothing left to enumerate them by.
 
-Account closure is the one place that does it for you, and it follows exactly
+Deleting a document, a bundle or an agent is no longer in that paragraph.
+Those three are marked rather than deleted
+([Deleting, and taking it back](#deleting-and-taking-it-back)), and the
+thirty-day sweeper removes their rows and their objects together, keys first.
+`DELETE /documents/:id` used to delete the object immediately and now deletes
+nothing at all — a restored document pointing at a missing file would be worse
+than either outcome on its own.
+
+Account closure is the other place that does it for you, and it follows exactly
 that advice: `worker/src/routes/account.ts` reads the keys of every document in
 the workspaces it is about to remove, deletes the rows, and then deletes the
 objects. The difference is not technical but legal — for an ordinary delete an

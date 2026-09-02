@@ -124,6 +124,18 @@ chat.post("/chat/stream", async (c) => {
   // the persisted history so that prefix stays byte-identical across turns and
   // OpenAI's automatic prompt cache can discount the bulk of the input.
   let ragBlock = "";
+  /**
+   * Which of the two grounding paths below produced `ragBlock`, persisted with
+   * the reply (0039) because `sources` cannot tell them apart — both paths fill
+   * it, and only the first means a passage the team wrote was close to what was
+   * asked. covan#44 reports on the difference.
+   *
+   * Starts at `"none"` and is narrowed on the way down, so every exit — an
+   * agent with no documents, a retrieval that threw, a fallback that found
+   * nothing with content — lands on the truthful value without needing its own
+   * assignment.
+   */
+  let grounding: "chunks" | "documents" | "none" = "none";
   // Embedding the question costs tokens too. Carried to the end of the turn and
   // recorded with the completion's, so one reply means one counter write.
   let embeddingTokens = 0;
@@ -186,6 +198,7 @@ chat.post("/chat/stream", async (c) => {
             typed.map((m) => ({ documentName: m.document_name, content: m.content })),
           );
           if (ragBlock) {
+            grounding = "chunks";
             for (const m of typed) addSource(m.document_id ?? null, m.document_name);
           }
         }
@@ -216,6 +229,7 @@ chat.post("/chat/stream", async (c) => {
         withContent.map((d) => ({ documentName: d.name, content: d.content as string })),
       );
       if (ragBlock) {
+        grounding = "documents";
         for (const d of withContent) addSource(d.id ?? null, d.name);
       }
     }
@@ -312,6 +326,7 @@ chat.post("/chat/stream", async (c) => {
             content: text,
             sender_id: null,
             sources: sources.size > 0 ? [...sources.values()] : null,
+            grounding,
             prompt_tokens: opts.promptTokens,
             completion_tokens: opts.completionTokens,
             cached_tokens: opts.cachedTokens,

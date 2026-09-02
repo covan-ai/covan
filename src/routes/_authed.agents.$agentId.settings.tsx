@@ -1,5 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api-client";
 import { useAgentsStore, type Agent } from "@/lib/agents-store";
 import {
   PageContainer,
@@ -31,7 +33,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { EMOJIS, MODELS } from "@/lib/agent-meta";
+import { EMOJIS, modelsFor } from "@/lib/agent-meta";
 import { AgentAvatar } from "@/components/avatars";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
 
@@ -75,6 +77,11 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
   const [emoji, setEmoji] = useState(agent.emoji);
   const [model, setModel] = useState(agent.model);
   const [persona, setPersona] = useState(agent.persona);
+  // Shares the cache every authed page has already filled, so this costs no
+  // request. `me.models` is the list this deployment can actually serve — the
+  // Claude ids are in it only when the server has a key for them.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const models = modelsFor(me?.models, model);
   const [mode, setMode] = useState(agent.mode);
 
   const save = () => {
@@ -124,7 +131,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {MODELS.map((m) => (
+                  {models.map((m) => (
                     <SelectItem key={m} value={m}>
                       {m}
                     </SelectItem>

@@ -83,9 +83,13 @@ a model and a mode, on a row that belongs to a workspace. It is shared by
 construction — there is no owner column that grants anything, so every member of
 the workspace sees the same agent and can edit it.
 
-The model is one of four OpenAI ids (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1`,
-`gpt-4.1-mini`); anything the API does not recognise resolves to `gpt-4o`, which
-is what keeps an agent created against an older list working. The mode is
+The model is one of seven OpenAI ids (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1`,
+`gpt-4.1-mini`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`), or one of three Anthropic
+ones (`claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-haiku-4-5`) on an
+install whose operator set `ANTHROPIC_API_KEY`. Anything the API does not
+recognise — an id from an older list, or a Claude one on an install with no key
+for it — resolves to `gpt-4o`, which is what keeps every agent answering across
+a change to either list. The mode is
 `normal` or `brainstorm`, and brainstorm layers a facilitation instruction block
 on top of the persona rather than replacing it.
 

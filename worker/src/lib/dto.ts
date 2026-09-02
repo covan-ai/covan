@@ -126,6 +126,16 @@ export type MeDTO = {
     avatarUrl: string | null;
   }>;
   /**
+   * The model ids this deployment can actually serve, in picker order.
+   *
+   * The frontend used to hold this list itself, which was true for as long as
+   * every model came from one provider and one key. It does not survive a
+   * second provider: whether the Claude models exist depends on whether
+   * `ANTHROPIC_API_KEY` is set, which is a fact about the server. A picker that
+   * offered them anyway would store a choice the API then quietly ignores.
+   */
+  models: string[];
+  /**
    * Where this account stands with its first run. The `_authed` layout gates on
    * `completed`, which is why this rides along with /me rather than having an
    * endpoint of its own — every page load needs the answer, and this response

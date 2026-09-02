@@ -93,11 +93,16 @@ function TermsPage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="The OpenAI key">
+      <LegalSection title="The model provider keys">
         <p>
           A self-hosted Covan uses an OpenAI API key you supply, and your use of that model is
           between you and OpenAI under their terms. The software does not stand between you and that
           agreement.
+        </p>
+        <p>
+          The same goes for an Anthropic key, if the operator added one to offer the Claude models —
+          that use is between you and Anthropic. Neither key is supplied by this software, and
+          neither agreement is one it is party to.
         </p>
       </LegalSection>
 

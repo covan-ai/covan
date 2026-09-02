@@ -13,6 +13,17 @@ import { describe, it, expect } from "vitest";
  * client: the risk is not this commit, it is the next one.
  */
 
+/**
+ * The imports that mean a file spends money.
+ *
+ * `lib/completion.ts` is the seam every completion goes through, on either
+ * provider; `transcribeAudio` is transcription's own module, which is routed to
+ * OpenAI on purpose. `openai.test.ts` and `anthropic.test.ts` guarantee no
+ * client is constructed outside those two, so a file cannot buy a completion
+ * without naming one of these.
+ */
+const SPENDING_IMPORTS = ["../lib/completion", "transcribeAudio"];
+
 const SRC = import.meta.dirname;
 const ROUTES = join(SRC, "routes");
 
@@ -31,14 +42,14 @@ function routeFiles(): string[] {
 
 /**
  * Route files that buy a completion, found by the seam every completion goes
- * through, plus transcription's own module. `lib/openai.test.ts` already
- * guarantees nothing reaches OpenAI for a completion any other way, so this
- * cannot be dodged by constructing a client directly.
+ * through, plus transcription's own module. The client-factory tests already
+ * guarantee nothing reaches a provider any other way, so this cannot be dodged
+ * by constructing a client directly.
  */
 function paidRouteFiles(): string[] {
   return routeFiles().filter((f) => {
     const src = readFileSync(join(ROUTES, f), "utf8");
-    return src.includes("createOpenAI") || src.includes("transcribeAudio");
+    return SPENDING_IMPORTS.some((marker) => src.includes(marker));
   });
 }
 
@@ -112,9 +123,9 @@ describe("the expensive rate limit", () => {
   });
 
   it("knows about every route file that spends, so a new one cannot arrive unnoticed", () => {
-    // This is the tripwire. If a route file starts importing createOpenAI, this
-    // fails and whoever added it has to decide — deliberately — whether its
-    // endpoints belong behind the limit.
+    // This is the tripwire. If a route file starts importing the completion
+    // seam, this fails and whoever added it has to decide — deliberately —
+    // whether its endpoints belong behind the limit.
     expect(paidRouteFiles().sort()).toEqual(Object.keys(PAID_ENDPOINTS).sort());
   });
 

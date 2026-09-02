@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { estimateCostUsd } from "./pricing";
+import { MODEL_IDS } from "./models";
 
 describe("estimateCostUsd", () => {
   it("prices prompt and completion tokens per the model's rate", () => {
@@ -45,5 +46,31 @@ describe("estimateCostUsd", () => {
   it("defaults to no caching when the count is omitted", () => {
     // Every pre-existing caller passes three arguments; they must not change price.
     expect(estimateCostUsd("gpt-4o", 1_000_000, 0)).toBeCloseTo(2.5, 6);
+  });
+
+  it("prices the Claude models, which bill in the same two dimensions", () => {
+    // claude-haiku-4-5: $1/M in, $5/M out.
+    expect(estimateCostUsd("claude-haiku-4-5", 1_000_000, 1_000_000)).toBeCloseTo(6, 6);
+    // claude-sonnet-4-5: $3/M in, $15/M out, cache reads at a tenth.
+    expect(estimateCostUsd("claude-sonnet-4-5", 1_000_000, 0, 1_000_000)).toBeCloseTo(0.3, 6);
+  });
+
+  it("prices the GPT-5 family below the 4o default it replaces", () => {
+    const perMillionIn = (model: string) => estimateCostUsd(model, 1_000_000, 0);
+    expect(perMillionIn("gpt-5")).toBeLessThan(perMillionIn("gpt-4o"));
+    expect(perMillionIn("gpt-5-mini")).toBeLessThan(perMillionIn("gpt-5"));
+    expect(perMillionIn("gpt-5-nano")).toBeLessThan(perMillionIn("gpt-5-mini"));
+  });
+
+  it("has a rate for every model the picker offers", () => {
+    // Falling back to gpt-4o's rate is the right answer for a self-hosted
+    // endpoint whose catalogue we cannot know. It is the wrong answer for a
+    // model we ship: the usage view would quote 2.5x for haiku and stay silent
+    // about it. So an id added to the catalogue without a price fails here.
+    const fallback = estimateCostUsd("mystery-model", 1_000_000, 0);
+    for (const id of MODEL_IDS) {
+      if (id === "gpt-4o") continue; // the fallback itself
+      expect(estimateCostUsd(id, 1_000_000, 0), id).not.toBe(fallback);
+    }
   });
 });

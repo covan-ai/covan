@@ -109,8 +109,9 @@ function PrivacyPage() {
 
       <LegalSection title="Where it goes">
         <p>
-          These are the only outside services the software contacts, and the last three are only
-          contacted if the operator configured them.
+          These are the only outside services the software contacts. Everything after the first is
+          contacted only if the operator configured it, or in the case of the last, only because
+          your browser fetches a stylesheet.
         </p>
         <LegalList>
           <LegalItem>
@@ -122,6 +123,14 @@ function PrivacyPage() {
             <code>EMBEDDING_BASE_URL</code> moves the document text, each to any OpenAI-compatible
             endpoint, and they are set independently. Dictation cannot be moved. Ask whoever runs
             this install which of them are set; nothing on this page can tell you.
+          </LegalItem>
+          <LegalItem>
+            <strong className="font-medium text-foreground">Anthropic</strong> — the same message,
+            persona and retrieved passages, when the agent answering you is on a Claude model. Only
+            an install whose operator set <code>ANTHROPIC_API_KEY</code> offers those models at all;
+            without it nothing here is ever contacted. Documents are not indexed there and dictation
+            does not go there — those stay where the paragraph above puts them. Which provider
+            answered you is decided per agent, by whoever picked its model.
           </LegalItem>
           <LegalItem>
             <strong className="font-medium text-foreground">Resend</strong> — invitation emails and
@@ -195,8 +204,9 @@ function PrivacyPage() {
           something one person does from this interface.
         </p>
         <p>
-          What you sent to OpenAI is governed by OpenAI's own retention terms and is not something
-          this software can reach in to delete.
+          What you sent to a model provider — OpenAI, or Anthropic if your agent was on a Claude
+          model — is governed by that provider's own retention terms and is not something this
+          software can reach in to delete.
         </p>
       </LegalSection>
 

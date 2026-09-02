@@ -317,6 +317,11 @@ services:
       # what still goes there regardless.
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
+      # Anthropic, optionally. Empty is the supported default and means the
+      # Claude models are not offered, not accepted and not resolved — nothing
+      # this stack sends reaches Anthropic. Setting it is the opt-in.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       # Documents, separately. Empty means api.openai.com — and it means that
       # even when OPENAI_BASE_URL above is set, which is the point: moving your
       # conversations is not the same decision as moving every file you upload.

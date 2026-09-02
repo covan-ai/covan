@@ -41,6 +41,10 @@ one.
   the SQL to replay it into a Covan you run yourself. "Nothing is held
   hostage" should be checkable by the team, not only by whoever runs the
   server ([`docs/export.md`](docs/export.md)).
+- **Pick the model per agent.** OpenAI's GPT-4o, GPT-4.1 and GPT-5 families
+  out of the box; add `ANTHROPIC_API_KEY` and Claude Sonnet 4.6, Sonnet 4.5 and
+  Haiku 4.5 join the picker. Leave that key unset and nothing reaches
+  Anthropic — the models are not offered, not accepted, and not resolved.
 - **Bring your own endpoint.** Set `OPENAI_BASE_URL` and completions go to
   Ollama, vLLM, LiteLLM or OpenRouter instead of OpenAI. Set
   `EMBEDDING_BASE_URL` and your documents go there too — a separate variable,
@@ -123,7 +127,7 @@ flowchart LR
   API["API<br/>Hono · Workers or Node"]
   DB[("Postgres<br/>RLS · pgvector")]
   STORE[["Documents<br/>R2 or filesystem"]]
-  LLM["OpenAI"]
+  LLM["Model provider<br/>OpenAI · Anthropic"]
 
   WEB -->|"bearer token"| API
   API -->|"request-scoped client<br/>auth.uid() → RLS"| DB

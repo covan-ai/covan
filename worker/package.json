@@ -33,6 +33,7 @@
     "start:node": "bun run src/node.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.123.0",
     "@hono/node-server": "^2.1.1",
     "@supabase/supabase-js": "^2.112.3",
     "cron-parser": "^5.10.0",

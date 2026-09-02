@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AppEnv } from "../types";
 import { getActiveWorkspaceId } from "../lib/workspace";
-import { OPENAI_MODELS } from "../lib/models";
+import { MODEL_IDS, availableModels } from "../lib/models";
 import { canSendEmail } from "../lib/email";
 import { removedFromWorkspaceEmail, roleChangedEmail } from "../lib/emails/membership";
 import { notify } from "../lib/emails/send";
@@ -18,7 +18,11 @@ const updateWorkspaceSchema = z
     // clears the preference. Anything else is refused rather than stored — a
     // typo here would otherwise sit in the database until someone wondered why
     // new agents came out on the wrong model.
-    defaultModel: z.union([z.enum(OPENAI_MODELS), z.null()]).optional(),
+    //
+    // Whether this *deployment* can serve the id is a second question, checked
+    // in the handler: it depends on the environment, and the schema is built
+    // once at import.
+    defaultModel: z.union([z.enum(MODEL_IDS), z.null()]).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
@@ -46,6 +50,15 @@ workspace.patch("/workspace", async (c) => {
   // The column is snake_case; the API is not. Mapped explicitly so a future
   // field cannot be forwarded to PostgREST under a name that silently misses.
   const { defaultModel, ...rest } = parsed.data;
+
+  // A model this build knows but this deployment cannot reach — a Claude id
+  // with no ANTHROPIC_API_KEY behind it. Storing it would be storing a
+  // preference that silently does nothing: every new agent would take it and
+  // every one of them would answer on the default instead.
+  if (defaultModel && !availableModels(c.env).includes(defaultModel)) {
+    return c.json({ error: `${defaultModel} is not configured on this deployment` }, 400);
+  }
+
   const patch: Record<string, unknown> = { ...rest };
   if (defaultModel !== undefined) patch.default_model = defaultModel;
 

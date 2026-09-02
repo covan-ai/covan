@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DEFAULT_MODEL } from "../models";
 import type { FeedItem } from "./feed";
-import { summariseWithOpenAI } from "./summarise";
+import { summariseWithModel } from "./summarise";
 
 const createMock = vi.fn();
 
@@ -10,7 +10,11 @@ const createMock = vi.fn();
 // how we read its response, not about the SDK itself. This is the one file
 // on the branch where money is actually spent, so the call shape matters.
 // vi.mock calls are hoisted above imports by vitest, so this applies before
-// `./summarise` constructs its `new OpenAI(...)` client above.
+// `lib/completion` constructs its `new OpenAI(...)` client.
+//
+// OpenAI's SDK rather than Anthropic's because a routine's env here has no
+// ANTHROPIC_API_KEY, so `resolveModel` cannot route one to Anthropic — the
+// Claude request shape is covered in `lib/completion.test.ts` instead.
 //
 // A class, not `vi.fn().mockImplementation(() => ...)`. The call site is `new
 // OpenAI(...)`, and vitest 4 forwards `new` straight to the implementation
@@ -33,17 +37,17 @@ const item = (n: number): FeedItem => ({
   summary: `summary body ${n}`,
 });
 
-describe("summariseWithOpenAI", () => {
+describe("summariseWithModel", () => {
   beforeEach(() => {
     createMock.mockReset();
     createMock.mockResolvedValue({
       choices: [{ message: { content: "the summary" } }],
-      usage: { total_tokens: 42 },
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
     });
   });
 
   it("puts the persona in the system message and the instruction plus item titles in the user message", async () => {
-    const summarise = summariseWithOpenAI(env);
+    const summarise = summariseWithModel(env);
     await summarise({
       persona: "You are Ada, a rigorous research assistant.",
       model: "gpt-4o",
@@ -62,7 +66,7 @@ describe("summariseWithOpenAI", () => {
   });
 
   it("makes exactly one completion call for a batch of items, not one per item", async () => {
-    const summarise = summariseWithOpenAI(env);
+    const summarise = summariseWithModel(env);
     await summarise({
       persona: null,
       model: "gpt-4o",
@@ -74,7 +78,7 @@ describe("summariseWithOpenAI", () => {
   });
 
   it("truncates pageText at 20,000 characters for a web-watch routine", async () => {
-    const summarise = summariseWithOpenAI(env);
+    const summarise = summariseWithModel(env);
     const bigText = "x".repeat(25_000);
     await summarise({
       persona: null,
@@ -91,7 +95,7 @@ describe("summariseWithOpenAI", () => {
   });
 
   it("resolves an unrecognised model to the default via resolveModel", async () => {
-    const summarise = summariseWithOpenAI(env);
+    const summarise = summariseWithModel(env);
     await summarise({
       persona: null,
       model: "not-a-real-model",
@@ -104,7 +108,7 @@ describe("summariseWithOpenAI", () => {
   });
 
   it("sends OPENAI_MODEL instead of the routine's own model, so a routine reaches a self-hosted endpoint's catalogue too", async () => {
-    const summarise = summariseWithOpenAI({
+    const summarise = summariseWithModel({
       OPENAI_API_KEY: "sk-test",
       OPENAI_BASE_URL: "http://localhost:11434/v1",
       OPENAI_MODEL: "llama3.3:70b",
@@ -119,8 +123,8 @@ describe("summariseWithOpenAI", () => {
     expect(createMock.mock.calls[0][0].model).toBe("llama3.3:70b");
   });
 
-  it("reads tokens from usage.total_tokens, defaulting to 0 when usage is absent", async () => {
-    const summarise = summariseWithOpenAI(env);
+  it("bills prompt plus completion tokens, and 0 when the endpoint reports no usage at all", async () => {
+    const summarise = summariseWithModel(env);
 
     const withUsage = await summarise({
       persona: null,

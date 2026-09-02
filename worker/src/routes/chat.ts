@@ -1,11 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
 import { resolveModel } from "../lib/models";
-import { createOpenAI } from "../lib/openai";
+import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
 import { selectHistory } from "../lib/history";
 import { buildSystemPrefix, temperatureFor, maxTokensFor } from "../lib/prompt";
@@ -132,7 +131,7 @@ chat.post("/chat/stream", async (c) => {
   // latest user turn, where it grounds the answer without breaking that prefix.
   const priorTurns = history.slice(0, -1);
   const latestTurn = history[history.length - 1];
-  const openaiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+  const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
     ...(ragBlock ? [{ role: "system" as const, content: ragBlock }] : []),
@@ -140,7 +139,6 @@ chat.post("/chat/stream", async (c) => {
   ];
 
   const model = resolveModel(agent.model, c.env);
-  const openai = createOpenAI(c.env);
   const signal = c.req.raw.signal;
   const service = serviceClient(c.env);
 
@@ -152,16 +150,16 @@ chat.post("/chat/stream", async (c) => {
       };
 
       let full = "";
-      // Token usage arrives in a final usage-only chunk (empty choices) when
-      // stream_options.include_usage is set. Captured for the usage dashboard.
+      // Token usage arrives once, after the last delta, whichever provider
+      // answered — `lib/completion.ts` normalises the two shapes into one
+      // event. Captured for the usage dashboard.
       let promptTokens: number | null = null;
       let completionTokens: number | null = null;
-      // How much of `promptTokens` OpenAI served from its automatic prompt
-      // cache — a subset of that count, not an addition. This is the only
-      // evidence that the cacheable-prefix assembly above is actually working;
-      // without it a change that silently breaks the cache costs real money and
-      // shows up nowhere. Unlike the transcription usage field, `cached_tokens`
-      // is properly typed by the pinned SDK, so no fallback is needed here.
+      // How much of `promptTokens` the provider served from its prompt cache —
+      // a subset of that count, not an addition. This is the only evidence that
+      // the cacheable-prefix assembly above is actually working; without it a
+      // change that silently breaks the cache costs real money and shows up
+      // nowhere.
       let cachedTokens: number | null = null;
       // Why the model stopped. "length" means it ran into `maxTokensFor` and
       // the answer is cut off mid-thought — which looks, on screen, exactly
@@ -223,30 +221,28 @@ chat.post("/chat/stream", async (c) => {
         return inserted;
       };
       try {
-        const completion = await openai.chat.completions.create(
+        const events = streamCompletion(
+          c.env,
           {
             model,
-            messages: openaiMessages,
-            stream: true,
-            stream_options: { include_usage: true },
-            max_completion_tokens: maxTokensFor(mode),
-            ...(temperatureFor(mode) !== undefined ? { temperature: temperatureFor(mode) } : {}),
+            messages,
+            maxTokens: maxTokensFor(mode),
+            temperature: temperatureFor(mode),
           },
           { signal },
         );
 
-        for await (const chunk of completion) {
-          const choice = chunk.choices[0];
-          const delta = choice?.delta?.content;
-          if (delta) {
-            full += delta;
-            send({ type: "delta", text: delta });
-          }
-          if (choice?.finish_reason) finishReason = choice.finish_reason;
-          if (chunk.usage) {
-            promptTokens = chunk.usage.prompt_tokens ?? null;
-            completionTokens = chunk.usage.completion_tokens ?? null;
-            cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? null;
+        for await (const event of events) {
+          if (event.type === "delta") {
+            full += event.text;
+            send({ type: "delta", text: event.text });
+          } else {
+            promptTokens = event.usage.promptTokens;
+            completionTokens = event.usage.completionTokens;
+            cachedTokens = event.usage.cachedTokens;
+            // Already normalised to OpenAI's vocabulary by `lib/completion.ts`,
+            // so `"length"` means truncated on either provider.
+            finishReason = event.finishReason;
           }
         }
 

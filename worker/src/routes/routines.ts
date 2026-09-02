@@ -13,7 +13,7 @@ import { encryptSecret } from "../lib/secret-box";
 import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { resolveModel } from "../lib/models";
-import { createOpenAI } from "../lib/openai";
+import { complete, totalTokens } from "../lib/completion";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
 const routines = new Hono<AppEnv>();
@@ -36,25 +36,24 @@ routines.post("/routines/draft", async (c) => {
   const parsed = draftBodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const client = createOpenAI(c.env);
   // parseDraft may call the model more than once. Totalled here and recorded
   // once, whether the draft parses or is rejected — a failed parse still spent.
   let spent = 0;
-  const complete = async (prompt: string) => {
-    const res = await client.chat.completions.create({
+  const completeOne = async (prompt: string) => {
+    const { text, usage } = await complete(c.env, {
       // Drafting has no agent behind it, so there is no per-agent model to
       // honour — `null` takes the default, or OPENAI_MODEL when one is set.
       model: resolveModel(null, c.env),
-      response_format: { type: "json_object" },
       messages: [{ role: "user", content: prompt }],
+      json: true,
     });
-    spent += res.usage?.total_tokens ?? 0;
-    return res.choices[0]?.message?.content ?? "";
+    spent += totalTokens(usage);
+    return text;
   };
 
   try {
     const draft = await parseDraft(parsed.data.text, {
-      complete,
+      complete: completeOne,
       timezone: parsed.data.timezone,
       ownHosts: ownHostsFrom(c.env),
     });

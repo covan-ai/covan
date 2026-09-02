@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
-import { createOpenAI } from "../lib/openai";
+import { complete, totalTokens } from "../lib/completion";
 import { buildIdeaExtractionMessages, parseIdeaSuggestions } from "../lib/idea-suggest";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 
@@ -68,17 +68,15 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
     )
     .join("\n");
 
-  const openai = createOpenAI(c.env);
   try {
-    const completion = await openai.chat.completions.create({
+    const { text, usage } = await complete(c.env, {
       model: resolveModel(agent?.model ?? null, c.env),
       messages: buildIdeaExtractionMessages(transcript),
-      response_format: { type: "json_object" },
-      max_completion_tokens: 800,
+      json: true,
+      maxTokens: 800,
     });
-    await recordQuota(c, completion.usage?.total_tokens ?? 0);
-    const raw = completion.choices[0]?.message?.content ?? "";
-    return c.json({ ideas: parseIdeaSuggestions(raw) });
+    await recordQuota(c, totalTokens(usage));
+    return c.json({ ideas: parseIdeaSuggestions(text) });
   } catch (err) {
     console.error("idea extraction failed", err);
     return c.json({ error: "failed to extract ideas" }, 502);

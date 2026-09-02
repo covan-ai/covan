@@ -107,6 +107,11 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // list, which is what an operator who has not thought about it should get.
     OPENAI_BASE_URL: source.OPENAI_BASE_URL,
     OPENAI_MODEL: source.OPENAI_MODEL,
+    // Optional, and deliberately not in REQUIRED: without it the Claude models
+    // are simply not offered and nothing reaches Anthropic. `lib/models.ts`
+    // treats its presence as the opt-in.
+    ANTHROPIC_API_KEY: source.ANTHROPIC_API_KEY,
+    ANTHROPIC_BASE_URL: source.ANTHROPIC_BASE_URL,
     // Separate from the two above on purpose — `lib/openai` explains why an
     // endpoint for completions is not automatically an endpoint for documents.
     EMBEDDING_BASE_URL: source.EMBEDDING_BASE_URL,

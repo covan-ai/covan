@@ -31,8 +31,31 @@ export type RoutineEnv = {
    * Forces one model for every completion, ignoring the per-agent picker.
    * Needed with OPENAI_BASE_URL because `lib/models` allowlists OpenAI's
    * catalogue, and a local endpoint serves names that are not in it.
+   *
+   * It does not reach a Claude pick, which is not served over that endpoint at
+   * all — see `resolveModel`. That is only reachable when the key below is set,
+   * so a deployment that has deliberately moved every completion in-house never
+   * lands there.
    */
   OPENAI_MODEL?: string;
+  /**
+   * Anthropic's key, and the switch that makes the Claude models exist.
+   *
+   * Optional, and its absence is a supported configuration rather than a
+   * misconfiguration: Covan needs exactly one provider to answer anything and
+   * OPENAI_API_KEY above is it. Unset means the Claude ids are not offered in
+   * the picker, not accepted by `PATCH /workspace`, and never resolved — so
+   * nothing this deployment sends can reach Anthropic. Setting it is the act
+   * that opts in. On Cloudflare: `wrangler secret put ANTHROPIC_API_KEY`.
+   */
+  ANTHROPIC_API_KEY?: string;
+  /**
+   * Where Claude completions go. Unset means api.anthropic.com. The Anthropic
+   * half of OPENAI_BASE_URL, for a gateway or proxy in front of it; the two are
+   * separate variables because they are separate endpoints, not two spellings
+   * of one decision.
+   */
+  ANTHROPIC_BASE_URL?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   RESEND_API_KEY: string;

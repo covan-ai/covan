@@ -107,7 +107,7 @@ api.use("/*", entitlementsMiddleware);
 //
 // The workspace export stays on `standard` too, and that is the least obvious
 // of these. It buys no completion, so it does not belong in the list above,
-// whose whole claim is derived from `createOpenAI` appearing in a route file.
+// whose whole claim is derived from `lib/completion` appearing in a route file.
 // But it is the one endpoint where a single request fans out into as many
 // object reads as the workspace has documents, so `standard`'s per-minute
 // allowance is an amplified one here in a way it is nowhere else. It bounds a

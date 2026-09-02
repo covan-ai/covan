@@ -4,6 +4,15 @@ import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
+  Connection,
+  ConnectionRun,
+  ConnectionsResponse,
+  DriveFolder,
+  ProviderId,
+  SlackState,
+  SyncOutcome,
+} from "./connections-api";
+import type {
   Routine,
   RoutineRun,
   DeliveryChannel,
@@ -425,6 +434,43 @@ export const api = {
     incoming: (): Promise<IncomingInvitation[]> => request("GET", "/invitations/incoming"),
     accept: (id: string): Promise<{ workspaceId: string }> =>
       request("POST", `/invitations/${id}/accept`),
+  },
+  connections: {
+    list: (): Promise<ConnectionsResponse> => request("GET", "/connections"),
+    runs: (id: string): Promise<ConnectionRun[]> => request("GET", `/connections/${id}/runs`),
+    /**
+     * Begin a grant. Returns the provider's consent URL rather than following a
+     * redirect: a cross-origin 302 from `fetch` lands as a CORS error, not a
+     * login page, so the navigation has to happen in the page.
+     */
+    start: (provider: ProviderId, bundleId: string): Promise<{ url: string }> =>
+      request("POST", `/connections/${provider}/start`, { bundleId }),
+    /** One level of a Drive tree. The browser holds no Google token of its own. */
+    folders: (id: string, parent?: string): Promise<DriveFolder[]> =>
+      request("GET", `/connections/${id}/folders${parent ? `?parent=${parent}` : ""}`),
+    update: (
+      id: string,
+      patch: {
+        status?: "active" | "paused";
+        syncIntervalMinutes?: number;
+        folderId?: string;
+        folderName?: string;
+      },
+    ): Promise<Connection> => request("PATCH", `/connections/${id}`, patch),
+    sync: (id: string): Promise<SyncOutcome> => request("POST", `/connections/${id}/sync`),
+    /**
+     * `keep` is the default, and the schema agrees: disconnecting a source is
+     * not a request to unlearn what it taught.
+     */
+    remove: (id: string, documents: "keep" | "delete" = "keep"): Promise<void> =>
+      request("DELETE", `/connections/${id}?documents=${documents}`),
+  },
+  slack: {
+    get: (): Promise<SlackState> => request("GET", "/slack"),
+    start: (): Promise<{ url: string }> => request("POST", "/slack/install/start"),
+    setAgent: (agentId: string): Promise<{ id: string; agentId: string }> =>
+      request("PATCH", "/slack/installation", { agentId }),
+    remove: (): Promise<void> => request("DELETE", "/slack/installation"),
   },
   routines: {
     list: (): Promise<Routine[]> => request("GET", "/routines"),

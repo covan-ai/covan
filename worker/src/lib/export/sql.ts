@@ -250,6 +250,20 @@ function placeholderChannelInsert(columns: string[], tables: Collected): string 
  */
 export const MISSING_SECRET = "not-exported: re-enter this channel's credential";
 
+/**
+ * Why every restored connection arrives switched off.
+ *
+ * Its own sentence rather than a share of the routine one, because the repair
+ * is different: a routine needs a credential typed back in, a connection needs
+ * the whole OAuth grant made again from the Integrations page — against this
+ * install's own Notion or Google client, which is a thing the operator has to
+ * have registered before the sentence is even actionable.
+ */
+export const CONNECTION_PAUSED_ON_RESTORE =
+  "Restored from an export. An OAuth grant cannot travel between installs — " +
+  "reconnect this source from Integrations, and the documents it already " +
+  "imported will be adopted rather than duplicated.";
+
 /** Why every restored routine arrives switched off. */
 export const PAUSED_ON_RESTORE =
   "Restored from an export. The delivery credential could not travel between " +
@@ -284,6 +298,19 @@ function rewriteForRestore(table: string, rows: Row[]): Row[] {
   }
   if (table === "routines") {
     return rows.map((r) => ({ ...r, status: "paused", paused_reason: PAUSED_ON_RESTORE }));
+  }
+  // Connections are both cases at once: the OAuth token is `not null` and
+  // cannot be exported, and a connection that tried to sync without one would
+  // fail against the provider every six hours in a workspace nobody has
+  // reconnected yet. Same answer as routines, for the same reason — arrive off,
+  // with why on the row.
+  if (table === "connections") {
+    return rows.map((r) => ({
+      ...r,
+      secret_ciphertext: MISSING_SECRET,
+      status: "paused",
+      paused_reason: CONNECTION_PAUSED_ON_RESTORE,
+    }));
   }
   return rows;
 }

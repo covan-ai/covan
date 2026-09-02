@@ -1,18 +1,23 @@
 import { serve } from "@hono/node-server";
 import { app } from "./index";
 import { loadEnv } from "./lib/env";
-import { runDueRoutines } from "./lib/routines/dispatcher";
+import { runScheduledWork } from "./lib/background";
 
 /**
  * The self-hosted entry point.
  *
  * Cloudflare gives the Worker its bindings and fires `scheduled` from a cron
  * trigger. Neither exists here, so this file supplies both: bindings come from
- * the process environment, and the routine engine runs on an interval.
+ * the process environment, and the background work runs on an interval.
  *
- * The dispatcher is unchanged — `claim_due_routines` uses
- * `for update skip locked`, so a slow tick overlapping the next one cannot run
- * the same routine twice.
+ * The tick is unchanged from Cloudflare's — `lib/background` decides what one
+ * does, so a self-hosted stack syncs its connected sources on exactly the same
+ * terms as the hosted one. It has `DOCS_DIR`, so `canSyncConnections` is
+ * satisfied and there is nothing extra to configure.
+ *
+ * Overlap is safe: both `claim_due_routines` and `claim_due_connections` hand
+ * out rows with `for update skip locked`, so a slow tick meeting the next one
+ * cannot run the same work twice.
  */
 const env = loadEnv();
 const port = Number(process.env.PORT ?? 8787);
@@ -23,7 +28,7 @@ const server = serve({ fetch: (request: Request) => app.fetch(request, env), por
 });
 
 const tick = setInterval(() => {
-  runDueRoutines(env).catch((err) => console.error("routine tick failed", err));
+  runScheduledWork(env).catch((err) => console.error("scheduled tick failed", err));
 }, tickMs);
 
 /**

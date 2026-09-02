@@ -24,8 +24,15 @@
 #   RESEND_FROM
 #
 # Not set here, deliberately: SUPABASE_ANON_KEY (no user-scoped access — this
-# Worker only ever uses the service role) and the DOCS R2 binding (the engine
-# never touches documents).
+# Worker only ever uses the service role) and the DOCS R2 binding.
+#
+# That bucket is the reason connected sources do NOT sync from this Worker. A
+# sync writes documents, and the bucket belongs to the API Worker's account —
+# which is the account this file exists to escape. `lib/background` checks for a
+# document store before it tries, so a tick here delivers routines and logs one
+# line saying connections were skipped, instead of failing them all. To sync
+# Notion and Drive on Cloudflare, put a cron trigger on the API Worker itself;
+# wrangler.toml.example says so where the trigger would go.
 
 name = "covan-routines"
 main = "src/cron.ts"

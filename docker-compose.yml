@@ -345,6 +345,17 @@ services:
       # API keys with no extra configuration; leaving it out turns them off
       # rather than breaking anything.
       SUPABASE_JWT_SECRET: ${JWT_SECRET}
+      # Connected sources. Empty means that source is not offered — the
+      # Integrations page names the variables rather than hiding the row.
+      NOTION_CLIENT_ID: ${NOTION_CLIENT_ID:-}
+      NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Asking an agent from Slack. All three or none; docs/integrations.md
+      # lists the scopes and the two URLs to register.
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
       PORT: 8787
       ROUTINE_TICK_MS: ${ROUTINE_TICK_MS:-60000}
     volumes:

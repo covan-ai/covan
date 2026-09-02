@@ -315,8 +315,22 @@ entirely in someone else's may not clear the floor. And if the reply reads like 
 summary of the tops of several documents rather than an answer, that is the
 fallback, which means nothing matched.
 
+## Keeping a bundle current
+
+Everything above assumes somebody dragged the file in, which is accurate on the
+day it happens and quietly wrong a month later. A bundle can instead be fed by a
+**connected source** — a Notion workspace or a Drive folder that is re-read on a
+schedule, with documents added, refreshed and removed as they change at the
+source.
+
+What arrives is an ordinary document: same chunking, same retrieval, same
+citations, same export. [Integrations](integrations.md) covers what each source
+can read, what it deliberately cannot, and what happens when you disconnect it.
+
 ## Where to go next
 
+- [Integrations](integrations.md) — connecting Notion or Drive so a bundle keeps
+  itself current, and asking an agent from Slack.
 - [Core concepts](concepts.md) — the precise definitions behind the words used
   here, and how bundles sit against workspaces, agents and sessions.
 - [Retrieval, in detail](architecture.md#retrieval) — the same path from the

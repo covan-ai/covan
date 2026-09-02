@@ -51,6 +51,38 @@ function paidRouteFiles(): string[] {
  * below is what keeps this honest: the file list is derived, so a new file
  * cannot be forgotten, and this map has to be updated when one appears.
  */
+/**
+ * The one endpoint that spends without appearing in the map below, and the
+ * argument for it.
+ *
+ * `POST /slack/events` buys a completion — through `lib/slack/handle.ts`, so
+ * the `createOpenAI` seam above does not see it, which is exactly the kind of
+ * thing this file exists to stop being invisible.
+ *
+ * It is deliberately not on the expensive tier. That tier is keyed by user, and
+ * this request has no user: it arrives from Slack's infrastructure, from many
+ * addresses, on behalf of whoever happened to type in a channel. A per-minute
+ * limit there would either be wide enough to bound nothing or narrow enough to
+ * throttle a busy Slack workspace.
+ *
+ * What bounds it instead is stronger than a minute counter, and both halves
+ * have to hold:
+ *
+ * - **Nothing reaches the work without the signing secret.** The signature is
+ *   checked before the body is even parsed, and a failure is a 401 that costs
+ *   one HMAC (`lib/slack/verify.ts`).
+ * - **The spend is attributed to a person and checked against their
+ *   allowance.** `handleSlackEvent` resolves the Slack user to a Covan account
+ *   and calls `entitlements.check` before the model, exactly as a chat turn
+ *   does. An unrecognised asker is answered with a sentence and no completion.
+ *
+ * The standard tier still applies — `app.use("/*")` is mounted at the root, in
+ * front of this route as much as any other.
+ */
+const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
+  "slack.ts": "handleSlackEvent",
+};
+
 const PAID_ENDPOINTS: Record<string, string[]> = {
   "chat.ts": ["/chat/stream"],
   "transcribe.ts": ["/transcribe"],
@@ -66,6 +98,17 @@ describe("the expensive rate limit", () => {
 
     expect(paid).not.toEqual([]);
     expect(mounted.slice().sort()).toEqual(paid.slice().sort());
+  });
+
+  it("still bounds the one endpoint that spends outside the map", () => {
+    // If the identity check or the allowance check ever leaves
+    // `lib/slack/handle.ts`, the argument above stops being true and this fails.
+    for (const [file, marker] of Object.entries(SPENDS_OUTSIDE_THE_MAP)) {
+      expect(readFileSync(join(ROUTES, file), "utf8")).toContain(marker);
+    }
+    const handle = readFileSync(join(SRC, "lib", "slack", "handle.ts"), "utf8");
+    expect(handle).toContain("entitlements.check");
+    expect(readFileSync(join(ROUTES, "slack.ts"), "utf8")).toContain("verifySlackSignature");
   });
 
   it("knows about every route file that spends, so a new one cannot arrive unnoticed", () => {

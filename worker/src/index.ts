@@ -4,7 +4,7 @@ import type { AppEnv, Bindings } from "./types";
 import { authMiddleware } from "./middleware/auth";
 import { entitlementsMiddleware } from "./middleware/entitlements";
 import { rateLimit } from "./middleware/ratelimit";
-import { runDueRoutines } from "./lib/routines/dispatcher";
+import { runScheduledWork } from "./lib/background";
 import { agents } from "./routes/agents";
 import { favorites } from "./routes/favorites";
 import { sessions } from "./routes/sessions";
@@ -30,6 +30,8 @@ import { feedback } from "./routes/feedback";
 import { trash } from "./routes/trash";
 import { events } from "./routes/events";
 import { runPurge } from "./lib/purge";
+import { connections, connectionsPublic } from "./routes/connections";
+import { slack, slackPublic } from "./routes/slack";
 
 const app = new Hono<AppEnv>();
 
@@ -148,6 +150,16 @@ api.route("/", exportRoutes);
 api.route("/", feedback);
 api.route("/", trash);
 api.route("/", events);
+api.route("/", connections);
+api.route("/", slack);
+
+// Outside the authenticated router, and the only route that is. A browser
+// coming back from Notion's or Google's consent screen carries no bearer token;
+// `state` is what carries the identity, and `lib/connections/oauth-state.ts`
+// explains why that is safe. Mounted before `api` so the authenticated
+// catch-all never sees it.
+app.route("/", connectionsPublic);
+app.route("/", slackPublic);
 
 app.route("/", api);
 
@@ -166,8 +178,8 @@ export default {
       // Log and re-throw. Swallowing the error would have Cloudflare record a
       // broken tick as a successful invocation, so the engine could be dead for
       // days with a green dashboard.
-      runDueRoutines(env).catch((err) => {
-        console.error("routine tick failed", err);
+      runScheduledWork(env).catch((err) => {
+        console.error("scheduled tick failed", err);
         throw err;
       }),
     );

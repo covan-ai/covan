@@ -4,7 +4,7 @@ import type { AppEnv } from "../types";
 import { mapBundle, mapDocument } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { chunkText, embedTexts } from "../lib/embeddings";
-import { extractDocumentText, hasIndexableText } from "../lib/extract";
+import { EXCERPT_LIMIT, extractDocumentText, hasIndexableText, safeName } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
@@ -25,16 +25,11 @@ const updateSchema = z
 
 const MAX_SIZE = 10 * 1024 * 1024;
 const ALLOWED_EXT = new Set(["md", "markdown", "txt", "csv", "json", "pdf"]);
-const EXCERPT_LIMIT = 8000;
 
 function extOf(name: string): string {
   const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
   return m ? m[1] : "";
 }
-function safeName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 200) || "file";
-}
-
 // Constant-time string comparison so the admin-key check can't be timing-probed.
 function timingSafeEqualStr(a: string, b: string): boolean {
   const enc = new TextEncoder();

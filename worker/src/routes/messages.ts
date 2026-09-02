@@ -85,6 +85,7 @@ messages.patch("/messages/:id", async (c) => {
 // DELETE /messages/after/:id
 messages.delete("/messages/after/:id", async (c) => {
   const db = c.get("db");
+  const user = c.get("user");
   const id = c.req.param("id");
 
   const { data: anchor, error: anchorError } = await db
@@ -98,6 +99,29 @@ messages.delete("/messages/after/:id", async (c) => {
   }
   if (!anchor) {
     return c.json({ error: "not found" }, 404);
+  }
+
+  // Checked here even though `messages_delete_owner` already refuses it,
+  // because of *how* it refuses: RLS answers a delete it has no policy for by
+  // matching no rows and reporting no error. So a member of a shared session
+  // who pressed Regenerate got `{ ok: true }`, nothing deleted, and then a
+  // stream that failed with "no user message to respond to" — the reply they
+  // were trying to replace still sitting at the end of the conversation. An
+  // honest 403 is what the interface can act on.
+  const { data: session, error: sessionError } = await db
+    .from("chat_sessions")
+    .select("user_id")
+    .eq("id", anchor.session_id)
+    .maybeSingle();
+
+  if (sessionError) {
+    return c.json({ error: "failed to load session" }, 500);
+  }
+  if (!session) {
+    return c.json({ error: "not found" }, 404);
+  }
+  if (session.user_id !== user.id) {
+    return c.json({ error: "only the owner of a conversation can rewrite it" }, 403);
   }
 
   const { error } = await db

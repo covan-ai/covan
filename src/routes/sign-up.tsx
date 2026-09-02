@@ -19,7 +19,9 @@ function SignUp() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmEmailSent, setConfirmEmailSent] = useState(false);
+  // The address, not a boolean: "check your email" is advice, and which inbox to
+  // check is the part of it that is actually information.
+  const [sentTo, setSentTo] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -39,7 +41,16 @@ function SignUp() {
     const { data, error } = await supabase.auth.signUp({
       email,
       password: String(password ?? ""),
-      options: { data: { name } },
+      options: {
+        data: { name },
+        // Without this, GoTrue sends the confirmation link to the project's Site
+        // URL — `/`, which is a redirect here and a marketing page on the hosted
+        // build, and in both cases a page with nothing to say about the click
+        // that led to it. `/confirmed` is that missing sentence. It has to be on
+        // the project's redirect allow-list or GoTrue silently falls back to the
+        // Site URL again; see `src/routes/confirmed.tsx`.
+        emailRedirectTo: `${window.location.origin}/confirmed`,
+      },
     });
     setSubmitting(false);
 
@@ -53,10 +64,10 @@ function SignUp() {
       return;
     }
 
-    setConfirmEmailSent(true);
+    setSentTo(email);
   }
 
-  if (confirmEmailSent) {
+  if (sentTo) {
     return (
       <AuthLayout
         title="Check your email"
@@ -71,8 +82,9 @@ function SignUp() {
         }
       >
         <p className="text-sm text-muted-foreground">
-          We sent a confirmation link to your email address. Click the link to activate your
-          account, then sign in.
+          We sent a confirmation link to{" "}
+          <span className="font-medium text-foreground">{sentTo}</span>. Clicking it activates the
+          account and brings you back signed in.
         </p>
       </AuthLayout>
     );
@@ -131,6 +143,12 @@ function SignUp() {
               className="pl-9"
             />
           </div>
+          {/* No `?email=` prefill here, and the invitation mail does not send
+              one — see `src/lib/invite-text.ts` and docs/team.md. A link that
+              fills the field in gets forwarded in place of the address, and the
+              person who follows it signs up as somebody else. The address is
+              named in prose in the mail instead, where it stays visibly the
+              thing that matters. */}
         </div>
 
         <div className="space-y-1.5">

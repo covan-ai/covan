@@ -18,8 +18,14 @@ Auth; the Covan API is not in that path at all.
 
 What happens next depends on whether the deployment confirms email addresses. If
 sign-up returns a session, you are in the app immediately. If it does not, you
-are shown a "Check your email" screen, and the confirmation link has to be
-clicked before you can sign in.
+are shown a "Check your email" screen naming the address it went to, and the
+confirmation link has to be clicked before you can sign in.
+
+Clicking it brings you back to `/confirmed`, which says so and hands you a way
+into the app. That page is the whole point of the link having a destination of
+its own: sent to the site's front door instead — which is what Supabase does
+when nothing tells it otherwise — a confirmed account and an expired link look
+exactly alike, because both of them look like the home page.
 
 Either way, a database trigger gives the new account a profile and a workspace of
 its own, named after you — `Alex Rivera's Workspace`. Everything you make from
@@ -91,6 +97,13 @@ agent's own — created on the first file and attached straight away, so you can
 ask about it in the next message. It is a normal bundle, so anything below about
 bundles applies to it too. [Knowledge bundles](knowledge.md#uploading) has the
 longer version.
+
+If you do not have anything to drop in yet, the Knowledge tab carries six
+starter documents — company overview, product notes, FAQ, how we work, glossary,
+meeting notes. Each downloads as a page of headings with a prompt under each,
+which you fill in and upload back. [What a document should look
+like](knowledge.md#what-a-document-should-look-like) is the reasoning behind
+their shape, and applies just as well to a file you write yourself.
 
 Accepted file types are exactly these, up to 10 MB each:
 

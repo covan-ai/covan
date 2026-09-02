@@ -11,6 +11,27 @@ import { paragraphs } from "./prose";
  * in a URL would be a second, weaker one guarding the same door. What the
  * recipient needs to know is which address to use; that is what this says.
  *
+ * Where it did not send them, for a long time, is anywhere useful. The button
+ * read "Sign in to accept" and pointed at the bare origin — a marketing page on
+ * the hosted build, a redirect to sign-in on the self-hosted one. Somebody
+ * invited to a product they have never used therefore landed on a page about it,
+ * holding no account and no password, having just been told to sign in. Reported
+ * from outside by a person who could not get in at all.
+ *
+ * So the button goes to `/sign-up`, and a second, named link goes to `/sign-in`
+ * for the recipient who already has an account. Two links rather than a guess:
+ * this route cannot tell which of the two it is writing to, because `profiles`
+ * is behind RLS scoped to the caller's own workspaces and an invitee is by
+ * definition not in one yet.
+ *
+ * Neither URL carries the address, and that is the same rule
+ * `src/lib/invite-text.ts` follows for the copy-paste version — a link that
+ * fills the field in is a link that gets forwarded in place of the address,
+ * after which somebody signs up as themselves and cannot see why nothing is
+ * waiting. The address is in the body in bold, where it stays visibly the thing
+ * that decides whether the invitation is ever found. docs/team.md argues it at
+ * length.
+ *
  * Two halves, not two mails. The text below was the whole message for as long as
  * this route existed, on the reasoning that an HTML mail which renders as a
  * blank card in a client that strips styles is worse than no HTML at all. That
@@ -26,6 +47,8 @@ export function invitationEmail(args: {
   appUrl: string;
 }) {
   const asRole = args.role === "admin" ? "an admin" : "a member";
+  const signUpUrl = `${args.appUrl}/sign-up`;
+  const signInUrl = `${args.appUrl}/sign-in`;
   return {
     to: args.email,
     subject: `${args.inviterName} invited you to ${args.workspaceName} on Covan`,
@@ -40,16 +63,20 @@ export function invitationEmail(args: {
       "Covan is where a team keeps its AI agents: the agents and the knowledge",
       "they read are shared, and your own conversations stay yours.",
       "",
-      "To accept, sign in and the invitation will be waiting:",
+      "Create your account here, and the invitation will be waiting inside:",
       "",
-      `  ${args.appUrl}`,
+      `  ${signUpUrl}`,
       "",
-      "Sign in with the address this was sent to:",
+      "Already have a Covan account? Sign in instead:",
+      "",
+      `  ${signInUrl}`,
+      "",
+      "Either way, use the address this was sent to:",
       "",
       `  ${args.email}`,
       "",
-      "If you do not have an account yet, sign up with that same address — it is",
-      "what the invitation is matched to, so a different one will not find it.",
+      "That address is what the invitation is matched to, so a different one",
+      "will not find it.",
       "",
       "If you were not expecting this, you can ignore it. Nothing happens until",
       "you accept.",
@@ -60,9 +87,10 @@ export function invitationEmail(args: {
       bodyHtml: paragraphs(
         `You have been invited as ${asRole}.`,
         "Covan is where a team keeps its AI agents: the agents and the knowledge they read are shared, and your own conversations stay yours.",
-        `Sign in with <strong>${escapeHtml(args.email)}</strong> — that address is what the invitation is matched to, so a different one will not find it. If you do not have an account yet, sign up with that same address.`,
+        `Sign up with <strong>${escapeHtml(args.email)}</strong> — that address is what the invitation is matched to, so a different one will not find it. The invitation is waiting once you are in.`,
+        `Already have a Covan account? <a href="${escapeHtml(signInUrl)}" style="color:#251f19">Sign in instead</a>.`,
       ),
-      action: { label: "Sign in to accept", url: args.appUrl },
+      action: { label: "Create your account", url: signUpUrl },
       footnote:
         "If you were not expecting this, you can ignore it. Nothing happens until you accept.",
     }),

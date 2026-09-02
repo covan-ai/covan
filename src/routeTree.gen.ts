@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthedRouteImport } from './routes/_authed'
+import { Route as ConfirmedRouteImport } from './routes/confirmed'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LicenseRouteImport } from './routes/license'
 import { Route as PrivacyRouteImport } from './routes/privacy'
@@ -39,6 +40,11 @@ const IndexRoute = IndexRouteImport.update({
 } as any)
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConfirmedRoute = ConfirmedRouteImport.update({
+  id: '/confirmed',
+  path: '/confirmed',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
@@ -150,6 +156,7 @@ const AuthedAgentsAgentIdRoutinesRoutineIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/confirmed': typeof ConfirmedRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/license': typeof LicenseRoute
   '/privacy': typeof PrivacyRoute
@@ -173,6 +180,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/confirmed': typeof ConfirmedRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/license': typeof LicenseRoute
   '/privacy': typeof PrivacyRoute
@@ -197,6 +205,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authed': typeof AuthedRouteWithChildren
+  '/confirmed': typeof ConfirmedRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/license': typeof LicenseRoute
   '/privacy': typeof PrivacyRoute
@@ -222,6 +231,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/confirmed'
     | '/forgot-password'
     | '/license'
     | '/privacy'
@@ -245,6 +255,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/confirmed'
     | '/forgot-password'
     | '/license'
     | '/privacy'
@@ -268,6 +279,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_authed'
+    | '/confirmed'
     | '/forgot-password'
     | '/license'
     | '/privacy'
@@ -293,6 +305,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthedRoute: typeof AuthedRouteWithChildren
+  ConfirmedRoute: typeof ConfirmedRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LicenseRoute: typeof LicenseRoute
   PrivacyRoute: typeof PrivacyRoute
@@ -316,6 +329,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AuthedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/confirmed': {
+      id: '/confirmed'
+      path: '/confirmed'
+      fullPath: '/confirmed'
+      preLoaderRoute: typeof ConfirmedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/forgot-password': {
@@ -509,6 +529,7 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthedRoute: AuthedRouteWithChildren,
+  ConfirmedRoute: ConfirmedRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LicenseRoute: LicenseRoute,
   PrivacyRoute: PrivacyRoute,

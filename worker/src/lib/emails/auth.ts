@@ -28,7 +28,7 @@ export const authEmailTemplates = [
       preheader: "Confirm your address to activate your Covan account.",
       heading: "Confirm your address",
       bodyHtml: [
-        `<p style="${P}">You are one click from a Covan account. Confirming tells us the address is really yours — after that you can sign in.</p>`,
+        `<p style="${P}">You are one click from a Covan account. Confirming tells us the address is really yours, and the link brings you back to Covan signed in.</p>`,
         `<p style="${P}">If a colleague invited you, the invitation is matched to this address and will be waiting once you are in.</p>`,
       ].join(""),
       action: { label: "Confirm my address", url: "{{ .ConfirmationURL }}" },

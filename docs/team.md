@@ -24,10 +24,20 @@ it. The address is lowercased before it is stored.
 
 **The email is a courtesy, and the row is the invitation.** After the row is
 written, the API emails the invitee through the same Resend account routine
-deliveries use — naming who invited them, which workspace, and which address to
-sign in with. It deliberately carries no link that accepts anything: acceptance
-is matched against the address, so a token in a URL would be a second and weaker
-key to the same door.
+deliveries use — naming who invited them, which workspace, and which address the
+invitation is matched to. It deliberately carries no link that accepts anything:
+acceptance is matched against the address, so a token in a URL would be a second
+and weaker key to the same door.
+
+What it does carry is two ordinary links, to `/sign-up` and to `/sign-in`, and
+it carries both because the sending route cannot tell which one the recipient
+needs: `profiles` is behind a policy scoped to the caller's own workspaces, and
+somebody who has not joined yet is not in one. The button used to be a single
+_Sign in to accept_ pointing at the bare origin, which is a marketing page on a
+hosted Covan and a redirect on a self-hosted one — so an invited person with no
+account landed on a page about the product, holding no password, having just
+been told to sign in. Neither link pre-fills the address, for the reason under
+_Tell them_ below.
 
 If that email fails, or if the deployment has no `RESEND_API_KEY` and
 `RESEND_FROM` — a supported configuration, not a broken one — the invitation
@@ -55,7 +65,9 @@ The URL is the front door, not a key. It carries no token and does not pre-fill
 the address, for the reason above and one more: a link that fills the field in
 gets forwarded in place of the address, and then somebody signs up as themselves
 and cannot see why nothing is waiting. Naming the address in prose keeps it
-visibly the thing that matters. Self-hosted installs get their own origin in
+visibly the thing that matters. The emailed invitation follows the same rule, so
+the two surfaces cannot drift into disagreeing about what a link is allowed to
+know. Self-hosted installs get their own origin in
 that sentence, so it reads `http://localhost:3000/sign-up` where that is true.
 
 The button is offered whether or not the email went out, because this list

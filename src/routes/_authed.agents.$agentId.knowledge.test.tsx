@@ -117,3 +117,36 @@ describe("a workspace with nothing in it", () => {
     expect(screen.queryByText("Start with four files")).not.toBeInTheDocument();
   });
 });
+
+// The neighbouring answer to the same question, for the team that does not have
+// the four files above either. "Start with four files" names documents you
+// already wrote; this names six you can fill in when you have written none.
+describe("the starter templates on the Knowledge tab", () => {
+  beforeEach(withKnowledge);
+
+  it("opens itself for the agent that has nothing yet", async () => {
+    const documents = store.agents[0].documents;
+    store.agents[0].documents = [];
+    try {
+      await renderTab(true);
+
+      expect(screen.getByLabelText(/download company-overview\.md/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/download faq\.md/i)).toBeInTheDocument();
+    } finally {
+      store.agents[0].documents = documents;
+    }
+  });
+
+  it("collapses once there are real documents, rather than competing with them", async () => {
+    await renderTab(true);
+
+    expect(screen.queryByLabelText(/download company-overview\.md/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show the six templates/i })).toBeInTheDocument();
+  });
+
+  it("is not offered to a viewer, who could not upload the result", async () => {
+    await renderTab(false);
+
+    expect(screen.queryByText(/nothing to upload yet/i)).not.toBeInTheDocument();
+  });
+});

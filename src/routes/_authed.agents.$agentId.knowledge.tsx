@@ -6,6 +6,7 @@ import { PageContainer, PageHeader, SectionHeading } from "@/components/page-con
 import { FirstUploads } from "@/components/first-uploads";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocsLink } from "@/components/docs-link";
+import { KnowledgeTemplates } from "@/components/knowledge-templates";
 import { RevisitPanel } from "@/components/revisit-panel";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -287,8 +288,11 @@ function KnowledgeTab() {
                     dragging ? "text-accent-orange" : "text-muted-foreground",
                   )}
                 />
+                {/* The bundle name was missing from this sentence, which ended
+                    mid-air on "Drop files into " — the one place the interface
+                    says out loud where a file is about to go. */}
                 <div className="font-dm text-[17px] font-medium">
-                  {dragging ? "Drop to upload" : `Drop files into `}
+                  {dragging ? "Drop to upload" : `Drop files into ${selectedBundle.name}`}
                 </div>
                 <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
                 <input
@@ -340,7 +344,13 @@ function KnowledgeTab() {
         </section>
       )}
 
-      {/* Section 3 — What the agent actually reads.
+      {/* Section 3 — Starter templates, for the account with nothing to upload.
+          Only where uploading is possible: offering a viewer a form to fill in
+          and then refusing the upload is a worse experience than not offering
+          it. */}
+      {canWrite && <KnowledgeTemplates openByDefault={agent.documents.length === 0} />}
+
+      {/* Section 4 — What the agent actually reads.
           Outside the `canWrite` branch, and outside the bundle selector, because
           it answers a question neither of them is about: what does this agent
           know? `agent.documents` is every document in every bundle attached to

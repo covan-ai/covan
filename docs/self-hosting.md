@@ -540,6 +540,24 @@ The subject lines that go with them are in
 `{{ .ConfirmationURL }}` placeholder, which is what the button points at — change
 anything else you like, but not that, or the button leads nowhere.
 
+**Both links have to be allowed back in.** The app asks GoTrue to send the
+confirmation link to `/confirmed` and the reset link to `/reset-password`, and
+GoTrue will only honour a `redirect_to` it has been told about. An address that
+is not on the list is not an error: the link still works, the account is still
+confirmed, and the person is dropped on the Site URL instead — which is the front
+door, says nothing about what just happened, and is precisely the behaviour those
+two pages exist to replace. Add them under Authentication → URL Configuration →
+Redirect URLs on a hosted project, or to `additional_redirect_urls` in
+`supabase/config.toml` for a local stack:
+
+```
+https://your-covan.example.com/confirmed
+https://your-covan.example.com/reset-password
+```
+
+A compose stack that leaves `GOTRUE_MAILER_AUTOCONFIRM` on never sends the first
+of those at all, so only the reset URL matters there.
+
 Edit the source rather than the files: `bun run build:email-templates` in
 `worker/` rewrites them, and a test fails if the checked-in copies drift from it.
 `supabase/config.toml` can point a **local** stack at template files, but there is

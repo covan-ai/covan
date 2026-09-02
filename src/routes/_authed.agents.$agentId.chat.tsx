@@ -889,7 +889,7 @@ function ChatTab() {
         <div className="flex h-full flex-col border-l border-border">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <Sparkles className="h-4 w-4 text-muted-foreground" /> Fikir Panosu
+              <Sparkles className="h-4 w-4 text-muted-foreground" /> Idea board
             </div>
             {/* Secondary on purpose: the composer's send is this view's one
                 primary action (DESIGN.md §2). */}
@@ -928,7 +928,7 @@ function ChatTab() {
                       }
                       className="shrink-0 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-secondary"
                     >
-                      Board'a ekle
+                      Add to board
                     </button>
                   </div>
                 ))}

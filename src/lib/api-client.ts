@@ -484,7 +484,7 @@ export const api = {
      *
      * Write-only from the client's side, and there is no `list` here on
      * purpose: nothing in the interface shows feedback back, because there is
-     * nobody in the interface it would be right to show it to. See 0040.
+     * nobody in the interface it would be right to show it to. See 0041.
      */
     send: (input: FeedbackDraft): Promise<{ id: string; createdAt: number }> =>
       request("POST", "/feedback", input),
@@ -521,7 +521,7 @@ export type FeedbackDraft = {
   path?: string;
   /**
    * The reply this is about, when the note started as a thumb under an answer.
-   * 0041 refuses an id the sender could not read.
+   * 0042 refuses an id the sender could not read.
    */
   messageId?: string;
 };

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useAgentsStore } from "@/lib/agents-store";
 import { api } from "@/lib/api-client";
 import { PageContainer, PageHeader, SectionHeading } from "@/components/page-container";
+import { FirstUploads } from "@/components/first-uploads";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocsLink } from "@/components/docs-link";
 import { RevisitPanel } from "@/components/revisit-panel";
@@ -168,11 +169,15 @@ function KnowledgeTab() {
           meta={bundles.length > 0 ? `${bundles.length} available` : undefined}
         />
         {bundles.length === 0 ? (
-          <EmptyState
-            className="mt-3"
-            title="No bundles yet"
-            description="Create one below, then drop documents into it. Bundles are reusable across every agent."
-          />
+          canWrite ? (
+            <FirstUploads className="mt-3" />
+          ) : (
+            <EmptyState
+              className="mt-3"
+              title="No bundles yet"
+              description="Nothing has been uploaded to this workspace. A member can create a bundle and drop documents into it."
+            />
+          )
         ) : (
           <div className="mt-3 divide-y divide-hairline overflow-hidden rounded-xl border border-border bg-surface">
             {bundles.map((b) => {

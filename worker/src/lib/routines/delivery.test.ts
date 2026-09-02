@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { deliver, claimItemKeys, releaseItemKeys } from "./delivery";
-import { encryptSecret } from "./crypto";
+import { encryptSecret } from "../secret-box";
 
 const KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const ok = () => new Response("{}", { status: 200 });

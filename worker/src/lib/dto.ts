@@ -452,3 +452,111 @@ export function mapDeliveryChannel(row: {
     createdAt: toEpochMs(row.created_at),
   };
 }
+
+/**
+ * A connected source, as the Integrations page sees it.
+ *
+ * Never carries the token — `connections.secret_ciphertext` is not selectable
+ * by a client at all (0039), so this DTO cannot leak it even by being careless.
+ * What it does carry is everything needed to answer "is this working?": when it
+ * last ran, when it will next, and the reason if it stopped.
+ */
+export type ConnectionDTO = {
+  id: string;
+  provider: "notion" | "google_drive";
+  /** The external account: a Notion workspace name, a Google address. */
+  accountLabel: string;
+  bundleId: string;
+  /** Denormalised for display, so the page does not need a second request. */
+  bundleName: string | null;
+  userId: string;
+  status: "active" | "paused";
+  pausedReason: string | null;
+  /**
+   * Whether this connection still needs setting up before it can sync. True
+   * only for a Drive connection with no folder chosen — the state between the
+   * OAuth grant and the folder picker, which is a step rather than a fault and
+   * so is not `pausedReason`.
+   */
+  needsFolder: boolean;
+  /** The chosen Drive folder, when there is one. */
+  folderName: string | null;
+  syncIntervalMinutes: number;
+  nextSyncAt: number | null;
+  lastSyncAt: number | null;
+  documentCount: number;
+  createdAt: number;
+};
+
+export function mapConnection(row: {
+  id: string;
+  provider: string;
+  account_label: string;
+  bundle_id: string;
+  knowledge_bundles?: { name?: string } | null;
+  user_id: string;
+  status: string;
+  paused_reason: string | null;
+  config: Record<string, unknown> | null;
+  sync_interval_minutes: number;
+  next_sync_at: string | null;
+  last_sync_at: string | null;
+  documents?: Array<{ count: number }> | null;
+  created_at: string;
+}): ConnectionDTO {
+  const provider = row.provider === "notion" ? "notion" : "google_drive";
+  const folderId = typeof row.config?.folderId === "string" ? row.config.folderId : null;
+  const folderName = typeof row.config?.folderName === "string" ? row.config.folderName : null;
+  return {
+    id: row.id,
+    provider,
+    accountLabel: row.account_label,
+    bundleId: row.bundle_id,
+    bundleName: row.knowledge_bundles?.name ?? null,
+    userId: row.user_id,
+    status: row.status === "paused" ? "paused" : "active",
+    pausedReason: row.paused_reason,
+    needsFolder: provider === "google_drive" && !folderId,
+    folderName,
+    syncIntervalMinutes: row.sync_interval_minutes,
+    nextSyncAt: row.next_sync_at ? toEpochMs(row.next_sync_at) : null,
+    lastSyncAt: row.last_sync_at ? toEpochMs(row.last_sync_at) : null,
+    documentCount: row.documents?.[0]?.count ?? 0,
+    createdAt: toEpochMs(row.created_at),
+  };
+}
+
+/** One sync, in the terms the person who set it up would use. */
+export type ConnectionRunDTO = {
+  id: string;
+  /** `skipped` means "looked, nothing had changed" — it is not a failure. */
+  status: "ok" | "skipped" | "failed";
+  added: number;
+  updated: number;
+  removed: number;
+  error: string | null;
+  durationMs: number | null;
+  startedAt: number;
+};
+
+export function mapConnectionRun(row: {
+  id: string;
+  status: string;
+  documents_added: number;
+  documents_updated: number;
+  documents_removed: number;
+  error: string | null;
+  duration_ms: number | null;
+  started_at: string;
+}): ConnectionRunDTO {
+  return {
+    id: row.id,
+    status: row.status as ConnectionRunDTO["status"],
+    added: row.documents_added,
+    updated: row.documents_updated,
+    removed: row.documents_removed,
+    error: row.error,
+    durationMs: row.duration_ms,
+    startedAt: toEpochMs(row.started_at),
+  };
+}

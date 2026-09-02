@@ -10,7 +10,7 @@ export type { DocStore, StoredObject } from "./types";
  * so its presence is the runtime discriminator — no explicit mode flag to keep
  * in sync.
  */
-export function getDocStore(env: Bindings): DocStore {
+export function getDocStore(env: Pick<Bindings, "DOCS" | "DOCS_DIR">): DocStore {
   if (env.DOCS) return r2DocStore(env.DOCS);
 
   const root = env.DOCS_DIR;

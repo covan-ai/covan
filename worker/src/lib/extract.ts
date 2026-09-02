@@ -49,3 +49,29 @@ export function hasIndexableText(text: string): boolean {
   const replacements = text.split(REPLACEMENT).length - 1;
   return replacements / text.length <= MAX_REPLACEMENT_RATIO;
 }
+
+/**
+ * How much of a document's text is kept on the row itself.
+ *
+ * `documents.content` is the excerpt the no-match fallback in `routes/chat.ts`
+ * reads when retrieval finds nothing — "what's in the handbook?" embeds close
+ * to no single passage — so it is a second, cruder path to the same text rather
+ * than a preview. The full document lives in the store.
+ *
+ * It moved here from `routes/bundles.ts` when connections started writing
+ * documents too. One number: an upload and a sync that disagreed about how much
+ * a document remembers would be a difference nobody would think to look for.
+ */
+export const EXCERPT_LIMIT = 8000;
+
+/**
+ * A document's name, reduced to something safe to put in a storage key.
+ *
+ * Not a display name — `documents.name` keeps the original, accents and all.
+ * This is only ever the tail of an object key, where a slash would invent a
+ * directory and a non-ASCII byte is one more thing for a storage backend to
+ * disagree about.
+ */
+export function safeName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 200) || "file";
+}

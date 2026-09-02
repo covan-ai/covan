@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "../email";
 import { emailShell } from "../email-layout";
 import { renderMarkdown } from "../email-markdown";
-import { decryptSecret } from "./crypto";
+import { decryptSecret } from "../secret-box";
 
 export type DeliveryChannel = {
   kind: "slack_webhook" | "email";

@@ -7,7 +7,7 @@ import {
   QUOTA_SKIP_REASON,
   type RoutineRow,
 } from "./executor";
-import { encryptSecret } from "./crypto";
+import { encryptSecret } from "../secret-box";
 
 // Task 11 wires a real DNS lookup into the Node fetch path so a hostname that
 // merely resolves to a private address is still caught. That lookup is a

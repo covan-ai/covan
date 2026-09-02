@@ -53,24 +53,22 @@ export type RoutineEnv = {
 };
 
 /**
- * Bindings + secrets available to the API Worker, across both runtimes it
- * ships on. Secrets (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
- * OPENAI_API_KEY, ROUTINE_SECRET_KEY) are set via `wrangler secret put` on
- * Cloudflare. ALLOWED_ORIGIN is a plain var. Document storage is either DOCS
- * (the R2 bucket binding, Cloudflare only) or DOCS_DIR (a filesystem root,
- * Node/Docker only) — see `getDocStore` in `lib/docstore`, the only place that
- * reads either. ADMIN_API_KEY (optional) gates the /admin/backfill-embeddings
- * maintenance endpoint; when unset the endpoint fails closed.
+ * What the connection engine needs, which is strictly more than the routine
+ * engine and strictly less than the API.
+ *
+ * A sync writes documents: it embeds text and puts bytes in the document store,
+ * so it needs the embedding configuration and one of the two storage bindings —
+ * neither of which the routine engine has ever touched. Naming that as its own
+ * type is what lets `cron.ts` stay honest. That Worker is deployed to a second
+ * Cloudflare account with `RoutineEnv` and nothing else; it can now be given
+ * these bindings as well, and `canSyncConnections` below is how it asks whether
+ * it was, rather than claiming them in a type and finding out in production.
  */
-export type Bindings = RoutineEnv & {
-  SUPABASE_ANON_KEY: string;
+export type SyncEnv = RoutineEnv & {
   /**
    * Where document embeddings go. Unset means api.openai.com, which is also
    * what `OPENAI_BASE_URL` on its own leaves them at — the two do not inherit
    * from each other, deliberately (`lib/openai`).
-   *
-   * On `Bindings` rather than `RoutineEnv` because nothing the cron Worker does
-   * embeds: it summarises and delivers, and retrieval belongs to a request.
    */
   EMBEDDING_BASE_URL?: string;
   /** Unset means `text-embedding-3-small`. Set it whenever the endpoint is. */
@@ -82,6 +80,47 @@ export type Bindings = RoutineEnv & {
    * insert; see `lib/embeddings`.
    */
   EMBEDDING_DIMENSIONS?: string;
+  /** The R2 bucket, on Cloudflare only. Absent on the Node/Docker runtime. */
+  DOCS?: R2Bucket;
+  /** Filesystem document root, on the Node runtime only. Absent on Cloudflare. */
+  DOCS_DIR?: string;
+  /**
+   * OAuth client credentials, one pair per connectable source. Every one is
+   * optional and absence is a supported configuration: a deployment that sets
+   * none simply offers no connections, and the Integrations page says which
+   * variables would turn each one on rather than hiding it.
+   */
+  NOTION_CLIENT_ID?: string;
+  NOTION_CLIENT_SECRET?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+};
+
+/**
+ * Whether this environment can actually run a sync.
+ *
+ * The document store is the discriminator, for the same reason it is in
+ * `getDocStore`: it is the one binding that has no default and no fallback. A
+ * cron Worker deployed without it should say so once per tick and skip, not
+ * fail every connection in the workspace and pause them all.
+ */
+export function canSyncConnections(env: RoutineEnv): env is SyncEnv {
+  const candidate = env as SyncEnv;
+  return Boolean(candidate.DOCS || candidate.DOCS_DIR);
+}
+
+/**
+ * Bindings + secrets available to the API Worker, across both runtimes it
+ * ships on. Secrets (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+ * OPENAI_API_KEY, ROUTINE_SECRET_KEY) are set via `wrangler secret put` on
+ * Cloudflare. ALLOWED_ORIGIN is a plain var. Document storage is either DOCS
+ * (the R2 bucket binding, Cloudflare only) or DOCS_DIR (a filesystem root,
+ * Node/Docker only) — see `getDocStore` in `lib/docstore`, the only place that
+ * reads either. ADMIN_API_KEY (optional) gates the /admin/backfill-embeddings
+ * maintenance endpoint; when unset the endpoint fails closed.
+ */
+export type Bindings = SyncEnv & {
+  SUPABASE_ANON_KEY: string;
   /**
    * The cosine-similarity floor below which a retrieved chunk is dropped as
    * irrelevant. Unset means 0.25, which is tuned against
@@ -104,10 +143,6 @@ export type Bindings = RoutineEnv & {
    * either name.
    */
   SUPABASE_JWT_SECRET?: string;
-  /** The R2 bucket, on Cloudflare only. Absent on the Node/Docker runtime. */
-  DOCS?: R2Bucket;
-  /** Filesystem document root, on the Node runtime only. Absent on Cloudflare. */
-  DOCS_DIR?: string;
   ADMIN_API_KEY?: string;
   /**
    * Rate limiting, on Cloudflare only — `[[ratelimits]]` in wrangler.toml.

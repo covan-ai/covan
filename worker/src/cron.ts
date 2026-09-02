@@ -1,6 +1,6 @@
 // worker/src/cron.ts
 import type { RoutineEnv } from "./types";
-import { runDueRoutines } from "./lib/routines/dispatcher";
+import { runScheduledWork } from "./lib/background";
 
 /**
  * The routine engine as a Worker of its own — no API, no HTTP handler at all.
@@ -27,8 +27,8 @@ export default {
       // Log and re-throw. Swallowing the error would have Cloudflare record a
       // broken tick as a successful invocation, so the engine could be dead for
       // days with a green dashboard.
-      runDueRoutines(env).catch((err) => {
-        console.error("routine tick failed", err);
+      runScheduledWork(env).catch((err) => {
+        console.error("scheduled tick failed", err);
         throw err;
       }),
     );

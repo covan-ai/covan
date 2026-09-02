@@ -73,6 +73,32 @@ export const EXPORTED: TableSpec[] = [
     order: "created_at",
   },
   {
+    // Above `documents`, and that placement is the whole of its difficulty.
+    // `documents.connection_id` is an ordinary foreign key — 0039 had no reason
+    // to make it deferrable the way 0012 made `routines.delivery_channel_id` —
+    // so a synced document inserted before its connection is a failed
+    // transaction rather than a dropped column.
+    //
+    // Columns are named for the same reason `delivery_channels` names its own:
+    // 0039 withholds `secret_ciphertext` from `authenticated`, so `select *`
+    // expands to a column the caller may not read and Postgres answers 42501
+    // for the whole row. The OAuth token being absent is the point rather than
+    // a gap — it is bound to this install's ROUTINE_SECRET_KEY, and to a
+    // redirect URI registered against this install's client id.
+    table: "connections",
+    scope: { kind: "workspace", column: "workspace_id" },
+    order: "created_at",
+    columns:
+      "id,workspace_id,bundle_id,user_id,provider,account_label,config,status," +
+      "paused_reason,sync_interval_minutes,next_sync_at,last_sync_at," +
+      "consecutive_failures,created_at,updated_at",
+  },
+  {
+    table: "connection_runs",
+    scope: { kind: "in", column: "connection_id", from: { table: "connections", column: "id" } },
+    order: "started_at",
+  },
+  {
     table: "agent_bundles",
     scope: {
       kind: "in",

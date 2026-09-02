@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { app } from "./index";
 import { loadEnv } from "./lib/env";
 import { runScheduledWork } from "./lib/background";
+import { runPurge } from "./lib/purge";
 
 /**
  * The self-hosted entry point.
@@ -18,10 +19,24 @@ import { runScheduledWork } from "./lib/background";
  * Overlap is safe: both `claim_due_routines` and `claim_due_connections` hand
  * out rows with `for update skip locked`, so a slow tick meeting the next one
  * cannot run the same work twice.
+ *
+ * TWO intervals, because `scheduled` on the Worker side is two `waitUntil`s.
+ * The sweeper is deliberately not inside `runScheduledWork`: that function
+ * exists to spend one Cloudflare invocation's subrequest budget on either
+ * routines or connections, and the sweeper is outside that trade in `index.ts`
+ * for the same reason it is outside it here.
  */
 const env = loadEnv();
 const port = Number(process.env.PORT ?? 8787);
 const tickMs = Number(process.env.ROUTINE_TICK_MS ?? 60_000);
+/**
+ * Hourly, against a thirty-day window — the exact hour a row is swept is not
+ * something anybody can observe. A minute is the right cadence for "is anything
+ * due" and a wasteful one for "has anything expired": on a workspace with an
+ * empty trash, which is nearly all of them nearly all the time, the sweep is
+ * three queries against partial indexes that return nothing.
+ */
+const purgeMs = Number(process.env.PURGE_TICK_MS ?? 3_600_000);
 
 const server = serve({ fetch: (request: Request) => app.fetch(request, env), port }, (info) => {
   console.log(`covan-api listening on http://localhost:${info.port}`);
@@ -30,6 +45,15 @@ const server = serve({ fetch: (request: Request) => app.fetch(request, env), por
 const tick = setInterval(() => {
   runScheduledWork(env).catch((err) => console.error("scheduled tick failed", err));
 }, tickMs);
+
+// Without this the sweeper has no caller on this side at all. `index.ts` runs
+// it from `scheduled`, which is the Cloudflare half; a self-hosted install
+// would mark things deleted forever — the trash filling, the countdown on each
+// row running to zero, and nothing ever collecting the rows or the uploaded
+// files they name.
+const purgeTick = setInterval(() => {
+  runPurge(env).catch((err) => console.error("purge tick failed", err));
+}, purgeMs);
 
 /**
  * Shut down on a signal instead of waiting to be killed.
@@ -51,6 +75,7 @@ const tick = setInterval(() => {
 const shutdown = (signal: NodeJS.Signals) => {
   console.log(`${signal} received, shutting down`);
   clearInterval(tick);
+  clearInterval(purgeTick);
   server.close(() => process.exit(0));
   // Long-lived responses (the SSE chat stream) hold sockets open, and
   // server.close() waits for every one of them. Give them a moment, then go

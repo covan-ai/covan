@@ -74,13 +74,13 @@ export const EXPORTED: TableSpec[] = [
   },
   {
     // Above `documents`, and that placement is the whole of its difficulty.
-    // `documents.connection_id` is an ordinary foreign key — 0040 had no reason
+    // `documents.connection_id` is an ordinary foreign key — 0043 had no reason
     // to make it deferrable the way 0012 made `routines.delivery_channel_id` —
     // so a synced document inserted before its connection is a failed
     // transaction rather than a dropped column.
     //
     // Columns are named for the same reason `delivery_channels` names its own:
-    // 0040 withholds `secret_ciphertext` from `authenticated`, so `select *`
+    // 0043 withholds `secret_ciphertext` from `authenticated`, so `select *`
     // expands to a column the caller may not read and Postgres answers 42501
     // for the whole row. The OAuth token being absent is the point rather than
     // a gap — it is bound to this install's ROUTINE_SECRET_KEY, and to a
@@ -184,7 +184,7 @@ export const EXCLUDED: Record<string, string> = {
   workspace_events:
     "a record of this install rather than of the work. It says who deleted what and who changed whose role, which is exactly the sort of thing an archive should not carry into somewhere else — and half its rows point at ids the archive deliberately does not contain, because the things they name were deleted. Admins read it in place, on the Team screen, which is where the question it answers gets asked.",
   slack_installations:
-    "a relationship between a Slack workspace and one particular Slack app, not workspace content. The bot token cannot be exported (0041 withholds the column) and would be meaningless anyway: a new install has its own Slack app, its own client id, and its own event URL. `team_id` is globally unique too, so restoring one into a database that already has it is a failed transaction rather than a duplicate. Reinstall from Integrations — it takes one click, and the conversations that happened in Slack are in this archive already, as ordinary sessions and messages.",
+    "a relationship between a Slack workspace and one particular Slack app, not workspace content. The bot token cannot be exported (0044 withholds the column) and would be meaningless anyway: a new install has its own Slack app, its own client id, and its own event URL. `team_id` is globally unique too, so restoring one into a database that already has it is a failed transaction rather than a duplicate. Reinstall from Integrations — it takes one click, and the conversations that happened in Slack are in this archive already, as ordinary sessions and messages.",
   slack_threads:
     "the plumbing under those conversations: which Slack thread a session came from. It references an installation that is deliberately not here, and the sessions and messages it points at are exported in full without it. What is lost is the ability to keep replying in the original Slack thread, which a new install could not do regardless.",
   slack_identities:

@@ -28,7 +28,7 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ],
   [
     "routes/connections.ts",
-    "connections has no INSERT grant and its secret_ciphertext is selectable by no client, for the reasons 0040 gives: the row holds an OAuth token this route encrypts before the database sees it, and the callback that writes it has no caller for RLS to resolve at all. Every claim in that callback's state is re-checked against workspace_members and knowledge_bundles before the insert, and the reads that decide permission everywhere else in the file go through the caller's own client",
+    "connections has no INSERT grant and its secret_ciphertext is selectable by no client, for the reasons 0043 gives: the row holds an OAuth token this route encrypts before the database sees it, and the callback that writes it has no caller for RLS to resolve at all. Every claim in that callback's state is re-checked against workspace_members and knowledge_bundles before the insert, and the reads that decide permission everywhere else in the file go through the caller's own client",
   ],
   [
     "routes/slack.ts",

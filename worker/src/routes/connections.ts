@@ -11,7 +11,6 @@ import { runOneConnection } from "../lib/connections/dispatcher";
 import { listFolders } from "../lib/connections/google-drive";
 import { ProviderError, type TokenEnvelope } from "../lib/connections/types";
 import type { ConnectionRow } from "../lib/connections/sync";
-import { getDocStore } from "../lib/docstore";
 
 /**
  * Connections: the two halves of a connector that a person actually touches.
@@ -311,7 +310,7 @@ connections.patch("/connections/:id", async (c) => {
 
   // The write is split in two, and the split is the permission check.
   //
-  // 0040 grants `authenticated` UPDATE on exactly three columns: status,
+  // 0043 grants `authenticated` UPDATE on exactly three columns: status,
   // paused_reason and sync_interval_minutes. Everything else a change implies —
   // the chosen folder, the failure counter, when to sync next — is the engine's
   // bookkeeping, and granting it would let a client set `next_sync_at` in a loop
@@ -436,35 +435,42 @@ connections.delete("/connections/:id", async (c) => {
   if (mode === "delete") {
     const { data: docs, error: docsError } = await db
       .from("documents")
-      .select("id,r2_key")
+      .select("id")
       .eq("connection_id", id);
     if (docsError) return c.json({ error: "failed to load this connection's documents" }, 500);
 
     const ids = (docs ?? []).map((d) => d.id);
     if (ids.length > 0) {
-      const { data: deleted, error: deleteError } = await db
+      // Marked, not deleted — the same answer 0040 gave the rest of the
+      // product. "Also delete the documents" is a real request and this is the
+      // real thing, with the thirty days everything else gets: the rows leave
+      // every screen at once, and `runPurge` takes them and their objects
+      // together when the time is up.
+      //
+      // One statement rather than `soft_delete_document` per row, because a
+      // connection can own hundreds and a Worker has fifty subrequests. The
+      // permission question is not skipped by that — `documents_update_member`
+      // asks `can_write_in_workspace`, so a viewer moves no rows and the count
+      // below is what says so.
+      const { data: hidden, error: hideError } = await db
         .from("documents")
-        .delete()
+        .update({
+          deleted_at: new Date().toISOString(),
+          deleted_by: c.get("user").id,
+          // Hidden on their own, so restoring the bundle does not bring them
+          // back. Somebody asked for these to go with the connection.
+          deleted_via: null,
+        })
         .in("id", ids)
         .select("id");
-      if (deleteError) return c.json({ error: "failed to delete documents" }, 500);
+      if (hideError) return c.json({ error: "failed to delete documents" }, 500);
       // RLS refusing here is the viewer case, and it has to be visible: the
       // alternative is a caller who asked for the documents to go, was told
       // "ok", and still has them.
-      if ((deleted ?? []).length < ids.length) {
+      if ((hidden ?? []).length < ids.length) {
         return c.json({ error: "you do not have permission to delete these documents" }, 403);
       }
-      removed = (deleted ?? []).length;
-
-      const store = getDocStore(c.env);
-      for (const doc of docs ?? []) {
-        if (!doc.r2_key) continue;
-        try {
-          await store.delete(doc.r2_key);
-        } catch (e) {
-          console.error("document store delete failed", e);
-        }
-      }
+      removed = (hidden ?? []).length;
     }
   }
 
@@ -520,7 +526,7 @@ async function loadForCaller(
  * The same row, with the one column a client may not select.
  *
  * `loadForCaller` reads through RLS and therefore cannot see
- * `secret_ciphertext` — 0040 withholds it from `authenticated` on purpose. So
+ * `secret_ciphertext` — 0043 withholds it from `authenticated` on purpose. So
  * the permission question is answered first, by the database, and only then is
  * the credential fetched, by id, with the service role. The order is the point:
  * this function never decides anything, it only fills in a column for a row

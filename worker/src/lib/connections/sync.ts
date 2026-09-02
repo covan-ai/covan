@@ -115,6 +115,8 @@ type ExistingDocument = {
   external_id: string | null;
   external_version: string | null;
   r2_key: string | null;
+  /** Set once 0040 has hidden it. Soft-deleted rows are still ours to reconcile. */
+  deleted_at: string | null;
 };
 
 /**
@@ -236,9 +238,14 @@ export async function runConnection(
 
     await adoptOrphans(connection, deps, [...byExternalId.keys()]);
 
+    // Soft-deleted rows are read too, and deliberately. 0040 hides them from
+    // every client, but they are still the rows this connection owns: the
+    // unique index on (connection_id, external_id) means importing "again"
+    // would be a constraint violation rather than a fresh document, and a file
+    // that comes back at the source has to come back here.
     const { data: existingRows, error: existingError } = await deps.db
       .from("documents")
-      .select("id,external_id,external_version,r2_key")
+      .select("id,external_id,external_version,r2_key,deleted_at")
       .eq("connection_id", connection.id);
     if (existingError) {
       throw new Error(`could not read this connection's documents: ${existingError.message}`);
@@ -250,7 +257,12 @@ export async function runConnection(
 
     const changed = remote.filter((file) => {
       const current = byId.get(file.externalId);
-      return !current || current.external_version !== file.version;
+      if (!current) return true;
+      // A row this sync hid because the file had gone, and the file is back.
+      // Re-importing is what brings it back, and it has to happen whether or not
+      // the version moved while it was away.
+      if (current.deleted_at) return true;
+      return current.external_version !== file.version;
     });
 
     let added = 0;
@@ -343,7 +355,25 @@ async function adoptOrphans(
   }
 }
 
-/** Delete the documents whose source file is no longer there. */
+/**
+ * Hide the documents whose source file is no longer there.
+ *
+ * A mark, not a delete, and the bytes stay put — the same answer 0040 gave for
+ * `DELETE /documents/:id`, and it matters more here rather than less. A person
+ * deleting a document meant to; a folder that briefly stops listing a file
+ * meant nothing, and a hard delete would spend somebody's thirty-day undo on a
+ * Drive permission that changed for an afternoon. `runPurge` removes the row
+ * and the object together when the thirty days are up.
+ *
+ * `deleted_by` is left null because nobody did this, and `deleted_via` is left
+ * null on purpose too: 0040's rule is that a document hidden on its own does
+ * not come back when its bundle is restored. That is the right answer for a
+ * file the source no longer has.
+ *
+ * `document_chunks` are hidden by their document's flag rather than by their
+ * own — `dc_select_member` joins to `documents.deleted_at` — so retrieval stops
+ * at the same instant either way.
+ */
 async function removeVanished(
   connection: ConnectionRow,
   deps: SyncDeps,
@@ -351,17 +381,14 @@ async function removeVanished(
   remote: Map<string, RemoteFile>,
 ): Promise<number> {
   const gone = existing
+    .filter((doc) => !doc.deleted_at)
     .filter((doc) => !doc.external_id || !remote.has(doc.external_id))
     .slice(0, MAX_REMOVALS_PER_RUN);
   if (gone.length === 0) return 0;
 
-  // The row first, and the bytes second — the same order and the same reason as
-  // `DELETE /documents/:id`: the row is the authority, and an orphaned object
-  // is a storage cost rather than a correctness problem. `document_chunks`
-  // cascades from the row, so retrieval stops at the same instant.
-  const { data: deleted, error } = await deps.db
+  const { data: hidden, error } = await deps.db
     .from("documents")
-    .delete()
+    .update({ deleted_at: deps.now().toISOString(), deleted_by: null, deleted_via: null })
     .in(
       "id",
       gone.map((d) => d.id),
@@ -369,16 +396,7 @@ async function removeVanished(
     .select("id");
   if (error) throw new Error(`could not remove deleted documents: ${error.message}`);
 
-  const store = getDocStore(deps.env);
-  for (const doc of gone) {
-    if (!doc.r2_key) continue;
-    try {
-      await store.delete(doc.r2_key);
-    } catch (e) {
-      console.error("document store delete failed", e);
-    }
-  }
-  return (deleted ?? []).length;
+  return (hidden ?? []).length;
 }
 
 /** Read one remote file and make it a document, replacing what was there. */
@@ -413,6 +431,12 @@ async function importOne(
     external_version: file.version,
     external_url: file.url,
     synced_at: deps.now().toISOString(),
+    // Clears the mark a previous run left when this file had gone from the
+    // source. Without it the document would come back with fresh text and stay
+    // invisible, which is the worst of both answers.
+    deleted_at: null,
+    deleted_by: null,
+    deleted_via: null,
   };
 
   let documentId: string;

@@ -103,10 +103,14 @@ function db(options: { documents?: Array<Record<string, unknown>>; member?: bool
           data: { id: `doc-${ctx.values?.external_id}` },
           error: null,
         }),
-        update: (ctx: QueryContext) => ({
-          data: ctx.single ? { id: "doc-existing" } : [],
-          error: null,
-        }),
+        update: (ctx: QueryContext) => {
+          if (ctx.single) return { data: { id: "doc-existing" }, error: null };
+          // A bulk update is either the adoption pass or the soft delete; both
+          // are keyed by an `in` filter, and both are answered with the rows
+          // they named.
+          const ids = ctx.filters.find((f) => f.kind === "in" && f.column === "id")?.value;
+          return { data: Array.isArray(ids) ? ids.map((id) => ({ id })) : [], error: null };
+        },
         delete: (ctx: QueryContext) => ({
           data: (ctx.filters.find((f) => f.kind === "in")?.value as string[]).map((id) => ({ id })),
           error: null,
@@ -198,19 +202,59 @@ describe("syncing a connection", () => {
   });
 
   // The half a changes feed cannot do, and the reason this engine lists instead.
-  it("removes a document whose source file is gone", async () => {
+  it("hides a document whose source file is gone, rather than destroying it", async () => {
     fakeProvider.listFiles.mockResolvedValue([]);
     const fake = db({
       documents: [
-        { id: "doc-1", external_id: "page-1", external_version: "v1", r2_key: "bundle-1/old" },
+        {
+          id: "doc-1",
+          external_id: "page-1",
+          external_version: "v1",
+          r2_key: "bundle-1/old",
+          deleted_at: null,
+        },
       ],
     });
 
     const outcome = await runConnection(await connection(), deps(fake));
 
     expect(outcome).toMatchObject({ status: "ok", removed: 1 });
-    const deleted = fake.callsTo("documents").find((c) => c.op === "delete");
-    expect(deleted?.filters).toContainEqual({ column: "id", value: ["doc-1"], kind: "in" });
+
+    const hidden = fake
+      .callsTo("documents")
+      .find((c) => c.op === "update" && "deleted_at" in (c.values ?? {}));
+    expect(hidden?.filters).toContainEqual({ column: "id", value: ["doc-1"], kind: "in" });
+    // Nobody did this — the source did — and 0040's rule is that a document
+    // hidden on its own does not return with its bundle.
+    expect(hidden?.values).toMatchObject({ deleted_by: null, deleted_via: null });
+
+    // A folder that stops listing a file for an afternoon must not spend
+    // somebody's thirty-day undo. The row and the object both stay.
+    expect(fake.callsTo("documents").some((c) => c.op === "delete")).toBe(false);
+  });
+
+  it("brings a document back when the source has it again", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
+    fakeProvider.readFile.mockResolvedValue("It is back, and unchanged.");
+    const fake = db({
+      documents: [
+        {
+          id: "doc-1",
+          external_id: "page-1",
+          external_version: "v1",
+          r2_key: "bundle-1/old",
+          deleted_at: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    // The version never moved while it was away, so only the mark can tell the
+    // engine there is work here.
+    expect(outcome).toMatchObject({ status: "ok", updated: 1 });
+    const restored = fake.callsTo("documents").find((c) => c.op === "update" && c.single);
+    expect(restored?.values).toMatchObject({ deleted_at: null, external_version: "v1" });
   });
 
   // Reconnecting a source, or restoring a workspace from an export, must not

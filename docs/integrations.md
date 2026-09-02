@@ -67,6 +67,11 @@ You are asked what should happen to the documents it imported. The default is to
 keep them: they stop being refreshed and become ordinary uploads. Disconnecting
 a source is not a request to unlearn what it taught.
 
+Choosing to remove them puts them in the trash rather than destroying them, with
+the same thirty days as anything else you delete — and a document the *source*
+removed goes the same way, so a Drive permission that changed for an afternoon
+costs you nothing.
+
 If you reconnect the same source later, the documents it already imported are
 adopted rather than duplicated.
 

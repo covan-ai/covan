@@ -20,7 +20,7 @@ import { lookupEmail, postMessage } from "./api";
  *
  * - **Who is asking** comes from a Slack user id, which means nothing here. It
  *   is resolved to a Covan account by email, once, and stored. Somebody with no
- *   account is told so rather than answered as the installer; see 0041.
+ *   account is told so rather than answered as the installer; see 0044.
  * - **The conversation** is the Slack thread. One thread is one
  *   `chat_sessions` row, so the exchange shows up in Covan as an ordinary
  *   conversation — searchable, exportable, and visible to the team when it

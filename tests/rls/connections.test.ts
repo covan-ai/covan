@@ -2,7 +2,7 @@
  * The policies on the three tables that hold somebody else's credentials.
  *
  * `connections` and `slack_installations` each carry an encrypted OAuth token,
- * and 0040/0041 protect them the way 0012 protects a delivery channel: row
+ * and 0043/0044 protect them the way 0012 protects a delivery channel: row
  * level security decides which rows you see, and a column-level grant decides
  * that `secret_ciphertext` is not one of the columns anybody sees. Neither half
  * is provable from TypeScript — the API could stop selecting the column and the
@@ -96,7 +96,7 @@ describe("a connection's credential", () => {
       .eq("id", connectionId);
 
     // 42501: the column grant, not the row policy. The row is visible; this one
-    // column is not, which is the whole distinction 0040 relies on.
+    // column is not, which is the whole distinction 0043 relies on.
     expect(error).not.toBeNull();
   });
 

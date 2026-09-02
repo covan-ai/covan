@@ -31,7 +31,7 @@ const slackPublic = new Hono<AppEnv>();
  * What the app asks Slack for.
  *
  * `users:read.email` is the one worth defending, because it looks like more
- * than it is: without it the app cannot tell who is asking, and 0041 explains
+ * than it is: without it the app cannot tell who is asking, and 0044 explains
  * why answering as the installer instead is the end of tenancy. The rest is the
  * minimum to hear a mention, hear a DM, and reply.
  */
@@ -58,7 +58,7 @@ const INSTALLATION_SELECT =
  * Every route below scopes to the caller's *active* workspace, and none of them
  * could get away with letting RLS do it alone.
  *
- * A person can be an admin of two workspaces, and 0041's policies are written
+ * A person can be an admin of two workspaces, and 0044's policies are written
  * from the workspace's point of view — so an unscoped read returns both
  * installations, an unscoped update changes both, and an unscoped delete
  * disconnects a Slack the caller was not looking at. The policy is still the
@@ -140,7 +140,7 @@ slack.patch("/slack/installation", async (c) => {
 
   // Through the caller's own client: the policy decides whether they are the
   // installer or an admin, and its WITH CHECK is what stops the agent being
-  // pointed at another workspace's. `agent_id` is the only column 0041 grants —
+  // pointed at another workspace's. `agent_id` is the only column 0044 grants —
   // `updated_at` is not one, and setting it here would fail the whole statement
   // with a permission error rather than a refusal anybody could read.
   const { data, error } = await c
@@ -161,7 +161,7 @@ slack.patch("/slack/installation", async (c) => {
 // Only the row goes. Slack's own side of an install is revoked from Slack, and
 // pretending otherwise — by calling `auth.revoke` here — would leave the two
 // disagreeing whenever that call failed. The conversations stay: they are
-// ordinary sessions, and 0041 lets `slack_threads` cascade rather than taking
+// ordinary sessions, and 0044 lets `slack_threads` cascade rather than taking
 // them with it.
 slack.delete("/slack/installation", async (c) => {
   const id = await activeInstallationId(c);

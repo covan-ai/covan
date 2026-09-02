@@ -70,6 +70,13 @@ function PrivacyPage() {
             reply, used to show you what you have used and, on a metered install, to apply an
             allowance.
           </LegalItem>
+          <LegalItem>
+            <strong className="font-medium text-foreground">Feedback you send</strong> — what you
+            typed, which of the three kinds you picked, and the path of the page you were on, which
+            the dialog shows you before it sends. Readable by whoever runs the install and by nobody
+            in your workspace, including an admin — enforced in the database. There is no reply
+            channel: it is a note, not a ticket.
+          </LegalItem>
         </LegalList>
       </LegalSection>
 
@@ -126,10 +133,11 @@ function PrivacyPage() {
           deleting them removes the rows and the stored file rather than hiding them.
         </p>
         <p>
-          Closing your account is in Settings, and it takes your conversations, your API keys and
-          any workspace you are the last person in with it. A workspace other people are still in
-          keeps running: what you made there stays and your name comes off it, which is why the one
-          case that is refused is being its last admin — hand the role over first.
+          Closing your account is in Settings, and it takes your conversations, your API keys, any
+          feedback you sent and any workspace you are the last person in with it. A workspace other
+          people are still in keeps running: what you made there stays and your name comes off it,
+          which is why the one case that is refused is being its last admin — hand the role over
+          first.
         </p>
         <p>
           A file you uploaded is part of what stays, and it is worth being exact about why. The

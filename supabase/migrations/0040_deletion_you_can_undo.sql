@@ -1,4 +1,4 @@
--- 0039_deletion_you_can_undo.sql
+-- 0040_deletion_you_can_undo.sql
 --
 -- Deleting an agent has been final since 0001, and larger than it looks. The
 -- foreign keys do the rest: every session anybody ever had with that agent,

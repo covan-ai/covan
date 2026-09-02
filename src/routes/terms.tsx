@@ -61,7 +61,12 @@ function TermsPage() {
             The full text ships in the repository as{" "}
             <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[13px]">LICENSE</code>,
             and it is the authority — this summary is a convenience and loses to it wherever the two
-            differ.
+            differ. The{" "}
+            <Link to="/license" className="text-foreground underline underline-offset-4">
+              licence page
+            </Link>{" "}
+            answers the questions the text does not put in one place: the name, contributions, and
+            when you would need a different licence.
           </LegalItem>
         </LegalList>
       </LegalSection>
@@ -104,6 +109,10 @@ function TermsPage() {
         <p>
           <Link to="/privacy" className="text-foreground underline underline-offset-4">
             Privacy
+          </Link>{" "}
+          ·{" "}
+          <Link to="/license" className="text-foreground underline underline-offset-4">
+            Licence
           </Link>
         </p>
       </LegalSection>

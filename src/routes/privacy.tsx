@@ -167,6 +167,10 @@ function PrivacyPage() {
         <p>
           <Link to="/terms" className="text-foreground underline underline-offset-4">
             Terms
+          </Link>{" "}
+          ·{" "}
+          <Link to="/license" className="text-foreground underline underline-offset-4">
+            Licence
           </Link>
         </p>
       </LegalSection>

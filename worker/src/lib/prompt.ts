@@ -40,11 +40,43 @@ export const CONCISION_INSTRUCTIONS = [
   "Expand freely when the user asks for detail, or when the subject genuinely requires it — brevity must never cost accuracy or omit a caveat that matters.",
 ].join("\n");
 
+/**
+ * How many filenames the manifest names before it starts counting instead.
+ *
+ * The manifest rides in the cacheable prefix, so its cost is amortised rather
+ * than per-turn — but a workspace with three hundred documents would still push
+ * the model's context out with a list nobody reads. Forty names is enough for
+ * the manifest's actual job: letting the agent recognise a file when the user
+ * names one.
+ */
+export const MANIFEST_NAME_LIMIT = 40;
+
+/**
+ * The line that tells the agent which files it has.
+ *
+ * The wording matters more than it looks. This sits in the *cacheable* prefix,
+ * which is byte-identical on every turn — including the turns where retrieval
+ * found nothing and no excerpt block follows it. The previous version pointed
+ * at "the shared knowledge provided below" unconditionally, so on those turns
+ * it named a document, promised its contents were attached, attached nothing,
+ * and left the model to fill the gap. Saying that excerpts arrive *when
+ * retrieval finds them* is true on both kinds of turn, and gives the model
+ * somewhere honest to go when they don't.
+ */
 const MANIFEST = (names: string) =>
-  `\n\nYou have access to the following team documents: ${names}. ` +
-  `When the user refers to "the file", "the document", "the video", or asks you to ` +
-  `summarize or explain what was uploaded, use the shared knowledge provided below — ` +
-  `never claim you cannot read files.`;
+  `\n\nThe team has shared these documents with you: ${names}. ` +
+  `When the user says "the file", "the document", "the video", or asks what was ` +
+  `uploaded, they mean one of these — never claim you cannot read files. ` +
+  `Relevant excerpts are supplied in a separate system message whenever retrieval ` +
+  `finds them; answer from those. If no excerpt is present, say which of these ` +
+  `documents you would need to look at rather than inventing what it contains.`;
+
+function manifestNames(names: string[]): string {
+  if (names.length <= MANIFEST_NAME_LIMIT) return names.join(", ");
+  const shown = names.slice(0, MANIFEST_NAME_LIMIT).join(", ");
+  const rest = names.length - MANIFEST_NAME_LIMIT;
+  return `${shown}, and ${rest} more`;
+}
 
 export function buildSystemPrefix(input: {
   persona: string | null;
@@ -60,8 +92,9 @@ export function buildSystemPrefix(input: {
   } else {
     prefix += `\n\n${CONCISION_INSTRUCTIONS}`;
   }
-  if (input.docNames.length > 0) {
-    prefix += MANIFEST(input.docNames.join(", "));
+  const names = input.docNames.filter((n) => n && n.trim().length > 0);
+  if (names.length > 0) {
+    prefix += MANIFEST(manifestNames(names));
   }
   return prefix;
 }

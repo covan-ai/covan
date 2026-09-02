@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Textarea } from "@/components/ui/textarea";
 import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
-import { api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
+import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
@@ -31,6 +31,8 @@ import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
+import { isPinnedToBottom } from "@/lib/chat-scroll";
+import { mergeRealtimeMessage, optimisticId } from "@/lib/chat-messages";
 import { SourceChip } from "@/components/source-chip";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 
@@ -99,11 +101,17 @@ function ChatTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
 
-  const [suggestions, setSuggestions] = useState<{ title: string; detail: string | null }[]>([]);
+  // Candidate ideas carry a local id rather than being keyed by their title.
+  // The extractor is a language model reading a conversation, and it will
+  // happily propose the same title twice — which collided as a React key, and
+  // meant adding one of them to the board removed both from the list.
+  const [suggestions, setSuggestions] = useState<
+    { id: string; title: string; detail: string | null }[]
+  >([]);
   const suggestMutation = useMutation({
     mutationFn: (sessionId: string) => api.brainstorm.suggest(sessionId),
     onSuccess: (res) => {
-      setSuggestions(res.ideas);
+      setSuggestions(res.ideas.map((idea) => ({ ...idea, id: crypto.randomUUID() })));
       if (res.ideas.length === 0) toast.message("No clear ideas to extract yet.");
     },
     onError: () => toast.error("Could not extract ideas."),
@@ -114,12 +122,13 @@ function ChatTab() {
       title,
       detail,
     }: {
+      id: string;
       sessionId: string;
       title: string;
       detail: string | null;
     }) => api.ideas.create(sessionId, { title, detail: detail ?? undefined }),
     onSuccess: (_i, vars) => {
-      setSuggestions((prev) => prev.filter((s) => s.title !== vars.title));
+      setSuggestions((prev) => prev.filter((s) => s.id !== vars.id));
       void queryClient.invalidateQueries({ queryKey: ["ideas", vars.sessionId] });
       toast.success("Added to the board");
     },
@@ -183,17 +192,15 @@ function ChatTab() {
             created_at: string;
           };
           const key = ["messages", activeId] as const;
-          queryClient.setQueryData<Message[]>(key, (old) => {
-            const list = old ?? [];
-            if (list.some((m) => m.id === row.id)) return list; // dedupe by id
-            const incoming: Message = {
-              id: row.id,
-              role: row.role,
-              content: row.content,
-              createdAt: new Date(row.created_at).getTime(),
-            };
-            return [...list, incoming];
-          });
+          const incoming: Message = {
+            id: row.id,
+            role: row.role,
+            content: row.content,
+            createdAt: new Date(row.created_at).getTime(),
+          };
+          queryClient.setQueryData<Message[]>(key, (old) =>
+            mergeRealtimeMessage(old ?? [], incoming),
+          );
           // Refetch so embedded sender/sources (not in the Realtime payload) fill in.
           void queryClient.invalidateQueries({ queryKey: ["messages", activeId] });
         },
@@ -218,19 +225,51 @@ function ChatTab() {
   const [replyingIn, setReplyingIn] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
   const [streamText, setStreamText] = useState("");
+  // The session whose revealed text is waiting for the server's copy to arrive.
+  // Separate from `replyingIn` because the two end at different moments: the
+  // composer is handed back the instant a stream stops, while the text that was
+  // already on screen has to stay there until the refetch replaces it. Both
+  // used to be the same flag, so the "keep it visible" delay below was keeping
+  // nothing visible — the answer blinked out and blinked back 700ms later.
+  const [settlingIn, setSettlingIn] = useState<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
   // Tracks the pending reconcile timeout (from `stop()` or the drop-fallback
   // below) so a fast stop→resend can't let a stale timer fire mid-stream.
   const reconcileTimer = useRef<number | null>(null);
+  // A send is in flight. `busy` cannot cover this on its own: it is derived
+  // from state, and the gap between the click and React re-rendering is long
+  // enough to fit a second click — which sent the same question twice.
+  const sending = useRef(false);
   const busy = replyingIn !== null;
 
   useEffect(() => {
-    return () => streamAbort.current?.abort();
+    return () => {
+      streamAbort.current?.abort();
+      if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);
+    };
   }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Whether the reader is still following the bottom. Kept in a ref rather than
+  // state because it changes on every scroll event and nothing renders from it.
+  const pinned = useRef(true);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      pinned.current = isPinnedToBottom(el);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+  // Opening a conversation starts at its end, wherever the last one was left.
+  useEffect(() => {
+    pinned.current = true;
+  }, [active?.id]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !pinned.current) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages.length, thinking, streamText]);
 
   const invalidateMessages = (sessionId: string) => {
@@ -250,6 +289,7 @@ function ChatTab() {
       reconcileTimer.current = null;
     }
     setReplyingIn(sessionId);
+    setSettlingIn(null);
     setThinking(true);
     setStreamText("");
 
@@ -327,6 +367,11 @@ function ChatTab() {
             setThinking(false);
             partial += event.text;
             setStreamText(partial);
+          } else if (event.type === "truncated") {
+            // The model ran into its output cap. The answer stops mid-thought
+            // and otherwise looks finished, which is the worst way for a reply
+            // to be wrong: nothing on screen says the end is missing.
+            toast.message("That answer hit its length limit — ask it to carry on.");
           } else if (event.type === "done") {
             terminalSeen = true;
             setStreamText("");
@@ -350,8 +395,10 @@ function ChatTab() {
         // drops before a terminal event; keep the revealed text visible until
         // the refetch reconciles so it doesn't flash out.
         const hadPartial = partial.trim().length > 0;
+        setSettlingIn(hadPartial ? sessionId : null);
         if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);
         reconcileTimer.current = window.setTimeout(() => {
+          setSettlingIn(null);
           setStreamText("");
           invalidateMessages(sessionId);
         }, 700);
@@ -367,6 +414,7 @@ function ChatTab() {
       setStreamText("");
       setThinking(false);
       setReplyingIn(null);
+      setSettlingIn(null);
     } finally {
       streamAbort.current = null;
     }
@@ -386,8 +434,10 @@ function ChatTab() {
     streamAbort.current = null;
     setThinking(false);
     setReplyingIn(null);
+    setSettlingIn(sessionId);
     if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);
     reconcileTimer.current = window.setTimeout(() => {
+      setSettlingIn(null);
       setStreamText("");
       invalidateMessages(sessionId);
     }, 700);
@@ -395,13 +445,22 @@ function ChatTab() {
 
   const submit = async (raw: string) => {
     const text = raw.trim();
-    if (!text || !active || busy) return;
+    // `sending` as well as `busy`: see the ref's declaration. Two taps on a
+    // starter card, or a double-click on send, used to post the same question
+    // twice — the second one then found the stream already open and returned
+    // without answering it, leaving a question in the transcript that nothing
+    // ever replied to.
+    if (!text || !active || busy || sending.current) return;
+    sending.current = true;
     setInput("");
+    // Sending is a deliberate move to the end of the conversation, even if the
+    // reader had scrolled up.
+    pinned.current = true;
     const sessionId = active.id;
 
     const key = ["messages", sessionId] as const;
     const optimistic: Message = {
-      id: `temp-${crypto.randomUUID()}`,
+      id: optimisticId(),
       role: "user",
       content: text,
       createdAt: Date.now(),
@@ -409,14 +468,24 @@ function ChatTab() {
     queryClient.setQueryData<Message[]>(key, (old = []) => [...old, optimistic]);
 
     try {
-      await api.messages.create({ sessionId, role: "user", content: text });
-    } catch {
-      toast.error("Couldn't send your message.");
+      try {
+        await api.messages.create({ sessionId, role: "user", content: text });
+      } catch {
+        toast.error("Couldn't send your message.");
+        // Hand the words back. The composer was cleared optimistically, so a
+        // failed send used to destroy what had just been typed — the one thing
+        // the person could not get back, and the thing they were most likely
+        // to want after being told to try again. Anything typed in the
+        // meantime wins; this only refills an empty box.
+        setInput((draft) => (draft.trim().length > 0 ? draft : text));
+        invalidateMessages(sessionId);
+        return;
+      }
       invalidateMessages(sessionId);
-      return;
+      await streamReply(sessionId);
+    } finally {
+      sending.current = false;
     }
-    invalidateMessages(sessionId);
-    await streamReply(sessionId);
   };
 
   const send = () => void submit(input);
@@ -442,16 +511,27 @@ function ChatTab() {
     }
     // The last of the eleven in #68, and the one that stays. The other ten were
     // effects copying something into state that could have been read or derived
-    // instead; this one sends a message. `submit` sets state on the way — that
-    // is what the rule sees — but the state is a consequence of the send, not
-    // the point of the effect, and there is nothing to derive it from: the
-    // draft is a handoff from another route, it is deleted as it is read, and
-    // it can only go once the session is loaded and still empty. Doing it
-    // during render would send a message twice under StrictMode.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // instead; this one sends a message. `submit` sets state on the way, but
+    // the state is a consequence of the send, not the point of the effect, and
+    // there is nothing to derive it from: the draft is a handoff from another
+    // route, it is deleted as it is read, and it can only go once the session
+    // is loaded and still empty. Doing it during render would send a message
+    // twice under StrictMode.
     void submit(draft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, messages.length, busy]);
+
+  // Rewriting a conversation — regenerating a reply or editing a past turn —
+  // discards every message after the anchor, and the delete policy is keyed to
+  // whoever owns the session. A non-owner reading a shared thread gets a 403,
+  // which is worth reading out rather than flattening into "couldn't update".
+  const rewriteFailed = (e: unknown) => {
+    const message =
+      e instanceof ApiError && e.status === 403
+        ? "Only the person who started this conversation can rewrite it."
+        : "Couldn't update the conversation.";
+    toast.error(message);
+  };
 
   // Regenerate: drop the reply after a user turn and answer it again. The
   // user message is unchanged, so we only need its id to trim after it.
@@ -459,8 +539,8 @@ function ChatTab() {
     if (!active || busy) return;
     try {
       await api.messages.deleteAfter(userMessageId);
-    } catch {
-      toast.error("Couldn't update the conversation.");
+    } catch (e) {
+      rewriteFailed(e);
       invalidateMessages(active.id);
       return;
     }
@@ -482,8 +562,8 @@ function ChatTab() {
     try {
       await api.messages.update(id, text);
       await api.messages.deleteAfter(id);
-    } catch {
-      toast.error("Couldn't update the conversation.");
+    } catch (e) {
+      rewriteFailed(e);
       invalidateMessages(active.id);
       return;
     }
@@ -756,7 +836,15 @@ function ChatTab() {
                         >
                           <ThumbsDown className="h-3.5 w-3.5" />
                         </MsgAction>
-                        {isLast && prevUser && (
+                        {/* Ownership, not role — the same rule as Edit above,
+                            and for the same reason. Regenerating discards
+                            every message after the anchor, and
+                            messages_delete_owner is keyed to whoever owns the
+                            SESSION. Offered to a colleague reading a shared
+                            thread it deleted nothing, reported nothing, and
+                            then failed to answer a question that already had
+                            an answer sitting under it. */}
+                        {isLast && prevUser && isOwner && (
                           <MsgAction
                             label="Regenerate"
                             onClick={() => void regenerate(prevUser.id)}
@@ -770,7 +858,7 @@ function ChatTab() {
                 );
               })}
 
-              {replyingIn === active?.id && (
+              {(replyingIn === active?.id || settlingIn === active?.id) && (
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center gap-2">
                     <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
@@ -796,7 +884,12 @@ function ChatTab() {
                     ) : (
                       <span className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">
                         {streamText}
-                        <span className="stream-caret ml-0.5 inline-block h-4 w-[3px] translate-y-0.5 rounded-sm bg-foreground/70 align-middle" />
+                        {/* No caret once the stream has stopped — this text is
+                            waiting to be replaced by the server's copy, not
+                            still arriving. */}
+                        {replyingIn === active?.id && (
+                          <span className="stream-caret ml-0.5 inline-block h-4 w-[3px] translate-y-0.5 rounded-sm bg-foreground/70 align-middle" />
+                        )}
                       </span>
                     )}
                   </div>
@@ -848,7 +941,12 @@ function ChatTab() {
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
               </div>
-              {busy ? (
+              {/* Stop belongs to the conversation that is actually streaming.
+                  There is one stream at a time, so opening a second
+                  conversation while a reply runs used to show a Stop button
+                  over a composer with nothing to stop — and pressing it cut
+                  off the answer in the tab you had just left. */}
+              {replyingIn === active?.id ? (
                 <button
                   onClick={stop}
                   aria-label="Stop generating"
@@ -859,8 +957,9 @@ function ChatTab() {
               ) : (
                 <button
                   onClick={send}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || busy}
                   aria-label="Send message"
+                  title={busy ? "Waiting for the current reply to finish" : undefined}
                   className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-accent-orange text-[#251f19] transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <ArrowUp className="h-4 w-4" />
@@ -927,7 +1026,7 @@ function ChatTab() {
               <div className="flex flex-col gap-1.5">
                 {suggestions.map((s) => (
                   <div
-                    key={s.title}
+                    key={s.id}
                     className="flex items-start justify-between gap-2 rounded-lg border border-border bg-card p-2"
                   >
                     <div className="min-w-0">
@@ -938,6 +1037,7 @@ function ChatTab() {
                       type="button"
                       onClick={() =>
                         addIdeaMutation.mutate({
+                          id: s.id,
                           sessionId: active.id,
                           title: s.title,
                           detail: s.detail,

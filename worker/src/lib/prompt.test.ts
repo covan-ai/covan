@@ -6,6 +6,7 @@ import {
   BRAINSTORM_INSTRUCTIONS,
   CONCISION_INSTRUCTIONS,
   DEFAULT_PERSONA,
+  MANIFEST_NAME_LIMIT,
 } from "./prompt";
 
 describe("buildSystemPrefix", () => {
@@ -32,6 +33,38 @@ describe("buildSystemPrefix", () => {
     const out = buildSystemPrefix({ persona: "P", mode: "normal", docNames: ["a.md", "b.md"] });
     expect(out).toContain("a.md, b.md");
     expect(out).toContain("never claim you cannot read files");
+  });
+
+  it("tells the agent excerpts only arrive when retrieval finds them", () => {
+    // The prefix is byte-identical on every turn, including the ones where
+    // nothing was retrieved and no excerpt block follows. Promising the
+    // contents "below" on those turns named a file, attached nothing, and left
+    // the model to fill the gap.
+    const out = buildSystemPrefix({ persona: "P", mode: "normal", docNames: ["a.md"] });
+    expect(out).toContain("whenever retrieval finds them");
+    expect(out).toContain("rather than inventing what it contains");
+    expect(out).not.toContain("provided below");
+  });
+
+  it("counts the tail of a long document list instead of naming all of it", () => {
+    const names = Array.from({ length: MANIFEST_NAME_LIMIT + 7 }, (_, i) => `doc-${i}.md`);
+    const out = buildSystemPrefix({ persona: "P", mode: "normal", docNames: names });
+    expect(out).toContain("doc-0.md");
+    expect(out).toContain(`doc-${MANIFEST_NAME_LIMIT - 1}.md`);
+    expect(out).not.toContain(`doc-${MANIFEST_NAME_LIMIT}.md`);
+    expect(out).toContain("and 7 more");
+  });
+
+  it("names every document while the list is short enough to be useful", () => {
+    const names = Array.from({ length: MANIFEST_NAME_LIMIT }, (_, i) => `doc-${i}.md`);
+    const out = buildSystemPrefix({ persona: "P", mode: "normal", docNames: names });
+    expect(out).toContain(`doc-${MANIFEST_NAME_LIMIT - 1}.md`);
+    expect(out).not.toContain("more");
+  });
+
+  it("ignores blank document names rather than listing a gap", () => {
+    const out = buildSystemPrefix({ persona: "P", mode: "normal", docNames: ["", "  "] });
+    expect(out).not.toContain("The team has shared");
   });
 
   it("omits the manifest when there are no documents", () => {

@@ -14,7 +14,7 @@ export type ProviderEnv = {
   GOOGLE_CLIENT_SECRET?: string;
 };
 
-/** The providers a connection can be. Mirrors the check constraint in 0039. */
+/** The providers a connection can be. Mirrors the check constraint in 0040. */
 export type ProviderId = "notion" | "google_drive";
 
 /**

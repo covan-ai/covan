@@ -249,7 +249,6 @@ export async function retrieveForAgent(
     }
   }
 
-
   return {
     docNames,
     bundleIds,

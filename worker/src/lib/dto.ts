@@ -457,7 +457,7 @@ export function mapDeliveryChannel(row: {
  * A connected source, as the Integrations page sees it.
  *
  * Never carries the token — `connections.secret_ciphertext` is not selectable
- * by a client at all (0039), so this DTO cannot leak it even by being careless.
+ * by a client at all (0040), so this DTO cannot leak it even by being careless.
  * What it does carry is everything needed to answer "is this working?": when it
  * last ran, when it will next, and the reason if it stopped.
  */

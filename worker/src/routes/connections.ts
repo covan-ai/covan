@@ -311,7 +311,7 @@ connections.patch("/connections/:id", async (c) => {
 
   // The write is split in two, and the split is the permission check.
   //
-  // 0039 grants `authenticated` UPDATE on exactly three columns: status,
+  // 0040 grants `authenticated` UPDATE on exactly three columns: status,
   // paused_reason and sync_interval_minutes. Everything else a change implies —
   // the chosen folder, the failure counter, when to sync next — is the engine's
   // bookkeeping, and granting it would let a client set `next_sync_at` in a loop
@@ -520,7 +520,7 @@ async function loadForCaller(
  * The same row, with the one column a client may not select.
  *
  * `loadForCaller` reads through RLS and therefore cannot see
- * `secret_ciphertext` — 0039 withholds it from `authenticated` on purpose. So
+ * `secret_ciphertext` — 0040 withholds it from `authenticated` on purpose. So
  * the permission question is answered first, by the database, and only then is
  * the credential fetched, by id, with the service role. The order is the point:
  * this function never decides anything, it only fills in a column for a row

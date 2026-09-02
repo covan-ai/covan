@@ -73,9 +73,17 @@ function redirectUri(c: { env: Bindings; req: { url: string } }): string {
 connections.get("/connections", async (c) => {
   const db = c.get("db");
 
+  // Scoped to the active workspace, not left to RLS alone. A person can be a
+  // member of two workspaces, and the policy is written from the workspace's
+  // point of view — so an unscoped read would put another team's connections on
+  // this team's page, all of them legitimately visible and none of them theirs.
+  const workspaceId = await getActiveWorkspaceId(db, c.get("user").id);
+  if (!workspaceId) return c.json({ error: "no workspace" }, 400);
+
   const { data, error } = await db
     .from("connections")
     .select(CONNECTION_SELECT)
+    .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: false });
   if (error) return c.json({ error: "failed to load connections" }, 500);
 
@@ -157,7 +165,7 @@ connections.post("/connections/:provider/start", async (c) => {
  * decrypts if we issued it. Every claim inside is then re-checked against the
  * database before a row is written: that the person is still a member of that
  * workspace, that they are allowed to write in it, and that the bundle is still
- * in it. A state is fifteen minutes long, and all three can change inside it.
+ * in it. A state is ten minutes long, and all three can change inside it.
  *
  * The response is always a redirect back to the application, never JSON. The
  * audience is a browser that has just come from a consent screen, and the
@@ -296,49 +304,66 @@ connections.patch("/connections/:id", async (c) => {
   if ("response" in loaded) return loaded.response;
   const { connection } = loaded;
 
-  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  // Choosing a folder is what finishes setting up a Drive connection, so it also
+  // starts it — asking somebody to pick a folder and then press Resume would be
+  // asking them to complete the same intention twice.
+  const resuming = body.status === "active" || Boolean(body.folderId);
 
+  // The write is split in two, and the split is the permission check.
+  //
+  // 0039 grants `authenticated` UPDATE on exactly three columns: status,
+  // paused_reason and sync_interval_minutes. Everything else a change implies —
+  // the chosen folder, the failure counter, when to sync next — is the engine's
+  // bookkeeping, and granting it would let a client set `next_sync_at` in a loop
+  // or repoint `config` at a folder the owner never picked.
+  //
+  // So the caller's own client writes the granted columns first, and whether a
+  // row comes back IS the answer to "may this person change this connection" —
+  // asked of the policy, in the database, rather than re-derived here. `status`
+  // is always included so there is a granted column to write even when the only
+  // thing being changed is a folder.
+  const granted: Record<string, unknown> = {
+    status: body.status ?? (body.folderId ? "active" : connection.status),
+  };
+  // Resuming clears the reason the engine paused it. Leaving it would have the
+  // interface explain a state the connection is no longer in.
+  if (resuming) granted.paused_reason = null;
+  if (body.syncIntervalMinutes) granted.sync_interval_minutes = body.syncIntervalMinutes;
+
+  const { data: allowed, error: grantedError } = await c
+    .get("db")
+    .from("connections")
+    .update(granted)
+    .eq("id", connection.id)
+    .select("id")
+    .maybeSingle();
+  if (grantedError) return c.json({ error: "failed to update connection" }, 500);
+  if (!allowed) {
+    return c.json({ error: "you do not have permission to change this connection" }, 403);
+  }
+
+  // Only now, and only for the columns no client may write. The row this
+  // touches is the one the policy just let through.
+  const bookkeeping: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (body.folderId) {
-    update.config = {
+    bookkeeping.config = {
       ...(connection.config ?? {}),
       folderId: body.folderId,
       folderName: body.folderName ?? body.folderId,
     };
-    // Choosing a folder is what finishes setting up a Drive connection, so it
-    // also starts it — asking somebody to pick a folder and then press Resume
-    // would be asking them to complete the same intention twice.
-    update.status = "active";
-    update.paused_reason = null;
-    update.next_sync_at = new Date().toISOString();
+  }
+  if (resuming) {
+    bookkeeping.consecutive_failures = 0;
+    bookkeeping.next_sync_at = new Date().toISOString();
   }
 
-  if (body.status) {
-    update.status = body.status;
-    // Resuming clears the reason the engine paused it. Leaving it would have
-    // the interface explain a state the connection is no longer in.
-    if (body.status === "active") {
-      update.paused_reason = null;
-      update.consecutive_failures = 0;
-      update.next_sync_at = new Date().toISOString();
-    }
-  }
-
-  if (body.syncIntervalMinutes) update.sync_interval_minutes = body.syncIntervalMinutes;
-
-  // Through the caller's own client: RLS decides whether they are the owner or
-  // an admin, and the column grants decide which fields may move at all. The
-  // one exception is `config`, which the grant withholds — a folder is chosen
-  // here or not at all, so this write needs the service role for that column
-  // the same way creation did.
-  const writer = body.folderId ? serviceClient(c.env) : c.get("db");
-  const { data, error } = await writer
+  const { data, error } = await serviceClient(c.env)
     .from("connections")
-    .update(update)
+    .update(bookkeeping)
     .eq("id", connection.id)
     .select(CONNECTION_SELECT)
     .maybeSingle();
-  if (error) return c.json({ error: "failed to update connection" }, 500);
-  if (!data) return c.json({ error: "you do not have permission to change this connection" }, 403);
+  if (error || !data) return c.json({ error: "failed to update connection" }, 500);
 
   return c.json(mapConnection(data as unknown as Parameters<typeof mapConnection>[0]));
 });
@@ -356,6 +381,24 @@ connections.post("/connections/:id/sync", async (c) => {
 
   if (connection.status === "paused") {
     return c.json({ error: "this connection is paused" }, 409);
+  }
+
+  // Asking the database whether this caller may change this connection, by
+  // making the smallest change there is: writing `status` back to the value it
+  // already holds. `loadForCaller` only proved they can SEE it, and a viewer can
+  // see everything — a sync writes documents into the workspace and spends the
+  // owner's allowance, so seeing is not enough. The sync itself runs as the
+  // service role and RLS will not be consulted again, which is exactly why the
+  // question has to be asked here.
+  const { data: allowed } = await c
+    .get("db")
+    .from("connections")
+    .update({ status: connection.status })
+    .eq("id", connection.id)
+    .select("id")
+    .maybeSingle();
+  if (!allowed) {
+    return c.json({ error: "you do not have permission to sync this connection" }, 403);
   }
 
   const outcome = await runOneConnection(c.env, await withSecret(c.env, connection));

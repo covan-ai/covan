@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { AppEnv, Bindings } from "../types";
 import { serviceClient } from "../lib/supabase";
@@ -54,12 +54,39 @@ function frontendOrigin(env: Bindings): string {
 const INSTALLATION_SELECT =
   "id,workspace_id,team_id,team_name,bot_user_id,agent_id,installed_by,created_at";
 
+/**
+ * Every route below scopes to the caller's *active* workspace, and none of them
+ * could get away with letting RLS do it alone.
+ *
+ * A person can be an admin of two workspaces, and 0040's policies are written
+ * from the workspace's point of view — so an unscoped read returns both
+ * installations, an unscoped update changes both, and an unscoped delete
+ * disconnects a Slack the caller was not looking at. The policy is still the
+ * thing that says *whether* they may; this says *which*.
+ */
+async function activeInstallationId(c: Context<AppEnv>): Promise<string | null> {
+  const db = c.get("db");
+  const workspaceId = await getActiveWorkspaceId(db, c.get("user").id);
+  if (!workspaceId) return null;
+
+  const { data } = await db
+    .from("slack_installations")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  return (data?.id as string) ?? null;
+}
+
 // GET /slack — whether Slack is available here, and what is installed.
 slack.get("/slack", async (c) => {
-  const { data, error } = await c
-    .get("db")
+  const db = c.get("db");
+  const workspaceId = await getActiveWorkspaceId(db, c.get("user").id);
+  if (!workspaceId) return c.json({ error: "no workspace" }, 400);
+
+  const { data, error } = await db
     .from("slack_installations")
     .select(INSTALLATION_SELECT)
+    .eq("workspace_id", workspaceId)
     .maybeSingle();
   if (error) return c.json({ error: "failed to load the Slack installation" }, 500);
 
@@ -108,13 +135,19 @@ slack.patch("/slack/installation", async (c) => {
   const parsed = patchSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
+  const id = await activeInstallationId(c);
+  if (!id) return c.json({ error: "not found" }, 404);
+
   // Through the caller's own client: the policy decides whether they are the
   // installer or an admin, and its WITH CHECK is what stops the agent being
-  // pointed at another workspace's.
+  // pointed at another workspace's. `agent_id` is the only column 0040 grants —
+  // `updated_at` is not one, and setting it here would fail the whole statement
+  // with a permission error rather than a refusal anybody could read.
   const { data, error } = await c
     .get("db")
     .from("slack_installations")
-    .update({ agent_id: parsed.data.agentId, updated_at: new Date().toISOString() })
+    .update({ agent_id: parsed.data.agentId })
+    .eq("id", id)
     .select("id,agent_id")
     .maybeSingle();
   if (error) return c.json({ error: "failed to update the Slack installation" }, 500);
@@ -131,11 +164,14 @@ slack.patch("/slack/installation", async (c) => {
 // ordinary sessions, and 0040 lets `slack_threads` cascade rather than taking
 // them with it.
 slack.delete("/slack/installation", async (c) => {
+  const id = await activeInstallationId(c);
+  if (!id) return c.json({ error: "not found" }, 404);
+
   const { data, error } = await c
     .get("db")
     .from("slack_installations")
     .delete()
-    .neq("id", "00000000-0000-0000-0000-000000000000")
+    .eq("id", id)
     .select("id");
   if (error) return c.json({ error: "failed to disconnect Slack" }, 500);
   if (!data || data.length === 0) {

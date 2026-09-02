@@ -27,6 +27,9 @@ import { apiKeys } from "./routes/api-keys";
 import { account } from "./routes/account";
 import { exportRoutes } from "./routes/export";
 import { feedback } from "./routes/feedback";
+import { trash } from "./routes/trash";
+import { events } from "./routes/events";
+import { runPurge } from "./lib/purge";
 
 const app = new Hono<AppEnv>();
 
@@ -143,6 +146,8 @@ api.route("/", apiKeys);
 api.route("/", account);
 api.route("/", exportRoutes);
 api.route("/", feedback);
+api.route("/", trash);
+api.route("/", events);
 
 app.route("/", api);
 
@@ -164,6 +169,20 @@ export default {
       runDueRoutines(env).catch((err) => {
         console.error("routine tick failed", err);
         throw err;
+      }),
+    );
+
+    // The thirty-day sweeper, and it lives HERE rather than on the cron Worker
+    // because that one takes `RoutineEnv`, which carries no R2 binding — a
+    // purged document's bytes have to go with its row, or the erasure is not
+    // one.
+    //
+    // Deliberately not chained onto the promise above: a failing routine tick
+    // must not stop the sweep, and a failing sweep must not mark the tick
+    // broken. They share a trigger and nothing else.
+    ctx.waitUntil(
+      runPurge(env).catch((err) => {
+        console.error("purge tick failed", err);
       }),
     );
   },

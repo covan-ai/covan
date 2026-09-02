@@ -489,6 +489,27 @@ export const api = {
     send: (input: FeedbackDraft): Promise<{ id: string; createdAt: number }> =>
       request("POST", "/feedback", input),
   },
+  trash: {
+    /** 403 for a viewer, deliberately — an empty list would say the wrong thing. */
+    list: (): Promise<TrashListing> => request("GET", "/trash"),
+    /**
+     * `kind` is the word the listing gave back, not a type the caller invents.
+     * A 400 here is the one worth reading aloud: it means the document's bundle
+     * is deleted too, and that has to go first.
+     */
+    restore: (kind: TrashKind, id: string): Promise<{ ok: true }> =>
+      request("POST", `/trash/${kind}/${id}/restore`),
+  },
+  events: {
+    /** Admin-only at the policy, so a member gets an empty page, not an error. */
+    list: (params?: { limit?: number; before?: string }): Promise<EventPage> => {
+      const q = new URLSearchParams();
+      if (params?.limit) q.set("limit", String(params.limit));
+      if (params?.before) q.set("before", params.before);
+      const suffix = q.toString();
+      return request("GET", `/events${suffix ? `?${suffix}` : ""}`);
+    },
+  },
 };
 
 export type FeedbackKind = "problem" | "idea" | "other";
@@ -503,6 +524,45 @@ export type FeedbackDraft = {
    * 0041 refuses an id the sender could not read.
    */
   messageId?: string;
+};
+
+export type TrashKind = "agent" | "bundle" | "document";
+
+export type TrashItem = {
+  kind: TrashKind;
+  id: string;
+  name: string;
+  /** Epoch milliseconds, like every other timestamp this API returns. */
+  deletedAt: number;
+  /** Null once the person who deleted it has closed their own account. */
+  deletedBy: string | null;
+  /** Which bundle a deleted document came out of; null for the other kinds. */
+  parentName: string | null;
+  purgesAt: number;
+};
+
+export type TrashListing = {
+  items: TrashItem[];
+  retentionDays: number;
+};
+
+export type WorkspaceEvent = {
+  id: string;
+  action: string;
+  subjectType: string;
+  subjectId: string | null;
+  /** The name as it was at the time — the row it points at may be gone. */
+  subjectLabel: string;
+  detail: Record<string, unknown> | null;
+  createdAt: number;
+  /** What to pass as `before` for the next page — see the route for why. */
+  cursor: string;
+  actor: string | null;
+};
+
+export type EventPage = {
+  events: WorkspaceEvent[];
+  hasMore: boolean;
 };
 
 /**

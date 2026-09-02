@@ -168,6 +168,11 @@ including this one — see [Your team](team.md).
 | `GET /documents/:id/download`                    | The original file     |
 | `POST /documents/:id/reindex`                    | Re-chunk and re-embed |
 
+Deleting a bundle or a document marks it rather than destroying it: it stops
+being visible and stops grounding answers immediately, and `GET /trash` can
+bring it back for thirty days. `403` means the caller is a viewer; `404` means
+it is already gone or was never visible. Same for `DELETE /agents/:id`.
+
 ### Routines
 
 |                                                |                                  |
@@ -192,6 +197,9 @@ including this one — see [Your team](team.md).
 | `GET`/`POST`/`DELETE /invitations`                           | Invite and revoke. Admin.                                                                                      |
 | `GET /invitations/incoming` · `POST /invitations/:id/accept` | Yours to accept                                                                                                |
 | `GET /workspaces/:id/export`                                 | The whole workspace as one zip — [Taking it with you](export.md)                                               |
+| `GET /trash`                                                 | Agents, bundles and documents deleted in the last 30 days. Refused to a viewer, rather than answered empty.    |
+| `POST /trash/:kind/:id/restore`                              | `kind` is the word `/trash` gave back. 400 means restore the parent first, and says which.                     |
+| `GET /events`                                                | Who deleted, restored, invited, removed or changed a role. Admin — anyone else gets an empty page.             |
 | `DELETE /account`                                            | Close your own account. Session only. Refused while you are the last admin of a workspace others are still in. |
 
 ### Usage and keys

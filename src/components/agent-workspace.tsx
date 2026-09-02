@@ -300,8 +300,9 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This removes the shared agent and all private chats across the team. This cannot
-                    be undone.
+                    This takes the shared agent away from the whole team, along with every chat and
+                    routine attached to it — including private ones. It waits 30 days in Settings →
+                    Recently deleted, and comes back whole if you restore it.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

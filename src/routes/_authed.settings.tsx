@@ -11,13 +11,14 @@ import { WorkspaceUsageSection } from "@/components/workspace-usage-section";
 import { PreferencesSection } from "@/components/preferences-section";
 import { ApiKeysSection } from "@/components/api-keys-section";
 import { ExportWorkspaceSection } from "@/components/export-workspace-section";
+import { RecentlyDeletedSection } from "@/components/recently-deleted-section";
 import { CloseAccountSection } from "@/components/close-account-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { api, ApiError, type Me, type Workspace } from "@/lib/api-client";
-import { isAdminRole } from "@/lib/roles";
+import { canWriteAsRole, isAdminRole } from "@/lib/roles";
 import { privacyLink, termsLink } from "@/lib/legal";
 import { LegalAnchor } from "@/components/legal-anchor";
 
@@ -198,7 +199,12 @@ function SettingsPage() {
 
   // Defaults to true while `me` loads, so the form does not visibly lock and
   // then unlock on every cold load — mirrors the same choice in agents-store.
-  const isAdmin = me ? isAdminRole(me.members.find((m) => m.id === me.user.id)?.role) : true;
+  const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
+  const isAdmin = me ? isAdminRole(myRole) : true;
+  // False while `me` loads, unlike `isAdmin` above: this one decides whether a
+  // section is fetched at all, and a request that 403s before the role is known
+  // is worse than a section that appears a moment late.
+  const canWrite = me ? canWriteAsRole(myRole) : false;
 
   return (
     <AppShell>
@@ -259,6 +265,14 @@ function SettingsPage() {
             Not gated on a role — an export is a read, and it contains only what
             this person could already see. */}
         <ExportWorkspaceSection workspaceId={me?.workspace.id} workspaceName={me?.workspace.name} />
+
+        {/* Under the export and above closing the account, which is the same
+            argument as the one above it: somebody on this page because
+            something went wrong should meet the way to undo it before they meet
+            the way to destroy more. Hidden from a viewer — `workspace_trash()`
+            refuses them anyway, and a section that only ever 403s is worse than
+            no section. */}
+        <RecentlyDeletedSection canWrite={canWrite} />
 
         {/* Last on the page, under everything it would destroy. Not gated on a
             role: erasure is the caller's own right and an admin has no say in

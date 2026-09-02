@@ -94,6 +94,10 @@ function makeDb(
       select: () => {
         const chain: any = {
           eq: () => chain,
+          // The agent lookup asks `.is("deleted_at", null)`: the executor holds
+          // a service-role client, so nothing else is filtering a soft-deleted
+          // agent out of its way.
+          is: () => chain,
           order: () => chain,
           limit: () => chain,
           maybeSingle: async () => ({ data: await rowFor(table), error: null }),

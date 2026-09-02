@@ -46,7 +46,7 @@ export const Route = createFileRoute("/_authed/agents/$agentId/settings")({
  * "Settings" held three read-only facts and the delete button. People looking
  * for the name or the model reasonably opened Settings and found neither.
  * Ordered by how often it is touched — the fields, then the facts, then the
- * button that cannot be undone.
+ * button nobody presses twice.
  */
 function SettingsTab() {
   const { agentId } = Route.useParams();
@@ -211,12 +211,14 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
         <section className="mt-10">
           <SectionHeading
             title="Danger zone"
-            description="Deleting the agent removes it for the entire team, along with everyone's private chats."
+            description="Deleting the agent takes it away from the entire team, along with everyone's private chats. Recoverable for 30 days."
           />
           <SectionCard className="mt-3 flex items-center justify-between gap-4 border-destructive/30">
             <div className="min-w-0">
               <div className="text-sm font-semibold">Delete {agent.name}</div>
-              <p className="mt-0.5 text-sm text-muted-foreground">This cannot be undone.</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Recoverable for 30 days from Settings.
+              </p>
             </div>
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -231,8 +233,9 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This removes the shared agent and every chat the team has had with it. This
-                    cannot be undone.
+                    This takes the shared agent away from the whole team, along with every chat and
+                    routine attached to it. It waits 30 days in Settings → Recently deleted, and
+                    comes back whole if you restore it.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

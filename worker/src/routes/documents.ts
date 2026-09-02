@@ -7,60 +7,34 @@ import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
 import { insertChunkRows } from "../lib/chunk-store";
+import { callDeletionFn } from "../lib/deletion";
 
 const documents = new Hono<AppEnv>();
 
-// DELETE /documents/:id — the row is the authority, and it goes first.
+// DELETE /documents/:id — a mark now, and the stored object stays put.
 //
-// This used to delete the stored object and then the row. RLS answers a delete
-// it has no policy for by matching no rows and reporting no error, so a viewer
-// — who passes documents_select_member but fails documents_delete_member —
-// destroyed the bytes and got {ok:true} back, leaving a row pointing at a key
-// that no longer exists. Deleting the row first, and reading back what was
-// actually deleted, makes the refusal visible before anything is lost.
+// It has twice been the case that this route destroyed bytes it should not
+// have. First it deleted the object and then the row, so a viewer — who passes
+// documents_select_member but fails documents_delete_member — destroyed the
+// file and got {ok:true} back, because RLS answers an unpermitted delete by
+// matching no rows and reporting no error. That was fixed by deleting the row
+// first and reading back what actually went.
+//
+// Now neither goes. `soft_delete_document` marks the row and raises 42501 on
+// refusal, so the viewer case is answered by an exception rather than by
+// silence; and the object is deliberately left in the store, because a restored
+// document that came back as a row pointing at a missing file would be worse
+// than either outcome on its own. `worker/src/lib/purge.ts` deletes both,
+// thirty days later, in the order account closure already uses: collect the
+// keys, delete the rows, then delete the objects.
 documents.delete("/documents/:id", async (c) => {
-  const db = c.get("db");
-  const id = c.req.param("id");
-
-  const { data: row, error: selErr } = await db
-    .from("documents")
-    .select("id,r2_key")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (selErr) {
-    return c.json({ error: "failed to load document" }, 500);
-  }
-  if (!row) {
-    return c.json({ error: "not found" }, 404);
-  }
-
-  const { data: deleted, error: delErr } = await db
-    .from("documents")
-    .delete()
-    .eq("id", id)
-    .select("id,r2_key");
-
-  if (delErr) {
-    return c.json({ error: "failed to delete document" }, 500);
-  }
-  // Visible above, not deletable: RLS refused. Not "already gone" — the select
-  // two calls up found it.
-  if (!deleted || deleted.length === 0) {
-    return c.json({ error: "you do not have permission to delete this document" }, 403);
-  }
-
-  const key = deleted[0].r2_key;
-  if (key) {
-    try {
-      await getDocStore(c.env).delete(key);
-    } catch (e) {
-      // Best-effort by design: the row is gone, so the document is gone as far
-      // as the product is concerned. An orphaned object is a storage cost, not
-      // a correctness problem, and failing the request here would be a lie.
-      console.error("document store delete failed", e);
-    }
-  }
+  const failure = await callDeletionFn(
+    c.get("db"),
+    "soft_delete_document",
+    { p_document_id: c.req.param("id") },
+    "failed to delete document",
+  );
+  if (failure) return c.json({ error: failure.message }, failure.status);
 
   return c.json({ ok: true });
 });

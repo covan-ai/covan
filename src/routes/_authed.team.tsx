@@ -33,6 +33,7 @@ import { copyInviteText } from "@/lib/invite-text";
 import { formatRelative } from "@/lib/relative-time";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
 import { LiveKeyWarning } from "@/components/live-key-warning";
+import { WorkspaceActivitySection } from "@/components/workspace-activity-section";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authed/team")({
@@ -382,6 +383,12 @@ function TeamPage() {
             )}
           </section>
         )}
+
+        {/* Last on the page, and admin-only because the policy is. It sits with
+            the people rather than with the deleted things on Settings: what it
+            records is mostly what members did to each other's work and each
+            other's standing, and that is the question this page exists for. */}
+        <WorkspaceActivitySection isAdmin={isAdmin} />
       </PageContainer>
 
       <InviteMemberDialog open={inviteOpen} onOpenChange={setInviteOpen} />

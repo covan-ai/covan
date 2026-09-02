@@ -9,6 +9,7 @@ import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
 import { insertChunkRows } from "../lib/chunk-store";
+import { callDeletionFn } from "../lib/deletion";
 
 const bundles = new Hono<AppEnv>();
 
@@ -156,10 +157,23 @@ bundles.patch("/bundles/:id", async (c) => {
 });
 
 // DELETE /bundles/:id
+//
+// Marks the bundle and its documents together (0037). The documents carry
+// `deleted_via = <bundle id>`, which is what keeps them out of the trash as
+// separate entries and brings exactly them back when the bundle is restored —
+// a document somebody deleted on its own beforehand keeps its own deletion.
+//
+// Their chunks and their uploaded files are untouched for thirty days, so
+// restoring costs no re-embedding. It also means a deleted bundle goes on
+// occupying storage until the sweeper reaches it.
 bundles.delete("/bundles/:id", async (c) => {
-  const db = c.get("db");
-  const { error } = await db.from("knowledge_bundles").delete().eq("id", c.req.param("id"));
-  if (error) return c.json({ error: "failed to delete bundle" }, 500);
+  const failure = await callDeletionFn(
+    c.get("db"),
+    "soft_delete_bundle",
+    { p_bundle_id: c.req.param("id") },
+    "failed to delete bundle",
+  );
+  if (failure) return c.json({ error: failure.message }, failure.status);
   return c.json({ ok: true });
 });
 

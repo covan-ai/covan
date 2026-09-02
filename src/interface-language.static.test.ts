@@ -79,10 +79,32 @@ const TURKISH_WORDS = new RegExp(
 /** `Board'a`, `Covan'da`, `panoya'yı` — a case ending hung off an apostrophe. */
 const TURKISH_SUFFIX = /'(a|e|ya|ye|da|de|ta|te|dan|den|tan|ten|nin|nun|la|le|yi|yu)\b/i;
 
+/**
+ * Turkish that is correct where it stands, and would be wrong translated.
+ *
+ * Both come from the legal pages, and both are the same kind of thing: the
+ * name of an institution, and a statutory term quoted beside its English
+ * equivalent. Translating the authority's name would leave a reader unable to
+ * find it, and paraphrasing `veri işleyen` would drop the exact word KVKK
+ * assigns a meaning to. Neither is an untranslated interface string.
+ *
+ * By phrase rather than by file on purpose. A file-level exemption would make
+ * the whole of `privacy.tsx` invisible to this check, including a heading
+ * somebody adds in Turkish next year; naming the phrases keeps everything
+ * around them covered, and the list is the record of what was decided.
+ */
+const ALLOWED = [
+  // Turkey's data protection authority, named in the DPA and the privacy page.
+  "Kişisel Verileri Koruma Kurumu",
+  // The KVKK term for "processor", quoted alongside it in the DPA's definitions.
+  "veri işleyen",
+];
+
 const SKIP_FILES = new Set(["routeTree.gen.ts"]);
 
 /** Why this line looks Turkish, or null. Exported shape kept simple for the assertion below. */
-function turkishHit(line: string): string | null {
+function turkishHit(rawLine: string): string | null {
+  const line = ALLOWED.reduce((rest, phrase) => rest.split(phrase).join(""), rawLine);
   if (TURKISH_LETTERS.test(line)) return "letter";
   const word = TURKISH_WORDS.exec(line);
   if (word) return `word: ${word[1]}`;
@@ -123,5 +145,14 @@ describe("interface language", () => {
     expect(turkishHit("Add to board")).toBeNull();
     expect(turkishHit("Don't have an account?")).toBeNull();
     expect(turkishHit("the workspace's documents")).toBeNull();
+  });
+
+  it("lets the legal pages keep the Turkish that has to stay", () => {
+    // Both of these are in the shipped source and both are correct there. The
+    // exemption is the phrase, not the file, so a Turkish string that happens
+    // to share a line with one is still caught.
+    expect(turkishHit("complain to the Kişisel Verileri Koruma Kurumu in Türkiye")).toBeNull();
+    expect(turkishHit("<strong>processor</strong> — <em>veri işleyen</em>")).toBeNull();
+    expect(turkishHit("Kişisel Verileri Koruma Kurumu — Fikir Panosu")).toBe("word: Fikir");
   });
 });

@@ -460,9 +460,13 @@ to leave un-owned.
 
 ## Deleting a person
 
-There is no route for this either, and the same operator path applies. The schema
-draws one line through it, and it is worth knowing which side a thing falls on.
-Six columns record who _made_ something — the `created_by` on workspaces, agents,
+Unlike a workspace, this one has a door. **Settings → Close account** calls
+`DELETE /account`, and it is immediate rather than a request somebody processes.
+The operator path below still exists and still works, and what follows describes
+both, because the schema is what decides most of it either way.
+
+The schema draws one line through it, and it is worth knowing which side a thing
+falls on. Six columns record who _made_ something — the `created_by` on workspaces, agents,
 bundles and ideas, and both of the who-did-this columns on invitations. All six
 null out. A workspace does not evaporate because the person who opened it left,
 and a shared agent does not vanish because its author closed their account; the
@@ -477,11 +481,24 @@ One case is refused, and it is refused on purpose.
 
 **The last admin of a surviving workspace.** Somebody who is the only admin of a
 workspace that still exists cannot be deleted, because the cascade into
-`workspace_members` meets the guard. Whether that should promote the oldest
-remaining member, block until the role is handed over, or take the workspace with
-it is a product question that has not been answered, and answering it in the
-schema would be answering it by accident. Deleting or handing over the workspace
-first is the way through.
+`workspace_members` meets the guard. Hand the role over first; the route names
+the workspace when it refuses, so there is nothing to go looking for.
+
+The trigger's reach is wider than that sentence suggests, and it is why closing
+an account is not one `delete`. It never asks how many members are left, and
+everybody starts as the sole admin of a workspace of their own — so left alone
+it would refuse _every_ account closure there will ever be, including one from
+somebody who never invited anybody. `planWorkspaces` in
+`worker/src/routes/account.ts` tells the two cases apart before the delete runs:
+a workspace with other people in it blocks and is named, and a workspace with
+nobody else in it is deleted along with the account. There is no role to hand
+over in the second case and nobody to hand it to, and keeping it would leave a
+room no living person can enter, still holding the agents and documents of
+somebody who asked to be forgotten.
+
+That is the product question this section used to say was unanswered. It was
+answered by building the route, and the answer is the same one
+[Leaving](#leaving) already gave: block until the role is handed over.
 
 What a departing account leaves behind, in somebody else's session, is its
 words without its name. `messages.sender_id` nulls on delete

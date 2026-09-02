@@ -27,6 +27,20 @@ import { LegalLayout, LegalSection, LegalList, LegalItem } from "@/components/le
  * months that erasure had no button, which was true when written and became
  * false the day `worker/src/routes/account.ts` shipped. Building a capability
  * puts this page in the change exactly as adding an outbound host does.
+ *
+ * And the third time was the fastest. `0040_deletion_you_can_undo.sql` made
+ * deleting an agent, a bundle or a document reversible for thirty days, and
+ * this page went on saying deletion "removes the rows and the stored file
+ * rather than hiding them" — the one sentence that soft delete exists to
+ * contradict, still standing twenty-six minutes after the migration merged.
+ *
+ * So the rule generalises past outbound hosts and past new routes: **a change
+ * to what deletion means is a change to this page.** It is the claim a person
+ * is relying on when they exercise erasure, and the only one here that is worse
+ * to overstate than to understate. Note what did not save it — every word was
+ * true when written, `docs/team.md` was updated in the same PR, and the tests
+ * passed. Prose has no compiler; only a person reading the diff for this file
+ * would have caught it.
  */
 export const Route = createFileRoute("/privacy")({
   component: PrivacyPage,
@@ -69,6 +83,18 @@ function PrivacyPage() {
             <strong className="font-medium text-foreground">Usage counts</strong> — tokens spent per
             reply, used to show you what you have used and, on a metered install, to apply an
             allowance.
+          </LegalItem>
+          <LegalItem>
+            <strong className="font-medium text-foreground">
+              A record of what people do to each other's work
+            </strong>{" "}
+            — when an agent, a bundle or a document is deleted or restored, and when somebody is
+            invited, has their role changed or is removed, the workspace keeps a line saying who did
+            it, to what, and when. The thing's name is kept alongside it, because thirty days later
+            the row it points at is gone and a log that can only say "an agent was deleted" is not a
+            log. Readable by the workspace's admins and by nobody else. It is written by the
+            database rather than by the API, so it records the action even when the action did not
+            go through the interface.
           </LegalItem>
           <LegalItem>
             <strong className="font-medium text-foreground">Feedback you send</strong> — what you
@@ -130,8 +156,23 @@ function PrivacyPage() {
 
       <LegalSection title="Deleting things">
         <p>
-          A document, a conversation and an agent can each be deleted from the interface, and
-          deleting them removes the rows and the stored file rather than hiding them.
+          Deleting an <strong className="font-medium text-foreground">agent</strong>, a{" "}
+          <strong className="font-medium text-foreground">knowledge bundle</strong> or a{" "}
+          <strong className="font-medium text-foreground">document</strong> puts it in the
+          workspace's trash rather than removing it. It stops being readable everywhere in the
+          product at once — no answer is grounded on it again — but the rows and the uploaded file
+          are still there, and anybody who can write in that workspace can put it back for{" "}
+          <strong className="font-medium text-foreground">thirty days</strong>. After that a sweeper
+          deletes the rows for real and deletes the stored file with them.
+        </p>
+        <p>
+          A <strong className="font-medium text-foreground">conversation</strong> is not like the
+          other three. Deleting one removes it immediately and there is nothing to restore.
+        </p>
+        <p>
+          There is no button that empties the trash sooner. If you need something gone before the
+          thirty days are up, ask whoever runs your install — and closing your account does not wait
+          either: what it deletes, it deletes at once, trash included.
         </p>
         <p>
           Closing your account is in Settings, and it takes your conversations, your API keys, any

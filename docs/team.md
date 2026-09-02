@@ -159,7 +159,7 @@ deleting an agent takes every session anybody ever had with it, every message in
 those sessions and every routine pointed at it, and deleting a bundle takes its
 documents and their embeddings. A `viewer` is refused all of it.
 
-Until `0039` none of that was recoverable from inside the product, and this page
+Until `0040` none of that was recoverable from inside the product, and this page
 said so. [Deleting, and taking it back](#deleting-and-taking-it-back) is the
 change: those three deletions now wait thirty days, and
 [the record of who did it](#the-record-of-who-did-it) says whose decision it was

@@ -7,7 +7,8 @@ import { serviceClient } from "../lib/supabase";
 import { resolveModel } from "../lib/models";
 import { createOpenAI } from "../lib/openai";
 import { embedTexts } from "../lib/embeddings";
-import { buildContextBlock, ragMinSimilarity } from "../lib/rag";
+import { buildContextBlock, ragMinSimilarity, retrievalQuery } from "../lib/rag";
+import { refersToDocuments, namesDocument } from "../lib/doc-question";
 import { selectHistory } from "../lib/history";
 import { buildSystemPrefix, temperatureFor, maxTokensFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
@@ -134,6 +135,17 @@ chat.post("/chat/stream", async (c) => {
    * agent with no documents, a retrieval that threw, a fallback that found
    * nothing with content — lands on the truthful value without needing its own
    * assignment.
+   *
+   * `"none"` covers one more case than it did when 0039 landed, and the report
+   * should read it as the wider fact rather than as a setup problem. The
+   * fallback used to run on *every* miss, so "thanks" and "merhaba" were
+   * recorded as `documents` — grounded, by a path that had fired on a turn
+   * about nothing. It now runs only when the question is about the documents
+   * (`refersToDocuments`), which leaves an ordinary question that cleared no
+   * passage recording `none`. That is what `none` should have meant all along:
+   * nothing the team wrote was close to this. The two populations it now mixes
+   * — no usable documents at all, and none close enough — are told apart by
+   * whether the agent has any documents, which the report can ask separately.
    */
   let grounding: "chunks" | "documents" | "none" = "none";
   // Embedding the question costs tokens too. Carried to the end of the turn and
@@ -176,7 +188,16 @@ chat.post("/chat/stream", async (c) => {
   // caught, at boot, before anybody asks anything.
   if (hasKnowledge) {
     try {
-      const embedded = await embedTexts(c.env, [lastMessage.content]);
+      // Not `lastMessage.content` alone: a follow-up carries its subject in the
+      // turn before it, and a pasted wall of text is longer than the embedding
+      // model's own context window. See `retrievalQuery`.
+      const query = retrievalQuery(
+        rows.map((m: { role: string; content: string }) => ({
+          role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+          content: m.content,
+        })),
+      );
+      const embedded = await embedTexts(c.env, [query]);
       embeddingTokens += embedded.tokens;
       const [queryEmbedding] = embedded.vectors;
       if (queryEmbedding) {
@@ -194,13 +215,19 @@ chat.post("/chat/stream", async (c) => {
             document_name: string;
             content: string;
           }>;
-          ragBlock = buildContextBlock(
-            typed.map((m) => ({ documentName: m.document_name, content: m.content })),
+          // Cited from `used`, not from `typed`: the block has a char budget and
+          // drops what does not fit, and a document whose passage was dropped
+          // did not ground anything.
+          const block = buildContextBlock(
+            typed.map((m) => ({
+              documentId: m.document_id,
+              documentName: m.document_name,
+              content: m.content,
+            })),
           );
-          if (ragBlock) {
-            grounding = "chunks";
-            for (const m of typed) addSource(m.document_id ?? null, m.document_name);
-          }
+          ragBlock = block.text;
+          if (ragBlock) grounding = "chunks";
+          for (const m of block.used) addSource(m.documentId ?? null, m.documentName);
         }
       }
     } catch (e) {
@@ -208,12 +235,18 @@ chat.post("/chat/stream", async (c) => {
     }
   }
 
-  // Fallback: no chunk matched (common for "summarize the file" / "what's in
-  // the doc" style questions that don't embed close to any single passage), yet
-  // the agent does have documents. Ground on their stored content directly —
-  // newest first, capped by the same char budget — so it answers from the file
-  // instead of claiming it can't read it.
-  if (!ragBlock && hasKnowledge) {
+  // Fallback: no chunk matched, the agent does have documents, and the question
+  // is about them — "summarize the file", "what's in the doc", or anything that
+  // names one. Those don't embed close to any single passage, so retrieval
+  // misses them however the floor is set; grounding on the documents' stored
+  // text directly is what stops the agent claiming it can't read a file it was
+  // just handed.
+  //
+  // `refersToDocuments` is the guard, and it is the whole point of the branch.
+  // Without it every miss landed here — "thanks", "merhaba", "say that again" —
+  // and each one pulled the agent's files into the prompt, paid for them, and
+  // hung a row of source chips under an answer they had nothing to do with.
+  if (!ragBlock && hasKnowledge && refersToDocuments(lastMessage.content, docNames)) {
     const { data: docRows, error: docError } = await db
       .from("documents")
       .select("id,name,content")
@@ -224,14 +257,26 @@ chat.post("/chat/stream", async (c) => {
       : ((docRows ?? []) as Array<{ id: string; name: string; content: string | null }>).filter(
           (d) => d.content && d.content.trim().length > 0,
         );
-    if (withContent.length > 0) {
-      ragBlock = buildContextBlock(
-        withContent.map((d) => ({ documentName: d.name, content: d.content as string })),
+    // Newest-first is the right default and the wrong answer when the user
+    // named a file: the budget fills from the front, so "what does handbook.md
+    // say?" against a dozen documents could ground on the three most recent
+    // uploads and never reach the one that was asked about. A document the
+    // question names goes first.
+    const ordered = [
+      ...withContent.filter((d) => namesDocument(lastMessage.content, d.name)),
+      ...withContent.filter((d) => !namesDocument(lastMessage.content, d.name)),
+    ];
+    if (ordered.length > 0) {
+      const block = buildContextBlock(
+        ordered.map((d) => ({
+          documentId: d.id,
+          documentName: d.name,
+          content: d.content as string,
+        })),
       );
-      if (ragBlock) {
-        grounding = "documents";
-        for (const d of withContent) addSource(d.id ?? null, d.name);
-      }
+      ragBlock = block.text;
+      if (ragBlock) grounding = "documents";
+      for (const d of block.used) addSource(d.documentId ?? null, d.documentName);
     }
   }
 
@@ -290,6 +335,12 @@ chat.post("/chat/stream", async (c) => {
       // shows up nowhere. Unlike the transcription usage field, `cached_tokens`
       // is properly typed by the pinned SDK, so no fallback is needed here.
       let cachedTokens: number | null = null;
+      // Why the model stopped. "length" means it ran into `maxTokensFor` and
+      // the answer is cut off mid-thought — which looks, on screen, exactly
+      // like an answer that finished. Carried out to the client so it can say
+      // so instead of leaving someone to work out that the last sentence has
+      // no end.
+      let finishReason: string | null = null;
 
       let persisted = false;
       let spendRecorded = false;
@@ -357,11 +408,13 @@ chat.post("/chat/stream", async (c) => {
         );
 
         for await (const chunk of completion) {
-          const delta = chunk.choices[0]?.delta?.content;
+          const choice = chunk.choices[0];
+          const delta = choice?.delta?.content;
           if (delta) {
             full += delta;
             send({ type: "delta", text: delta });
           }
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
           if (chunk.usage) {
             promptTokens = chunk.usage.prompt_tokens ?? null;
             completionTokens = chunk.usage.completion_tokens ?? null;
@@ -395,6 +448,8 @@ chat.post("/chat/stream", async (c) => {
             controller.close();
             return;
           }
+          // Before `done`, which is the client's terminal event.
+          if (finishReason === "length") send({ type: "truncated" });
           send({ type: "done", message: mapMessage(inserted) });
         } else {
           await recordSpend();

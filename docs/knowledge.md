@@ -30,6 +30,59 @@ it, not the workspace.
 Both roles can create, edit and delete bundles. There is no owner who has to
 approve it.
 
+## What a document should look like
+
+The accepted formats are listed further down, and they are the least interesting
+half of the answer. A file that is accepted can still be a file no question ever
+reaches, and the difference is not the extension.
+
+Four things decide it, all of them consequences of how retrieval works rather
+than house style:
+
+**One subject per file.** A question matches a passage, and the passage arrives
+with its neighbours. A single handbook covering pricing, onboarding and the
+deployment runbook competes with itself: the pricing question pulls a chunk that
+happens to sit between two unrelated ones. Six files beat one file six times the
+size.
+
+**Write the answer, not a pointer to it.** "See the Notion page" retrieves
+perfectly and answers nothing. So does a heading with nothing under it. The
+agent can only say what the text says.
+
+**Use the words people ask in.** Matching is on meaning as the embedding model
+represents it, so a document written entirely in internal shorthand and a
+question written in plain English may not meet. This is what makes a glossary of
+your own terms one of the highest-value files in a workspace.
+
+**Say when it was true.** Nothing updates a document in place — a re-upload
+makes a new one — so a date inside the text is the only version the agent can
+read. The source chip under an answer carries the upload date and warns past
+ninety days, which tells the reader the file is old but not what it was current
+for.
+
+Everything else is ordinary writing. Headings help, because they give the
+chunker a natural boundary to cut on, and they cost nothing.
+
+### Starting from nothing
+
+A team that has not written any of this down yet has the harder version of the
+problem, and it is the common one: the first agent is often made before the
+first document exists.
+
+The Knowledge tab carries six starter documents for exactly that — company
+overview, product notes, FAQ, how we work, glossary, and a meeting-notes shape.
+Each downloads as a Markdown file of headings with a bracketed prompt under
+each, and the prompts are questions rather than instructions. Fill one in and
+upload it back.
+
+They download rather than being created in place, and that is deliberate: an
+empty template inside a bundle is worse than no document at all. Retrieval would
+match it, the agent would ground an answer in `[Two or three sentences]`, and
+the source chip under that answer would report the file as read.
+
+If you fill in only one, make it the FAQ. It is the file whose headings are
+already phrased the way somebody will ask.
+
 ## Uploading
 
 There are two ways in, and they differ only in where the file lands.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
@@ -45,6 +45,18 @@ const store = {
 
 vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
 
+/** Puts the workspace back to one bundle with one document in it. */
+function withKnowledge() {
+  store.bundles = [{ id: "bundle-1", name: "GTM knowledge", description: null, documentCount: 1 }];
+  store.agents[0].bundleIds = ["bundle-1"];
+}
+
+/** A workspace nobody has uploaded anything to yet. */
+function withNothing() {
+  store.bundles = [];
+  store.agents[0].bundleIds = [];
+}
+
 async function renderTab(canWrite: boolean) {
   store.canWrite = canWrite;
   const { Route } = await import("./_authed.agents.$agentId.knowledge");
@@ -58,6 +70,7 @@ async function renderTab(canWrite: boolean) {
 }
 
 describe("the Knowledge tab", () => {
+  beforeEach(withKnowledge);
   // The read-only notice promises a viewer "can read every bundle attached to
   // this agent and everything in it". The document list used to sit inside the
   // `canWrite` branch alongside the upload form, so a viewer read the promise
@@ -77,5 +90,63 @@ describe("the Knowledge tab", () => {
     expect(screen.getByText("pitch-deck.pdf")).toBeInTheDocument();
     expect(screen.getByLabelText(/remove pitch-deck\.pdf/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/reindex pitch-deck\.pdf/i)).toBeInTheDocument();
+  });
+});
+
+// covan#45: an empty workspace is the one screen where the product looks like a
+// chat window, and the reason is that nobody has told it anything yet. "No
+// bundles yet" is true and useless — there is a specific answer to "what now".
+describe("a workspace with nothing in it", () => {
+  beforeEach(withNothing);
+
+  it("tells a member what to upload first, instead of that there is nothing", async () => {
+    await renderTab(true);
+
+    expect(screen.getByText("Start with four files")).toBeInTheDocument();
+    expect(screen.getByText("The handbook")).toBeInTheDocument();
+    expect(screen.getByText("The answer you have typed twice")).toBeInTheDocument();
+    expect(screen.queryByText("No bundles yet")).not.toBeInTheDocument();
+  });
+
+  it("gives a viewer the plain empty state, because they cannot act on the list", async () => {
+    // A checklist you are not allowed to complete is worse than a blank: it
+    // reads as your job until you try, and the upload control is not there.
+    await renderTab(false);
+
+    expect(screen.getByText("No bundles yet")).toBeInTheDocument();
+    expect(screen.queryByText("Start with four files")).not.toBeInTheDocument();
+  });
+});
+
+// The neighbouring answer to the same question, for the team that does not have
+// the four files above either. "Start with four files" names documents you
+// already wrote; this names six you can fill in when you have written none.
+describe("the starter templates on the Knowledge tab", () => {
+  beforeEach(withKnowledge);
+
+  it("opens itself for the agent that has nothing yet", async () => {
+    const documents = store.agents[0].documents;
+    store.agents[0].documents = [];
+    try {
+      await renderTab(true);
+
+      expect(screen.getByLabelText(/download company-overview\.md/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/download faq\.md/i)).toBeInTheDocument();
+    } finally {
+      store.agents[0].documents = documents;
+    }
+  });
+
+  it("collapses once there are real documents, rather than competing with them", async () => {
+    await renderTab(true);
+
+    expect(screen.queryByLabelText(/download company-overview\.md/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show the six templates/i })).toBeInTheDocument();
+  });
+
+  it("is not offered to a viewer, who could not upload the result", async () => {
+    await renderTab(false);
+
+    expect(screen.queryByText(/nothing to upload yet/i)).not.toBeInTheDocument();
   });
 });

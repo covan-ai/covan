@@ -1,29 +1,36 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { BrandMark } from "@/components/brand-mark";
-import { PageContainer, Headline } from "@/components/page-container";
+import { PageContainer, Headline, type PageWidth } from "@/components/page-container";
 
 /**
  * The frame for a document somebody has to be able to read before they have an
  * account — so no AppShell, whose sidebar assumes a session and a workspace.
  *
  * `form` width rather than `list`: these are paragraphs, and a measure that
- * suits a table of members is too wide to read prose in.
+ * suits a table of members is too wide to read prose in. `width` exists for the
+ * exception — a legal page whose substance is a table rather than prose, where
+ * the reading measure is the wrong constraint. Prose stays at `form`.
  */
 export function LegalLayout({
   title,
   updated,
+  width = "form",
   children,
 }: {
   title: string;
   /** When the text last changed. Written as prose, e.g. "August 2026". */
   updated: string;
+  /** Prose measure by default; widen only for a page that is genuinely tabular. */
+  width?: PageWidth;
   children: ReactNode;
 }) {
+  const header = width === "form" ? "max-w-2xl" : "max-w-4xl";
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border">
-        <div className="mx-auto flex h-16 max-w-2xl items-center justify-between px-5 lg:px-8">
+        <div className={`mx-auto flex h-16 items-center justify-between px-5 lg:px-8 ${header}`}>
           <Link to="/" className="flex items-center gap-2.5">
             <BrandMark />
             <span className="font-dm text-lg font-semibold leading-none tracking-[-0.02em]">
@@ -39,7 +46,7 @@ export function LegalLayout({
         </div>
       </header>
 
-      <PageContainer width="form">
+      <PageContainer width={width}>
         <Headline as="h1">{title}</Headline>
         <p className="mt-3 text-sm text-muted-foreground">Last updated {updated}</p>
         <div className="mt-12 space-y-10">{children}</div>

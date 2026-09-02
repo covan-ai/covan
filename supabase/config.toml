@@ -160,7 +160,16 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+# The two paths are the pages that report what a link did: sign-up asks GoTrue to send the
+# confirmation link to /confirmed, and the reset mail lands on /reset-password. An address missing
+# from this list does not fail — GoTrue quietly falls back to site_url, which is the front door and
+# says nothing about the click that led there. Hosted projects keep the same list under
+# Authentication → URL Configuration → Redirect URLs; see docs/self-hosting.md.
+additional_redirect_urls = [
+  "https://127.0.0.1:3000",
+  "http://127.0.0.1:3000/confirmed",
+  "http://127.0.0.1:3000/reset-password",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

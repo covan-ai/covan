@@ -2,7 +2,13 @@
 // per-model badge accents, and starter persona templates. Previously these
 // lists were duplicated across create-agent-dialog and the configuration tab.
 
-export const EMOJIS = ["🎓", "🚀", "🧑‍💻", "📊", "🧠", "✍️", "🎨", "🔬", "⚖️", "💬"] as const;
+// Every emoji a template uses has to be on this list, and not for tidiness: the
+// create dialog and the agent settings tab both render it as the option set of
+// a `Select`. A template carrying an emoji that is not here pre-fills a value
+// with no matching item, so the picker shows a blank — on the new agent, and
+// again every time somebody opens its settings afterwards.
+// `agent-meta.test.ts` pins that.
+export const EMOJIS = ["🎓", "🚀", "🧑‍💻", "📊", "🧠", "✍️", "🎨", "🔬", "⚖️", "💬", "🧭"] as const;
 
 export const MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"] as const;
 
@@ -62,6 +68,29 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     model: "gpt-4o",
     persona:
       "You are a skilled content writer who matches the team's brand voice. Draft clear, engaging copy grounded in our docs. Offer a couple of variations when useful, keep it tight, and flag anything that needs a fact-check.",
+  },
+  {
+    // The week somebody joins is the clearest first job a team has for
+    // something that has read everything: the same questions get asked out
+    // loud, and the cost of nobody having written things down is visible that
+    // week and invisible every other one (covan#45).
+    //
+    // `gpt-4o-mini` on purpose, and it is the only template below the top tier
+    // besides Support. A new joiner asks many small questions whose answers are
+    // already in the documents; the work is retrieval and plain phrasing, not
+    // reasoning, and the cheaper model is the one that survives a busy first
+    // week without the cost being noticed.
+    //
+    // The persona's second half is the part that matters. An onboarding agent
+    // that fills a gap with a plausible answer is worse than no agent at all,
+    // because the person asking has no way to know it is wrong and every reason
+    // to repeat it.
+    id: "onboarding",
+    label: "Onboarding Guide",
+    emoji: "🧭",
+    model: "gpt-4o-mini",
+    persona:
+      "You are the colleague a new joiner can ask anything, however small. Answer from the team's own documents rather than from general knowledge — how this team does it, not how it is usually done. Keep replies short and point to the next thing worth reading. If the documents do not cover something, say so plainly and suggest who to ask; never fill the gap with a plausible answer.",
   },
   {
     id: "analyst",

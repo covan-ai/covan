@@ -22,19 +22,30 @@ browser. Any path that leaks it is critical.
 
 ## Already known
 
-One thing in the policies looks like a finding and is a documented limitation,
-so you can save yourself the write-up: the owner branch of the select policy on
-`chat_sessions` tests `user_id = auth.uid()` with no membership condition beside
-it. A person removed from a workspace therefore keeps their own sessions from
-it — the list stops showing them, but somebody holding a session id can still
-read the transcript back. They cannot get new answers; the reply path loads the
-agent first and that read is membership-gated.
+This section used to describe a real weakness: the owner branch of the select
+policy on `chat_sessions` tested `user_id = auth.uid()` with no membership
+condition beside it, so a person removed from a workspace kept their own
+transcripts from it and could read one back by id.
 
-[What removal leaves behind](docs/team.md#what-removal-leaves-behind) covers
-this and the rest of what outlives a membership. It is a product decision that
-has not been made yet, not an oversight — reports are still welcome if you find
-a consequence of it we have not written down, and especially if you find a way
-to reach anything that was _not_ already theirs.
+**That is closed.** `0031_access_follows_membership.sql` rewrote eleven policies
+across `chat_sessions`, `messages` and `ideas` so membership is checked
+unconditionally and ownership only decides which member sees the row. A
+conversation in a workspace somebody has left is now refused however they come
+at it — the list, a bookmarked id, an open tab, or a request straight to
+PostgREST. `tests/rls/membership.test.ts` asserts it in both directions.
+
+One thing on the same shape deliberately remains, so you can save yourself the
+write-up: `routines_select_visible` keeps the plain owner branch. A departed
+member can still read their own routine rows. That is the point — the executor
+re-checks membership before every run and pauses the routine with a recorded
+reason, and that reason is the only explanation its owner will ever get. The row
+holds their own instruction; `routine_runs` records counts and status, never
+content.
+
+[What removal leaves behind](docs/team.md#what-removal-leaves-behind) covers the
+rest of what outlives a membership, and [Security](docs/security.md) is the
+whole model in one page. Reports are welcome for anything that reaches something
+which was _not_ already the reporter's.
 
 ## Self-hosted instances
 

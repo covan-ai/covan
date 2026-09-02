@@ -53,6 +53,19 @@ describe("route files", () => {
   // person passes through exactly once. This walks the source rather than
   // rendering Settings, because the regression to catch is a deletion, and a
   // deleted link fails no render test.
+  // The licence page has no resolver in front of it — `lib/legal.ts` exists so
+  // an operator can redirect Terms and Privacy at documents of their own, and
+  // nobody redirects a licence. So the only thing holding /license reachable is
+  // that two other pages link to it, and the regression is a deletion, which no
+  // render test would catch.
+  it("reaches the licence page from both of the pages that name it", () => {
+    expect(routeFiles()).toContain("license.tsx");
+
+    for (const page of ["terms.tsx", "privacy.tsx"]) {
+      expect(readFileSync(`${ROUTES_DIR}${page}`, "utf8"), page).toContain('to="/license"');
+    }
+  });
+
   it("links to both documents from somewhere inside the signed-in app", () => {
     const authed = routeFiles()
       .filter((f) => f.startsWith("_authed"))

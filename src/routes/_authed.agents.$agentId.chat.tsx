@@ -506,7 +506,7 @@ function ChatTab() {
    * reload — the same shape of bug the sign-in page's Remember me box had.
    *
    * They are not a rating now, because a rating has to be changeable and
-   * `feedback` is deliberately immutable (0039). They open the same box the
+   * `feedback` is deliberately immutable (0040). They open the same box the
    * sidebar opens, with the kind chosen and the answer attached, so what the
    * operator gets is a sentence about a specific reply rather than a tally.
    */

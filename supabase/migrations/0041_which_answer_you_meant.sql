@@ -60,6 +60,6 @@ create policy "feedback_insert_own"
     )
   );
 
--- No new grant: 0039 granted `select, insert` on the table and a column added
+-- No new grant: 0040 granted `select, insert` on the table and a column added
 -- to it inherits that. There is still no update policy, so the column is as
 -- fixed as everything beside it.

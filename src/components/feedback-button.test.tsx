@@ -37,7 +37,7 @@ describe("the feedback button", () => {
 
   /**
    * The dialog claims two things about where this goes, and both have to stay
-   * true of the schema in 0039: only the operator reads it, and no reply is
+   * true of the schema in 0040: only the operator reads it, and no reply is
    * coming. A feedback box that implies a conversation it cannot have is worse
    * than no box.
    */

@@ -247,7 +247,7 @@ container starts, so `docker compose up -d covan-web` is enough.
 
 The sidebar has a **Send feedback** button, and what it writes is addressed to
 you rather than to the workspace. It is the one table in the schema no client
-can read on somebody else's behalf: `0039` gives `feedback` a select policy of
+can read on somebody else's behalf: `0040` gives `feedback` a select policy of
 `user_id = auth.uid()` and no update or delete policy at all, so an author sees
 their own note, an admin sees nothing, and the workspace export does not carry
 it. Nothing in the interface displays it back, to anyone.

@@ -6,7 +6,7 @@ import { getActiveWorkspaceId } from "../lib/workspace";
 const feedback = new Hono<AppEnv>();
 
 /**
- * 4000 is the check constraint on `feedback.message` in 0039. Repeated here on
+ * 4000 is the check constraint on `feedback.message` in 0040. Repeated here on
  * purpose rather than left to Postgres: a body that trips a constraint comes
  * back as a 500 with a message about a relation, and the person who just typed
  * four thousand characters deserves to be told which end to cut.
@@ -23,7 +23,7 @@ const sendSchema = z.object({
   path: z.string().max(2000).optional(),
   /**
    * The reply this is about, when the note started as a thumb under an answer.
-   * A uuid or nothing: 0040 refuses an id the caller cannot read, so what this
+   * A uuid or nothing: 0041 refuses an id the caller cannot read, so what this
    * check buys is a 400 with a reason instead of a 500 from a type error.
    */
   messageId: z.string().uuid().optional(),
@@ -53,7 +53,7 @@ function pathOf(raw: string | undefined): string | null {
 
 // POST /feedback — one paragraph, addressed to whoever runs this install.
 //
-// Written through the caller's own client, so 0039's insert policy is what
+// Written through the caller's own client, so 0040's insert policy is what
 // enforces "your own name, your own workspace". `user_id` comes from the
 // verified token and `workspace_id` is resolved here rather than accepted from
 // the body: neither is something the client should get to choose, and the

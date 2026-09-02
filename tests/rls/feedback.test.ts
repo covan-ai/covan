@@ -6,7 +6,7 @@ import { seedWorkspace, type Seeded } from "./fixtures";
 /*
  * Who may write feedback, and who may read it.
  *
- * `0039` adds the one table in this schema that is addressed to the operator
+ * `0040` adds the one table in this schema that is addressed to the operator
  * rather than to the workspace, and that inverts the usual question. Everywhere
  * else, "can a fellow member see this?" is the thing to get right and the
  * answer is usually yes. Here the answer has to be no — including for an admin.
@@ -127,7 +127,7 @@ describe("feedback", () => {
   });
 
   /**
-   * `0040` lets a note point at the reply it is about, which is what the chat's
+   * `0041` lets a note point at the reply it is about, which is what the chat's
    * thumbs send. The operator reads that column as "the answer they were
    * looking at", so an id the sender could not have seen would make the
    * sentence false.

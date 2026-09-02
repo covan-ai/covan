@@ -27,7 +27,7 @@ import { api, type FeedbackKind } from "@/lib/api-client";
  * the box there: an accidental Escape should not eat what somebody wrote, and
  * neither should a failed send.
  *
- * Two promises it makes, both of which the schema keeps (0039): the operator is
+ * Two promises it makes, both of which the schema keeps (0040): the operator is
  * the only reader, and no reply is coming. The second is worth being blunt
  * about — there is no ticket and no inbox behind this, and a box that implies a
  * conversation it cannot have is worse than no box.

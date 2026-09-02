@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Textarea } from "@/components/ui/textarea";
 import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
-import { api, getAccessToken } from "@/lib/api-client";
+import { api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
@@ -32,6 +32,7 @@ import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
 import { SourceChip } from "@/components/source-chip";
+import { FeedbackDialog } from "@/components/feedback-dialog";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
   component: ChatTab,
@@ -490,22 +491,26 @@ function ChatTab() {
     await streamReply(active.id);
   };
 
-  const [feedback, setFeedback] = useState<Record<string, "up" | "down">>({});
   const copyMessage = (content: string) => {
     navigator.clipboard?.writeText(content).then(
       () => toast.success("Copied to clipboard"),
       () => toast.error("Couldn't copy"),
     );
   };
-  const rate = (id: string, v: "up" | "down") => {
-    setFeedback((prev) => {
-      const next = { ...prev };
-      if (next[id] === v) delete next[id];
-      else next[id] = v;
-      return next;
-    });
-    toast.success(v === "up" ? "Thanks for the feedback" : "Feedback noted");
-  };
+
+  /**
+   * Which answer somebody is writing about, and which thumb opened the box.
+   *
+   * These two buttons used to be a `useState` map and a toast that said "Thanks
+   * for the feedback". Nothing was stored, nothing read it, and it was gone on
+   * reload — the same shape of bug the sign-in page's Remember me box had.
+   *
+   * They are not a rating now, because a rating has to be changeable and
+   * `feedback` is deliberately immutable (0039). They open the same box the
+   * sidebar opens, with the kind chosen and the answer attached, so what the
+   * operator gets is a sentence about a specific reply rather than a tally.
+   */
+  const [rating, setRating] = useState<{ messageId: string; kind: FeedbackKind } | null>(null);
 
   const isEmpty = !active || messages.length === 0;
 
@@ -705,7 +710,6 @@ function ChatTab() {
                   );
                 }
                 const sources = m.sources ?? [];
-                const fb = feedback[m.id];
                 const prevUser = idx > 0 && arr[idx - 1].role === "user" ? arr[idx - 1] : null;
                 const isLast = idx === arr.length - 1;
                 return (
@@ -741,16 +745,14 @@ function ChatTab() {
                           <Copy className="h-3.5 w-3.5" />
                         </MsgAction>
                         <MsgAction
-                          label="Good response"
-                          active={fb === "up"}
-                          onClick={() => rate(m.id, "up")}
+                          label="This answer was good — say why"
+                          onClick={() => setRating({ messageId: m.id, kind: "other" })}
                         >
                           <ThumbsUp className="h-3.5 w-3.5" />
                         </MsgAction>
                         <MsgAction
-                          label="Bad response"
-                          active={fb === "down"}
-                          onClick={() => rate(m.id, "down")}
+                          label="Something's wrong with this answer"
+                          onClick={() => setRating({ messageId: m.id, kind: "problem" })}
                         >
                           <ThumbsDown className="h-3.5 w-3.5" />
                         </MsgAction>
@@ -874,6 +876,21 @@ function ChatTab() {
           </p>
         </div>
       </div>
+
+      {/* Inside the pane so both layouts get it — the brainstorm view returns a
+          split panel around this same variable. Radix portals it either way. */}
+      <FeedbackDialog
+        // Remounts per answer, so a note started under one reply cannot appear
+        // under the next one.
+        key={rating?.messageId ?? "none"}
+        open={rating !== null}
+        onOpenChange={(next) => {
+          if (!next) setRating(null);
+        }}
+        path={`/agents/${agentId}/chat`}
+        about={rating ? { messageId: rating.messageId, label: `${agent.name}'s answer` } : null}
+        initialKind={rating?.kind ?? null}
+      />
     </section>
   );
 

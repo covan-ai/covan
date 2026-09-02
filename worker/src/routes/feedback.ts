@@ -21,6 +21,12 @@ const sendSchema = z.object({
     .pipe(z.string().min(1).max(MAX_MESSAGE)),
   kind: z.enum(["problem", "idea", "other"]).optional(),
   path: z.string().max(2000).optional(),
+  /**
+   * The reply this is about, when the note started as a thumb under an answer.
+   * A uuid or nothing: 0040 refuses an id the caller cannot read, so what this
+   * check buys is a 400 with a reason instead of a 500 from a type error.
+   */
+  messageId: z.string().uuid().optional(),
 });
 
 /**
@@ -60,7 +66,7 @@ feedback.post("/feedback", async (c) => {
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
-  const { message, kind, path } = parsed.data;
+  const { message, kind, path, messageId } = parsed.data;
 
   // Null is a normal answer, not a failure: somebody mid-onboarding, or who
   // has just left their last workspace, still has something to say.
@@ -74,6 +80,7 @@ feedback.post("/feedback", async (c) => {
       kind: kind ?? "other",
       message,
       path: pathOf(path),
+      message_id: messageId ?? null,
     })
     .select("id, created_at")
     .single();

@@ -72,10 +72,11 @@ function PrivacyPage() {
           </LegalItem>
           <LegalItem>
             <strong className="font-medium text-foreground">Feedback you send</strong> — what you
-            typed, which of the three kinds you picked, and the path of the page you were on, which
-            the dialog shows you before it sends. Readable by whoever runs the install and by nobody
-            in your workspace, including an admin — enforced in the database. There is no reply
-            channel: it is a note, not a ticket.
+            typed, which of the three kinds you picked, the path of the page you were on, and, when
+            you started from a thumb under a reply, which reply it was. The dialog names both before
+            it sends. Readable by whoever runs the install and by nobody in your workspace,
+            including an admin — enforced in the database. There is no reply channel: it is a note,
+            not a ticket.
           </LegalItem>
         </LegalList>
       </LegalSection>

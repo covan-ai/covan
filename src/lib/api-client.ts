@@ -498,6 +498,11 @@ export type FeedbackDraft = {
   kind?: FeedbackKind;
   /** The page they were on. A path, never a full URL — see the route. */
   path?: string;
+  /**
+   * The reply this is about, when the note started as a thumb under an answer.
+   * 0040 refuses an id the sender could not read.
+   */
+  messageId?: string;
 };
 
 /**

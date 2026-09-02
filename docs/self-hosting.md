@@ -256,13 +256,20 @@ That means you read it from the database, and there is no inbox behind the
 button:
 
 ```sql
-select f.created_at, f.kind, f.path, u.email, w.name as workspace, f.message
+select f.created_at, f.kind, f.path, u.email, w.name as workspace,
+       f.message, m.content as answer_it_is_about
 from public.feedback f
 left join auth.users u on u.id = f.user_id
 left join public.workspaces w on w.id = f.workspace_id
+left join public.messages m on m.id = f.message_id
 order by f.created_at desc
 limit 50;
 ```
+
+`answer_it_is_about` is filled in when the note started as a thumb under a reply
+in the chat rather than from the sidebar. It is null for feedback about the
+product at large, and null again once that conversation is deleted — the note
+survives, the reply does not.
 
 For the Docker stack: `docker compose exec db psql -U postgres -f -` with that
 query, or point any client at port 54322. On hosted Supabase it is the SQL

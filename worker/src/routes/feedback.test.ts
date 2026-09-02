@@ -190,6 +190,41 @@ describe("POST /feedback", () => {
     expect(inserted[0].path).toBe("/agents/abc");
   });
 
+  /**
+   * The reply a thumb was pressed under. The policy in 0040 refuses an id the
+   * caller cannot read, so this is context rather than a claim the route has
+   * to check — but it does have to arrive.
+   */
+  it("carries the answer the feedback is about", async () => {
+    const { db, inserted } = fakeDb();
+
+    await post(db, {
+      message: "this answer invented a refund window",
+      kind: "problem",
+      messageId: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+    });
+
+    expect(inserted[0].message_id).toBe("3f2504e0-4f89-11d3-9a0c-0305e82c3301");
+  });
+
+  it("files feedback about nothing in particular with no answer attached", async () => {
+    const { db, inserted } = fakeDb();
+
+    await post(db, { message: "the sidebar is cramped" });
+
+    expect(inserted[0].message_id).toBeNull();
+  });
+
+  // A message id is a uuid or it is a mistake. Letting anything else through
+  // would reach Postgres as a type error and come back as a 500.
+  it("refuses an answer id that is not one", async () => {
+    const { db } = fakeDb();
+
+    const res = await post(db, { message: "hello", messageId: "not-a-uuid" });
+
+    expect(res.status).toBe(400);
+  });
+
   it("reports a write that did not happen", async () => {
     const { db } = fakeDb({ insertError: "permission denied" });
 

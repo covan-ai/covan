@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { closeSql, createTestUser, destroyTestUsers, type TestUser } from "./harness";
+import { seedWorkspace, type Seeded } from "./fixtures";
 
 /*
  * Who may write feedback, and who may read it.
@@ -22,10 +23,14 @@ import { closeSql, createTestUser, destroyTestUsers, type TestUser } from "./har
 
 let alice: TestUser;
 let bob: TestUser;
+let aliceContent: Seeded;
+let bobContent: Seeded;
 
 beforeAll(async () => {
   alice = await createTestUser("feedback-alice");
   bob = await createTestUser("feedback-bob");
+  aliceContent = await seedWorkspace(alice);
+  bobContent = await seedWorkspace(bob);
 });
 
 afterAll(async () => {
@@ -119,6 +124,28 @@ describe("feedback", () => {
       .maybeSingle();
 
     expect(data?.message).toBe("as written");
+  });
+
+  /**
+   * `0040` lets a note point at the reply it is about, which is what the chat's
+   * thumbs send. The operator reads that column as "the answer they were
+   * looking at", so an id the sender could not have seen would make the
+   * sentence false.
+   */
+  it("lets a note point at an answer the sender can see", async () => {
+    const { error } = await alice.db
+      .from("feedback")
+      .insert({ message: "this answer was wrong", message_id: aliceContent.messageId });
+
+    expect(error).toBeNull();
+  });
+
+  it("refuses a note pointing at an answer in somebody else's conversation", async () => {
+    const { error } = await alice.db
+      .from("feedback")
+      .insert({ message: "about a reply I cannot read", message_id: bobContent.messageId });
+
+    expect(error).not.toBeNull();
   });
 
   it("offers no way to delete it from the app", async () => {

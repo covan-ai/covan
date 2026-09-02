@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase/client";
+import { readSession } from "./supabase/session";
 
 /**
  * Whether there is somebody signed in, as a fact a query can be gated on.
@@ -22,14 +23,23 @@ export function useHasSession(): boolean | undefined {
   useEffect(() => {
     let active = true;
 
-    void supabase.auth.getSession().then(({ data }) => {
-      if (active) setHasSession(Boolean(data.session));
+    void readSession().then((answer) => {
+      if (!active) return;
+      // A lookup that could not complete stays `undefined`. `false` would empty
+      // a signed-in person's sidebar over a network blip, and nothing here
+      // re-asks — the answer that arrives with the next auth event is what
+      // corrects it. See readSession for what the third answer means.
+      if (answer.kind === "unknown") return;
+      setHasSession(answer.kind === "session");
     });
 
     // Covers signing in, signing out, and the token refresh that would
-    // otherwise leave a signed-in page gated on a stale `false`.
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active) setHasSession(Boolean(session));
+    // otherwise leave a signed-in page gated on a stale `false`. INITIAL_SESSION
+    // is skipped because it carries a null on exactly the failed lookup above,
+    // and the lookup is the one that can tell that apart from a real absence.
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active || event === "INITIAL_SESSION") return;
+      setHasSession(Boolean(session));
     });
 
     return () => {

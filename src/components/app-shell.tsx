@@ -50,6 +50,7 @@ import { useAgentsStore } from "@/lib/agents-store";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { DOCS_HOME } from "@/lib/docs";
 import { IncomingInvitesBanner } from "@/components/incoming-invites-banner";
+import { FeedbackButton } from "@/components/feedback-button";
 
 const nav = [
   { to: "/app", label: "Home", icon: LayoutGrid },
@@ -176,7 +177,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <RecentRail onNavigate={() => setOpen(false)} />
 
-        <div className="mt-auto border-t border-sidebar-border p-4">
+        <div className="mt-auto space-y-1 border-t border-sidebar-border p-4">
+          {/* Above the account menu rather than inside it. Somebody who has
+              just hit a problem should not have to guess that the way to say
+              so is behind their own name. */}
+          <FeedbackButton path={pathname} onOpen={() => setOpen(false)} />
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex w-full items-center gap-3 rounded-md p-2 text-left transition-colors duration-200 hover:bg-sidebar-accent/60">

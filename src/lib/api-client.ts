@@ -478,6 +478,17 @@ export const api = {
       request("PATCH", "/onboarding", patch),
     complete: (): Promise<{ completed: true }> => request("POST", "/onboarding/complete"),
   },
+  feedback: {
+    /**
+     * One paragraph, addressed to whoever runs this install.
+     *
+     * Write-only from the client's side, and there is no `list` here on
+     * purpose: nothing in the interface shows feedback back, because there is
+     * nobody in the interface it would be right to show it to. See 0040.
+     */
+    send: (input: FeedbackDraft): Promise<{ id: string; createdAt: number }> =>
+      request("POST", "/feedback", input),
+  },
   trash: {
     /** 403 for a viewer, deliberately — an empty list would say the wrong thing. */
     list: (): Promise<TrashListing> => request("GET", "/trash"),
@@ -499,6 +510,20 @@ export const api = {
       return request("GET", `/events${suffix ? `?${suffix}` : ""}`);
     },
   },
+};
+
+export type FeedbackKind = "problem" | "idea" | "other";
+
+export type FeedbackDraft = {
+  message: string;
+  kind?: FeedbackKind;
+  /** The page they were on. A path, never a full URL — see the route. */
+  path?: string;
+  /**
+   * The reply this is about, when the note started as a thumb under an answer.
+   * 0041 refuses an id the sender could not read.
+   */
+  messageId?: string;
 };
 
 export type TrashKind = "agent" | "bundle" | "document";

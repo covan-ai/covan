@@ -220,6 +220,14 @@ says nothing about anything else.
 preferences. `PATCH /onboarding` and `POST /onboarding/complete` back the first
 run.
 
+`POST /feedback` takes `{ "message": "...", "kind": "problem" | "idea" |
+"other", "path": "/app", "messageId": "<uuid>" }` and answers `201` with the id.
+`messageId` names the reply the note is about and is refused if it is one you
+could not read. Write-only: there is
+no endpoint that reads feedback back, because it is addressed to whoever runs
+the install rather than to the workspace. `path` is reduced to a path before it
+is stored, so a full URL loses its query string.
+
 ## Keeping a key safe
 
 A key is a password that does not expire and cannot be seen twice. Treat it that

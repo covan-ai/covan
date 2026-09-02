@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Textarea } from "@/components/ui/textarea";
 import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
-import { ApiError, api, getAccessToken } from "@/lib/api-client";
+import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
@@ -34,6 +34,7 @@ import { startersFor } from "@/lib/chat-starters";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { mergeRealtimeMessage, optimisticId } from "@/lib/chat-messages";
 import { SourceChip } from "@/components/source-chip";
+import { FeedbackDialog } from "@/components/feedback-dialog";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
   component: ChatTab,
@@ -570,27 +571,26 @@ function ChatTab() {
     await streamReply(active.id);
   };
 
-  const [feedback, setFeedback] = useState<Record<string, "up" | "down">>({});
   const copyMessage = (content: string) => {
     navigator.clipboard?.writeText(content).then(
       () => toast.success("Copied to clipboard"),
       () => toast.error("Couldn't copy"),
     );
   };
-  // A mark on a reply, and nothing more: nothing stores it, no endpoint
-  // receives it, and it is gone the moment this component unmounts. It used to
-  // answer with "Thanks for the feedback" — a sentence about somebody having
-  // received something, when nobody had. The highlighted thumb is the whole of
-  // what happens, so it is now the whole of what is claimed. Wiring it to a
-  // real store is a feature, not a fix, and needs a table to put it in.
-  const rate = (id: string, v: "up" | "down") => {
-    setFeedback((prev) => {
-      const next = { ...prev };
-      if (next[id] === v) delete next[id];
-      else next[id] = v;
-      return next;
-    });
-  };
+
+  /**
+   * Which answer somebody is writing about, and which thumb opened the box.
+   *
+   * These two buttons used to be a `useState` map and a toast that said "Thanks
+   * for the feedback". Nothing was stored, nothing read it, and it was gone on
+   * reload — the same shape of bug the sign-in page's Remember me box had.
+   *
+   * They are not a rating now, because a rating has to be changeable and
+   * `feedback` is deliberately immutable (0040). They open the same box the
+   * sidebar opens, with the kind chosen and the answer attached, so what the
+   * operator gets is a sentence about a specific reply rather than a tally.
+   */
+  const [rating, setRating] = useState<{ messageId: string; kind: FeedbackKind } | null>(null);
 
   const isEmpty = !active || messages.length === 0;
 
@@ -790,7 +790,6 @@ function ChatTab() {
                   );
                 }
                 const sources = m.sources ?? [];
-                const fb = feedback[m.id];
                 const prevUser = idx > 0 && arr[idx - 1].role === "user" ? arr[idx - 1] : null;
                 const isLast = idx === arr.length - 1;
                 return (
@@ -826,16 +825,14 @@ function ChatTab() {
                           <Copy className="h-3.5 w-3.5" />
                         </MsgAction>
                         <MsgAction
-                          label="Good response"
-                          active={fb === "up"}
-                          onClick={() => rate(m.id, "up")}
+                          label="This answer was good — say why"
+                          onClick={() => setRating({ messageId: m.id, kind: "other" })}
                         >
                           <ThumbsUp className="h-3.5 w-3.5" />
                         </MsgAction>
                         <MsgAction
-                          label="Bad response"
-                          active={fb === "down"}
-                          onClick={() => rate(m.id, "down")}
+                          label="Something's wrong with this answer"
+                          onClick={() => setRating({ messageId: m.id, kind: "problem" })}
                         >
                           <ThumbsDown className="h-3.5 w-3.5" />
                         </MsgAction>
@@ -978,6 +975,21 @@ function ChatTab() {
           </p>
         </div>
       </div>
+
+      {/* Inside the pane so both layouts get it — the brainstorm view returns a
+          split panel around this same variable. Radix portals it either way. */}
+      <FeedbackDialog
+        // Remounts per answer, so a note started under one reply cannot appear
+        // under the next one.
+        key={rating?.messageId ?? "none"}
+        open={rating !== null}
+        onOpenChange={(next) => {
+          if (!next) setRating(null);
+        }}
+        path={`/agents/${agentId}/chat`}
+        about={rating ? { messageId: rating.messageId, label: `${agent.name}'s answer` } : null}
+        initialKind={rating?.kind ?? null}
+      />
     </section>
   );
 

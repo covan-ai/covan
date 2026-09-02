@@ -243,6 +243,50 @@ default this repository could ship would be. Point `VITE_TERMS_URL` and
 stop being linked. Like the other `VITE_` values they are applied when the
 container starts, so `docker compose up -d covan-web` is enough.
 
+## Reading the feedback people send you
+
+The sidebar has a **Send feedback** button, and what it writes is addressed to
+you rather than to the workspace. It is the one table in the schema no client
+can read on somebody else's behalf: `0040` gives `feedback` a select policy of
+`user_id = auth.uid()` and no update or delete policy at all, so an author sees
+their own note, an admin sees nothing, and the workspace export does not carry
+it. Nothing in the interface displays it back, to anyone.
+
+That means you read it from the database, and there is no inbox behind the
+button:
+
+```sql
+select f.created_at, f.kind, f.path, u.email, w.name as workspace,
+       f.message, m.content as answer_it_is_about
+from public.feedback f
+left join auth.users u on u.id = f.user_id
+left join public.workspaces w on w.id = f.workspace_id
+left join public.messages m on m.id = f.message_id
+order by f.created_at desc
+limit 50;
+```
+
+`answer_it_is_about` is filled in when the note started as a thumb under a reply
+in the chat rather than from the sidebar. It is null for feedback about the
+product at large, and null again once that conversation is deleted — the note
+survives, the reply does not.
+
+For the Docker stack: `docker compose exec db psql -U postgres -f -` with that
+query, or point any client at port 54322. On hosted Supabase it is the SQL
+editor.
+
+**The dialog promises two things, and they are yours to keep.** It says the
+note reaches whoever runs this Covan, and it says no reply is coming. The first
+is only true if you run that query; a button that records into a table nobody
+opens is worse than no button, because it spends the goodwill of somebody who
+took the trouble to write. The second is honest by construction — there is no
+reply address on the row and the sender cannot be answered through the product —
+but the email column above is there if you want to write back yourself.
+
+Closing an account deletes that person's feedback with it (`on delete cascade`),
+which is the same treatment their conversations get. If a report matters beyond
+the account that filed it, copy it somewhere before that happens.
+
 ## Uploaded documents
 
 `covan-api` has no Cloudflare R2 binding, so `getDocStore()` falls back to the

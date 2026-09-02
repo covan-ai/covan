@@ -26,6 +26,7 @@ import { onboarding } from "./routes/onboarding";
 import { apiKeys } from "./routes/api-keys";
 import { account } from "./routes/account";
 import { exportRoutes } from "./routes/export";
+import { feedback } from "./routes/feedback";
 import { trash } from "./routes/trash";
 import { events } from "./routes/events";
 import { runPurge } from "./lib/purge";
@@ -144,6 +145,7 @@ api.route("/", onboarding);
 api.route("/", apiKeys);
 api.route("/", account);
 api.route("/", exportRoutes);
+api.route("/", feedback);
 api.route("/", trash);
 api.route("/", events);
 

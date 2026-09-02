@@ -153,6 +153,8 @@ export const EXCLUDED: Record<string, string> = {
     "a person's setting, not a workspace's. It follows the account rather than the room, and the account is not what is being exported.",
   user_onboarding:
     "the same, and about a first run that has already happened. It would mean nothing in a new install.",
+  feedback:
+    "addressed to the operator, not to the workspace. 0040 keeps it unreadable by anybody but its author for a reason — a note saying what is broken must not be readable by the colleague it is about — and a workspace archive is precisely the thing an admin downloads. Carrying it here would undo the policy through the back door.",
   workspace_events:
     "a record of this install rather than of the work. It says who deleted what and who changed whose role, which is exactly the sort of thing an archive should not carry into somewhere else — and half its rows point at ids the archive deliberately does not contain, because the things they name were deleted. Admins read it in place, on the Team screen, which is where the question it answers gets asked.",
 };

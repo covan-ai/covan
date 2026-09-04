@@ -148,7 +148,7 @@ does nothing: the Compose stack passes an explicit list of variables to
 `ADMIN_API_KEY: ${ADMIN_API_KEY:-}` to that service's `environment:` block
 first.
 
-### Offering Anthropic's models as well
+### Offering the Anthropic models as well
 
 Covan ships two provider lists. OpenAI's is always there, because
 `OPENAI_API_KEY` is required and embeddings and voice notes go through it
@@ -589,8 +589,8 @@ bunx wrangler secret put SUPABASE_JWT_SECRET
 ```
 
 Add `bunx wrangler secret put ANTHROPIC_API_KEY` if you want the Claude models
-in the picker. It is genuinely optional — see [Offering Anthropic's models as
-well](#offering-anthropics-models-as-well) — and the deployment works without it.
+in the picker. It is genuinely optional — see [Offering the Anthropic models as
+well](#offering-the-anthropic-models-as-well) — and the deployment works without it.
 
 `ROUTINE_SECRET_KEY` must decode to 16, 24 or 32 bytes — `openssl rand -base64
 32`. The two `RESEND_*` values cover the two things Covan emails: routine

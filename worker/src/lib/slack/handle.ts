@@ -10,6 +10,7 @@ import { resolveModel } from "../models";
 import { createOpenAI } from "../openai";
 import { decryptSecret } from "../secret-box";
 import { lookupEmail, postMessage } from "./api";
+import { toMrkdwn } from "./mrkdwn";
 
 /**
  * A question asked in Slack, answered by the agent, in the thread.
@@ -273,7 +274,12 @@ export async function handleSlackEvent(
   // answer the person paid for and never saw.
   if (replyError) console.error("slack: failed to record the answer", replyError);
 
-  await say(withCitations(answer, retrieval.sources));
+  // The model writes Markdown, because every other surface in Covan renders
+  // Markdown. Slack does not: `text` is mrkdwn, a different language, and an
+  // answer posted straight into it arrives with its own asterisks and brackets
+  // showing. The citation line below has always been mrkdwn — `_From: …_` — and
+  // that is the tell that the answer above it never was.
+  await say(withCitations(toMrkdwn(answer), retrieval.sources));
 }
 
 /**

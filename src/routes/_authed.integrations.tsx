@@ -1,13 +1,14 @@
 import { useEffect } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Code2, MessageSquare } from "lucide-react";
+import { Code2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PageContainer, PageHeader, SectionHeading } from "@/components/page-container";
 import { Chip, EmptyState, SectionCard } from "@/components/section-card";
 import { DocsLink } from "@/components/docs-link";
 import { ConnectionCard, ConnectSourceCard } from "@/components/integrations/connection-card";
 import { SlackCard } from "@/components/integrations/slack-card";
+import { SlackMark } from "@/components/integrations/brand-marks";
 import { useConnections, useSlack } from "@/hooks/use-connections";
 import { useAgentsStore } from "@/lib/agents-store";
 import { connectErrorMessage } from "@/lib/connections-api";
@@ -151,7 +152,7 @@ function IntegrationsPage() {
             <SectionCard className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3.5">
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-                  <MessageSquare className="h-[22px] w-[22px]" />
+                  <SlackMark className="h-[22px] w-[22px]" />
                 </span>
                 <span className="flex min-w-0 flex-col gap-[3px]">
                   <span className="font-dm text-[18px] font-medium leading-tight">

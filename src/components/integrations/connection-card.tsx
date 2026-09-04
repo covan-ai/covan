@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactElement } from "react";
 import { toast } from "sonner";
-import { FolderOpen, NotebookPen, RefreshCw, type LucideIcon } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { Connection, ProviderAvailability, ProviderId } from "@/lib/connections-api";
 import type { Bundle } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -20,16 +20,22 @@ import {
   useUpdateConnection,
 } from "@/hooks/use-connections";
 import { DriveFolderDialog } from "./drive-folder-dialog";
+import { GoogleDriveMark, NotionMark } from "./brand-marks";
 
 /**
- * A brand mark lives in a 44px tile — the accent ceiling. lucide 1 dropped its
- * brand icons and this page never wanted them: a folder is a folder and a page
- * is a page, so the icons describe what the source *is* rather than whose logo
- * it wears.
+ * A brand mark lives in a 44px tile — the accent ceiling, and what that tile
+ * was sized for.
+ *
+ * These were descriptive icons — a notebook for Notion, a folder for Drive — on
+ * the reasoning that lucide 1 had dropped its brand icons and a logo would be
+ * the odd entry out. That was true of a list where one row in five wore one.
+ * Every connectable source is a product with a mark somebody recognises, and a
+ * person scanning this page is looking for *Notion*: the fastest way to say
+ * Notion is Notion's own mark.
  */
-export const PROVIDER_ICON: Record<ProviderId, LucideIcon> = {
-  notion: NotebookPen,
-  google_drive: FolderOpen,
+export const PROVIDER_MARK: Record<ProviderId, (props: { className?: string }) => ReactElement> = {
+  notion: NotionMark,
+  google_drive: GoogleDriveMark,
 };
 
 /**
@@ -49,7 +55,7 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
   const update = useUpdateConnection();
   const sync = useSyncConnection();
   const disconnect = useDisconnect();
-  const Icon = PROVIDER_ICON[connection.provider];
+  const Mark = PROVIDER_MARK[connection.provider];
 
   const paused = connection.status === "paused";
 
@@ -58,7 +64,7 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3.5">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-            <Icon className="h-[22px] w-[22px]" />
+            <Mark className="h-[22px] w-[22px]" />
           </span>
           <span className="flex min-w-0 flex-col gap-[3px]">
             <span className="text-[15px] font-medium leading-tight [overflow-wrap:anywhere]">
@@ -208,6 +214,26 @@ const PROVIDER_ENV: Record<ProviderId, string> = {
   google_drive: "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET",
 };
 
+/**
+ * Sources that are built but not being offered yet.
+ *
+ * Drive is here for a reason that is not code: syncing a folder needs
+ * `drive.readonly`, which Google classifies as a *restricted* scope, and an
+ * unverified client shows every person who connects it an "unverified app"
+ * warning and stops working past a hundred of them. Verification means a
+ * third-party security assessment and weeks of waiting, renewed annually. Until
+ * that is done, offering Drive on the hosted product would be selling something
+ * whose first screen tells the buyer not to trust it.
+ *
+ * The card says "Coming soon" and nothing else — the environment variables are
+ * deliberately not named here, unlike the unconfigured case below. A
+ * self-hoster is under no such constraint and can turn Drive on today;
+ * `docs/self-hosting.md` and `docs/integrations.md` are where they read how,
+ * and they are the honest place for it, because "coming soon" is a statement
+ * about this deployment rather than about the software.
+ */
+const SOON = new Set<ProviderId>(["google_drive"]);
+
 const PROVIDER_BLURB: Record<ProviderId, string> = {
   notion: "The pages you tick in Notion's own picker, kept in step with a bundle.",
   google_drive:
@@ -230,14 +256,17 @@ export function ConnectSourceCard({
 }) {
   const [bundleId, setBundleId] = useState<string>("");
   const start = useStartConnection();
-  const Icon = PROVIDER_ICON[provider.id];
+  const Mark = PROVIDER_MARK[provider.id];
+  // Only when it is off. A deployment that has set the credentials has it, so
+  // saying "coming soon" there would be the page contradicting its own buttons.
+  const soon = !provider.configured && SOON.has(provider.id);
 
   return (
     <SectionCard className={`flex flex-col gap-4 ${provider.configured ? "" : "opacity-70"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3.5">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-            <Icon className="h-[22px] w-[22px]" />
+            <Mark className="h-[22px] w-[22px]" />
           </span>
           <span className="flex min-w-0 flex-col gap-[3px]">
             <span className="font-dm text-[18px] font-medium leading-tight">{provider.label}</span>
@@ -246,6 +275,9 @@ export function ConnectSourceCard({
             </span>
           </span>
         </div>
+        {/* Neutral, because grey is this page's word for off, pending and not
+            yet built alike. Amber would claim it does something. */}
+        {soon ? <Chip tone="neutral">Coming soon</Chip> : null}
       </div>
 
       {provider.configured ? (
@@ -277,6 +309,8 @@ export function ConnectSourceCard({
             {start.isPending ? "Opening…" : "Connect"}
           </Button>
         </div>
+      ) : soon ? (
+        <p className="text-[13px] leading-[1.45] text-muted-foreground">Coming soon.</p>
       ) : (
         <p className="text-[13px] leading-[1.45] text-muted-foreground">
           Not configured on this deployment. An operator sets{" "}

@@ -73,6 +73,9 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
       model: resolveModel(agent?.model ?? null, c.env),
       messages: buildIdeaExtractionMessages(transcript),
       json: true,
+      // Distilling a transcript into cards is the same kind of task as the
+      // persona drafter's, and the same ceiling problem without this.
+      reasoningEffort: "minimal",
       maxTokens: 800,
     });
     await recordQuota(c, totalTokens(usage));

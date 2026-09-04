@@ -6,6 +6,7 @@ import {
   extractJsonObject,
   totalTokens,
   DEFAULT_MAX_TOKENS,
+  REASONING_HEADROOM,
   type CompletionEnv,
   type CompletionEvent,
 } from "./completion";
@@ -176,6 +177,63 @@ describe("complete, on OpenAI", () => {
       temperature: 0.9,
     });
     expect(openaiCreate.mock.calls[0][0]).not.toHaveProperty("temperature");
+  });
+
+  describe("a reasoning model's budget", () => {
+    // The regression this exists to stop. A GPT-5 model bills its thinking
+    // against max_completion_tokens, so the persona drafter's 400 was spent
+    // deliberating and the reply came back empty with finish_reason "length" —
+    // an HTTP 200 that every caller here reads as "the model failed".
+
+    it("adds headroom when the caller wants the thinking", async () => {
+      await complete(openaiOnly, {
+        model: "gpt-5",
+        messages: [{ role: "user", content: "Hi" }],
+        maxTokens: 1536,
+      });
+      expect(openaiCreate.mock.calls[0][0].max_completion_tokens).toBe(1536 + REASONING_HEADROOM);
+      expect(openaiCreate.mock.calls[0][0]).not.toHaveProperty("reasoning_effort");
+    });
+
+    it("honours the caller's own number when the task does not want thinking", async () => {
+      await complete(openaiOnly, {
+        model: "gpt-5-mini",
+        messages: [{ role: "user", content: "Hi" }],
+        maxTokens: 400,
+        reasoningEffort: "minimal",
+      });
+      const call = openaiCreate.mock.calls[0][0];
+      expect(call.max_completion_tokens).toBe(400);
+      expect(call.reasoning_effort).toBe("minimal");
+    });
+
+    it("leaves a non-reasoning model's ceiling exactly as asked", async () => {
+      // gpt-4o has nothing to make room for, and inflating its ceiling would be
+      // spending someone's money to fix a problem it does not have.
+      await complete(openaiOnly, {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hi" }],
+        maxTokens: 400,
+      });
+      const call = openaiCreate.mock.calls[0][0];
+      expect(call.max_completion_tokens).toBe(400);
+      expect(call).not.toHaveProperty("reasoning_effort");
+    });
+
+    it("sends no reasoning_effort to a model that has no such setting", async () => {
+      await complete(openaiOnly, {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hi" }],
+        maxTokens: 400,
+        reasoningEffort: "minimal",
+      });
+      expect(openaiCreate.mock.calls[0][0]).not.toHaveProperty("reasoning_effort");
+    });
+
+    it("leaves an uncapped request uncapped rather than inventing a ceiling", async () => {
+      await complete(openaiOnly, { model: "gpt-5", messages: [{ role: "user", content: "Hi" }] });
+      expect(openaiCreate.mock.calls[0][0]).not.toHaveProperty("max_completion_tokens");
+    });
   });
 
   it("keeps it for a model that accepts one", async () => {

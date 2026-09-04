@@ -84,23 +84,55 @@ the grant, Notion shows its own page picker; the integration can afterwards see
 exactly what was ticked there and nothing else. A page un-picked later stops
 appearing and is removed on the next sync.
 
-Pages are imported as Markdown — headings, lists, to-dos, quotes, code and
-tables survive, because that shape is what makes a passage retrievable. Child
-pages are not inlined: they are separate pages in their own right, so inlining
-them would index the same text twice.
+**What is imported.** Pages arrive as Markdown, because the shape is the
+meaning: a heading tells the chunker where a section starts, and a list that
+arrives as one run-on paragraph retrieves worse than the same list with its
+bullets. Headings, lists, to-dos, quotes, callouts, toggles, code, equations and
+tables all keep their shape, and **links keep their targets** — a page whose
+value is thirty links to other things is thirty links here too.
 
-**Limits.** 500 pages per connection, 300 blocks per page, and two levels of
-nesting inside a page. These bound what one sync can cost; a curated set of
-pages is well inside all three.
+**Database rows bring their properties.** Status, owner, dates, tags, a
+one-line summary: in a Notion database that is usually the whole of the row, and
+its page body is empty. They arrive as a short list above the body. Relations
+and rollups are skipped — they are ids and nested aggregates, which no question
+can match.
+
+**Images and files contribute their captions, not their links.** A file stored
+in Notion is served from a signed URL that expires about an hour later, so
+writing one into a document that will be read for months produces a link that
+worked once. Captions are text and last. A caption is worth writing.
+
+Child pages are not inlined: they are separate pages in their own right, so
+inlining them would index the same text twice.
+
+**Limits.** 500 pages per connection, 300 blocks per page, two levels of nesting
+inside a page, and 100 rows of any one table. These bound what one sync can
+cost; a curated set of pages is well inside all four. Multi-column layouts do
+not spend a level of nesting — they are layout, not depth.
 
 ### Setting it up
 
-1. Go to <https://www.notion.so/my-integrations> and create a **public**
-   integration.
-2. Set the redirect URI to `<your API URL>/connections/callback` — for example
+Notion has renamed integrations to **connections** and moved them, twice.
+`notion.so/my-integrations` and `notion.so/profile/integrations` both redirect
+to the current home.
+
+1. Go to <https://app.notion.com/developers/connections>. (In the app it is
+   Settings → Connections, which needs Developer mode and workspace ownership
+   before it appears at all.)
+2. **New connection**, and choose **OAuth** as the authentication method. The
+   default, "Access token", is a static workspace-scoped token for one
+   workspace — Covan has no way to accept one, and the connect button will
+   never complete.
+3. Under **OAuth configuration**, add the redirect URI
+   `<your API URL>/connections/callback` — for example
    `https://api.example.com/connections/callback`, or
-   `http://localhost:8787/connections/callback` for a local stack.
-3. Set `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET`.
+   `http://localhost:8787/connections/callback` for a local stack. It must match
+   byte for byte; Notion compares it again when the code is exchanged.
+4. Choose the installation scope. **This cannot be changed afterwards** — a
+   connection meant for other people's workspaces needs *Any workspace*, and
+   getting it wrong means deleting the connection and starting again.
+5. Set `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET` from the **Configuration**
+   tab. The secret is shown once.
 
 ---
 

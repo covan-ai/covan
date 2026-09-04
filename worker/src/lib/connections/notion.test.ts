@@ -87,6 +87,9 @@ describe("notion provider", () => {
         name: "Handbook.md",
         version: "2026-09-01T10:00:00.000Z",
         url: "https://notion.so/page-1",
+        // Carried so `readFile` can render a database row's properties without
+        // asking for a page `search` has already returned in full.
+        listing: page(),
       },
     ]);
   });
@@ -159,7 +162,11 @@ describe("notion provider", () => {
         "# Handbook",
         "",
         "## Leave",
+        "",
         "Twenty days a year.",
+        "",
+        // Two list items in a row and no blank line between them: a blank line
+        // there ends the list and starts a second one.
         "- Ask in advance",
         "- [x] Sign it",
       ].join("\n"),
@@ -201,7 +208,267 @@ describe("notion provider", () => {
       url: null,
     });
 
-    expect(text).toContain("- Parent\n    - Child");
+    // Two spaces, not four. Four is Markdown's code-block marker, and the
+    // version that used it turned every nested block into a monospaced blob.
+    expect(text).toContain("- Parent\n  - Child");
+  });
+
+  /**
+   * Read one page whose top-level blocks are `blocks`, with `children` keyed by
+   * the parent block id. Every failure below was a real defect: the first
+   * version of this converter read `plain_text` and block types and nothing
+   * else, so links, tables, media and database rows all arrived as either
+   * nothing at all or as a code block.
+   */
+  const readWith = async (
+    blocks: unknown[],
+    children: Record<string, unknown[]> = {},
+    listing?: unknown,
+  ) => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const id = String(input).match(/\/blocks\/([^/]+)\/children/)?.[1] ?? "";
+      if (id === "page-1") return json({ results: blocks, has_more: false });
+      return json({ results: children[id] ?? [], has_more: false });
+    }) as unknown as typeof fetch;
+
+    return notionProvider.readFile(ctx(fetchImpl), {
+      externalId: "page-1",
+      name: "P.md",
+      version: "v1",
+      url: null,
+      ...(listing ? { listing: listing as Record<string, unknown> } : {}),
+    });
+  };
+
+  it("keeps the links, which were the whole value of the page", async () => {
+    const text = await readWith([
+      {
+        id: "b1",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [
+            { plain_text: "See " },
+            { plain_text: "the policy", href: "https://example.com/policy" },
+            { plain_text: " and ", annotations: {} },
+            { plain_text: "ask Ayşe", annotations: { bold: true } },
+          ],
+        },
+      },
+    ]);
+
+    expect(text).toContain("See [the policy](https://example.com/policy) and **ask Ayşe**");
+  });
+
+  it("puts the space outside the markers, where it renders", async () => {
+    // Notion routinely ends a bold run with the trailing space inside it, and
+    // `**bold **` is not bold in any parser.
+    const text = await readWith([
+      {
+        id: "b1",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [
+            { plain_text: "Deadline ", annotations: { bold: true } },
+            { plain_text: "is Friday" },
+          ],
+        },
+      },
+    ]);
+
+    expect(text).toContain("**Deadline** is Friday");
+  });
+
+  it("reads a table as a table, not as a code block", async () => {
+    const text = await readWith(
+      [{ id: "t1", type: "table", table: { has_column_header: true }, has_children: true }],
+      {
+        t1: [
+          {
+            id: "r1",
+            type: "table_row",
+            table_row: { cells: [[{ plain_text: "Plan" }], [{ plain_text: "Seats" }]] },
+          },
+          {
+            id: "r2",
+            type: "table_row",
+            table_row: { cells: [[{ plain_text: "Team" }], [{ plain_text: "5" }]] },
+          },
+        ],
+      },
+    );
+
+    expect(text).toContain(["| Plan | Seats |", "| --- | --- |", "| Team | 5 |"].join("\n"));
+    // The four-space indent it used to get is what made it a code block.
+    expect(text).not.toContain("    | Plan");
+  });
+
+  it("gives a headerless table a delimiter anyway", async () => {
+    const text = await readWith(
+      [{ id: "t1", type: "table", table: { has_column_header: false }, has_children: true }],
+      {
+        t1: [
+          {
+            id: "r1",
+            type: "table_row",
+            table_row: { cells: [[{ plain_text: "a" }], [{ plain_text: "b" }]] },
+          },
+        ],
+      },
+    );
+
+    expect(text).toContain(["|  |  |", "| --- | --- |", "| a | b |"].join("\n"));
+  });
+
+  it("passes a column's contents through at the level they read at", async () => {
+    const text = await readWith(
+      [{ id: "cl", type: "column_list", column_list: {}, has_children: true }],
+      {
+        cl: [{ id: "c1", type: "column", column: {}, has_children: true }],
+        c1: [
+          {
+            id: "p1",
+            type: "bulleted_list_item",
+            bulleted_list_item: { rich_text: [{ plain_text: "In a column" }] },
+            has_children: true,
+          },
+        ],
+        // Two structural wrappers deep and the list underneath still nests,
+        // because layout does not spend a level of MAX_BLOCK_DEPTH.
+        p1: [
+          {
+            id: "p2",
+            type: "bulleted_list_item",
+            bulleted_list_item: { rich_text: [{ plain_text: "Nested" }] },
+          },
+        ],
+      },
+    );
+
+    expect(text).toContain("- In a column\n  - Nested");
+  });
+
+  it("keeps a toggle's contents out of a code block", async () => {
+    const text = await readWith(
+      [
+        {
+          id: "t1",
+          type: "toggle",
+          toggle: { rich_text: [{ plain_text: "Details" }] },
+          has_children: true,
+        },
+      ],
+      {
+        t1: [
+          { id: "p1", type: "paragraph", paragraph: { rich_text: [{ plain_text: "The body." }] } },
+        ],
+      },
+    );
+
+    expect(text).toContain("Details\n\nThe body.");
+  });
+
+  it("keeps a caption but not a link that expires before anybody clicks it", async () => {
+    const text = await readWith([
+      {
+        id: "i1",
+        type: "image",
+        image: {
+          caption: [{ plain_text: "The org chart" }],
+          type: "file",
+          // Notion-hosted: a signed URL good for about an hour.
+          file: { url: "https://s3.example.com/signed?expires=soon" },
+        },
+      },
+      {
+        id: "i2",
+        type: "image",
+        image: {
+          caption: [{ plain_text: "The logo" }],
+          type: "external",
+          external: { url: "https://example.com/logo.png" },
+        },
+      },
+    ]);
+
+    expect(text).toContain("The org chart");
+    expect(text).not.toContain("s3.example.com");
+    expect(text).toContain("![The logo](https://example.com/logo.png)");
+  });
+
+  it("imports a bookmark, which used to import as nothing", async () => {
+    const text = await readWith([
+      { id: "b1", type: "bookmark", bookmark: { url: "https://example.com/pricing", caption: [] } },
+      {
+        id: "b2",
+        type: "callout",
+        callout: { rich_text: [{ plain_text: "Mind the gap" }], icon: { emoji: "⚠️" } },
+      },
+      { id: "b3", type: "equation", equation: { expression: "e = mc^2" } },
+    ]);
+
+    expect(text).toContain("<https://example.com/pricing>");
+    expect(text).toContain("> ⚠️ Mind the gap");
+    expect(text).toContain("$$e = mc^2$$");
+  });
+
+  it("leaves a code block's contents alone", async () => {
+    // Emphasis inside a fence is not emphasis, it is punctuation somebody now
+    // has to explain to whoever copies the snippet.
+    const text = await readWith([
+      {
+        id: "c1",
+        type: "code",
+        code: {
+          language: "sql",
+          rich_text: [{ plain_text: "select *", annotations: { bold: true } }],
+        },
+      },
+    ]);
+
+    expect(text).toContain("```sql\nselect *\n```");
+  });
+
+  it("imports a database row's properties, which are usually all it has", async () => {
+    const text = await readWith(
+      [],
+      {},
+      {
+        object: "page",
+        id: "page-1",
+        parent: { type: "database_id" },
+        properties: {
+          Name: { type: "title", title: [{ plain_text: "Renew the SOC 2" }] },
+          Status: { type: "status", status: { name: "In review" } },
+          Owner: { type: "people", people: [{ name: "Ayşe" }] },
+          Due: { type: "date", date: { start: "2026-10-01" } },
+          Tags: { type: "multi_select", multi_select: [{ name: "legal" }, { name: "q4" }] },
+          Blocked: { type: "checkbox", checkbox: false },
+          Notes: { type: "rich_text", rich_text: [{ plain_text: "Ask the auditor." }] },
+          // Ids and nested aggregates: nothing a question can match.
+          Parent: { type: "relation", relation: [{ id: "abc" }] },
+        },
+      },
+    );
+
+    expect(text).toContain("- **Status:** In review");
+    expect(text).toContain("- **Owner:** Ayşe");
+    expect(text).toContain("- **Due:** 2026-10-01");
+    expect(text).toContain("- **Tags:** legal, q4");
+    expect(text).toContain("- **Blocked:** No");
+    expect(text).toContain("- **Notes:** Ask the auditor.");
+    expect(text).not.toContain("Parent");
+  });
+
+  it("leaves an ordinary page's properties alone", async () => {
+    // Its only property is the title, which is already the heading. A page that
+    // is not a database row imports exactly as it did before.
+    const text = await readWith(
+      [{ id: "p1", type: "paragraph", paragraph: { rich_text: [{ plain_text: "Body." }] } }],
+      {},
+      { object: "page", id: "page-1", parent: { type: "workspace" }, properties: {} },
+    );
+
+    expect(text).toBe("# P\n\nBody.");
   });
 
   // A revoked grant is not weather. Retrying it every six hours forever is how

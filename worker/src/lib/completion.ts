@@ -2,7 +2,7 @@ import type OpenAI from "openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createOpenAI } from "./openai";
 import { createAnthropic } from "./anthropic";
-import { providerFor, acceptsTemperature } from "./models";
+import { providerFor, acceptsTemperature, reasonsBeforeAnswering } from "./models";
 
 /**
  * The one seam every completion goes through, whichever provider answers it.
@@ -57,6 +57,18 @@ export type CompletionRequest = {
   temperature?: number;
   /** Ask for a single JSON object back. */
   json?: boolean;
+  /**
+   * Set by a caller whose task is shaping, not thinking.
+   *
+   * Drafting a persona from a title or pulling ideas out of a transcript are
+   * writing tasks with a known shape; a reasoning model deliberating over them
+   * buys nothing and costs a multiple. Measured on the persona drafter: default
+   * effort spends 512-1408 tokens thinking before writing ~120 tokens of
+   * answer, and `"minimal"` spends none and writes the same answer.
+   *
+   * Nothing on a non-reasoning model, which has no such setting.
+   */
+  reasoningEffort?: "minimal";
 };
 
 /**
@@ -66,6 +78,27 @@ export type CompletionRequest = {
  * draft) and still a real stop.
  */
 export const DEFAULT_MAX_TOKENS = 4096;
+
+/**
+ * Extra room given to a reasoning model, on top of what the caller asked for.
+ *
+ * `maxTokens` means "how long an answer" everywhere it is set in this codebase
+ * — `maxTokensFor` in `lib/prompt.ts` sizes it for a chat reply. On a reasoning
+ * model the API's ceiling covers thinking too, so passing that number through
+ * unchanged spends the answer's budget on deliberation and truncates, or empties,
+ * the reply.
+ *
+ * 4096 is sized from measurement rather than picked: a chat-shaped request with
+ * retrieved context spent 896 reasoning tokens on gpt-5 and 384 on gpt-5-mini,
+ * and the trivial persona draft — where there is least to think about and it
+ * therefore ran longest relative to the answer — spent 1408. This leaves room
+ * for a harder question than either without turning the ceiling into no ceiling.
+ *
+ * It applies only when the caller wants the thinking. A caller that sets
+ * `reasoningEffort: "minimal"` gets its own number honoured, because there is
+ * then nothing to make room for.
+ */
+export const REASONING_HEADROOM = 4096;
 
 const JSON_ONLY_INSTRUCTION =
   "Respond with a single JSON object and nothing else: no prose before or after it, " +
@@ -105,10 +138,20 @@ export function extractJsonObject(text: string): string {
 // ---- OpenAI ----------------------------------------------------------------
 
 function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompletionCreateParams {
+  const reasons = reasonsBeforeAnswering(req.model);
+  // Two ways to keep thinking from eating the answer, and which one applies is
+  // the caller's call, not the model's: minimal effort when the task does not
+  // want deliberation, headroom when it does. See REASONING_HEADROOM.
+  const minimal = reasons && req.reasoningEffort === "minimal";
+  const cap =
+    req.maxTokens !== undefined && reasons && !minimal
+      ? req.maxTokens + REASONING_HEADROOM
+      : req.maxTokens;
   return {
     model: req.model,
     messages: req.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-    ...(req.maxTokens !== undefined ? { max_completion_tokens: req.maxTokens } : {}),
+    ...(cap !== undefined ? { max_completion_tokens: cap } : {}),
+    ...(minimal ? { reasoning_effort: "minimal" as const } : {}),
     ...(req.temperature !== undefined && acceptsTemperature(req.model)
       ? { temperature: req.temperature }
       : {}),

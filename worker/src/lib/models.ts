@@ -48,6 +48,22 @@ export type ModelSpec = {
    * model alone, which is exactly the kind of bug nobody reproduces.
    */
   temperature: boolean;
+  /**
+   * Whether the model thinks before it answers, and bills that thinking against
+   * the same ceiling as the answer.
+   *
+   * This is the difference between `max_completion_tokens` meaning "how long an
+   * answer" and meaning "how long an answer plus however much deliberation the
+   * model decided to do first". Measured on the persona drafter, whose ceiling
+   * is 400: gpt-5 spent 1408 tokens thinking, gpt-5-mini 512, gpt-5-nano 1152.
+   * All three therefore returned an empty string with `finish_reason: "length"`
+   * — a successful HTTP 200 carrying no content, which every caller here reads
+   * as "the model failed".
+   *
+   * `lib/completion.ts` is where this is paid for, in one of two ways depending
+   * on whether the caller wants the thinking at all.
+   */
+  reasoning: boolean;
 };
 
 /**
@@ -56,16 +72,16 @@ export type ModelSpec = {
  * model that reaches `lib/completion.ts` with no provider.
  */
 const SPECS: Record<ModelId, ModelSpec> = {
-  "gpt-4o": { provider: "openai", temperature: true },
-  "gpt-4o-mini": { provider: "openai", temperature: true },
-  "gpt-4.1": { provider: "openai", temperature: true },
-  "gpt-4.1-mini": { provider: "openai", temperature: true },
-  "gpt-5": { provider: "openai", temperature: false },
-  "gpt-5-mini": { provider: "openai", temperature: false },
-  "gpt-5-nano": { provider: "openai", temperature: false },
-  "claude-sonnet-4-6": { provider: "anthropic", temperature: true },
-  "claude-sonnet-4-5": { provider: "anthropic", temperature: true },
-  "claude-haiku-4-5": { provider: "anthropic", temperature: true },
+  "gpt-4o": { provider: "openai", temperature: true, reasoning: false },
+  "gpt-4o-mini": { provider: "openai", temperature: true, reasoning: false },
+  "gpt-4.1": { provider: "openai", temperature: true, reasoning: false },
+  "gpt-4.1-mini": { provider: "openai", temperature: true, reasoning: false },
+  "gpt-5": { provider: "openai", temperature: false, reasoning: true },
+  "gpt-5-mini": { provider: "openai", temperature: false, reasoning: true },
+  "gpt-5-nano": { provider: "openai", temperature: false, reasoning: true },
+  "claude-sonnet-4-6": { provider: "anthropic", temperature: true, reasoning: false },
+  "claude-sonnet-4-5": { provider: "anthropic", temperature: true, reasoning: false },
+  "claude-haiku-4-5": { provider: "anthropic", temperature: true, reasoning: false },
 };
 
 export const DEFAULT_MODEL = "gpt-4o";
@@ -107,6 +123,18 @@ export function providerFor(model: string | null | undefined): ModelProvider {
 /** Whether a temperature may be sent for `model`. Unknown ids: yes, as before. */
 export function acceptsTemperature(model: string | null | undefined): boolean {
   return modelSpec(model)?.temperature ?? true;
+}
+
+/**
+ * Whether `model` bills its own deliberation against the output ceiling.
+ *
+ * Unknown ids are treated as not reasoning, which is the safe answer rather
+ * than the optimistic one: under `OPENAI_BASE_URL` every id is unknown, and
+ * quietly tripling a self-hoster's token ceiling because we could not identify
+ * their model would be a cost decision made on their behalf.
+ */
+export function reasonsBeforeAnswering(model: string | null | undefined): boolean {
+  return modelSpec(model)?.reasoning ?? false;
 }
 
 /**

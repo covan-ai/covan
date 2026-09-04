@@ -31,6 +31,9 @@ persona.post("/persona/suggest", async (c) => {
       model: resolveModel(model ?? null, c.env),
       messages: buildPersonaMessages(name),
       json: true,
+      // A title in, three sentences out: shaping, not thinking. Without this a
+      // reasoning model spends the whole 400 deliberating and returns nothing.
+      reasoningEffort: "minimal",
       maxTokens: 400,
     });
     await recordQuota(c, totalTokens(usage));

@@ -75,6 +75,31 @@ const MAX_BYTES = 10 * 1024 * 1024;
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 /**
+ * A pointer to a file that lives somewhere else.
+ *
+ * "Add shortcut to Drive" is how a person puts a document from a shared drive
+ * into the folder they actually work in, so in a real team folder these are
+ * ordinary and often most of what is there. Drive returns them as files of
+ * their own with this type, and the first version of this file had no case for
+ * it: `importableName` returned null and every one of them was skipped without
+ * a word. A folder of shortcuts synced as an empty bundle.
+ */
+const SHORTCUT_MIME = "application/vnd.google-apps.shortcut";
+
+/**
+ * How many shortcuts one listing may resolve.
+ *
+ * A shortcut carries its target's id and type but not its `modifiedTime`, and
+ * the modified time is the whole of how this sync decides a file has changed —
+ * using the shortcut's own would mean edits to the target never re-imported it.
+ * So each one costs a metadata request, and this bounds that. Past it the
+ * listing reports itself truncated, the same as any other ceiling here.
+ *
+ * A shortcut to a *folder* costs nothing: its target id is all the walk needs.
+ */
+const MAX_SHORTCUTS = 25;
+
+/**
  * How a Google-native file becomes text, and what it is called afterwards.
  *
  * The extension is chosen to match what the export actually produces, because
@@ -119,6 +144,8 @@ type DriveFile = {
   modifiedTime?: string;
   webViewLink?: string;
   size?: string;
+  /** Present only on a shortcut, and the only thing that makes one useful. */
+  shortcutDetails?: { targetId?: string; targetMimeType?: string };
 };
 
 function withExtension(name: string, extension: string): string {
@@ -173,6 +200,30 @@ export async function listFolders(
   return data.files ?? [];
 }
 
+/**
+ * What a shortcut points at, as though it had been in the folder itself.
+ *
+ * The target's own metadata, not the shortcut's: its name, its type, and above
+ * all its `modifiedTime`, which is what tells the next sync the document has
+ * been edited. Returning null — the target is gone, or is a type nothing can
+ * read — is an ordinary outcome and means the shortcut is skipped, exactly as a
+ * file of that type in the folder would have been.
+ */
+async function resolveShortcut(
+  ctx: ProviderContext,
+  shortcut: DriveFile,
+): Promise<DriveFile | null> {
+  const targetId = shortcut.shortcutDetails?.targetId;
+  if (!targetId) return null;
+
+  const res = await driveFetch(ctx, `/files/${targetId}`, {
+    fields: "id,name,mimeType,modifiedTime,webViewLink,size",
+    supportsAllDrives: "true",
+  });
+  const target = (await res.json()) as DriveFile;
+  return target.id ? target : null;
+}
+
 /** Everything under one folder, following subfolders, within the request budget. */
 async function listTree(
   ctx: ProviderContext,
@@ -180,6 +231,15 @@ async function listTree(
 ): Promise<{ files: DriveFile[]; truncated: boolean }> {
   const files: DriveFile[] = [];
   const queue: Array<{ id: string; depth: number }> = [{ id: rootId, depth: 0 }];
+  // Shortcuts are resolved after the walk rather than during it, so a folder
+  // full of them cannot spend the listing budget before the walk has seen the
+  // rest of the tree.
+  const shortcuts: DriveFile[] = [];
+  // A shortcut and its target can both be in the tree, and after resolution
+  // they are the same file with the same id. Importing it twice would be two
+  // documents of one thing on the first sync and a fight over one row on every
+  // sync after, since `documents` is unique on (connection_id, external_id).
+  const seen = new Set<string>();
   let requests = 0;
   let truncated = false;
 
@@ -193,7 +253,9 @@ async function listTree(
 
       const query: Record<string, string> = {
         q: `'${id.replace(/'/g, "\\'")}' in parents and trashed = false`,
-        fields: "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,size)",
+        fields:
+          "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,size," +
+          "shortcutDetails(targetId,targetMimeType))",
         pageSize: "100",
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
@@ -204,15 +266,55 @@ async function listTree(
       const data = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string };
 
       for (const file of data.files ?? []) {
+        if (file.mimeType === SHORTCUT_MIME) {
+          // A shortcut to a folder needs nothing fetched: the walk only wants an
+          // id, and the folder's own listing supplies everything about what is
+          // inside it.
+          if (file.shortcutDetails?.targetMimeType === FOLDER_MIME) {
+            const targetId = file.shortcutDetails.targetId;
+            if (!targetId) continue;
+            if (depth < MAX_FOLDER_DEPTH) queue.push({ id: targetId, depth: depth + 1 });
+            else truncated = true;
+            continue;
+          }
+          shortcuts.push(file);
+          continue;
+        }
+
         if (file.mimeType === FOLDER_MIME) {
           if (depth < MAX_FOLDER_DEPTH) queue.push({ id: file.id, depth: depth + 1 });
           else truncated = true;
           continue;
         }
+
+        if (seen.has(file.id)) continue;
+        seen.add(file.id);
         files.push(file);
       }
       pageToken = data.nextPageToken;
     } while (pageToken);
+  }
+
+  // Their own budget rather than the listing one. A tree big enough to spend
+  // all six listing requests would otherwise drop every shortcut in it, and
+  // these are metadata reads of one file each — far cheaper than the page
+  // listings that ceiling exists to bound.
+  let resolved = 0;
+  for (const shortcut of shortcuts) {
+    const targetId = shortcut.shortcutDetails?.targetId;
+    // The target is already in this tree: somebody put both the file and a
+    // shortcut to it in the folder, which is not rare and is not two documents.
+    if (!targetId || seen.has(targetId)) continue;
+    if (resolved >= MAX_SHORTCUTS) {
+      truncated = true;
+      break;
+    }
+    resolved++;
+
+    const target = await resolveShortcut(ctx, shortcut);
+    if (!target || seen.has(target.id)) continue;
+    seen.add(target.id);
+    files.push(target);
   }
 
   return { files, truncated };

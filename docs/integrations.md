@@ -165,10 +165,19 @@ browser in a scheduled sync, so an imported PDF would be a document that is
 listed, named to the agent on every turn, and impossible to retrieve a sentence
 of. Upload those by hand.
 
+**Shortcuts are followed.** "Add shortcut to Drive" is how most people get a
+document from a shared drive into the folder they actually work in, so a real
+team folder is often mostly shortcuts. Each one is read as the file it points
+at — the target's name, and the target's modified time, so editing the document
+re-imports it. A shortcut to a subfolder is walked into like any other folder.
+If the folder holds both a file and a shortcut to that same file, it is imported
+once.
+
 Files larger than 10 MB are skipped, the same ceiling the upload form applies.
 
-**Limits.** One folder, two levels of subfolders, and six listing requests per
-sync — enough for a few hundred files in an ordinary folder tree.
+**Limits.** One folder, two levels of subfolders, six listing requests and
+twenty-five resolved shortcuts per sync — enough for a few hundred files in an
+ordinary folder tree.
 
 ### Setting it up
 

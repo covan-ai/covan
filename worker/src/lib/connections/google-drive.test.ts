@@ -185,6 +185,139 @@ describe("google drive provider", () => {
     });
   });
 
+  // "Add shortcut to Drive" is how somebody puts a document from a shared drive
+  // into the folder they work in. Every one of these used to be skipped without
+  // a word, so a folder of shortcuts synced as an empty bundle.
+  it("follows a shortcut to the file it points at", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/files/doc-1")) {
+        return json({
+          id: "doc-1",
+          name: "Handbook",
+          mimeType: "application/vnd.google-apps.document",
+          // The target's modified time, not the shortcut's. The shortcut never
+          // changes when the document is edited, so using its own would mean an
+          // edited document never re-imported.
+          modifiedTime: "2026-09-02T10:00:00Z",
+          webViewLink: "https://docs.google.com/doc-1",
+        });
+      }
+      return json({
+        files: [
+          {
+            id: "short-1",
+            name: "Handbook shortcut",
+            mimeType: "application/vnd.google-apps.shortcut",
+            modifiedTime: "2026-01-01T00:00:00Z",
+            shortcutDetails: {
+              targetId: "doc-1",
+              targetMimeType: "application/vnd.google-apps.document",
+            },
+          },
+        ],
+      });
+    }) as unknown as typeof fetch;
+
+    const files = await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }));
+
+    expect(files).toEqual([
+      {
+        externalId: "doc-1",
+        name: "Handbook.md",
+        version: "2026-09-02T10:00:00Z",
+        url: "https://docs.google.com/doc-1",
+      },
+    ]);
+  });
+
+  it("walks into a shortcut to a folder without spending a request on it", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const q = url.searchParams.get("q") ?? "";
+      if (q.includes("'root'")) {
+        return json({
+          files: [
+            {
+              id: "short-f",
+              name: "Policies shortcut",
+              mimeType: "application/vnd.google-apps.shortcut",
+              shortcutDetails: {
+                targetId: "sub",
+                targetMimeType: "application/vnd.google-apps.folder",
+              },
+            },
+          ],
+        });
+      }
+      return json({
+        files: [
+          { id: "doc-2", name: "Leave.md", mimeType: "text/markdown", modifiedTime: "2026-08-01" },
+        ],
+      });
+    }) as unknown as typeof fetch;
+
+    const files = await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }));
+
+    expect(files.map((f) => f.externalId)).toEqual(["doc-2"]);
+    // Two listings and no metadata read: a folder shortcut carries the only
+    // thing the walk wants, which is an id.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("imports one document when the folder holds both a file and a shortcut to it", async () => {
+    const fetchImpl = vi.fn(async () =>
+      json({
+        files: [
+          {
+            id: "doc-1",
+            name: "Handbook",
+            mimeType: "application/vnd.google-apps.document",
+            modifiedTime: "2026-09-01T10:00:00Z",
+          },
+          {
+            id: "short-1",
+            name: "Handbook shortcut",
+            mimeType: "application/vnd.google-apps.shortcut",
+            shortcutDetails: {
+              targetId: "doc-1",
+              targetMimeType: "application/vnd.google-apps.document",
+            },
+          },
+        ],
+      }),
+    ) as unknown as typeof fetch;
+
+    const files = await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }));
+
+    // `documents` is unique on (connection_id, external_id), so a second copy
+    // would be a constraint fight on every sync rather than a second document.
+    expect(files.map((f) => f.externalId)).toEqual(["doc-1"]);
+    // And the target was recognised without being fetched.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a shortcut to something it could not read anyway", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/files/scan")) {
+        return json({ id: "scan", name: "contract.pdf", mimeType: "application/pdf" });
+      }
+      return json({
+        files: [
+          {
+            id: "short-p",
+            name: "contract shortcut",
+            mimeType: "application/vnd.google-apps.shortcut",
+            shortcutDetails: { targetId: "scan", targetMimeType: "application/pdf" },
+          },
+        ],
+      });
+    }) as unknown as typeof fetch;
+
+    expect(await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }))).toEqual([]);
+  });
+
   it("skips a file bigger than the upload form would have taken", async () => {
     const fetchImpl = vi.fn(async () =>
       json({

@@ -208,6 +208,13 @@ workspace is told so rather than answered — the alternative, running every
 question as whoever installed the app, would retrieve with that person's access
 and log every question as theirs.
 
+**Answers are written in Slack's own formatting.** The agent writes Markdown,
+which Slack does not read — its `text` is *mrkdwn*, a different language — so
+replies are translated on the way out: bold, italic, strikethrough, links,
+headings and lists all arrive formatted rather than as visible asterisks and
+brackets. Code blocks are passed through untouched, since both languages spell
+them the same way.
+
 **Each thread becomes a conversation in Covan.** A question asked in a channel
 creates a shared conversation; a direct message creates a private one. Either
 way it is an ordinary conversation afterwards — searchable, exportable, and

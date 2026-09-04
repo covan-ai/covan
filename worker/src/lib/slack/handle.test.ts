@@ -198,6 +198,31 @@ describe("answering in a thread", () => {
     expect(posted().text).toContain("Handbook.md");
   });
 
+  // The model writes Markdown because every other surface in Covan renders it.
+  // Slack's `text` is mrkdwn, so an answer posted straight through arrives with
+  // its asterisks and brackets showing. `lib/slack/mrkdwn` covers the language
+  // itself; this is the wiring.
+  it("posts the answer in the language Slack reads", async () => {
+    create.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: "**Twenty days** a year — see [the policy](https://example.com/p).",
+          },
+        },
+      ],
+      usage: { prompt_tokens: 500, completion_tokens: 20 },
+    });
+    const fake = db({ identity: true });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(posted().text).toContain(
+      "*Twenty days* a year — see <https://example.com/p|the policy>.",
+    );
+    expect(posted().text).not.toContain("**");
+  });
+
   it("keeps the exchange in Covan as an ordinary conversation", async () => {
     const fake = db({ identity: true });
 

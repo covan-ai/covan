@@ -56,6 +56,21 @@ export type RemoteFile = {
   version: string;
   /** A link to the original, so a citation can open the source document. */
   url: string | null;
+  /**
+   * Whatever the listing already knew and reading would otherwise ask for again.
+   *
+   * Optional, provider-shaped, and never persisted: `sync.ts` hands `readFile`
+   * the very object `listFiles` returned, in the same run, so this is a way of
+   * not making a second request rather than a second source of truth. Notion
+   * uses it for a database row's properties — `search` returns them, and the
+   * alternative is one `/pages/{id}` call per document per sync, which on a
+   * 500-page connection is 500 requests to learn something already in hand.
+   *
+   * A provider that does not set it loses nothing: `google-drive.ts` never
+   * reads it, and a file rebuilt from anywhere but a listing simply arrives
+   * without it.
+   */
+  listing?: Record<string, unknown>;
 };
 
 /** What a provider needs to talk to its API on one connection's behalf. */

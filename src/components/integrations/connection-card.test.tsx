@@ -151,12 +151,44 @@ describe("a source that could be connected", () => {
   it("names the variables that would turn it on", () => {
     renderCard(
       <ConnectSourceCard
+        provider={{ id: "notion", label: "Notion", configured: false }}
+        bundles={bundles}
+      />,
+    );
+
+    expect(screen.getByText(/NOTION_CLIENT_ID and NOTION_CLIENT_SECRET/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+  });
+
+  // Drive is built and works; what it does not have is Google's verification
+  // for a restricted scope, so the hosted product cannot offer it yet. It says
+  // that and stops — naming the variables would read as an invitation.
+  it("says coming soon for a source that is not being offered yet", () => {
+    renderCard(
+      <ConnectSourceCard
         provider={{ id: "google_drive", label: "Google Drive", configured: false }}
         bundles={bundles}
       />,
     );
 
-    expect(screen.getByText(/GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET/)).toBeInTheDocument();
+    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByText("Coming soon.")).toBeInTheDocument();
+    expect(screen.queryByText(/GOOGLE_CLIENT_ID/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+  });
+
+  // The other half of that: a deployment that HAS set the credentials gets the
+  // whole card, because "coming soon" is a statement about covan.app rather
+  // than about the software.
+  it("offers Drive normally to a deployment that configured it", () => {
+    renderCard(
+      <ConnectSourceCard
+        provider={{ id: "google_drive", label: "Google Drive", configured: true }}
+        bundles={bundles}
+      />,
+    );
+
+    expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
   });
 });

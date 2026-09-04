@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { MessageSquare } from "lucide-react";
+import { SlackMark } from "./brand-marks";
 import type { SlackState } from "@/lib/connections-api";
 import type { Agent } from "@/lib/agents-store";
 import { Button } from "@/components/ui/button";
@@ -144,7 +144,7 @@ function SlackHeading({ subtitle, chip }: { subtitle?: string; chip: React.React
     <div className="flex items-start justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3.5">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-          <MessageSquare className="h-[22px] w-[22px]" />
+          <SlackMark className="h-[22px] w-[22px]" />
         </span>
         <span className="flex min-w-0 flex-col gap-[3px]">
           <span className="font-dm text-[18px] font-medium leading-tight">Slack</span>

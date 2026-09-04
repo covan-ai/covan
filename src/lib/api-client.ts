@@ -41,6 +41,14 @@ export type Me = {
   user: { id: string; name: string | null; email: string | null; avatarUrl: string | null };
   workspace: Workspace;
   members: WorkspaceMember[];
+  /**
+   * The model ids this deployment can serve, in picker order.
+   *
+   * Optional because it is newer than this client: a frontend deployed ahead of
+   * its API would otherwise render an empty picker rather than the built-in
+   * list. `modelsFor` in `lib/agent-meta` handles the absence.
+   */
+  models?: string[];
   onboarding: { completed: boolean; answers: OnboardingAnswers };
 };
 

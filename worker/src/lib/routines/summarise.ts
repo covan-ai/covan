@@ -1,7 +1,7 @@
 // worker/src/lib/routines/summarise.ts
 import type { RoutineEnv } from "../../types";
 import { resolveModel } from "../models";
-import { createOpenAI } from "../openai";
+import { complete, totalTokens } from "../completion";
 import type { SummariseInput } from "./executor";
 
 /**
@@ -9,9 +9,7 @@ import type { SummariseInput } from "./executor";
  * instead of eight. The agent's persona is applied exactly as it is in chat —
  * a routine is the same colleague, reporting instead of answering.
  */
-export function summariseWithOpenAI(env: RoutineEnv) {
-  const client = createOpenAI(env);
-
+export function summariseWithModel(env: RoutineEnv) {
   return async (input: SummariseInput): Promise<{ text: string; tokens: number }> => {
     const body = input.pageText
       ? `Watched page content:\n\n${input.pageText.slice(0, 20_000)}`
@@ -19,7 +17,7 @@ export function summariseWithOpenAI(env: RoutineEnv) {
           .map((i) => `- ${i.title}\n  ${i.link}\n  ${i.summary.slice(0, 1_000)}`)
           .join("\n\n");
 
-    const completion = await client.chat.completions.create({
+    const { text, usage } = await complete(env, {
       model: resolveModel(input.model, env),
       messages: [
         {
@@ -32,9 +30,6 @@ export function summariseWithOpenAI(env: RoutineEnv) {
       ],
     });
 
-    return {
-      text: completion.choices[0]?.message?.content ?? "",
-      tokens: completion.usage?.total_tokens ?? 0,
-    };
+    return { text, tokens: totalTokens(usage) };
   };
 }

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError, type Me } from "@/lib/api-client";
 import { useTheme, type ThemePreference } from "@/lib/theme";
-import { MODELS } from "@/lib/agent-meta";
+import { modelsFor } from "@/lib/agent-meta";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard } from "@/components/section-card";
 import { Label } from "@/components/ui/label";
@@ -33,6 +33,7 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
   const [savingModel, setSavingModel] = useState(false);
 
   const defaultModel = me?.workspace.defaultModel ?? null;
+  const models = modelsFor(me?.models, defaultModel);
 
   const saveDefaultModel = async (value: string) => {
     const next = value === NO_DEFAULT ? null : value;
@@ -90,7 +91,7 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={NO_DEFAULT}>No preference</SelectItem>
-              {MODELS.map((m) => (
+              {models.map((m) => (
                 <SelectItem key={m} value={m}>
                   {m}
                 </SelectItem>

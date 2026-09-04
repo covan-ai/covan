@@ -168,6 +168,34 @@ describe("PATCH /workspace", () => {
     expect((await json(app, "PATCH", "/workspace", body)).status).toBe(400);
   });
 
+  it("refuses a model this build knows but this deployment cannot serve", async () => {
+    // A Claude id with no ANTHROPIC_API_KEY behind it. Storing it would store a
+    // preference that does nothing: every new agent would take it and every one
+    // of them would answer on the default instead, with nothing on screen
+    // saying so.
+    let patch: Record<string, unknown> | undefined;
+    const { app } = appWith({
+      tables: {
+        workspaces: {
+          update: (ctx) => {
+            patch = ctx.values;
+            return { data: [saved], error: null };
+          },
+        },
+      },
+    });
+
+    const res = await json(app, "PATCH", "/workspace", { defaultModel: "claude-sonnet-4-5" });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: "claude-sonnet-4-5 is not configured on this deployment",
+    });
+    // Refused before the write, not after: a stored preference that resolves to
+    // something else is worse than no preference at all.
+    expect(patch).toBeUndefined();
+  });
+
   it("answers 403 when RLS matched no row", async () => {
     // A member who is not an admin. The update succeeds and changes nothing,
     // which must not be reported as a save.

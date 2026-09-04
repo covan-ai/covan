@@ -106,6 +106,8 @@ every line in `.env.docker.example`, in the order it appears there.
 | `OPENAI_API_KEY`                                       | _empty — you must set it_  | Chat completions and `text-embedding-3-small`. Nothing else needs an account.                                                                                                                                                                |
 | `OPENAI_BASE_URL`                                      | _empty — means OpenAI_     | Optional. Sends completions to an OpenAI-compatible endpoint instead. See below — it does not move everything.                                                                                                                               |
 | `OPENAI_MODEL`                                         | _empty_                    | Optional. Forces one model for every completion, overriding the per-agent picker. Needed whenever `OPENAI_BASE_URL` is set.                                                                                                                  |
+| `ANTHROPIC_API_KEY`                                    | _empty — no Claude models_ | Optional. Adds Anthropic's models to the picker. Empty means they are not offered, not accepted and not resolved — nothing reaches Anthropic. See below.                                                                                     |
+| `ANTHROPIC_BASE_URL`                                   | _empty — means Anthropic_  | Optional. Sends Claude completions to a gateway in front of `api.anthropic.com`. The Anthropic half of `OPENAI_BASE_URL`.                                                                                                                    |
 | `EMBEDDING_BASE_URL`                                   | _empty — means OpenAI_     | Optional. Sends document embeddings to an OpenAI-compatible endpoint. Deliberately does **not** follow `OPENAI_BASE_URL`.                                                                                                                    |
 | `EMBEDDING_MODEL`                                      | _empty_                    | Optional. Defaults to `text-embedding-3-small`. Set it whenever `EMBEDDING_BASE_URL` is set.                                                                                                                                                 |
 | `EMBEDDING_DIMENSIONS`                                 | _empty — means 1536_       | Optional. The width `document_chunks.embedding` was declared with. Changing it is a schema change — see below. Refuses to boot on anything but a positive whole number.                                                                      |
@@ -145,6 +147,43 @@ does nothing: the Compose stack passes an explicit list of variables to
 `covan-api`, and this is not on it. To use the endpoint on the Docker stack, add
 `ADMIN_API_KEY: ${ADMIN_API_KEY:-}` to that service's `environment:` block
 first.
+
+### Offering Anthropic's models as well
+
+Covan ships two provider lists. OpenAI's is always there, because
+`OPENAI_API_KEY` is required and embeddings and voice notes go through it
+regardless. Anthropic's exists only if you say so:
+
+```bash
+# in .env, for the Docker stack
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+That one line adds three models to every picker:
+
+| Model               | Roughly       | Good for                                                    |
+| ------------------- | ------------- | ----------------------------------------------------------- |
+| `claude-sonnet-4-6` | $3 / $15 a M  | The default Claude pick — strongest of the three.             |
+| `claude-sonnet-4-5` | $3 / $15 a M  | The previous Sonnet, kept for agents already tuned against it. |
+| `claude-haiku-4-5`  | $1 / $5 a M   | Cheapest here — under half of `gpt-4o` on input.               |
+
+Two properties worth stating plainly, because both are the kind of thing that
+is otherwise discovered later:
+
+- **Leave the key unset and nothing reaches Anthropic.** The ids are not in the
+  picker, `PATCH /workspace` refuses them, and an agent already carrying one
+  falls back to the default rather than failing. That last part matters if you
+  ever remove the key: agents keep answering, on `gpt-4o`.
+- **It does not replace `OPENAI_API_KEY`.** Document embeddings and voice-note
+  transcription have no Anthropic equivalent wired up here and stay exactly
+  where they were.
+
+`OPENAI_MODEL` does not override a Claude pick — that model is not served over
+the OpenAI-compatible endpoint at all. This never surprises a local-model
+install, because such an install has no `ANTHROPIC_API_KEY` and therefore never
+offers a Claude id in the first place. Setting the key is what opts a
+deployment into sending anything to Anthropic; the rest of this section is what
+happens when you don't.
 
 ### Using a model that is not OpenAI's
 
@@ -549,6 +588,10 @@ bunx wrangler secret put RESEND_FROM
 bunx wrangler secret put SUPABASE_JWT_SECRET
 ```
 
+Add `bunx wrangler secret put ANTHROPIC_API_KEY` if you want the Claude models
+in the picker. It is genuinely optional — see [Offering Anthropic's models as
+well](#offering-anthropics-models-as-well) — and the deployment works without it.
+
 `ROUTINE_SECRET_KEY` must decode to 16, 24 or 32 bytes — `openssl rand -base64
 32`. The two `RESEND_*` values cover the two things Covan emails: routine
 deliveries to an email channel, and the note that tells somebody they have been
@@ -673,6 +716,12 @@ Set its secrets the same way, adding `-c wrangler.cron.toml` to each
 `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `ROUTINE_SECRET_KEY`,
 `RESEND_API_KEY` and `RESEND_FROM`. It gets no anon key and no bucket, because
 it never acts on behalf of a user and never touches a document.
+
+If you set `ANTHROPIC_API_KEY` on the API Worker, set it here too. Routines run
+on the agent's own model, so a routine belonging to an agent on Claude has to
+resolve that id in this Worker — and without the key it quietly summarises on
+`gpt-4o` instead, which is a bill in the wrong column and an answer in the wrong
+voice.
 
 **`ROUTINE_SECRET_KEY` must be byte-identical to the API Worker's.** The API
 encrypts every delivery destination with it and this Worker decrypts them. A

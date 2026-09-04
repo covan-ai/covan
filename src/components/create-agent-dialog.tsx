@@ -17,7 +17,7 @@ import {
 import { Upload, X, FileText, ChevronRight, ChevronLeft, Sparkles } from "lucide-react";
 import { useAgentsStore } from "@/lib/agents-store";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
-import { EMOJIS, MODELS, PERSONA_TEMPLATES } from "@/lib/agent-meta";
+import { EMOJIS, MODELS, PERSONA_TEMPLATES, modelsFor } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -77,6 +77,11 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
   // Hold the real File objects picked in the Train step. The agent doesn't
   // exist yet, so they can only be uploaded after createAgent returns an id.
   const [docs, setDocs] = useState<{ id: string; name: string; size: number; file: File }[]>([]);
+
+  // What this deployment can actually serve, from /me — the Claude ids appear
+  // only when the server has a key for them. The current pick is carried in so
+  // a template that named a model still renders while /me is in flight.
+  const models = modelsFor(me?.models, model);
 
   const applyTemplate = (id: string) => {
     const t = PERSONA_TEMPLATES.find((x) => x.id === id);
@@ -235,7 +240,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {MODELS.map((m) => (
+                {models.map((m) => (
                   <SelectItem key={m} value={m}>
                     {m}
                   </SelectItem>

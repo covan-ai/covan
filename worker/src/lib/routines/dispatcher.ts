@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
 import { runRoutine as defaultRunRoutine, type ExecutorDeps, type RoutineRow } from "./executor";
-import { summariseWithOpenAI } from "./summarise";
+import { summariseWithModel } from "./summarise";
 import { ownHostsFrom } from "./url-guard";
 import { entitlementsFor } from "../entitlements";
 
@@ -50,7 +50,7 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
 
   return {
     db,
-    summarise: summariseWithOpenAI(env),
+    summarise: summariseWithModel(env),
     entitlements: entitlementsFor(env),
     fetchDeps: { fetchImpl: boundFetch, ownHosts },
     deliveryDeps: {

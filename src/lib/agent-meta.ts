@@ -10,7 +10,54 @@
 // `agent-meta.test.ts` pins that.
 export const EMOJIS = ["🎓", "🚀", "🧑‍💻", "📊", "🧠", "✍️", "🎨", "🔬", "⚖️", "💬", "🧭"] as const;
 
-export const MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"] as const;
+/**
+ * Every model this build knows, in picker order.
+ *
+ * This is the fallback, not the source of truth. Which of these a deployment
+ * can actually serve depends on which provider keys it has — the Claude ids
+ * need an `ANTHROPIC_API_KEY` the frontend cannot see — so the real list comes
+ * from `/me` as `me.models`, and `modelsFor` below is what every picker calls.
+ * The constant stays because a picker rendered before /me resolves still has to
+ * render something, and because the self-hosted default (OpenAI only) is the
+ * safe thing to show while waiting.
+ */
+export const MODELS = [
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-5",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "claude-sonnet-4-6",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5",
+] as const;
+
+/**
+ * What a model picker should list: what this install offers, plus whatever the
+ * thing being edited is already on.
+ *
+ * The second half matters more than it looks. An agent can be sitting on a
+ * model the deployment has stopped offering — a Claude one after the key was
+ * rotated out, or an id dropped from a later build. A `<Select>` whose value
+ * matches no item renders blank, so the settings page would show an agent with
+ * no model at all and save whatever was picked next. Carrying the current value
+ * in keeps it visible and leaves changing it a decision.
+ */
+export function modelsFor(available: string[] | undefined, current?: string | null): string[] {
+  const offered = available && available.length > 0 ? available : DEFAULT_PICKER_MODELS;
+  const list = [...offered];
+  if (current && !list.includes(current)) list.push(current);
+  return list;
+}
+
+/**
+ * What a picker shows before /me has answered — the OpenAI ids alone, because
+ * those are the ones every deployment has by definition. Showing the Claude ids
+ * on a hunch and removing them a moment later is worse than showing fewer.
+ */
+const DEFAULT_PICKER_MODELS = MODELS.filter((m) => !m.startsWith("claude-"));
 
 // A per-model colour used to live here — emerald for GPT, violet for Llama and
 // so on. The design system allows exactly one saturated colour, so a palette

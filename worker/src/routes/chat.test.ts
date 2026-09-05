@@ -24,6 +24,7 @@ const AGENT = { id: "agent-1", persona: "You are our PM.", model: null, mode: "n
 const embedTexts = vi.fn();
 const completionCreate = vi.fn();
 const serviceInsert = vi.fn();
+const sessionUpdate = vi.fn();
 
 vi.mock("../lib/embeddings", () => ({
   embedTexts: (...args: unknown[]) => embedTexts(...args),
@@ -62,7 +63,18 @@ vi.mock("../lib/supabase", () => ({
           },
         };
       }
-      return { update: () => ({ eq: async () => ({ error: null }) }) };
+      // chat_sessions, which the route touches twice: the `updated_at` bump
+      // ends at `.eq()`, and the generated title adds `.is("title", null)`
+      // after it so it cannot overwrite a name the user chose mid-stream.
+      return {
+        update: (row: Record<string, unknown>) => {
+          sessionUpdate(row);
+          const settled = Object.assign(Promise.resolve({ error: null }), {
+            is: async () => ({ error: null }),
+          });
+          return { eq: () => settled };
+        },
+      };
     },
   }),
 }));
@@ -81,6 +93,25 @@ function streamOf(text: string, finishReason = "stop") {
   };
 }
 
+/** The unstreamed JSON reply the titler asks for. */
+function titleOf(title: string) {
+  return {
+    choices: [{ message: { content: JSON.stringify({ title }) } }],
+    usage: { prompt_tokens: 20, completion_tokens: 5, prompt_tokens_details: {} },
+  };
+}
+
+/**
+ * Answer both completions a turn makes — the streamed reply and, for an
+ * untitled session, the titling call — from the one mocked client, dispatching
+ * on `stream` the way the two are actually told apart.
+ */
+function answersWith(reply: ReturnType<typeof streamOf>, title = "Vacation days") {
+  completionCreate.mockImplementation(async (body: { stream?: boolean }) =>
+    body.stream ? reply : titleOf(title),
+  );
+}
+
 type Doc = { id: string; name: string; content: string | null };
 type Match = { document_id: string; document_name: string; content: string };
 
@@ -89,6 +120,8 @@ function appWith(spec: {
   history?: Array<{ role: string; content: string }>;
   documents?: Doc[];
   matches?: Match[];
+  /** The name the session already has. Null — the default — is a new chat. */
+  sessionTitle?: string | null;
 }) {
   const documents = spec.documents ?? [];
   const rows = [...(spec.history ?? []), { role: "user", content: spec.question }].map((m, i) => ({
@@ -100,7 +133,9 @@ function appWith(spec: {
 
   const dbSpec: FakeDbSpec = {
     tables: {
-      chat_sessions: { select: () => ({ data: SESSION, error: null }) },
+      chat_sessions: {
+        select: () => ({ data: { ...SESSION, title: spec.sessionTitle ?? null }, error: null }),
+      },
       agents: { select: () => ({ data: AGENT, error: null }) },
       // The route reads newest-first and reverses, so hand it back reversed.
       messages: { select: () => ({ data: [...rows].reverse(), error: null }) },
@@ -149,9 +184,18 @@ async function ask(app: Hono<AppEnv>) {
   return { status: res.status, body: await res.text() };
 }
 
-/** The messages the model was actually sent, by role. */
+/**
+ * The messages the model was actually sent for the REPLY, by role.
+ *
+ * A turn makes more than one completion now: an untitled session is also named
+ * from its opening message, and that call is not streamed. Selecting on
+ * `stream` rather than taking the first call means these assertions keep
+ * pointing at the answer whichever of the two the mock happened to record
+ * first.
+ */
 function sentMessages(): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
-  return completionCreate.mock.calls[0][0].messages;
+  const reply = completionCreate.mock.calls.find((c) => c[0].stream);
+  return reply![0].messages;
 }
 
 function knowledgeBlock(): string | undefined {
@@ -174,7 +218,7 @@ function citedNames(): string[] {
 beforeEach(() => {
   vi.clearAllMocks();
   embedTexts.mockResolvedValue({ vectors: [[0.1, 0.2]], tokens: 8 });
-  completionCreate.mockResolvedValue(streamOf("Twenty days."));
+  answersWith(streamOf("Twenty days."));
 });
 
 const HANDBOOK: Doc = { id: "d1", name: "handbook.md", content: "Vacation is 20 days." };
@@ -356,7 +400,7 @@ describe("a reply that ran out of room", () => {
   it("says so, ahead of the terminal event", async () => {
     // A reply cut off at `maxTokensFor` stops mid-thought and otherwise looks
     // finished. Nothing on screen said the end was missing.
-    completionCreate.mockResolvedValue(streamOf("A long list that stops at 3.", "length"));
+    answersWith(streamOf("A long list that stops at 3.", "length"));
     const { app } = appWith({ question: "list every public holiday" });
     const { body } = await ask(app);
     expect(body).toContain('data: {"type":"truncated"}');
@@ -393,5 +437,58 @@ describe("the assembled prompt", () => {
     const { app } = appWith({ question: "hello", documents: [HANDBOOK], matches: [] });
     await ask(app);
     expect(sentMessages()[0].content).toContain("handbook.md");
+  });
+});
+
+describe("naming the conversation", () => {
+  /** What the route wrote to chat_sessions.title, if anything. */
+  const writtenTitle = () =>
+    sessionUpdate.mock.calls.map((c) => c[0]).find((row) => "title" in row)?.title;
+
+  it("names a session that has no name yet", async () => {
+    const { app } = appWith({ question: "How many vacation days do I get?" });
+
+    await ask(app);
+
+    expect(writtenTitle()).toBe("Vacation days");
+  });
+
+  it("names it from the message that opened the conversation", async () => {
+    const { app } = appWith({ question: "How many vacation days do I get?" });
+
+    await ask(app);
+
+    const titling = completionCreate.mock.calls.find((c) => !c[0].stream);
+    const sent = titling![0].messages.map((m: { content: string }) => m.content).join("\n");
+    expect(sent).toContain("How many vacation days do I get?");
+  });
+
+  // Renaming on every turn would cost money and move a label out from under
+  // somebody reading it.
+  it("leaves a session that already has a name alone", async () => {
+    const { app } = appWith({
+      question: "And what about sick days?",
+      sessionTitle: "Q3 pricing review",
+    });
+
+    await ask(app);
+
+    expect(writtenTitle()).toBeUndefined();
+    expect(completionCreate.mock.calls.filter((c) => !c[0].stream)).toHaveLength(0);
+  });
+
+  // A name is a convenience riding along with an answer somebody asked for.
+  it("still answers when the naming call fails", async () => {
+    const { app } = appWith({ question: "How many vacation days do I get?" });
+    completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+      if (!body.stream) throw new Error("the provider is down");
+      return streamOf("Twenty days.");
+    });
+
+    const res = await ask(app);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("Twenty days.");
+    expect(writtenTitle()).toBeUndefined();
   });
 });

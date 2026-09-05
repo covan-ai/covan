@@ -9,6 +9,7 @@ import { retrieveForAgent } from "../lib/retrieval";
 import { selectHistory } from "../lib/history";
 import { buildSystemPrefix, temperatureFor, maxTokensFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
+import { generateSessionTitle } from "../lib/session-title";
 import { deferred } from "../lib/defer";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
@@ -142,6 +143,22 @@ chat.post("/chat/stream", async (c) => {
   const signal = c.req.raw.signal;
   const service = serviceClient(c.env);
 
+  // Name the conversation from the message that opened it, the way every other
+  // chat product does — an untitled sidebar of "New chat, New chat, New chat"
+  // is a list you cannot navigate.
+  //
+  // Started here, before the reply, so it runs alongside the streaming
+  // completion instead of after it: the reply takes seconds and this takes
+  // under one, so in practice the turn never waits. Deliberately *not*
+  // deferred past the response — the frontend refetches the session list when
+  // the stream closes, and a title written after that lands in a sidebar
+  // nobody is going to reload.
+  //
+  // Only for a session with no title. A named session is one the user or an
+  // earlier turn already settled, and re-titling it every turn would both cost
+  // money and move a label out from under someone reading it.
+  const titling = session.title ? null : generateSessionTitle(c.env, model, lastMessage.content);
+
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -171,15 +188,47 @@ chat.post("/chat/stream", async (c) => {
       let persisted = false;
       let spendRecorded = false;
 
+      // Collect the title started above and write it, returning what it cost so
+      // the caller can charge it with the rest of the turn. Written with the
+      // service client for the same reason `updated_at` is: the bump has to
+      // work whoever drove the reply, owner or not.
+      //
+      // `.is("title", null)` is the whole safety of it. Between the call
+      // starting and this landing, the user may have renamed the session
+      // themselves — the filter means the generated name loses that race
+      // rather than silently overwriting a name somebody chose.
+      const settleTitle = async (): Promise<number> => {
+        if (!titling) return 0;
+        const { title, tokens } = await titling;
+        if (title) {
+          const { error: titleError } = await service
+            .from("chat_sessions")
+            .update({ title })
+            .eq("id", sessionId)
+            .is("title", null);
+          if (titleError) console.error("failed to write session title", titleError);
+        }
+        return tokens;
+      };
+
       // One counter write per turn, on every way this stream can end — a reply
       // that was cut off still cost what it cost. Guarded because several of
       // those endings overlap (an abort mid-loop also lands in the catch).
+      //
+      // The title is settled from in here rather than from each ending, so the
+      // tokens it spent are in the same write and no ending can forget it. That
+      // includes an abort: the titling call had already been made and paid for
+      // by the time the user hit stop.
       const recordSpend = async () => {
         if (spendRecorded) return;
         spendRecorded = true;
+        const titleTokens = await settleTitle();
         await recordQuota(
           c,
-          embeddingCost(embeddingTokens) + (promptTokens ?? 0) + (completionTokens ?? 0),
+          embeddingCost(embeddingTokens) +
+            (promptTokens ?? 0) +
+            (completionTokens ?? 0) +
+            titleTokens,
         );
       };
 

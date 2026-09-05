@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useAgentsStore } from "@/lib/agents-store";
 import { AgentAvatar } from "@/components/avatars";
+import { SessionRow } from "@/components/session-row";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -33,8 +34,16 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export function AgentWorkspace({ agentId, children }: { agentId: string; children?: ReactNode }) {
-  const { agents, sessions, deleteAgent, startSession, startBrainstorm, deleteSession, canWrite } =
-    useAgentsStore();
+  const {
+    agents,
+    sessions,
+    deleteAgent,
+    startSession,
+    startBrainstorm,
+    deleteSession,
+    renameSession,
+    canWrite,
+  } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const activeSessionId = useRouterState({
@@ -205,33 +214,14 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
                 </div>
                 <div className="space-y-0.5">
                   {sharedSessions.map((s) => (
-                    <div
+                    <SessionRow
                       key={s.id}
-                      className={cn(
-                        "group flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors duration-200",
-                        s.id === activeSessionId
-                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                          : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-                      )}
-                    >
-                      <button
-                        onClick={() => openChat(s.id)}
-                        className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-left"
-                      >
-                        <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {s.kind === "brainstorm" && <span className="mr-1">🧠</span>}
-                          {s.title || (s.kind === "brainstorm" ? "New brainstorm" : "New chat")}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => removeSession(s.id)}
-                        className="shrink-0 opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                        aria-label="Delete chat"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                      session={s}
+                      active={s.id === activeSessionId}
+                      onOpen={openChat}
+                      onRename={renameSession}
+                      onDelete={removeSession}
+                    />
                   ))}
                 </div>
               </div>
@@ -245,30 +235,14 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
                 <p className="px-3 py-1 text-xs text-sidebar-foreground/50">No chats yet.</p>
               ) : (
                 mySessions.map((s) => (
-                  <div
+                  <SessionRow
                     key={s.id}
-                    className={cn(
-                      "group flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors duration-200",
-                      s.id === activeSessionId
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-                    )}
-                  >
-                    <button
-                      onClick={() => openChat(s.id)}
-                      className="min-w-0 flex-1 truncate text-left"
-                    >
-                      {s.kind === "brainstorm" && <span className="mr-1">🧠</span>}
-                      {s.title || (s.kind === "brainstorm" ? "New brainstorm" : "New chat")}
-                    </button>
-                    <button
-                      onClick={() => removeSession(s.id)}
-                      className="shrink-0 opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                      aria-label="Delete chat"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+                    session={s}
+                    active={s.id === activeSessionId}
+                    onOpen={openChat}
+                    onRename={renameSession}
+                    onDelete={removeSession}
+                  />
                 ))
               )}
             </div>

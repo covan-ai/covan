@@ -58,6 +58,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "routes/account.ts",
     "erasure is the one thing a caller cannot do as themselves: auth.users is outside RLS entirely, so deleting your own account needs auth.admin.deleteUser, and the workspaces left with nobody in them have no DELETE policy for the same reason nobody has ever needed one. Both writes are keyed to the caller's own id, and the survey that decides which workspaces those are is done through the user client on purpose",
   ],
+  [
+    "lib/keys/store.ts",
+    "workspace_provider_keys has RLS on and no policy for authenticated at all — not even a workspace's own admin selects a row. Every caller of this module is responsible for having checked who is asking before it does: routes/provider-keys.ts checks the admin role, and readWorkspaceKeys is read mid-chat-request for whoever the request already resolved to a member of",
+  ],
 ]);
 
 /**

@@ -56,6 +56,21 @@ export type RoutineEnv = {
    * of one decision.
    */
   ANTHROPIC_BASE_URL?: string;
+  /**
+   * Key material for `workspace_provider_keys`, 32 bytes base64.
+   *
+   * On `RoutineEnv` rather than `Bindings` because the cron Worker needs it as
+   * much as the API one does: a scheduled routine whose owner has run out of
+   * allowance has to be able to open their workspace's key, and it has no
+   * request to carry one in on.
+   *
+   * Optional, and its absence is a supported configuration rather than a
+   * misconfiguration: a deployment that has not set it does not offer workspace
+   * keys at all. It does not offer a broken version of them — `PUT
+   * /workspace/provider-keys` answers 501 and the interface never renders the
+   * field. `wrangler secret put PROVIDER_KEY_SECRET`.
+   */
+  PROVIDER_KEY_SECRET?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   RESEND_API_KEY: string;
@@ -195,6 +210,14 @@ export type Bindings = SyncEnv & {
    */
   RATE_LIMIT_STANDARD_PER_MINUTE?: string;
   RATE_LIMIT_EXPENSIVE_PER_MINUTE?: string;
+  /**
+   * Where a message from the quota wall goes. Defaults to `efe@covan.app`.
+   *
+   * A default rather than a required secret, so there is nothing to forget on
+   * deploy. A self-hoster who has registered their own metered entitlements can
+   * reach that form and should set this.
+   */
+  SUPPORT_EMAIL?: string;
 };
 
 /**

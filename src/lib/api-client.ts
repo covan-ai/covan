@@ -332,6 +332,8 @@ export const api = {
     messages: (id: string): Promise<Message[]> => request("GET", `/sessions/${id}/messages`),
     setVisibility: (id: string, visibility: "private" | "shared"): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, { visibility }),
+    rename: (id: string, title: string): Promise<ChatSession> =>
+      request("PATCH", `/sessions/${id}`, { title }),
   },
   messages: {
     create: (input: { sessionId: string; role: "user"; content: string }): Promise<Message> =>

@@ -115,6 +115,7 @@ type Store = {
   updateMessage: (sessionId: string, messageId: string, content: string) => void;
   deleteMessagesAfter: (sessionId: string, messageId: string) => void;
   deleteSession: (id: string) => void;
+  renameSession: (id: string, title: string) => void;
   toggleFavorite: (agentId: string) => void;
 };
 
@@ -289,6 +290,28 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           .remove(id)
           .then(() => queryClient.invalidateQueries({ queryKey: ["sessions"] }))
           .catch(() => toast.error("Couldn't delete the conversation."));
+      },
+
+      // Optimistic, unlike deleteSession: the name is already on screen in the
+      // field the user just left, and a round trip before it settles reads as
+      // the rename not having taken. A failure puts the old list back and says
+      // so, the same shape as toggleFavorite below.
+      renameSession: (id, title) => {
+        const key = ["sessions"] as const;
+        const previous = queryClient.getQueryData<ChatSession[]>(key);
+        queryClient.setQueryData<ChatSession[]>(key, (old = []) =>
+          old.map((s) => (s.id === id ? { ...s, title } : s)),
+        );
+
+        void api.sessions
+          .rename(id, title)
+          .catch(() => {
+            queryClient.setQueryData<ChatSession[]>(key, previous);
+            toast.error("Couldn't rename the conversation.");
+          })
+          .finally(() => {
+            void queryClient.invalidateQueries({ queryKey: key });
+          });
       },
 
       updateMessage: (sessionId, messageId, content) => {

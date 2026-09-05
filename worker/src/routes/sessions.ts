@@ -12,9 +12,23 @@ const createSessionSchema = z.object({
   kind: z.enum(["chat", "brainstorm"]).optional(),
 });
 
-const updateSessionSchema = z.object({
-  visibility: z.enum(["private", "shared"]),
-});
+// How long a name a person may type. Deliberately wider than the ~60 characters
+// a generated title aims for: that cap exists so the model writes a label
+// rather than a sentence, and it has no business limiting someone who knows
+// what they want their own conversation called. The sidebar truncates either
+// way.
+const TITLE_INPUT_MAX_CHARS = 120;
+
+// Both fields optional, at least one required. A PATCH that named both columns
+// unconditionally would blank the title of every session somebody shared.
+const updateSessionSchema = z
+  .object({
+    visibility: z.enum(["private", "shared"]).optional(),
+    title: z.string().trim().min(1).max(TITLE_INPUT_MAX_CHARS).optional(),
+  })
+  .refine((v) => v.visibility !== undefined || v.title !== undefined, {
+    message: "nothing to update",
+  });
 
 // GET /sessions
 sessions.get("/sessions", async (c) => {
@@ -93,10 +107,17 @@ sessions.patch("/sessions/:id", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  // RLS restricts UPDATE to the session owner.
+  const { visibility, title } = parsed.data;
+
+  // RLS restricts UPDATE to the session owner — so on a shared session, only
+  // the person who started it can rename it, the same rule that already
+  // governs sharing it in the first place.
   const { data, error } = await db
     .from("chat_sessions")
-    .update({ visibility: parsed.data.visibility })
+    .update({
+      ...(visibility !== undefined ? { visibility } : {}),
+      ...(title !== undefined ? { title } : {}),
+    })
     .eq("id", id)
     .select("*, messages(count)")
     .maybeSingle();

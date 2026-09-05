@@ -16,18 +16,30 @@ import { paragraphs } from "./prose";
 export function quotaSupportEmail(args: {
   to: string;
   from: { email: string; name: string | null };
-  workspace: { id: string; name: string; memberCount: number };
-  quota: { used: number; limit: number };
+  /**
+   * `name` and `memberCount` are `"unknown"` rather than a made-up default
+   * when the route's own read of them failed — a gap that announces itself
+   * beats a plausible-looking number that happens to be wrong.
+   */
+  workspace: { id: string; name: string; memberCount: number | "unknown" };
+  /**
+   * `limit: null` means unmetered — the same convention `QuotaSnapshot`
+   * (`lib/entitlements`) uses. Coercing it to `0` here would read as an
+   * account entitled to nothing, which is stricter than reality and the wrong
+   * conclusion for somebody triaging this inbox.
+   */
+  quota: { used: number; limit: number | null };
   hasWorkspaceKey: boolean;
   appUrl: string;
   message: string;
 }) {
   const who = args.from.name ? `${args.from.name} <${args.from.email}>` : args.from.email;
+  const limit = args.quota.limit === null ? "unmetered" : args.quota.limit.toLocaleString("en-GB");
   const facts = [
     `From:       ${who}`,
     `Workspace:  ${args.workspace.name} (${args.workspace.id})`,
     `Members:    ${args.workspace.memberCount}`,
-    `Allowance:  ${args.quota.used.toLocaleString("en-GB")} of ${args.quota.limit.toLocaleString("en-GB")}`,
+    `Allowance:  ${args.quota.used.toLocaleString("en-GB")} of ${limit}`,
     `Own key:    ${args.hasWorkspaceKey ? "yes" : "no"}`,
     `Deployment: ${args.appUrl}`,
   ];

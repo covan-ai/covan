@@ -57,7 +57,15 @@ function appWith(opts: {
   canSendEmailMock.mockReturnValue(true);
   readKeyHints.mockResolvedValue({ openai: null, anthropic: null, updatedAt: null });
   rateCheck.mockResolvedValue(opts.rateLimit ?? { allowed: true });
-  sendEmail.mockImplementation((...args: unknown[]) => opts.send(...args));
+  // `sendEmail` now returns `Promise<Response>` and the route checks `.ok`
+  // (it does not throw on a non-2xx — see `lib/email.ts`), so a bare `vi.fn()`
+  // passed as `send` — which resolves `undefined` — needs a real ok `Response`
+  // standing in for it. A test that wants a specific outcome (a rejection, or
+  // a non-ok `Response`) configures `send` itself and that value wins instead.
+  sendEmail.mockImplementation(async (...args: unknown[]) => {
+    const result = await opts.send(...args);
+    return result ?? new Response(null, { status: 200 });
+  });
 
   const fake = fakeDb({
     tables: {
@@ -216,6 +224,20 @@ describe("POST /support/quota", () => {
     // The wall is where somebody decides whether this product is worth paying
     // for. A message that silently does not arrive is worse than a refusal.
     const { app, env } = appWith({ send: vi.fn().mockRejectedValue(new Error("resend down")) });
+
+    const res = await post(app, env, { message: "hello" });
+
+    expect(res.status).toBe(502);
+  });
+
+  it("reports a Resend error response, not just a rejected fetch", async () => {
+    // `sendEmail` returns `Promise<Response>` and does not throw on a non-2xx
+    // (`lib/email.ts`) — a bad RESEND_API_KEY resolves a 401 rather than
+    // rejecting. A `try/catch` around the call alone never sees this, and the
+    // route would answer 200 for a message nobody sent.
+    const { app, env } = appWith({
+      send: vi.fn().mockResolvedValue(new Response("", { status: 422 })),
+    });
 
     const res = await post(app, env, { message: "hello" });
 

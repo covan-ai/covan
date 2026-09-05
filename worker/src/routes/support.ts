@@ -52,7 +52,18 @@ support.post("/support/quota", async (c) => {
   // arrive at frustrated, and a send button there without a limit is a send
   // button that gets pressed eleven times — this has to stop that before a
   // single query runs, not after building the mail it would have sent.
-  const verdict = await getRateLimiter(c.env, "standard").check(user.id);
+  //
+  // `expensive`, not `standard`: `standard` is 120/min and deliberately
+  // generous, because its job is to protect the token check in front of it,
+  // "not to ration ordinary use" (`ratelimit/types.ts`). That would let one
+  // account send 7,200 messages an hour to a human inbox. `expensive` is
+  // 20/min and user-keyed — "far less than a loop can" is exactly the
+  // instrument a send button needs. Namespaced with the route's own prefix
+  // because the limiter does no namespacing of its own (`middleware/ratelimit.ts`
+  // adds the tier prefix only for the global middleware, not for a bare
+  // `.check()` call like this one) — a raw `user.id` would share a keyspace
+  // with any other route that also happened to check in with a bare id.
+  const verdict = await getRateLimiter(c.env, "expensive").check(`support:user:${user.id}`);
   if (!verdict.allowed) {
     c.header("Retry-After", String(verdict.retryAfterSeconds));
     return c.json({ error: "too many messages — try again shortly" }, 429);
@@ -73,21 +84,43 @@ support.post("/support/quota", async (c) => {
   const workspaceId = await getActiveWorkspaceId(db, user.id);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
-  const [{ data: workspace }, { data: profile }, { data: members }, hints, quota] =
-    await Promise.all([
-      db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
-      // The same lookup `notifyInvitee` (`routes/invitations.ts`) makes for the
-      // inviter's display name — `profiles.name`, not the auth user's own
-      // metadata, which nothing else in this codebase reads.
-      db.from("profiles").select("name").eq("id", user.id).maybeSingle(),
-      // Read as rows rather than `{ count: 'exact', head: true }` — the same
-      // choice `DELETE /workspace/members/me` makes, and for the same reason: a
-      // workspace has a handful of members, not a table's worth, so paying for a
-      // second aggregate query buys nothing a `.length` does not already give.
-      db.from("workspace_members").select("user_id").eq("workspace_id", workspaceId),
-      readKeyHints(c.env, workspaceId),
-      c.get("entitlements").snapshot(user.id),
-    ]);
+  const [
+    { data: workspace, error: workspaceError },
+    { data: profile, error: profileError },
+    { data: members, error: membersError },
+    hints,
+    quota,
+  ] = await Promise.all([
+    db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
+    // The same lookup `notifyInvitee` (`routes/invitations.ts`) makes for the
+    // inviter's display name — `profiles.name`, not the auth user's own
+    // metadata, which nothing else in this codebase reads.
+    db.from("profiles").select("name").eq("id", user.id).maybeSingle(),
+    // Read as rows rather than `{ count: 'exact', head: true }` — the same
+    // choice `DELETE /workspace/members/me` makes, and for the same reason: a
+    // workspace has a handful of members, not a table's worth, so paying for a
+    // second aggregate query buys nothing a `.length` does not already give.
+    db.from("workspace_members").select("user_id").eq("workspace_id", workspaceId),
+    readKeyHints(c.env, workspaceId),
+    c.get("entitlements").snapshot(user.id),
+  ]);
+
+  // This mail exists so somebody can be trusted on sight. A failed read that
+  // fell back to a normal-looking default — "0 members", "unnamed" — would be
+  // indistinguishable from the truth, so a failure here has to announce
+  // itself in the fact block rather than quietly render a number nobody
+  // checked. It does not refuse the send: the message itself, which the
+  // person actually typed, is what the sender is waiting on, and one missing
+  // fact should not swallow it.
+  if (workspaceError) {
+    console.error("could not read the workspace name for a quota support message", workspaceError);
+  }
+  if (profileError) {
+    console.error("could not read the sender's profile for a quota support message", profileError);
+  }
+  if (membersError) {
+    console.error("could not read the member count for a quota support message", membersError);
+  }
 
   const email = quotaSupportEmail({
     to: c.env.SUPPORT_EMAIL || DEFAULT_SUPPORT_EMAIL,
@@ -97,21 +130,31 @@ support.post("/support/quota", async (c) => {
     },
     workspace: {
       id: workspaceId,
-      name: (workspace?.name as string | null) ?? "unnamed",
-      memberCount: (members ?? []).length,
+      name: workspaceError ? "unknown" : ((workspace?.name as string | null) ?? "unnamed"),
+      memberCount: membersError ? "unknown" : (members ?? []).length,
     },
-    quota: { used: quota.used, limit: quota.limit ?? 0 },
+    quota: { used: quota.used, limit: quota.limit },
     hasWorkspaceKey: Boolean(hints.openai || hints.anthropic),
     appUrl: appUrlOf(c),
     message: parsed.data.message,
   });
 
   try {
-    await sendEmail(email, {
+    // `sendEmail` returns the Resend `Response` rather than throwing on a
+    // non-2xx (`lib/email.ts`) — a bad `RESEND_API_KEY` or an unverified
+    // sender resolves a 401/403 rather than rejecting the fetch. A `catch`
+    // alone never sees that, so `res.ok` is checked here too, the same way
+    // `notifyInvitee` (`routes/invitations.ts`) and `deliverRoutine`
+    // (`lib/routines/delivery.ts`) already do for their own awaited sends.
+    const res = await sendEmail(email, {
       fetchImpl: fetch.bind(globalThis),
       apiKey: c.env.RESEND_API_KEY,
       from: c.env.RESEND_FROM,
     });
+    if (!res.ok) {
+      console.error("Resend refused a quota support message", res.status);
+      return c.json({ error: "could not send your message — please email us directly" }, 502);
+    }
   } catch (err) {
     console.error("could not send a quota support message", err);
     return c.json({ error: "could not send your message — please email us directly" }, 502);

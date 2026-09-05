@@ -53,7 +53,18 @@ afterEach(() => {
   // vi.mock() factory, like keysForUser above, is "silently ignored" by it.
   // Without this, call counts from one test's mockResolvedValue leak into the
   // next test's "was this even called" assertions.
-  vi.mocked(keysForUser).mockClear();
+  //
+  // mockClear() alone is not enough either: it wipes call history but leaves
+  // whatever mockResolvedValue the previous test installed in place as the new
+  // de-facto default, so a later test that forgets to reconfigure it silently
+  // inherits "workspace" instead of the documented "house". mockReset() drops
+  // that installed implementation too, so re-asserting the factory default
+  // below is what actually makes every test start from the same place.
+  vi.mocked(keysForUser).mockReset().mockResolvedValue({
+    openai: "house",
+    anthropic: undefined,
+    source: "house",
+  });
 });
 
 describe("guardQuota", () => {

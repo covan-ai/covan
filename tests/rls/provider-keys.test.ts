@@ -23,9 +23,11 @@ import {
  */
 
 let alice: TestUser;
+let bob: TestUser;
 
 beforeAll(async () => {
   alice = await createTestUser("keys-alice");
+  bob = await createTestUser("keys-bob");
   // Seed through service_role, the only writer there is.
   const { error } = await serviceClient().from("workspace_provider_keys").upsert({
     workspace_id: alice.workspaceId,
@@ -55,11 +57,23 @@ describe("workspace_provider_keys", () => {
   });
 
   it("refuses INSERT to the workspace's own admin", async () => {
-    const { error } = await alice.db
-      .from("workspace_provider_keys")
-      .insert({ workspace_id: alice.workspaceId, openai_hint: "sk-…dead" });
+    // Targets bob's workspace, not alice's own: alice's workspace_id already
+    // has the seeded row (a primary-key collision on its own), and a bare hint
+    // would fail the openai_complete check constraint on its own. Neither of
+    // those is the wall this test exists to find. bob's workspace has no row
+    // yet and this triple is complete, so the only thing left standing between
+    // alice and a written row is the missing grant/policy — which is also why
+    // the assertion below checks the specific code rather than "some error":
+    // a permission-denied code says the wall is what stopped this; any error
+    // would also pass if a stray NOT NULL or FK tripped first.
+    const { error } = await alice.db.from("workspace_provider_keys").insert({
+      workspace_id: bob.workspaceId,
+      openai_ciphertext: "ZmFrZQ==",
+      openai_iv: "MTIzNDU2Nzg5MDEy",
+      openai_hint: "sk-…dead",
+    });
 
-    expect(error).not.toBeNull();
+    expect(error?.code).toBe("42501");
   });
 
   it("refuses UPDATE to the workspace's own admin", async () => {

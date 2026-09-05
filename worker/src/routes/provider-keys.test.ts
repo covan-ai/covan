@@ -72,7 +72,7 @@ function appWith(opts: {
   });
   app.route("/", providerKeys);
 
-  return app;
+  return { app, ...fake };
 }
 
 beforeEach(() => {
@@ -81,7 +81,7 @@ beforeEach(() => {
 
 describe("GET /workspace/provider-keys", () => {
   it("returns hints and never a key", async () => {
-    const app = appWith({
+    const { app } = appWith({
       role: "admin",
       hints: { openai: "sk-…4f2a", anthropic: null, updatedAt: "2026-09-05T00:00:00Z" },
     });
@@ -94,7 +94,7 @@ describe("GET /workspace/provider-keys", () => {
   });
 
   it("says so when the deployment cannot store keys", async () => {
-    const app = appWith({ role: "admin", configured: false });
+    const { app } = appWith({ role: "admin", configured: false });
     const body = (await (await app.request("/workspace/provider-keys")).json()) as {
       configured: boolean;
     };
@@ -117,7 +117,7 @@ describe("PUT /workspace/provider-keys", () => {
     );
 
   it("stores a key for an admin and answers with the hint", async () => {
-    const app = appWith({ role: "admin" });
+    const { app, callsTo } = appWith({ role: "admin" });
     const res = await put(app);
 
     expect(res.status).toBe(200);
@@ -129,10 +129,26 @@ describe("PUT /workspace/provider-keys", () => {
       "sk-proj-abcdef123456",
       "user-1",
     );
+
+    // The role that authorised this write has to come from a row scoped to
+    // BOTH the session user and the active workspace. `activeRole`'s own
+    // query is the last call this handler makes against `workspace_members`
+    // (the first is `getActiveWorkspaceId`'s membership check). Dropping
+    // either filter in a future refactor would let the role of a different
+    // member of the same workspace — or a row of the caller's in a different
+    // workspace — decide whether this write goes through, and every other
+    // test in this file would stay green because none of them look past the
+    // response.
+    expect(callsTo("workspace_members").at(-1)!.filters).toEqual(
+      expect.arrayContaining([
+        { column: "user_id", value: "user-1", kind: "eq" },
+        { column: "workspace_id", value: "ws-1", kind: "eq" },
+      ]),
+    );
   });
 
   it("refuses a member", async () => {
-    const app = appWith({ role: "member" });
+    const { app } = appWith({ role: "member" });
     const res = await put(app);
 
     expect(res.status).toBe(403);
@@ -140,7 +156,7 @@ describe("PUT /workspace/provider-keys", () => {
   });
 
   it("refuses a viewer", async () => {
-    const app = appWith({ role: "viewer" });
+    const { app } = appWith({ role: "viewer" });
     const res = await put(app);
 
     expect(res.status).toBe(403);
@@ -148,7 +164,7 @@ describe("PUT /workspace/provider-keys", () => {
   });
 
   it("answers 501 when the deployment has no PROVIDER_KEY_SECRET", async () => {
-    const app = appWith({ role: "admin", configured: false });
+    const { app } = appWith({ role: "admin", configured: false });
     const res = await put(app);
 
     expect(res.status).toBe(501);
@@ -156,7 +172,7 @@ describe("PUT /workspace/provider-keys", () => {
   });
 
   it("refuses an unknown provider", async () => {
-    const app = appWith({ role: "admin" });
+    const { app } = appWith({ role: "admin" });
     const res = await app.request("/workspace/provider-keys", {
       method: "PUT",
       body: JSON.stringify({ provider: "gemini", key: "sk-proj-abcdef123456" }),
@@ -168,7 +184,7 @@ describe("PUT /workspace/provider-keys", () => {
   });
 
   it("refuses an empty key", async () => {
-    const app = appWith({ role: "admin" });
+    const { app } = appWith({ role: "admin" });
     const res = await app.request("/workspace/provider-keys", {
       method: "PUT",
       body: JSON.stringify({ provider: "openai", key: "   " }),
@@ -182,7 +198,7 @@ describe("PUT /workspace/provider-keys", () => {
 
 describe("DELETE /workspace/provider-keys/:provider", () => {
   it("clears for an admin", async () => {
-    const app = appWith({ role: "admin" });
+    const { app } = appWith({ role: "admin" });
     const res = await app.request("/workspace/provider-keys/openai", { method: "DELETE" }, ENV);
 
     expect(res.status).toBe(200);
@@ -191,7 +207,7 @@ describe("DELETE /workspace/provider-keys/:provider", () => {
   });
 
   it("refuses a member", async () => {
-    const app = appWith({ role: "member" });
+    const { app } = appWith({ role: "member" });
     const res = await app.request("/workspace/provider-keys/openai", { method: "DELETE" }, ENV);
 
     expect(res.status).toBe(403);

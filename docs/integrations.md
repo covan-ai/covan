@@ -141,15 +141,43 @@ to the current home.
 Read this section before promising Drive to anyone.
 
 **The scope is the problem.** Syncing a folder needs `drive.readonly`, which
-Google classifies as **restricted**. An unverified OAuth client works — for up to
-100 users, behind an "unverified app" warning screen — but going past that needs
-Google's verification, and for a restricted scope that includes a third-party
-security assessment. It is a cost with a lead time, not a checkbox.
+Google classifies as **restricted**. An unverified OAuth client still works, for
+up to about a hundred users, and every one of them sees a full-page "Google
+hasn't verified this app" warning before they can continue. Going past that —
+or wanting the warning gone — means Google's verification.
 
 The narrow alternative, `drive.file`, only reaches files the user picked through
 Google's own Picker widget, and cannot express "this folder, and whatever
 appears in it later". A folder that syncs is the whole feature, so the narrow
-scope does not do it.
+scope does not do it. This is worth re-checking rather than believing: if Google
+ever gives `drive.file` a folder that keeps granting, the entire section below
+stops being necessary.
+
+### What verification costs
+
+Not a checkbox, and not a one-off either.
+
+- A restricted scope needs a **CASA Tier 2** security assessment on top of
+  Google's own review. The self-serve route through an approved lab is typically
+  **$540–$1,000**; the older, manually driven assessment ran to five figures and
+  still applies to some grandfathered cases.
+- **Four to twelve weeks** from first submission to approval, which is long
+  enough to be a roadmap item rather than a task.
+- **Annually.** Access to a restricted scope has to be re-certified every twelve
+  months from the assessor's letter, so this is a recurring cost and a recurring
+  piece of work.
+
+Before submitting you will need the consent screen filled in properly, the
+domain verified in Search Console, a public demo video showing the OAuth flow
+and what each scope is used for, and a written justification for why
+`drive.file` does not do the job. The video is the usual reason for a rejection:
+it has to show the scope being used, not just the app existing.
+
+**If everyone who will use it is in one Google Workspace organisation, none of
+this applies.** Set the audience to *Internal* and there is no warning screen
+and no verification — but only accounts in that organisation can grant access,
+which makes it right for a self-hosted deployment inside one company and wrong
+for a product sold to others.
 
 **Connecting is two steps**: the grant, and then a folder. A Drive connection
 stays paused between them, because a connection that defaulted to all of My
@@ -181,13 +209,40 @@ ordinary folder tree.
 
 ### Setting it up
 
-1. In the Google Cloud console, create an **OAuth client ID** of type *Web
-   application*.
-2. Add `<your API URL>/connections/callback` as an authorised redirect URI.
-3. Enable the **Google Drive API** for the project.
-4. On the OAuth consent screen, add the scope
-   `https://www.googleapis.com/auth/drive.readonly`.
-5. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+Google renamed all of this. What used to be the "OAuth consent screen" is now
+**Google Auth Platform**, split into *Branding*, *Audience*, *Data Access* and
+*Clients*, and OAuth clients are created under the last of those rather than
+under APIs & Services → Credentials.
+
+1. **Enable the Google Drive API.** APIs & Services → Library → *Google Drive
+   API* → Enable.
+2. **Google Auth Platform → Branding.** App name, support email, home page,
+   privacy policy and terms URLs, and the authorised domain — which has to be
+   verified in Search Console before Google will accept it.
+3. **Google Auth Platform → Audience.** User type *External*, then **publish the
+   app to Production**.
+
+   Do not leave it in *Testing*. A project in Testing with an external audience
+   has its **refresh tokens revoked after seven days** for any scope beyond
+   basic profile, and a Drive connection is nothing but a refresh token — so
+   every connection would pause itself once a week with "the grant was revoked",
+   which looks exactly like a customer having removed access. Testing also only
+   admits the hundred test users you list by hand.
+4. **Google Auth Platform → Data Access.** Add
+   `https://www.googleapis.com/auth/drive.readonly`. Google will mark it as
+   restricted and ask about verification; see above for what that costs.
+5. **Google Auth Platform → Clients → Create client.** Type *Web application*,
+   and add `<your API URL>/connections/callback` as an authorised redirect URI —
+   for example `https://api.example.com/connections/callback`, or
+   `http://localhost:8787/connections/callback` for a local stack. It must match
+   byte for byte; Google checks it again when the code is exchanged.
+6. **Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`** from the client you just
+   created. The secret is shown once.
+
+Until the app is verified, everyone connecting Drive lands on "Google hasn't
+verified this app" and has to open **Advanced** and continue anyway. That is
+survivable for people you have told in advance and is not something to put in
+front of a buyer.
 
 If a connection fails immediately with "Google did not return a refresh token",
 somebody has granted this app before: remove Covan from

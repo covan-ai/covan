@@ -1,11 +1,44 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { guardQuota, recordQuota } from "./guard";
 import type { Entitlements } from "./index";
+import { keysForUser } from "../keys/resolve";
 
-/** The two things the guard touches on a Hono context, and nothing else. */
-function ctx(entitlements: Partial<Entitlements>) {
+// Defaults to the house-keys shape so tests that never touch this mock (the
+// pre-existing 402 case above all) still get an answer `guardQuota` can read
+// `.source` off of, instead of the `undefined` a bare `vi.fn()` returns.
+vi.mock("../keys/resolve", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../keys/resolve")>()),
+  keysForUser: vi
+    .fn()
+    .mockResolvedValue({ openai: "house", anthropic: undefined, source: "house" }),
+}));
+
+/** The things the guard touches on a Hono context, and nothing else. */
+function ctx(
+  entitlements: Partial<Entitlements>,
+  extra: {
+    db?: unknown;
+    env?: unknown;
+    providerEnv?: unknown;
+    set?: (k: string, v: unknown) => void;
+  } = {},
+) {
+  const store: Record<string, unknown> = {
+    user: { id: "u1" },
+    entitlements,
+    db: extra.db ?? {},
+    // Undefined unless a test says otherwise — the normal case, and the one
+    // the old helper got wrong by answering every key with `entitlements`.
+    providerEnv: extra.providerEnv,
+  };
   return {
-    get: (key: string) => (key === "user" ? { id: "u1" } : (entitlements as Entitlements)),
+    env: extra.env ?? { OPENAI_API_KEY: "house" },
+    get: (key: string) => store[key],
+    set:
+      extra.set ??
+      ((k: string, v: unknown) => {
+        store[k] = v;
+      }),
     json: (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), {
         status,
@@ -14,7 +47,14 @@ function ctx(entitlements: Partial<Entitlements>) {
   } as any;
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  // restoreAllMocks only touches spies made with vi.spyOn — a vi.fn() from a
+  // vi.mock() factory, like keysForUser above, is "silently ignored" by it.
+  // Without this, call counts from one test's mockResolvedValue leak into the
+  // next test's "was this even called" assertions.
+  vi.mocked(keysForUser).mockClear();
+});
 
 describe("guardQuota", () => {
   it("lets an allowed caller through", async () => {
@@ -93,5 +133,73 @@ describe("recordQuota", () => {
       ),
     ).resolves.toBeUndefined();
     expect(err).toHaveBeenCalled();
+  });
+});
+
+const DENIED = {
+  allowed: false as const,
+  used: 100_000,
+  limit: 100_000,
+  resetsAt: "2026-10-01T00:00:00.000Z",
+};
+
+describe("guardQuota with a workspace key", () => {
+  it("lets the request through and stashes the workspace env", async () => {
+    vi.mocked(keysForUser).mockResolvedValue({
+      openai: "ws-openai",
+      anthropic: undefined,
+      source: "workspace",
+    });
+
+    const set = vi.fn();
+    const c = ctx({ check: async () => DENIED }, { set, env: { OPENAI_API_KEY: "house" } });
+
+    expect(await guardQuota(c)).toBeNull();
+    expect(set).toHaveBeenCalledWith(
+      "providerEnv",
+      expect.objectContaining({ OPENAI_API_KEY: "ws-openai" }),
+    );
+  });
+
+  it("still answers 402 when the workspace has no key", async () => {
+    vi.mocked(keysForUser).mockResolvedValue({
+      openai: "house",
+      anthropic: undefined,
+      source: "house",
+    });
+
+    const set = vi.fn();
+    const c = ctx({ check: async () => DENIED }, { set, env: { OPENAI_API_KEY: "house" } });
+
+    const denied = await guardQuota(c);
+    expect(denied?.status).toBe(402);
+    expect(set).not.toHaveBeenCalledWith("providerEnv", expect.anything());
+  });
+
+  it("does not look for a key at all while the caller is within allowance", async () => {
+    const c = ctx({ check: async () => ({ allowed: true }) }, { set: vi.fn(), env: {} });
+    expect(await guardQuota(c)).toBeNull();
+    expect(keysForUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordQuota under a workspace key", () => {
+  it("counts nothing when the workspace is paying", async () => {
+    const record = vi.fn();
+    const c = ctx(
+      { check: async () => DENIED, record },
+      { set: vi.fn(), env: {}, providerEnv: { OPENAI_API_KEY: "ws-openai" } },
+    );
+
+    await recordQuota(c, 5_000);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("still counts when the operator is paying", async () => {
+    const record = vi.fn();
+    const c = ctx({ check: async () => ({ allowed: true }), record }, { set: vi.fn(), env: {} });
+
+    await recordQuota(c, 5_000);
+    expect(record).toHaveBeenCalledWith(expect.any(String), 5_000);
   });
 });

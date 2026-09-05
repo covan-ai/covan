@@ -231,6 +231,20 @@ export type Variables = {
   /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
   entitlements: Entitlements;
   /**
+   * The environment this request's model calls should use, when it is not the
+   * operator's.
+   *
+   * Set by `guardQuota` only when the caller is out of allowance and their
+   * workspace has its own key. Undefined is the normal case and means "use
+   * `c.env`" — which is why every route reads it as
+   * `c.get("providerEnv") ?? c.env` rather than branching.
+   *
+   * Its presence is also what tells `recordQuota` not to count: these tokens
+   * are billed to the workspace, and the counter means what the operator is
+   * billed for.
+   */
+  providerEnv?: Bindings;
+  /**
    * Set only when the caller proved themselves with an API key rather than a
    * browser session. Routes read it to refuse the things a key must not do —
    * chiefly creating another key, which would make revocation meaningless.

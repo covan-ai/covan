@@ -41,6 +41,11 @@ chat.post("/chat/stream", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
+
   const parsed = streamChatSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
@@ -99,7 +104,7 @@ chat.post("/chat/stream", async (c) => {
   // question — see `lib/retrieval.ts` for why one copy rather than two.
   const { docNames, ragBlock, sources, grounding, embeddingTokens } = await retrieveForAgent(
     db,
-    c.env,
+    env,
     session.agent_id,
     lastMessage.content,
     rows.map((m: { role: string; content: string }) => ({
@@ -139,7 +144,7 @@ chat.post("/chat/stream", async (c) => {
     ...(latestTurn ? [latestTurn] : []),
   ];
 
-  const model = resolveModel(agent.model, c.env);
+  const model = resolveModel(agent.model, env);
   const signal = c.req.raw.signal;
   const service = serviceClient(c.env);
 
@@ -157,7 +162,7 @@ chat.post("/chat/stream", async (c) => {
   // Only for a session with no title. A named session is one the user or an
   // earlier turn already settled, and re-titling it every turn would both cost
   // money and move a label out from under someone reading it.
-  const titling = session.title ? null : generateSessionTitle(c.env, model, lastMessage.content);
+  const titling = session.title ? null : generateSessionTitle(env, model, lastMessage.content);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -271,7 +276,7 @@ chat.post("/chat/stream", async (c) => {
       };
       try {
         const events = streamCompletion(
-          c.env,
+          env,
           {
             model,
             messages,

@@ -157,6 +157,9 @@ function makeDeps(db: any) {
   recorded = [];
   return {
     db,
+    // A plain house env — none of these tests exercise a workspace key, so this
+    // only has to be a shape `keysForUser` can read without a workspace lookup.
+    env: { OPENAI_API_KEY: "sk-test" },
     summarise,
     // Unmetered by default, like a self-hosted install. The quota tests
     // override `check` on the returned object.

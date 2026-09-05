@@ -50,7 +50,11 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
 
   return {
     db,
-    summarise: summariseWithModel(env),
+    env,
+    // `summariseWithModel` still takes the env it completes with; the run
+    // resolves that env once (house or workspace) and hands it in here, per
+    // call, rather than baking one in at construction the way this used to.
+    summarise: (input, runEnv) => summariseWithModel(runEnv)(input),
     entitlements: entitlementsFor(env),
     fetchDeps: { fetchImpl: boundFetch, ownHosts },
     deliveryDeps: {

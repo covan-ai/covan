@@ -27,6 +27,11 @@ transcribe.post("/transcribe", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
+
   const contentLength = parseInt(c.req.header("content-length") ?? "", 10);
   if (Number.isFinite(contentLength) && contentLength > MAX_SIZE) {
     return c.json({ error: "recording too long (max 2 minutes)" }, 413);
@@ -41,7 +46,7 @@ transcribe.post("/transcribe", async (c) => {
 
   let result;
   try {
-    result = await transcribeAudio(c.env.OPENAI_API_KEY, file);
+    result = await transcribeAudio(env.OPENAI_API_KEY, file);
   } catch (err) {
     console.error("transcription failed", err);
     return c.json({ error: "could not transcribe the recording" }, 502);

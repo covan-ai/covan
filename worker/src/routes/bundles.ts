@@ -204,6 +204,11 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
+
   const contentLength = parseInt(c.req.header("content-length") ?? "", 10);
   if (Number.isFinite(contentLength) && contentLength > MAX_SIZE) {
     return c.json({ error: "file too large (max 10 MB)" }, 413);
@@ -289,7 +294,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   try {
     const chunks = chunkText(fullText);
     if (chunks.length > 0) {
-      const embedded = await embedTexts(c.env, chunks);
+      const embedded = await embedTexts(env, chunks);
       const vectors = embedded.vectors;
       await recordQuota(c, embeddingCost(embedded.tokens));
       const rows = chunks.map((ch, i) => ({

@@ -33,6 +33,11 @@ routines.post("/routines/draft", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
+
   const parsed = draftBodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
@@ -40,10 +45,10 @@ routines.post("/routines/draft", async (c) => {
   // once, whether the draft parses or is rejected — a failed parse still spent.
   let spent = 0;
   const completeOne = async (prompt: string) => {
-    const { text, usage } = await complete(c.env, {
+    const { text, usage } = await complete(env, {
       // Drafting has no agent behind it, so there is no per-agent model to
       // honour — `null` takes the default, or OPENAI_MODEL when one is set.
-      model: resolveModel(null, c.env),
+      model: resolveModel(null, env),
       messages: [{ role: "user", content: prompt }],
       json: true,
     });

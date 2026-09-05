@@ -25,13 +25,18 @@ const embedTexts = vi.fn();
 const completionCreate = vi.fn();
 const serviceInsert = vi.fn();
 const sessionUpdate = vi.fn();
+/** The OPENAI_API_KEY every `createOpenAI(env)` call was actually made with. */
+const createOpenAIKeys: Array<string | undefined> = [];
 
 vi.mock("../lib/embeddings", () => ({
   embedTexts: (...args: unknown[]) => embedTexts(...args),
 }));
 
 vi.mock("../lib/openai", () => ({
-  createOpenAI: () => ({ chat: { completions: { create: completionCreate } } }),
+  createOpenAI: (env: { OPENAI_API_KEY?: string }) => {
+    createOpenAIKeys.push(env.OPENAI_API_KEY);
+    return { chat: { completions: { create: completionCreate } } };
+  },
 }));
 
 vi.mock("../lib/entitlements/guard", () => ({
@@ -122,6 +127,14 @@ function appWith(spec: {
   matches?: Match[];
   /** The name the session already has. Null — the default — is a new chat. */
   sessionTitle?: string | null;
+  /**
+   * Stands in for what the real `guardQuota` sets on `c` when a workspace key
+   * is carrying the caller past their allowance. `guardQuota` itself is mocked
+   * out above (this file is not about quota), so this is how a test reaches
+   * the one seam Task 6 actually owns: whether the route reads `providerEnv`
+   * off the context and passes it to every provider call.
+   */
+  providerEnv?: { OPENAI_API_KEY: string };
 }) {
   const documents = spec.documents ?? [];
   const rows = [...(spec.history ?? []), { role: "user", content: spec.question }].map((m, i) => ({
@@ -165,6 +178,7 @@ function appWith(spec: {
   app.use("/*", async (c, next) => {
     c.set("user", USER as never);
     c.set("db", db as never);
+    if (spec.providerEnv) c.set("providerEnv", spec.providerEnv as never);
     await next();
   });
   app.route("/", chat);
@@ -217,6 +231,7 @@ function citedNames(): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  createOpenAIKeys.length = 0;
   embedTexts.mockResolvedValue({ vectors: [[0.1, 0.2]], tokens: 8 });
   answersWith(streamOf("Twenty days."));
 });
@@ -437,6 +452,31 @@ describe("the assembled prompt", () => {
     const { app } = appWith({ question: "hello", documents: [HANDBOOK], matches: [] });
     await ask(app);
     expect(sentMessages()[0].content).toContain("handbook.md");
+  });
+});
+
+describe("whose key answers (Task 6)", () => {
+  it("completes on the workspace key once guardQuota has set one", async () => {
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      providerEnv: { OPENAI_API_KEY: "ws-openai" },
+    });
+
+    const res = await ask(app);
+
+    expect(res.status).toBe(200);
+    expect(createOpenAIKeys.length).toBeGreaterThan(0);
+    expect(createOpenAIKeys.every((k) => k === "ws-openai")).toBe(true);
+  });
+
+  it("completes on the operator's key when guardQuota set nothing", async () => {
+    const { app } = appWith({ question: "How many vacation days do I get?" });
+
+    await ask(app);
+
+    // `c.env` carries no OPENAI_API_KEY in this fixture; the point is only that
+    // it is what answered, not the overlay's.
+    expect(createOpenAIKeys.every((k) => k === undefined)).toBe(true);
   });
 });
 

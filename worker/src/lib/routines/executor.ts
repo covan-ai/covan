@@ -1,10 +1,12 @@
 // worker/src/lib/routines/executor.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RoutineEnv } from "../../types";
 import { nextRunAt } from "./schedule";
 import { fetchSource, UpstreamError, type FetchDeps } from "./source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
 import type { Entitlements } from "../entitlements";
+import { keysForUser, withProviderKeys, type ProviderKeys } from "../keys/resolve";
 
 export const MAX_FAILURES = 5;
 
@@ -57,7 +59,14 @@ export type SummariseInput = {
 export type ExecutorDeps = {
   /** Service-role client — bypasses RLS. See the scoping note below. */
   db: SupabaseClient;
-  summarise: (input: SummariseInput) => Promise<{ text: string; tokens: number }>;
+  /**
+   * The house env, before any per-owner key overlay. Kept alongside
+   * `entitlements` so `runRoutine` can ask `keysForUser` whose key answers this
+   * run — the same question `guardQuota` asks on a request, asked here because
+   * a scheduled run has no request to guard.
+   */
+  env: RoutineEnv;
+  summarise: (input: SummariseInput, env: RoutineEnv) => Promise<{ text: string; tokens: number }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
   /** What the routine's owner may spend. Unmetered on a self-hosted install. */
@@ -117,7 +126,12 @@ export async function runRoutine(
     // cursor is deliberately left unadvanced, so once the quota resets the run
     // picks up exactly what it would have reported.
     const verdict = await deps.entitlements.check(routine.user_id);
-    if (!verdict.allowed) {
+    // The routine's owner may be past their allowance while their workspace
+    // carries it. Resolved here rather than in `guardQuota` because a scheduled
+    // run has no request to guard.
+    const keys = await keysForUser(deps.env, deps.db, routine.user_id, verdict.allowed);
+    const runEnv = withProviderKeys(deps.env, keys);
+    if (!verdict.allowed && keys.source !== "workspace") {
       // Read before `finish` writes this run: the question is whether the
       // PREVIOUS one was also a quota skip.
       const alreadyTold = await lastRunWasQuotaSkip(deps.db, routine.id);
@@ -255,13 +269,16 @@ export async function runRoutine(
 
     if (agentError) throw new Error(`agent lookup failed: ${agentError.message}`);
 
-    const summary = await deps.summarise({
-      persona: agent?.persona ?? null,
-      model: agent?.model ?? null,
-      instruction: routine.instruction,
-      items,
-      pageText,
-    });
+    const summary = await deps.summarise(
+      {
+        persona: agent?.persona ?? null,
+        model: agent?.model ?? null,
+        instruction: routine.instruction,
+        items,
+        pageText,
+      },
+      runEnv,
+    );
 
     await deliver(channel, { subject: routine.name, body: summary.text }, deps.deliveryDeps);
     // Past this point the message is out. Releasing the claims would let the
@@ -276,6 +293,7 @@ export async function runRoutine(
       tokens: summary.tokens,
       cursor: nextCursor,
       summary: summary.text,
+      keys,
     });
     return { status: "ok", itemsNew: items.length };
   } catch (err) {
@@ -350,6 +368,12 @@ async function finish(
     transient?: boolean;
     /** Pause the routine with this reason, independently of the failure count. */
     pause?: string;
+    /**
+     * Whose key paid for `tokens`. Present only on the `"ok"` outcome, the one
+     * call site that can actually spend — its absence elsewhere is harmless,
+     * since `tokens` is 0 there too and the write below is already gated on that.
+     */
+    keys?: ProviderKeys;
   },
 ): Promise<void> {
   const finishedAt = deps.now();
@@ -377,7 +401,10 @@ async function finish(
   // delivered, and `routine_runs.tokens` above is the durable record, so a
   // counter that cannot be written must not turn a successful run into a failed
   // one that retries and pays twice.
-  if (outcome.tokens > 0) {
+  // Tokens the workspace paid for are not counted here — same rule as
+  // `recordQuota` on a request: the counter means what the operator is billed
+  // for, and these were billed to the workspace instead.
+  if (outcome.tokens > 0 && outcome.keys?.source !== "workspace") {
     try {
       await deps.entitlements.record(routine.user_id, outcome.tokens);
     } catch (err) {

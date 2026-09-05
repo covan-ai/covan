@@ -9,6 +9,7 @@ import { buildSystemPrefix, maxTokensFor, temperatureFor } from "../prompt";
 import { resolveModel } from "../models";
 import { createOpenAI } from "../openai";
 import { decryptSecret } from "../secret-box";
+import { keysForUser, withProviderKeys } from "../keys/resolve";
 import { lookupEmail, postMessage } from "./api";
 import { toMrkdwn } from "./mrkdwn";
 
@@ -136,7 +137,11 @@ export async function handleSlackEvent(
   }
 
   const verdict = await deps.entitlements.check(userId);
-  if (!verdict.allowed) {
+  // This asker's workspace may be carrying their allowance from here. Resolved
+  // next to the check because a Slack event has no request to guard.
+  const keys = await keysForUser(deps.env, deps.db, userId, verdict.allowed);
+  const runEnv = withProviderKeys(deps.env, keys);
+  if (!verdict.allowed && keys.source !== "workspace") {
     await say("Your monthly Covan allowance is used up, so I can't answer this one.");
     return;
   }
@@ -199,7 +204,7 @@ export async function handleSlackEvent(
   // The same history the turn is assembled from. `retrievalQuery` reads the
   // turns before the last one, so a follow-up in a Slack thread carries its
   // subject the same way a follow-up in the chat screen does.
-  const retrieval = await retrieveForAgent(deps.db, deps.env, agent.id, question, history);
+  const retrieval = await retrieveForAgent(deps.db, runEnv, agent.id, question, history);
 
   const mode: "normal" | "brainstorm" = agent.mode === "brainstorm" ? "brainstorm" : "normal";
   const systemPrefix = buildSystemPrefix({
@@ -222,8 +227,8 @@ export async function handleSlackEvent(
 
   let completion;
   try {
-    completion = await createOpenAI(deps.env).chat.completions.create({
-      model: resolveModel(agent.model, deps.env),
+    completion = await createOpenAI(runEnv).chat.completions.create({
+      model: resolveModel(agent.model, runEnv),
       messages,
       temperature: temperatureFor(mode),
       max_tokens: maxTokensFor(mode),
@@ -231,7 +236,11 @@ export async function handleSlackEvent(
   } catch (err) {
     console.error("slack completion failed", err);
     // The spend still happened up to the failure — the embedding, at least.
-    await deps.entitlements.record(userId, embeddingCost(retrieval.embeddingTokens));
+    // Not counted when the workspace is carrying it: the counter means what
+    // the operator is billed for.
+    if (keys.source !== "workspace") {
+      await deps.entitlements.record(userId, embeddingCost(retrieval.embeddingTokens));
+    }
     await say("Something went wrong reaching the model. Try again in a moment.");
     return;
   }
@@ -244,11 +253,15 @@ export async function handleSlackEvent(
   // prefix assembled above is actually working.
   const cachedTokens = completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
 
-  // One counter write per turn, whichever way the rest of this goes.
-  await deps.entitlements.record(
-    userId,
-    embeddingCost(retrieval.embeddingTokens) + promptTokens + completionTokens,
-  );
+  // One counter write per turn, whichever way the rest of this goes — unless
+  // the workspace paid for it, in which case the operator's counter is not
+  // the right place to say so.
+  if (keys.source !== "workspace") {
+    await deps.entitlements.record(
+      userId,
+      embeddingCost(retrieval.embeddingTokens) + promptTokens + completionTokens,
+    );
+  }
 
   if (!answer) {
     await say("I don't have an answer for that one.");

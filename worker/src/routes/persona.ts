@@ -20,6 +20,11 @@ persona.post("/persona/suggest", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
+
   const parsed = suggestSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
@@ -27,8 +32,8 @@ persona.post("/persona/suggest", async (c) => {
   const { name, model } = parsed.data;
 
   try {
-    const { text, usage } = await complete(c.env, {
-      model: resolveModel(model ?? null, c.env),
+    const { text, usage } = await complete(env, {
+      model: resolveModel(model ?? null, env),
       messages: buildPersonaMessages(name),
       json: true,
       // A title in, three sentences out: shaping, not thinking. Without this a

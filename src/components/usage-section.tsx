@@ -49,13 +49,20 @@ export function UsageSection() {
   // same choice `["usage"]` itself makes — so this, `QuotaWall` and
   // `WorkspaceProviderKeys` all agree without any of them owning the others.
   //
-  // Not gated on being spent. It was, and that was the same mistake as gating
-  // the key field itself: an admin with replies left needs the hint to know
-  // whether their workspace already has a key, and the allowance is per member,
-  // so "spent" is not a fact about the workspace at all.
+  // No longer gated on being *spent*. It was, and that was the same mistake as
+  // gating the key field itself: an admin with replies left needs the hint to
+  // know whether their workspace already has a key, and the allowance is per
+  // member, so "spent" is not a fact about the workspace at all.
+  //
+  // Still gated on the deployment being metered, which is the honest version of
+  // what that gate was reaching for. `quota` is null on a self-hosted install,
+  // where nothing below this line renders and a workspace key would fund
+  // nothing — the same condition the whole card is behind. It is null while
+  // `["usage"]` is in flight too, so this simply starts a moment later.
   const { data: keys } = useQuery({
     queryKey: ["provider-keys"],
     queryFn: () => api.providerKeys.get(),
+    enabled: quota !== null,
   });
   const hasWorkspaceKey = Boolean(keys?.openai || keys?.anthropic);
 

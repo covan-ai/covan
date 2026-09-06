@@ -1,5 +1,8 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import type { Entitlements } from "./lib/entitlements";
+// Type-only, and therefore erased: `lib/keys/resolve` imports `RoutineEnv` back
+// out of this file, and a value import either way would be a real cycle.
+import type { ProviderKeys } from "./lib/keys/resolve";
 
 /**
  * Exactly what the routine engine needs to run a tick.
@@ -238,12 +241,19 @@ export type Variables = {
    * workspace has its own key. Undefined is the normal case and means "use
    * `c.env`" — which is why every route reads it as
    * `c.get("providerEnv") ?? c.env` rather than branching.
-   *
-   * Its presence is also what tells `recordQuota` not to count: these tokens
-   * are billed to the workspace, and the counter means what the operator is
-   * billed for.
    */
   providerEnv?: Bindings;
+  /**
+   * Whose keys those are — the same resolution `providerEnv` was built from,
+   * kept in the shape the money question is asked in.
+   *
+   * `recordQuota` reads this rather than the presence of `providerEnv`, so that
+   * every site in the codebase that decides whether the operator is billed asks
+   * `billsTheOperator(keys)` and none of them asks the inverse. Set alongside
+   * `providerEnv` and only where `guardQuota` actually resolved a key; absent
+   * means the operator's own keys answered.
+   */
+  providerKeys?: ProviderKeys;
   /**
    * Set only when the caller proved themselves with an API key rather than a
    * browser session. Routes read it to refuse the things a key must not do —

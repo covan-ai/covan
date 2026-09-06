@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { keysForUser, withProviderKeys, type ProviderEnv } from "./resolve";
+import { billsTheOperator, keysForUser, withProviderKeys, type ProviderEnv } from "./resolve";
 
 const readWorkspaceKeys = vi.fn();
 const getActiveWorkspaceId = vi.fn();
@@ -87,6 +87,25 @@ describe("keysForUser", () => {
 
     const keys = await keysForUser(ENV, DB, "u1", false);
     expect(keys.source).toBe("house");
+  });
+});
+
+describe("billsTheOperator", () => {
+  it("says yes for the operator's own keys", () => {
+    expect(billsTheOperator({ openai: "house", source: "house" })).toBe(true);
+  });
+
+  it("says no for a workspace's key", () => {
+    expect(billsTheOperator({ openai: "ws", source: "workspace" })).toBe(false);
+  });
+
+  // The whole reason this is a predicate rather than five copies of
+  // `source !== "workspace"`. A source nobody has taught the counter about is
+  // not the operator's, so nothing is written to the operator's counter for it
+  // until somebody decides it should be. The inverse form would have answered
+  // "yes, bill the operator" here, silently, for money somebody else spent.
+  it("says no for a source it has never heard of", () => {
+    expect(billsTheOperator({ openai: "k", source: "reseller" as never })).toBe(false);
   });
 });
 

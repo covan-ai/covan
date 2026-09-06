@@ -6,7 +6,12 @@ import { fetchSource, UpstreamError, type FetchDeps } from "./source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
 import type { Entitlements } from "../entitlements";
-import { keysForUser, withProviderKeys, type ProviderKeys } from "../keys/resolve";
+import {
+  billsTheOperator,
+  keysForUser,
+  withProviderKeys,
+  type ProviderKeys,
+} from "../keys/resolve";
 
 export const MAX_FAILURES = 5;
 
@@ -131,7 +136,7 @@ export async function runRoutine(
     // run has no request to guard.
     const keys = await keysForUser(deps.env, deps.db, routine.user_id, verdict.allowed);
     const runEnv = withProviderKeys(deps.env, keys);
-    if (!verdict.allowed && keys.source !== "workspace") {
+    if (!verdict.allowed && billsTheOperator(keys)) {
       // Read before `finish` writes this run: the question is whether the
       // PREVIOUS one was also a quota skip.
       const alreadyTold = await lastRunWasQuotaSkip(deps.db, routine.id);
@@ -352,29 +357,45 @@ export async function runRoutine(
  * dies quietly while the UI still says "active" is the failure that destroys
  * trust in this feature.
  */
+/**
+ * What a run turned out to be.
+ *
+ * Split into a common half and a discriminated one so the money question cannot
+ * be answered by omission. Only an `"ok"` run ever spends, so only `"ok"` may
+ * carry a non-zero `tokens` — and, having spent, it is *required* to name whose
+ * key it spent. The alternative shape, an optional `keys?`, compiles for a
+ * future caller who forgets it and then quietly bills the operator for tokens
+ * somebody else's key paid for; that is a mistake worth spending a type on.
+ *
+ * `tokens: 0` as a literal on the other branch is the same idea from the other
+ * end: a skipped or failed run that wanted to report a spend would have to
+ * become an `"ok"` one first, and would then have to say who paid.
+ */
+type RunOutcome = {
+  itemsNew: number;
+  cursor?: Cursor;
+  error?: string;
+  /** What was delivered. Absent for skipped and failed runs, which sent nothing. */
+  summary?: string;
+  /** The remote's fault, not the routine's — judged against the higher limit. */
+  transient?: boolean;
+  /** Pause the routine with this reason, independently of the failure count. */
+  pause?: string;
+} & (
+  | {
+      status: "ok";
+      tokens: number;
+      /** Whose key paid for `tokens`. Required, and that is the point. */
+      keys: ProviderKeys;
+    }
+  | { status: "skipped" | "failed"; tokens: 0; keys?: undefined }
+);
+
 async function finish(
   routine: RoutineRow,
   deps: ExecutorDeps,
   startedAt: Date,
-  outcome: {
-    status: "ok" | "skipped" | "failed";
-    itemsNew: number;
-    tokens: number;
-    cursor?: Cursor;
-    error?: string;
-    /** What was delivered. Absent for skipped and failed runs, which sent nothing. */
-    summary?: string;
-    /** The remote's fault, not the routine's — judged against the higher limit. */
-    transient?: boolean;
-    /** Pause the routine with this reason, independently of the failure count. */
-    pause?: string;
-    /**
-     * Whose key paid for `tokens`. Present only on the `"ok"` outcome, the one
-     * call site that can actually spend — its absence elsewhere is harmless,
-     * since `tokens` is 0 there too and the write below is already gated on that.
-     */
-    keys?: ProviderKeys;
-  },
+  outcome: RunOutcome,
 ): Promise<void> {
   const finishedAt = deps.now();
 
@@ -401,10 +422,11 @@ async function finish(
   // delivered, and `routine_runs.tokens` above is the durable record, so a
   // counter that cannot be written must not turn a successful run into a failed
   // one that retries and pays twice.
-  // Tokens the workspace paid for are not counted here — same rule as
-  // `recordQuota` on a request: the counter means what the operator is billed
-  // for, and these were billed to the workspace instead.
-  if (outcome.tokens > 0 && outcome.keys?.source !== "workspace") {
+  // Only what the operator is billed for — same rule as `recordQuota` on a
+  // request, asked through the same predicate. The `status === "ok"` term is
+  // not a second guard so much as what makes the type narrow: it is the only
+  // outcome that can have spent anything, and the only one carrying the answer.
+  if (outcome.status === "ok" && outcome.tokens > 0 && billsTheOperator(outcome.keys)) {
     try {
       await deps.entitlements.record(routine.user_id, outcome.tokens);
     } catch (err) {

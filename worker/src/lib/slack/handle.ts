@@ -9,7 +9,7 @@ import { buildSystemPrefix, maxTokensFor, temperatureFor } from "../prompt";
 import { resolveModel } from "../models";
 import { createOpenAI } from "../openai";
 import { decryptSecret } from "../secret-box";
-import { keysForUser, withProviderKeys } from "../keys/resolve";
+import { billsTheOperator, keysForUser, withProviderKeys } from "../keys/resolve";
 import { lookupEmail, postMessage } from "./api";
 import { toMrkdwn } from "./mrkdwn";
 
@@ -141,7 +141,7 @@ export async function handleSlackEvent(
   // next to the check because a Slack event has no request to guard.
   const keys = await keysForUser(deps.env, deps.db, userId, verdict.allowed);
   const runEnv = withProviderKeys(deps.env, keys);
-  if (!verdict.allowed && keys.source !== "workspace") {
+  if (!verdict.allowed && billsTheOperator(keys)) {
     await say("Your monthly Covan allowance is used up, so I can't answer this one.");
     return;
   }
@@ -236,9 +236,10 @@ export async function handleSlackEvent(
   } catch (err) {
     console.error("slack completion failed", err);
     // The spend still happened up to the failure — the embedding, at least.
-    // Not counted when the workspace is carrying it: the counter means what
-    // the operator is billed for.
-    if (keys.source !== "workspace") {
+    // Counted only where the operator is the one billed for it, asked through
+    // the shared predicate so a third key source does not quietly land on the
+    // operator's counter.
+    if (billsTheOperator(keys)) {
       await deps.entitlements.record(userId, embeddingCost(retrieval.embeddingTokens));
     }
     await say("Something went wrong reaching the model. Try again in a moment.");
@@ -253,10 +254,11 @@ export async function handleSlackEvent(
   // prefix assembled above is actually working.
   const cachedTokens = completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
 
-  // One counter write per turn, whichever way the rest of this goes — unless
-  // the workspace paid for it, in which case the operator's counter is not
-  // the right place to say so.
-  if (keys.source !== "workspace") {
+  // One counter write per turn, whichever way the rest of this goes — but only
+  // where the operator is the one being billed. Somebody else's key spent
+  // somebody else's money, and the operator's counter is not the place to say
+  // so.
+  if (billsTheOperator(keys)) {
     await deps.entitlements.record(
       userId,
       embeddingCost(retrieval.embeddingTokens) + promptTokens + completionTokens,

@@ -27,8 +27,36 @@ export type ProviderKeys = {
 /** The slice of the environment that naming a key changes. */
 export type ProviderEnv = { OPENAI_API_KEY: string; ANTHROPIC_API_KEY?: string };
 
-function houseKeys(env: ProviderEnv): ProviderKeys {
+/**
+ * The operator's own keys, as a `ProviderKeys`.
+ *
+ * Exported because "the operator is paying" is a state some callers are in
+ * without ever having resolved anything — a request inside its allowance never
+ * calls `keysForUser` at all — and they still have to be able to answer
+ * `billsTheOperator` below with something rather than with `undefined`.
+ */
+export function houseKeys(env: ProviderEnv): ProviderKeys {
   return { openai: env.OPENAI_API_KEY, anthropic: env.ANTHROPIC_API_KEY, source: "house" };
+}
+
+/**
+ * Whether the tokens spent on these keys land on the operator's bill.
+ *
+ * The one place this question is phrased, and phrased *positively* on purpose.
+ * Every site that writes to the entitlements counter was originally asking the
+ * inverse — `keys.source !== "workspace"` — which is correct only for as long
+ * as `KeySource` has exactly the two members it has today. Add a third (a
+ * reseller's key, a per-agent key, anything) and every one of those inverses
+ * silently starts billing the operator for tokens somebody else paid for; a
+ * mistake that costs money and announces itself nowhere.
+ *
+ * Asked this way round, a new `KeySource` fails closed instead: it is not
+ * `"house"`, so nothing is written to the operator's counter until somebody
+ * decides it should be. Under-counting is a number that can be reconstructed
+ * from `messages` and `routine_runs`; over-counting is a bill.
+ */
+export function billsTheOperator(keys: ProviderKeys): boolean {
+  return keys.source === "house";
 }
 
 export async function keysForUser(

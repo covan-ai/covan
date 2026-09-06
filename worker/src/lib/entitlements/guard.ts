@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import type { AppEnv } from "../../types";
 import { deferred } from "../defer";
-import { keysForUser, withProviderKeys } from "../keys/resolve";
+import { billsTheOperator, houseKeys, keysForUser, withProviderKeys } from "../keys/resolve";
 import { warnIfLow } from "./warn";
 
 /**
@@ -11,7 +11,8 @@ import { warnIfLow } from "./warn";
  *
  *   1. Within allowance — `null`, and the operator's keys answer.
  *   2. Out of allowance, but the caller's workspace has its own key — `null`,
- *      and that key answers. `c.get("providerEnv")` carries it.
+ *      and that key answers. `c.get("providerEnv")` carries it, and
+ *      `c.get("providerKeys")` carries whose it is.
  *   3. Out of allowance with no workspace key — a 402 to return as-is.
  *
  *   const denied = await guardQuota(c);
@@ -43,7 +44,8 @@ export async function guardQuota(c: Context<AppEnv>): Promise<Response | null> {
   // from here. Only reached on the exhausted path, so the common case pays for
   // no extra lookup.
   const keys = await keysForUser(c.env, c.get("db"), userId, false);
-  if (keys.source === "workspace") {
+  if (!billsTheOperator(keys)) {
+    c.set("providerKeys", keys);
     c.set("providerEnv", withProviderKeys(c.env, keys));
     return null;
   }
@@ -66,7 +68,9 @@ export async function guardQuota(c: Context<AppEnv>): Promise<Response | null> {
  * persists its token count in its own table (`messages`, `routine_runs`), so a
  * dropped increment is recoverable from history rather than lost.
  *
- * Tokens the workspace paid for are not counted here at all. The counter means
+ * Only what the operator is billed for is counted here, and that is asked as a
+ * question with exactly that shape — `billsTheOperator` — rather than as
+ * "unless the workspace paid". The counter means
  * "what the operator is billed for", and a number that climbs without bound past
  * a limit it can no longer enforce is not that. Leaving `used` pinned just above
  * `limit` is also what keeps the state stable: `check` keeps saying denied, the
@@ -76,7 +80,16 @@ export async function guardQuota(c: Context<AppEnv>): Promise<Response | null> {
  */
 export async function recordQuota(c: Context<AppEnv>, tokens: number): Promise<void> {
   if (!Number.isFinite(tokens) || tokens <= 0) return;
-  if (c.get("providerEnv")) return;
+
+  // Asked positively, and through the same predicate the three context-free
+  // paths use, so that all five sites in the codebase phrase the money question
+  // identically. `providerKeys` is set by `guardQuota` only where it actually
+  // resolved a key — the out-of-allowance branch — so its absence means branch
+  // one, where the operator's own keys answered by definition and there was
+  // nothing to look up. `houseKeys(c.env)` is what that absence *means*, spelled
+  // out rather than left as an `undefined` this predicate would have to special
+  // case.
+  if (!billsTheOperator(c.get("providerKeys") ?? houseKeys(c.env))) return;
 
   try {
     await c.get("entitlements").record(c.get("user").id, Math.round(tokens));

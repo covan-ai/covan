@@ -7,7 +7,7 @@ import { insertChunkRows } from "../chunk-store";
 import { getDocStore } from "../docstore";
 import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
 import { decryptSecret, encryptSecret } from "../secret-box";
-import { keysForUser, withProviderKeys } from "../keys/resolve";
+import { billsTheOperator, keysForUser, withProviderKeys } from "../keys/resolve";
 import { providerFor } from "./registry";
 import {
   ProviderError,
@@ -199,7 +199,7 @@ export async function runConnection(
   // request to guard.
   const keys = await keysForUser(deps.env, deps.db, connection.user_id, verdict.allowed);
   const runEnv = withProviderKeys(deps.env, keys);
-  if (!verdict.allowed && keys.source !== "workspace") {
+  if (!verdict.allowed && billsTheOperator(keys)) {
     return finish(connection, deps, startedAt, {
       status: "skipped",
       added: 0,
@@ -289,9 +289,11 @@ export async function runConnection(
     }
 
     const more = changed.length > MAX_DOCUMENTS_PER_RUN;
-    // Tokens the workspace paid for are not counted here — the counter means
-    // what the operator is billed for.
-    if (tokens > 0 && keys.source !== "workspace") {
+    // Only what the operator is billed for reaches the counter. Asked through
+    // the shared predicate rather than as `!== "workspace"`, so that a third
+    // key source added later stops being counted here by default instead of
+    // silently landing on the operator's bill.
+    if (tokens > 0 && billsTheOperator(keys)) {
       await deps.entitlements.record(connection.user_id, tokens);
     }
 
@@ -306,7 +308,8 @@ export async function runConnection(
       tokens,
     });
   } catch (err) {
-    if (tokens > 0 && keys.source !== "workspace") {
+    // Same question as the success path above, asked the same way.
+    if (tokens > 0 && billsTheOperator(keys)) {
       await deps.entitlements.record(connection.user_id, tokens);
     }
 

@@ -20,6 +20,7 @@ function ctx(
     db?: unknown;
     env?: unknown;
     providerEnv?: unknown;
+    providerKeys?: unknown;
     set?: (k: string, v: unknown) => void;
   } = {},
 ) {
@@ -30,6 +31,7 @@ function ctx(
     // Undefined unless a test says otherwise — the normal case, and the one
     // the old helper got wrong by answering every key with `entitlements`.
     providerEnv: extra.providerEnv,
+    providerKeys: extra.providerKeys,
   };
   return {
     env: extra.env ?? { OPENAI_API_KEY: "house" },
@@ -170,6 +172,14 @@ describe("guardQuota with a workspace key", () => {
       "providerEnv",
       expect.objectContaining({ OPENAI_API_KEY: "ws-openai" }),
     );
+    // And whose they are, alongside. `recordQuota` reads this rather than the
+    // presence of the env, so that the money question is asked as
+    // `billsTheOperator(keys)` here exactly as it is on the three paths that
+    // have no request context.
+    expect(set).toHaveBeenCalledWith(
+      "providerKeys",
+      expect.objectContaining({ source: "workspace" }),
+    );
   });
 
   it("still answers 402 when the workspace has no key", async () => {
@@ -185,6 +195,7 @@ describe("guardQuota with a workspace key", () => {
     const denied = await guardQuota(c);
     expect(denied?.status).toBe(402);
     expect(set).not.toHaveBeenCalledWith("providerEnv", expect.anything());
+    expect(set).not.toHaveBeenCalledWith("providerKeys", expect.anything());
   });
 
   it("does not look for a key at all while the caller is within allowance", async () => {
@@ -199,7 +210,31 @@ describe("recordQuota under a workspace key", () => {
     const record = vi.fn();
     const c = ctx(
       { check: async () => DENIED, record },
-      { set: vi.fn(), env: {}, providerEnv: { OPENAI_API_KEY: "ws-openai" } },
+      {
+        set: vi.fn(),
+        env: {},
+        providerEnv: { OPENAI_API_KEY: "ws-openai" },
+        providerKeys: { openai: "ws-openai", anthropic: undefined, source: "workspace" },
+      },
+    );
+
+    await recordQuota(c, 5_000);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  // The predicate is `source === "house"`, not `source !== "workspace"`, and
+  // this is what that difference buys: a source nobody has taught the counter
+  // about is not written to it. Under-counting is reconstructible from
+  // `messages`; over-counting is a bill for tokens the operator never bought.
+  it("counts nothing for a key source it has never heard of", async () => {
+    const record = vi.fn();
+    const c = ctx(
+      { check: async () => DENIED, record },
+      {
+        set: vi.fn(),
+        env: {},
+        providerKeys: { openai: "k", anthropic: undefined, source: "reseller" },
+      },
     );
 
     await recordQuota(c, 5_000);
@@ -212,5 +247,19 @@ describe("recordQuota under a workspace key", () => {
 
     await recordQuota(c, 5_000);
     expect(record).toHaveBeenCalledWith(expect.any(String), 5_000);
+  });
+
+  // Nothing was resolved, because nothing needed to be: the caller was inside
+  // their allowance and `guardQuota` never went looking. That absence means the
+  // operator's own keys answered, which is precisely what the counter is for.
+  it("counts when no keys were ever resolved", async () => {
+    const record = vi.fn();
+    const c = ctx(
+      { check: async () => ({ allowed: true }), record },
+      { set: vi.fn(), env: { OPENAI_API_KEY: "house" } },
+    );
+
+    await recordQuota(c, 1_000);
+    expect(record).toHaveBeenCalledWith("u1", 1_000);
   });
 });

@@ -40,6 +40,22 @@ export function UsageSection() {
   const agents = usage?.agents ?? [];
   const used = agents.filter((a) => a.messageCount > 0);
 
+  // `/usage` has no notion of a workspace provider key — `entitlements.snapshot`
+  // (`worker/src/routes/usage.ts`) answers purely from the account's own
+  // allowance, so it cannot say replies continue past it. `QuotaWall` fetches
+  // this same `["provider-keys"]` cache to build door one; read here too so
+  // the sentence above it can stop calling replies "paused" once an admin has
+  // made that false. Shared by query key rather than passed down as a prop —
+  // the same choice `["usage"]` itself makes — so this and `QuotaWall` agree
+  // without either owning the other. `enabled` only once spent: the common
+  // case (replies left) never pays for a fetch nothing here will read.
+  const { data: keys } = useQuery({
+    queryKey: ["provider-keys"],
+    queryFn: () => api.providerKeys.get(),
+    enabled: quota?.level === "spent",
+  });
+  const hasWorkspaceKey = Boolean(keys?.openai || keys?.anthropic);
+
   // Share of measured input that OpenAI served from its prompt cache. The
   // denominator is measuredPromptTokens, not promptTokens: replies stored
   // before the count existed report nothing, and dividing by every prompt ever
@@ -78,7 +94,13 @@ export function UsageSection() {
 
           <p className="mt-3 text-xs text-muted-foreground">
             {quota.level === "spent"
-              ? "Used up — new replies are paused"
+              ? // "Paused" stopped being true the moment an admin saved a
+                // workspace key below — echoing `quota-wall.tsx`'s own
+                // "carries on from here" rather than inventing a second phrase
+                // for the same fact.
+                hasWorkspaceKey
+                ? "Used up — the workspace's own key carries on from here"
+                : "Used up — new replies are paused"
               : `About ${shown} ${shown === 1 ? "reply" : "replies"} left`}
             {quota.resetsOn ? ` · resets on ${quota.resetsOn}` : null}
           </p>

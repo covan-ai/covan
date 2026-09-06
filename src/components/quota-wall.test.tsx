@@ -113,6 +113,39 @@ describe("QuotaWall", () => {
     expect(screen.queryByLabelText(/OpenAI key/i)).not.toBeInTheDocument();
   });
 
+  it("does not show the key input before the role is known", async () => {
+    // `me` never resolves in this test — standing in for the window every
+    // load passes through. `isAdmin` in `quota-wall.tsx` is `false` here on
+    // purpose, unlike `settings.tsx`'s `isAdmin = me ? isAdminRole(myRole) :
+    // true`: that default is fine for a form that only locks fields, but here
+    // it would let anybody paste a live credential into a field that turns
+    // out to belong to a role that cannot set one. `configured` resolves
+    // immediately, so this is the one case that can tell the two defaults
+    // apart — if the `me ?` guard in `quota-wall.tsx` is ever dropped (or
+    // `isAdminRole` made permissive the way `canWriteAsRole` is), `keys` is
+    // ready while `me` is still pending and the key field would appear for
+    // whoever happens to load slowly, not whoever is actually an admin.
+    me.mockReturnValue(new Promise<never>(() => {}));
+    providerKeysGet.mockResolvedValue(hintsWith({ configured: true }));
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <QuotaWall />
+      </QueryClientProvider>,
+    );
+
+    // The send button is not a safe anchor here — it renders on the very
+    // first pass regardless of either query, so waiting on it proves nothing
+    // about whether `provider-keys` has landed. "An admin of this workspace…"
+    // only exists on the non-admin branch, so it can only appear once
+    // `configured` has resolved *and* `isAdmin` has stayed `false` — which is
+    // exactly the fact under test, and the one thing a race with the pending
+    // `me` query cannot fake.
+    expect(await screen.findByText(/An admin of this workspace/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/OpenAI key/i)).not.toBeInTheDocument();
+  });
+
   it("keeps self-hosting as the third answer", async () => {
     renderWall({ role: "admin", configured: true });
 

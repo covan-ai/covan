@@ -6,7 +6,7 @@ import type { UsageResponse } from "@/lib/api-client";
 const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
 
 vi.mock("@tanstack/react-query", () => ({ useQuery }));
-vi.mock("@/lib/api-client", () => ({ api: { usage: vi.fn() } }));
+vi.mock("@/lib/api-client", () => ({ api: { usage: vi.fn(), providerKeys: { get: vi.fn() } } }));
 
 // `QuotaWall` reads `["me"]` and `["provider-keys"]` and its own children write
 // through `useMutation` — none of which this file's blanket `useQuery` mock (one
@@ -31,8 +31,24 @@ function usage(quota: UsageResponse["quota"]): UsageResponse {
   return { agents: [], totals: TOTALS, quota } as UsageResponse;
 }
 
-function renderWith(data: UsageResponse) {
-  useQuery.mockReturnValue({ data, isLoading: false, isPending: false });
+function renderWith(
+  data: UsageResponse,
+  keys?: { openai: string | null; anthropic: string | null },
+) {
+  // `UsageSection` now runs two queries — `["usage"]` and `["provider-keys"]`
+  // — so the old one-answer-for-every-call mock would hand the usage fixture
+  // back as the key hints too. Dispatching on `queryKey[0]` is the same fix
+  // `_authed.app.test.tsx` uses for the same shape of problem.
+  useQuery.mockImplementation((opts: { queryKey: readonly unknown[] }) => {
+    if (opts.queryKey[0] === "provider-keys") {
+      return {
+        data: keys ? { configured: true, updatedAt: null, ...keys } : undefined,
+        isLoading: false,
+        isPending: false,
+      };
+    }
+    return { data, isLoading: false, isPending: false };
+  });
   render(<UsageSection />);
 }
 
@@ -56,6 +72,20 @@ describe("UsageSection", () => {
 
     expect(screen.queryByTestId("quota-wall")).not.toBeInTheDocument();
     expect(screen.getByText(/replies left/)).toBeInTheDocument();
+  });
+
+  it("says replies continue once an admin has set a workspace key", () => {
+    // `/usage` (`entitlements.snapshot`) has no notion of a workspace provider
+    // key at all, so this reads the same `["provider-keys"]` cache
+    // `QuotaWall` populates rather than waiting on a response that structurally
+    // cannot say replies continue.
+    renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }), {
+      openai: "sk-…4f2a",
+      anthropic: null,
+    });
+
+    expect(screen.queryByText(/new replies are paused/)).not.toBeInTheDocument();
+    expect(screen.getByText(/workspace's own key carries on from here/)).toBeInTheDocument();
   });
 
   it("shows no allowance at all on an install that does not meter", () => {

@@ -64,7 +64,14 @@ export function UsageSection() {
     queryFn: () => api.providerKeys.get(),
     enabled: quota !== null,
   });
-  const hasWorkspaceKey = Boolean(keys?.openai || keys?.anthropic);
+  // The OpenAI half alone, not `openai || anthropic`. `keysForUser` refuses to
+  // take over without it — embeddings, dictation and the default model all need
+  // one — so a workspace that set only the optional Anthropic key is still
+  // being refused, and saying "carries on from here" would be this screen
+  // telling somebody their wall is gone while they watch it turn them away.
+  // `workspace-provider-keys.tsx` is where that workspace is told what is
+  // missing; here it is enough not to claim otherwise.
+  const hasWorkspaceKey = Boolean(keys?.openai);
 
   // Share of measured input that OpenAI served from its prompt cache. The
   // denominator is measuredPromptTokens, not promptTokens: replies stored

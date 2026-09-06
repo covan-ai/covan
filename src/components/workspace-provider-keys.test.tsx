@@ -125,6 +125,32 @@ describe("WorkspaceProviderKeys", () => {
     expect(screen.getByRole("button", { name: /remove/i })).toBeInTheDocument();
   });
 
+  it("says an Anthropic key on its own carries nothing", async () => {
+    // The state somebody lands in by setting the optional key and stopping.
+    // `keysForUser` refuses to take over without an OpenAI key, so the wall
+    // keeps refusing them — and until this said so, the only feedback was a
+    // saved hint and a screen that still read "paused", with nothing anywhere
+    // connecting the two.
+    renderKeys({ role: "admin", hints: { openai: null, anthropic: "sk-ant-…9c1d" } });
+
+    expect(await screen.findByText(/Anthropic key on its own/i)).toBeInTheDocument();
+  });
+
+  it("says nothing of the sort once the OpenAI key is there too", async () => {
+    renderKeys({ role: "admin", hints: { openai: "sk-…4f2a", anthropic: "sk-ant-…9c1d" } });
+
+    expect(await screen.findByText("sk-…4f2a")).toBeInTheDocument();
+    expect(screen.queryByText(/Anthropic key on its own/i)).not.toBeInTheDocument();
+  });
+
+  it("says nothing of the sort when no key is set at all", async () => {
+    // The empty state is not a mistake — it is where every workspace starts.
+    renderKeys({ role: "admin", hints: { openai: null, anthropic: null } });
+
+    expect(await screen.findByLabelText(/OpenAI key/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Anthropic key on its own/i)).not.toBeInTheDocument();
+  });
+
   it("does not show the key input before the role is known", async () => {
     // `me` never resolves — the window every load passes through. `isAdmin` is
     // `false` here on purpose, unlike `settings.tsx`'s `me ? … : true`: that

@@ -292,6 +292,14 @@ instead, still per member, so one person spending through theirs first shortens
 nobody else's month. Once set, the key is stored encrypted and is never shown
 again — only a short hint, like `sk-…4f2a`, in its place.
 
+**The OpenAI one is the key that carries it.** Embeddings, dictation and the
+default model all run on OpenAI, so a workspace that sets only the Anthropic key
+has not set up anything — its people keep running out, exactly as before. The
+Anthropic field is optional in the sense that Claude models need it and nothing
+else does, not in the sense that either one will do. Setting it alone is the one
+way to leave this half-done, so the Usage screen says so on the spot rather than
+letting somebody find out from a wall that never lifts.
+
 **The field is there before anybody needs it, and that is deliberate.** The
 allowance is per member, so the person who hits the wall is almost never the
 person who can do anything about it: they tell an admin, and that admin still

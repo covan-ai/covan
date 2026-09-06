@@ -52,13 +52,18 @@ function appWith(opts: {
   supportEmail?: string;
   allowedOrigin?: string;
   rateLimit?: RateVerdict;
+  /** What `readKeyHints` answers. Defaults to a workspace that has set none. */
+  hints?: { openai: string | null; anthropic: string | null };
 }) {
   const user = opts.user ?? USER;
   const workspace = opts.workspace ?? WORKSPACE;
   const quota = opts.quota ?? { used: 10, limit: 1000 };
 
   canSendEmailMock.mockReturnValue(true);
-  readKeyHints.mockResolvedValue({ openai: null, anthropic: null, updatedAt: null });
+  readKeyHints.mockResolvedValue({
+    ...(opts.hints ?? { openai: null, anthropic: null }),
+    updatedAt: null,
+  });
   rateCheck.mockResolvedValue(opts.rateLimit ?? { allowed: true });
   // `sendEmail` now returns `Promise<Response>` and the route checks `.ok`
   // (it does not throw on a non-2xx — see `lib/email.ts`), so a bare `vi.fn()`
@@ -267,6 +272,41 @@ describe("POST /support/quota", () => {
     const res = await post(app, env, { message: "hello" });
 
     expect(res.status).toBe(502);
+  });
+
+  it("tells us apart the three states a workspace's keys can be in", async () => {
+    // The middle one is the reason this is three states rather than a boolean.
+    // Somebody who set the optional key and stopped believes they have paid for
+    // their own tokens; `keysForUser` refuses to take over without an OpenAI
+    // key, so they are still hitting the wall and do not know why — and they
+    // are exactly the person most likely to write to us. "Own key: yes" would
+    // have sent us looking for a different problem.
+    const cases = [
+      { hints: { openai: "sk-…4f2a", anthropic: null }, expect: /Own key:\s+yes/ },
+      { hints: { openai: null, anthropic: "sk-ant-…9c1d" }, expect: /Own key:\s+Anthropic only/ },
+      { hints: { openai: null, anthropic: null }, expect: /Own key:\s+no/ },
+    ];
+
+    for (const c of cases) {
+      const send = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
+      const { app, env } = appWith({ send, hints: c.hints });
+
+      await post(app, env, { message: "hello" });
+
+      expect(send.mock.calls[0][0].text).toMatch(c.expect);
+    }
+  });
+
+  it("says an Anthropic-only key does not take over, not merely that one exists", async () => {
+    const send = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
+    const { app, env } = appWith({ send, hints: { openai: null, anthropic: "sk-ant-…9c1d" } });
+
+    await post(app, env, { message: "hello" });
+
+    // The line has to carry what to do about it, not just what is true — the
+    // person reading this inbox should not have to remember that takeover
+    // needs OpenAI.
+    expect(send.mock.calls[0][0].text).toMatch(/does not take over/i);
   });
 
   it("is rate limited", async () => {

@@ -13,6 +13,21 @@ import { paragraphs } from "./prose";
  * Plainer than the rest of the set. Nobody is being welcomed or reassured — this
  * is a message arriving on a desk, and what it needs is to be read quickly.
  */
+
+/**
+ * What the `Own key` line says, per state.
+ *
+ * The middle line carries the remedy rather than only the fact, because whoever
+ * reads this inbox should not have to remember that takeover needs an OpenAI
+ * key. It is the one state where the sender has already tried to fix their own
+ * problem and is being refused anyway.
+ */
+const OWN_KEY: Record<"openai" | "anthropic-only" | "none", string> = {
+  openai: "yes",
+  "anthropic-only": "Anthropic only — does not take over; they need an OpenAI key",
+  none: "no",
+};
+
 export function quotaSupportEmail(args: {
   to: string;
   from: { email: string; name: string | null };
@@ -33,7 +48,18 @@ export function quotaSupportEmail(args: {
    * both figures or rejects with neither, so there is no half of it to render.
    */
   quota: { used: number; limit: number | null } | "unknown";
-  hasWorkspaceKey: boolean;
+  /**
+   * Which of three states the workspace's keys are in, rather than whether a
+   * row exists.
+   *
+   * The middle one is why this is not a boolean. `keysForUser` refuses to take
+   * over without an OpenAI key — embeddings, dictation and the default model
+   * all need it — so somebody who set the optional Anthropic key and stopped
+   * believes they are funding their own tokens while the wall keeps refusing
+   * them. That is the person most likely to be writing this message, and
+   * "Own key: yes" would send whoever reads it looking for a different problem.
+   */
+  workspaceKey: "openai" | "anthropic-only" | "none";
   appUrl: string;
   message: string;
 }) {
@@ -49,7 +75,7 @@ export function quotaSupportEmail(args: {
     `Workspace:  ${args.workspace.name} (${args.workspace.id})`,
     `Members:    ${args.workspace.memberCount}`,
     `Allowance:  ${allowance}`,
-    `Own key:    ${args.hasWorkspaceKey ? "yes" : "no"}`,
+    `Own key:    ${OWN_KEY[args.workspaceKey]}`,
     `Deployment: ${args.appUrl}`,
   ];
 

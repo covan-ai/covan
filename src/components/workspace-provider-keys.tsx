@@ -70,6 +70,26 @@ export function WorkspaceProviderKeys() {
         placeholder="sk-ant-…"
         hint={keyHint(keys.anthropic)}
       />
+
+      {/* The one wrong state this form can be left in, and the only one worth
+          saying out loud. "Optional" is true of the Anthropic field and false
+          of the pair: `keysForUser` refuses to take over without an OpenAI key,
+          because embeddings, dictation and the default model all need one. So
+          an admin who fills in the second field and stops has done something
+          that looks finished, saves cleanly, shows a hint back — and changes
+          nothing. Without this line their only other feedback is a usage screen
+          that still says paused, with nothing anywhere connecting the two.
+
+          Not `text-destructive`: nothing failed, and DESIGN.md keeps that token
+          for engine-level failures. This is a step missing, which is what the
+          amber accent is for. */}
+      {!keys.openai && keys.anthropic && (
+        <p className="text-xs text-accent-orange">
+          An Anthropic key on its own carries nothing. Covan needs the OpenAI key to take over —
+          embeddings, dictation and the default model all run on it — so until that one is set,
+          people here will keep running out.
+        </p>
+      )}
     </div>
   );
 }

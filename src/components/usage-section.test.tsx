@@ -116,6 +116,21 @@ describe("UsageSection", () => {
     expect(screen.getByText(/workspace's own key carries on from here/)).toBeInTheDocument();
   });
 
+  it("still says paused when the only key set is an Anthropic one", () => {
+    // `keysForUser` refuses to take over without an OpenAI key — embeddings,
+    // dictation and the default model all need it, so an Anthropic key alone
+    // funds nothing and the 402 keeps coming. Saying "carries on from here"
+    // here would be the screen telling somebody their wall is gone while they
+    // watch it refuse them.
+    renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }), {
+      openai: null,
+      anthropic: "sk-ant-…9c1d",
+    });
+
+    expect(screen.getByText(/new replies are paused/)).toBeInTheDocument();
+    expect(screen.queryByText(/carries on from here/)).not.toBeInTheDocument();
+  });
+
   it("shows no allowance at all on an install that does not meter", () => {
     // limit: null is how the API says "self-hosted". The whole card, including
     // the wall itself, would be nonsense to somebody already there.

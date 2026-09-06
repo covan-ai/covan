@@ -14,6 +14,22 @@ import { readWorkspaceKeys } from "./store";
  * called `entitlements.check` to decide whether to proceed at all. Checking
  * again would put a second round trip in front of every reply to answer a
  * question that was answered a line ago.
+ *
+ * KNOWN LIMITATION — whose workspace pays. The funding workspace is always the
+ * caller's **active** one (`getActiveWorkspaceId`), which is not necessarily
+ * the workspace the work belongs to. Three of the five callers know better and
+ * are not asked: `slack/handle.ts` holds `installation.workspace_id`,
+ * `connections/sync.ts` holds the connection's, and `routines/executor.ts`
+ * holds the routine's. For anyone in a single workspace these are the same id.
+ * For someone in two, a routine belonging to A can be funded by B's key —
+ * whichever they had active.
+ *
+ * Nothing crosses a tenancy boundary as a result: every row read or written is
+ * still scoped by the owning workspace, and this decides only whose key is
+ * billed. It is documented rather than fixed because closing it is a signature
+ * change threaded through three context-free money paths, and it is stated here
+ * so that whoever does thread it knows the rule they are changing. Said the
+ * same way in `docs/team.md`.
  */
 
 export type KeySource = "house" | "workspace";
@@ -68,6 +84,8 @@ export async function keysForUser(
   if (allowed) return houseKeys(env);
 
   try {
+    // The caller's active workspace, which may not be the one the work belongs
+    // to — see the limitation in the doc comment above.
     const workspaceId = await getActiveWorkspaceId(db, userId);
     if (!workspaceId) return houseKeys(env);
 

@@ -50,8 +50,21 @@ async function activeRole(c: Context<AppEnv>) {
   return { workspaceId, role: (data?.role as string | null) ?? null, userId };
 }
 
+/**
+ * What the workspace has set, as much of it as the caller is owed.
+ *
+ * Deliberately not admin-gated, unlike `PUT` and `DELETE` below: a member or a
+ * viewer who has run out of allowance is shown "an admin of this workspace can
+ * add its own OpenAI key", and that sentence is only worth showing where a key
+ * could be added at all — which is what `configured` answers.
+ *
+ * They are not shown the hint, though. `sk-…4f2a` is four characters of a live
+ * credential and it is an admin's business what the workspace pays with; what a
+ * member needs is whether a key exists, which is a boolean. So the hint goes to
+ * admins as the string it is, and to everybody else as `true`/`false`.
+ */
 providerKeys.get("/workspace/provider-keys", async (c) => {
-  const { workspaceId } = await activeRole(c);
+  const { workspaceId, role } = await activeRole(c);
   const configured = keyStorageConfigured(c.env);
 
   if (!workspaceId || !configured) {
@@ -59,7 +72,16 @@ providerKeys.get("/workspace/provider-keys", async (c) => {
   }
 
   const hints = await readKeyHints(c.env, workspaceId);
-  return c.json({ configured, ...hints });
+  if (role === "admin") return c.json({ configured, ...hints });
+
+  return c.json({
+    configured,
+    openai: hints.openai !== null,
+    anthropic: hints.anthropic !== null,
+    // Nor when: a timestamp is not a credential, but it is a fact about how the
+    // workspace is administered and nothing outside the admin view reads it.
+    updatedAt: null,
+  });
 });
 
 providerKeys.put("/workspace/provider-keys", async (c) => {

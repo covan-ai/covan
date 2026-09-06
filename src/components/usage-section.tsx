@@ -5,6 +5,7 @@ import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
 import { QuotaWall } from "@/components/quota-wall";
+import { WorkspaceProviderKeys } from "@/components/workspace-provider-keys";
 
 const compact = (n: number) =>
   n >= 1_000_000
@@ -42,17 +43,19 @@ export function UsageSection() {
 
   // `/usage` has no notion of a workspace provider key — `entitlements.snapshot`
   // (`worker/src/routes/usage.ts`) answers purely from the account's own
-  // allowance, so it cannot say replies continue past it. `QuotaWall` fetches
-  // this same `["provider-keys"]` cache to build door one; read here too so
-  // the sentence above it can stop calling replies "paused" once an admin has
-  // made that false. Shared by query key rather than passed down as a prop —
-  // the same choice `["usage"]` itself makes — so this and `QuotaWall` agree
-  // without either owning the other. `enabled` only once spent: the common
-  // case (replies left) never pays for a fetch nothing here will read.
+  // allowance, so it cannot say replies continue past it. Read here so the
+  // sentence below can stop calling replies "paused" once an admin has made
+  // that false. Shared by query key rather than passed down as a prop — the
+  // same choice `["usage"]` itself makes — so this, `QuotaWall` and
+  // `WorkspaceProviderKeys` all agree without any of them owning the others.
+  //
+  // Not gated on being spent. It was, and that was the same mistake as gating
+  // the key field itself: an admin with replies left needs the hint to know
+  // whether their workspace already has a key, and the allowance is per member,
+  // so "spent" is not a fact about the workspace at all.
   const { data: keys } = useQuery({
     queryKey: ["provider-keys"],
     queryFn: () => api.providerKeys.get(),
-    enabled: quota?.level === "spent",
   });
   const hasWorkspaceKey = Boolean(keys?.openai || keys?.anthropic);
 
@@ -104,14 +107,24 @@ export function UsageSection() {
               : `About ${shown} ${shown === 1 ? "reply" : "replies"} left`}
             {quota.resetsOn ? ` · resets on ${quota.resetsOn}` : null}
           </p>
-          {/* Only once it is actually spent. Somebody with replies left does
-              not need to be told there is somewhere else to go, and this is a
-              fact rather than a nudge: the allowance exists because the
-              operator is paying OpenAI, and an install running on your own key
-              does not have one. Waiting used to be weighed against exactly one
-              other option — self-hosting — and is now weighed against three:
-              the workspace's own key, a message to us, and self-hosting still,
-              nearest first. See `quota-wall.tsx`. */}
+          {/* Door one, in both states, and only for an admin — the component
+              decides that for itself. It cannot hang off `level` the way the
+              wall below does: the allowance is per member, so the person who
+              hits the wall and the person who can do something about it are
+              usually not the same person. An admin who is told about this only
+              after burning their own month is an admin who is told too late,
+              and until they are, the key their workspace already stored cannot
+              be removed either. */}
+          <WorkspaceProviderKeys />
+
+          {/* The rest of the wall, only once it is actually spent. Somebody
+              with replies left does not need to be told there is somewhere
+              else to go, and this is a fact rather than a nudge: the allowance
+              exists because the operator is paying OpenAI, and an install
+              running on your own key does not have one. Waiting used to be
+              weighed against exactly one other option — self-hosting — and is
+              now weighed against three: the workspace's own key, a message to
+              us, and self-hosting still, nearest first. See `quota-wall.tsx`. */}
           {quota.level === "spent" && <QuotaWall />}
 
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">

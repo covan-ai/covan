@@ -517,6 +517,11 @@ describe("whose key answers (Task 6)", () => {
 
     await ask(app);
 
+    // `every` over an empty array is `true`, so without this the assertion
+    // below would go on passing if the route stopped calling the provider at
+    // all — which is the failure it is here to catch, not one to shrug at. Its
+    // sibling above already guards the same way.
+    expect(createOpenAIKeys.length).toBeGreaterThan(0);
     // `c.env` carries no OPENAI_API_KEY in this fixture; the point is only that
     // it is what answered, not the overlay's.
     expect(createOpenAIKeys.every((k) => k === undefined)).toBe(true);

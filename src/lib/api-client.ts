@@ -752,13 +752,20 @@ export type ApiKeyList = { available: boolean; keys: ApiKey[] };
  * What the workspace's own provider keys look like from here — hints, never
  * the keys themselves. There is no endpoint that answers with a stored key, so
  * there is nothing this type could carry that would let an interface prefill
- * an input with one; `openai`/`anthropic` are each either `null` or a
- * `hintFor()` fragment such as `sk-…4f2a`.
+ * an input with one.
+ *
+ * Two shapes, by role, which is why these are not simply `string | null`. An
+ * admin gets a `hintFor()` fragment such as `sk-…4f2a`, or `null` for a
+ * provider with nothing set. A member or viewer gets `true`/`false`: they are
+ * shown *that* the workspace has a key so the wall can say "ask your admin",
+ * and four characters of a live credential are none of their business. Read it
+ * with `keyHint` below rather than by hand.
  */
 export type ProviderKeyHints = {
   /** False on a deployment with no `PROVIDER_KEY_SECRET` — nothing here can be set. */
   configured: boolean;
-  openai: string | null;
-  anthropic: string | null;
+  openai: string | boolean | null;
+  anthropic: string | boolean | null;
+  /** Admins only; `null` for everybody else, and for a provider never set. */
   updatedAt: string | null;
 };

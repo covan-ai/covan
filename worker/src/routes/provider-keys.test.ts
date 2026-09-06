@@ -93,6 +93,37 @@ describe("GET /workspace/provider-keys", () => {
     expect(JSON.stringify(body)).not.toMatch(/ciphertext|sk-proj|sk-ant/);
   });
 
+  // Not admin-gated, on purpose: a member at the wall is shown "an admin of
+  // this workspace can add its own OpenAI key", and that sentence is only worth
+  // showing where a key could be added at all. What they are not shown is the
+  // hint — four characters of a live credential, and an admin's business.
+  it("answers a member with booleans rather than hints", async () => {
+    const { app } = appWith({
+      role: "member",
+      hints: { openai: "sk-…4f2a", anthropic: null, updatedAt: "2026-09-05T00:00:00Z" },
+    });
+    const res = await app.request("/workspace/provider-keys");
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ configured: true, openai: true, anthropic: false, updatedAt: null });
+    expect(JSON.stringify(body)).not.toContain("4f2a");
+  });
+
+  it("answers a viewer the same way", async () => {
+    const { app } = appWith({
+      role: "viewer",
+      hints: { openai: "sk-…4f2a", anthropic: "sk-…9b1c", updatedAt: null },
+    });
+    const body = (await (await app.request("/workspace/provider-keys")).json()) as Record<
+      string,
+      unknown
+    >;
+
+    expect(body).toMatchObject({ openai: true, anthropic: true });
+    expect(JSON.stringify(body)).not.toMatch(/4f2a|9b1c/);
+  });
+
   it("says so when the deployment cannot store keys", async () => {
     const { app } = appWith({ role: "admin", configured: false });
     const body = (await (await app.request("/workspace/provider-keys")).json()) as {

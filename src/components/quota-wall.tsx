@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { isAdminRole } from "@/lib/roles";
 import { DocsLink } from "@/components/docs-link";
-import { ProviderKeyForm } from "@/components/provider-key-form";
 import { QuotaSupportForm } from "@/components/quota-support-form";
 
 /**
@@ -14,9 +13,18 @@ import { QuotaSupportForm } from "@/components/quota-support-form";
  * only one that changes anything about next month; self-hosting is the thorough
  * option and was, until this, the only one offered.
  *
+ * Only the last two are rendered here. Door one's *field* is
+ * `WorkspaceProviderKeys`, which `UsageSection` mounts above this one and mounts
+ * whether or not the reader has run out — because the allowance is per member,
+ * and the admin who has to set the key is usually not the person who hit the
+ * wall. What stays here is the half of door one that only makes sense at the
+ * wall: telling a member whose admin to ask. Nothing renders a key form but that
+ * component.
+ *
  * A member and a viewer cannot set a key — that is an admin's to do — but both
- * get the form. Somebody who hit the wall is the warmest signal the product
- * produces, and a second one from the same company is worth more than the first.
+ * get the message form. Somebody who hit the wall is the warmest signal the
+ * product produces, and a second one from the same company is worth more than
+ * the first.
  */
 export function QuotaWall() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
@@ -29,45 +37,26 @@ export function QuotaWall() {
   const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
 
   // `false` until `me` loads, unlike settings.tsx which defaults to `true`.
-  // The cost of guessing wrong is asymmetric here: showing a key field to
-  // somebody who may not be able to set one invites them to paste a live
-  // credential into a form that will refuse it, and this is the one field in
-  // the product where a moment of "ask your admin" is worth more than a form
-  // that flashes into existence and then locks.
+  // Here that default decides whether somebody is told to go and ask their
+  // admin, and telling an admin to ask an admin for a moment is a smaller
+  // wrong than staying silent about the door that would actually open for
+  // them. The field itself makes the same conservative choice for the sharper
+  // reason — see `workspace-provider-keys.tsx`.
   const isAdmin = me ? isAdminRole(myRole) : false;
 
   return (
     <div className="mt-3 flex flex-col gap-4 border-t border-hairline pt-3">
-      {/* Door one. Only an admin can walk through it, and only where the
-          deployment can store a key at all — a self-host without
-          PROVIDER_KEY_SECRET has nowhere to put one, and `configured` says so
-          before anybody types anything into a form that would just 501. */}
-      {keys?.configured &&
-        (isAdmin ? (
-          <div className="flex flex-col gap-3">
-            <p className="text-xs text-muted-foreground">
-              Point the workspace at its own key and it carries on from here. Each person still
-              spends their allowance first; only what runs past it is billed to you.
-            </p>
-            <ProviderKeyForm
-              provider="openai"
-              label="OpenAI key"
-              placeholder="sk-…"
-              hint={keys.openai}
-            />
-            <ProviderKeyForm
-              provider="anthropic"
-              label="Anthropic key (optional)"
-              placeholder="sk-ant-…"
-              hint={keys.anthropic}
-            />
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            An admin of this workspace can add its own OpenAI key, and everyone who runs out carries
-            on from there.
-          </p>
-        ))}
+      {/* The half of door one that belongs at the wall. An admin does not need
+          it: their field is already above this. Shown only where the deployment
+          can store a key at all — a self-host without PROVIDER_KEY_SECRET has
+          nowhere to put one, and pointing somebody at an admin who would find
+          no field is worse than saying nothing. */}
+      {keys?.configured && !isAdmin && (
+        <p className="text-xs text-muted-foreground">
+          An admin of this workspace can add its own OpenAI key, and everyone who runs out carries
+          on from there.
+        </p>
+      )}
 
       {/* Door two, for everybody — admin, member and viewer alike. */}
       <div className="flex flex-col gap-2">

@@ -71,11 +71,17 @@ function renderWall({
 beforeEach(() => vi.clearAllMocks());
 
 describe("QuotaWall", () => {
-  it("offers an admin the key field and the form", async () => {
+  // Door one's *field* is no longer here — `WorkspaceProviderKeys` renders it,
+  // above this, and renders it whether or not the reader has run out. See that
+  // component's own test. What must not happen is two components both rendering
+  // a key form, so the negative below is load-bearing rather than incidental.
+  it("offers an admin the message form and no key field of its own", async () => {
     renderWall({ role: "admin", configured: true });
 
-    expect(await screen.findByLabelText(/OpenAI key/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /send/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/OpenAI key/i)).not.toBeInTheDocument();
+    // Nor the sentence pointing at an admin, to an admin who has the field.
+    expect(screen.queryByText(/An admin of this workspace/i)).not.toBeInTheDocument();
   });
 
   it("tells a member to ask their admin, and still offers the form", async () => {
@@ -96,35 +102,24 @@ describe("QuotaWall", () => {
     expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
   });
 
-  it("hides the key field on a deployment that cannot store keys", async () => {
-    renderWall({ role: "admin", configured: false });
-
-    // There is no "door one" text at all when the deployment cannot store a
-    // key — not the field, not the ask-your-admin sentence either — so the
+  it("says nothing about a key on a deployment that cannot store one", async () => {
+    // No PROVIDER_KEY_SECRET means there is nowhere to put a key, so pointing
+    // somebody at an admin who would find no field is worse than silence. The
     // form is the settled state to wait on before asserting the negative.
+    renderWall({ role: "member", configured: false });
+
     expect(await screen.findByRole("button", { name: /send/i })).toBeInTheDocument();
-    expect(screen.queryByLabelText(/OpenAI key/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/An admin of this workspace/i)).not.toBeInTheDocument();
   });
 
-  it("shows the hint, not a key, once one is set", async () => {
-    renderWall({ role: "admin", configured: true, hints: { openai: "sk-…4f2a" } });
-
-    expect(await screen.findByText("sk-…4f2a")).toBeInTheDocument();
-    expect(screen.queryByLabelText(/OpenAI key/i)).not.toBeInTheDocument();
-  });
-
-  it("does not show the key input before the role is known", async () => {
-    // `me` never resolves in this test — standing in for the window every
-    // load passes through. `isAdmin` in `quota-wall.tsx` is `false` here on
-    // purpose, unlike `settings.tsx`'s `isAdmin = me ? isAdminRole(myRole) :
-    // true`: that default is fine for a form that only locks fields, but here
-    // it would let anybody paste a live credential into a field that turns
-    // out to belong to a role that cannot set one. `configured` resolves
-    // immediately, so this is the one case that can tell the two defaults
-    // apart — if the `me ?` guard in `quota-wall.tsx` is ever dropped (or
-    // `isAdminRole` made permissive the way `canWriteAsRole` is), `keys` is
-    // ready while `me` is still pending and the key field would appear for
-    // whoever happens to load slowly, not whoever is actually an admin.
+  it("points at an admin while the role is still unknown", async () => {
+    // `me` never resolves in this test — standing in for the window every load
+    // passes through. `isAdmin` in `quota-wall.tsx` is `false` here on purpose,
+    // and here that only decides which sentence is shown: telling an admin to
+    // ask an admin for a moment is a smaller wrong than staying silent about
+    // the door that would open for them. (The sharp version of this default —
+    // never offering the *field* to somebody whose role is unknown — is tested
+    // in `workspace-provider-keys.test.tsx`, which is where the field lives.)
     me.mockReturnValue(new Promise<never>(() => {}));
     providerKeysGet.mockResolvedValue(hintsWith({ configured: true }));
 
@@ -135,15 +130,12 @@ describe("QuotaWall", () => {
       </QueryClientProvider>,
     );
 
-    // The send button is not a safe anchor here — it renders on the very
-    // first pass regardless of either query, so waiting on it proves nothing
-    // about whether `provider-keys` has landed. "An admin of this workspace…"
-    // only exists on the non-admin branch, so it can only appear once
-    // `configured` has resolved *and* `isAdmin` has stayed `false` — which is
-    // exactly the fact under test, and the one thing a race with the pending
-    // `me` query cannot fake.
+    // The send button is not a safe anchor here — it renders on the very first
+    // pass regardless of either query, so waiting on it proves nothing about
+    // whether `provider-keys` has landed. "An admin of this workspace…" can
+    // only appear once `configured` has resolved *and* `isAdmin` has stayed
+    // `false`, which is the fact under test.
     expect(await screen.findByText(/An admin of this workspace/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/OpenAI key/i)).not.toBeInTheDocument();
   });
 
   it("keeps self-hosting as the third answer", async () => {

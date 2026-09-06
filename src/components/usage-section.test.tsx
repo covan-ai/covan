@@ -17,6 +17,15 @@ vi.mock("@/components/quota-wall", () => ({
   QuotaWall: () => <div data-testid="quota-wall" />,
 }));
 
+// Door one's field, for the same reason: it reads `["me"]` and writes through
+// `useMutation`, and its own contract is in `workspace-provider-keys.test.tsx`.
+// What this file owns is the decision *this* component makes — that the field
+// is mounted whether or not the reader's allowance is spent, and the wall only
+// when it is.
+vi.mock("@/components/workspace-provider-keys", () => ({
+  WorkspaceProviderKeys: () => <div data-testid="workspace-provider-keys" />,
+}));
+
 const TOTALS = {
   messageCount: 10,
   promptTokens: 30_000,
@@ -74,6 +83,25 @@ describe("UsageSection", () => {
     expect(screen.getByText(/replies left/)).toBeInTheDocument();
   });
 
+  // The defect this pair exists to catch. The allowance is per member, so the
+  // person who hits the wall and the admin who can do something about it are
+  // usually different people — and the admin, by construction, still has
+  // replies left. Mounting the key field only at `level === "spent"` meant that
+  // admin opened Settings, found no field anywhere, and the journey the whole
+  // feature was designed around dead-ended. It also made a stored key
+  // unrevocable until somebody burned a month to reach the button.
+  it("offers the workspace key field while there are still replies left", () => {
+    renderWith(usage({ used: 1_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
+
+    expect(screen.getByTestId("workspace-provider-keys")).toBeInTheDocument();
+  });
+
+  it("offers it once the allowance is spent as well", () => {
+    renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
+
+    expect(screen.getByTestId("workspace-provider-keys")).toBeInTheDocument();
+  });
+
   it("says replies continue once an admin has set a workspace key", () => {
     // `/usage` (`entitlements.snapshot`) has no notion of a workspace provider
     // key at all, so this reads the same `["provider-keys"]` cache
@@ -95,5 +123,9 @@ describe("UsageSection", () => {
 
     expect(screen.queryByText(/Used up/)).not.toBeInTheDocument();
     expect(screen.queryByTestId("quota-wall")).not.toBeInTheDocument();
+    // The key field goes with it. A self-hosted install has no allowance for
+    // anybody to run past, so a workspace key would fund nothing — and the
+    // whole card it lives in is behind `limit` being a number.
+    expect(screen.queryByTestId("workspace-provider-keys")).not.toBeInTheDocument();
   });
 });

@@ -128,6 +128,8 @@ every line in `.env.docker.example`, in the order it appears there.
 | `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT` | `8000` / `8787` / `3000`   | Host ports. Change them if something already owns those, and update the `VITE_` URLs to match.                                                                                                                                               |
 | `ROUTINE_TICK_MS`                                      | `60000`                    | How often the Node entry point asks whether there is background work due — a routine to deliver, or a connected source to re-read. Per-item frequency lives in the database, not here.                                                                                                                       |
 | `RESEND_API_KEY` / `RESEND_FROM`                       | _empty_                    | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.                                                                                                                  |
+| `PROVIDER_KEY_SECRET`                                  | _empty — feature off_      | Optional. AES-GCM key, 32 bytes base64, for a workspace's own stored provider key. Blank means the feature is not offered rather than broken. Inert on an ordinary self-host — see below.                                                    |
+| `SUPPORT_EMAIL`                                        | _empty — means `efe@covan.app`_ | Optional. Where the quota wall's message form delivers. Blank sends to Covan's own inbox through **your** Resend account — see below.                                                                                                   |
 | `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                  | _empty_                    | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                                                                                                                              |
 | `COVAN_VERSION`                                        | `latest`                   | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.1.0` pins one.                                                                                                                          |
 | `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET`            | _empty_                    | Optional. Lets a bundle sync from Notion. Blank means the source is offered but not configured. See [Integrations](integrations.md).                                                                                                         |
@@ -147,6 +149,40 @@ does nothing: the Compose stack passes an explicit list of variables to
 `covan-api`, and this is not on it. To use the endpoint on the Docker stack, add
 `ADMIN_API_KEY: ${ADMIN_API_KEY:-}` to that service's `environment:` block
 first.
+
+### The last two rows, and why `SUPPORT_EMAIL` is the one to think about
+
+`PROVIDER_KEY_SECRET` and `SUPPORT_EMAIL` back the two doors somebody finds
+beside a spent monthly allowance. On this stack there is no such allowance:
+Covan ships only `unlimitedEntitlements`
+(`worker/src/lib/entitlements/index.ts`), so nothing here ever runs out and
+nobody ever arrives at that wall. Both variables are reachable on this runtime
+all the same — the Node entry point forwards them (`worker/src/lib/env.ts`) and
+`docker-compose.yml` passes them through — because a variable an operator
+cannot set is also a variable they cannot turn off, and one of these two has a
+default worth turning off.
+
+**`PROVIDER_KEY_SECRET`** is what lets a workspace store its own OpenAI key so
+its members carry on past their allowance on it. 32 random bytes, base64 —
+`openssl rand -base64 32`, the same shape as `ROUTINE_SECRET_KEY`. Leave it
+unset and the feature is not offered rather than broken: `PUT
+/workspace/provider-keys` answers `501` and no key field is rendered anywhere.
+Setting it here does not switch anything on either, for the reason above:
+`guardQuota` never answers anything but "allowed", so no workspace key is ever
+consulted, and the usage screen's quota card — the only screen that carries the
+key field — does not render at all when `limit` is `null`
+(`src/lib/quota.ts`). An admin could reach the route directly and have a key
+stored and encrypted; nothing would ever read it. Set it if you have registered
+a metered entitlements implementation of your own. Otherwise leave it blank.
+
+**`SUPPORT_EMAIL` is different, and worth two minutes.** `POST /support/quota`
+is mounted on every deployment, not only metered ones, and its recipient
+defaults to `efe@covan.app` — Covan's own inbox. Any signed-in user of your
+install who reaches that endpoint therefore mails **us**, through **your**
+Resend account, and blank means you have no way to point it elsewhere. The
+message names the deployment it came from (`APP_URL`), so one arriving from
+somewhere other than covan.app is at least legible as such; that is not a
+reason to leave it. Set `SUPPORT_EMAIL` to an address of your own.
 
 ### Offering the Anthropic models as well
 
@@ -613,20 +649,31 @@ field that would have asked for one. `SUPPORT_EMAIL` is narrower — it only
 changes where the quota wall's own message form delivers, defaulting to
 `efe@covan.app`, the address already named in `src/routes/license.tsx`.
 
+**Neither is specific to this runtime.** `wrangler secret put` is how you set
+them here; the Docker stack sets the same two in `.env`, and
+[The last two rows](#the-last-two-rows-and-why-support_email-is-the-one-to-think-about)
+covers them there. What follows is true of both paths.
+
 Setting either one does not switch anything on, and that is not a gap to
 close. This repository ships only `unlimitedEntitlements`
 (`worker/src/lib/entitlements/index.ts`) — a self-hosted Covan has no monthly
 allowance to spend, so `guardQuota` never answers anything but "allowed" and
 never goes looking for a workspace key to fall back on. Set
-`PROVIDER_KEY_SECRET` here anyway and `PUT /workspace/provider-keys` still
+`PROVIDER_KEY_SECRET` anyway and `PUT /workspace/provider-keys` still
 answers — an admin could reach it directly and have a key stored and
 encrypted — but there is no screen that gets them there. The form and its
 hint live inside the usage screen's quota card, and that card only mounts once
 `limit` is a number rather than `null` (`src/lib/quota.ts`);
 `unlimitedEntitlements.snapshot()` always answers `limit: null`, so the card
-itself never renders here, key or no key. The feature is inert on this path
+itself never renders here, key or no key. The feature is inert on both paths
 rather than disabled: the route, the encryption and the storage are all
 present, and the one screen that would ever ask for a key never appears.
+
+`SUPPORT_EMAIL` is the exception to all of that, and the one of the two worth
+setting on a self-hosted install of either kind. `POST /support/quota` is
+mounted unconditionally — it does not ask whether this deployment is metered —
+so any signed-in user who reaches it sends mail to `efe@covan.app` through
+**your** Resend account. Unset means you cannot redirect that. Set it.
 
 ### The two emails Supabase sends, and where their design lives
 

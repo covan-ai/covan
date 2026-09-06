@@ -344,6 +344,15 @@ services:
       RATE_LIMIT_EXPENSIVE_PER_MINUTE: ${RATE_LIMIT_EXPENSIVE_PER_MINUTE:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-}
+      # The two doors beside a spent allowance. Both are inert here — this
+      # repository ships only unlimitedEntitlements, so there is no allowance to
+      # spend — but this list is explicit, and a variable missing from it cannot
+      # be set from .env at all. Empty means a workspace cannot store its own
+      # provider key, and means the wall's message form keeps its default
+      # recipient; docs/self-hosting.md explains why you probably want the
+      # second one set even so.
+      PROVIDER_KEY_SECRET: ${PROVIDER_KEY_SECRET:-}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
       # The same secret GoTrue signs sessions with, passed through so the API can
       # exchange an API key for a short-lived token belonging to the key's owner.
       # It is already in .env for the auth service, so a self-hosted stack gets

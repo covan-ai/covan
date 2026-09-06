@@ -618,11 +618,15 @@ close. This repository ships only `unlimitedEntitlements`
 (`worker/src/lib/entitlements/index.ts`) — a self-hosted Covan has no monthly
 allowance to spend, so `guardQuota` never answers anything but "allowed" and
 never goes looking for a workspace key to fall back on. Set
-`PROVIDER_KEY_SECRET` here anyway and an admin can still store a key and see
-its hint on the usage screen; it is only ever consulted on a deployment where
-an allowance can run out. The feature is inert on this path rather than
-disabled: the route, the encryption and the storage are all present, and the
-one thing they exist to answer never arrives.
+`PROVIDER_KEY_SECRET` here anyway and `PUT /workspace/provider-keys` still
+answers — an admin could reach it directly and have a key stored and
+encrypted — but there is no screen that gets them there. The form and its
+hint live inside the usage screen's quota card, and that card only mounts once
+`limit` is a number rather than `null` (`src/lib/quota.ts`);
+`unlimitedEntitlements.snapshot()` always answers `limit: null`, so the card
+itself never renders here, key or no key. The feature is inert on this path
+rather than disabled: the route, the encryption and the storage are all
+present, and the one screen that would ever ask for a key never appears.
 
 ### The two emails Supabase sends, and where their design lives
 

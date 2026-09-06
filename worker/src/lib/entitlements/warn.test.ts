@@ -152,4 +152,19 @@ describe("warnIfLow", () => {
 
     expect(sent).toEqual([]);
   });
+
+  // The wall now offers two more answers than "wait". The mail that arrives
+  // before somebody ever sees the wall should say so too, rather than leaving
+  // them to discover a workspace key or the support form only at the 402.
+  it("names the two doors", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    captureSends(sent);
+
+    await warnIfLow(ctx({ used: 900, limit: 1000, sent }));
+
+    expect(sent).toHaveLength(1);
+    const mail = sent[0] as { text: string; html: string };
+    expect(mail.text).toMatch(/own key/i);
+    expect(mail.text + mail.html).toMatch(/get in touch|write to us|tell us/i);
+  });
 });

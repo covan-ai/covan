@@ -284,6 +284,14 @@ This is the third thing admin governs, and the list above says two. Read it as
 "the workspace row, the people in it, and what the workspace costs" — the first
 two are what admin _controls_, and this one is only something it can _see_.
 
+An admin's reach over that cost goes past seeing it. Once a member's monthly
+allowance is exhausted, an admin may set the workspace's own OpenAI key — and,
+if they want it, an Anthropic one too — under Settings, and from that moment
+the workspace's key answers for that member instead, still per member, so one
+person spending through theirs first shortens nobody else's month. Once set,
+the key is stored encrypted and is never shown again — only a short hint, like
+`sk-…4f2a`, in its place.
+
 The figures also now account for prompt caching. Most of what Covan sends the
 model on any given turn is the same bytes as last turn — the persona, the
 document manifest, the conversation so far — so `chat.ts` assembles the prompt

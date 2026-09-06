@@ -602,6 +602,28 @@ invitation checks for both and quietly reports that nothing was emailed, while a
 routine posts anyway and records whatever Resend answers as a failed run. So if
 you set one, set both.
 
+Two more secrets are optional the same way, and they back the two doors a
+member finds once their monthly allowance is spent rather than anything an
+ordinary self-hosted install needs. `wrangler secret put PROVIDER_KEY_SECRET`
+— 32 random bytes, base64, the same shape as `ROUTINE_SECRET_KEY` above — is
+what a deployment needs before it can store a workspace's own key at all.
+Leave it unset and the feature is not offered, not broken: `PUT
+/workspace/provider-keys` answers `501`, and the interface never renders the
+field that would have asked for one. `SUPPORT_EMAIL` is narrower — it only
+changes where the quota wall's own message form delivers, defaulting to
+`efe@covan.app`, the address already named in `src/routes/license.tsx`.
+
+Setting either one does not switch anything on, and that is not a gap to
+close. This repository ships only `unlimitedEntitlements`
+(`worker/src/lib/entitlements/index.ts`) — a self-hosted Covan has no monthly
+allowance to spend, so `guardQuota` never answers anything but "allowed" and
+never goes looking for a workspace key to fall back on. Set
+`PROVIDER_KEY_SECRET` here anyway and an admin can still store a key and see
+its hint on the usage screen; it is only ever consulted on a deployment where
+an allowance can run out. The feature is inert on this path rather than
+disabled: the route, the encryption and the storage are all present, and the
+one thing they exist to answer never arrives.
+
 ### The two emails Supabase sends, and where their design lives
 
 Confirming an address and resetting a password are sent by Supabase, not by this

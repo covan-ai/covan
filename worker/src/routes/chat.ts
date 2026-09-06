@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
-import { resolveModel } from "../lib/models";
+import { resolveModel, modelSpec } from "../lib/models";
 import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
 import { selectHistory } from "../lib/history";
@@ -40,6 +40,11 @@ chat.post("/chat/stream", async (c) => {
   // that back into a 402.
   const denied = await guardQuota(c);
   if (denied) return denied;
+
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
 
   const parsed = streamChatSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -99,7 +104,7 @@ chat.post("/chat/stream", async (c) => {
   // question — see `lib/retrieval.ts` for why one copy rather than two.
   const { docNames, ragBlock, sources, grounding, embeddingTokens } = await retrieveForAgent(
     db,
-    c.env,
+    env,
     session.agent_id,
     lastMessage.content,
     rows.map((m: { role: string; content: string }) => ({
@@ -139,7 +144,29 @@ chat.post("/chat/stream", async (c) => {
     ...(latestTurn ? [latestTurn] : []),
   ];
 
-  const model = resolveModel(agent.model, c.env);
+  const model = resolveModel(agent.model, env);
+
+  // `availableModels` (`lib/models.ts`) is computed from the deployment's own
+  // environment and carried to the frontend once, by `/me` — it has no idea
+  // which key is about to answer *this* particular reply. So the picker can
+  // still be showing Claude to someone who is, this turn, running on a
+  // workspace key that only covers OpenAI. `resolveModel` above already does
+  // the right thing about it: a Claude pick with no key for it quietly falls
+  // through to the default rather than failing the reply. That fallback is
+  // correct and already shipped — nothing here changes it. What was missing
+  // is that it happened without a word, and the reply that comes back is from
+  // a different model than the one on screen.
+  //
+  // Making `/me` aware of which key answers for which caller would be the
+  // real fix, and is deliberately not this: it is a response every screen
+  // reads, and reworking it would be a lot of surface to close an edge that
+  // only exists for a workspace that set one key and not the other. Saying so
+  // once, here, is the whole scope.
+  const claudeDroppedForWorkspaceKey =
+    Boolean(c.get("providerEnv")) &&
+    modelSpec(agent.model)?.provider === "anthropic" &&
+    model !== agent.model;
+
   const signal = c.req.raw.signal;
   const service = serviceClient(c.env);
 
@@ -157,7 +184,7 @@ chat.post("/chat/stream", async (c) => {
   // Only for a session with no title. A named session is one the user or an
   // earlier turn already settled, and re-titling it every turn would both cost
   // money and move a label out from under someone reading it.
-  const titling = session.title ? null : generateSessionTitle(c.env, model, lastMessage.content);
+  const titling = session.title ? null : generateSessionTitle(env, model, lastMessage.content);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -165,6 +192,16 @@ chat.post("/chat/stream", async (c) => {
       const send = (event: Record<string, unknown>) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
+
+      // Computed once, above, from `agent.model` and the env this reply is
+      // actually using — not re-derived per delta — so this can only ever
+      // fire once per reply.
+      if (claudeDroppedForWorkspaceKey) {
+        send({
+          type: "notice",
+          text: `Your workspace key has no Anthropic key, so this reply came from ${model}.`,
+        });
+      }
 
       let full = "";
       // Token usage arrives once, after the last delta, whichever provider
@@ -271,7 +308,7 @@ chat.post("/chat/stream", async (c) => {
       };
       try {
         const events = streamCompletion(
-          c.env,
+          env,
           {
             model,
             messages,

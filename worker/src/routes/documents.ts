@@ -176,6 +176,11 @@ documents.post("/documents/:id/reindex", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
+
   const { data: doc, error } = await db
     .from("documents")
     .select("id,name,size,created_at,bundle_id,r2_key,content,knowledge_bundles(workspace_id)")
@@ -215,7 +220,7 @@ documents.post("/documents/:id/reindex", async (c) => {
   // a failure never leaves the document worse off than before.
   let vectors: number[][];
   try {
-    const embedded = await embedTexts(c.env, chunks);
+    const embedded = await embedTexts(env, chunks);
     vectors = embedded.vectors;
     await recordQuota(c, embeddingCost(embedded.tokens));
   } catch (e) {

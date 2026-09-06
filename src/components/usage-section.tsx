@@ -4,7 +4,8 @@ import { quotaFrom, approximateReplies } from "@/lib/quota";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
-import { DocsLink } from "@/components/docs-link";
+import { QuotaWall } from "@/components/quota-wall";
+import { WorkspaceProviderKeys } from "@/components/workspace-provider-keys";
 
 const compact = (n: number) =>
   n >= 1_000_000
@@ -39,6 +40,31 @@ export function UsageSection() {
   const shown = quota ? approximateReplies(quota.repliesLeft) : 0;
   const agents = usage?.agents ?? [];
   const used = agents.filter((a) => a.messageCount > 0);
+
+  // `/usage` has no notion of a workspace provider key — `entitlements.snapshot`
+  // (`worker/src/routes/usage.ts`) answers purely from the account's own
+  // allowance, so it cannot say replies continue past it. Read here so the
+  // sentence below can stop calling replies "paused" once an admin has made
+  // that false. Shared by query key rather than passed down as a prop — the
+  // same choice `["usage"]` itself makes — so this, `QuotaWall` and
+  // `WorkspaceProviderKeys` all agree without any of them owning the others.
+  //
+  // No longer gated on being *spent*. It was, and that was the same mistake as
+  // gating the key field itself: an admin with replies left needs the hint to
+  // know whether their workspace already has a key, and the allowance is per
+  // member, so "spent" is not a fact about the workspace at all.
+  //
+  // Still gated on the deployment being metered, which is the honest version of
+  // what that gate was reaching for. `quota` is null on a self-hosted install,
+  // where nothing below this line renders and a workspace key would fund
+  // nothing — the same condition the whole card is behind. It is null while
+  // `["usage"]` is in flight too, so this simply starts a moment later.
+  const { data: keys } = useQuery({
+    queryKey: ["provider-keys"],
+    queryFn: () => api.providerKeys.get(),
+    enabled: quota !== null,
+  });
+  const hasWorkspaceKey = Boolean(keys?.openai || keys?.anthropic);
 
   // Share of measured input that OpenAI served from its prompt cache. The
   // denominator is measuredPromptTokens, not promptTokens: replies stored
@@ -78,25 +104,35 @@ export function UsageSection() {
 
           <p className="mt-3 text-xs text-muted-foreground">
             {quota.level === "spent"
-              ? "Used up — new replies are paused"
+              ? // "Paused" stopped being true the moment an admin saved a
+                // workspace key below — echoing `quota-wall.tsx`'s own
+                // "carries on from here" rather than inventing a second phrase
+                // for the same fact.
+                hasWorkspaceKey
+                ? "Used up — the workspace's own key carries on from here"
+                : "Used up — new replies are paused"
               : `About ${shown} ${shown === 1 ? "reply" : "replies"} left`}
             {quota.resetsOn ? ` · resets on ${quota.resetsOn}` : null}
           </p>
-          {/* Only once it is actually spent. Somebody with replies left does
-              not need to be told there is somewhere else to go, and this is a
-              fact rather than a nudge: the allowance exists because the
-              operator is paying OpenAI, and an install running on your own key
-              does not have one. There are no paid tiers to offer instead, so
-              waiting and self-hosting are genuinely the two answers. */}
-          {quota.level === "spent" && (
-            <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
-              Waiting is not the only option. Covan is open source, and an install running on your
-              own OpenAI key has no allowance at all — everything here works the same way.{" "}
-              <DocsLink page="self-hosting" className="text-xs">
-                Running it yourself
-              </DocsLink>
-            </p>
-          )}
+          {/* Door one, in both states, and only for an admin — the component
+              decides that for itself. It cannot hang off `level` the way the
+              wall below does: the allowance is per member, so the person who
+              hits the wall and the person who can do something about it are
+              usually not the same person. An admin who is told about this only
+              after burning their own month is an admin who is told too late,
+              and until they are, the key their workspace already stored cannot
+              be removed either. */}
+          <WorkspaceProviderKeys />
+
+          {/* The rest of the wall, only once it is actually spent. Somebody
+              with replies left does not need to be told there is somewhere
+              else to go, and this is a fact rather than a nudge: the allowance
+              exists because the operator is paying OpenAI, and an install
+              running on your own key does not have one. Waiting used to be
+              weighed against exactly one other option — self-hosting — and is
+              now weighed against three: the workspace's own key, a message to
+              us, and self-hosting still, nearest first. See `quota-wall.tsx`. */}
+          {quota.level === "spent" && <QuotaWall />}
 
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
             Counted in tokens, the unit the model is billed in, and converted to replies at about{" "}

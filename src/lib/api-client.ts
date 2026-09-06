@@ -512,6 +512,17 @@ export const api = {
       request("POST", "/api-keys", { name }),
     revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/api-keys/${id}`),
   },
+  providerKeys: {
+    get: (): Promise<ProviderKeyHints> => request("GET", "/workspace/provider-keys"),
+    /** Admin only; 403 otherwise, 501 on a deployment with no `PROVIDER_KEY_SECRET`. */
+    set: (input: {
+      provider: "openai" | "anthropic";
+      key: string;
+    }): Promise<{ ok: true; hint: string }> => request("PUT", "/workspace/provider-keys", input),
+    /** Admin only; 403 otherwise. */
+    clear: (provider: "openai" | "anthropic"): Promise<{ ok: true }> =>
+      request("DELETE", `/workspace/provider-keys/${provider}`),
+  },
   account: {
     /**
      * Closes the caller's own account. The path carries no id — the server
@@ -544,6 +555,15 @@ export const api = {
      */
     send: (input: FeedbackDraft): Promise<{ id: string; createdAt: number }> =>
       request("POST", "/feedback", input),
+  },
+  support: {
+    /**
+     * The other door at the quota wall. Only the message travels — who is
+     * asking, which workspace, and how much it has spent are read by the API
+     * from the caller's own session and tables, never from this body.
+     */
+    quota: (message: string): Promise<{ ok: true }> =>
+      request("POST", "/support/quota", { message }),
   },
   trash: {
     /** 403 for a viewer, deliberately — an empty list would say the wrong thing. */
@@ -727,3 +747,25 @@ export type ApiKey = {
  * Two different sentences, and the section renders nothing for the first.
  */
 export type ApiKeyList = { available: boolean; keys: ApiKey[] };
+
+/**
+ * What the workspace's own provider keys look like from here — hints, never
+ * the keys themselves. There is no endpoint that answers with a stored key, so
+ * there is nothing this type could carry that would let an interface prefill
+ * an input with one.
+ *
+ * Two shapes, by role, which is why these are not simply `string | null`. An
+ * admin gets a `hintFor()` fragment such as `sk-…4f2a`, or `null` for a
+ * provider with nothing set. A member or viewer gets `true`/`false`: they are
+ * shown *that* the workspace has a key so the wall can say "ask your admin",
+ * and four characters of a live credential are none of their business. Read it
+ * with `keyHint` below rather than by hand.
+ */
+export type ProviderKeyHints = {
+  /** False on a deployment with no `PROVIDER_KEY_SECRET` — nothing here can be set. */
+  configured: boolean;
+  openai: string | boolean | null;
+  anthropic: string | boolean | null;
+  /** Admins only; `null` for everybody else, and for a provider never set. */
+  updatedAt: string | null;
+};

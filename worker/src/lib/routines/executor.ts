@@ -1,10 +1,17 @@
 // worker/src/lib/routines/executor.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RoutineEnv } from "../../types";
 import { nextRunAt } from "./schedule";
 import { fetchSource, UpstreamError, type FetchDeps } from "./source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
 import type { Entitlements } from "../entitlements";
+import {
+  billsTheOperator,
+  keysForUser,
+  withProviderKeys,
+  type ProviderKeys,
+} from "../keys/resolve";
 
 export const MAX_FAILURES = 5;
 
@@ -57,7 +64,14 @@ export type SummariseInput = {
 export type ExecutorDeps = {
   /** Service-role client — bypasses RLS. See the scoping note below. */
   db: SupabaseClient;
-  summarise: (input: SummariseInput) => Promise<{ text: string; tokens: number }>;
+  /**
+   * The house env, before any per-owner key overlay. Kept alongside
+   * `entitlements` so `runRoutine` can ask `keysForUser` whose key answers this
+   * run — the same question `guardQuota` asks on a request, asked here because
+   * a scheduled run has no request to guard.
+   */
+  env: RoutineEnv;
+  summarise: (input: SummariseInput, env: RoutineEnv) => Promise<{ text: string; tokens: number }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
   /** What the routine's owner may spend. Unmetered on a self-hosted install. */
@@ -117,7 +131,12 @@ export async function runRoutine(
     // cursor is deliberately left unadvanced, so once the quota resets the run
     // picks up exactly what it would have reported.
     const verdict = await deps.entitlements.check(routine.user_id);
-    if (!verdict.allowed) {
+    // The routine's owner may be past their allowance while their workspace
+    // carries it. Resolved here rather than in `guardQuota` because a scheduled
+    // run has no request to guard.
+    const keys = await keysForUser(deps.env, deps.db, routine.user_id, verdict.allowed);
+    const runEnv = withProviderKeys(deps.env, keys);
+    if (!verdict.allowed && billsTheOperator(keys)) {
       // Read before `finish` writes this run: the question is whether the
       // PREVIOUS one was also a quota skip.
       const alreadyTold = await lastRunWasQuotaSkip(deps.db, routine.id);
@@ -255,13 +274,16 @@ export async function runRoutine(
 
     if (agentError) throw new Error(`agent lookup failed: ${agentError.message}`);
 
-    const summary = await deps.summarise({
-      persona: agent?.persona ?? null,
-      model: agent?.model ?? null,
-      instruction: routine.instruction,
-      items,
-      pageText,
-    });
+    const summary = await deps.summarise(
+      {
+        persona: agent?.persona ?? null,
+        model: agent?.model ?? null,
+        instruction: routine.instruction,
+        items,
+        pageText,
+      },
+      runEnv,
+    );
 
     await deliver(channel, { subject: routine.name, body: summary.text }, deps.deliveryDeps);
     // Past this point the message is out. Releasing the claims would let the
@@ -276,6 +298,7 @@ export async function runRoutine(
       tokens: summary.tokens,
       cursor: nextCursor,
       summary: summary.text,
+      keys,
     });
     return { status: "ok", itemsNew: items.length };
   } catch (err) {
@@ -334,23 +357,45 @@ export async function runRoutine(
  * dies quietly while the UI still says "active" is the failure that destroys
  * trust in this feature.
  */
+/**
+ * What a run turned out to be.
+ *
+ * Split into a common half and a discriminated one so the money question cannot
+ * be answered by omission. Only an `"ok"` run ever spends, so only `"ok"` may
+ * carry a non-zero `tokens` — and, having spent, it is *required* to name whose
+ * key it spent. The alternative shape, an optional `keys?`, compiles for a
+ * future caller who forgets it and then quietly bills the operator for tokens
+ * somebody else's key paid for; that is a mistake worth spending a type on.
+ *
+ * `tokens: 0` as a literal on the other branch is the same idea from the other
+ * end: a skipped or failed run that wanted to report a spend would have to
+ * become an `"ok"` one first, and would then have to say who paid.
+ */
+type RunOutcome = {
+  itemsNew: number;
+  cursor?: Cursor;
+  error?: string;
+  /** What was delivered. Absent for skipped and failed runs, which sent nothing. */
+  summary?: string;
+  /** The remote's fault, not the routine's — judged against the higher limit. */
+  transient?: boolean;
+  /** Pause the routine with this reason, independently of the failure count. */
+  pause?: string;
+} & (
+  | {
+      status: "ok";
+      tokens: number;
+      /** Whose key paid for `tokens`. Required, and that is the point. */
+      keys: ProviderKeys;
+    }
+  | { status: "skipped" | "failed"; tokens: 0; keys?: undefined }
+);
+
 async function finish(
   routine: RoutineRow,
   deps: ExecutorDeps,
   startedAt: Date,
-  outcome: {
-    status: "ok" | "skipped" | "failed";
-    itemsNew: number;
-    tokens: number;
-    cursor?: Cursor;
-    error?: string;
-    /** What was delivered. Absent for skipped and failed runs, which sent nothing. */
-    summary?: string;
-    /** The remote's fault, not the routine's — judged against the higher limit. */
-    transient?: boolean;
-    /** Pause the routine with this reason, independently of the failure count. */
-    pause?: string;
-  },
+  outcome: RunOutcome,
 ): Promise<void> {
   const finishedAt = deps.now();
 
@@ -377,7 +422,11 @@ async function finish(
   // delivered, and `routine_runs.tokens` above is the durable record, so a
   // counter that cannot be written must not turn a successful run into a failed
   // one that retries and pays twice.
-  if (outcome.tokens > 0) {
+  // Only what the operator is billed for — same rule as `recordQuota` on a
+  // request, asked through the same predicate. The `status === "ok"` term is
+  // not a second guard so much as what makes the type narrow: it is the only
+  // outcome that can have spent anything, and the only one carrying the answer.
+  if (outcome.status === "ok" && outcome.tokens > 0 && billsTheOperator(outcome.keys)) {
     try {
       await deps.entitlements.record(routine.user_id, outcome.tokens);
     } catch (err) {

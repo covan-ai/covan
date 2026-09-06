@@ -8,6 +8,7 @@ import {
   type RoutineRow,
 } from "./executor";
 import { encryptSecret } from "../secret-box";
+import type { WorkspaceKeys } from "../keys/store";
 
 // Task 11 wires a real DNS lookup into the Node fetch path so a hostname that
 // merely resolves to a private address is still caught. That lookup is a
@@ -18,6 +19,16 @@ import { encryptSecret } from "../secret-box";
 vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
 }));
+
+// `keysForUser` reaches the workspace's stored key through `lib/keys/store`,
+// which opens a service-role Supabase client of its own rather than taking the
+// `deps.db` stub below — there is nothing here to point it at. Mocked to "no
+// key set", which is what every test in this file wants except the
+// workspace-funded one at the bottom, which says otherwise for itself.
+const { readWorkspaceKeys } = vi.hoisted(() => ({
+  readWorkspaceKeys: vi.fn(async () => ({ openai: null, anthropic: null }) as WorkspaceKeys),
+}));
+vi.mock("../keys/store", () => ({ readWorkspaceKeys }));
 
 // Same fixture key used in delivery.test.ts. The stubbed `delivery_channels`
 // row below must round-trip through the real decryptSecret (this module does
@@ -157,6 +168,9 @@ function makeDeps(db: any) {
   recorded = [];
   return {
     db,
+    // A plain house env — none of these tests exercise a workspace key, so this
+    // only has to be a shape `keysForUser` can read without a workspace lookup.
+    env: { OPENAI_API_KEY: "sk-test" },
     summarise,
     // Unmetered by default, like a self-hosted install. The quota tests
     // override `check` on the returned object.
@@ -183,6 +197,10 @@ function makeDeps(db: any) {
 
 beforeEach(() => {
   summarise = vi.fn(async () => ({ text: "summary", tokens: 120 }));
+  // Reset rather than clear: a mockResolvedValue installed by one test would
+  // otherwise become the de-facto default for every test after it.
+  readWorkspaceKeys.mockReset();
+  readWorkspaceKeys.mockResolvedValue({ openai: null, anthropic: null });
 });
 
 describe("runRoutine", () => {
@@ -358,6 +376,100 @@ describe("runRoutine", () => {
     await runRoutine(routine(), deps);
 
     expect(deliverCalls).toHaveLength(0);
+  });
+
+  /**
+   * The workspace-funded branch, on the path with no request to guard.
+   *
+   * `guardQuota` covers this for every route that has a request; a scheduled
+   * routine has none, so the same three-branch decision is made here by hand
+   * and is the one a refactor is most likely to get wrong quietly. The two
+   * halves are a pair on purpose: running on the wrong key spends the wrong
+   * person's money, and recording a workspace-funded run against the operator's
+   * counter bills the operator for money they did not spend. Either alone is
+   * still a defect.
+   */
+  describe("when the owner is out but their workspace has a key", () => {
+    /** A db where `getActiveWorkspaceId` resolves, so a key can be looked up. */
+    const workspaceDb = () =>
+      makeDb({
+        rows: {
+          profiles: { active_workspace_id: "w1" },
+          workspace_members: { user_id: "u1", workspace_id: "w1" },
+        },
+      });
+
+    const outOfAllowance = (deps: any) => {
+      deps.entitlements.check = vi.fn(async () => ({
+        allowed: false,
+        used: 100_000,
+        limit: 100_000,
+        resetsAt: "2026-10-01T00:00:00.000Z",
+      }));
+      return deps;
+    };
+
+    it("runs the summary on the workspace's key rather than skipping", async () => {
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
+      const { db } = workspaceDb();
+      const deps = outOfAllowance(makeDeps(db) as any);
+
+      const out = await runRoutine(
+        routine({
+          cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+        }),
+        deps,
+      );
+
+      expect(out).toEqual({ status: "ok", itemsNew: 2 });
+      // The second argument is the env the model call is made with. It has to
+      // be the overlay, not `deps.env` — the operator's key answering here
+      // would be the operator paying for a run their allowance already refused.
+      expect(summarise.mock.calls[0][1].OPENAI_API_KEY).toBe("ws-openai");
+      // And nothing about the skip: no quota notice, one real delivery.
+      expect(deliverCalls).toHaveLength(1);
+    });
+
+    it("writes nothing to the operator's counter for what the workspace paid", async () => {
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
+      const { db, inserts } = workspaceDb();
+      const deps = outOfAllowance(makeDeps(db) as any);
+
+      await runRoutine(
+        routine({
+          cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+        }),
+        deps,
+      );
+
+      expect(deps.entitlements.record).not.toHaveBeenCalled();
+      expect(recorded).toEqual([]);
+      // Still durably recorded where the team can see it, though — the counter
+      // is not the only record of a spend, and `routine_runs.tokens` is what
+      // the usage screen's per-agent figures are built from.
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values.tokens).toBe(120);
+    });
+
+    it("still charges the operator when the key came from the operator", async () => {
+      // The control. Same denied verdict, same code path, no workspace key —
+      // and the run is skipped rather than quietly funded by anybody.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+      const { db } = workspaceDb();
+      const deps = outOfAllowance(makeDeps(db) as any);
+
+      const out = await runRoutine(
+        routine({
+          cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+        }),
+        deps,
+      );
+
+      expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+      expect(summarise).not.toHaveBeenCalled();
+    });
   });
 
   // Without this the run history can say "Sent · 2 new items" but not what was

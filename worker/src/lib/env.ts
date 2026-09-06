@@ -119,6 +119,22 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     EMBEDDING_DIMENSIONS: source.EMBEDDING_DIMENSIONS,
     RAG_MIN_SIMILARITY: source.RAG_MIN_SIMILARITY,
     ROUTINE_SECRET_KEY: source.ROUTINE_SECRET_KEY!,
+    // Optional, and absent is a supported configuration: without it a workspace
+    // cannot store its own provider key at all, `PUT /workspace/provider-keys`
+    // answers 501 and the interface never renders the field. Forwarded here
+    // rather than left out because the Node runtime is a place somebody may
+    // deliberately want the feature — a self-hoster who has registered a metered
+    // entitlements implementation of their own has the same wall to offer doors
+    // beside. Unlike `ROUTINE_SECRET_KEY` it is not validated at boot: it is
+    // optional, and refusing to start over a key nothing may ever use would turn
+    // an unused feature into an outage.
+    PROVIDER_KEY_SECRET: source.PROVIDER_KEY_SECRET,
+    // Where a message from the quota wall goes, defaulting in `routes/support.ts`
+    // to efe@covan.app. Forwarded for a sharper reason than the one above: that
+    // route is mounted unconditionally, so without this an operator's own users
+    // would be mailing us through the operator's Resend account with no way to
+    // redirect it.
+    SUPPORT_EMAIL: source.SUPPORT_EMAIL,
     RESEND_API_KEY: source.RESEND_API_KEY ?? "",
     RESEND_FROM: source.RESEND_FROM ?? "",
     ALLOWED_ORIGIN: source.ALLOWED_ORIGIN!,

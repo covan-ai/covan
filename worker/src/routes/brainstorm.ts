@@ -22,6 +22,11 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
+  // Whose key answers. `guardQuota` sets this only when the caller is past
+  // their allowance and the workspace is carrying it from here; undefined is
+  // the normal case and means the operator's.
+  const env = c.get("providerEnv") ?? c.env;
+
   const parsed = suggestSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
@@ -69,8 +74,8 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
     .join("\n");
 
   try {
-    const { text, usage } = await complete(c.env, {
-      model: resolveModel(agent?.model ?? null, c.env),
+    const { text, usage } = await complete(env, {
+      model: resolveModel(agent?.model ?? null, env),
       messages: buildIdeaExtractionMessages(transcript),
       json: true,
       // Distilling a transcript into cards is the same kind of task as the

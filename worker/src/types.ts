@@ -1,5 +1,8 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import type { Entitlements } from "./lib/entitlements";
+// Type-only, and therefore erased: `lib/keys/resolve` imports `RoutineEnv` back
+// out of this file, and a value import either way would be a real cycle.
+import type { ProviderKeys } from "./lib/keys/resolve";
 
 /**
  * Exactly what the routine engine needs to run a tick.
@@ -56,6 +59,21 @@ export type RoutineEnv = {
    * of one decision.
    */
   ANTHROPIC_BASE_URL?: string;
+  /**
+   * Key material for `workspace_provider_keys`, 32 bytes base64.
+   *
+   * On `RoutineEnv` rather than `Bindings` because the cron Worker needs it as
+   * much as the API one does: a scheduled routine whose owner has run out of
+   * allowance has to be able to open their workspace's key, and it has no
+   * request to carry one in on.
+   *
+   * Optional, and its absence is a supported configuration rather than a
+   * misconfiguration: a deployment that has not set it does not offer workspace
+   * keys at all. It does not offer a broken version of them — `PUT
+   * /workspace/provider-keys` answers 501 and the interface never renders the
+   * field. `wrangler secret put PROVIDER_KEY_SECRET`.
+   */
+  PROVIDER_KEY_SECRET?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   RESEND_API_KEY: string;
@@ -195,6 +213,14 @@ export type Bindings = SyncEnv & {
    */
   RATE_LIMIT_STANDARD_PER_MINUTE?: string;
   RATE_LIMIT_EXPENSIVE_PER_MINUTE?: string;
+  /**
+   * Where a message from the quota wall goes. Defaults to `efe@covan.app`.
+   *
+   * A default rather than a required secret, so there is nothing to forget on
+   * deploy. A self-hoster who has registered their own metered entitlements can
+   * reach that form and should set this.
+   */
+  SUPPORT_EMAIL?: string;
 };
 
 /**
@@ -207,6 +233,27 @@ export type Variables = {
   db: SupabaseClient;
   /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
   entitlements: Entitlements;
+  /**
+   * The environment this request's model calls should use, when it is not the
+   * operator's.
+   *
+   * Set by `guardQuota` only when the caller is out of allowance and their
+   * workspace has its own key. Undefined is the normal case and means "use
+   * `c.env`" — which is why every route reads it as
+   * `c.get("providerEnv") ?? c.env` rather than branching.
+   */
+  providerEnv?: Bindings;
+  /**
+   * Whose keys those are — the same resolution `providerEnv` was built from,
+   * kept in the shape the money question is asked in.
+   *
+   * `recordQuota` reads this rather than the presence of `providerEnv`, so that
+   * every site in the codebase that decides whether the operator is billed asks
+   * `billsTheOperator(keys)` and none of them asks the inverse. Set alongside
+   * `providerEnv` and only where `guardQuota` actually resolved a key; absent
+   * means the operator's own keys answered.
+   */
+  providerKeys?: ProviderKeys;
   /**
    * Set only when the caller proved themselves with an API key rather than a
    * browser session. Routes read it to refuse the things a key must not do —

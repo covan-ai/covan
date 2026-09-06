@@ -1,11 +1,46 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { guardQuota, recordQuota } from "./guard";
 import type { Entitlements } from "./index";
+import { keysForUser } from "../keys/resolve";
 
-/** The two things the guard touches on a Hono context, and nothing else. */
-function ctx(entitlements: Partial<Entitlements>) {
+// Defaults to the house-keys shape so tests that never touch this mock (the
+// pre-existing 402 case above all) still get an answer `guardQuota` can read
+// `.source` off of, instead of the `undefined` a bare `vi.fn()` returns.
+vi.mock("../keys/resolve", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../keys/resolve")>()),
+  keysForUser: vi
+    .fn()
+    .mockResolvedValue({ openai: "house", anthropic: undefined, source: "house" }),
+}));
+
+/** The things the guard touches on a Hono context, and nothing else. */
+function ctx(
+  entitlements: Partial<Entitlements>,
+  extra: {
+    db?: unknown;
+    env?: unknown;
+    providerEnv?: unknown;
+    providerKeys?: unknown;
+    set?: (k: string, v: unknown) => void;
+  } = {},
+) {
+  const store: Record<string, unknown> = {
+    user: { id: "u1" },
+    entitlements,
+    db: extra.db ?? {},
+    // Undefined unless a test says otherwise — the normal case, and the one
+    // the old helper got wrong by answering every key with `entitlements`.
+    providerEnv: extra.providerEnv,
+    providerKeys: extra.providerKeys,
+  };
   return {
-    get: (key: string) => (key === "user" ? { id: "u1" } : (entitlements as Entitlements)),
+    env: extra.env ?? { OPENAI_API_KEY: "house" },
+    get: (key: string) => store[key],
+    set:
+      extra.set ??
+      ((k: string, v: unknown) => {
+        store[k] = v;
+      }),
     json: (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), {
         status,
@@ -14,7 +49,25 @@ function ctx(entitlements: Partial<Entitlements>) {
   } as any;
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  // restoreAllMocks only touches spies made with vi.spyOn — a vi.fn() from a
+  // vi.mock() factory, like keysForUser above, is "silently ignored" by it.
+  // Without this, call counts from one test's mockResolvedValue leak into the
+  // next test's "was this even called" assertions.
+  //
+  // mockClear() alone is not enough either: it wipes call history but leaves
+  // whatever mockResolvedValue the previous test installed in place as the new
+  // de-facto default, so a later test that forgets to reconfigure it silently
+  // inherits "workspace" instead of the documented "house". mockReset() drops
+  // that installed implementation too, so re-asserting the factory default
+  // below is what actually makes every test start from the same place.
+  vi.mocked(keysForUser).mockReset().mockResolvedValue({
+    openai: "house",
+    anthropic: undefined,
+    source: "house",
+  });
+});
 
 describe("guardQuota", () => {
   it("lets an allowed caller through", async () => {
@@ -93,5 +146,120 @@ describe("recordQuota", () => {
       ),
     ).resolves.toBeUndefined();
     expect(err).toHaveBeenCalled();
+  });
+});
+
+const DENIED = {
+  allowed: false as const,
+  used: 100_000,
+  limit: 100_000,
+  resetsAt: "2026-10-01T00:00:00.000Z",
+};
+
+describe("guardQuota with a workspace key", () => {
+  it("lets the request through and stashes the workspace env", async () => {
+    vi.mocked(keysForUser).mockResolvedValue({
+      openai: "ws-openai",
+      anthropic: undefined,
+      source: "workspace",
+    });
+
+    const set = vi.fn();
+    const c = ctx({ check: async () => DENIED }, { set, env: { OPENAI_API_KEY: "house" } });
+
+    expect(await guardQuota(c)).toBeNull();
+    expect(set).toHaveBeenCalledWith(
+      "providerEnv",
+      expect.objectContaining({ OPENAI_API_KEY: "ws-openai" }),
+    );
+    // And whose they are, alongside. `recordQuota` reads this rather than the
+    // presence of the env, so that the money question is asked as
+    // `billsTheOperator(keys)` here exactly as it is on the three paths that
+    // have no request context.
+    expect(set).toHaveBeenCalledWith(
+      "providerKeys",
+      expect.objectContaining({ source: "workspace" }),
+    );
+  });
+
+  it("still answers 402 when the workspace has no key", async () => {
+    vi.mocked(keysForUser).mockResolvedValue({
+      openai: "house",
+      anthropic: undefined,
+      source: "house",
+    });
+
+    const set = vi.fn();
+    const c = ctx({ check: async () => DENIED }, { set, env: { OPENAI_API_KEY: "house" } });
+
+    const denied = await guardQuota(c);
+    expect(denied?.status).toBe(402);
+    expect(set).not.toHaveBeenCalledWith("providerEnv", expect.anything());
+    expect(set).not.toHaveBeenCalledWith("providerKeys", expect.anything());
+  });
+
+  it("does not look for a key at all while the caller is within allowance", async () => {
+    const c = ctx({ check: async () => ({ allowed: true }) }, { set: vi.fn(), env: {} });
+    expect(await guardQuota(c)).toBeNull();
+    expect(keysForUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordQuota under a workspace key", () => {
+  it("counts nothing when the workspace is paying", async () => {
+    const record = vi.fn();
+    const c = ctx(
+      { check: async () => DENIED, record },
+      {
+        set: vi.fn(),
+        env: {},
+        providerEnv: { OPENAI_API_KEY: "ws-openai" },
+        providerKeys: { openai: "ws-openai", anthropic: undefined, source: "workspace" },
+      },
+    );
+
+    await recordQuota(c, 5_000);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  // The predicate is `source === "house"`, not `source !== "workspace"`, and
+  // this is what that difference buys: a source nobody has taught the counter
+  // about is not written to it. Under-counting is reconstructible from
+  // `messages`; over-counting is a bill for tokens the operator never bought.
+  it("counts nothing for a key source it has never heard of", async () => {
+    const record = vi.fn();
+    const c = ctx(
+      { check: async () => DENIED, record },
+      {
+        set: vi.fn(),
+        env: {},
+        providerKeys: { openai: "k", anthropic: undefined, source: "reseller" },
+      },
+    );
+
+    await recordQuota(c, 5_000);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("still counts when the operator is paying", async () => {
+    const record = vi.fn();
+    const c = ctx({ check: async () => ({ allowed: true }), record }, { set: vi.fn(), env: {} });
+
+    await recordQuota(c, 5_000);
+    expect(record).toHaveBeenCalledWith(expect.any(String), 5_000);
+  });
+
+  // Nothing was resolved, because nothing needed to be: the caller was inside
+  // their allowance and `guardQuota` never went looking. That absence means the
+  // operator's own keys answered, which is precisely what the counter is for.
+  it("counts when no keys were ever resolved", async () => {
+    const record = vi.fn();
+    const c = ctx(
+      { check: async () => ({ allowed: true }), record },
+      { set: vi.fn(), env: { OPENAI_API_KEY: "house" } },
+    );
+
+    await recordQuota(c, 1_000);
+    expect(record).toHaveBeenCalledWith("u1", 1_000);
   });
 });

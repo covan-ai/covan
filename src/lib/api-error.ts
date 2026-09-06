@@ -42,8 +42,8 @@ export function errorMessage(status: number, body: unknown, fallback: string): s
           })
         : null;
     return resets
-      ? `You've used this month's allowance. It resets on ${resets}.`
-      : "You've used this month's allowance.";
+      ? `You've used this month's allowance. It resets on ${resets}, or your workspace can continue on its own key.`
+      : "You've used this month's allowance, or your workspace can continue on its own key.";
   }
 
   return stated ?? fallback;

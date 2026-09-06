@@ -18,7 +18,9 @@ const posted = (index = 0): PostedMessage => postMessage.mock.calls[index][2];
 vi.mock("./api", () => ({ postMessage, lookupEmail, SlackError: Error }));
 
 const { retrieveForAgent } = vi.hoisted(() => ({
-  retrieveForAgent: vi.fn(async () => ({
+  // Arguments declared rather than dropped: the second one is the env the
+  // embedding is bought with, which is half of whose key answered a turn.
+  retrieveForAgent: vi.fn(async (_db: unknown, _env: unknown, ..._rest: unknown[]) => ({
     docNames: ["Handbook.md"],
     bundleIds: ["bundle-1"],
     ragBlock: "Document: Handbook.md\nTwenty days.",
@@ -34,10 +36,24 @@ const { create } = vi.hoisted(() => ({
     usage: { prompt_tokens: 500, completion_tokens: 20 },
   })),
 }));
-vi.mock("../openai", () => ({
-  createOpenAI: () => ({ chat: { completions: { create } } }),
+// A spy rather than a bare arrow: which env this is handed is the whole of
+// whose key answered, and a mock that drops its argument cannot tell the two
+// apart.
+const { createOpenAI } = vi.hoisted(() => ({
+  createOpenAI: vi.fn((_env: unknown) => ({ chat: { completions: { create } } })),
 }));
+vi.mock("../openai", () => ({ createOpenAI }));
 
+// `keysForUser` opens the workspace's stored key through `lib/keys/store`,
+// which builds a service-role Supabase client of its own rather than using the
+// `deps.db` fake. Mocked to "no key set" — what every test wants but the
+// workspace-funded ones at the bottom.
+const { readWorkspaceKeys } = vi.hoisted(() => ({
+  readWorkspaceKeys: vi.fn(async () => ({ openai: null, anthropic: null }) as WorkspaceKeys),
+}));
+vi.mock("../keys/store", () => ({ readWorkspaceKeys }));
+
+import type { WorkspaceKeys } from "../keys/store";
 import { fakeDb, type QueryContext } from "../../test-support/fake-db";
 import { handleSlackEvent, shouldAnswer, stripMention, type InstallationRow } from "./handle";
 import { encryptSecret } from "../secret-box";
@@ -91,8 +107,16 @@ function db(
     member?: boolean;
     agent?: boolean;
     existingSession?: string;
+    /**
+     * The asker's active workspace, for the two reads `getActiveWorkspaceId`
+     * makes on the way to a workspace's own provider key. `null` — the default
+     * — is somebody with no active workspace, which is where that lookup gives
+     * up and the operator's keys answer.
+     */
+    activeWorkspace?: string | null;
   } = {},
 ) {
+  const activeWorkspace = options.activeWorkspace ?? null;
   return fakeDb({
     tables: {
       slack_identities: {
@@ -100,11 +124,18 @@ function db(
         insert: () => ({ data: null, error: null }),
       },
       profiles: {
-        select: () => ({ data: options.profile === false ? null : { id: "user-1" }, error: null }),
+        select: () => ({
+          data:
+            options.profile === false
+              ? null
+              : { id: "user-1", active_workspace_id: activeWorkspace },
+          error: null,
+        }),
       },
       workspace_members: {
         select: () => ({
-          data: options.member === false ? null : { user_id: "user-1" },
+          data:
+            options.member === false ? null : { user_id: "user-1", workspace_id: activeWorkspace },
           error: null,
         }),
       },
@@ -146,6 +177,11 @@ const deps = (fake: ReturnType<typeof fakeDb>, entitlements: unknown = unlimited
 beforeEach(() => {
   vi.clearAllMocks();
   lookupEmail.mockResolvedValue("deniz@covan.app");
+  // clearAllMocks wipes call history but leaves an implementation an earlier
+  // test installed in place, so both of these are re-asserted rather than
+  // assumed.
+  createOpenAI.mockImplementation(() => ({ chat: { completions: { create } } }));
+  readWorkspaceKeys.mockResolvedValue({ openai: null, anthropic: null });
   create.mockResolvedValue({
     choices: [{ message: { content: "Twenty days a year." } }],
     usage: { prompt_tokens: 500, completion_tokens: 20 },
@@ -321,6 +357,77 @@ describe("answering in a thread", () => {
 
     expect(create).not.toHaveBeenCalled();
     expect(posted().text).toMatch(/allowance/i);
+  });
+
+  /**
+   * The workspace-funded branch, on a path with no request to guard.
+   *
+   * `guardQuota` covers this for every route that has a request; a Slack event
+   * arrives without one, so the same three-branch decision is made here by
+   * hand. Both halves matter: answering on the operator's key spends money the
+   * allowance already refused, and recording a workspace-funded answer against
+   * the operator's counter bills them for money they did not spend.
+   */
+  describe("when the asker is out but their workspace has a key", () => {
+    const spent = () => ({
+      ...unlimited,
+      check: vi.fn(async () => ({
+        allowed: false as const,
+        used: 100_000,
+        limit: 100_000,
+        resetsAt: "2026-10-01T00:00:00Z",
+      })),
+    });
+
+    it("answers on the workspace's key rather than refusing", async () => {
+      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
+      const fake = db({ identity: true, activeWorkspace: "ws-1" });
+
+      await handleSlackEvent(await installation(), mention(), deps(fake, spent()));
+
+      expect(create).toHaveBeenCalled();
+      expect(posted().text).toContain("Twenty days a year.");
+      // Whose key the model call was actually made on. The operator's here
+      // would be the operator paying for a reply their allowance refused.
+      expect(createOpenAI.mock.calls[0][0]).toMatchObject({ OPENAI_API_KEY: "ws-openai" });
+      // And the retrieval that runs before it — the embedding is a spend too.
+      expect(retrieveForAgent.mock.calls[0][1]).toMatchObject({ OPENAI_API_KEY: "ws-openai" });
+    });
+
+    it("writes nothing to the operator's counter for what the workspace paid", async () => {
+      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
+      const fake = db({ identity: true, activeWorkspace: "ws-1" });
+      const entitlements = spent();
+
+      await handleSlackEvent(await installation(), mention(), deps(fake, entitlements));
+
+      expect(entitlements.record).not.toHaveBeenCalled();
+    });
+
+    it("writes nothing either when the model call fails mid-turn", async () => {
+      // The embedding was already paid for by then, and it was paid for by the
+      // workspace — the failure path has its own `record` call, and it has to
+      // ask the same question the success path asks.
+      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
+      create.mockRejectedValue(new Error("OpenAI is down"));
+      const fake = db({ identity: true, activeWorkspace: "ws-1" });
+      const entitlements = spent();
+
+      await handleSlackEvent(await installation(), mention(), deps(fake, entitlements));
+
+      expect(entitlements.record).not.toHaveBeenCalled();
+      expect(posted().text).toMatch(/went wrong/i);
+    });
+
+    it("refuses when the workspace has no key of its own", async () => {
+      // The control. Same denied verdict, same lookup, nothing found.
+      const fake = db({ identity: true, activeWorkspace: "ws-1" });
+
+      await handleSlackEvent(await installation(), mention(), deps(fake, spent()));
+
+      expect(create).not.toHaveBeenCalled();
+      expect(posted().text).toMatch(/allowance/i);
+    });
   });
 
   it("says which choice is missing when no agent is set", async () => {

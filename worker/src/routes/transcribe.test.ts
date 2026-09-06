@@ -3,11 +3,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AppEnv } from "../types";
 import type { Entitlements } from "../lib/entitlements";
 
-const { transcribeAudio } = vi.hoisted(() => ({ transcribeAudio: vi.fn() }));
+const { transcribeAudio, keysForUser } = vi.hoisted(() => ({
+  transcribeAudio: vi.fn(),
+  keysForUser: vi.fn(),
+}));
 vi.mock("../lib/transcribe", async (orig) => ({
   ...(await orig<typeof import("../lib/transcribe")>()),
   transcribeAudio,
 }));
+// Delegates to the real resolver by default, so every existing test below
+// exercises the same fallback-to-house behaviour it always has. Only the
+// workspace-key test overrides a single call, with `mockResolvedValueOnce` —
+// this is `guardQuota`'s own seam (Task 4/5), not something this file has to
+// re-derive from a fake database and real ciphertext.
+vi.mock("../lib/keys/resolve", async (orig) => {
+  const actual = await orig<typeof import("../lib/keys/resolve")>();
+  keysForUser.mockImplementation(actual.keysForUser);
+  return { ...actual, keysForUser };
+});
 
 const { transcribe } = await import("./transcribe");
 
@@ -163,5 +176,31 @@ describe("POST /transcribe", () => {
     const res = await post(app, recording());
 
     expect(res.status).toBe(502);
+  });
+
+  // The point of Task 6: once `guardQuota` has decided the workspace is
+  // carrying this caller past their allowance, the route has to actually spend
+  // on that key rather than the operator's — not just let the request through.
+  it("transcribes on the workspace key when the caller is out of allowance", async () => {
+    keysForUser.mockResolvedValueOnce({
+      openai: "ws-openai",
+      anthropic: undefined,
+      source: "workspace",
+    });
+    const { app, record } = appWith({
+      check: async () => ({
+        allowed: false,
+        used: 1200,
+        limit: 1000,
+        resetsAt: "2026-09-01T00:00:00.000Z",
+      }),
+    });
+
+    const res = await post(app, recording());
+
+    expect(res.status).toBe(200);
+    expect(transcribeAudio).toHaveBeenCalledWith("ws-openai", expect.anything());
+    // Spent on the workspace's key, so the operator's counter must not move.
+    expect(record).not.toHaveBeenCalled();
   });
 });

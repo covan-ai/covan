@@ -30,7 +30,9 @@ describe("errorMessage", () => {
   it("still says what happened when there is no date to give", () => {
     const message = errorMessage(402, { error: "quota_exceeded" }, "Payment Required");
 
-    expect(message).toBe("You've used this month's allowance.");
+    expect(message).toBe(
+      "You've used this month's allowance, or your workspace can continue on its own key.",
+    );
   });
 
   it("leaves a 402 that is not about quota alone", () => {

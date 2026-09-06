@@ -8,6 +8,15 @@ const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
 vi.mock("@tanstack/react-query", () => ({ useQuery }));
 vi.mock("@/lib/api-client", () => ({ api: { usage: vi.fn() } }));
 
+// `QuotaWall` reads `["me"]` and `["provider-keys"]` and its own children write
+// through `useMutation` — none of which this file's blanket `useQuery` mock (one
+// answer for every query, whatever the key) can support. Its own contract has
+// its own test, `quota-wall.test.tsx`; this file only needs to know whether
+// `UsageSection` decided to render it.
+vi.mock("@/components/quota-wall", () => ({
+  QuotaWall: () => <div data-testid="quota-wall" />,
+}));
+
 const TOTALS = {
   messageCount: 10,
   promptTokens: 30_000,
@@ -36,26 +45,25 @@ describe("UsageSection", () => {
     renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
 
     expect(screen.getByText(/Used up/)).toBeInTheDocument();
-    expect(screen.getByText(/no allowance at all/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /running it yourself/i })).toHaveAttribute(
-      "href",
-      "https://covan.app/docs/self-hosting",
-    );
+    // The three answers themselves — the workspace's own key, a message to us,
+    // self-hosting still — are `QuotaWall`'s contract, proven in
+    // `quota-wall.test.tsx`. This only has to show up.
+    expect(screen.getByTestId("quota-wall")).toBeInTheDocument();
   });
 
   it("does not send somebody away while they still have replies left", () => {
     renderWith(usage({ used: 1_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
 
-    expect(screen.queryByText(/no allowance at all/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("quota-wall")).not.toBeInTheDocument();
     expect(screen.getByText(/replies left/)).toBeInTheDocument();
   });
 
   it("shows no allowance at all on an install that does not meter", () => {
     // limit: null is how the API says "self-hosted". The whole card, including
-    // the advice to self-host, would be nonsense to somebody already there.
+    // the wall itself, would be nonsense to somebody already there.
     renderWith(usage({ used: 0, limit: null, resetsAt: null }));
 
     expect(screen.queryByText(/Used up/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/no allowance at all/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("quota-wall")).not.toBeInTheDocument();
   });
 });

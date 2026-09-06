@@ -4,7 +4,7 @@ import { quotaFrom, approximateReplies } from "@/lib/quota";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
-import { DocsLink } from "@/components/docs-link";
+import { QuotaWall } from "@/components/quota-wall";
 
 const compact = (n: number) =>
   n >= 1_000_000
@@ -86,17 +86,11 @@ export function UsageSection() {
               not need to be told there is somewhere else to go, and this is a
               fact rather than a nudge: the allowance exists because the
               operator is paying OpenAI, and an install running on your own key
-              does not have one. There are no paid tiers to offer instead, so
-              waiting and self-hosting are genuinely the two answers. */}
-          {quota.level === "spent" && (
-            <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
-              Waiting is not the only option. Covan is open source, and an install running on your
-              own OpenAI key has no allowance at all — everything here works the same way.{" "}
-              <DocsLink page="self-hosting" className="text-xs">
-                Running it yourself
-              </DocsLink>
-            </p>
-          )}
+              does not have one. Waiting used to be weighed against exactly one
+              other option — self-hosting — and is now weighed against three:
+              the workspace's own key, a message to us, and self-hosting still,
+              nearest first. See `quota-wall.tsx`. */}
+          {quota.level === "spent" && <QuotaWall />}
 
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
             Counted in tokens, the unit the model is billed in, and converted to replies at about{" "}

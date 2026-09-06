@@ -323,6 +323,11 @@ function ChatTab() {
           resets
             ? `You've used this month's allowance. It resets on ${resets}.`
             : "You've used this month's allowance.",
+          // Settings is where the wall itself lives — the workspace's own key,
+          // a message to us, and self-hosting, nearest first. See
+          // `quota-wall.tsx`. There is no `/settings/usage` route; `UsageSection`
+          // is one of several sections on the single `/settings` page.
+          { action: { label: "Options", onClick: () => navigate({ to: "/settings" }) } },
         );
         setThinking(false);
         setStreamText("");

@@ -151,7 +151,11 @@ support.post("/support/quota", async (c) => {
       memberCount: membersError ? "unknown" : (members ?? []).length,
     },
     quota: quota ? { used: quota.used, limit: quota.limit } : "unknown",
-    hasWorkspaceKey: Boolean(hints.openai || hints.anthropic),
+    // Not `openai || anthropic`. An Anthropic key alone does not carry a
+    // workspace past its allowance — see `keysForUser` — so reporting it as a
+    // key would tell the reader this person is funding themselves when they are
+    // still hitting the wall.
+    workspaceKey: hints.openai ? "openai" : hints.anthropic ? "anthropic-only" : "none",
     appUrl: appUrlOf(c),
     message: parsed.data.message,
   });

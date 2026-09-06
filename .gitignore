@@ -46,3 +46,11 @@ worker/wrangler.cron.toml
 
 # Internal design docs never ship to the public repository
 docs/superpowers/
+
+# npm lockfiles. This project installs with bun — `bun.lock` and
+# `worker/bun.lock` are the tracked ones, and CI runs
+# `bun install --frozen-lockfile` against them. Anyone who reaches for
+# `npm install` out of habit leaves a second lockfile describing the same tree
+# by different rules, and `git add -A` will commit it without comment. The tool
+# is not wrong; the artifact is just not ours to keep.
+package-lock.json

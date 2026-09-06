@@ -27,19 +27,28 @@ export function quotaSupportEmail(args: {
    * (`lib/entitlements`) uses. Coercing it to `0` here would read as an
    * account entitled to nothing, which is stricter than reality and the wrong
    * conclusion for somebody triaging this inbox.
+   *
+   * `"unknown"` for the pair when the snapshot itself would not answer. Unlike
+   * the three reads above, this one is all-or-nothing: a snapshot resolves with
+   * both figures or rejects with neither, so there is no half of it to render.
    */
-  quota: { used: number; limit: number | null };
+  quota: { used: number; limit: number | null } | "unknown";
   hasWorkspaceKey: boolean;
   appUrl: string;
   message: string;
 }) {
   const who = args.from.name ? `${args.from.name} <${args.from.email}>` : args.from.email;
-  const limit = args.quota.limit === null ? "unmetered" : args.quota.limit.toLocaleString("en-GB");
+  const allowance =
+    args.quota === "unknown"
+      ? "unknown"
+      : `${args.quota.used.toLocaleString("en-GB")} of ${
+          args.quota.limit === null ? "unmetered" : args.quota.limit.toLocaleString("en-GB")
+        }`;
   const facts = [
     `From:       ${who}`,
     `Workspace:  ${args.workspace.name} (${args.workspace.id})`,
     `Members:    ${args.workspace.memberCount}`,
-    `Allowance:  ${args.quota.used.toLocaleString("en-GB")} of ${limit}`,
+    `Allowance:  ${allowance}`,
     `Own key:    ${args.hasWorkspaceKey ? "yes" : "no"}`,
     `Deployment: ${args.appUrl}`,
   ];

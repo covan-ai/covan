@@ -46,6 +46,9 @@ function appWith(opts: {
   user?: { id: string; email: string };
   workspace?: { id: string; name: string; memberCount: number };
   quota?: { used: number; limit: number };
+  /** A metered adapter having a bad minute: `snapshot` rejects, it does not
+   * resolve an error. Every other read on this route resolves `{ data, error }`. */
+  quotaThrows?: boolean;
   supportEmail?: string;
   allowedOrigin?: string;
   rateLimit?: RateVerdict;
@@ -115,7 +118,10 @@ function appWith(opts: {
     c.set("entitlements", {
       check: async () => ({ allowed: true }) as never,
       record: async () => {},
-      snapshot: async () => ({ used: quota.used, limit: quota.limit, resetsAt: null }),
+      snapshot: async () => {
+        if (opts.quotaThrows) throw new Error("the metering service is unreachable");
+        return { used: quota.used, limit: quota.limit, resetsAt: null };
+      },
     });
     await next();
   });
@@ -228,6 +234,25 @@ describe("POST /support/quota", () => {
     const res = await post(app, env, { message: "hello" });
 
     expect(res.status).toBe(502);
+  });
+
+  // The mirror of the test above. That one is about a send that failed being
+  // reported; this one is about a send that must still happen. Three of this
+  // route's five reads resolve `{ data, error }` and degrade to "unknown" on
+  // their own; `snapshot` rejects, and uncaught in the same `Promise.all` it
+  // turned a metering hiccup into a 500 and lost the message entirely.
+  it("still sends when the allowance cannot be read, saying so", async () => {
+    const sent = vi.fn();
+    const { app, env } = appWith({ send: sent, quotaThrows: true });
+
+    const res = await post(app, env, { message: "we need more" });
+
+    expect(res.status).toBe(200);
+    const email = sent.mock.calls[0][0] as { text: string; html: string };
+    expect(email.text).toContain("Allowance:  unknown");
+    // And the sentence somebody actually typed is still in it, which is the
+    // whole reason not to refuse.
+    expect(email.text).toContain("we need more");
   });
 
   it("reports a Resend error response, not just a rejected fetch", async () => {

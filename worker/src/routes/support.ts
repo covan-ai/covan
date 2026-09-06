@@ -102,7 +102,22 @@ support.post("/support/quota", async (c) => {
     // second aggregate query buys nothing a `.length` does not already give.
     db.from("workspace_members").select("user_id").eq("workspace_id", workspaceId),
     readKeyHints(c.env, workspaceId),
-    c.get("entitlements").snapshot(user.id),
+    // The odd one out, and the one that could have swallowed the message.
+    // postgrest-js resolves `{ data, error }` and the three reads above degrade
+    // to "unknown" on their own; `snapshot` *rejects*, and sitting uncaught in
+    // the same `Promise.all` it turned a metered adapter having a bad minute
+    // into a 500 — on the one route whose whole premise is that a message which
+    // does not arrive must be refused loudly rather than lost. Caught to the
+    // same shape the other three degrade to, for the same reason: a gap that
+    // says so beats a plausible number nobody checked, and neither is worth
+    // losing the sentence somebody actually typed.
+    c
+      .get("entitlements")
+      .snapshot(user.id)
+      .catch((err: unknown) => {
+        console.error("could not read the allowance for a quota support message", err);
+        return null;
+      }),
   ]);
 
   // This mail exists so somebody can be trusted on sight. A failed read that
@@ -111,7 +126,9 @@ support.post("/support/quota", async (c) => {
   // itself in the fact block rather than quietly render a number nobody
   // checked. It does not refuse the send: the message itself, which the
   // person actually typed, is what the sender is waiting on, and one missing
-  // fact should not swallow it.
+  // fact should not swallow it. The allowance read follows the same rule; its
+  // `.catch` is above, next to the call, because it rejects rather than
+  // resolving an error.
   if (workspaceError) {
     console.error("could not read the workspace name for a quota support message", workspaceError);
   }
@@ -133,7 +150,7 @@ support.post("/support/quota", async (c) => {
       name: workspaceError ? "unknown" : ((workspace?.name as string | null) ?? "unnamed"),
       memberCount: membersError ? "unknown" : (members ?? []).length,
     },
-    quota: { used: quota.used, limit: quota.limit },
+    quota: quota ? { used: quota.used, limit: quota.limit } : "unknown",
     hasWorkspaceKey: Boolean(hints.openai || hints.anthropic),
     appUrl: appUrlOf(c),
     message: parsed.data.message,

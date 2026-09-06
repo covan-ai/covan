@@ -23,6 +23,17 @@ const AGENT = { id: "agent-1", persona: "You are our PM.", model: null, mode: "n
 
 const embedTexts = vi.fn();
 const completionCreate = vi.fn();
+/**
+ * The Anthropic Messages API call, mocked for the same reason `createOpenAI`
+ * is below: without this, a test that puts the agent on a Claude model that
+ * survives `resolveModel` (Task 9's "the workspace has an Anthropic key too"
+ * case) would reach the real `@anthropic-ai/sdk` client and make an actual
+ * HTTPS request to api.anthropic.com — slow, dependent on network access this
+ * suite has no business needing, and answered with a 401 for the fake key
+ * either way. Every other test in this file never resolves to a Claude model,
+ * so this mock sits unused for them.
+ */
+const anthropicCreate = vi.fn();
 const serviceInsert = vi.fn();
 const sessionUpdate = vi.fn();
 /** The OPENAI_API_KEY every `createOpenAI(env)` call was actually made with. */
@@ -37,6 +48,10 @@ vi.mock("../lib/openai", () => ({
     createOpenAIKeys.push(env.OPENAI_API_KEY);
     return { chat: { completions: { create: completionCreate } } };
   },
+}));
+
+vi.mock("../lib/anthropic", () => ({
+  createAnthropic: () => ({ messages: { create: anthropicCreate } }),
 }));
 
 vi.mock("../lib/entitlements/guard", () => ({
@@ -98,6 +113,25 @@ function streamOf(text: string, finishReason = "stop") {
   };
 }
 
+/**
+ * An Anthropic Messages stream shaped the way `lib/completion.ts` reads it —
+ * only used by the one Task 9 test that resolves to a Claude model with a key
+ * present, where the reply itself is incidental to what's being checked.
+ */
+function anthropicStreamOf(text: string) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "message_start", message: { usage: { input_tokens: 50 } } };
+      yield { type: "content_block_delta", delta: { type: "text_delta", text } };
+      yield {
+        type: "message_delta",
+        usage: { output_tokens: 10 },
+        delta: { stop_reason: "end_turn" },
+      };
+    },
+  };
+}
+
 /** The unstreamed JSON reply the titler asks for. */
 function titleOf(title: string) {
   return {
@@ -133,8 +167,15 @@ function appWith(spec: {
    * out above (this file is not about quota), so this is how a test reaches
    * the one seam Task 6 actually owns: whether the route reads `providerEnv`
    * off the context and passes it to every provider call.
+   *
+   * Typed as a partial `Bindings` rather than just the OpenAI key so Task 9's
+   * tests can say whether the workspace's overlay also carries an Anthropic
+   * key — that presence or absence is the whole of what `resolveModel` reads
+   * to decide whether a Claude pick survives.
    */
-  providerEnv?: { OPENAI_API_KEY: string };
+  providerEnv?: { OPENAI_API_KEY: string; ANTHROPIC_API_KEY?: string };
+  /** The agent's stored model. Defaults to `AGENT.model` (null → the default). */
+  agentModel?: string | null;
 }) {
   const documents = spec.documents ?? [];
   const rows = [...(spec.history ?? []), { role: "user", content: spec.question }].map((m, i) => ({
@@ -144,12 +185,14 @@ function appWith(spec: {
     created_at: `2026-09-0${i + 1}T10:00:00Z`,
   }));
 
+  const agent = spec.agentModel !== undefined ? { ...AGENT, model: spec.agentModel } : AGENT;
+
   const dbSpec: FakeDbSpec = {
     tables: {
       chat_sessions: {
         select: () => ({ data: { ...SESSION, title: spec.sessionTitle ?? null }, error: null }),
       },
-      agents: { select: () => ({ data: AGENT, error: null }) },
+      agents: { select: () => ({ data: agent, error: null }) },
       // The route reads newest-first and reverses, so hand it back reversed.
       messages: { select: () => ({ data: [...rows].reverse(), error: null }) },
       agent_bundles: {
@@ -477,6 +520,76 @@ describe("whose key answers (Task 6)", () => {
     // `c.env` carries no OPENAI_API_KEY in this fixture; the point is only that
     // it is what answered, not the overlay's.
     expect(createOpenAIKeys.every((k) => k === undefined)).toBe(true);
+  });
+});
+
+describe("saying so when a Claude pick is dropped (Task 9)", () => {
+  // `resolveModel` (lib/models.ts) already drops a keyless Claude pick to the
+  // default, silently — that fallback is correct and pre-existing, and none
+  // of these tests touch it. What they cover is the one line that announces
+  // it: a `notice` event, at most once per reply, and only when all three of
+  // "running on a workspace key", "the agent asked for Claude" and "the
+  // answer came from somewhere else" are true at once.
+  it("says so when a Claude agent falls back under a workspace key", async () => {
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      agentModel: "claude-sonnet-4-6",
+      // The workspace's overlay carries an OpenAI key but no Anthropic one —
+      // exactly the gap `resolveModel` falls through on.
+      providerEnv: { OPENAI_API_KEY: "ws-openai" },
+    });
+
+    const { body } = await ask(app);
+
+    expect(body).toContain('"type":"notice"');
+    expect(body).toMatch(/gpt-4o/);
+  });
+
+  it("says nothing when the workspace has an Anthropic key too", async () => {
+    // With both halves of the overlay set, `resolveModel` keeps the Claude
+    // pick and the reply is actually served by the (mocked) Anthropic client
+    // — the one case in this file that reaches it. `sessionTitle` is set so
+    // the titling call, which would otherwise also go through that client,
+    // never fires; it has nothing to do with what this test is checking.
+    anthropicCreate.mockResolvedValue(anthropicStreamOf("Twenty days."));
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      agentModel: "claude-sonnet-4-6",
+      sessionTitle: "Already named",
+      providerEnv: { OPENAI_API_KEY: "ws-openai", ANTHROPIC_API_KEY: "ws-anthropic" },
+    });
+
+    const { body } = await ask(app);
+
+    expect(body).not.toContain('"type":"notice"');
+    expect(body).toContain("Twenty days.");
+  });
+
+  it("says nothing on the operator's keys", async () => {
+    // No `providerEnv` at all — the same shape as every ordinary reply, on
+    // whichever keys the operator configured. `c.get("providerEnv")` being
+    // unset is on its own enough to keep this silent, whatever the agent's
+    // model is or however it would have resolved.
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      agentModel: "claude-sonnet-4-6",
+    });
+
+    const { body } = await ask(app);
+
+    expect(body).not.toContain('"type":"notice"');
+  });
+
+  it("says nothing when the agent was never on Claude", async () => {
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      agentModel: "gpt-4o-mini",
+      providerEnv: { OPENAI_API_KEY: "ws-openai" },
+    });
+
+    const { body } = await ask(app);
+
+    expect(body).not.toContain('"type":"notice"');
   });
 });
 

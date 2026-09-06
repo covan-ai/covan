@@ -372,6 +372,13 @@ function ChatTab() {
             // and otherwise looks finished, which is the worst way for a reply
             // to be wrong: nothing on screen says the end is missing.
             toast.message("That answer hit its length limit — ask it to carry on.");
+          } else if (event.type === "notice" && typeof event.text === "string") {
+            // The worker sends this at most once, when the agent's stored
+            // model was Claude but this reply ran on a workspace key with no
+            // Anthropic half and quietly answered from the default instead.
+            // A toast, like the 402 above, because it is a fact about this one
+            // reply — not a banner that should still be sitting there next turn.
+            toast.message(event.text);
           } else if (event.type === "done") {
             terminalSeen = true;
             setStreamText("");

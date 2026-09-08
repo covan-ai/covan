@@ -79,7 +79,12 @@ const routine = (over: Partial<RoutineRow> = {}): RoutineRow => ({
  * on delivery_channels, both on workspace_members).
  */
 function makeDb(
-  over: { rows?: Record<string, any>; claimWins?: (keys: string[]) => string[] } = {},
+  over: {
+    rows?: Record<string, any>;
+    claimWins?: (keys: string[]) => string[];
+    /** Rows a `connection` routine's document read resolves to. */
+    documents?: any[];
+  } = {},
 ) {
   const updates: Array<{ table: string; values: any }> = [];
   const inserts: Array<{ table: string; values: any }> = [];
@@ -89,6 +94,9 @@ function makeDb(
     if (over.rows && table in over.rows) return over.rows[table];
     if (table === "workspace_members") return { user_id: "u1" };
     if (table === "agents") return { persona: "You are a growth specialist", model: "gpt-4o" };
+    // A `connection` routine looks its connection up scoped to the routine's
+    // own workspace before it reads a single document. See connection-source.ts.
+    if (table === "connections") return { id: "cn1" };
     if (table === "delivery_channels")
       return {
         kind: "slack_webhook",
@@ -110,7 +118,16 @@ function makeDb(
           // agent out of its way.
           is: () => chain,
           order: () => chain,
-          limit: () => chain,
+          // Two callers end a chain with `.limit()` and want different things
+          // from it: `lastRunWasQuotaSkip` follows it with `.maybeSingle()`,
+          // and the document read for a `connection` routine awaits it. A
+          // promise carrying the extra method satisfies both, which is what
+          // postgrest-js's builder does too.
+          limit: () => {
+            const pending: any = Promise.resolve({ data: over.documents ?? [], error: null });
+            pending.maybeSingle = chain.maybeSingle;
+            return pending;
+          },
           maybeSingle: async () => ({ data: await rowFor(table), error: null }),
           single: async () => ({ data: await rowFor(table), error: null }),
         };
@@ -159,6 +176,7 @@ function makeDb(
 
 let fetchImpl: any;
 let summarise: any;
+let retrieve: any;
 let deliverCalls: any[];
 /** Tokens charged through `entitlements.record`, per run. */
 let recorded: Array<{ userId: string; tokens: number }>;
@@ -172,6 +190,7 @@ function makeDeps(db: any) {
     // only has to be a shape `keysForUser` can read without a workspace lookup.
     env: { OPENAI_API_KEY: "sk-test" },
     summarise,
+    retrieve,
     // Unmetered by default, like a self-hosted install. The quota tests
     // override `check` on the returned object.
     entitlements: {
@@ -197,6 +216,10 @@ function makeDeps(db: any) {
 
 beforeEach(() => {
   summarise = vi.fn(async () => ({ text: "summary", tokens: 120 }));
+  // Ungrounded by default, so the assertions below are about what the executor
+  // does with a block rather than about whether one was produced. The tests
+  // that care override this.
+  retrieve = vi.fn(async () => ({ ragBlock: "", embeddingTokens: 0 }));
   // Reset rather than clear: a mockResolvedValue installed by one test would
   // otherwise become the de-facto default for every test after it.
   readWorkspaceKeys.mockReset();
@@ -960,5 +983,210 @@ describe("runRoutine", () => {
       (u) => u.table === "routines" && Object.keys(u.values).length === 1,
     );
     expect(bareReset?.values).toEqual({ claimed_at: null });
+  });
+
+  // ---- what the agent knows ------------------------------------------------
+  //
+  // A routine is meant to be the same colleague as the one in the chat window,
+  // reporting rather than answering. It was not: chat and Slack both retrieve
+  // against the agent's documents and the routine path did not, so the same
+  // agent read the company's own handbook when asked a question and had
+  // forgotten it when it wrote the digest.
+
+  it("grounds the summary in the agent's own documents", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    retrieve = vi.fn(async () => ({
+      ragBlock: "Excerpt: our own pricing page lists Pro at $29.",
+      embeddingTokens: 0,
+    }));
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    expect(summarise.mock.calls[0][0].ragBlock).toContain("Pro at $29");
+  });
+
+  it("retrieves against the instruction and what this run actually found", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb();
+    const r = routine({
+      instruction: "Flag anything about competitor pricing",
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    const [call] = retrieve.mock.calls;
+    expect(call[0].agentId).toBe("a1");
+    // Both halves: the standing instruction, and the entries this particular
+    // run is about. A query built from the instruction alone returns the same
+    // passages every run, whatever came in.
+    expect(call[0].query).toContain("Flag anything about competitor pricing");
+    expect(call[0].query).toContain("Tb");
+  });
+
+  it("charges the embedding tokens to the owner alongside the completion's", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    retrieve = vi.fn(async () => ({ ragBlock: "block", embeddingTokens: 900 }));
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    // 120 from the completion, plus 900 embedding tokens at EMBEDDING_TOKEN_WEIGHT.
+    expect(recorded).toEqual([{ userId: "u1", tokens: 129 }]);
+  });
+
+  it("still delivers, ungrounded, when retrieval throws", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    retrieve = vi.fn(async () => {
+      throw new Error("embeddings unavailable");
+    });
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    // An ungrounded digest beats no digest — the same trade retrieval.ts makes
+    // for a chat turn.
+    expect(out.status).toBe("ok");
+    expect(summarise.mock.calls[0][0].ragBlock).toBe("");
+    expect(deliverCalls).toHaveLength(1);
+  });
+
+  it("does not pay to retrieve for a run that has nothing to report", async () => {
+    fetchImpl = vi.fn(async () => res("", { status: 304 }));
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: '"v1"', contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  // ---- watching a connection -----------------------------------------------
+
+  it("reads a connection's documents instead of fetching anything", async () => {
+    fetchImpl = vi.fn();
+    const { db } = makeDb({
+      documents: [
+        {
+          id: "d1",
+          name: "Handbook",
+          content: "Holiday policy is twenty-five days.",
+          external_url: "https://notion.so/handbook",
+          external_version: "v2",
+          synced_at: "2026-09-05T10:00:00Z",
+        },
+      ],
+    });
+    const r = routine({
+      source_kind: "connection",
+      source_config: { connectionId: "cn1" },
+      cursor: { seenKeys: ["d1:v1"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    expect(out).toEqual({ status: "ok", itemsNew: 1 });
+    // The whole design: no provider call, no second token decrypt, nothing
+    // added to the sync's subrequest budget.
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(summarise.mock.calls[0][0].items[0].title).toBe("Handbook");
+  });
+
+  it("says nothing on a connection routine's first run", async () => {
+    fetchImpl = vi.fn();
+    const { db, updates } = makeDb({
+      documents: [{ id: "d1", name: "Handbook", external_version: "v1", synced_at: "2026-09-05" }],
+    });
+    const r = routine({
+      source_kind: "connection",
+      source_config: { connectionId: "cn1" },
+      cursor: null,
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    // Same rule as a feed: with no cursor there is nothing to compare against,
+    // so the baseline is recorded and the whole bundle is not posted at anyone.
+    expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    expect(deliverCalls).toHaveLength(0);
+    const saved = updates.find((u) => u.table === "routines")!;
+    expect(saved.values.cursor.seenKeys).toEqual(["d1:v1"]);
+  });
+
+  it("fails a connection routine whose connection is not in its workspace", async () => {
+    fetchImpl = vi.fn();
+    const { db, updates } = makeDb({ rows: { connections: null } });
+    const r = routine({
+      source_kind: "connection",
+      source_config: { connectionId: "cn-elsewhere" },
+      cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    expect(out.status).toBe("failed");
+    expect(deliverCalls).toHaveLength(0);
+    const saved = updates.find((u) => u.table === "routines")!;
+    expect(saved.values.consecutive_failures).toBe(1);
+  });
+
+  // ---- what the cap declined -----------------------------------------------
+
+  it("records the entries the per-run cap dropped", async () => {
+    // Twelve unseen entries against a cap of ten.
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+    fetchImpl = vi.fn(async () => new Response(ATOM(ids), { status: 200 }));
+    const { db, inserts } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["z"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    expect(out).toEqual({ status: "ok", itemsNew: 10 });
+    const run = inserts.find((i) => i.table === "routine_runs")!;
+    expect(run.values.items_new).toBe(10);
+    // The two the cap declined are marked seen and never delivered later, so a
+    // run that does not record this number has lost it.
+    expect(run.values.items_overflow).toBe(2);
+  });
+
+  it("tells the reader what was left out of the message", async () => {
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+    fetchImpl = vi.fn(async () => new Response(ATOM(ids), { status: 200 }));
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["z"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    const sent = JSON.parse(deliverCalls[0].init.body).text;
+    expect(sent).toContain("2 further entries were not included");
+  });
+
+  it("leaves the message alone when nothing was dropped", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    expect(JSON.parse(deliverCalls[0].init.body).text).not.toContain("not included");
+    expect(inserts.find((i) => i.table === "routine_runs")!.values.items_overflow).toBe(0);
   });
 });

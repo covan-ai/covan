@@ -19,6 +19,26 @@ import { RoutineStatus } from "@/components/routines/routine-status";
 import { cronToProse } from "@/lib/cron-to-prose";
 import { formatRelative } from "@/lib/relative-time";
 import type { Routine, RoutineRun } from "@/lib/routines-api";
+import type { Connection } from "@/lib/connections-api";
+
+/**
+ * What this routine watches, in one line.
+ *
+ * A connection is named by its account rather than by its id, and falls back to
+ * the generic phrase rather than to a bare uuid: connections are visible to the
+ * whole workspace, so a miss here means the list has not loaded yet or the
+ * connection has since been deleted, and neither is worth showing a uuid for.
+ */
+function sourceLabel(routine: Routine, connections: Connection[]): string {
+  if (routine.sourceKind === "none") return "Scheduled prompt";
+  if (routine.sourceKind === "connection") {
+    const connection = connections.find((c) => c.id === routine.connectionId);
+    if (!connection) return "A connected source";
+    const scope = connection.folderName ?? connection.bundleName;
+    return `Connected · ${connection.accountLabel}${scope ? ` · ${scope}` : ""}`;
+  }
+  return `${routine.sourceKind.toUpperCase()} · ${routine.sourceUrl ?? ""}`;
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -48,6 +68,16 @@ function RunRow({ run }: { run: RoutineRun }) {
       <span className="text-sm">
         Sent · <span className="tabular-nums">{run.itemsNew}</span> new item
         {run.itemsNew === 1 ? "" : "s"}
+        {/* What the per-run cap declined. These were marked seen, so they are
+            not waiting for the next run — they were never delivered and never
+            will be. A run that shows only "10 new items" reads as complete,
+            which is exactly the impression to avoid on a busy feed. */}
+        {run.itemsOverflow > 0 && (
+          <span className="text-muted-foreground">
+            {" · "}
+            <span className="tabular-nums">{run.itemsOverflow}</span> skipped
+          </span>
+        )}
       </span>
     ) : run.status === "failed" ? (
       <span className="text-sm text-destructive">{run.error ?? "Failed"}</span>
@@ -101,6 +131,7 @@ function RunRow({ run }: { run: RoutineRun }) {
 export function RoutineDetail({
   routine,
   runs,
+  connections = [],
   channelLabel,
   isOwner,
   onTogglePause,
@@ -113,6 +144,12 @@ export function RoutineDetail({
 }: {
   routine: Routine;
   runs: RoutineRun[];
+  /**
+   * The workspace's connections, so a `connection` routine can be named by the
+   * account it watches rather than by a uuid. Empty is fine and is what a
+   * routine of any other kind gets.
+   */
+  connections?: Connection[];
   /** null when the viewer is not the owner — RLS hides other people's channels. */
   channelLabel: string | null;
   isOwner: boolean;
@@ -177,11 +214,7 @@ export function RoutineDetail({
 
       <SectionCard className="mt-8">
         <dl className="divide-y divide-hairline">
-          <Field label="Source">
-            {routine.sourceKind === "none"
-              ? "Scheduled prompt"
-              : `${routine.sourceKind.toUpperCase()} · ${routine.sourceUrl ?? ""}`}
-          </Field>
+          <Field label="Source">{sourceLabel(routine, connections)}</Field>
           <Field label="Schedule">
             <span className="tabular-nums">{cronToProse(routine.scheduleCron)}</span> ·{" "}
             {routine.timezone}

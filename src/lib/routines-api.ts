@@ -2,6 +2,15 @@
 // their own file so api-client.ts stays a transport layer; the request
 // functions themselves live there because `request()` is module-private.
 
+/**
+ * `connection` watches a bundle a Notion or Drive connection already keeps
+ * current, and reports the documents that were added or changed since the last
+ * run. It reads nothing from the provider itself — the sync has already done
+ * that — so what it sees is only ever as fresh as the connection's own
+ * interval.
+ */
+export type RoutineSourceKind = "rss" | "web" | "none" | "connection";
+
 export type Routine = {
   id: string;
   agentId: string;
@@ -9,8 +18,10 @@ export type Routine = {
   userId: string;
   name: string;
   visibility: "private" | "shared";
-  sourceKind: "rss" | "web" | "none";
+  sourceKind: RoutineSourceKind;
   sourceUrl: string | null;
+  /** Set only for `connection`. The connection whose documents it watches. */
+  connectionId: string | null;
   instruction: string;
   deliveryChannelId: string;
   scheduleCron: string;
@@ -28,6 +39,12 @@ export type RoutineRun = {
   /** `skipped` means "looked, nothing new" — it is not a failure. */
   status: "ok" | "skipped" | "failed";
   itemsNew: number;
+  /**
+   * New entries this run saw and did not deliver, dropped by the per-run cap of
+   * ten. They were marked seen, so they are not queued for a later run — they
+   * are gone, which is why the number is shown rather than inferred.
+   */
+  itemsOverflow: number;
   durationMs: number | null;
   error: string | null;
   /** What was delivered. Null for skipped and failed runs, and for runs
@@ -62,8 +79,10 @@ export type RoutineDraft = {
 export type CreateRoutineInput = {
   agentId: string;
   name: string;
-  sourceKind: "rss" | "web" | "none";
+  sourceKind: RoutineSourceKind;
   sourceUrl?: string | null;
+  /** Required when sourceKind is `connection`. */
+  connectionId?: string | null;
   instruction: string;
   deliveryChannelId: string;
   scheduleCron: string;

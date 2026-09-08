@@ -12,6 +12,7 @@ const routine: Routine = {
   visibility: "private",
   sourceKind: "rss",
   sourceUrl: "https://example.com/feed.xml",
+  connectionId: null,
   instruction: "summarise new posts",
   deliveryChannelId: "c1",
   scheduleCron: "0 * * * *",
@@ -28,6 +29,7 @@ const runs: RoutineRun[] = [
     id: "1",
     status: "ok",
     itemsNew: 3,
+    itemsOverflow: 0,
     durationMs: 1400,
     error: null,
     summary: "Three new posts about pricing.",
@@ -37,6 +39,7 @@ const runs: RoutineRun[] = [
     id: "2",
     status: "skipped",
     itemsNew: 0,
+    itemsOverflow: 0,
     durationMs: 300,
     error: null,
     summary: null,
@@ -46,6 +49,7 @@ const runs: RoutineRun[] = [
     id: "3",
     status: "failed",
     itemsNew: 0,
+    itemsOverflow: 0,
     durationMs: 2100,
     error: "upstream 503",
     summary: null,
@@ -77,6 +81,44 @@ describe("RoutineDetail", () => {
   it("shows a failed run's error", () => {
     render(<RoutineDetail {...props} />);
     expect(screen.getByText("upstream 503")).toBeInTheDocument();
+  });
+
+  // The per-run cap delivers ten and marks everything it saw as seen, so the
+  // rest are not queued for later — they are gone. A row reading "10 new items"
+  // and nothing else says the opposite.
+  it("says how many entries the per-run cap dropped", () => {
+    const capped = [{ ...runs[0], itemsNew: 10, itemsOverflow: 32 }];
+    render(<RoutineDetail {...props} runs={capped} />);
+    expect(screen.getByText("32")).toBeInTheDocument();
+    expect(screen.getByText(/skipped/)).toBeInTheDocument();
+  });
+
+  it("says nothing about drops when there were none", () => {
+    render(<RoutineDetail {...props} />);
+    expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
+  });
+
+  it("names a connection routine by the account it watches", () => {
+    render(
+      <RoutineDetail
+        {...props}
+        routine={{ ...routine, sourceKind: "connection", sourceUrl: null, connectionId: "cn1" }}
+        connections={[{ id: "cn1", accountLabel: "Covan HQ", folderName: null } as never]}
+      />,
+    );
+    expect(screen.getByText(/Covan HQ/)).toBeInTheDocument();
+  });
+
+  // A uuid in a Source field tells the reader nothing, and the list not having
+  // loaded yet is the ordinary case rather than an error.
+  it("falls back to a readable phrase when the connection is unknown", () => {
+    render(
+      <RoutineDetail
+        {...props}
+        routine={{ ...routine, sourceKind: "connection", sourceUrl: null, connectionId: "gone" }}
+      />,
+    );
+    expect(screen.getByText("A connected source")).toBeInTheDocument();
   });
 
   it("hides owner controls for a teammate's routine", () => {

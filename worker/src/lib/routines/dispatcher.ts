@@ -6,6 +6,7 @@ import { runRoutine as defaultRunRoutine, type ExecutorDeps, type RoutineRow } f
 import { summariseWithModel } from "./summarise";
 import { ownHostsFrom } from "./url-guard";
 import { entitlementsFor } from "../entitlements";
+import { retrieveForAgent } from "../retrieval";
 
 /**
  * How many routines one tick may run, bounded by the Workers **Free** plan's
@@ -55,6 +56,18 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
     // resolves that env once (house or workspace) and hands it in here, per
     // call, rather than baking one in at construction the way this used to.
     summarise: (input, runEnv) => summariseWithModel(runEnv)(input),
+    // The same retrieval chat and Slack use, reached through the same module.
+    // `retrieval.ts` exists precisely because a second surface needed to ask an
+    // agent something and two copies would have drifted rather than failed —
+    // this is the third surface, and it passes an empty history because a
+    // routine has no prior turns to carry a subject in.
+    //
+    // `runEnv` for the same reason `summarise` takes it: embedding is a paid
+    // call and goes to whichever key is answering this run.
+    retrieve: async ({ agentId, query }, runEnv) => {
+      const { ragBlock, embeddingTokens } = await retrieveForAgent(db, runEnv, agentId, query, []);
+      return { ragBlock, embeddingTokens };
+    },
     entitlements: entitlementsFor(env),
     fetchDeps: { fetchImpl: boundFetch, ownHosts },
     deliveryDeps: {

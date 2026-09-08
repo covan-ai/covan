@@ -18,6 +18,7 @@ const routine = (over: Partial<Routine>): Routine => ({
   visibility: "private",
   sourceKind: "rss",
   sourceUrl: "https://example.com/feed.xml",
+  connectionId: null,
   instruction: "summarise",
   deliveryChannelId: "c1",
   scheduleCron: "0 * * * *",

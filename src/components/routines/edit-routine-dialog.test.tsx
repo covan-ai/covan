@@ -12,6 +12,7 @@ const routine: Routine = {
   visibility: "private",
   sourceKind: "rss",
   sourceUrl: "https://example.com/feed.xml",
+  connectionId: null,
   instruction: "Summarise anything about pricing.",
   deliveryChannelId: "c1",
   scheduleCron: "0 */6 * * *",

@@ -160,8 +160,10 @@ routines.delete("/delivery-channels/:id", async (c) => {
 const createSchema = z.object({
   agentId: z.string().uuid(),
   name: z.string().min(1),
-  sourceKind: z.enum(["rss", "web", "none"]),
+  sourceKind: z.enum(["rss", "web", "none", "connection"]),
   sourceUrl: z.string().nullable().optional(),
+  /** Required for `connection`, ignored otherwise. */
+  connectionId: z.string().uuid().nullable().optional(),
   instruction: z.string().min(1),
   deliveryChannelId: z.string().uuid(),
   scheduleCron: z.string().min(1),
@@ -184,6 +186,19 @@ const updateSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, { message: "no fields to update" });
 
+/**
+ * What the engine reads back off the row.
+ *
+ * One key per kind rather than a bag of everything the request happened to
+ * carry: a `connection` routine that also stored a leftover `url` would look,
+ * to anyone reading the row later, like it might fetch one.
+ */
+function sourceConfigFor(body: z.infer<typeof createSchema>): Record<string, string> {
+  if (body.sourceKind === "connection") return { connectionId: body.connectionId! };
+  if (body.sourceUrl) return { url: body.sourceUrl };
+  return {};
+}
+
 routines.get("/routines", async (c) => {
   const { data, error } = await c
     .get("db")
@@ -203,13 +218,21 @@ routines.post("/routines", async (c) => {
   if (!isValidCron(body.scheduleCron, body.timezone)) {
     return c.json({ error: "unusable schedule" }, 400);
   }
-  if (body.sourceKind !== "none") {
+  if (body.sourceKind === "rss" || body.sourceKind === "web") {
     if (!body.sourceUrl) return c.json({ error: "this source needs a url" }, 400);
     try {
       assertFetchableUrl(body.sourceUrl, ownHostsFrom(c.env));
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "invalid url" }, 400);
     }
+  }
+  // A connection is checked by the database, not here: 0047's policy resolves
+  // the id through the caller's own RLS, so a connection in another workspace
+  // is refused by the same mechanism that refuses another workspace's agent.
+  // This only catches the shape, so the error names the missing field instead
+  // of arriving as the policy's generic refusal below.
+  if (body.sourceKind === "connection" && !body.connectionId) {
+    return c.json({ error: "this source needs a connection" }, 400);
   }
 
   const db = c.get("db");
@@ -228,7 +251,7 @@ routines.post("/routines", async (c) => {
       user_id: c.get("user").id,
       name: body.name,
       source_kind: body.sourceKind,
-      source_config: body.sourceUrl ? { url: body.sourceUrl } : {},
+      source_config: sourceConfigFor(body),
       instruction: body.instruction,
       delivery_channel_id: body.deliveryChannelId,
       schedule_cron: body.scheduleCron,

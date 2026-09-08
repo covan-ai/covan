@@ -53,6 +53,7 @@ describe("summariseWithModel", () => {
       model: "gpt-4o",
       instruction: "Summarise the latest posts.",
       items: [item(1), item(2)],
+      ragBlock: "",
     });
 
     const call = createMock.mock.calls[0][0];
@@ -65,6 +66,46 @@ describe("summariseWithModel", () => {
     expect(userMessage.content).toContain("Item 2");
   });
 
+  // A routine is meant to be the same colleague as the one in the chat window.
+  // It was not: chat put the agent's retrieved documents in their own system
+  // message and this path had none at all, so the agent that could quote the
+  // handbook when asked had forgotten it by the time it wrote the digest.
+  it("carries what the agent knows in its own system message, as chat does", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Flag competitor pricing moves.",
+      items: [item(1)],
+      ragBlock: "Excerpt from Pricing.md: our Pro tier is $29.",
+    });
+
+    const messages = createMock.mock.calls[0][0].messages;
+    const systemMessages = messages.filter((m: any) => m.role === "system");
+
+    // Two, not one concatenated block: the persona is the agent's standing
+    // identity and the excerpts are this run's material, and merging them
+    // invites the model to read retrieved text as instructions.
+    expect(systemMessages).toHaveLength(2);
+    expect(systemMessages[1].content).toContain("our Pro tier is $29");
+    // Before the user turn it grounds, same as `routes/chat.ts` assembles it.
+    expect(messages[messages.length - 1].role).toBe("user");
+  });
+
+  it("sends no grounding message when retrieval found nothing", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Summarise.",
+      items: [item(1)],
+      ragBlock: "",
+    });
+
+    const messages = createMock.mock.calls[0][0].messages;
+    expect(messages.filter((m: any) => m.role === "system")).toHaveLength(1);
+  });
+
   it("makes exactly one completion call for a batch of items, not one per item", async () => {
     const summarise = summariseWithModel(env);
     await summarise({
@@ -72,6 +113,7 @@ describe("summariseWithModel", () => {
       model: "gpt-4o",
       instruction: "Summarise.",
       items: [item(1), item(2), item(3)],
+      ragBlock: "",
     });
 
     expect(createMock).toHaveBeenCalledTimes(1);
@@ -86,6 +128,7 @@ describe("summariseWithModel", () => {
       instruction: "Summarise the page.",
       items: [],
       pageText: bigText,
+      ragBlock: "",
     });
 
     const call = createMock.mock.calls[0][0];
@@ -101,6 +144,7 @@ describe("summariseWithModel", () => {
       model: "not-a-real-model",
       instruction: "Summarise.",
       items: [item(1)],
+      ragBlock: "",
     });
 
     const call = createMock.mock.calls[0][0];
@@ -118,6 +162,7 @@ describe("summariseWithModel", () => {
       model: "gpt-4o",
       instruction: "Summarise.",
       items: [item(1)],
+      ragBlock: "",
     });
 
     expect(createMock.mock.calls[0][0].model).toBe("llama3.3:70b");
@@ -131,6 +176,7 @@ describe("summariseWithModel", () => {
       model: "gpt-4o",
       instruction: "Summarise.",
       items: [item(1)],
+      ragBlock: "",
     });
     expect(withUsage.tokens).toBe(42);
 
@@ -140,6 +186,7 @@ describe("summariseWithModel", () => {
       model: "gpt-4o",
       instruction: "Summarise.",
       items: [item(1)],
+      ragBlock: "",
     });
     expect(withoutUsage.tokens).toBe(0);
   });

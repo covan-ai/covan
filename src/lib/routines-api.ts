@@ -45,6 +45,12 @@ export type RoutineRun = {
    * are gone, which is why the number is shown rather than inferred.
    */
   itemsOverflow: number;
+  /**
+   * The run read real entries and the agent judged none of them to be what the
+   * instruction asked for — as opposed to a run that found nothing new at all.
+   * `itemsNew` is how many it read before deciding.
+   */
+  nothingRelevant: boolean;
   durationMs: number | null;
   error: string | null;
   /** What was delivered. Null for skipped and failed runs, and for runs

@@ -54,6 +54,7 @@ describe("summariseWithModel", () => {
       instruction: "Summarise the latest posts.",
       items: [item(1), item(2)],
       ragBlock: "",
+      mayDecline: false,
     });
 
     const call = createMock.mock.calls[0][0];
@@ -78,6 +79,7 @@ describe("summariseWithModel", () => {
       instruction: "Flag competitor pricing moves.",
       items: [item(1)],
       ragBlock: "Excerpt from Pricing.md: our Pro tier is $29.",
+      mayDecline: false,
     });
 
     const messages = createMock.mock.calls[0][0].messages;
@@ -100,6 +102,7 @@ describe("summariseWithModel", () => {
       instruction: "Summarise.",
       items: [item(1)],
       ragBlock: "",
+      mayDecline: false,
     });
 
     const messages = createMock.mock.calls[0][0].messages;
@@ -114,6 +117,7 @@ describe("summariseWithModel", () => {
       instruction: "Summarise.",
       items: [item(1), item(2), item(3)],
       ragBlock: "",
+      mayDecline: false,
     });
 
     expect(createMock).toHaveBeenCalledTimes(1);
@@ -129,6 +133,7 @@ describe("summariseWithModel", () => {
       items: [],
       pageText: bigText,
       ragBlock: "",
+      mayDecline: false,
     });
 
     const call = createMock.mock.calls[0][0];
@@ -145,6 +150,7 @@ describe("summariseWithModel", () => {
       instruction: "Summarise.",
       items: [item(1)],
       ragBlock: "",
+      mayDecline: false,
     });
 
     const call = createMock.mock.calls[0][0];
@@ -163,6 +169,7 @@ describe("summariseWithModel", () => {
       instruction: "Summarise.",
       items: [item(1)],
       ragBlock: "",
+      mayDecline: false,
     });
 
     expect(createMock.mock.calls[0][0].model).toBe("llama3.3:70b");
@@ -177,6 +184,7 @@ describe("summariseWithModel", () => {
       instruction: "Summarise.",
       items: [item(1)],
       ragBlock: "",
+      mayDecline: false,
     });
     expect(withUsage.tokens).toBe(42);
 
@@ -187,7 +195,102 @@ describe("summariseWithModel", () => {
       instruction: "Summarise.",
       items: [item(1)],
       ragBlock: "",
+      mayDecline: false,
     });
     expect(withoutUsage.tokens).toBe(0);
+  });
+
+  // ---- deciding not to send ------------------------------------------------
+  //
+  // A routine used to send whatever the model wrote, every time it had new
+  // entries. Ask for "anything about our competitors" against a general news
+  // feed and most runs are six unrelated posts and a paragraph explaining that
+  // none of them are about competitors — which arrives hourly, in a Slack
+  // channel, until somebody mutes it. The routine is then technically working
+  // and practically dead.
+
+  const declining = (over: Record<string, unknown> = {}) => ({
+    persona: "You are Ada.",
+    model: "gpt-4o",
+    instruction: "Flag anything about our competitors.",
+    items: [item(1), item(2)],
+    ragBlock: "",
+    mayDecline: true,
+    ...over,
+  });
+
+  it("reports a declined run when the model says nothing matched", async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: '{"relevant": false, "summary": ""}' } }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+
+    const result = await summariseWithModel(env)(declining());
+
+    expect(result.declined).toBe(true);
+    // Still billed. The call that produced the judgement is the call that costs
+    // money — silence is cheaper in noise, not in tokens.
+    expect(result.tokens).toBe(42);
+  });
+
+  it("returns the summary, not the envelope, when something did match", async () => {
+    createMock.mockResolvedValue({
+      choices: [
+        { message: { content: '{"relevant": true, "summary": "Acme launched a Pro tier."}' } },
+      ],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+
+    const result = await summariseWithModel(env)(declining());
+
+    expect(result.declined).toBe(false);
+    expect(result.text).toBe("Acme launched a Pro tier.");
+  });
+
+  // The whole safety of this feature. A routine that goes quiet looks exactly
+  // like a routine with nothing to report, so a parse bug would be invisible
+  // for weeks. Failing open means the worst case is the noise we had before.
+  it("sends the raw text rather than going silent when the JSON is unreadable", async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "I could not follow the format. Acme launched a tier." } }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+
+    const result = await summariseWithModel(env)(declining());
+
+    expect(result.declined).toBe(false);
+    expect(result.text).toBe("I could not follow the format. Acme launched a tier.");
+  });
+
+  it("sends rather than going silent when the object omits the decision", async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: '{"summary": "Acme launched a Pro tier."}' } }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+
+    const result = await summariseWithModel(env)(declining());
+
+    expect(result.declined).toBe(false);
+  });
+
+  // A scheduled prompt has no source, so there is nothing for its output to be
+  // irrelevant *to* — the instruction is the whole job. Asking anyway would let
+  // one `false` silence "remind the team to post standup" forever.
+  it("does not ask for a decision at all when the routine may not decline", async () => {
+    await summariseWithModel(env)(declining({ mayDecline: false }));
+
+    const call = createMock.mock.calls[0][0];
+    expect(call.response_format).toBeUndefined();
+  });
+
+  it("asks for a decision when the routine may decline", async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: '{"relevant": true, "summary": "x"}' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+
+    await summariseWithModel(env)(declining());
+
+    expect(createMock.mock.calls[0][0].response_format).toEqual({ type: "json_object" });
   });
 });

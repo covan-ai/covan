@@ -5,6 +5,7 @@ import {
   MAX_FAILURES,
   MAX_TRANSIENT_FAILURES,
   QUOTA_SKIP_REASON,
+  NOTHING_RELEVANT_REASON,
   type RoutineRow,
 } from "./executor";
 import { encryptSecret } from "../secret-box";
@@ -215,7 +216,7 @@ function makeDeps(db: any) {
 }
 
 beforeEach(() => {
-  summarise = vi.fn(async () => ({ text: "summary", tokens: 120 }));
+  summarise = vi.fn(async () => ({ text: "summary", tokens: 120, declined: false }));
   // Ungrounded by default, so the assertions below are about what the executor
   // does with a block rather than about whether one was produced. The tests
   // that care override this.
@@ -1188,5 +1189,119 @@ describe("runRoutine", () => {
 
     expect(JSON.parse(deliverCalls[0].init.body).text).not.toContain("not included");
     expect(inserts.find((i) => i.table === "routine_runs")!.values.items_overflow).toBe(0);
+  });
+
+  // ---- deciding not to send ------------------------------------------------
+  //
+  // Every run with new entries used to deliver. Point a routine at a general
+  // news feed and ask for competitor news, and most runs are six unrelated
+  // posts plus a paragraph saying none of them are about competitors — hourly,
+  // in a channel, until it is muted. The routine keeps working and stops being
+  // read, which is the failure that does not show up anywhere.
+
+  const declines = () => {
+    summarise = vi.fn(async () => ({ text: "", tokens: 120, declined: true }));
+  };
+
+  it("sends nothing when the model found nothing worth sending", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+    declines();
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    expect(deliverCalls).toHaveLength(0);
+  });
+
+  it("records how many entries it reviewed before deciding", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+    declines();
+    const { db, inserts } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    const run = inserts.find((i) => i.table === "routine_runs")!;
+    expect(run.values.status).toBe("skipped");
+    // Two new entries were read and judged. A row reading 0 would be
+    // indistinguishable from a feed that had not moved, which is the question
+    // this number exists to answer.
+    expect(run.values.items_new).toBe(2);
+    expect(run.values.error).toBe(NOTHING_RELEVANT_REASON);
+    // Nothing was delivered, so there is nothing to show under the row.
+    expect(run.values.summary).toBeNull();
+  });
+
+  it("advances the cursor, so a rejected entry is not judged again", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+    declines();
+    const { db, updates } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    const saved = updates.find((u) => u.table === "routines")!;
+    expect(saved.values.cursor.seenKeys).toEqual(expect.arrayContaining(["b", "c"]));
+  });
+
+  it("still charges the call that produced the decision", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    declines();
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    // Silence is cheaper in noise, not in tokens: the model call that decided
+    // this is the model call that cost money.
+    expect(recorded).toEqual([{ userId: "u1", tokens: 120 }]);
+  });
+
+  it("does not count as a failure", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    declines();
+    const { db, updates } = makeDb();
+    const r = routine({
+      consecutive_failures: 3,
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    // A run that looked and decided is a working run. Counting it would pause a
+    // healthy routine after five quiet ones.
+    expect(updates.find((u) => u.table === "routines")!.values.consecutive_failures).toBe(0);
+  });
+
+  it("never lets a scheduled prompt decline", async () => {
+    fetchImpl = vi.fn();
+    const { db } = makeDb();
+
+    await runRoutine(routine({ source_kind: "none", source_config: {} }), makeDeps(db) as any);
+
+    // Nothing to be irrelevant to, and one `false` would silence it forever.
+    expect(summarise.mock.calls[0][0].mayDecline).toBe(false);
+  });
+
+  it("lets a routine that watches something decline", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    expect(summarise.mock.calls[0][0].mayDecline).toBe(true);
   });
 });

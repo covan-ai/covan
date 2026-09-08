@@ -30,6 +30,7 @@ const runs: RoutineRun[] = [
     status: "ok",
     itemsNew: 3,
     itemsOverflow: 0,
+    nothingRelevant: false,
     durationMs: 1400,
     error: null,
     summary: "Three new posts about pricing.",
@@ -40,6 +41,7 @@ const runs: RoutineRun[] = [
     status: "skipped",
     itemsNew: 0,
     itemsOverflow: 0,
+    nothingRelevant: false,
     durationMs: 300,
     error: null,
     summary: null,
@@ -50,6 +52,7 @@ const runs: RoutineRun[] = [
     status: "failed",
     itemsNew: 0,
     itemsOverflow: 0,
+    nothingRelevant: false,
     durationMs: 2100,
     error: "upstream 503",
     summary: null,
@@ -91,6 +94,26 @@ describe("RoutineDetail", () => {
     render(<RoutineDetail {...props} runs={capped} />);
     expect(screen.getByText("32")).toBeInTheDocument();
     expect(screen.getByText(/skipped/)).toBeInTheDocument();
+  });
+
+  // "Nothing new" and "nothing here was relevant" are different answers to
+  // "why didn't it send me anything?", and only one of them means the model
+  // made a judgement somebody might disagree with. Silence is what a broken
+  // routine looks like too, so the count is what gives anyone a way to check.
+  it("distinguishes a filtered run from an empty one, with what it read", () => {
+    const filtered = [{ ...runs[1], nothingRelevant: true, itemsNew: 6 }];
+    render(<RoutineDetail {...props} runs={filtered} />);
+    expect(screen.getByText(/Nothing relevant/)).toBeInTheDocument();
+    expect(screen.getByText(/6/)).toBeInTheDocument();
+    expect(screen.queryByText("Nothing new")).not.toBeInTheDocument();
+  });
+
+  it("still reads as neutral, not as a failure", () => {
+    const filtered = [{ ...runs[1], nothingRelevant: true, itemsNew: 6 }];
+    render(<RoutineDetail {...props} runs={filtered} />);
+    const row = screen.getByText(/Nothing relevant/);
+    expect(row.className).toContain("text-muted-foreground");
+    expect(row.className).not.toContain("destructive");
   });
 
   it("says nothing about drops when there were none", () => {

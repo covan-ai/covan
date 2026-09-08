@@ -81,6 +81,15 @@ function RunRow({ run }: { run: RoutineRun }) {
       </span>
     ) : run.status === "failed" ? (
       <span className="text-sm text-destructive">{run.error ?? "Failed"}</span>
+    ) : run.nothingRelevant ? (
+      // A different answer to "why didn't it send me anything?" than the one
+      // below: this run had entries and the agent decided none of them were
+      // what you asked for. The count is not decoration — a filtered routine
+      // and a broken one both look like silence from the outside, and this is
+      // the only place to see that it is still reading.
+      <span className="text-sm text-muted-foreground">
+        Nothing relevant · <span className="tabular-nums">{run.itemsNew}</span> reviewed
+      </span>
     ) : (
       <span className="text-sm text-muted-foreground">Nothing new</span>
     );

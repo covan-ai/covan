@@ -2,6 +2,7 @@
  * Row → frontend DTO mappers.
  * Frontend TS types are fixed: camelCase fields, timestamps as epoch-ms.
  */
+import { NOTHING_RELEVANT_REASON } from "./routines/executor";
 
 export type DocumentDTO = {
   id: string;
@@ -422,6 +423,16 @@ export type RoutineRunDTO = {
    * Zero for every run recorded before 0047.
    */
   itemsOverflow: number;
+  /**
+   * A skipped run that looked at real entries and judged none of them to be
+   * what the instruction asked for — as opposed to one that found nothing new.
+   * `itemsNew` says how many it read before deciding.
+   *
+   * Computed here rather than left to the client to match `error` against a
+   * string: the constant lives in the executor, and a copy of it in the
+   * frontend would be a magic string in a second package, free to drift.
+   */
+  nothingRelevant: boolean;
   durationMs: number | null;
   error: string | null;
   /** What was delivered. Null for skipped and failed runs, and for any run
@@ -445,6 +456,7 @@ export function mapRoutineRun(row: {
     status: row.status === "ok" || row.status === "failed" ? row.status : "skipped",
     itemsNew: row.items_new ?? 0,
     itemsOverflow: row.items_overflow ?? 0,
+    nothingRelevant: row.status === "skipped" && row.error === NOTHING_RELEVANT_REASON,
     durationMs: row.duration_ms ?? null,
     error: row.error ?? null,
     summary: row.summary ?? null,

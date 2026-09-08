@@ -148,6 +148,9 @@ routine for the team — a routine is the same colleague, reporting rather than
 answering. Your instruction is the user message, with the new entries or the
 watched page's text beneath it.
 
+That call also decides whether to send at all — see
+[Nothing relevant](#nothing-relevant).
+
 The agent also gets what it knows. Before the call, the run retrieves against
 the agent's documents exactly as a chat turn does, and the excerpts ride in
 their own system message ahead of your instruction. Without that the claim above
@@ -353,6 +356,47 @@ routine the engine paused recovers with one click once the cause is fixed.
 answer to "why didn't it send me anything?". A run is skipped when the source
 answered `304` or hashed to the same page as last time, when a feed had no new
 entries, and on the first run of a feed or page watcher.
+
+### Nothing relevant
+
+There is a second answer to that question, and it is the one you will see most
+on a broad source: the run had real new entries, and the agent decided none of
+them were what your instruction asked for.
+
+Before this existed, every run with new entries delivered. Point a routine at a
+general news feed and ask for competitor news, and most runs are six unrelated
+posts plus a paragraph explaining that none of them are about competitors —
+hourly, in a channel people read, until they stop reading it. The routine goes
+on working and stops being useful, and nothing anywhere records that.
+
+So the model is asked two things rather than one: whether the material contains
+anything the instruction asked for, and the report. When the answer to the first
+is no, nothing is delivered and the run is recorded as
+`Nothing relevant · 6 reviewed`. **The count is the point.** A routine that
+filters and a routine that is broken both look like silence from outside, and
+that row is where you can see it is still reading.
+
+Three things follow.
+
+**It costs what it costs.** The model call that produced the judgement is the
+call you pay for, so a filtered run is billed like any other. What it saves is
+attention, not tokens.
+
+**A rejected entry is not offered again.** The cursor advances and the delivery
+claims stay, so an entry that has been judged is done with — otherwise a busy
+feed would spend a model call per run re-reaching the same answer.
+
+**A scheduled prompt is never asked.** With no source, there is nothing for its
+output to be irrelevant *to*: the instruction is the whole job. Asking anyway
+would let one `false` silence "remind the team to post standup" permanently.
+
+The decision comes back as a field of its own rather than as something to read
+out of the summary text, and **every way of failing to read it delivers**:
+unreadable JSON, a missing decision, or a decision that is not a plain `false`
+all send the message. That asymmetry is deliberate. A routine that sends
+something it should have withheld is the noise there was before, noticed at
+once; a routine that goes quiet because of a bug is indistinguishable from a
+quiet week, for as long as it takes somebody to get suspicious.
 
 Two more are worth naming. If the owner is no longer a member of the workspace,
 the run stops before anything else happens and the routine pauses, and unlike a

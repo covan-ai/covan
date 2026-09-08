@@ -211,9 +211,10 @@ fallback — falls back to a persona-only answer rather than failing the turn.
 
 ## Routines
 
-A routine is: a source (an RSS feed, a web page, or nothing), an instruction, a
-cron expression with a timezone, and a delivery channel (a Slack webhook or an
-email address). The engine wakes up, asks the database what is due, and runs it.
+A routine is: a source (an RSS feed, a web page, a connection, or nothing), an
+instruction, a cron expression with a timezone, and a delivery channel (a Slack
+webhook or an email address). The engine wakes up, asks the database what is
+due, and runs it.
 
 ### Claiming
 
@@ -251,13 +252,14 @@ one rather than run until the invocation is killed.
 
 ### Running one
 
-`lib/routines/executor.ts`, in order: check workspace membership → fetch the
-source through the SSRF guard → diff the fetched items against the routine's
-stored cursor → reserve the new item keys in `routine_deliveries` → summarise
-with the model → deliver → record a `routine_runs` row and advance
+`lib/routines/executor.ts`, in order: check workspace membership → read the
+source (through the SSRF guard for a feed or a page; through `documents` for a
+connection) → diff what it found against the routine's stored cursor → reserve
+the new item keys in `routine_deliveries` → retrieve the agent's own documents →
+summarise with the model → deliver → record a `routine_runs` row and advance
 `next_run_at`.
 
-Two details worth knowing:
+Four details worth knowing:
 
 - **Delivery keys are reserved before the send, not after.** That is what makes
   a retry, an overlapping "run now", or a duplicated tick harmless: whoever gets
@@ -269,6 +271,20 @@ Two details worth knowing:
   so a routine cannot be pointed back at Covan itself. It is explicit in its
   own header comment about what it does not do: it cannot resolve DNS, so a
   hostname that resolves to a private address still passes.
+- **A `connection` source reads the database, not the provider**
+  (`lib/routines/connection-source.ts`). The reconciler has already fetched,
+  versioned and removed; the routine reports the documents it added or changed,
+  keyed by document id _and_ `external_version` so an edited page counts as new.
+  That keeps one substrate — the argument `0043` makes for connections in the
+  first place — and costs the routine no provider call, no second token
+  decrypt, and nothing from the tick's subrequest budget. The connection is
+  looked up scoped to the routine's own workspace, because the executor's
+  service-role client is not filtered by RLS.
+- **Retrieval runs for a routine too**, through the same `retrieveForAgent` that
+  chat and Slack use. The query is the instruction plus what this run found,
+  because a routine has no question; the block rides in its own system message,
+  as it does in `routes/chat.ts`. It happens after the run knows it has
+  something to send, so a tick that will deliver nothing does not pay to embed.
 
 Failures back off, capped at six hours past the natural next run, and a routine
 pauses itself after 5 consecutive failures — or 20 if they are transient (429s

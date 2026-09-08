@@ -16,9 +16,28 @@ import {
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api-client";
 import { useDeliveryChannels, useCreateRoutine } from "@/hooks/use-routines";
+import { useConnections } from "@/hooks/use-connections";
 import { SchedulePicker, scheduleError } from "@/components/routines/schedule-picker";
+import type { RoutineSourceKind } from "@/lib/routines-api";
 
-type SourceKind = "rss" | "web" | "none";
+/**
+ * Says what a connection routine can and cannot see, in the units the person
+ * setting the schedule is already thinking in.
+ *
+ * Written from the connection's own interval rather than as a fixed sentence
+ * about "six hours", because the default is only a default and somebody who has
+ * turned theirs down to fifteen minutes should not be told otherwise.
+ */
+function syncCaveat(intervalMinutes: number | undefined): string {
+  if (intervalMinutes === undefined) {
+    return "A routine reports what the connection has already synced, so it sees a change no sooner than the next sync does.";
+  }
+  const every =
+    intervalMinutes % 60 === 0
+      ? `${intervalMinutes / 60} ${intervalMinutes === 60 ? "hour" : "hours"}`
+      : `${intervalMinutes} minutes`;
+  return `This connection syncs every ${every}, and the routine reports what the sync has already imported — so running it more often than that will not find changes any sooner.`;
+}
 
 const browserTimezone = () => {
   try {
@@ -31,6 +50,12 @@ const browserTimezone = () => {
 export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   const { data: channels = [] } = useDeliveryChannels();
   const createRoutine = useCreateRoutine();
+  // A connection that has never finished setting itself up has no documents to
+  // report, so offering it here would create a routine that can only ever skip.
+  // Paused ones are still offered: a pause is usually temporary and the routine
+  // outlives it.
+  const { data: connectionData } = useConnections();
+  const connections = (connectionData?.connections ?? []).filter((c) => !c.needsFolder);
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
@@ -38,8 +63,9 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   const [drafting, setDrafting] = useState(false);
 
   const [name, setName] = useState("");
-  const [sourceKind, setSourceKind] = useState<SourceKind>("rss");
+  const [sourceKind, setSourceKind] = useState<RoutineSourceKind>("rss");
   const [sourceUrl, setSourceUrl] = useState("");
+  const [connectionId, setConnectionId] = useState("");
   const [instruction, setInstruction] = useState("");
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
   const [timezone, setTimezone] = useState(browserTimezone());
@@ -55,6 +81,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     setName("");
     setSourceKind("rss");
     setSourceUrl("");
+    setConnectionId("");
     setInstruction("");
     setScheduleCron("0 * * * *");
     setTimezone(browserTimezone());
@@ -105,7 +132,8 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
         agentId,
         name: name.trim(),
         sourceKind,
-        sourceUrl: sourceKind === "none" ? null : sourceUrl.trim(),
+        sourceUrl: sourceKind === "rss" || sourceKind === "web" ? sourceUrl.trim() : null,
+        connectionId: sourceKind === "connection" ? connectionId : null,
         instruction: instruction.trim(),
         deliveryChannelId: channelId,
         scheduleCron: scheduleCron.trim(),
@@ -143,7 +171,8 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
     scheduleError(scheduleCron) === null &&
-    (sourceKind === "none" || sourceUrl.trim() !== "");
+    (sourceKind === "none" ||
+      (sourceKind === "connection" ? connectionId !== "" : sourceUrl.trim() !== ""));
 
   return (
     <>
@@ -183,19 +212,29 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
 
               <div className="space-y-2">
                 <Label htmlFor="routine-source">Source</Label>
-                <Select value={sourceKind} onValueChange={(v) => setSourceKind(v as SourceKind)}>
+                <Select
+                  value={sourceKind}
+                  onValueChange={(v) => setSourceKind(v as RoutineSourceKind)}
+                >
                   <SelectTrigger id="routine-source">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="rss">RSS / Atom feed</SelectItem>
                     <SelectItem value="web">Web page</SelectItem>
+                    {/* Offered only when there is something to point at. An
+                        option that opens onto an empty list reads as a broken
+                        feature rather than as one nobody has set up yet — the
+                        Integrations page is where a connection is made. */}
+                    {connections.length > 0 && (
+                      <SelectItem value="connection">A connected source</SelectItem>
+                    )}
                     <SelectItem value="none">Scheduled prompt (no source)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {sourceKind !== "none" && (
+              {(sourceKind === "rss" || sourceKind === "web") && (
                 <div className="space-y-2">
                   <Label htmlFor="routine-url">URL</Label>
                   <Input
@@ -207,6 +246,37 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                   {fieldError?.field === "url" && (
                     <p className="text-xs text-destructive">{fieldError.message}</p>
                   )}
+                </div>
+              )}
+
+              {sourceKind === "connection" && (
+                <div className="space-y-2">
+                  <Label htmlFor="routine-connection">Connected source</Label>
+                  <Select value={connectionId} onValueChange={setConnectionId}>
+                    <SelectTrigger id="routine-connection">
+                      <SelectValue placeholder="Pick a connection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {connections.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.accountLabel}
+                          {c.folderName ? ` · ${c.folderName}` : ""}
+                          {c.bundleName ? ` → ${c.bundleName}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {/* The one thing about this kind that will otherwise be
+                      discovered as a bug. The routine reports what the sync has
+                      already imported, so its own schedule cannot make it see a
+                      change sooner than the connection does — an hourly routine
+                      on a six-hourly connection is an hourly routine that finds
+                      something roughly every six hours. */}
+                  <p className="text-xs text-muted-foreground">
+                    {syncCaveat(
+                      connections.find((c) => c.id === connectionId)?.syncIntervalMinutes,
+                    )}
+                  </p>
                 </div>
               )}
 

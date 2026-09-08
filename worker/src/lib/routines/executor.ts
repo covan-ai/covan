@@ -2,10 +2,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { nextRunAt } from "./schedule";
-import { fetchSource, UpstreamError, type FetchDeps } from "./source";
+import { fetchSource, UpstreamError, type FetchDeps, type SourceResult } from "./source";
+import { fetchConnectionItems } from "./connection-source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
-import type { Entitlements } from "../entitlements";
+import { embeddingCost, type Entitlements } from "../entitlements";
 import {
   billsTheOperator,
   keysForUser,
@@ -41,8 +42,9 @@ export type RoutineRow = {
   user_id: string;
   workspace_id: string;
   name: string;
-  source_kind: "rss" | "web" | "none";
-  source_config: { url?: string };
+  source_kind: "rss" | "web" | "none" | "connection";
+  /** `url` for rss and web, `connectionId` for connection, empty for none. */
+  source_config: { url?: string; connectionId?: string };
   instruction: string;
   delivery_channel_id: string;
   schedule_cron: string;
@@ -59,7 +61,16 @@ export type SummariseInput = {
   instruction: string;
   items: FeedItem[];
   pageText?: string;
+  /**
+   * What the agent already knows, retrieved for this run. Empty when the agent
+   * has no documents, when nothing cleared the similarity floor, or when
+   * retrieval failed — all three mean the same thing to the model, which is
+   * that it answers from its persona alone.
+   */
+  ragBlock: string;
 };
+
+export type RetrievalInput = { agentId: string; query: string };
 
 export type ExecutorDeps = {
   /** Service-role client — bypasses RLS. See the scoping note below. */
@@ -72,12 +83,75 @@ export type ExecutorDeps = {
    */
   env: RoutineEnv;
   summarise: (input: SummariseInput, env: RoutineEnv) => Promise<{ text: string; tokens: number }>;
+  /**
+   * What the agent knows, for one run.
+   *
+   * Injected rather than called directly for the reason `summarise` is: this
+   * module is meant to be drivable without an environment, and `retrieveForAgent`
+   * needs embedding config. The dispatcher supplies the real one.
+   *
+   * Takes the resolved run env for the same reason `summarise` does. Embedding
+   * is a paid call, so it has to go to whichever key is answering this run — an
+   * owner who brought their own is not asking the operator to pay for the
+   * retrieval half of it.
+   */
+  retrieve: (
+    input: RetrievalInput,
+    env: RoutineEnv,
+  ) => Promise<{ ragBlock: string; embeddingTokens: number }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
   /** What the routine's owner may spend. Unmetered on a self-hosted install. */
   entitlements: Entitlements;
   now: () => Date;
 };
+
+/**
+ * How much of a watched page's text goes into the retrieval query.
+ *
+ * The page itself is already in the prompt; this only has to be enough to
+ * describe what the page is about. Embedding twenty thousand characters to
+ * find six passages would cost more than the completion it is grounding.
+ */
+const PAGE_QUERY_CHARS = 500;
+
+/**
+ * What to look up in the agent's documents for this run.
+ *
+ * A routine has no question, which is the thing that makes this different from
+ * a chat turn. It has a standing instruction and whatever arrived this
+ * particular time, and both halves matter: the instruction alone returns the
+ * same passages on every run whatever came in, and the arrivals alone lose the
+ * reason the routine exists.
+ */
+function retrievalQueryFor(instruction: string, items: FeedItem[], pageText?: string): string {
+  if (pageText) return `${instruction}\n${pageText.slice(0, PAGE_QUERY_CHARS)}`;
+  if (items.length === 0) return instruction;
+  return `${instruction}\n${items.map((i) => i.title).join("\n")}`;
+}
+
+/**
+ * Says what the message is missing, in the message.
+ *
+ * A run delivers at most ten new entries and marks everything it saw as seen,
+ * so on a busy feed the reader gets ten of forty and the other thirty are not
+ * late — they are never coming. Somebody reading a digest has no way to know
+ * that, and the shape of the failure is the worst kind: the message looks
+ * complete. The run history carries the same number, but the digest is where
+ * the person is looking.
+ *
+ * Appended after the model's text rather than described to the model, because
+ * this is a fact about the delivery and not something the summary should be
+ * asked to reason about — and a model told "you are missing thirty entries"
+ * tends to hedge the ten it does have.
+ */
+function withOverflowNote(text: string, overflow: number): string {
+  if (overflow <= 0) return text;
+  const entries = overflow === 1 ? "entry" : "entries";
+  // Italic in Slack's mrkdwn and in the Markdown the email path renders, which
+  // are the only two destinations there are.
+  return `${text}\n\n_${overflow} further ${entries} were not included._`;
+}
 
 /**
  * Executes one routine, end to end. Knows nothing about what triggered it —
@@ -152,7 +226,34 @@ export async function runRoutine(
       return { status: "skipped", itemsNew: 0 };
     }
 
-    const result = await fetchSource(routine, routine.cursor, deps.fetchDeps);
+    // A connection routine reads rows the reconciler already imported rather
+    // than fetching anything itself — see `connection-source.ts` for why that
+    // is the design and not a shortcut. Everything downstream is identical to a
+    // feed's: the same diff, the same seen window, the same cap, the same
+    // silent first run.
+    let result: SourceResult;
+    if (routine.source_kind === "connection") {
+      result = {
+        status: "items",
+        items: await fetchConnectionItems(deps.db, {
+          workspaceId: routine.workspace_id,
+          connectionId: routine.source_config.connectionId,
+        }),
+        etag: null,
+      };
+    } else {
+      // Rebuilt rather than passed through, so `SourceInput` keeps its narrower
+      // union and `source.ts` stays what it is: the HTTP path, with the url
+      // guard and the redirect loop that only an outbound fetch needs. A
+      // connection reads the database and has no url to guard, and widening
+      // that type to admit it would put a kind through a module with nothing
+      // to do for it.
+      result = await fetchSource(
+        { source_kind: routine.source_kind, source_config: routine.source_config },
+        routine.cursor,
+        deps.fetchDeps,
+      );
+    }
 
     if (result.status === "unchanged") {
       await finish(routine, deps, startedAt, { status: "skipped", itemsNew: 0, tokens: 0 });
@@ -166,10 +267,24 @@ export async function runRoutine(
     // unique constraint is then the backstop for a run that overruns the
     // stale-claim window or fails between delivering and recording.
     let keysToClaim: string[] = [];
+    /**
+     * New entries this run saw and will not deliver, dropped by the per-run cap.
+     *
+     * Recorded rather than discarded because they are not deferred, they are
+     * gone: `diffItems` marks everything it saw as seen, including these, so a
+     * busy feed's overflow is never delivered on a later run. `diffItems` has
+     * always returned this number and this file used to throw it away, which
+     * made a documented behaviour invisible in the two places somebody would
+     * look for it — the message, and the run history.
+     */
+    let overflow = 0;
 
-    if (result.status === "items" && routine.source_kind === "rss") {
+    const diffed = routine.source_kind === "rss" || routine.source_kind === "connection";
+
+    if (result.status === "items" && diffed) {
       const diff = diffItems(result.items, routine.cursor);
       items = diff.newItems;
+      overflow = diff.overflow;
       nextCursor = { ...diff.nextCursor, etag: result.etag };
       keysToClaim = items.map((i) => i.key);
     } else if (result.status === "content") {
@@ -229,7 +344,7 @@ export async function runRoutine(
 
     // Reserve before sending. A concurrent or retried run gets back fewer keys.
     claimedKeys = await claimItemKeys(deps.db, routine.id, keysToClaim);
-    if (routine.source_kind === "rss") {
+    if (diffed) {
       items = items.filter((i) => claimedKeys.includes(i.key));
     }
     if (claimedKeys.length === 0) {
@@ -274,6 +389,37 @@ export async function runRoutine(
 
     if (agentError) throw new Error(`agent lookup failed: ${agentError.message}`);
 
+    // What the agent already knows, retrieved for this run.
+    //
+    // Placed here deliberately: after the quota check, after the run has
+    // established it has something to report, and after the delivery channel
+    // has been shown to exist — so a tick that will send nothing does not pay
+    // to embed a query, which on a healthy feed is most ticks.
+    //
+    // Through `runEnv`, so an owner who brought their own key pays for the
+    // embedding as well as the completion.
+    //
+    // Best-effort, for the reason `retrieval.ts` gives about a chat turn: an
+    // ungrounded answer beats no answer. That module already falls back to
+    // persona-only on its own failures, so reaching this catch means something
+    // further out broke — and a digest that arrives without the handbook is
+    // still worth more to the reader than a run that failed.
+    let ragBlock = "";
+    let embeddingTokens = 0;
+    try {
+      const retrieved = await deps.retrieve(
+        {
+          agentId: routine.agent_id,
+          query: retrievalQueryFor(routine.instruction, items, pageText),
+        },
+        runEnv,
+      );
+      ragBlock = retrieved.ragBlock;
+      embeddingTokens = retrieved.embeddingTokens;
+    } catch (err) {
+      console.error("routine retrieval failed (continuing persona-only)", err);
+    }
+
     const summary = await deps.summarise(
       {
         persona: agent?.persona ?? null,
@@ -281,11 +427,16 @@ export async function runRoutine(
         instruction: routine.instruction,
         items,
         pageText,
+        ragBlock,
       },
       runEnv,
     );
 
-    await deliver(channel, { subject: routine.name, body: summary.text }, deps.deliveryDeps);
+    await deliver(
+      channel,
+      { subject: routine.name, body: withOverflowNote(summary.text, overflow) },
+      deps.deliveryDeps,
+    );
     // Past this point the message is out. Releasing the claims would let the
     // next tick re-win them and send it again — the duplicate this whole
     // claim-first ordering exists to prevent. Leaving them claimed makes the
@@ -295,7 +446,12 @@ export async function runRoutine(
     await finish(routine, deps, startedAt, {
       status: "ok",
       itemsNew: items.length,
-      tokens: summary.tokens,
+      itemsOverflow: overflow,
+      // One counter write for the run, so the embeddings this run paid for are
+      // charged with the completion rather than in a second place that a later
+      // change could forget — including the decision about whose key paid,
+      // which `finish` makes once from `keys`.
+      tokens: summary.tokens + embeddingCost(embeddingTokens),
       cursor: nextCursor,
       summary: summary.text,
       keys,
@@ -373,6 +529,8 @@ export async function runRoutine(
  */
 type RunOutcome = {
   itemsNew: number;
+  /** New entries the per-run cap declined. Only a run that delivered has any. */
+  itemsOverflow?: number;
   cursor?: Cursor;
   error?: string;
   /** What was delivered. Absent for skipped and failed runs, which sent nothing. */
@@ -410,6 +568,7 @@ async function finish(
     finished_at: finishedAt.toISOString(),
     status: outcome.status,
     items_new: outcome.itemsNew,
+    items_overflow: outcome.itemsOverflow ?? 0,
     tokens: outcome.tokens,
     duration_ms: finishedAt.getTime() - startedAt.getTime(),
     error: outcome.error ?? null,

@@ -8,6 +8,13 @@ import type { SummariseInput } from "./executor";
  * One LLM call per run, not per item: cheaper, and the user gets one message
  * instead of eight. The agent's persona is applied exactly as it is in chat —
  * a routine is the same colleague, reporting instead of answering.
+ *
+ * "Exactly as in chat" now includes what the agent has read. It did not, and
+ * the gap was invisible because both halves worked: the agent could quote the
+ * handbook when someone asked it a question, and wrote the Monday digest as if
+ * it had never seen one. So a routine watching a competitor's blog could not
+ * say what the news meant for this company, which is the only reason to have
+ * asked an agent rather than forwarded the feed.
  */
 export function summariseWithModel(env: RoutineEnv) {
   return async (input: SummariseInput): Promise<{ text: string; tokens: number }> => {
@@ -26,6 +33,16 @@ export function summariseWithModel(env: RoutineEnv) {
             .filter(Boolean)
             .join("\n\n"),
         },
+        // The grounding block gets its own message rather than being folded
+        // into the persona, which is how `routes/chat.ts` assembles it and for
+        // the same two reasons: the persona is the agent's standing identity
+        // and this is one run's material, and keeping retrieved text in a
+        // separate message is what stops a passage that happens to read like an
+        // instruction from being read as one.
+        //
+        // Nothing is sent when retrieval found nothing, so an agent with no
+        // documents gets exactly the prompt it got before this existed.
+        ...(input.ragBlock ? [{ role: "system" as const, content: input.ragBlock }] : []),
         { role: "user", content: `${input.instruction}\n\n${body}` },
       ],
     });

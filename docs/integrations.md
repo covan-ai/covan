@@ -48,6 +48,12 @@ over a few runs rather than in one.
 Runs are recorded. `skipped` means it looked and nothing had changed — it is the
 healthy state, not a failure.
 
+That interval is also the ceiling on how fresh anything downstream can be. A
+[routine](routines.md#watching-a-connected-source) can watch a connection and
+report what it added or changed, and because it reads what the sync has already
+imported rather than going to the provider itself, running it more often than
+the connection syncs will not find changes any sooner.
+
 ### When it stops
 
 A connection pauses itself and says why on the row:

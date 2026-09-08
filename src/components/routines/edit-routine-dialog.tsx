@@ -97,7 +97,11 @@ export function EditRoutineDialog({
             <div className="space-y-2">
               <Label>Source</Label>
               <p className="truncate rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
-                {routine.sourceKind === "none" ? "Scheduled prompt" : routine.sourceUrl}
+                {routine.sourceKind === "none"
+                  ? "Scheduled prompt"
+                  : routine.sourceKind === "connection"
+                    ? "A connected source"
+                    : routine.sourceUrl}
               </p>
               <p className="text-xs text-muted-foreground">
                 A routine remembers how far it has read this source, so the source itself is fixed.

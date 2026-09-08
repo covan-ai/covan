@@ -358,8 +358,10 @@ export type RoutineDTO = {
   userId: string;
   name: string;
   visibility: "private" | "shared";
-  sourceKind: "rss" | "web" | "none";
+  sourceKind: "rss" | "web" | "none" | "connection";
   sourceUrl: string | null;
+  /** Set only for `connection`. The connection whose documents it watches. */
+  connectionId: string | null;
   instruction: string;
   deliveryChannelId: string;
   scheduleCron: string;
@@ -378,7 +380,7 @@ export function mapRoutine(row: {
   name: string;
   visibility: string;
   source_kind: string;
-  source_config: { url?: string } | null;
+  source_config: { url?: string; connectionId?: string } | null;
   instruction: string;
   delivery_channel_id: string;
   schedule_cron: string;
@@ -397,6 +399,7 @@ export function mapRoutine(row: {
     visibility: row.visibility === "shared" ? "shared" : "private",
     sourceKind: row.source_kind as RoutineDTO["sourceKind"],
     sourceUrl: row.source_config?.url ?? null,
+    connectionId: row.source_config?.connectionId ?? null,
     instruction: row.instruction,
     deliveryChannelId: row.delivery_channel_id,
     scheduleCron: row.schedule_cron,
@@ -413,6 +416,12 @@ export type RoutineRunDTO = {
   id: string;
   status: "ok" | "skipped" | "failed";
   itemsNew: number;
+  /**
+   * New entries this run saw and did not deliver, dropped by the per-run cap.
+   * Not deferred — they were marked seen, so they are never delivered later.
+   * Zero for every run recorded before 0047.
+   */
+  itemsOverflow: number;
   durationMs: number | null;
   error: string | null;
   /** What was delivered. Null for skipped and failed runs, and for any run
@@ -425,6 +434,7 @@ export function mapRoutineRun(row: {
   id: string;
   status: string;
   items_new: number | null;
+  items_overflow?: number | null;
   duration_ms: number | null;
   error: string | null;
   summary?: string | null;
@@ -434,6 +444,7 @@ export function mapRoutineRun(row: {
     id: row.id,
     status: row.status === "ok" || row.status === "failed" ? row.status : "skipped",
     itemsNew: row.items_new ?? 0,
+    itemsOverflow: row.items_overflow ?? 0,
     durationMs: row.duration_ms ?? null,
     error: row.error ?? null,
     summary: row.summary ?? null,

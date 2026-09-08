@@ -11,6 +11,7 @@ const base: Routine = {
   visibility: "private",
   sourceKind: "none",
   sourceUrl: null,
+  connectionId: null,
   instruction: "do a thing",
   deliveryChannelId: "c1",
   scheduleCron: "0 * * * *",

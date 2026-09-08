@@ -224,10 +224,10 @@ whoever administers the database.
 ## Routine
 
 A routine is a standing order attached to an agent: a source (an RSS feed, a web
-page, or nothing at all), an instruction in plain language, a cron expression
-with a timezone, and a delivery channel — a Slack webhook or an email address.
-The engine wakes up, asks the database which routines are due, runs them and
-delivers the result.
+page, a connected Notion or Drive source, or nothing at all), an instruction in
+plain language, a cron expression with a timezone, and a delivery channel — a
+Slack webhook or an email address. The engine wakes up, asks the database which
+routines are due, runs them and delivers the result.
 
 A routine belongs to a workspace and an agent, but it is owned by the person who
 made it, and it follows the same visibility rule as a session: private by

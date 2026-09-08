@@ -17,6 +17,7 @@ import {
   useRunRoutine,
   useDeliveryChannels,
 } from "@/hooks/use-routines";
+import { useConnections } from "@/hooks/use-connections";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/routines/$routineId")({
   component: RoutineDetailPage,
@@ -28,6 +29,10 @@ function RoutineDetailPage() {
   const { data: routines = [], isLoading } = useRoutines();
   const { data: runs = [] } = useRoutineRuns(routineId);
   const { data: channels = [] } = useDeliveryChannels();
+  // Only so a routine watching one can be named by the account rather than by
+  // its id. Workspace-visible, so this resolves for a teammate reading a shared
+  // routine too — unlike the delivery channel below it.
+  const { data: connectionData } = useConnections();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const updateRoutine = useUpdateRoutine();
   const deleteRoutine = useDeleteRoutine();
@@ -126,6 +131,7 @@ function RoutineDetailPage() {
         <RoutineDetail
           routine={routine}
           runs={runs}
+          connections={connectionData?.connections ?? []}
           channelLabel={isOwner ? channelLabel : null}
           isOwner={isOwner}
           onTogglePause={() => void togglePause()}

@@ -20,6 +20,11 @@ saved at that point: the second step is the same definition as editable fields,
 and you confirm it before anything is written. "Set it up myself" skips the
 model entirely.
 
+The draft never proposes a connected source, and cannot: it would have to name a
+connection by id, and the model has no way to know one. Pick that kind on the
+second step, where the connections your workspace has are a list you choose
+from.
+
 The draft is validated against the same guards the engine runs on — the cron
 parser and the URL guard — so a routine the engine could never execute is
 refused while you are still looking at it. If the model cannot read the request
@@ -33,13 +38,14 @@ routine behave differently today?" is not a question anyone has to answer.
 
 ## What it can read
 
-Three source kinds, and the difference between them is what counts as new.
+Four source kinds, and the difference between them is what counts as new.
 
-| Source           | What a run does                                                      |
-| ---------------- | -------------------------------------------------------------------- |
-| RSS / Atom feed  | Fetches and parses it, and reports the entries it has not seen       |
-| Web page         | Fetches it and hashes the body, and reports only when the hash moved |
-| Scheduled prompt | Fetches nothing — it runs the instruction on the schedule            |
+| Source           | What a run does                                                             |
+| ---------------- | --------------------------------------------------------------------------- |
+| RSS / Atom feed  | Fetches and parses it, and reports the entries it has not seen              |
+| Web page         | Fetches it and hashes the body, and reports only when the hash moved        |
+| Connected source | Fetches nothing — it reports the documents a connection has synced since    |
+| Scheduled prompt | Fetches nothing — it runs the instruction on the schedule                   |
 
 For the two that fetch, the request carries `If-None-Match` when a previous run
 stored an ETag. A `304` ends the run immediately: no parse, no model call, and a
@@ -66,9 +72,56 @@ between two runs reports ten, and the other thirty are never delivered rather
 than arriving piecemeal later. Poll a busy source often enough that a run rarely
 finds more than ten.
 
+When that happens the run says so, in both places you might look. The delivered
+message ends with a line naming how many entries were left out, and the run's
+row in the history reads "10 new items · 30 skipped". Neither is decoration: a
+message reporting ten of forty looks exactly like a message reporting all ten
+there were, and the number is not recoverable afterwards — by the time anyone
+asks, the seen window has moved past them.
+
 Nothing from the source is stored. The cursor holds fingerprints — seen keys, an
 ETag, a content hash — so a feed your workspace watches is never mirrored into
-the database.
+the database. A connected source is the exception that proves it: those
+documents are in the database already, put there by the sync, and the routine
+reads them rather than copying anything.
+
+### Watching a connected source
+
+A [connection](integrations.md) already re-reads a Notion workspace or a Drive
+folder on a schedule and files what it finds in a bundle. A routine of this kind
+watches that bundle and reports the documents added or changed since its last
+run — so "tell me what changed in the handbook" is a routine, not a thing you
+have to remember to check.
+
+It fetches nothing itself. The reconciler has already done the reading, the
+version comparison and the removals, and a routine that went to Notion directly
+would be a second place deciding what "changed" means, with its own answer to
+get subtly differently wrong. So this reads `documents`, and identity is the
+document _and its version_: a page edited at the source arrives under a key the
+cursor has not seen and is reported again, while a page nobody has touched is
+not.
+
+**The routine cannot see a change sooner than the sync does.** A connection
+syncs every `sync_interval_minutes` — six hours by default — so an hourly
+routine on a six-hourly connection is an hourly routine that finds something
+roughly every six hours. The create dialog says this against the connection you
+picked, in its own interval rather than as a general claim about six hours.
+
+Two more things follow from reading the bundle rather than the provider. A
+document the sync withdrew is not reported, because it has already stopped
+grounding answers everywhere else and announcing it as new here would contradict
+that — which also means a routine reports additions and edits but never
+removals. And a run reads at most 200 documents, newest sync first; a connection
+whose sync changes more than that between two routine runs loses the oldest of
+them, reported the same way as a feed's overflow.
+
+The source is picked from the connections your workspace already has, and the
+setup dialog offers this kind only when there is at least one. A routine may
+only name a connection in its own workspace, enforced by the insert and update
+policies on the table rather than by the API — the scheduled executor holds a
+service-role client, so without that guard a crafted write could have pointed a
+routine here at another workspace's Notion and had the engine mail its contents
+out.
 
 ### What the URL guard refuses
 
@@ -94,6 +147,28 @@ persona and its own model, with one line added saying it is running a scheduled
 routine for the team — a routine is the same colleague, reporting rather than
 answering. Your instruction is the user message, with the new entries or the
 watched page's text beneath it.
+
+The agent also gets what it knows. Before the call, the run retrieves against
+the agent's documents exactly as a chat turn does, and the excerpts ride in
+their own system message ahead of your instruction. Without that the claim above
+was only half true: the same agent could quote the handbook when somebody asked
+it a question and had forgotten it by the time it wrote the Monday digest, so a
+routine watching a competitor could report what happened and never what it meant
+for this company.
+
+A routine has no question, which is what makes the query different from a chat
+turn's. It is built from your instruction _and_ what this particular run found —
+the entry titles, or the first 500 characters of a watched page. The instruction
+alone would return the same passages every run whatever came in; the arrivals
+alone would lose the reason the routine exists.
+
+Retrieval happens after the run has established it has something to report, so
+a tick that will send nothing does not pay to embed a query — which on a healthy
+feed is most ticks. It is best-effort: an agent with no documents, a retrieval
+that finds nothing above the similarity floor and a retrieval that fails all
+produce the same thing, which is the prompt as it was before this existed. The
+embedding tokens are charged to the routine's owner with the completion's, in
+one write.
 
 Two truncations apply on the way in: a watched page contributes its first 20,000
 characters, and each feed entry contributes 1,000 characters of its own summary

@@ -25,6 +25,19 @@ export const MAX_FAILURES = 5;
 export const QUOTA_SKIP_REASON = "skipped: the owner's monthly token quota is used up";
 
 /**
+ * Written to `routine_runs.error` when the model read what arrived and judged
+ * none of it to be what the instruction asked for.
+ *
+ * Invariable, like `QUOTA_SKIP_REASON` and for a related reason: the interface
+ * matches it exactly to decide whether a skipped row reads "Nothing new" or
+ * "Nothing relevant", and the count of what was reviewed lives in
+ * `items_new` rather than in this string. It must also never equal
+ * `QUOTA_SKIP_REASON`, which `lastRunWasQuotaSkip` compares against — a
+ * collision there would suppress the quota notice.
+ */
+export const NOTHING_RELEVANT_REASON = "skipped: nothing in this run matched the instruction";
+
+/**
  * The same limit for failures that are the remote's fault rather than the
  * routine's — a 429 or a 5xx. Set far higher because backoff is capped at six
  * hours past the natural next run, so reaching this many consecutive transient
@@ -68,6 +81,15 @@ export type SummariseInput = {
    * that it answers from its persona alone.
    */
   ragBlock: string;
+  /**
+   * Whether this run is allowed to decide there is nothing worth sending.
+   *
+   * False for a scheduled prompt, which has no source for its output to be
+   * irrelevant *to* — the instruction is the whole job, and one `false` would
+   * silence "remind the team to post standup" permanently. True for everything
+   * that watches something.
+   */
+  mayDecline: boolean;
 };
 
 export type RetrievalInput = { agentId: string; query: string };
@@ -82,7 +104,19 @@ export type ExecutorDeps = {
    * a scheduled run has no request to guard.
    */
   env: RoutineEnv;
-  summarise: (input: SummariseInput, env: RoutineEnv) => Promise<{ text: string; tokens: number }>;
+  summarise: (
+    input: SummariseInput,
+    env: RoutineEnv,
+  ) => Promise<{
+    text: string;
+    tokens: number;
+    /**
+     * The model read the material and judged none of it to be what the
+     * instruction asked for, so this run delivers nothing. Only ever true when
+     * the input allowed it — see `SummariseInput.mayDecline`.
+     */
+    declined: boolean;
+  }>;
   /**
    * What the agent knows, for one run.
    *
@@ -428,9 +462,37 @@ export async function runRoutine(
         items,
         pageText,
         ragBlock,
+        // A scheduled prompt has no source, so there is nothing for its output
+        // to be irrelevant to — and one `false` would silence it permanently.
+        // Everything that watches something may decline.
+        mayDecline: routine.source_kind !== "none",
       },
       runEnv,
     );
+
+    // The model read what arrived and judged none of it to be what was asked
+    // for. This is a working run, not a failure and not an empty source: the
+    // entries were real, they were read, and the answer was no.
+    //
+    // The cursor advances and the delivery claims stay, both deliberately. A
+    // rejected entry has been judged; offering it again next run would spend
+    // another model call to reach the same answer, and on a busy feed that is
+    // most of the bill.
+    if (summary.declined) {
+      await finish(routine, deps, startedAt, {
+        status: "skipped",
+        // What it read before deciding. Zero here would be indistinguishable
+        // from a feed that had not moved, which is the question this number is
+        // on the row to answer.
+        itemsNew: items.length,
+        itemsOverflow: overflow,
+        tokens: summary.tokens + embeddingCost(embeddingTokens),
+        cursor: nextCursor,
+        error: NOTHING_RELEVANT_REASON,
+        keys,
+      });
+      return { status: "skipped", itemsNew: 0 };
+    }
 
     await deliver(
       channel,
@@ -546,6 +608,20 @@ type RunOutcome = {
       /** Whose key paid for `tokens`. Required, and that is the point. */
       keys: ProviderKeys;
     }
+  | {
+      /**
+       * A run that paid for a model call and then decided not to send.
+       *
+       * It is not an `"ok"` run — nothing was delivered — and it is not free
+       * either, so it carries the same answer about who paid. This branch
+       * exists so that widening "skipped" to admit a spend could not be done
+       * without also answering that question: `keys` is required here for the
+       * same reason it is required above.
+       */
+      status: "skipped";
+      tokens: number;
+      keys: ProviderKeys;
+    }
   | { status: "skipped" | "failed"; tokens: 0; keys?: undefined }
 );
 
@@ -582,10 +658,15 @@ async function finish(
   // counter that cannot be written must not turn a successful run into a failed
   // one that retries and pays twice.
   // Only what the operator is billed for — same rule as `recordQuota` on a
-  // request, asked through the same predicate. The `status === "ok"` term is
-  // not a second guard so much as what makes the type narrow: it is the only
-  // outcome that can have spent anything, and the only one carrying the answer.
-  if (outcome.status === "ok" && outcome.tokens > 0 && billsTheOperator(outcome.keys)) {
+  // request, asked through the same predicate. `outcome.keys` is what makes the
+  // type narrow rather than a second guard: the branches that can have spent
+  // anything are exactly the branches carrying the answer to who paid, so a
+  // spend the union let through without one would not compile.
+  //
+  // Not keyed on `status === "ok"` any more. A run that paid for a model call
+  // and then declined to send is a skipped run that spent real money, and
+  // billing it as if it were free would make a filtered routine free to run.
+  if (outcome.tokens > 0 && outcome.keys && billsTheOperator(outcome.keys)) {
     try {
       await deps.entitlements.record(routine.user_id, outcome.tokens);
     } catch (err) {

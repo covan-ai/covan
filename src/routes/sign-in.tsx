@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase/client";
 import { setRemember } from "@/lib/supabase/auth-storage";
+import { readSession } from "@/lib/supabase/session";
 
 export const Route = createFileRoute("/sign-in")({
   component: SignIn,
@@ -19,6 +20,36 @@ function SignIn() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [remember, setRememberChecked] = useState(true);
+
+  /*
+   * A password prompt is the wrong answer to somebody who is already signed in.
+   *
+   * This page is where every other surface sends people — the landing page's
+   * only button, a bookmark, the link in an invitation — and it used to ask for
+   * a password regardless. That is the whole of the "it signs me out when I go
+   * back to the home page" report: nothing had signed anybody out, the stored
+   * session was sitting untouched in localStorage the entire time, and this
+   * page simply never looked. Being asked to type your password again is
+   * indistinguishable from having been signed out, so it was reported as one.
+   *
+   * Only a definite session forwards. `none` is the normal case and `unknown`
+   * means the lookup could not complete — neither may replace the form, because
+   * a lookup that cannot finish is exactly when somebody needs a way in.
+   */
+  useEffect(() => {
+    let active = true;
+
+    void readSession().then((answer) => {
+      if (!active || answer.kind !== "session") return;
+      // `replace`, so the back button goes wherever they came from rather than
+      // to a sign-in page that will only bounce them here again.
+      navigate({ to: "/app", replace: true });
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

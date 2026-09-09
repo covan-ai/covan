@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase/client";
+import { readSession } from "@/lib/supabase/session";
 import { privacyLink, termsLink } from "@/lib/legal";
 import { LegalAnchor } from "@/components/legal-anchor";
 
@@ -22,6 +23,29 @@ function SignUp() {
   // The address, not a boolean: "check your email" is advice, and which inbox to
   // check is the part of it that is actually information.
   const [sentTo, setSentTo] = useState<string | null>(null);
+
+  /*
+   * The same door as the sign-in page's, and it needs the same answer.
+   *
+   * "Get started" is the landing page's only call to action, so this is where a
+   * signed-in person who typed the bare domain lands. A blank sign-up form is
+   * the loudest possible way to tell somebody they have been signed out, and
+   * they have not been — see the note on the sign-in page for the report this
+   * closes. Only a definite session forwards; see there for why the other two
+   * answers leave the form alone.
+   */
+  useEffect(() => {
+    let active = true;
+
+    void readSession().then((answer) => {
+      if (!active || answer.kind !== "session") return;
+      navigate({ to: "/app", replace: true });
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

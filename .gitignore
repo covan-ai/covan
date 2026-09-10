@@ -47,6 +47,22 @@ worker/wrangler.cron.toml
 # Internal design docs never ship to the public repository
 docs/superpowers/
 
+# MCP server configuration, written by whichever agent tool is being run in this
+# checkout. It is not project configuration and it does not belong to anyone but
+# the machine it was written on — but the reason it is named here is narrower
+# than that, and it is the reason this line exists in the open repository and not
+# the private one.
+#
+# The file that prompted it pointed a Supabase MCP server at a `project_ref`, and
+# the ref was covan.app's production project. That identifier is deliberately
+# absent from this tree: `0025_what_the_cache_already_paid_for.sql` carries its
+# explanatory comments in the private copy and not in this one for exactly that
+# reason, and `scripts/check-sync.sh` asserts the split every time it runs. All
+# of which is undone by one `git add -A` in a checkout where the file is
+# untracked and unignored, because an untracked file is not a protection — it is
+# a file nobody has committed yet.
+.mcp.json
+
 # npm lockfiles. This project installs with bun — `bun.lock` and
 # `worker/bun.lock` are the tracked ones, and CI runs
 # `bun install --frozen-lockfile` against them. Anyone who reaches for

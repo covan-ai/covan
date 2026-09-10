@@ -54,7 +54,7 @@ export const Route = createFileRoute("/privacy")({
 
 function PrivacyPage() {
   return (
-    <LegalLayout title="Privacy" updated="August 2026">
+    <LegalLayout title="Privacy" updated="September 2026">
       <p className="text-[15px] leading-[1.55] text-muted-foreground">
         Covan is open source, and this page describes what the software itself does — the data it
         stores and every outside service it calls. Whoever runs the install you are using controls
@@ -109,9 +109,10 @@ function PrivacyPage() {
 
       <LegalSection title="Where it goes">
         <p>
-          These are the only outside services the software contacts. Everything after the first is
-          contacted only if the operator configured it, or in the case of the last, only because
-          your browser fetches a stylesheet.
+          These are the only outside services the software contacts, and every one of them is a call
+          the server makes on purpose. Everything after the first is contacted only if the operator
+          configured it. Nothing is reached by your browser on its own: the page loads no script,
+          stylesheet or font from anywhere but the install you are signed in to.
         </p>
         <LegalList>
           <LegalItem>
@@ -144,22 +145,16 @@ function PrivacyPage() {
             <strong className="font-medium text-foreground">Pages a routine watches</strong> — a
             routine you point at a feed or a page fetches that address on its schedule.
           </LegalItem>
-          <LegalItem>
-            <strong className="font-medium text-foreground">Google Fonts</strong> — the two
-            typefaces the interface uses are requested by your browser from{" "}
-            <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[13px]">
-              fonts.googleapis.com
-            </code>
-            .
-          </LegalItem>
         </LegalList>
       </LegalSection>
 
       <LegalSection title="What there is none of">
         <p>
           No analytics, no tracking pixels, no advertising, no session recording, and no third-party
-          script beyond the font stylesheet above. Covan does not sell anything to anyone, because
-          there is nobody to sell it to: the software has no telephone home.
+          script or stylesheet of any kind — the typefaces are served from the same machine as the
+          rest of the page, so opening one asks nobody else for anything. Covan does not sell
+          anything to anyone, because there is nobody to sell it to: the software has no telephone
+          home.
         </p>
       </LegalSection>
 

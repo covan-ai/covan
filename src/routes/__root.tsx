@@ -10,6 +10,7 @@ import {
 import type { ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import fontsCss from "../fonts.css?url";
 import { AgentsProvider } from "../lib/agents-store";
 import { THEME_INIT_SCRIPT } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
@@ -110,13 +111,42 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       // DM Sans (display) + Geist (interface) are the app's two families, per
-      // DESIGN.md §3.2 — one request, both families.
+      // DESIGN.md §3.2.
+      //
+      // Vendored into public/fonts rather than linked from Google's CDN. Two
+      // reasons, and for a self-hosted install the second one decides it: the
+      // link cost two connections in front of first paint that a preconnect
+      // could shorten but not remove, and it told a third party the address of
+      // everyone who opened a page of *your* deployment. On a machine with no
+      // route out it did not degrade gracefully either — the request failed and
+      // the whole interface fell back to a system face.
+      //
+      // Regenerate with `node scripts/fetch-fonts.mjs`.
+      { rel: "stylesheet", href: fontsCss },
+      // The two files an English page renders from. A @font-face is only found
+      // once fontsCss above has parsed, and `font-display: swap` makes that
+      // delay visible as a flash of the fallback.
+      //
+      // Two of six: latin, upright. The latin-ext pair is fetched on demand by
+      // unicode-range and the italics are rare enough not to be worth the
+      // bandwidth. `crossOrigin` is required even same-origin — fonts are
+      // always fetched in CORS mode, and without it the preload lands in a
+      // different cache entry than the one @font-face asks for, so the file
+      // comes down twice.
       {
-        rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400;1,9..40,500;1,9..40,600&family=Geist:wght@400;500;600&display=swap",
+        rel: "preload",
+        as: "font",
+        type: "font/woff2",
+        href: "/fonts/dm-sans-400-600-latin.woff2",
+        crossOrigin: "anonymous",
+      },
+      {
+        rel: "preload",
+        as: "font",
+        type: "font/woff2",
+        href: "/fonts/geist-400-600-latin.woff2",
+        crossOrigin: "anonymous",
       },
       // The `?v=` is not decoration. Browsers cache a favicon far more
       // stubbornly than any other asset — often past a hard reload, and past

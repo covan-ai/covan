@@ -1,6 +1,6 @@
 {
   "name": "covan",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A shared AI agent for your team. Everyone trains it together; everyone talks to it privately.",
   "//private": "Covan is deployed, not published. This keeps `npm publish` from ever succeeding by accident; it says nothing about the licence, which is the line below.",
   "private": true,

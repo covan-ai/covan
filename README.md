@@ -109,7 +109,7 @@ come from
 amd64 and arm64. Either way the stack pulls half a dozen supporting images —
 Postgres, GoTrue, PostgREST, Kong — so give the first start a minute.
 
-Pin a release with `COVAN_VERSION=0.1.0` in `.env` — no leading `v`, since the
+Pin a release with `COVAN_VERSION=0.2.0` in `.env` — no leading `v`, since the
 image tags are semver — or track the branch with `COVAN_VERSION=edge`. The
 default is `latest`, which follows releases.
 

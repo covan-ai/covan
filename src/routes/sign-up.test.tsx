@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type React from "react";
+import type { SessionAnswer } from "@/lib/supabase/session";
 
 const navigate = vi.fn();
 
@@ -20,6 +21,9 @@ vi.mock("@/lib/legal", () => ({
   privacyLink: () => ({ href: "/privacy", external: false }),
 }));
 
+const readSession = vi.fn<() => Promise<SessionAnswer>>(async () => ({ kind: "none" }));
+vi.mock("@/lib/supabase/session", () => ({ readSession }));
+
 async function renderSignUp() {
   const { Route } = await import("./sign-up");
   const Component = (Route as unknown as { component: () => React.ReactElement }).component;
@@ -35,9 +39,50 @@ async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, email = "
   await user.click(screen.getByRole("button", { name: /create account/i }));
 }
 
+// The landing page's only button points here, so this is where a signed-in
+// person who typed the bare domain actually ends up. Offering them a form to
+// make a second account is the same bug as the sign-in page's, one door over.
+describe("the sign-up page when somebody is already signed in", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    readSession.mockResolvedValue({ kind: "none" });
+  });
+
+  it("lets a held session straight through to the app", async () => {
+    readSession.mockResolvedValue({
+      kind: "session",
+      session: { access_token: "t" } as never,
+    });
+
+    await renderSignUp();
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/app", replace: true }));
+    expect(signUp).not.toHaveBeenCalled();
+  });
+
+  it("offers the form when nobody is signed in", async () => {
+    await renderSignUp();
+
+    await waitFor(() => expect(readSession).toHaveBeenCalled());
+    expect(navigate).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
+  });
+
+  it("still offers the form when the lookup could not complete", async () => {
+    readSession.mockResolvedValue({ kind: "unknown" });
+
+    await renderSignUp();
+
+    await waitFor(() => expect(readSession).toHaveBeenCalled());
+    expect(navigate).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
+  });
+});
+
 describe("signing up", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    readSession.mockResolvedValue({ kind: "none" });
     signUp.mockResolvedValue({ data: { session: null }, error: null });
   });
 

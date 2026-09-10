@@ -29,6 +29,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check:rls": "node scripts/check-rls.mjs",
+    "//check:self-host": "Boots the built self-host server and asks it for four pages. Needs a build first: `NITRO_PRESET=node-server bun run build`. Kept separate from `build` so a build failure reads as a build failure. This is the only check that runs the artifact rather than reading the source, which is why it is the only one that could have caught #101.",
+    "check:self-host": "node scripts/check-self-host.mjs",
     "//fonts": "Re-downloads DM Sans and Geist into public/fonts and rewrites src/fonts.css. Not in build or CI on purpose: a build that fetches binaries from a third party is a build that fails when that third party does, and these files change roughly never. Run it on a laptop only when a family or a weight actually does, and commit what it writes.",
     "fonts": "node scripts/fetch-fonts.mjs",
     "format": "prettier --write .",

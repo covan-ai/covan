@@ -100,10 +100,16 @@ export type RoutineEnv = {
  * A sync writes documents: it embeds text and puts bytes in the document store,
  * so it needs the embedding configuration and one of the two storage bindings —
  * neither of which the routine engine has ever touched. Naming that as its own
- * type is what lets `cron.ts` stay honest. That Worker is deployed to a second
- * Cloudflare account with `RoutineEnv` and nothing else; it can now be given
- * these bindings as well, and `canSyncConnections` below is how it asks whether
- * it was, rather than claiming them in a type and finding out in production.
+ * type is what lets `cron.ts` stay honest: it is deployed with `RoutineEnv` and
+ * may or may not have been given the rest, so it asks rather than claiming them
+ * in a type and finding out in production.
+ *
+ * The storage binding is what `canSyncConnections` tests, but it is not the
+ * whole of what a sync needs — the OAuth client credentials below are the other
+ * half, and a Worker holding one without the other is the dangerous
+ * combination rather than the harmless one. `lib/background` checks for both
+ * before a tick claims anything, and the comment there says what goes wrong if
+ * it does not.
  */
 export type SyncEnv = RoutineEnv & {
   /**

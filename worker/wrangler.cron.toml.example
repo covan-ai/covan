@@ -23,16 +23,38 @@
 #   RESEND_API_KEY
 #   RESEND_FROM
 #
-# Not set here, deliberately: SUPABASE_ANON_KEY (no user-scoped access — this
-# Worker only ever uses the service role) and the DOCS R2 binding.
+# Not set here, deliberately: SUPABASE_ANON_KEY. This Worker only ever uses the
+# service role, so a user-scoped key would be a credential with no caller.
 #
-# That bucket is the reason connected sources do NOT sync from this Worker. A
-# sync writes documents, and the bucket belongs to the API Worker's account —
-# which is the account this file exists to escape. `lib/background` checks for a
-# document store before it tries, so a tick here delivers routines and logs one
-# line saying connections were skipped, instead of failing them all. To sync
-# Notion and Drive on Cloudflare, put a cron trigger on the API Worker itself;
-# wrangler.toml.example says so where the trigger would go.
+# ---- Syncing connected sources from this Worker ----------------------------
+#
+# Off by default, and turning it on is two things that must happen in this
+# order. Doing the second without the first is worse than leaving it off.
+#
+# 1. The four OAuth client secrets, the same way as the ones above:
+#      NOTION_CLIENT_ID / NOTION_CLIENT_SECRET
+#      GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+#    Only the pairs you actually offer. A sync re-reads the source with the
+#    person's stored token, and Google's access tokens last an hour — refreshing
+#    one needs the client secret, so a Worker without it cannot sync Drive even
+#    though the connection is perfectly good.
+#
+# 2. The DOCS binding below, uncommented. A sync writes documents, and this is
+#    where they go. It only works if this Worker is on the same account as the
+#    bucket — an R2 binding cannot cross accounts — so an engine you moved to a
+#    second account to escape the five-cron cap cannot have it at all. In that
+#    case leave both off and put the cron trigger on the API Worker instead;
+#    wrangler.toml.example says so where the trigger would go.
+#
+# The order matters because of what the two halves do when they are missing.
+# `lib/background` checks for both before it claims anything, and skips with one
+# log line if either is absent — so all-off and half-off are both safe. What it
+# is protecting against is further down: `lib/connections/sync` treats a
+# provider without credentials as a provider the deployment has *removed*, and
+# pauses the connection with a message telling the person to go and ask an
+# operator. A Worker given storage but not secrets would reach that path for
+# every connection in every workspace. The guard means it no longer can, and
+# the ordering above means you never find out whether the guard works.
 
 name = "covan-routines"
 main = "src/cron.ts"
@@ -63,9 +85,22 @@ ALLOWED_ORIGIN = "https://your-app.example.com"
 # OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
 # OPENAI_MODEL = "meta-llama/llama-3.3-70b-instruct"
 
+# Where a sync puts the documents it reads. Step 2 of the header's two, and the
+# one to uncomment second — the same bucket name as wrangler.toml, since both
+# Workers must read and write the same documents. Leave commented to keep this
+# Worker on routines only.
+# [[r2_buckets]]
+# binding = "DOCS"
+# bucket_name = "covan-docs"
+
 # The engine's heartbeat. It only asks "is anything due?" — each routine's own
 # frequency lives in routines.next_run_at, so "every 15 minutes" and "Mondays at
 # 09:00" both run off this one trigger.
+#
+# It is also what makes syncing from here worth setting up. A connection claimed
+# on this trigger is re-read within minutes; the alternative in the header — a
+# cron on the API Worker — shares that Worker's schedule, which exists for the
+# nightly purge and so refreshes a source about once a day.
 [triggers]
 crons = ["*/5 * * * *"]
 

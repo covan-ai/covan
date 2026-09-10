@@ -29,7 +29,50 @@ export default defineConfig(({ command }) => ({
     }),
     // Nitro turns the SSR build into a deployable server. It is build-only:
     // in dev, Vite serves SSR itself and adding nitro here would fight it.
-    ...(command === "build" ? [nitro({ defaultPreset: "node-server" })] : []),
+    ...(command === "build"
+      ? [
+          nitro({
+            defaultPreset: "node-server",
+            // Pins Rolldown's own runtime helpers to a chunk of their own.
+            //
+            // This is not a size or caching tweak. Without it the build emits
+            // a server that throws `__exportAll is not a function` on every
+            // request — see #101, which is what nine days of a dead self-host
+            // build cost before anyone traced it.
+            //
+            // There are two Rolldown passes here, and only the second one is
+            // wrong. Vite's SSR build already gets this right: it emits
+            // `rolldown-runtime-*.js` as its own 360-byte chunk with no
+            // imports at all. Nitro then re-chunks that output into
+            // `.output/server/_ssr/`, and it is that pass which merged the
+            // runtime helper into a chunk that also re-exported the server
+            // entry's namespace. That chunk therefore imported the big server
+            // chunk, while the big server chunk imported `__exportAll` back
+            // out of it — a cycle. `__exportAll` is a `var`, so whichever side
+            // Node evaluates second finds it hoisted and still `undefined`.
+            // Hence a TypeError rather than a resolution failure, which is why
+            // grepping for a missing file turns up nothing.
+            //
+            // A group with nothing else in it cannot import anything, so the
+            // back-edge has nowhere to attach and the cycle cannot form.
+            //
+            // Nothing in our source is at fault, and that is the point worth
+            // keeping: #101 bisected to `0f8c46e`, a commit about telling a
+            // dead session apart from an unreachable one, which touches no
+            // build configuration whatsoever. It merely moved the module graph
+            // enough to tip the chunker over. Any commit could do that again,
+            // in either direction, which is why the fix belongs here and not in
+            // whatever module happens to be holding the graph today.
+            rolldownConfig: {
+              output: {
+                codeSplitting: {
+                  groups: [{ name: "rolldown-runtime", test: /rolldown-runtime/ }],
+                },
+              },
+            },
+          }),
+        ]
+      : []),
     viteReact(),
   ],
   resolve: {

@@ -83,6 +83,54 @@ jobs:
         run: bun run test
         working-directory: worker
 
+  self-host:
+    name: The self-host build boots
+    runs-on: ubuntu-latest
+    # The job that would have caught #101 on the day it landed instead of nine
+    # days and 229 commits later.
+    #
+    # Everything else here reads source. This builds the artifact a self-hoster
+    # runs and asks it for four pages, because the bug was in neither the source
+    # nor the tests — it was in how the bundler chunked a graph that every other
+    # check was perfectly happy with. Lint, types, 1,647 unit tests and the RLS
+    # suite were all green the entire time the product answered 500 on every
+    # route it had.
+    #
+    # `node-server` is the preset `Dockerfile.web` sets. The hosted site builds
+    # `cloudflare-module` and was unaffected throughout, which is most of how
+    # this went unnoticed: the deployment anybody was watching was fine.
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Restore the package cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'worker/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build it the way Dockerfile.web does
+        # Sentinels, for the same reason Dockerfile.web uses them: Vite inlines
+        # VITE_* as literal strings at build time, and nothing here should carry
+        # a real project's values. `.invalid` is reserved by RFC 2606 and can
+        # never resolve, so a page that somehow tried to reach one fails at once
+        # rather than reaching somebody else's server.
+        run: bun run build
+        env:
+          NITRO_PRESET: node-server
+          VITE_SUPABASE_URL: https://covan-ci-supabase-url.invalid
+          VITE_SUPABASE_ANON_KEY: covan-ci-anon-key
+          VITE_API_URL: https://covan-ci-api-url.invalid
+
+      - name: Serve four pages from it
+        run: node scripts/check-self-host.mjs
+
   rls:
     name: Row level security
     runs-on: ubuntu-latest

@@ -29,6 +29,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check:rls": "node scripts/check-rls.mjs",
+    "//fonts": "Re-downloads DM Sans and Geist into public/fonts and rewrites src/fonts.css. Not in build or CI on purpose: a build that fetches binaries from a third party is a build that fails when that third party does, and these files change roughly never. Run it on a laptop only when a family or a weight actually does, and commit what it writes.",
+    "fonts": "node scripts/fetch-fonts.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",

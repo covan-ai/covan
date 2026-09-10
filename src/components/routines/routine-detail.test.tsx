@@ -103,8 +103,13 @@ describe("RoutineDetail", () => {
   it("distinguishes a filtered run from an empty one, with what it read", () => {
     const filtered = [{ ...runs[1], nothingRelevant: true, itemsNew: 6 }];
     render(<RoutineDetail {...props} runs={filtered} />);
-    expect(screen.getByText(/Nothing relevant/)).toBeInTheDocument();
-    expect(screen.getByText(/6/)).toBeInTheDocument();
+    // Read off the row itself, not off the screen. `getByText(/6/)` asked
+    // whether a 6 was rendered anywhere, which the timestamp beside this row
+    // also answers — so it threw on "found multiple elements" rather than
+    // failing on anything about the count. Asserting the row's whole sentence
+    // is both unambiguous and closer to what the row has to say: the number is
+    // only useful attached to what it counts.
+    expect(screen.getByText(/Nothing relevant/)).toHaveTextContent("Nothing relevant · 6 reviewed");
     expect(screen.queryByText("Nothing new")).not.toBeInTheDocument();
   });
 

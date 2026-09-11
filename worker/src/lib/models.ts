@@ -172,6 +172,41 @@ export function availableModels(env?: ModelEnv): ModelId[] {
  * to rule 2 — the conversation stays on their endpoint. Setting the key is the
  * act that opts a deployment into sending anything to Anthropic.
  */
+/**
+ * The cheapest model of the same provider, for work that is shaping rather than
+ * thinking.
+ *
+ * Naming a conversation is five words long and reads one message. It was being
+ * asked of whatever the agent runs on, so a `claude-sonnet-4-6` agent paid
+ * flagship input *and* output rates to write "Invoice numbering question", once
+ * per new chat, forever. Nothing about the title got better for it:
+ * `session-title.ts` already caps the reply at 64 tokens, already asks for
+ * minimal effort, and already treats every failure as "keep the name you had".
+ *
+ * The same is true of the other two shaping callers — the persona drafter and
+ * the idea extractor — but those are one-off actions somebody pressed a button
+ * for. Titling is the one that fires on its own, on every new session, on the
+ * hot path of the product's main screen, which is what makes it worth a rule.
+ *
+ * **Same provider, never across.** Swapping a Claude agent onto an OpenAI id
+ * would send that user's first message to a provider their workspace may have
+ * deliberately not enabled, and would fail outright where only one key is set.
+ *
+ * **An id this build does not know keeps its own model**, and so does any
+ * deployment with `OPENAI_MODEL` set. Under `OPENAI_BASE_URL` the catalogue
+ * belongs to somebody else's server: `gpt-4o-mini` is a name it has probably
+ * never heard of, and a 404 would turn a free convenience into a broken one.
+ * Same reasoning as rule 2 of `resolveModel`, and the same direction — when in
+ * doubt, do what the operator configured.
+ */
+export function titleModelFor(model: string, env?: ModelEnv): string {
+  if (env?.OPENAI_MODEL) return model;
+  const spec = modelSpec(model);
+  if (!spec) return model;
+  if (spec.provider === "anthropic") return "claude-haiku-4-5";
+  return "gpt-4o-mini";
+}
+
 export function resolveModel(model: string | null | undefined, env?: ModelEnv): string {
   const spec = modelSpec(model);
   if (spec?.provider === "anthropic" && anthropicEnabled(env)) return model as string;

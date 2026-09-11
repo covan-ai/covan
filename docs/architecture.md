@@ -178,7 +178,7 @@ rather than letting Postgres refuse the insert later. See
    Names alone, on the hot path — the stored full text is only needed by the
    fallback below, so it is loaded lazily there rather than on every turn.
 2. Embed the latest user message and call `match_chunks(p_agent_id,
-   p_query_embedding, p_match_count => 6, p_min_similarity => 0.25)`.
+   p_query_embedding, p_match_count => 10, p_min_similarity => 0.25)`.
 3. `match_chunks` (`0005_message_sources_and_match_threshold.sql`) is
    `SECURITY INVOKER`, so RLS on `document_chunks` and `documents` still applies.
    It computes `1 - (embedding <=> query)` as cosine similarity, keeps only rows
@@ -186,7 +186,7 @@ rather than letting Postgres refuse the insert later. See
    agent, orders by distance and takes the top *n*.
 
    The floor is the interesting part. Without it, an off-topic question still
-   returns the six nearest chunks — nearest is not the same as relevant — and
+   returns the ten nearest chunks — nearest is not the same as relevant — and
    those get injected into the prompt as though they were evidence. The SQL
    default is `0` for backward compatibility; the API passes `0.25`.
 4. Matching chunks are assembled by `buildContextBlock` (`lib/rag.ts`) under a

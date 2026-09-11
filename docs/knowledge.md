@@ -200,13 +200,18 @@ a best-effort attempt on the stored bytes.
 ## What happens when somebody asks a question
 
 Each turn starts by embedding the message that was just sent, with the same model
-the chunks were embedded with, and asking the database for the six nearest chunks
+the chunks were embedded with, and asking the database for the ten nearest chunks
 across the attached bundles whose cosine similarity is at or above 0.25.
+
+Ten are asked for and fewer are sent: a passage already contained in one further
+up the list is dropped rather than repeated — the same document reached through
+two bundles is chunked once per bundle, so the same words can come back twice —
+and the 4000-character budget below decides how many of the rest fit.
 
 The floor is what makes a wrong answer less likely than a coy one. Vector search
 always returns something — ask an agent that only knows the deployment runbook
 about somebody's holiday plans and there is still a nearest chunk. Without a
-floor those six chunks are handed to the model inside a block that says the team
+floor those chunks are handed to the model inside a block that says the team
 has shared this knowledge, which is a claim about relevance that nobody checked.
 The floor drops them instead. `text-embedding-3-small` puts genuinely on-topic
 content well above 0.25 and clearly unrelated content below it, so the effect in
@@ -286,7 +291,7 @@ answer.
 Read them as what was in scope, not as what the model saw, because the two are
 not the same list. The names are collected from every match — and on the fallback
 path from every document that had any text — before the 4000-character budget is
-applied, and the budget is easy to overrun: six chunks of up to 1000 characters
+applied, and the budget is easy to overrun: ten chunks of up to 1000 characters
 each go past it, and on the fallback path a single 8000-character excerpt fills
 it twice over on its own, leaving every document listed after it contributing
 nothing at all. Those documents are still named underneath the answer.

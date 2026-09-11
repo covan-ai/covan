@@ -62,13 +62,21 @@ export const MANIFEST_NAME_LIMIT = 40;
  * and left the model to fill the gap. Saying that excerpts arrive *when
  * retrieval finds them* is true on both kinds of turn, and gives the model
  * somewhere honest to go when they don't.
+ *
+ * The clause about preferring the excerpt and admitting when it falls short is
+ * here rather than in the excerpt block for the same reason everything else in
+ * this prefix is: the block is rebuilt every turn and never caches, so an
+ * instruction living in it is bought again on every question. This one is
+ * bought once per cache window and applies to every turn of the chat.
  */
 const MANIFEST = (names: string) =>
   `\n\nThe team has shared these documents with you: ${names}. ` +
   `When the user says "the file", "the document", "the video", or asks what was ` +
   `uploaded, they mean one of these — never claim you cannot read files. ` +
   `Relevant excerpts are supplied in a separate system message whenever retrieval ` +
-  `finds them; answer from those. If no excerpt is present, say which of these ` +
+  `finds them; answer from those in preference to what you already believe, and ` +
+  `say plainly when they do not cover what was asked rather than filling the gap. ` +
+  `If no excerpt is present, say which of these ` +
   `documents you would need to look at rather than inventing what it contains.`;
 
 function manifestNames(names: string[]): string {

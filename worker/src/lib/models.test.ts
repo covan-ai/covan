@@ -5,6 +5,7 @@ import {
   acceptsTemperature,
   availableModels,
   modelSpec,
+  titleModelFor,
   DEFAULT_MODEL,
   MODEL_IDS,
 } from "./models";
@@ -121,5 +122,33 @@ describe("resolveModel", () => {
       // from ever addressing api.anthropic.com.
       expect(resolveModel("claude-sonnet-4-6", env)).toBe("llama3.3:70b");
     });
+  });
+});
+
+describe("titleModelFor", () => {
+  it("names a conversation on the cheapest model of the same provider", () => {
+    expect(titleModelFor("gpt-4o")).toBe("gpt-4o-mini");
+    expect(titleModelFor("claude-sonnet-4-6")).toBe("claude-haiku-4-5");
+  });
+
+  it("never crosses providers, whichever way round", () => {
+    // A workspace can have one key and not the other. Titling a Claude agent on
+    // an OpenAI id would send that user's first message somewhere their
+    // deployment may have deliberately not enabled — and fail outright where
+    // the key simply is not set.
+    expect(titleModelFor("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+    expect(titleModelFor("gpt-4o-mini")).toBe("gpt-4o-mini");
+    expect(titleModelFor("gpt-5-nano")).toBe("gpt-4o-mini");
+  });
+
+  it("leaves an id this build does not know alone", () => {
+    // Under OPENAI_BASE_URL the catalogue is somebody else's. gpt-4o-mini is a
+    // name that endpoint has probably never heard of, and a 404 would turn a
+    // free convenience into a broken reply.
+    expect(titleModelFor("llama3.3:70b")).toBe("llama3.3:70b");
+  });
+
+  it("defers to OPENAI_MODEL, which is the operator naming their own model", () => {
+    expect(titleModelFor("gpt-4o", { OPENAI_MODEL: "llama3.3:70b" })).toBe("gpt-4o");
   });
 });

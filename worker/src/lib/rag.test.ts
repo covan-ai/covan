@@ -157,6 +157,67 @@ describe("retrievalQuery", () => {
   });
 });
 
+describe("passages the model has already been given", () => {
+  it("drops a chunk that repeats one already in the block", () => {
+    // The case this exists for: one document attached to an agent through two
+    // bundles is chunked and embedded once per bundle, so match_chunks returns
+    // both copies. Both used to be paid for, and both used to claim a citation.
+    const passage = "Expenses are approved by the team lead, then by finance.";
+    const block = buildContextBlock([
+      { documentId: "d1", documentName: "handbook.md", content: passage },
+      { documentId: "d2", documentName: "handbook (copy).md", content: passage },
+      { documentId: "d3", documentName: "travel.md", content: "Flights book themselves." },
+    ]);
+
+    expect(block.used.map((c) => c.documentName)).toEqual(["handbook.md", "travel.md"]);
+    expect(block.text.match(/Expenses are approved/g)).toHaveLength(1);
+  });
+
+  it("drops a chunk wholly contained in one already admitted", () => {
+    const block = buildContextBlock([
+      { documentName: "a.md", content: "The office is closed on Tuesdays and Thursdays." },
+      { documentName: "b.md", content: "closed on Tuesdays" },
+    ]);
+
+    expect(block.used).toHaveLength(1);
+  });
+
+  it("keeps looking after a duplicate rather than stopping at it", () => {
+    // `continue`, not `break` — the chunks after a repeat are still new, and
+    // stopping would have cost the block its least-relevant-but-real material.
+    const block = buildContextBlock([
+      { documentName: "a.md", content: "Same text." },
+      { documentName: "b.md", content: "Same text." },
+      { documentName: "c.md", content: "Different text." },
+    ]);
+
+    expect(block.used.map((c) => c.documentName)).toEqual(["a.md", "c.md"]);
+  });
+
+  it("still compares on whitespace-insensitive text, and only on that", () => {
+    const block = buildContextBlock([
+      { documentName: "a.md", content: "One   two\nthree" },
+      { documentName: "b.md", content: "one two three" },
+      { documentName: "c.md", content: "one two four" },
+    ]);
+
+    expect(block.used.map((c) => c.documentName)).toEqual(["a.md", "c.md"]);
+  });
+
+  it("respects the budget to the byte with duplicates in the list", () => {
+    const block = buildContextBlock(
+      [
+        { documentName: "a.md", content: "x".repeat(900) },
+        { documentName: "b.md", content: "x".repeat(900) },
+        { documentName: "c.md", content: "y".repeat(900) },
+      ],
+      1000,
+    );
+
+    expect(block.text.length).toBeLessThanOrEqual(1000);
+  });
+});
+
 describe("the similarity floor", () => {
   it("is 0.25 unless the operator says otherwise", () => {
     expect(ragMinSimilarity({})).toBe(DEFAULT_RAG_MIN_SIMILARITY);

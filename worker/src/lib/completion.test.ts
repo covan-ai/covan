@@ -118,6 +118,42 @@ describe("toAnthropicMessages", () => {
       complete(env, { model: "claude-haiku-4-5", messages: [{ role: "system", content: "Hi" }] }),
     ).rejects.toThrow(/at least one user message/);
   });
+
+  it("puts the cache breakpoint on the last turn before the retrieved block", () => {
+    // Everything up to and including that turn repeats verbatim next turn. The
+    // block after it does not, which is why it is the boundary.
+    const { cacheIndex } = toAnthropicMessages([
+      { role: "system", content: "You are Ada." },
+      { role: "user", content: "What does the handbook say?" },
+      { role: "assistant", content: "Tuesdays." },
+      { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+      { role: "user", content: "And Wednesdays?" },
+    ]);
+
+    expect(cacheIndex).toBe(1);
+  });
+
+  it("falls back to the turn before the question when retrieval found nothing", () => {
+    const { cacheIndex } = toAnthropicMessages([
+      { role: "system", content: "You are Ada." },
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi." },
+      { role: "user", content: "How are you?" },
+    ]);
+
+    expect(cacheIndex).toBe(1);
+  });
+
+  it("marks nothing when the only turn is the question itself", () => {
+    // There is no history to cache yet, and marking the question would ask the
+    // provider to cache the one part of the prompt that is different every time.
+    const { cacheIndex } = toAnthropicMessages([
+      { role: "system", content: "You are Ada." },
+      { role: "user", content: "Hello" },
+    ]);
+
+    expect(cacheIndex).toBeNull();
+  });
 });
 
 describe("extractJsonObject", () => {
@@ -259,9 +295,43 @@ describe("complete, on Anthropic", () => {
     expect(text).toBe("an answer");
     const call = anthropicCreate.mock.calls[0][0];
     expect(call.model).toBe("claude-sonnet-4-5");
-    expect(call.system).toBe("You are Ada.");
+    // A block rather than a string, because that is the only shape a cache
+    // breakpoint can ride on — see the cache tests below.
+    expect(call.system).toEqual([
+      { type: "text", text: "You are Ada.", cache_control: { type: "ephemeral" } },
+    ]);
     expect(call.messages).toEqual([{ role: "user", content: "Hello" }]);
     expect(call.max_tokens).toBe(DEFAULT_MAX_TOKENS);
+  });
+
+  it("asks for the repeated half of the prompt to be cached", async () => {
+    // The saving this earns was already priced in lib/pricing.ts and already
+    // read back by anthropicUsage; the number was zero because nothing on the
+    // wire ever asked for it.
+    await complete(env, {
+      model: "claude-sonnet-4-6",
+      messages: [
+        { role: "system", content: "You are Ada." },
+        { role: "user", content: "What does the handbook say?" },
+        { role: "assistant", content: "Tuesdays." },
+        { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+        { role: "user", content: "And Wednesdays?" },
+      ],
+    });
+
+    const call = anthropicCreate.mock.calls[0][0];
+    expect(call.system[0].cache_control).toEqual({ type: "ephemeral" });
+    // The assistant turn that closes the stable history, not the knowledge
+    // block and not the new question.
+    expect(call.messages[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "Tuesdays.", cache_control: { type: "ephemeral" } }],
+    });
+    expect(call.messages[2]).toEqual({
+      role: "user",
+      content: "KNOWLEDGE: the handbook says Tuesdays.",
+    });
+    expect(call.messages[3]).toEqual({ role: "user", content: "And Wednesdays?" });
   });
 
   it("honours a ceiling the caller did name", async () => {
@@ -289,8 +359,8 @@ describe("complete, on Anthropic", () => {
     });
 
     const call = anthropicCreate.mock.calls[0][0];
-    expect(call.system).toContain("Draft a persona.");
-    expect(call.system).toContain("single JSON object");
+    expect(call.system[0].text).toContain("Draft a persona.");
+    expect(call.system[0].text).toContain("single JSON object");
     expect(call).not.toHaveProperty("response_format");
     // The fence is stripped here rather than downstream: every caller does a
     // bare JSON.parse and reports a throw to the user as "the model failed".

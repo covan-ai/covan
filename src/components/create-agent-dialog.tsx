@@ -17,7 +17,7 @@ import {
 import { Upload, X, FileText, ChevronRight, ChevronLeft, Sparkles } from "lucide-react";
 import { useAgentsStore } from "@/lib/agents-store";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
-import { EMOJIS, MODELS, PERSONA_TEMPLATES, modelsFor } from "@/lib/agent-meta";
+import { EMOJIS, DEFAULT_NEW_AGENT_MODEL, PERSONA_TEMPLATES, modelsFor } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -62,7 +62,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
   const navigate = useNavigate();
   // Shares the cache the dashboard already filled, so this costs no request.
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
-  const startingModel = me?.workspace.defaultModel ?? MODELS[0];
+  const startingModel = me?.workspace.defaultModel ?? DEFAULT_NEW_AGENT_MODEL;
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState("");

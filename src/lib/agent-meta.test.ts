@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { EMOJIS, MODELS, PERSONA_TEMPLATES, modelsFor, specFor } from "./agent-meta";
+import {
+  EMOJIS,
+  MODELS,
+  PERSONA_TEMPLATES,
+  modelsFor,
+  specFor,
+  DEFAULT_NEW_AGENT_MODEL,
+} from "./agent-meta";
 
 /**
  * Two invariants that nothing else would catch, because both fail silently.
@@ -94,5 +101,33 @@ describe("specFor", () => {
   it("answers the same way before /me has said anything at all", () => {
     expect(specFor(undefined, "gpt-5-mini")).toEqual({ temperature: true, reasoning: false });
     expect(specFor(specs, null)).toEqual({ temperature: true, reasoning: false });
+  });
+});
+
+describe("the model a new agent starts on", () => {
+  it("is one this build knows", () => {
+    expect(MODELS).toContain(DEFAULT_NEW_AGENT_MODEL);
+  });
+
+  it("is one every deployment can actually serve", () => {
+    // The real invariant, and the one that would fail silently. A Claude id
+    // here would seed an unserveable model on every install without an
+    // ANTHROPIC_API_KEY: `resolveModel` would quietly drop it, and the agent
+    // would answer on something other than what its own settings page shows.
+    expect(DEFAULT_NEW_AGENT_MODEL.startsWith("claude-")).toBe(false);
+  });
+
+  it("is not simply the first thing in the picker", () => {
+    // What it was until this was named: `MODELS[0]`. That tuple is ordered for
+    // reading — flagships first — and the head of a display order is not a
+    // statement about what a new agent should cost. Coupling the two made the
+    // most expensive model in the list the default by accident.
+    expect(DEFAULT_NEW_AGENT_MODEL).not.toBe(MODELS[0]);
+  });
+
+  it("is not more expensive than the templates people pick instead", () => {
+    // A default nobody changes should not cost more than the curated starting
+    // points beside it. gpt-4o is the id this is moving away from.
+    expect(PERSONA_TEMPLATES.some((t) => t.model === "gpt-4o")).toBe(false);
   });
 });

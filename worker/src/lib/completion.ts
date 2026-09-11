@@ -290,6 +290,21 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
  * A prefix shorter than the model's minimum (1024 tokens, 2048 on Haiku) is not
  * cached and the request is not refused; a short chat simply pays what it pays
  * today.
+ *
+ * **Both markers are set together or not at all**, which is `cacheIndex`'s
+ * second job. A cache write is not free on this provider — Anthropic charges
+ * 1.25x input for the tokens it stores, as `lib/pricing.ts` says — so a marker
+ * on a prefix that will never be read back is a bill, not a saving. That is
+ * exactly what the first turn of a conversation is: with no prior turns,
+ * `toAnthropicMessages` folds the retrieved block into `system` (nothing
+ * precedes it, so by this function's own rule it is a leading system message),
+ * and the next turn's `system` is the persona alone. The two do not match, the
+ * entry is never read, and the write was paid for.
+ *
+ * `cacheIndex` is null in precisely that case and in the one-shot callers
+ * (titling, persona drafting, a routine's summary) which send one system
+ * message and one question and never ask twice. So it is the right condition
+ * for both: mark nothing until there is repeated history to mark.
  */
 const CACHE_CONTROL = { type: "ephemeral" as const };
 
@@ -319,7 +334,15 @@ function anthropicParams(
         : messages.map((m, i) => (i === cacheIndex ? withCacheBreakpoint(m) : m)),
     max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
     ...(systemText
-      ? { system: [{ type: "text" as const, text: systemText, cache_control: CACHE_CONTROL }] }
+      ? {
+          system: [
+            {
+              type: "text" as const,
+              text: systemText,
+              ...(cacheIndex === null ? {} : { cache_control: CACHE_CONTROL }),
+            },
+          ],
+        }
       : {}),
     ...(req.temperature !== undefined && acceptsTemperature(req.model)
       ? { temperature: req.temperature }

@@ -331,10 +331,9 @@ describe("complete, on Anthropic", () => {
     const call = anthropicCreate.mock.calls[0][0];
     expect(call.model).toBe("claude-sonnet-4-5");
     // A block rather than a string, because that is the only shape a cache
-    // breakpoint can ride on — see the cache tests below.
-    expect(call.system).toEqual([
-      { type: "text", text: "You are Ada.", cache_control: { type: "ephemeral" } },
-    ]);
+    // breakpoint can ride on — but unmarked here, because one question with no
+    // history behind it has nothing to cache. See the cache tests below.
+    expect(call.system).toEqual([{ type: "text", text: "You are Ada." }]);
     expect(call.messages).toEqual([{ role: "user", content: "Hello" }]);
     expect(call.max_tokens).toBe(DEFAULT_MAX_TOKENS);
   });
@@ -367,6 +366,42 @@ describe("complete, on Anthropic", () => {
       content: "KNOWLEDGE: the handbook says Tuesdays.",
     });
     expect(call.messages[3]).toEqual({ role: "user", content: "And Wednesdays?" });
+  });
+
+  it("marks nothing on a turn whose prefix will not be asked for again", async () => {
+    // The first turn of a conversation, and the regression this pins. With no
+    // prior turns the retrieved block folds into `system`, and the next turn's
+    // `system` is the persona alone — the two never match, so the entry would
+    // be written, charged at 1.25x, and never read.
+    await complete(env, {
+      model: "claude-sonnet-4-6",
+      messages: [
+        { role: "system", content: "You are Ada." },
+        { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+        { role: "user", content: "What does the handbook say?" },
+      ],
+    });
+
+    const call = anthropicCreate.mock.calls[0][0];
+    expect(call.system[0]).not.toHaveProperty("cache_control");
+    expect(call.messages.every((m: { content: unknown }) => typeof m.content === "string")).toBe(
+      true,
+    );
+  });
+
+  it("marks nothing for a one-shot caller that will never ask twice", async () => {
+    // Titling, persona drafting and a routine's summary all send one system
+    // message and one question. There is no second turn to read the cache back.
+    await complete(env, {
+      model: "claude-haiku-4-5",
+      messages: [
+        { role: "system", content: "Name this conversation." },
+        { role: "user", content: "How many vacation days do I get?" },
+      ],
+      json: true,
+    });
+
+    expect(anthropicCreate.mock.calls[0][0].system[0]).not.toHaveProperty("cache_control");
   });
 
   it("honours a ceiling the caller did name", async () => {

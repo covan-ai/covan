@@ -53,6 +53,11 @@ describe("acceptsTemperature", () => {
 
   it("allows one everywhere else, unknown endpoints included", () => {
     expect(acceptsTemperature("gpt-4o")).toBe(true);
+    // The model new agents start on (`DEFAULT_NEW_AGENT_MODEL`, frontend). It
+    // was chosen partly for this: gpt-5-mini is cheaper on input and rejects a
+    // temperature, which would have made the per-agent temperature setting
+    // inert on every agent created from the picker's default.
+    expect(acceptsTemperature("gpt-4.1-mini")).toBe(true);
     expect(acceptsTemperature("claude-sonnet-4-6")).toBe(true);
     expect(acceptsTemperature("llama3.3:70b")).toBe(true);
   });

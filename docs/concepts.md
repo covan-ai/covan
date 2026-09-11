@@ -89,7 +89,9 @@ ones (`claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-haiku-4-5`) on an
 install whose operator set `ANTHROPIC_API_KEY`. Anything the API does not
 recognise — an id from an older list, or a Claude one on an install with no key
 for it — resolves to `gpt-4o`, which is what keeps every agent answering across
-a change to either list. The mode is
+a change to either list. A _new_ agent starts on `gpt-4.1-mini` instead, unless
+the workspace names a default of its own: roughly a sixth of the price, and the
+one most people never change. The mode is
 `normal` or `brainstorm`, and brainstorm layers a facilitation instruction block
 on top of the persona rather than replacing it.
 

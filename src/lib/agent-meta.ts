@@ -35,6 +35,31 @@ export const MODELS = [
 ] as const;
 
 /**
+ * Where the model picker starts for a new agent, when the workspace has named
+ * no preference of its own.
+ *
+ * This used to be `MODELS[0]`, which is `gpt-4o`, and that coupling was the
+ * whole problem: the tuple is ordered for *reading* — flagships first, so an
+ * unchanged install finds them — and the first item of a display order is not
+ * a statement about what anybody should be spending. Nothing said so, so the
+ * most expensive model in the list was the default by accident.
+ *
+ * And it is the default that decides, because most people accept it. The model
+ * it seeds is written to the agent row explicitly, so those agents are not
+ * "on the default" in any way a later change could reach — they are on
+ * `gpt-4o`, by name, forever. Which is also why this only affects agents made
+ * from here on, and why nothing retroactively moves an agent somebody is
+ * already talking to.
+ *
+ * `gpt-4.1-mini` rather than something cheaper still: it is roughly a sixth of
+ * `gpt-4o` and newer, it **accepts a temperature** — `gpt-5-mini` does not, and
+ * would have made the per-agent temperature setting inert on every new agent —
+ * and it does not bill thinking against the answer's ceiling. Cheaper is
+ * available (`gpt-4o-mini`) and one Select away for anyone who wants it.
+ */
+export const DEFAULT_NEW_AGENT_MODEL = "gpt-4.1-mini";
+
+/**
  * What a model picker should list: what this install offers, plus whatever the
  * thing being edited is already on.
  *
@@ -126,7 +151,7 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     id: "coding",
     label: "Coding Assistant",
     emoji: "🧑‍💻",
-    model: "gpt-4o",
+    model: "gpt-4.1-mini",
     persona:
       "You are a senior software engineer. Give correct, idiomatic code that matches the team's existing conventions. Explain trade-offs briefly, prefer small focused changes, and point out edge cases. Reference the team's docs when relevant.",
   },
@@ -134,7 +159,7 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     id: "gtm",
     label: "GTM Strategist",
     emoji: "🚀",
-    model: "gpt-4o",
+    model: "gpt-4.1-mini",
     persona:
       "You are a go-to-market strategist. Help the team with positioning, messaging, and launch planning grounded in our product docs. Be sharp and specific, avoid generic marketing fluff, and always tie advice back to the target customer.",
   },
@@ -142,7 +167,7 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     id: "tutor",
     label: "Knowledge Tutor",
     emoji: "🎓",
-    model: "gpt-4o",
+    model: "gpt-4.1-mini",
     persona:
       "You are a patient tutor. Explain concepts from the team's documents clearly, adapting to the learner's level. Use examples and analogies, check understanding with a short question, and never invent facts outside the knowledge base.",
   },
@@ -150,7 +175,7 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     id: "writer",
     label: "Content Writer",
     emoji: "✍️",
-    model: "gpt-4o",
+    model: "gpt-4.1-mini",
     persona:
       "You are a skilled content writer who matches the team's brand voice. Draft clear, engaging copy grounded in our docs. Offer a couple of variations when useful, keep it tight, and flag anything that needs a fact-check.",
   },

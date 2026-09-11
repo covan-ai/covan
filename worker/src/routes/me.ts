@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import type { MeDTO } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
-import { availableModels } from "../lib/models";
+import { availableModels, modelSpecsFor } from "../lib/models";
 
 const me = new Hono<AppEnv>();
 
@@ -132,6 +132,7 @@ me.get("/me", async (c) => {
     },
     members,
     models: availableModels(c.env),
+    modelSpecs: modelSpecsFor(availableModels(c.env)),
     onboarding: {
       completed: Boolean(onboardingRow?.completed_at),
       answers: {

@@ -7,7 +7,7 @@ import { resolveModel, modelSpec, titleModelFor } from "../lib/models";
 import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
 import { selectHistory } from "../lib/history";
-import { buildSystemPrefix, temperatureFor, maxTokensFor } from "../lib/prompt";
+import { buildSystemPrefix, temperatureFor, maxTokensFor, reasoningEffortFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
 import { deferred } from "../lib/defer";
@@ -319,7 +319,8 @@ chat.post("/chat/stream", async (c) => {
             model,
             messages,
             maxTokens: maxTokensFor(mode),
-            temperature: temperatureFor(mode),
+            temperature: temperatureFor(mode, agent.temperature),
+            reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
           },
           { signal },
         );

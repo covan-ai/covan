@@ -1,13 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type OpenAI from "openai";
 import type { Bindings } from "../../types";
 import type { Entitlements } from "../entitlements";
 import { embeddingCost } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
 import { selectHistory } from "../history";
-import { buildSystemPrefix, maxTokensFor, temperatureFor } from "../prompt";
+import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../prompt";
 import { resolveModel } from "../models";
-import { createOpenAI } from "../openai";
+import { complete, type CompletionMessage } from "../completion";
 import { decryptSecret } from "../secret-box";
 import { billsTheOperator, keysForUser, withProviderKeys } from "../keys/resolve";
 import { lookupEmail, postMessage } from "./api";
@@ -148,7 +147,7 @@ export async function handleSlackEvent(
 
   const { data: agent, error: agentError } = await deps.db
     .from("agents")
-    .select("id,name,persona,model,mode,workspace_id")
+    .select("id,name,persona,model,mode,temperature,reasoning_effort,workspace_id")
     .eq("id", installation.agent_id)
     .eq("workspace_id", installation.workspace_id)
     .maybeSingle();
@@ -218,7 +217,7 @@ export async function handleSlackEvent(
   // retrieved block riding immediately before the latest question.
   const priorTurns = history.slice(0, -1);
   const latestTurn = history[history.length - 1];
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+  const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
     ...(retrieval.ragBlock ? [{ role: "system" as const, content: retrieval.ragBlock }] : []),
@@ -227,11 +226,25 @@ export async function handleSlackEvent(
 
   let completion;
   try {
-    completion = await createOpenAI(runEnv).chat.completions.create({
+    // Through the completion seam, not `createOpenAI` directly.
+    //
+    // This call used to build its own request, and building it here meant
+    // getting it wrong here: `max_tokens` is the parameter the GPT-5 family
+    // does not take, a temperature is what that family rejects outright, and a
+    // Claude id was being handed to the OpenAI client which has never been able
+    // to serve one. All three were 400s on a mention, for agents that answer
+    // perfectly well in the chat screen — and all three are decisions
+    // `lib/completion.ts` already makes for every other caller.
+    //
+    // Which is also what makes the two settings below mean the same thing in
+    // both places. An agent asked to answer twice the same way should not do it
+    // in one surface and improvise in the other.
+    completion = await complete(runEnv, {
       model: resolveModel(agent.model, runEnv),
       messages,
-      temperature: temperatureFor(mode),
-      max_tokens: maxTokensFor(mode),
+      temperature: temperatureFor(mode, agent.temperature),
+      reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
+      maxTokens: maxTokensFor(mode),
     });
   } catch (err) {
     console.error("slack completion failed", err);
@@ -246,13 +259,13 @@ export async function handleSlackEvent(
     return;
   }
 
-  const answer = completion.choices[0]?.message?.content?.trim() ?? "";
-  const promptTokens = completion.usage?.prompt_tokens ?? 0;
-  const completionTokens = completion.usage?.completion_tokens ?? 0;
-  // How much of `promptTokens` OpenAI served from its own cache — a subset of
-  // that count, not an addition. It is the only evidence that the cacheable
-  // prefix assembled above is actually working.
-  const cachedTokens = completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const answer = completion.text.trim();
+  const promptTokens = completion.usage.promptTokens ?? 0;
+  const completionTokens = completion.usage.completionTokens ?? 0;
+  // How much of `promptTokens` the provider served from its own cache — a
+  // subset of that count, not an addition. It is the only evidence that the
+  // cacheable prefix assembled above is actually working.
+  const cachedTokens = completion.usage.cachedTokens ?? 0;
 
   // One counter write per turn, whichever way the rest of this goes — but only
   // where the operator is the one being billed. Somebody else's key spent

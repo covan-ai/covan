@@ -59,6 +59,44 @@ export function modelsFor(available: string[] | undefined, current?: string | nu
  */
 const DEFAULT_PICKER_MODELS = MODELS.filter((m) => !m.startsWith("claude-"));
 
+/**
+ * How hard a reasoning model is asked to think, cheapest first. Mirrors
+ * `REASONING_EFFORTS` in `worker/src/lib/models.ts`, which is what the API
+ * validates against and what migration 0048 constrains the column to.
+ */
+export const REASONING_EFFORTS = ["minimal", "low", "medium", "high"] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+/** What each effort buys, for the one line of help under the picker. */
+export const REASONING_EFFORT_HINTS: Record<ReasoningEffort, string> = {
+  minimal: "Answers immediately. Cheapest, and best for lookups and rewrites.",
+  low: "A moment's thought before answering.",
+  medium: "The model's usual amount of deliberation.",
+  high: "Thinks at length first. Best for analysis, and the most expensive.",
+};
+
+export type ModelSpec = { temperature: boolean; reasoning: boolean };
+
+/**
+ * What a model will accept, as the server described it.
+ *
+ * The fallback matters more than the lookup. `modelSpecs` arrives with /me and
+ * covers the ids this deployment serves; an agent can be sitting on one it does
+ * not — a Claude pick after the key was rotated out, or anything at all under a
+ * custom endpoint, where every id is unknown by design. The answer for those is
+ * the server's own answer for an unknown id (`lib/models.ts`): a temperature is
+ * accepted, and the model does not reason. Optimistic about the control that is
+ * harmless to offer and conservative about the one that is not.
+ */
+export function specFor(
+  specs: Record<string, ModelSpec> | undefined,
+  model: string | null | undefined,
+): ModelSpec {
+  const known = model ? specs?.[model] : undefined;
+  return known ?? { temperature: true, reasoning: false };
+}
+
 // A per-model colour used to live here — emerald for GPT, violet for Llama and
 // so on. The design system allows exactly one saturated colour, so a palette
 // keyed on model name is off-system by construction: models are now

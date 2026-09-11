@@ -1,3 +1,5 @@
+import { REASONING_EFFORTS, type ReasoningEffort } from "./models";
+
 export const DEFAULT_PERSONA = "You are a helpful AI assistant for a team workspace.";
 
 // Layered on top of the persona when an agent is in brainstorm mode. Sequences
@@ -107,8 +109,46 @@ export function buildSystemPrefix(input: {
   return prefix;
 }
 
-export function temperatureFor(mode: "normal" | "brainstorm"): number | undefined {
+/**
+ * How much the model may vary its wording, and who decides.
+ *
+ * The agent's own setting wins when it has one (0048). Null — which is every
+ * agent until somebody moves the dial — leaves the decision where it has always
+ * been: brainstorm wants range and asks for 0.9, and normal chat sends nothing
+ * at all, which is not the same as sending the provider's default value and is
+ * the reason this returns `undefined` rather than a number.
+ *
+ * `0` is a legitimate setting and means "as close to the same answer every time
+ * as this model gets", so the check is against null and not against falsiness.
+ */
+export function temperatureFor(
+  mode: "normal" | "brainstorm",
+  override?: number | null,
+): number | undefined {
+  if (override !== null && override !== undefined) return override;
   return mode === "brainstorm" ? 0.9 : undefined;
+}
+
+/**
+ * How long the agent may think before it answers.
+ *
+ * There is no mode default here and deliberately no default of any kind:
+ * `undefined` means the request carries no `reasoning_effort` and the model
+ * does whatever it does, which is what every reply in this product has been
+ * getting. See `REASONING_EFFORTS` in `lib/models.ts` for why "medium" is not
+ * that.
+ *
+ * Unknown strings are dropped rather than forwarded. The database constrains
+ * this column (0048) and the API validates it, so a value that is neither null
+ * nor one of the four can only be a row written before those existed or by
+ * something that bypassed both — and forwarding it would turn that into a 400
+ * on every turn of a conversation.
+ */
+export function reasoningEffortFor(override?: string | null): ReasoningEffort | undefined {
+  if (!override) return undefined;
+  return (REASONING_EFFORTS as readonly string[]).includes(override)
+    ? (override as ReasoningEffort)
+    : undefined;
 }
 
 // Upper bound on generated tokens. Output tokens are the most expensive

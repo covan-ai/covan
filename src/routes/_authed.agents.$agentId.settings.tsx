@@ -33,7 +33,15 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { EMOJIS, modelsFor } from "@/lib/agent-meta";
+import {
+  EMOJIS,
+  modelsFor,
+  specFor,
+  REASONING_EFFORTS,
+  REASONING_EFFORT_HINTS,
+  type ReasoningEffort,
+} from "@/lib/agent-meta";
+import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAvatar } from "@/components/avatars";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
 
@@ -83,9 +91,28 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const models = modelsFor(me?.models, model);
   const [mode, setMode] = useState(agent.mode);
+  // Null is Auto, and Auto is what every agent starts on: the mode decides.
+  // `?? null` rather than a default, because an API older than this screen
+  // sends neither field and "the server did not say" is the same answer.
+  const [temperature, setTemperature] = useState<number | null>(agent.temperature ?? null);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(
+    agent.reasoningEffort ?? null,
+  );
+  // What the *currently picked* model accepts, not what the saved one did — so
+  // switching to gpt-5 in this form greys the temperature out before you save,
+  // rather than after the reply comes back wrong.
+  const spec = specFor(me?.modelSpecs, model);
 
   const save = () => {
-    updateAgent(agent.id, { name: name.trim() || agent.name, emoji, model, persona, mode });
+    updateAgent(agent.id, {
+      name: name.trim() || agent.name,
+      emoji,
+      model,
+      persona,
+      mode,
+      temperature,
+      reasoningEffort,
+    });
     toast.success("Changes saved");
   };
 
@@ -155,6 +182,18 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 answering directly — good for finding new directions.
               </p>
             </div>
+            <TemperatureField
+              value={temperature}
+              onChange={setTemperature}
+              accepted={spec.temperature}
+              model={model}
+            />
+            <ReasoningField
+              value={reasoningEffort}
+              onChange={setReasoningEffort}
+              accepted={spec.reasoning}
+              model={model}
+            />
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <Label className="text-xs" htmlFor="a-persona">
@@ -266,6 +305,155 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
     </PageContainer>
   );
 }
+
+/**
+ * How much the model may vary its wording.
+ *
+ * Two controls for one setting, because the setting has a state that is not a
+ * number. Auto is not 0.7 or any other value — it means the mode decides, which
+ * is 0.9 in brainstorm and *nothing sent at all* in normal chat, and no point
+ * on a 0-to-2 slider can say that. So the checkbox chooses between "the mode
+ * decides" and "I decide", and the slider only exists in the second case.
+ *
+ * A native range input rather than a slider component: there is no slider in
+ * `components/ui`, and one control does not justify a Radix dependency and a
+ * lockfile change. The thumb is squared off and amber because DESIGN.md says
+ * selection markers are squares and the accent is the pointer.
+ */
+function TemperatureField({
+  value,
+  onChange,
+  accepted,
+  model,
+}: {
+  value: number | null;
+  onChange: (next: number | null) => void;
+  accepted: boolean;
+  model: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <Label className="text-xs" htmlFor="a-temperature">
+          Temperature
+        </Label>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="a-temperature-auto"
+            checked={value === null}
+            disabled={!accepted}
+            // 0.7 on first touch rather than 0: a slider that starts at one end
+            // reads as "off", and the number somebody wants is almost never the
+            // extreme they landed on.
+            onCheckedChange={(checked) => onChange(checked === true ? null : 0.7)}
+          />
+          <Label className="text-xs font-normal text-muted-foreground" htmlFor="a-temperature-auto">
+            Auto
+          </Label>
+        </div>
+      </div>
+      {value !== null && (
+        <div className="flex items-center gap-3">
+          <input
+            id="a-temperature"
+            type="range"
+            min={0}
+            max={2}
+            step={0.1}
+            value={value}
+            disabled={!accepted}
+            onChange={(e) => onChange(Number(e.target.value))}
+            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-muted accent-primary outline-none disabled:cursor-not-allowed disabled:opacity-50 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-[4px] [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#f48d16] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-[4px] [&::-webkit-slider-thumb]:bg-[#f48d16]"
+          />
+          <span className="w-8 shrink-0 text-right font-mono text-xs tabular-nums">
+            {value.toFixed(1)}
+          </span>
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {!accepted ? (
+          <>
+            <span className="font-mono">{model}</span> decides this for itself and rejects any other
+            value, so the agent runs on its own setting.
+          </>
+        ) : value === null ? (
+          "Left to the mode: steady in Normal, wide-ranging in Brainstorm."
+        ) : value <= 0.3 ? (
+          "Close to the same answer every time. Good for support and policy questions."
+        ) : value <= 1 ? (
+          "Some variation in wording, the same substance."
+        ) : (
+          "Freely inventive, and less predictable. Worth checking what it says."
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * How long the agent thinks before it starts writing.
+ *
+ * Auto is a real option and the one every agent is on — it sends no effort at
+ * all and lets the model do what it does. "Medium" is a different request, so
+ * the two cannot be collapsed into one item however similar they look.
+ *
+ * Shown rather than hidden on a model that does not reason. The picker above it
+ * is the thing that decides whether this control does anything, and a setting
+ * that vanishes when you change a neighbouring field reads as a bug; a disabled
+ * one that says why reads as an explanation.
+ */
+function ReasoningField({
+  value,
+  onChange,
+  accepted,
+  model,
+}: {
+  value: ReasoningEffort | null;
+  onChange: (next: ReasoningEffort | null) => void;
+  accepted: boolean;
+  model: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-xs">Reasoning</Label>
+      <Select
+        value={value ?? AUTO}
+        disabled={!accepted}
+        onValueChange={(v) => onChange(v === AUTO ? null : (v as ReasoningEffort))}
+      >
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={AUTO}>Auto</SelectItem>
+          {REASONING_EFFORTS.map((effort) => (
+            <SelectItem key={effort} value={effort}>
+              {effort[0].toUpperCase() + effort.slice(1)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        {!accepted ? (
+          <>
+            <span className="font-mono">{model}</span> answers without a separate thinking step, so
+            this has no effect on it.
+          </>
+        ) : value === null ? (
+          "Whatever the model does by default."
+        ) : (
+          REASONING_EFFORT_HINTS[value]
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The picker's stand-in for null. A `Select` item cannot carry an empty value —
+ * Radix reserves it for "nothing is selected", which is not what Auto means.
+ */
+const AUTO = "auto";
 
 function PersonaPreview({
   emoji,

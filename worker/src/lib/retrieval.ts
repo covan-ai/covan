@@ -23,14 +23,24 @@ import { refersToDocuments, namesDocument } from "./doc-question";
  */
 
 /**
- * How many chunks to retrieve.
+ * How many chunks to *consider*. What reaches the prompt is decided after this,
+ * by `buildContextBlock`'s char budget.
  *
- * The block is re-sent every turn and rides after the cacheable prefix, so it
- * never caches — keeping the count tight cuts recurring input directly. The
- * floor that goes with it is `ragMinSimilarity`, which is configurable because
- * it is a property of the embedding model rather than of this code.
+ * That distinction is why this went from 6 to 10 without costing a token. The
+ * block is re-sent every turn and rides after the cacheable prefix, so it never
+ * caches, and keeping it tight cuts recurring input directly — but the thing
+ * keeping it tight is the 4000-char budget, not this number. Six candidates
+ * frequently could not fill that budget while a seventh, perfectly relevant
+ * passage sat just outside the list; and now that near-duplicates are dropped
+ * rather than admitted (see `buildContextBlock`), a short list could be spent
+ * entirely on two copies of one passage.
+ *
+ * The cost of the four extra candidates is one wider `limit` in a query that
+ * already ran, over an HNSW index. The floor that goes with it is
+ * `ragMinSimilarity`, which is configurable because it is a property of the
+ * embedding model rather than of this code.
  */
-const RAG_MATCH_COUNT = 6;
+const RAG_MATCH_COUNT = 10;
 
 export type RetrievedSource = { id: string | null; name: string };
 

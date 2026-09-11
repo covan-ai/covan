@@ -121,6 +121,23 @@ const TRUNCATION_MARK = "\n…[truncated]";
 const MIN_USEFUL_EXCERPT = 200;
 
 /**
+ * What two passages have to share before the second one is treated as text the
+ * model has already been given.
+ *
+ * Not a similarity measure — a containment check, on purpose. The duplicates
+ * this catches are literal: a document attached to an agent through two bundles
+ * is chunked and embedded once per bundle, so `match_chunks` returns both
+ * copies of the same passage, and both were being paid for and both were
+ * putting the same words in front of the model. Whitespace is normalised
+ * because the two copies can differ in it and mean the same thing; nothing else
+ * is, because "nearly the same passage" is a judgement this should not be
+ * making on its own.
+ */
+function normaliseForComparison(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
  * Assembles retrieved chunks into a system-prompt context block under a total
  * char budget, and reports which of them fitted.
  *
@@ -141,10 +158,18 @@ export function buildContextBlock(chunks: RetrievedChunk[], budget = 4000): Cont
   let remaining = budget - HEADER.length;
   const blocks: string[] = [];
   const used: RetrievedChunk[] = [];
+  const admitted: string[] = [];
 
   for (const ch of chunks) {
     const content = ch.content.trim();
     if (!content || !ch.documentName) continue;
+
+    // A passage already inside one that was admitted adds nothing and costs the
+    // budget twice — and, before it was skipped, could also hang a second
+    // source chip under the answer for a document that had already grounded it.
+    // `continue`, not `break`: the chunks after a duplicate are still new.
+    const normalised = normaliseForComparison(content);
+    if (admitted.some((seen) => seen.includes(normalised))) continue;
 
     const frame =
       `Document: ${ch.documentName}\n`.length + (blocks.length > 0 ? SEPARATOR.length : 0);
@@ -165,6 +190,9 @@ export function buildContextBlock(chunks: RetrievedChunk[], budget = 4000): Cont
     remaining -= frame + body.length;
     blocks.push(`Document: ${ch.documentName}\n${body}`);
     used.push(ch);
+    // The whole passage, not `body`: a later duplicate is a duplicate of what
+    // the chunk said, whether or not the budget let all of it through.
+    admitted.push(normalised);
   }
 
   if (blocks.length === 0) return empty;

@@ -321,8 +321,9 @@ written; it is only whose key is billed. Known, and not yet fixed.
 The figures also now account for prompt caching. Most of what Covan sends the
 model on any given turn is the same bytes as last turn — the persona, the
 document manifest, the conversation so far — so `chat.ts` assembles the prompt
-with that stable part first and the retrieved knowledge after it, and OpenAI
-serves the repeat at a reduced rate. The share that came from the cache is
+with that stable part first and the retrieved knowledge after it, and both
+providers serve the repeat at a reduced rate — OpenAI automatically, Anthropic
+only when the request says so, which it now does. The share that came from the cache is
 recorded per reply and priced accordingly, which makes the estimate lower and
 truer than it was, and makes a change that quietly breaks the arrangement
 visible instead of merely expensive.

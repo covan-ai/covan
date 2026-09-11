@@ -178,20 +178,32 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
  * - **The first turn must be a user turn.** History trimming can leave an
  *   assistant message first; OpenAI accepts that and Anthropic returns a 400.
  *   Leading assistant turns are dropped rather than sent.
+ *
+ * `cacheIndex` is the third return value and the reason this function reports
+ * more than it used to — see `CACHE_CONTROL` below for what it is for.
  */
 export function toAnthropicMessages(messages: CompletionMessage[]): {
   system: string;
   messages: Anthropic.MessageParam[];
+  cacheIndex: number | null;
 } {
   const systemParts: string[] = [];
   const out: Anthropic.MessageParam[] = [];
+  // Where the stable half of the conversation ends: the last turn pushed before
+  // the first mid-conversation system message, which is the volatile retrieved
+  // block. Null until one is seen, and resolved below for the callers that send
+  // no block at all.
+  let stableThrough: number | null = null;
 
   for (const message of messages) {
     const content = message.content?.trim();
     if (!content) continue;
     if (message.role === "system") {
       if (out.length === 0) systemParts.push(content);
-      else out.push({ role: "user", content });
+      else {
+        if (stableThrough === null) stableThrough = out.length - 1;
+        out.push({ role: "user", content });
+      }
       continue;
     }
     // Nothing to answer yet, so an assistant turn here is history that lost its
@@ -200,7 +212,52 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
     out.push({ role: message.role, content });
   }
 
-  return { system: systemParts.join("\n\n"), messages: out };
+  // No retrieved block on this turn, so the volatile tail is the question alone
+  // and everything before it is the history that repeats.
+  if (stableThrough === null) stableThrough = out.length - 2;
+
+  return {
+    system: systemParts.join("\n\n"),
+    messages: out,
+    cacheIndex: stableThrough >= 0 ? stableThrough : null,
+  };
+}
+
+/**
+ * The marker that makes Anthropic bill a repeated prefix at a tenth of its
+ * price, and the thing this file did not send for as long as Claude has been
+ * offered here.
+ *
+ * Two breakpoints, because the prompt has two stable regions and one volatile
+ * one between them:
+ *
+ * 1. **The system block.** `buildSystemPrefix` exists to be byte-identical turn
+ *    over turn — that is why the retrieved knowledge is a separate message and
+ *    not part of the persona. The whole persona, concision block and document
+ *    manifest therefore repeat exactly, every turn, for the life of a chat.
+ * 2. **The last turn before the retrieved block.** History repeats too: turn
+ *    twelve re-sends the eleven turns before it verbatim. Marking the end of
+ *    that run caches the system block *and* the conversation, leaving only the
+ *    excerpts and the new question to pay full price.
+ *
+ * Both were already true before this marker existed, which is the point:
+ * `lib/pricing.ts` has priced a 10x cache discount since Claude was added,
+ * `anthropicUsage` has read `cache_read_input_tokens` since then too, and the
+ * number it read was always zero. Nothing about the prompt had to change to
+ * earn it — only saying so on the wire.
+ *
+ * A prefix shorter than the model's minimum (1024 tokens, 2048 on Haiku) is not
+ * cached and the request is not refused; a short chat simply pays what it pays
+ * today.
+ */
+const CACHE_CONTROL = { type: "ephemeral" as const };
+
+function withCacheBreakpoint(message: Anthropic.MessageParam): Anthropic.MessageParam {
+  if (typeof message.content !== "string") return message;
+  return {
+    role: message.role,
+    content: [{ type: "text", text: message.content, cache_control: CACHE_CONTROL }],
+  };
 }
 
 // Without `stream`, so the two call sites below can each add their own and get
@@ -208,16 +265,21 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
 function anthropicParams(
   req: CompletionRequest,
 ): Omit<Anthropic.MessageCreateParamsNonStreaming, "stream"> {
-  const { system, messages } = toAnthropicMessages(req.messages);
+  const { system, messages, cacheIndex } = toAnthropicMessages(req.messages);
   if (messages.length === 0) {
     throw new Error("a completion needs at least one user message");
   }
   const systemText = [system, req.json ? JSON_ONLY_INSTRUCTION : ""].filter(Boolean).join("\n\n");
   return {
     model: req.model,
-    messages,
+    messages:
+      cacheIndex === null
+        ? messages
+        : messages.map((m, i) => (i === cacheIndex ? withCacheBreakpoint(m) : m)),
     max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
-    ...(systemText ? { system: systemText } : {}),
+    ...(systemText
+      ? { system: [{ type: "text" as const, text: systemText, cache_control: CACHE_CONTROL }] }
+      : {}),
     ...(req.temperature !== undefined && acceptsTemperature(req.model)
       ? { temperature: req.temperature }
       : {}),

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
-import { resolveModel, modelSpec } from "../lib/models";
+import { resolveModel, modelSpec, titleModelFor } from "../lib/models";
 import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
 import { selectHistory } from "../lib/history";
@@ -184,7 +184,13 @@ chat.post("/chat/stream", async (c) => {
   // Only for a session with no title. A named session is one the user or an
   // earlier turn already settled, and re-titling it every turn would both cost
   // money and move a label out from under someone reading it.
-  const titling = session.title ? null : generateSessionTitle(env, model, lastMessage.content);
+  //
+  // On the cheapest model of the same provider, not on the agent's — see
+  // `titleModelFor`. A title is five words and the agent's model has nothing to
+  // add to them.
+  const titling = session.title
+    ? null
+    : generateSessionTitle(env, titleModelFor(model, env), lastMessage.content);
 
   const stream = new ReadableStream({
     async start(controller) {

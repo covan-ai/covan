@@ -621,6 +621,19 @@ describe("naming the conversation", () => {
     expect(sent).toContain("How many vacation days do I get?");
   });
 
+  it("names it on the cheap model, not on the one answering", async () => {
+    // Five words of title on a flagship model, once per new chat, forever. The
+    // reply keeps the agent's model; only the label moves.
+    const { app } = appWith({ question: "How many vacation days do I get?" });
+
+    await ask(app);
+
+    const titling = completionCreate.mock.calls.find((c) => !c[0].stream);
+    const answering = completionCreate.mock.calls.find((c) => c[0].stream);
+    expect(titling![0].model).toBe("gpt-4o-mini");
+    expect(answering![0].model).toBe("gpt-4o");
+  });
+
   // Renaming on every turn would cost money and move a label out from under
   // somebody reading it.
   it("leaves a session that already has a name alone", async () => {

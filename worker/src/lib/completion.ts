@@ -2,7 +2,12 @@ import type OpenAI from "openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createOpenAI } from "./openai";
 import { createAnthropic } from "./anthropic";
-import { providerFor, acceptsTemperature, reasonsBeforeAnswering } from "./models";
+import {
+  providerFor,
+  acceptsTemperature,
+  reasonsBeforeAnswering,
+  type ReasoningEffort,
+} from "./models";
 
 /**
  * The one seam every completion goes through, whichever provider answers it.
@@ -58,17 +63,26 @@ export type CompletionRequest = {
   /** Ask for a single JSON object back. */
   json?: boolean;
   /**
-   * Set by a caller whose task is shaping, not thinking.
+   * How long the model may deliberate before it starts writing.
    *
-   * Drafting a persona from a title or pulling ideas out of a transcript are
-   * writing tasks with a known shape; a reasoning model deliberating over them
-   * buys nothing and costs a multiple. Measured on the persona drafter: default
-   * effort spends 512-1408 tokens thinking before writing ~120 tokens of
-   * answer, and `"minimal"` spends none and writes the same answer.
+   * Two kinds of caller set this, and they arrive from opposite directions.
+   *
+   * The first is a caller whose task is shaping, not thinking, and it says
+   * `"minimal"`. Drafting a persona from a title or pulling ideas out of a
+   * transcript are writing tasks with a known shape; a reasoning model
+   * deliberating over them buys nothing and costs a multiple. Measured on the
+   * persona drafter: default effort spends 512-1408 tokens thinking before
+   * writing ~120 tokens of answer, and `"minimal"` spends none and writes the
+   * same answer.
+   *
+   * The second is a chat turn carrying an agent's own setting (0048), which can
+   * be any of the four and is usually none of them — an agent that names no
+   * effort is left on the model's default, which is what every agent had before
+   * the setting existed. `"medium"` is a request, not a synonym for silence.
    *
    * Nothing on a non-reasoning model, which has no such setting.
    */
-  reasoningEffort?: "minimal";
+  reasoningEffort?: ReasoningEffort;
 };
 
 /**
@@ -99,6 +113,33 @@ export const DEFAULT_MAX_TOKENS = 4096;
  * then nothing to make room for.
  */
 export const REASONING_HEADROOM = 4096;
+
+/**
+ * The same headroom, sized to how much thinking was actually asked for.
+ *
+ * `REASONING_HEADROOM` was one number because there was one behaviour: either a
+ * caller wanted no deliberation (`"minimal"`) or it took whatever the model
+ * chose. Now that an agent can ask for `"high"`, one number is the wrong shape
+ * in both directions — 4096 is more than a `"low"` turn will ever use, and a
+ * ceiling a `"high"` turn can exhaust before it writes a word, which is not a
+ * shorter answer but an empty one with `finish_reason: "length"`.
+ *
+ * Anchored on the measured value rather than invented around it: the unset case
+ * keeps 4096 exactly, so nothing that runs today changes. The others scale from
+ * it in the direction their name promises.
+ */
+export function reasoningHeadroom(effort: ReasoningEffort | undefined): number {
+  switch (effort) {
+    case "minimal":
+      return 0;
+    case "low":
+      return 2048;
+    case "high":
+      return 8192;
+    default:
+      return REASONING_HEADROOM;
+  }
+}
 
 const JSON_ONLY_INSTRUCTION =
   "Respond with a single JSON object and nothing else: no prose before or after it, " +
@@ -141,17 +182,17 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
   const reasons = reasonsBeforeAnswering(req.model);
   // Two ways to keep thinking from eating the answer, and which one applies is
   // the caller's call, not the model's: minimal effort when the task does not
-  // want deliberation, headroom when it does. See REASONING_HEADROOM.
-  const minimal = reasons && req.reasoningEffort === "minimal";
-  const cap =
-    req.maxTokens !== undefined && reasons && !minimal
-      ? req.maxTokens + REASONING_HEADROOM
-      : req.maxTokens;
+  // want deliberation, headroom when it does — sized to how much was asked for.
+  // See `reasoningHeadroom`.
+  const headroom = reasons ? reasoningHeadroom(req.reasoningEffort) : 0;
+  const cap = req.maxTokens !== undefined ? req.maxTokens + headroom : req.maxTokens;
   return {
     model: req.model,
     messages: req.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     ...(cap !== undefined ? { max_completion_tokens: cap } : {}),
-    ...(minimal ? { reasoning_effort: "minimal" as const } : {}),
+    // Only where it means something. A model that answers without a separate
+    // thinking step has no such parameter, and sending one is a 400.
+    ...(reasons && req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
     ...(req.temperature !== undefined && acceptsTemperature(req.model)
       ? { temperature: req.temperature }
       : {}),

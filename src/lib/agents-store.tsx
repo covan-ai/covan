@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type Bundle } from "./api-client";
 import { canWriteAsRole } from "./roles";
+import type { ReasoningEffort } from "./agent-meta";
 import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
 import { useHasSession } from "./session-presence";
 
@@ -13,6 +14,17 @@ export type Agent = {
   model: string;
   persona: string;
   mode: "normal" | "brainstorm";
+  /**
+   * How much the model may vary its wording, 0 to 2, or null for Auto.
+   *
+   * Null is a setting and not a missing value: it means the mode decides, which
+   * is 0.9 for a brainstorm agent and nothing at all for a normal one. Every
+   * agent is on it until somebody moves the dial, so `0` and `null` are
+   * different answers and the form has to keep them apart.
+   */
+  temperature: number | null;
+  /** How long the agent thinks first, or null for whatever the model does. */
+  reasoningEffort: ReasoningEffort | null;
   documents: {
     id: string;
     name: string;
@@ -94,7 +106,18 @@ type Store = {
    * or not the button was there; this is so the button is not there.
    */
   canWrite: boolean;
-  createAgent: (a: Omit<Agent, "id" | "createdAt" | "documents" | "bundleIds">) => Promise<Agent>;
+  /**
+   * The tuning settings are optional here and required nowhere else: a new
+   * agent is created on Auto, and both surfaces that create one say so by not
+   * mentioning them. Settings is where they are chosen, once there is an agent
+   * to choose them for.
+   */
+  createAgent: (
+    a: Omit<
+      Agent,
+      "id" | "createdAt" | "documents" | "bundleIds" | "temperature" | "reasoningEffort"
+    >,
+  ) => Promise<Agent>;
   updateAgent: (id: string, patch: Partial<Agent>) => void;
   removeDocument: (agentId: string, docId: string) => Promise<void>;
   reindexDocument: (docId: string) => Promise<Agent["documents"][number]>;

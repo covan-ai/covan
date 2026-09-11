@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildSystemPrefix,
   temperatureFor,
+  reasoningEffortFor,
   maxTokensFor,
   BRAINSTORM_INSTRUCTIONS,
   CONCISION_INSTRUCTIONS,
@@ -101,6 +102,50 @@ describe("temperatureFor", () => {
   it("returns 0.9 for brainstorm and undefined for normal", () => {
     expect(temperatureFor("brainstorm")).toBe(0.9);
     expect(temperatureFor("normal")).toBeUndefined();
+  });
+
+  it("leaves the mode in charge when the agent named no temperature", () => {
+    // Null is what every agent has until somebody moves the dial, and it has to
+    // mean exactly what the two lines above mean — otherwise 0048 changes every
+    // reply in the product on the day it is applied.
+    expect(temperatureFor("brainstorm", null)).toBe(0.9);
+    expect(temperatureFor("normal", null)).toBeUndefined();
+    expect(temperatureFor("normal", undefined)).toBeUndefined();
+  });
+
+  it("lets the agent's own setting win in either mode", () => {
+    expect(temperatureFor("normal", 0.2)).toBe(0.2);
+    expect(temperatureFor("brainstorm", 0.2)).toBe(0.2);
+  });
+
+  it("takes 0, which is a setting and not an absence", () => {
+    // The bug this pins: `override || mode default` would read 0 as "unset" and
+    // quietly hand a support agent asked for determinism the mode's own value.
+    expect(temperatureFor("normal", 0)).toBe(0);
+    expect(temperatureFor("brainstorm", 0)).toBe(0);
+  });
+});
+
+describe("reasoningEffortFor", () => {
+  it("sends nothing when the agent named nothing", () => {
+    // Not "medium". A request that carries no effort gets the model's own
+    // default, which is what every reply in this product has been getting.
+    expect(reasoningEffortFor(null)).toBeUndefined();
+    expect(reasoningEffortFor(undefined)).toBeUndefined();
+    expect(reasoningEffortFor("")).toBeUndefined();
+  });
+
+  it("passes the four the API knows", () => {
+    for (const effort of ["minimal", "low", "medium", "high"]) {
+      expect(reasoningEffortFor(effort)).toBe(effort);
+    }
+  });
+
+  it("drops a value neither the database nor the API would have allowed", () => {
+    // Reachable only by a row written around both. Forwarding it would be a 400
+    // on every turn of that agent's conversations; dropping it is one reply
+    // without a setting nobody asked for.
+    expect(reasoningEffortFor("maximum")).toBeUndefined();
   });
 });
 

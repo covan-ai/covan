@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { EMOJIS, MODELS, PERSONA_TEMPLATES, modelsFor } from "./agent-meta";
+import { EMOJIS, MODELS, PERSONA_TEMPLATES, modelsFor, specFor } from "./agent-meta";
 
 /**
  * Two invariants that nothing else would catch, because both fail silently.
@@ -69,5 +69,30 @@ describe("modelsFor", () => {
 
   it("ignores a null current pick, which is how 'no preference' arrives", () => {
     expect(modelsFor(["gpt-4o"], null)).toEqual(["gpt-4o"]);
+  });
+});
+
+describe("specFor", () => {
+  const specs = {
+    "gpt-4o": { temperature: true, reasoning: false },
+    "gpt-5-mini": { temperature: false, reasoning: true },
+  };
+
+  it("answers from what the server said", () => {
+    expect(specFor(specs, "gpt-5-mini")).toEqual({ temperature: false, reasoning: true });
+  });
+
+  it("assumes a model it was told nothing about takes a temperature and does not reason", () => {
+    // The server's own answer for an unknown id, and the situation is normal
+    // rather than exceptional: under a custom endpoint every id is unknown, and
+    // an agent can sit on a Claude model after the key was rotated out.
+    // Optimistic about the control that is harmless to offer, conservative
+    // about the one that is not.
+    expect(specFor(specs, "llama3.3:70b")).toEqual({ temperature: true, reasoning: false });
+  });
+
+  it("answers the same way before /me has said anything at all", () => {
+    expect(specFor(undefined, "gpt-5-mini")).toEqual({ temperature: true, reasoning: false });
+    expect(specFor(specs, null)).toEqual({ temperature: true, reasoning: false });
   });
 });

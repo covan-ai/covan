@@ -36,6 +36,23 @@ export const MODEL_IDS = [
 
 export type ModelId = (typeof MODEL_IDS)[number];
 
+/**
+ * How hard a reasoning model is asked to think before it writes, in the API's
+ * own vocabulary, cheapest first.
+ *
+ * A tuple for the same reason `MODEL_IDS` is one: `routes/agents.ts` builds a
+ * `z.enum()` out of it, and migration 0048 checks the same four strings in the
+ * database. Three lists that have to agree, so this is the one they are all
+ * spelled from.
+ *
+ * Absent is not a fifth value: an agent that names no effort gets whatever the
+ * model does by default, which is what every agent got before this was
+ * settable. Saying `"medium"` is a different request from saying nothing.
+ */
+export const REASONING_EFFORTS = ["minimal", "low", "medium", "high"] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export type ModelSpec = {
   provider: ModelProvider;
   /**
@@ -172,6 +189,24 @@ export function availableModels(env?: ModelEnv): ModelId[] {
  * to rule 2 — the conversation stays on their endpoint. Setting the key is the
  * act that opts a deployment into sending anything to Anthropic.
  */
+/**
+ * What each of `ids` accepts, for the agent settings screen to render against.
+ *
+ * `SPECS` stays private — `provider` is a routing decision and nothing outside
+ * this file has any business reading it — so this projects the two fields a
+ * picker needs and no more.
+ */
+export function modelSpecsFor(
+  ids: readonly string[],
+): Record<string, { temperature: boolean; reasoning: boolean }> {
+  const out: Record<string, { temperature: boolean; reasoning: boolean }> = {};
+  for (const id of ids) {
+    const spec = modelSpec(id);
+    if (spec) out[id] = { temperature: spec.temperature, reasoning: spec.reasoning };
+  }
+  return out;
+}
+
 /**
  * The cheapest model of the same provider, for work that is shaping rather than
  * thinking.

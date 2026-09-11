@@ -2,6 +2,7 @@
 import type { RoutineEnv } from "../../types";
 import { resolveModel } from "../models";
 import { complete, totalTokens } from "../completion";
+import { temperatureFor, reasoningEffortFor } from "../prompt";
 import type { SummariseInput } from "./executor";
 
 /**
@@ -54,6 +55,13 @@ export function summariseWithModel(env: RoutineEnv) {
     const { text, usage } = await complete(env, {
       model: resolveModel(input.model, env),
       json: input.mayDecline,
+      // The agent's own settings, so a routine reports the way the agent
+      // answers. There is no mode here — a routine is neither normal chat nor
+      // brainstorm — so `temperatureFor` is given the one it would fall back to
+      // and the agent's value overrides it or nothing is sent, which is exactly
+      // what this call did before the settings existed.
+      temperature: temperatureFor("normal", input.temperature),
+      reasoningEffort: reasoningEffortFor(input.reasoningEffort),
       messages: [
         {
           role: "system",

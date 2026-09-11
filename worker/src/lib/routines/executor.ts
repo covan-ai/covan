@@ -71,6 +71,18 @@ export type RoutineRow = {
 export type SummariseInput = {
   persona: string | null;
   model: string | null;
+  /**
+   * The agent's own tuning (0048), carried so a routine writes the way the
+   * agent answers. A routine is the same colleague reporting instead of
+   * replying, and an agent told to stay close to its material should not
+   * improvise on a schedule because the report took a different code path.
+   *
+   * Null — or absent, which is the same thing here — means what it means
+   * everywhere else: the model's own defaults, which is what every routine ran
+   * on before the settings existed.
+   */
+  temperature?: number | null;
+  reasoningEffort?: string | null;
   instruction: string;
   items: FeedItem[];
   pageText?: string;
@@ -410,7 +422,7 @@ export async function runRoutine(
 
     const { data: agent, error: agentError } = await deps.db
       .from("agents")
-      .select("persona, model")
+      .select("persona, model, temperature, reasoning_effort")
       .eq("id", routine.agent_id)
       .eq("workspace_id", routine.workspace_id)
       // Service-role client, so RLS is not filtering this. `claim_due_routines`
@@ -458,6 +470,8 @@ export async function runRoutine(
       {
         persona: agent?.persona ?? null,
         model: agent?.model ?? null,
+        temperature: agent?.temperature ?? null,
+        reasoningEffort: agent?.reasoning_effort ?? null,
         instruction: routine.instruction,
         items,
         pageText,

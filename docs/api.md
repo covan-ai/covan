@@ -135,7 +135,7 @@ client for all of it.
 | ---------------------------------------------- | -------------------------------- |
 | `GET /agents`                                  | Every agent in the workspace     |
 | `POST /agents`                                 | Create one                       |
-| `PATCH /agents/:id`                            | Rename, re-persona, change model |
+| `PATCH /agents/:id`                            | Rename, re-persona, change model, tune |
 | `DELETE /agents/:id`                           | Delete                           |
 | `POST /agents/:id/bundles/:bundleId`           | Attach a knowledge bundle        |
 | `DELETE /agents/:id/bundles/:bundleId`         | Detach it                        |

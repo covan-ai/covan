@@ -49,6 +49,13 @@ export type Me = {
    * list. `modelsFor` in `lib/agent-meta` handles the absence.
    */
   models?: string[];
+  /**
+   * What each of those ids accepts — whether a temperature may be sent, and
+   * whether the model thinks before it answers. Optional for the same reason
+   * `models` is: a frontend deployed ahead of its API gets nothing here, and
+   * `specFor` in `lib/agent-meta` answers for an id it was told nothing about.
+   */
+  modelSpecs?: Record<string, { temperature: boolean; reasoning: boolean }>;
   onboarding: { completed: boolean; answers: OnboardingAnswers };
 };
 
@@ -252,7 +259,12 @@ export const api = {
     }): Promise<Agent> => request("POST", "/agents", input),
     update: (
       id: string,
-      patch: Partial<Pick<Agent, "name" | "emoji" | "model" | "persona" | "mode">>,
+      patch: Partial<
+        Pick<
+          Agent,
+          "name" | "emoji" | "model" | "persona" | "mode" | "temperature" | "reasoningEffort"
+        >
+      >,
     ): Promise<Agent> => request("PATCH", `/agents/${id}`, patch),
     remove: (id: string): Promise<void> => request("DELETE", `/agents/${id}`),
     toggleFavorite: (id: string): Promise<{ favorited: boolean }> =>

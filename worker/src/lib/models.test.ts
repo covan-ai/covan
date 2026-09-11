@@ -6,6 +6,7 @@ import {
   availableModels,
   modelSpec,
   titleModelFor,
+  modelSpecsFor,
   DEFAULT_MODEL,
   MODEL_IDS,
 } from "./models";
@@ -150,5 +151,24 @@ describe("titleModelFor", () => {
 
   it("defers to OPENAI_MODEL, which is the operator naming their own model", () => {
     expect(titleModelFor("gpt-4o", { OPENAI_MODEL: "llama3.3:70b" })).toBe("gpt-4o");
+  });
+});
+
+describe("modelSpecsFor", () => {
+  it("describes each id the picker was given", () => {
+    expect(modelSpecsFor(["gpt-4o", "gpt-5-mini"])).toEqual({
+      "gpt-4o": { temperature: true, reasoning: false },
+      "gpt-5-mini": { temperature: false, reasoning: true },
+    });
+  });
+
+  it("says nothing about an id this build does not know", () => {
+    // Silence, not a guess. The frontend has its own answer for an id it was
+    // told nothing about, and inventing one here would make it look authoritative.
+    expect(modelSpecsFor(["llama3.3:70b"])).toEqual({});
+  });
+
+  it("carries no provider, which is a routing decision and nobody else's business", () => {
+    expect(modelSpecsFor(["gpt-4o"])["gpt-4o"]).not.toHaveProperty("provider");
   });
 });

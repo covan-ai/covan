@@ -176,6 +176,8 @@ function appWith(spec: {
   providerEnv?: { OPENAI_API_KEY: string; ANTHROPIC_API_KEY?: string };
   /** The agent's stored model. Defaults to `AGENT.model` (null → the default). */
   agentModel?: string | null;
+  /** The agent's own tuning (0048). Undefined leaves both on Auto. */
+  agentTuning?: { temperature?: number | null; reasoning_effort?: string | null };
 }) {
   const documents = spec.documents ?? [];
   const rows = [...(spec.history ?? []), { role: "user", content: spec.question }].map((m, i) => ({
@@ -185,7 +187,11 @@ function appWith(spec: {
     created_at: `2026-09-0${i + 1}T10:00:00Z`,
   }));
 
-  const agent = spec.agentModel !== undefined ? { ...AGENT, model: spec.agentModel } : AGENT;
+  const agent = {
+    ...AGENT,
+    ...(spec.agentModel !== undefined ? { model: spec.agentModel } : {}),
+    ...(spec.agentTuning ?? {}),
+  };
 
   const dbSpec: FakeDbSpec = {
     tables: {
@@ -595,6 +601,62 @@ describe("saying so when a Claude pick is dropped (Task 9)", () => {
     const { body } = await ask(app);
 
     expect(body).not.toContain('"type":"notice"');
+  });
+});
+
+describe("the agent's own tuning", () => {
+  const requestBody = () => completionCreate.mock.calls.find((c) => c[0].stream)![0];
+
+  it("sends the temperature the agent was given", async () => {
+    const { app } = appWith({ question: "Hi", agentTuning: { temperature: 0.2 } });
+
+    await ask(app);
+
+    expect(requestBody().temperature).toBe(0.2);
+  });
+
+  it("sends 0, which is a setting and not an absence", async () => {
+    const { app } = appWith({ question: "Hi", agentTuning: { temperature: 0 } });
+
+    await ask(app);
+
+    expect(requestBody().temperature).toBe(0);
+  });
+
+  it("leaves the mode in charge when the agent is on Auto", async () => {
+    // Every agent is on Auto until somebody moves the dial, so this is the
+    // behaviour of the whole product and it must be the behaviour it had before
+    // the column existed: normal chat sends no temperature at all.
+    const { app } = appWith({ question: "Hi" });
+
+    await ask(app);
+
+    expect(requestBody()).not.toHaveProperty("temperature");
+    expect(requestBody()).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("asks a reasoning model for the effort the agent named", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-5-mini",
+      agentTuning: { reasoning_effort: "high" },
+    });
+
+    await ask(app);
+
+    expect(requestBody().reasoning_effort).toBe("high");
+  });
+
+  it("says nothing about reasoning to a model that does not reason", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-4o",
+      agentTuning: { reasoning_effort: "high" },
+    });
+
+    await ask(app);
+
+    expect(requestBody()).not.toHaveProperty("reasoning_effort");
   });
 });
 

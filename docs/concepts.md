@@ -93,6 +93,20 @@ a change to either list. The mode is
 `normal` or `brainstorm`, and brainstorm layers a facilitation instruction block
 on top of the persona rather than replacing it.
 
+Two settings tune how that model answers, and both are on Auto until somebody
+says otherwise. **Temperature** is 0 to 2 and decides how much the wording
+varies between two answers to the same question; Auto leaves it to the mode,
+which asks for 0.9 in brainstorm and sends nothing at all in normal chat. The
+GPT-5 family decides this for itself and rejects any other value, so the control
+is inert there and says so. **Reasoning** is `minimal`, `low`, `medium` or
+`high` and decides how long a reasoning model deliberates before it starts
+writing — more thinking, more tokens, and on a long analysis a better answer.
+Auto sends no setting at all, which is not the same as `medium`, and the models
+that answer without a separate thinking step ignore it entirely.
+
+Both apply wherever the agent answers: the chat screen, a Slack thread, and a
+routine's scheduled report.
+
 ## Persona
 
 The persona is the system prompt every conversation with an agent starts from. It

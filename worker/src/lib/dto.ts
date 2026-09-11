@@ -32,6 +32,13 @@ export type AgentDTO = {
   model: string | null;
   persona: string | null;
   mode: "normal" | "brainstorm";
+  /**
+   * The two tuning settings (0048). Null is not a missing value — it is the
+   * setting, and it means the mode decides, which is what every agent has until
+   * somebody moves the dial.
+   */
+  temperature: number | null;
+  reasoningEffort: string | null;
   documents: DocumentDTO[];
   bundleIds: string[];
   createdAt: number;
@@ -137,6 +144,19 @@ export type MeDTO = {
    */
   models: string[];
   /**
+   * What each of those ids will accept, keyed by id.
+   *
+   * The same reasoning as `models`, one level down. Whether a temperature can
+   * be sent and whether the model thinks before it answers are facts about the
+   * model, decided in `lib/models.ts`, and the agent settings screen needs them
+   * to know which of its two tuning controls mean anything: the GPT-5 family
+   * rejects any temperature but its own with a 400, and nothing but that family
+   * has a reasoning effort at all. A frontend holding its own copy of that
+   * table would be a second source of truth for something the server already
+   * decides — and would be wrong for exactly the ids it had not heard of.
+   */
+  modelSpecs: Record<string, { temperature: boolean; reasoning: boolean }>;
+  /**
    * Where this account stands with its first run. The `_authed` layout gates on
    * `completed`, which is why this rides along with /me rather than having an
    * endpoint of its own — every page load needs the answer, and this response
@@ -187,6 +207,8 @@ export function mapAgent(row: {
   model: string | null;
   persona: string | null;
   mode?: string | null;
+  temperature?: number | null;
+  reasoning_effort?: string | null;
   created_at: string;
   agent_bundles?: Array<{
     bundle_id: string;
@@ -209,6 +231,8 @@ export function mapAgent(row: {
     model: row.model,
     persona: row.persona,
     mode: row.mode === "brainstorm" ? "brainstorm" : "normal",
+    temperature: row.temperature ?? null,
+    reasoningEffort: row.reasoning_effort ?? null,
     documents: agentBundles.flatMap((ab) => ab.knowledge_bundles?.documents ?? []).map(mapDocument),
     bundleIds: agentBundles.map((ab) => ab.bundle_id),
     createdAt: toEpochMs(row.created_at),

@@ -7,6 +7,7 @@ import {
   totalTokens,
   DEFAULT_MAX_TOKENS,
   REASONING_HEADROOM,
+  reasoningHeadroom,
   type CompletionEnv,
   type CompletionEvent,
 } from "./completion";
@@ -269,6 +270,40 @@ describe("complete, on OpenAI", () => {
     it("leaves an uncapped request uncapped rather than inventing a ceiling", async () => {
       await complete(openaiOnly, { model: "gpt-5", messages: [{ role: "user", content: "Hi" }] });
       expect(openaiCreate.mock.calls[0][0]).not.toHaveProperty("max_completion_tokens");
+    });
+
+    it("forwards an agent's own effort, which used to be minimal or nothing", async () => {
+      await complete(openaiOnly, {
+        model: "gpt-5",
+        messages: [{ role: "user", content: "Hi" }],
+        maxTokens: 1536,
+        reasoningEffort: "high",
+      });
+      expect(openaiCreate.mock.calls[0][0].reasoning_effort).toBe("high");
+    });
+
+    it.each([
+      ["minimal", 0],
+      ["low", 2048],
+      ["medium", REASONING_HEADROOM],
+      ["high", 8192],
+    ] as const)("gives %s effort room to think in", async (effort, headroom) => {
+      // A ceiling a "high" turn exhausts before it writes a word is not a
+      // shorter answer, it is an empty one with finish_reason "length".
+      await complete(openaiOnly, {
+        model: "gpt-5",
+        messages: [{ role: "user", content: "Hi" }],
+        maxTokens: 1536,
+        reasoningEffort: effort,
+      });
+      expect(openaiCreate.mock.calls[0][0].max_completion_tokens).toBe(1536 + headroom);
+    });
+
+    it("keeps the unset case on exactly the number it has always used", async () => {
+      // `reasoningHeadroom` replaced a constant. The measured value is the one
+      // every request in the product runs on today, so it must not have moved.
+      expect(reasoningHeadroom(undefined)).toBe(REASONING_HEADROOM);
+      expect(REASONING_HEADROOM).toBe(4096);
     });
   });
 

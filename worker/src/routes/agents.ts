@@ -4,11 +4,29 @@ import type { AppEnv } from "../types";
 import { mapAgent } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
+import { REASONING_EFFORTS } from "../lib/models";
 
 const agents = new Hono<AppEnv>();
 
 const AGENT_SELECT =
   "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,document_chunks(count))))";
+
+/**
+ * The two tuning settings, on both schemas.
+ *
+ * Nullable as well as optional, and the difference is the whole feature:
+ * *absent* means "do not change this", *null* means "put it back on Auto". A
+ * field that could only be absent or a number would let somebody set a
+ * temperature and never unset one.
+ *
+ * The bounds are the same as migration 0048's check constraint, stated twice on
+ * purpose — the database is what guarantees it, and this is what turns a
+ * violation into a 400 naming the field instead of a 500 naming a constraint.
+ */
+const tuningFields = {
+  temperature: z.number().min(0).max(2).nullable().optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
+};
 
 const createAgentSchema = z.object({
   name: z.string().min(1),
@@ -16,6 +34,7 @@ const createAgentSchema = z.object({
   model: z.string().optional(),
   persona: z.string().optional(),
   mode: z.enum(["normal", "brainstorm"]).optional(),
+  ...tuningFields,
 });
 
 const updateAgentSchema = z
@@ -25,10 +44,37 @@ const updateAgentSchema = z
     model: z.string().optional(),
     persona: z.string().optional(),
     mode: z.enum(["normal", "brainstorm"]).optional(),
+    ...tuningFields,
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
   });
+
+/**
+ * The validated body as database columns.
+ *
+ * This route used to hand `parsed.data` straight to `.update()`, which worked
+ * only because every field it accepted happened to be spelled the same way in
+ * both places. `reasoningEffort` is the first one that is not, and the failure
+ * that would have caused is not a type error — it is PostgREST refusing a
+ * column named `reasoningEffort` at runtime, on the one request the user
+ * actually cares about. `routes/workspace.ts` has mapped `defaultModel` by hand
+ * for the same reason since 0014.
+ *
+ * Only keys that were sent are copied, so "absent" stays absent and a PATCH of
+ * one field remains a PATCH of one field.
+ */
+function agentColumns(body: z.infer<typeof updateAgentSchema>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if ("name" in body) patch.name = body.name;
+  if ("emoji" in body) patch.emoji = body.emoji;
+  if ("model" in body) patch.model = body.model;
+  if ("persona" in body) patch.persona = body.persona;
+  if ("mode" in body) patch.mode = body.mode;
+  if ("temperature" in body) patch.temperature = body.temperature;
+  if ("reasoningEffort" in body) patch.reasoning_effort = body.reasoningEffort;
+  return patch;
+}
 
 // GET /agents
 agents.get("/agents", async (c) => {
@@ -68,7 +114,7 @@ agents.post("/agents", async (c) => {
     return c.json({ error: "no workspace found for user" }, 400);
   }
 
-  const { name, emoji, model, persona, mode } = parsed.data;
+  const { name, emoji, model, persona, mode, temperature, reasoningEffort } = parsed.data;
 
   const { data, error } = await db
     .from("agents")
@@ -79,6 +125,10 @@ agents.post("/agents", async (c) => {
       model: model ?? null,
       persona: persona ?? null,
       mode: mode ?? "normal",
+      // Null is the default and means the mode decides, which is what every
+      // agent created before 0048 has.
+      temperature: temperature ?? null,
+      reasoning_effort: reasoningEffort ?? null,
       created_by: user.id,
     })
     .select("*")
@@ -101,7 +151,10 @@ agents.patch("/agents/:id", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { error: updateError } = await db.from("agents").update(parsed.data).eq("id", id);
+  const { error: updateError } = await db
+    .from("agents")
+    .update(agentColumns(parsed.data))
+    .eq("id", id);
 
   if (updateError) {
     return c.json({ error: "failed to update agent" }, 500);

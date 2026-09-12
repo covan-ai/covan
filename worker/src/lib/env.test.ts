@@ -121,6 +121,15 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ ...complete, RAG_MIN_SIMILARITY: "25" })).toThrow(/RAG_MIN_SIMILARITY/);
   });
 
+  it("refuses to start on a RAG_LEXICAL value that is neither on nor off", () => {
+    expect(() => loadEnv({ ...complete, RAG_LEXICAL: "sometimes" })).toThrow(/RAG_LEXICAL/);
+  });
+
+  it("starts on a valid RAG_LEXICAL value, and when it is left unset", () => {
+    expect(() => loadEnv({ ...complete, RAG_LEXICAL: "off" })).not.toThrow();
+    expect(() => loadEnv(complete)).not.toThrow();
+  });
+
   it("carries the rate limits through when the operator sets them", () => {
     const env = loadEnv({
       ...complete,

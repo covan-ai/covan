@@ -62,7 +62,7 @@ export type Retrieval = {
   embeddingTokens: number;
 };
 
-export type RetrievalConfig = EmbeddingConfig & { RAG_MIN_SIMILARITY?: string };
+export type RetrievalConfig = EmbeddingConfig & { RAG_MIN_SIMILARITY?: string; RAG_LEXICAL?: string };
 
 /**
  * Retrieve for one question, best-effort.

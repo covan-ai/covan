@@ -237,6 +237,7 @@ documents.post("/documents/:id/reindex", async (c) => {
     workspace_id: workspaceId,
     chunk_index: i,
     content: ch,
+    context: doc.name,
     embedding: vectors[i],
   }));
   const { error: insErr } = await insertChunkRows(db, rows);

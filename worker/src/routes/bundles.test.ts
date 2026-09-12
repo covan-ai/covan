@@ -118,7 +118,7 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
   // not indexed" for every upload it had just embedded perfectly well. The
   // Knowledge tab never noticed because it re-reads the agent; the chat
   // composer's receipt believed it and called every file unretrievable.
-  function fakeDbCounting(chunkRows: { length: number }) {
+  function fakeDbCounting(chunkRows: { length: number } & { rows?: unknown[] }) {
     const db = {
       from(table: string) {
         if (table === "knowledge_bundles") {
@@ -149,6 +149,7 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
           return {
             insert: async (rows: unknown[]) => {
               chunkRows.length = (rows as unknown[]).length;
+              chunkRows.rows = rows;
               return { error: null };
             },
           };
@@ -162,7 +163,7 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
   it("reports the chunks it just embedded, not zero", async () => {
     const root = await mkdtemp(join(tmpdir(), "covan-upload-indexed-"));
     roots.push(root);
-    const inserted = { length: 0 };
+    const inserted: { length: number; rows?: unknown[] } = { length: 0 };
     const app = appWithDb(fakeDbCounting(inserted));
 
     const form = new FormData();
@@ -182,6 +183,14 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
     const body = (await res.json()) as { chunkCount: number; indexed: boolean };
     expect(body.chunkCount).toBe(inserted.length);
     expect(body.indexed).toBe(true);
+
+    // Every row carries the document's name as `context`, so a lexical search
+    // for the document by name/title matches even when the passage text
+    // itself never says it.
+    expect(inserted.rows?.length).toBeGreaterThan(0);
+    for (const row of inserted.rows ?? []) {
+      expect((row as { context?: string }).context).toBe("notes.md");
+    }
   });
 });
 

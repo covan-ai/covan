@@ -11,6 +11,7 @@ const row = (i: number) => ({
   workspace_id: "w1",
   chunk_index: i,
   content: `chunk ${i}`,
+  context: "doc.md",
   embedding: [i],
 });
 

@@ -195,7 +195,15 @@ describe("syncing a connection", () => {
     });
     // The excerpt the no-match fallback reads, same as an upload.
     expect(inserted?.values?.content).toContain("Twenty days");
-    expect(fake.callsTo("document_chunks").some((c) => c.op === "insert")).toBe(true);
+    const chunkInsert = fake.callsTo("document_chunks").find((c) => c.op === "insert");
+    expect(chunkInsert).toBeTruthy();
+    // `insertChunkRows` passes the whole row array as the insert payload, so
+    // `values` here is that array, not a single record — every row carries
+    // the file's name as `context`, so a name/title search finds this
+    // document even when the passage text never says it.
+    const chunkRows = chunkInsert?.values as unknown as Array<{ context?: string }>;
+    expect(chunkRows.length).toBeGreaterThan(0);
+    expect(chunkRows.every((row) => row.context === "page-1.md")).toBe(true);
   });
 
   // A healthy connection over an unchanged folder must not read as a broken one.

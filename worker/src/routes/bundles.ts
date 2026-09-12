@@ -303,6 +303,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
         workspace_id: bundle.workspace_id,
         chunk_index: i,
         content: ch,
+        context: doc.name,
         embedding: vectors[i],
       }));
       const { error: chunkErr } = await insertChunkRows(db, rows);
@@ -333,7 +334,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
 
   const { data: docs, error } = await db
     .from("documents")
-    .select("id,bundle_id,content,knowledge_bundles(workspace_id)")
+    .select("id,bundle_id,name,content,knowledge_bundles(workspace_id)")
     .not("content", "is", null);
   if (error) return c.json({ error: "failed to load documents" }, 500);
 
@@ -342,6 +343,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
   for (const d of (docs ?? []) as unknown as Array<{
     id: string;
     bundle_id: string;
+    name: string;
     content: string | null;
     knowledge_bundles: { workspace_id: string } | null;
   }>) {
@@ -373,6 +375,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
         workspace_id: workspaceId,
         chunk_index: i,
         content: ch,
+        context: d.name,
         embedding: vectors[i],
       }));
       const { error: insErr } = await insertChunkRows(db, rows);

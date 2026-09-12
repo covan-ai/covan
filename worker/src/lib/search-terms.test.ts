@@ -96,6 +96,11 @@ describe("lexicalSearchEnabled", () => {
     expect(lexicalSearchEnabled({ RAG_LEXICAL: undefined })).toBe(true);
   });
 
+  it("is on when RAG_LEXICAL is blank, the shape an unset .env var takes under ${RAG_LEXICAL:-} substitution", () => {
+    expect(lexicalSearchEnabled({ RAG_LEXICAL: "" })).toBe(true);
+    expect(lexicalSearchEnabled({ RAG_LEXICAL: "   " })).toBe(true);
+  });
+
   it("is on when explicitly set to 'on'", () => {
     expect(lexicalSearchEnabled({ RAG_LEXICAL: "on" })).toBe(true);
   });

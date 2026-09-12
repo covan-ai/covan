@@ -121,19 +121,25 @@ export function searchTerms(query: string): string[] {
  * Whether the lexical (keyword / `tsquery`) search arm runs alongside vector
  * search.
  *
- * Unset means on: the lexical arm is meant to run by default, the same way
- * `ragMinSimilarity` (`rag.ts`) defaults its floor rather than requiring every
- * environment to set one. A corpus or query shape the lexical arm handles
- * badly does not error when it fires — it just contributes worse-ranked or
- * irrelevant chunks under OR semantics, the same silent-degradation argument
- * `ragMinSimilarity`'s doc comment makes for the similarity floor. So this is
- * a dial an operator can turn off for a corpus (or a language, or a migration
- * rollout) where that trade is not paying for itself, without a deploy that
- * touches code.
+ * Unset (or blank) means on: the lexical arm is meant to run by default, the
+ * same way `ragMinSimilarity` (`rag.ts`) defaults its floor rather than
+ * requiring every environment to set one. That equivalence matters here for a
+ * concrete reason, not just symmetry: an operator who leaves `RAG_LEXICAL` out
+ * of their `.env` file gets an empty string from `${RAG_LEXICAL:-}`
+ * substitution, not `undefined`, so the empty string has to mean the same
+ * thing as unset or every self-hosted deployment that never opted in would
+ * fail at boot instead of defaulting to on.
+ *
+ * A corpus or query shape the lexical arm handles badly does not error when
+ * it fires — it just contributes worse-ranked or irrelevant chunks under OR
+ * semantics, the same silent-degradation argument `ragMinSimilarity`'s doc
+ * comment makes for the similarity floor. So this is a dial an operator can
+ * turn off for a corpus (or a language, or a migration rollout) where that
+ * trade is not paying for itself, without a deploy that touches code.
  */
 export function lexicalSearchEnabled(env: { RAG_LEXICAL?: string }): boolean {
-  const raw = env.RAG_LEXICAL;
-  if (raw === undefined || raw === "on") return true;
+  const raw = (env.RAG_LEXICAL ?? "").trim();
+  if (raw === "" || raw === "on") return true;
   if (raw === "off") return false;
   throw new Error(`RAG_LEXICAL must be "on" or "off" (got ${JSON.stringify(raw)}).`);
 }

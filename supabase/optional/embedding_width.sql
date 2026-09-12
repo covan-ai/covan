@@ -103,17 +103,27 @@ begin
     using hnsw (embedding vector_cosine_ops);
 
   -- The retrieval function takes the query vector by the same width, so it has
-  -- to be replaced too. Body copied from 0005 — if that migration ever changes
-  -- this file has to change with it, which is the cost of living outside the
-  -- sequence.
-  drop function if exists public.match_chunks(uuid, vector, int, float);
+  -- to be replaced too. Body copied from migration
+  -- 0049_the_words_as_well_as_the_meaning.sql — if that migration's
+  -- match_chunks ever changes again, this file has to change with it, which
+  -- is the cost of living outside the sequence.
+  --
+  -- This same edit also repairs drift that predates the hybrid-retrieval
+  -- feature: the body here used to be 0005's, missing the knowledge_bundles
+  -- join and the two `deleted_at is null` filters that migration 0040 added.
+  -- Running this file before this fix would have silently un-deleted
+  -- soft-deleted documents and bundles back into retrieval results. That
+  -- drift fix and the 0049 hybrid (vector + lexical) port land together in
+  -- this one commit — see git blame if you need to tell the two apart.
+  drop function if exists public.match_chunks(uuid, vector, int, float, text[]);
 
   execute format($fmt$
     create function public.match_chunks(
       p_agent_id uuid,
       p_query_embedding vector(%s),
       p_match_count int,
-      p_min_similarity float default 0
+      p_min_similarity float default 0,
+      p_query_terms text[] default '{}'
     )
     returns table (document_id uuid, document_name text, content text, similarity float)
     language sql
@@ -121,18 +131,65 @@ begin
     security invoker
     set search_path = pg_catalog, public
     as $body$
-      select dc.document_id,
-             d.name as document_name,
-             dc.content,
-             1 - (dc.embedding <=> p_query_embedding) as similarity
-      from public.document_chunks dc
-      join public.documents d on d.id = dc.document_id
-      where dc.embedding is not null
-        and (1 - (dc.embedding <=> p_query_embedding)) >= p_min_similarity
-        and dc.bundle_id in (
-          select ab.bundle_id from public.agent_bundles ab where ab.agent_id = p_agent_id
-        )
-      order by dc.embedding <=> p_query_embedding
+      with q as (
+        select case when cardinality(p_query_terms) = 0 then null
+               else array_to_string(
+                      array(select public.rag_fold(t) || ':*' from unnest(p_query_terms) t),
+                      ' | ')::tsquery
+               end as tsq
+      ),
+      vector_matches as (
+        select dc.id, dc.document_id, d.name as document_name, dc.content,
+               1 - (dc.embedding <=> p_query_embedding) as similarity,
+               row_number() over (order by dc.embedding <=> p_query_embedding) as rank
+        from public.document_chunks dc
+        join public.documents d on d.id = dc.document_id
+        join public.knowledge_bundles b on b.id = dc.bundle_id
+        where dc.embedding is not null
+          and d.deleted_at is null
+          and b.deleted_at is null
+          and (1 - (dc.embedding <=> p_query_embedding)) >= p_min_similarity
+          and dc.bundle_id in (
+            select ab.bundle_id from public.agent_bundles ab where ab.agent_id = p_agent_id
+          )
+        order by dc.embedding <=> p_query_embedding
+        limit p_match_count * 4
+      ),
+      lexical_matches as (
+        select dc.id, dc.document_id, d.name as document_name, dc.content,
+               row_number() over (order by ts_rank_cd(dc.search_tsv, q.tsq) desc) as rank
+        from public.document_chunks dc
+        join public.documents d on d.id = dc.document_id
+        join public.knowledge_bundles b on b.id = dc.bundle_id
+        cross join q
+        where q.tsq is not null
+          and dc.search_tsv @@ q.tsq
+          and d.deleted_at is null
+          and b.deleted_at is null
+          and dc.bundle_id in (
+            select ab.bundle_id from public.agent_bundles ab where ab.agent_id = p_agent_id
+          )
+        order by ts_rank_cd(dc.search_tsv, q.tsq) desc
+        limit p_match_count * 4
+      ),
+      fused as (
+        select id, document_id, document_name, content,
+               max(similarity) as similarity,
+               sum(score) as fused_score
+        from (
+          select id, document_id, document_name, content, similarity,
+                 1.0 / (60 + rank) as score
+          from vector_matches
+          union all
+          select id, document_id, document_name, content, null::float as similarity,
+                 0.8 / (60 + rank) as score
+          from lexical_matches
+        ) arms
+        group by id, document_id, document_name, content
+      )
+      select document_id, document_name, content, similarity
+      from fused
+      order by fused_score desc
       limit p_match_count;
     $body$
   $fmt$, v_dims);
@@ -141,7 +198,7 @@ begin
   -- to do. `security invoker` means document_chunks RLS still decides what
   -- comes back; this only says who may ask.
   execute format(
-    'grant execute on function public.match_chunks(uuid, vector(%s), int, float) to authenticated, service_role',
+    'grant execute on function public.match_chunks(uuid, vector(%s), int, float, text[]) to authenticated, service_role',
     v_dims
   );
 

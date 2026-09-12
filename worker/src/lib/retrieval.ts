@@ -3,6 +3,7 @@ import type { EmbeddingConfig } from "./embeddings";
 import { embedTexts } from "./embeddings";
 import { buildContextBlock, ragMinSimilarity, retrievalQuery } from "./rag";
 import { refersToDocuments, namesDocument } from "./doc-question";
+import { lexicalSearchEnabled, searchTerms } from "./search-terms";
 
 /**
  * What an agent knows, assembled for one question.
@@ -185,6 +186,7 @@ export async function retrieveForAgent(
           p_query_embedding: queryEmbedding,
           p_match_count: RAG_MATCH_COUNT,
           p_min_similarity: ragMinSimilarity(env),
+          p_query_terms: lexicalSearchEnabled(env) ? searchTerms(query) : [],
         });
         if (matchError) {
           console.error("match_chunks failed", matchError);

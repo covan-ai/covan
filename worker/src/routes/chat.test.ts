@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
+import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
 
 /**
@@ -173,7 +174,7 @@ function appWith(spec: {
    * key — that presence or absence is the whole of what `resolveModel` reads
    * to decide whether a Claude pick survives.
    */
-  providerEnv?: { OPENAI_API_KEY: string; ANTHROPIC_API_KEY?: string };
+  providerEnv?: { OPENAI_API_KEY: string; ANTHROPIC_API_KEY?: string; RAG_LEXICAL?: string };
   /** The agent's stored model. Defaults to `AGENT.model` (null → the default). */
   agentModel?: string | null;
   /** The agent's own tuning (0048). Undefined leaves both on Auto. */
@@ -192,6 +193,12 @@ function appWith(spec: {
     ...(spec.agentModel !== undefined ? { model: spec.agentModel } : {}),
     ...(spec.agentTuning ?? {}),
   };
+
+  // `fakeDb`'s own `calls` array only records table operations, not RPCs (see
+  // its `rpc()` implementation) — so a signature change to the `match_chunks`
+  // call would sail through unnoticed unless something here captures the args
+  // itself, inside the handler below.
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 
   const dbSpec: FakeDbSpec = {
     tables: {
@@ -217,7 +224,10 @@ function appWith(spec: {
       },
     },
     rpc: {
-      match_chunks: () => ({ data: spec.matches ?? [], error: null }),
+      match_chunks: (args: Record<string, unknown>) => {
+        rpcCalls.push({ name: "match_chunks", args });
+        return { data: spec.matches ?? [], error: null };
+      },
     },
   };
 
@@ -231,7 +241,7 @@ function appWith(spec: {
     await next();
   });
   app.route("/", chat);
-  return { app, calls };
+  return { app, calls, rpcCalls };
 }
 
 async function ask(app: Hono<AppEnv>) {
@@ -413,6 +423,30 @@ describe("what gets embedded", () => {
     const [embedded] = embedTexts.mock.calls[0][1];
     expect(embedded).toContain("handbook.md");
     expect(embedded).toContain("peki ikinci maddesi?");
+  });
+});
+
+describe("the lexical arm (Task 5)", () => {
+  it("passes the same query's search terms as p_query_terms", async () => {
+    const question = "What does the handbook say about parental leave in Istanbul?";
+    const { app, rpcCalls } = appWith({ question, documents: [HANDBOOK] });
+    await ask(app);
+
+    const match = rpcCalls.find((c) => c.name === "match_chunks");
+    expect(match?.args.p_query_terms).toEqual(searchTerms(question));
+  });
+
+  it("turns the lexical arm off when RAG_LEXICAL is off", async () => {
+    const question = "What does the handbook say about parental leave in Istanbul?";
+    const { app, rpcCalls } = appWith({
+      question,
+      documents: [HANDBOOK],
+      providerEnv: { OPENAI_API_KEY: "ws-openai", RAG_LEXICAL: "off" },
+    });
+    await ask(app);
+
+    const match = rpcCalls.find((c) => c.name === "match_chunks");
+    expect(match?.args.p_query_terms).toEqual([]);
   });
 });
 

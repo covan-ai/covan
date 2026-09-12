@@ -252,6 +252,83 @@ describe("POST /bundles/:id/documents/upload — files with no readable text", (
   });
 });
 
+describe("POST /admin/backfill-embeddings", () => {
+  // Same shape of fake as fakeDbCounting above, spanning the three tables this
+  // endpoint touches: the `documents` select that finds candidates, the
+  // `document_chunks` count that decides whether a document is skipped as
+  // already-chunked, and the `document_chunks` insert that writes the rows.
+  function fakeDbBackfill(
+    doc: { id: string; bundle_id: string; name: string; content: string; workspace_id: string },
+    inserted: { rows?: unknown[] },
+  ) {
+    const db = {
+      from(table: string) {
+        if (table === "documents") {
+          return {
+            select: () => ({
+              not: async () => ({
+                data: [
+                  {
+                    id: doc.id,
+                    bundle_id: doc.bundle_id,
+                    name: doc.name,
+                    content: doc.content,
+                    knowledge_bundles: { workspace_id: doc.workspace_id },
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === "document_chunks") {
+          return {
+            select: () => ({
+              eq: async () => ({ count: 0, error: null }),
+            }),
+            insert: async (rows: unknown[]) => {
+              inserted.rows = rows;
+              return { error: null };
+            },
+          };
+        }
+        throw new Error(`fakeDb: unexpected table "${table}"`);
+      },
+    };
+    return db;
+  }
+
+  it("populates context with the document's name on the chunk rows it backfills", async () => {
+    const inserted: { rows?: unknown[] } = {};
+    const db = fakeDbBackfill(
+      {
+        id: "doc-1",
+        bundle_id: "bundle-1",
+        name: "old-notes.md",
+        content: "a passage worth embedding",
+        workspace_id: "ws-1",
+      },
+      inserted,
+    );
+    const app = appWithDb(db);
+
+    const res = await app.request(
+      "/admin/backfill-embeddings",
+      { method: "POST", headers: { "x-admin-key": "secret-key" } },
+      { ADMIN_API_KEY: "secret-key" } as never,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { processed: number; skipped: number };
+    expect(body.processed).toBe(1);
+
+    expect(inserted.rows?.length).toBeGreaterThan(0);
+    for (const row of inserted.rows ?? []) {
+      expect((row as { context?: string }).context).toBe("old-notes.md");
+    }
+  });
+});
+
 /*
  * GET /bundles/citations
  *

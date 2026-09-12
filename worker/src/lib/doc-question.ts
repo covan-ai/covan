@@ -26,6 +26,8 @@
  * half its users.
  */
 
+import { fold } from "./search-terms";
+
 /**
  * Stems, matched as substrings so suffixes come free: "dosyada", "dosyanın"
  * and "dosyayı" all follow from "dosya", and "documents" from "document".
@@ -81,22 +83,6 @@ const DOCUMENT_WORDS = [
  * matching them would fire on almost every sentence.
  */
 const MIN_NAME_STEM = 4;
-
-/**
- * Lowercase, with Turkish's four I's collapsed onto one.
- *
- * JavaScript lowercases by Unicode's default rules, not Turkish's: "İ" becomes
- * "i" plus a combining dot (U+0307), and "I" becomes "i" where Turkish would
- * make it "ı". So "İŞE ALIM" lowercases to "i̇şe alim" and stops matching a file
- * called "işe alım.md" — over a letter, in the language half the users type in.
- * Folding i/ı/İ/I together costs nothing here (this is a keyword match, not a
- * display name) and makes all four spellings the same string.
- *
- * Needles are folded with the same function, so both sides agree.
- */
-function fold(value: string): string {
-  return value.toLowerCase().replace(/̇/g, "").replace(/ı/g, "i");
-}
 
 const DOCUMENT_NEEDLES = DOCUMENT_WORDS.map(fold);
 

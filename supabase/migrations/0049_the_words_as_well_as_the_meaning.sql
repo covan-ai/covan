@@ -118,6 +118,22 @@
 -- collapse onto one, so "İŞE ALIM" keeps matching "işe alım". Must be
 -- `immutable` to appear inside a generated column's expression below — both
 -- `lower()` and `replace()` qualify.
+--
+-- Locale assumption: the correctness of this folding rests on `lower()`
+-- performing Unicode-aware case folding, not a `C`/POSIX-locale ASCII-only
+-- lowercase. Under a `C` locale, `lower()` leaves non-ASCII characters (like
+-- İ, U+0130) untouched, so it would never produce the "i" + combining dot
+-- (U+0307) that the `replace(..., U&'\0307', '')` step strips — "İŞE ALIM"
+-- would then silently fail to fold to "işe alım", the exact breakage this
+-- migration exists to fix. Supabase's hosted and self-hosted Postgres both
+-- run a UTF-8/ICU-aware locale, under which `lower()` does the expected
+-- Unicode case folding, so this holds in practice — but it is a database
+-- configuration assumption, not something this function enforces or can
+-- enforce. Spot-check post-deploy with:
+--   select public.rag_fold('İŞE ALIM');
+-- which should return 'ise alim' (the function only lowercases and folds
+-- İ/ı; it does not touch spaces, so the space between the two words is
+-- preserved as-is).
 create or replace function public.rag_fold(value text)
 returns text
 language sql
@@ -178,6 +194,16 @@ stable
 security invoker
 set search_path = pg_catalog, public
 as $$
+  -- Precondition on `p_query_terms`: every element must be non-empty *after*
+  -- `rag_fold` normalization. A term that folds to '' (an empty string, or a
+  -- string made entirely of characters `rag_fold` strips) produces the token
+  -- `':*'` with no lexeme in front of it — not valid `tsquery` syntax — and
+  -- casting it below would raise an error for the whole `match_chunks` call,
+  -- not just skip that one term. This function does not filter or guard
+  -- against that input; it is the caller's job. The worker's term-extraction
+  -- step (`worker/src/lib/search-terms.ts`) is responsible for filtering
+  -- short/blank tokens before calling this function, so in practice this
+  -- never fires — but nothing in this SQL enforces it.
   with q as (
     select case when cardinality(p_query_terms) = 0 then null
            else array_to_string(

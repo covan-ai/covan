@@ -112,6 +112,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `EMBEDDING_MODEL`                                      | _empty_                    | Optional. Defaults to `text-embedding-3-small`. Set it whenever `EMBEDDING_BASE_URL` is set.                                                                                                                                                 |
 | `EMBEDDING_DIMENSIONS`                                 | _empty — means 1536_       | Optional. The width `document_chunks.embedding` was declared with. Changing it is a schema change — see below. Refuses to boot on anything but a positive whole number.                                                                      |
 | `RAG_MIN_SIMILARITY`                                   | _empty — means 0.25_       | Optional. Cosine-similarity floor below which a retrieved chunk is dropped. `0` disables it. Tuned for `text-embedding-3-small`; another model wants its own.                                                                                |
+| `RAG_LEXICAL`                                           | _empty — means `on`_       | Optional. Enables retrieval's keyword-matching arm alongside vector search, so an exact code, name or acronym can be found even when it embeds far from the question. `off` disables it; any other value refuses to start.                    |
 | `POSTGRES_PASSWORD`                                    | `covan-local-dev-password` | The database password. `auth`, `rest`, `realtime` and `migrate` all connect with it.                                                                                                                                                         |
 | `POSTGRES_PORT`                                        | `54322`                    | **Host** port only, for `psql` or a GUI client. Inside the compose network Postgres is always on 5432.                                                                                                                                       |
 | `JWT_SECRET`                                           | Supabase demo secret       | Signs and verifies every access token. Changing it invalidates `ANON_KEY` and `SERVICE_ROLE_KEY`, which are JWTs signed with it. Also passed to the API as `SUPABASE_JWT_SECRET`, which is what makes API keys work — see [The API](api.md). |
@@ -300,6 +301,14 @@ fact about the model you chose rather than about Covan. In short:
    else, and a floor that is wrong for it never errors — too high starves
    genuine matches, too low fills every prompt with noise. Both just look like
    the answers got worse.
+
+`RAG_LEXICAL` is a similarly self-hoster-tunable dial, though it isn't tied to
+the embedding model — it's tied to the corpus's language. It defaults to `on`
+and adds keyword matching alongside whatever embedding model you've pointed
+retrieval at. Turn it `off` for a corpus that is neither Turkish nor English:
+the matching uses no language-specific dictionary, so on a non-Latin-script or
+otherwise structurally different corpus it can add noisy matches rather than
+real recall.
 
 The API refuses to start on an `EMBEDDING_DIMENSIONS` that is not a positive
 whole number, or a `RAG_MIN_SIMILARITY` outside 0–1, naming the variable. A

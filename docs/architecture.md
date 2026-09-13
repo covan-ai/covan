@@ -177,18 +177,41 @@ rather than letting Postgres refuse the insert later. See
 1. Collect the bundles attached to the agent and the document *names* in them.
    Names alone, on the hot path — the stored full text is only needed by the
    fallback below, so it is loaded lazily there rather than on every turn.
-2. Embed the latest user message and call `match_chunks(p_agent_id,
-   p_query_embedding, p_match_count => 10, p_min_similarity => 0.25)`.
-3. `match_chunks` (`0005_message_sources_and_match_threshold.sql`) is
-   `SECURITY INVOKER`, so RLS on `document_chunks` and `documents` still applies.
-   It computes `1 - (embedding <=> query)` as cosine similarity, keeps only rows
-   at or above the floor, restricts to chunks whose bundle is attached to this
-   agent, orders by distance and takes the top *n*.
+2. Embed the latest user message, extract its search terms
+   (`worker/src/lib/search-terms.ts`'s `searchTerms`), and call
+   `match_chunks(p_agent_id, p_query_embedding, p_match_count => 10,
+   p_min_similarity => 0.25, p_query_terms => terms)`. `p_query_terms` is `[]`
+   whenever `RAG_LEXICAL` disables the lexical arm (`lexicalSearchEnabled`) or
+   the question yields no usable terms, which turns the fifth argument back
+   into the pre-hybrid default and the call behaves exactly as it did before.
+3. `match_chunks` (`0049_the_words_as_well_as_the_meaning.sql`, growing the
+   signature `0005_message_sources_and_match_threshold.sql` first defined) is
+   `SECURITY INVOKER`, so RLS on `document_chunks` and `documents` still
+   applies. It now runs two arms over the same bundle-scoped, non-deleted rows
+   and fuses them:
 
-   The floor is the interesting part. Without it, an off-topic question still
-   returns the ten nearest chunks — nearest is not the same as relevant — and
-   those get injected into the prompt as though they were evidence. The SQL
-   default is `0` for backward compatibility; the API passes `0.25`.
+   - The **vector arm** is the original query: `1 - (embedding <=> query)` as
+     cosine similarity, floored at `p_min_similarity`, ordered by distance.
+   - The **lexical arm** matches `document_chunks.search_tsv` (a generated
+     `tsvector` covering the document name and chunk content, `'simple'`
+     config — no stemmer, so a verbatim code, name or acronym is not blurred
+     the way an embedding can blur it) against the query terms, OR'd together
+     and ranked by `ts_rank_cd`. It carries no similarity floor of its own — a
+     lexical hit is a match by a different definition than cosine distance.
+   - Each arm contributes candidates (`p_match_count * 4` each) that are
+     combined with Reciprocal Rank Fusion — grouped by chunk id, each arm's
+     rank turned into `1.0 / (60 + rank)`, the vector arm weighted `1.0` and
+     the lexical arm `0.8` — and the top `p_match_count` by fused score is
+     returned. A chunk found by both arms is scored higher than one found by
+     either alone.
+
+   The floor is still the interesting part for the vector arm. Without it, an
+   off-topic question still returns the ten nearest chunks — nearest is not the
+   same as relevant — and those get injected into the prompt as though they
+   were evidence. The SQL default is `0` for backward compatibility; the API
+   passes `0.25`. The lexical arm has no analogous floor: OR semantics already
+   mean a bad term just fails to contribute, rather than dragging in noise the
+   way a missing floor would on the vector side.
 4. Matching chunks are assembled by `buildContextBlock` (`lib/rag.ts`) under a
    4000-character budget, in similarity order, and dropped once the budget is
    spent.

@@ -1,6 +1,7 @@
 import type { Bindings } from "../types";
 import { embeddingDimensions } from "./embeddings";
 import { ragMinSimilarity } from "./rag";
+import { lexicalSearchEnabled } from "./search-terms";
 
 /** Absent or empty means unset — a blank line in a .env file is not a value. */
 const REQUIRED = [
@@ -97,6 +98,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   // reads it at `docker compose up` instead of inferring it a week later.
   embeddingDimensions(source);
   ragMinSimilarity(source);
+  lexicalSearchEnabled(source);
 
   return {
     SUPABASE_URL: source.SUPABASE_URL!,
@@ -118,6 +120,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     EMBEDDING_MODEL: source.EMBEDDING_MODEL,
     EMBEDDING_DIMENSIONS: source.EMBEDDING_DIMENSIONS,
     RAG_MIN_SIMILARITY: source.RAG_MIN_SIMILARITY,
+    RAG_LEXICAL: source.RAG_LEXICAL,
     ROUTINE_SECRET_KEY: source.ROUTINE_SECRET_KEY!,
     // Optional, and absent is a supported configuration: without it a workspace
     // cannot store its own provider key at all, `PUT /workspace/provider-keys`

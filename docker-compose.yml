@@ -333,6 +333,9 @@ services:
       # Retrieval's relevance floor. Empty means 0.25, tuned for
       # text-embedding-3-small; another embedding model wants its own.
       RAG_MIN_SIMILARITY: ${RAG_MIN_SIMILARITY:-}
+      # Retrieval's lexical (keyword) arm. Empty or "on" means enabled; "off"
+      # turns it off for a corpus it doesn't suit.
+      RAG_LEXICAL: ${RAG_LEXICAL:-}
       ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY:?set ROUTINE_SECRET_KEY in .env}
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
       # No R2 binding off Cloudflare, so getDocStore falls to the filesystem

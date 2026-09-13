@@ -177,6 +177,13 @@ export type Bindings = SyncEnv & {
    */
   RAG_MIN_SIMILARITY?: string;
   /**
+   * Whether the lexical (keyword / `tsquery`) search arm runs alongside
+   * vector search. Unset or blank means on — see `lexicalSearchEnabled`
+   * in `lib/search-terms.ts` for the resolver and why an empty string
+   * has to mean the same thing as unset.
+   */
+  RAG_LEXICAL?: string;
+  /**
    * The project's JWT signing secret, and the one thing that makes API keys
    * possible: a key is exchanged for a short-lived JWT for its owner, so the
    * request reaches Postgres as that person and RLS decides as it always does.

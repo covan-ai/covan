@@ -16,6 +16,7 @@ export type ChunkRow = {
   workspace_id: string;
   chunk_index: number;
   content: string;
+  context: string;
   embedding: number[];
 };
 

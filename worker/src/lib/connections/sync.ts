@@ -512,6 +512,7 @@ async function importOne(
       workspace_id: connection.workspace_id,
       chunk_index: index,
       content,
+      context: file.name,
       embedding: embedded.vectors[index],
     })),
   );

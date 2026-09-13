@@ -49,10 +49,18 @@ size.
 perfectly and answers nothing. So does a heading with nothing under it. The
 agent can only say what the text says.
 
-**Use the words people ask in.** Matching is on meaning as the embedding model
-represents it, so a document written entirely in internal shorthand and a
-question written in plain English may not meet. This is what makes a glossary of
-your own terms one of the highest-value files in a workspace.
+**Use the words people ask in.** Matching is on meaning and on wording now: a
+question still has to land near a passage in the embedding model's sense, but a
+code, a name or an acronym typed exactly as it appears in a document can also be
+found by the words themselves, even when it means almost nothing to the
+embedding model. A document written entirely in internal shorthand and a
+question written in plain English can still miss on meaning, so this doesn't
+replace speaking the reader's language — it just means your own exact terms are
+no longer invisible to search. This is still what makes a glossary of your own
+terms one of the highest-value files in a workspace, though the reason has
+shifted: it used to teach the model what your shorthand meant; now it also
+guarantees that shorthand is one of the exact strings retrieval can find
+verbatim.
 
 **Say when it was true.** Nothing updates a document in place — a re-upload
 makes a new one — so a date inside the text is the only version the agent can
@@ -203,6 +211,14 @@ Each turn starts by embedding the message that was just sent, with the same mode
 the chunks were embedded with, and asking the database for the ten nearest chunks
 across the attached bundles whose cosine similarity is at or above 0.25.
 
+Alongside that, the significant words in the question — short filler words and
+grammar dropped — are matched against the chunks directly, as text, not as
+meaning. A passage that uses the same code, name or acronym the question does
+can be found this way even when it sits nowhere near that question in the
+embedding model's sense. The two sets of candidates are combined into one
+ranking, so a chunk that matches on both counts more than one that matches on
+only one, and neither way of matching crowds the other out.
+
 Ten are asked for and fewer are sent: a passage already contained in one further
 up the list is dropped rather than repeated — the same document reached through
 two bundles is chunked once per bundle, so the same words can come back twice —
@@ -223,8 +239,9 @@ self-hosted Covan that embeds with something else needs its own — which is wha
 wrong for the model in use produces no error at all, only answers that are
 vaguer or emptier than they should be.
 
-What survives is assembled in similarity order under a 4000-character budget and
-sent as its own system message, positioned after the earlier turns and just
+What survives is assembled in ranked order — meaning-matches and wording-matches
+merged into one ordering — under a 4000-character budget and sent as its own
+system message, positioned after the earlier turns and just
 before the latest one. Two details of that block matter when you read a reply.
 The budget is spent in order, so the last chunk admitted can be cut off partway
 through, and anything after the budget runs out is dropped. And the block
@@ -242,19 +259,31 @@ the model what exists without telling it what any of it says.
 It is worth being exact about this, because it is easy to assume the floor alone
 produces "I don't know". It does not, on its own.
 
-If no chunk clears the floor and the agent has documents, the reply is grounded
-on those documents' stored excerpts instead, newest first, under the same
-4000-character budget. That escape hatch exists for questions like "summarise the
-file", which embed close to nothing in particular and would otherwise get an
-agent insisting it cannot read a document it is holding. So an agent answers from
-its persona alone only when it genuinely has nothing: no attached bundles, or
-nothing in them with any extractable text.
+If no chunk matches at all — neither close enough in meaning to clear the floor
+nor a wording match on its own terms — and the agent has documents, the reply is
+grounded on those documents' stored excerpts instead, newest first, under the
+same 4000-character budget. That escape hatch exists for questions like
+"summarise the file", which embed close to nothing in particular and would
+otherwise get an agent insisting it cannot read a document it is holding. So an
+agent answers from its persona alone only when it genuinely has nothing: no
+attached bundles, or nothing in them with any extractable text.
 
-The honest reading of an answer is therefore that the floor governs what is
+The honest reading of an answer is therefore that matching governs what is
 presented as a matched passage, and the fallback governs what is available when
 nothing matched. The model can still say it does not know, and with excerpts of
 unrelated documents in front of it that is the right answer — but it is the model
 declining, not the retrieval layer having withheld everything.
+
+This also changes what "grounded" means internally. What Covan records against a
+reply as grounded on the team's documents used to mean, exactly, that a passage
+cleared the similarity floor. Now a passage that matched only by its exact
+wording — with no floor of its own to clear — counts the same way. That is a
+real widening, not a technicality: an answer can now be grounded on a chunk that
+the embedding model would never have called a close match, because a code, a
+name or an acronym in it lined up with the question word for word. The chip
+under the answer and the fallback behaviour above both stay the same either
+way — this only affects what gets counted as "matched" versus "nothing matched"
+before the fallback is even considered.
 
 Retrieval is best-effort throughout. If embedding the question or the search
 itself fails, the turn quietly falls back to a persona-only answer rather than

@@ -33,6 +33,12 @@ OPENAI_API_KEY=replace-with-openai-api-key
 # model — a wrong floor does not error, it just returns the wrong chunks.
 # RAG_MIN_SIMILARITY=0.3
 
+# Optional. Turns retrieval's keyword-matching arm on or off; unset or "on"
+# means enabled. Turn it "off" for a corpus that isn't Turkish or English —
+# the matching has no dictionary behind it and can add noise without adding
+# recall on a corpus it wasn't tuned for.
+# RAG_LEXICAL=off
+
 # Comma-separated EXACT frontend origins. Never a wildcard or a pattern —
 # docs/self-hosting.md explains what that costs. localhost is allowed in code.
 ALLOWED_ORIGIN=http://localhost:3000

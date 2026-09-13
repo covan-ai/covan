@@ -141,7 +141,7 @@ function normaliseForComparison(text: string): string {
  * Assembles retrieved chunks into a system-prompt context block under a total
  * char budget, and reports which of them fitted.
  *
- * Chunks are added most-relevant-first (the caller passes them in similarity
+ * Chunks are added most-relevant-first (the caller passes them in fused-RRF
  * order) and the budget covers the whole block — header, per-document framing
  * and separators included, which it did not before, so a block asked for 4000
  * chars no longer returns 4300. Once what is left cannot hold a useful excerpt

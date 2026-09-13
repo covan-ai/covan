@@ -213,7 +213,8 @@ rather than letting Postgres refuse the insert later. See
    mean a bad term just fails to contribute, rather than dragging in noise the
    way a missing floor would on the vector side.
 4. Matching chunks are assembled by `buildContextBlock` (`lib/rag.ts`) under a
-   4000-character budget, in similarity order, and dropped once the budget is
+   4000-character budget, in fused-RRF order (the `order by fused_score desc`
+   from step 3, not raw cosine similarity), and dropped once the budget is
    spent.
 5. The block is sent as its own system message positioned *after* the prior
    turns and before the latest one — deliberately not merged into the persona

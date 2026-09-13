@@ -114,8 +114,10 @@ export async function retrieveForAgent(
   /**
    * Which of the two grounding paths below produced `ragBlock`, persisted with
    * the reply (0039) because `sources` cannot tell them apart — both paths fill
-   * it, and only the first means a passage the team wrote was close to what was
-   * asked. covan#44 reports on the difference.
+   * it, and only the first means a passage actually matched the question,
+   * either because the vector arm found it close in meaning or because the
+   * lexical arm found it close in wording (0049) — either arm firing is enough.
+   * covan#44 reports on the difference.
    *
    * Starts at `"none"` and is narrowed on the way down, so every exit — an
    * agent with no documents, a retrieval that threw, a fallback that found
@@ -127,11 +129,12 @@ export async function retrieveForAgent(
    * fallback used to run on *every* miss, so "thanks" and "merhaba" were
    * recorded as `documents` — grounded, by a path that had fired on a turn
    * about nothing. It now runs only when the question is about the documents
-   * (`refersToDocuments`), which leaves an ordinary question that cleared no
-   * passage recording `none`. That is what `none` should have meant all along:
-   * nothing the team wrote was close to this. The two populations it now mixes
-   * — no usable documents at all, and none close enough — are told apart by
-   * whether the agent has any documents, which the report can ask separately.
+   * (`refersToDocuments`), which leaves an ordinary question that matched no
+   * passage, by meaning or by wording, recording `none`. That is what `none`
+   * should have meant all along: nothing the team wrote matched this. The two
+   * populations it now mixes — no usable documents at all, and no match at all
+   * — are told apart by whether the agent has any documents, which the report
+   * can ask separately.
    */
   let grounding: "chunks" | "documents" | "none" = "none";
   // Embedding the question costs tokens too. Carried to the end of the turn and

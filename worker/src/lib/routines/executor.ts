@@ -88,9 +88,9 @@ export type SummariseInput = {
   pageText?: string;
   /**
    * What the agent already knows, retrieved for this run. Empty when the agent
-   * has no documents, when nothing cleared the similarity floor, or when
-   * retrieval failed — all three mean the same thing to the model, which is
-   * that it answers from its persona alone.
+   * has no documents, when nothing matched — by meaning or by wording — or
+   * when retrieval failed — all three mean the same thing to the model, which
+   * is that it answers from its persona alone.
    */
   ragBlock: string;
   /**

@@ -74,18 +74,7 @@ describe("searchTerms", () => {
     expect(searchTerms("")).toEqual([]);
   });
 
-  it("returns [] for a greeting-only query", () => {
-    // "teşekkürler" folds to a single token of ordinary conversational
-    // Turkish that carries no digit and is longer than the short-token
-    // floor, so it must be filtered as ordinary conversation rather than a
-    // search term — same intent as "thanks" or "merhaba" in doc-question.ts.
-    // If it survived as a lone term, an unrelated chunk of the corpus that
-    // happens to contain "teşekkürler" would be pulled into a turn that had
-    // no lexical business firing at all — exactly the failure mode the
-    // stopword list exists to prevent, just for a word outside that list.
-    // The all-stopword sentence below is the case the brief's spec actually
-    // guarantees; "teşekkürler" is asserted separately in the next test only
-    // if it happens to be covered.
+  it("returns [] for a sentence made entirely of stopwords", () => {
     expect(searchTerms("ne mi bir bu için")).toEqual([]);
   });
 });

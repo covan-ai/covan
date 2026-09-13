@@ -224,11 +224,13 @@ rather than letting Postgres refuse the insert later. See
    `messages.sources`, so citations survive a reload instead of being recomputed
    in the client.
 
-There is a fallback: if nothing clears the floor but the agent does have
-documents, the reply is grounded on the stored document text directly, newest
-first, under the same budget. This exists for "summarise the file" style
-questions, which embed close to nothing in particular and would otherwise get an
-agent claiming it cannot read a file it plainly has.
+There is a fallback: if no chunk matches at all — neither close enough in
+meaning to clear the vector floor nor a hit on the lexical arm's own terms —
+but the agent does have documents, the reply is grounded on the stored
+document text directly, newest first, under the same budget. This exists for
+"summarise the file" style questions, which embed close to nothing in
+particular and would otherwise get an agent claiming it cannot read a file it
+plainly has.
 
 Retrieval is best-effort throughout. Any failure — embedding, the RPC, the
 fallback — falls back to a persona-only answer rather than failing the turn.

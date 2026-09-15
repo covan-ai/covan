@@ -32,3 +32,32 @@ export function findReportBundle(bundles: Bundle[], agentId: string): Bundle | n
   const marker = reportBundleMarker(agentId);
   return bundles.find((b) => b.description === marker) ?? null;
 }
+
+/**
+ * Asking for a report without leaving the message box.
+ *
+ * The composer button is the discoverable way in and this is the fast one, for
+ * the person who already knows what they want and does not want a dialog
+ * between them and typing it. Deliberately a typed command rather than the
+ * model noticing that a message sounds like a request for a report: a
+ * misjudged one costs a minute of waiting and answers a question with a file.
+ *
+ * The command is `/report` in every language, the way `git commit` is — what
+ * follows it is the instruction and is written in whatever language the person
+ * thinks in.
+ */
+const COMMAND = /^\/report(?:[ \t\n]+([\s\S]*))?$/i;
+
+/**
+ * The instruction in a `/report …` message, or null if this is just a message.
+ *
+ * An empty instruction is not the same answer as null, and callers act on the
+ * difference: null sends the line as an ordinary message, `""` means the person
+ * asked for a report and has not said what about — which is exactly what the
+ * dialog is for.
+ */
+export function parseReportCommand(text: string): { instruction: string } | null {
+  const match = text.trim().match(COMMAND);
+  if (!match) return null;
+  return { instruction: (match[1] ?? "").trim() };
+}

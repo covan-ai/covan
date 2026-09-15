@@ -25,7 +25,7 @@ import type { ReportWriter } from "@/lib/use-report";
  * text being typed.
  */
 export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWrite: boolean }) {
-  const [open, setOpen] = useState(false);
+  const { dialogOpen, setDialogOpen } = reports;
   const [instruction, setInstruction] = useState("");
 
   if (!canWrite) return null;
@@ -33,7 +33,7 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
   const submit = () => {
     const text = instruction.trim();
     if (!text || reports.pending) return;
-    setOpen(false);
+    setDialogOpen(false);
     setInstruction("");
     void reports.write(text);
   };
@@ -42,14 +42,15 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => setDialogOpen(true)}
         className="grid h-7 w-7 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="Write a report from this conversation"
+        title="Write a report from this conversation — or type /report in the message box"
       >
         <ScrollText className="h-4 w-4" />
       </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Write a report</DialogTitle>
@@ -73,7 +74,7 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
             </p>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
             <Button onClick={submit} disabled={reports.pending || instruction.trim().length === 0}>

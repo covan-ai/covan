@@ -12,6 +12,12 @@ export type ReportReceipt = {
 export type ReportWriter = {
   pending: boolean;
   receipt: ReportReceipt | null;
+  /**
+   * Lives here rather than inside the dialog because two things open it: the
+   * composer button, and a bare `/report` typed into the message box.
+   */
+  dialogOpen: boolean;
+  setDialogOpen: (open: boolean) => void;
   write: (instruction: string) => Promise<void>;
   dismiss: () => void;
   download: () => void;
@@ -38,6 +44,7 @@ export function useReportWriter(
   const { writeReport } = useAgentsStore();
   const [pending, setPending] = useState(false);
   const [receipt, setReceipt] = useState<ReportReceipt | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   const write = useCallback(
     async (instruction: string) => {
@@ -66,5 +73,13 @@ export function useReportWriter(
       .catch(() => toast.error("Couldn't download the report"));
   }, [receipt]);
 
-  return { pending, receipt, write, dismiss: () => setReceipt(null), download };
+  return {
+    pending,
+    receipt,
+    dialogOpen,
+    setDialogOpen,
+    write,
+    dismiss: () => setReceipt(null),
+    download,
+  };
 }

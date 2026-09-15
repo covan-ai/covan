@@ -200,6 +200,13 @@ conversation and the bundles attached to it, and what comes back is an ordinary
 markdown document — it downloads, moves, deletes and goes into the workspace
 export like any file you uploaded.
 
+Typing `/report ` in the message box, followed by the same sentence, does the
+same thing without the dialog — `/report write up the quarter for the board`.
+The command is `/report` whatever language you write the instruction in. On its
+own, with nothing after it, it opens the dialog to ask what the report should
+cover. It is not a command for a viewer, who cannot write a document to the
+workspace: there the line is sent as the message it looks like.
+
 It lands in a bundle of its own, named after the agent and created the first
 time you ask for one. That separation is deliberate: a bundle you uploaded holds
 sources the agent was given, and this one holds what the agent produced. Keeping

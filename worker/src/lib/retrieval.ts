@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EmbeddingConfig } from "./embeddings";
 import { embedTexts } from "./embeddings";
 import { buildContextBlock, ragMinSimilarity, retrievalQuery } from "./rag";
+import type { RetrievedChunk } from "./rag";
 import { refersToDocuments, namesDocument } from "./doc-question";
 import { lexicalSearchEnabled, searchTerms } from "./search-terms";
 
@@ -42,6 +43,18 @@ import { lexicalSearchEnabled, searchTerms } from "./search-terms";
  * embedding model rather than of this code.
  */
 const RAG_MATCH_COUNT = 10;
+
+/**
+ * How much of a named document's stored text may sit in front of the passages
+ * that matched.
+ *
+ * Half of `buildContextBlock`'s 4000-char budget. The document is admitted for
+ * being named rather than for being relevant to the sentence, so it earns a
+ * place at the front and not the whole room: uncapped, one 8000-character
+ * document would fill the budget and break out of the loop before a single
+ * matched passage was read.
+ */
+const STORED_SHARE = 2000;
 
 export type RetrievedSource = { id: string | null; name: string };
 
@@ -137,6 +150,10 @@ export async function retrieveForAgent(
    * can ask separately.
    */
   let grounding: "chunks" | "documents" | "none" = "none";
+  /** Passages `match_chunks` returned, before the char budget has had a say. */
+  let matched: RetrievedChunk[] = [];
+  /** Whole-document text admitted alongside them, if any. */
+  let storedUsed: RetrievedChunk[] = [];
   // Embedding the question costs tokens too. Carried to the end of the turn and
   // recorded with the completion's, so one reply means one counter write.
   let embeddingTokens = 0;
@@ -202,19 +219,15 @@ export async function retrieveForAgent(
             document_name: string;
             content: string;
           }>;
-          // Cited from `used`, not from `typed`: the block has a char budget and
-          // drops what does not fit, and a document whose passage was dropped
-          // did not ground anything.
-          const block = buildContextBlock(
-            typed.map((m) => ({
-              documentId: m.document_id,
-              documentName: m.document_name,
-              content: m.content,
-            })),
-          );
-          ragBlock = block.text;
-          if (ragBlock) grounding = "chunks";
-          for (const m of block.used) addSource(m.documentId ?? null, m.documentName);
+          // Held rather than built into a block here. A document the question
+          // named by name may still have to be merged in below, and one block
+          // assembled once is the only way the char budget can weigh the two
+          // against each other.
+          matched = typed.map((m) => ({
+            documentId: m.document_id,
+            documentName: m.document_name,
+            content: m.content,
+          }));
         }
       }
     } catch (e) {
@@ -233,7 +246,26 @@ export async function retrieveForAgent(
   // Without it every miss landed here — "thanks", "merhaba", "say that again" —
   // and each one pulled the agent's files into the prompt, paid for them, and
   // hung a row of source chips under an answer they had nothing to do with.
-  if (!ragBlock && hasKnowledge && refersToDocuments(question, docNames)) {
+  // A document the question named that no passage of came back.
+  //
+  // Which is not only the "retrieval found nothing" case. A document can have no
+  // chunks at all — a report, which is written without embeddings on purpose,
+  // and an upload whose embedding failed — and then no question can ever match
+  // a passage of it. While this branch ran only on a total miss, such a document
+  // was reachable exactly as long as nothing *else* matched, which on an agent
+  // that has documents is almost never. Asked about by name, it answered "the
+  // excerpt did not come" and was right: it had been named in the manifest and
+  // was the one thing that could not get in.
+  const matchedNames = new Set(matched.map((m) => m.documentName));
+  const namedAndUnmatched = docNames.some(
+    (name) => namesDocument(question, name) && !matchedNames.has(name),
+  );
+
+  if (
+    hasKnowledge &&
+    (matched.length === 0 || namedAndUnmatched) &&
+    refersToDocuments(question, docNames)
+  ) {
     const { data: docRows, error: docError } = await db
       .from("documents")
       .select("id,name,content")
@@ -253,18 +285,46 @@ export async function retrieveForAgent(
       ...withContent.filter((d) => namesDocument(question, d.name)),
       ...withContent.filter((d) => !namesDocument(question, d.name)),
     ];
-    if (ordered.length > 0) {
-      const block = buildContextBlock(
-        ordered.map((d) => ({
-          documentId: d.id,
-          documentName: d.name,
-          content: d.content as string,
-        })),
-      );
-      ragBlock = block.text;
-      if (ragBlock) grounding = "documents";
-      for (const d of block.used) addSource(d.documentId ?? null, d.documentName);
+
+    // With passages in hand, only the named document is added — the rest of the
+    // library is not more relevant than a passage that actually matched, and
+    // dumping it here would be the newest-few-thousand-characters behaviour this
+    // branch's guard exists to prevent. With no passages, nothing else is on
+    // offer, so the whole ordered list stands as it always has.
+    const storedDocs =
+      matched.length === 0 ? ordered : ordered.filter((d) => namesDocument(question, d.name));
+
+    const stored: RetrievedChunk[] = storedDocs.map((d) => ({
+      documentId: d.id,
+      documentName: d.name,
+      // A whole document alongside relevance-ranked passages is capped, because
+      // the budget fills from the front and one 8000-character document placed
+      // first would leave nothing for the passages behind it. Uncapped when it
+      // is the only thing there is, which is where this branch started.
+      content:
+        matched.length === 0 ? (d.content as string) : (d.content as string).slice(0, STORED_SHARE),
+    }));
+
+    if (stored.length > 0) storedUsed = stored;
+  }
+
+  // One block, assembled once, so the budget can weigh a named document against
+  // the passages that matched. Stored text goes first: being named by the person
+  // asking is the strongest relevance signal there is, stronger than a
+  // similarity score, and it is capped above so going first cannot starve the
+  // rest.
+  const entries = [...storedUsed, ...matched];
+  if (entries.length > 0) {
+    const block = buildContextBlock(entries);
+    ragBlock = block.text;
+    if (ragBlock) {
+      // Truthful for the mixed case too: `chunks` answers "did a passage
+      // actually match this question", and if any admitted entry came from
+      // `matched`, one did. covan#44 reads it that way.
+      const matchedSet = new Set(matched);
+      grounding = block.used.some((u) => matchedSet.has(u)) ? "chunks" : "documents";
     }
+    for (const u of block.used) addSource(u.documentId ?? null, u.documentName);
   }
 
   return {

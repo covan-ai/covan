@@ -394,6 +394,62 @@ describe("the no-match fallback", () => {
     expect(citedNames()[0]).toBe("handbook.md");
   });
 
+  it("reaches a document that has no chunks when the question names it", async () => {
+    // Reported from production: a report written by the agent, asked about by
+    // name, and answered with "the excerpt did not come".
+    //
+    // A report is stored with no embeddings on purpose, so no passage of it can
+    // ever match — the stored-text fallback was supposed to be how it is read.
+    // But the fallback only runs when retrieval found *nothing*, and an agent
+    // that has a report also has the documents the report was written from. One
+    // of those matches, `ragBlock` is no longer empty, and the document the
+    // question actually named is the one thing that cannot get in.
+    const REPORT = { id: "d3", name: "Yönetim Özeti.md", content: "Revenue rose 12% in Q3." };
+    const { app } = appWith({
+      question: "Yönetim Özeti raporunda ne yazıyor?",
+      documents: [REPORT, HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    await ask(app);
+    expect(knowledgeBlock()).toContain("Revenue rose 12% in Q3.");
+  });
+
+  it("adds only the named document, not the rest of the library", async () => {
+    // The reason this branch has a guard at all. Once a passage has matched, the
+    // other documents are not more relevant than it is, and admitting them here
+    // would be the dump-the-newest-few-thousand-characters behaviour the guard
+    // exists to prevent — paid for, and hung with source chips it did not earn.
+    const REPORT = { id: "d3", name: "Yönetim Özeti.md", content: "Revenue rose 12% in Q3." };
+    const { app } = appWith({
+      question: "Yönetim Özeti raporunda ne yazıyor?",
+      documents: [REPORT, HANDBOOK, PAYROLL],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    await ask(app);
+    expect(knowledgeBlock()).toContain("Revenue rose 12% in Q3.");
+    expect(knowledgeBlock()).not.toContain("Paid on the 15th.");
+  });
+
+  it("caps the named document so the passages behind it still fit", async () => {
+    // The budget fills from the front and breaks out when the room runs low, so
+    // an uncapped 8000-character document placed first would be the whole block
+    // and every matched passage would be dropped behind it.
+    const LONG = { id: "d3", name: "Yönetim Özeti.md", content: "R".repeat(8000) };
+    const { app } = appWith({
+      question: "Yönetim Özeti raporunda ne yazıyor?",
+      documents: [LONG, HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    await ask(app);
+    expect(knowledgeBlock()).toContain("Vacation is 20 days.");
+  });
+
   it("is never reached when the agent has no documents at all", async () => {
     const { app } = appWith({ question: "summarize the file", documents: [], matches: [] });
     await ask(app);
@@ -471,6 +527,22 @@ describe("what grounded the reply (0039)", () => {
     });
     await ask(app);
     expect(grounding()).toBe("documents");
+  });
+
+  it("still records chunks when a named document rode in beside a match", async () => {
+    // `chunks` answers "did a passage actually match this question". One did,
+    // whatever else was admitted alongside it, so the mixed case is not a
+    // separate value — covan#44 reads the column that way.
+    const REPORT = { id: "d3", name: "Yönetim Özeti.md", content: "Revenue rose 12% in Q3." };
+    const { app } = appWith({
+      question: "Yönetim Özeti raporunda ne yazıyor?",
+      documents: [REPORT, HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    await ask(app);
+    expect(grounding()).toBe("chunks");
   });
 
   it("records a question nothing was close to as none", async () => {

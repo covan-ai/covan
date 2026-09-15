@@ -159,11 +159,11 @@ the workspace can read it. Assistant replies cannot be written by any client,
 including this one — see [Your team](team.md).
 
 `POST /sessions/:id/report` takes `{ "instruction", "bundleId" }` and answers
-with the document it wrote, the same shape an upload returns. It is one call and
-a slow one — up to a minute — so it does not stream; `chunkCount` comes back `0`
-because a report is not embedded when it is written. `POST
-/documents/:id/reindex` is how it becomes retrievable. See
-[Knowledge bundles](knowledge.md).
+with the document it wrote, the same shape an upload returns — chunked, embedded
+and retrievable from then on. It is one call and a slow one, up to a minute, so
+it does not stream. `chunkCount` comes back `0` only when the embedding failed,
+which leaves the report saved and unretrievable until `POST
+/documents/:id/reindex`. See [Knowledge bundles](knowledge.md).
 
 ### Knowledge
 

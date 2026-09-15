@@ -64,13 +64,12 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
               onChange={(e) => setInstruction(e.target.value)}
               placeholder="Write up the quarter for the board, with the revenue numbers."
             />
-            {/* Said before the wait rather than after it. The report lands in
-                the agent's knowledge as a document, and it lands unindexed —
-                both are easier to accept as a description than as a surprise. */}
+            {/* Said before the wait rather than after it: where it lands and how
+                long it takes are both easier to accept as a description than as
+                a surprise. */}
             <p className="text-xs text-muted-foreground">
               Lands as a document in this agent&rsquo;s reports bundle, grounded in the conversation
-              and its knowledge. It arrives unindexed — reindex it on the Knowledge tab if the agent
-              should be able to search it later. Takes up to a minute.
+              and its knowledge, and searchable in chat from then on. Takes up to a minute.
             </p>
           </div>
           <div className="flex justify-end gap-2">

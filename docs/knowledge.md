@@ -192,6 +192,35 @@ longer than 8000 characters therefore comes back from a reindex with a narrower
 index than it had after upload. Reindex a PDF when it retrieves nothing at all;
 re-uploading it is the way to rebuild a full index.
 
+## Reports the agent writes
+
+The report control in the chat composer turns a conversation into a document.
+You say what the report should cover, the agent writes it against the
+conversation and the bundles attached to it, and what comes back is an ordinary
+markdown document — it downloads, moves, deletes and goes into the workspace
+export like any file you uploaded.
+
+It lands in a bundle of its own, named after the agent and created the first
+time you ask for one. That separation is deliberate: a bundle you uploaded holds
+sources the agent was given, and this one holds what the agent produced. Keeping
+them apart means you can detach the reports — so the agent stops reading its own
+output back as if it were evidence — without also detaching your files.
+
+**A report arrives unindexed, and that is on purpose.** It has no chunks, so no
+passage inside it can be matched by the retrieval described below, and the
+Knowledge tab labels it "Not indexed". It is still not invisible to the agent:
+asking about it by name reaches it through the stored-text fallback further
+down, which covers the first 8000 characters of any document. If you want a
+report searchable the way an uploaded file is, reindex it — that is what the
+refresh control beside it does, and it is the moment the report starts costing
+storage in earnest. Embedding every report the moment it was written would have
+made that decision for everyone, and most reports are read once.
+
+A report is one model call, capped at roughly eight pages, and it takes up to a
+minute. It is charged to your monthly allowance like a reply, and costs about
+what two to seven replies do — more than a chat turn, because the length is the
+point.
+
 ## Attaching, detaching and deleting
 
 The switch beside each bundle attaches it to the agent whose tab you are on.

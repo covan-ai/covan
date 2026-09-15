@@ -26,9 +26,11 @@ import { toast } from "sonner";
 import { Markdown } from "@/components/markdown";
 import { AgentAvatar } from "@/components/avatars";
 import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
+import { ChatReport, ChatReportReceipt } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
+import { useReportWriter } from "@/lib/use-report";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
@@ -89,6 +91,11 @@ function ChatTab() {
   );
   const active: ChatSession | undefined =
     agentSessions.find((s) => s.id === activeId) ?? agentSessions[0];
+
+  // Writing this conversation up as a document. Declared here rather than
+  // beside `uploads` above because it needs the session the report is written
+  // from, and that is only resolved on the line above this one.
+  const reports = useReportWriter(active?.id ?? null, agent);
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const currentUserId = me?.user.id;
@@ -923,6 +930,7 @@ function ChatTab() {
           )}
           <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">
             <ChatReceipts uploads={uploads} />
+            <ChatReportReceipt reports={reports} />
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -951,6 +959,7 @@ function ChatTab() {
                   {agent.name}
                 </span>
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
+                <ChatReport reports={reports} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
               </div>
               {/* Stop belongs to the conversation that is actually streaming.

@@ -295,6 +295,23 @@ export const api = {
       URL.revokeObjectURL(url);
     },
   },
+  reports: {
+    /**
+     * Write this conversation up as a document in `bundleId`.
+     *
+     * Comes back the same shape an upload does, and unindexed: a report is born
+     * with no chunks, so it reads as "Not indexed" in the Knowledge tab until
+     * somebody decides it is worth embedding and presses reindex there.
+     *
+     * One request, and a slow one — the model is writing a whole document, not
+     * a reply. Callers need a pending state that survives tens of seconds.
+     */
+    create: (
+      sessionId: string,
+      body: { instruction: string; bundleId: string },
+    ): Promise<Agent["documents"][number]> =>
+      request("POST", `/sessions/${sessionId}/report`, body),
+  },
   bundles: {
     list: (): Promise<Bundle[]> => request("GET", "/bundles"),
     /**

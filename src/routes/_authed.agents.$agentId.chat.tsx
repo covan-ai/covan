@@ -26,9 +26,12 @@ import { toast } from "sonner";
 import { Markdown } from "@/components/markdown";
 import { AgentAvatar } from "@/components/avatars";
 import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
+import { ChatReport, ChatReportReceipt } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
+import { useReportWriter } from "@/lib/use-report";
+import { parseReportCommand } from "@/lib/reports";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
@@ -89,6 +92,11 @@ function ChatTab() {
   );
   const active: ChatSession | undefined =
     agentSessions.find((s) => s.id === activeId) ?? agentSessions[0];
+
+  // Writing this conversation up as a document. Declared here rather than
+  // beside `uploads` above because it needs the session the report is written
+  // from, and that is only resolved on the line above this one.
+  const reports = useReportWriter(active?.id ?? null, agent);
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const currentUserId = me?.user.id;
@@ -500,7 +508,29 @@ function ChatTab() {
     }
   };
 
-  const send = () => void submit(input);
+  // `/report …` asks for a document instead of a reply.
+  //
+  // Read here rather than inside `submit`, which is also reached from the draft
+  // effect below — a command branch there is a setState run synchronously from
+  // an effect, which is a cascading render and a lint error besides.
+  //
+  // Only where the person can actually write one. For a viewer the command is
+  // not a command, it is text, and it is sent as typed — the same way the
+  // button beside the composer is simply absent rather than disabled.
+  const send = () => {
+    if (canWrite) {
+      const command = parseReportCommand(input);
+      if (command) {
+        setInput("");
+        // Nothing after the command means "I want a report and have not said
+        // what about", which is this dialog's question rather than an error.
+        if (command.instruction) void reports.write(command.instruction);
+        else reports.setDialogOpen(true);
+        return;
+      }
+    }
+    void submit(input);
+  };
 
   // The home composer stashes the first message under `chat-draft:<id>` and
   // opens this route. When the session lands empty, send that draft once.
@@ -529,6 +559,11 @@ function ChatTab() {
     // route, it is deleted as it is read, and it can only go once the session
     // is loaded and still empty. Doing it during render would send a message
     // twice under StrictMode.
+    // `/report` typed into the home composer is not a report — this conversation
+    // is empty, so there is nothing to write up yet. Dropped rather than sent,
+    // so it does not arrive as a puzzling first message the agent tries to
+    // answer. It is already out of sessionStorage by here, so this ends it.
+    if (parseReportCommand(draft)) return;
     void submit(draft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, messages.length, busy]);
@@ -923,6 +958,7 @@ function ChatTab() {
           )}
           <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">
             <ChatReceipts uploads={uploads} />
+            <ChatReportReceipt reports={reports} />
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -951,6 +987,7 @@ function ChatTab() {
                   {agent.name}
                 </span>
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
+                <ChatReport reports={reports} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
               </div>
               {/* Stop belongs to the conversation that is actually streaming.

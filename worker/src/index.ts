@@ -16,6 +16,7 @@ import { chat } from "./routes/chat";
 import { transcribe } from "./routes/transcribe";
 import { documents } from "./routes/documents";
 import { bundles } from "./routes/bundles";
+import { reports } from "./routes/reports";
 import { me } from "./routes/me";
 import { workspace } from "./routes/workspace";
 import { providerKeys } from "./routes/provider-keys";
@@ -127,6 +128,9 @@ api.use("/brainstorm/ideas/suggest", rateLimit("expensive"));
 api.use("/persona/suggest", rateLimit("expensive"));
 api.use("/routines/draft", rateLimit("expensive"));
 api.use("/routines/:id/run", rateLimit("expensive"));
+// The most expensive of the lot per call: a report is capped at 4096 output
+// tokens where a chat reply is capped at 1536, and output is the dear side.
+api.use("/sessions/:id/report", rateLimit("expensive"));
 
 api.route("/", agents);
 api.route("/", favorites);
@@ -139,6 +143,7 @@ api.route("/", chat);
 api.route("/", transcribe);
 api.route("/", documents);
 api.route("/", bundles);
+api.route("/", reports);
 api.route("/", me);
 api.route("/", workspace);
 api.route("/", providerKeys);

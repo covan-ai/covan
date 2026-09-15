@@ -43,6 +43,28 @@ export const CONCISION_INSTRUCTIONS = [
 ].join("\n");
 
 /**
+ * What a report is, said to a model that has spent every other turn being told
+ * to be brief.
+ *
+ * `CONCISION_INSTRUCTIONS` above is the right instruction for a chat turn and
+ * exactly the wrong one here — a report is asked for precisely when the short
+ * answer is not the deliverable. So this replaces it rather than layering on
+ * top of it, which is why report is a mode and not a flag.
+ *
+ * The title line is load-bearing: `lib/report.ts` reads it to name the document,
+ * and a report that opens with "Here is the report you asked for" is filed under
+ * a date instead of under its own subject.
+ */
+export const REPORT_INSTRUCTIONS = [
+  "Write a document, not a chat reply. The reader will open this on its own, without the conversation around it.",
+  "Open with a single `# ` title on the first line, naming the subject. No preamble above it.",
+  "Structure the body with `## ` sections. Use prose; reach for a list or a table only where one genuinely reads better.",
+  "Ground every claim in the documents and the conversation you were given. Attribute anything specific to the document it came from.",
+  "Where the sources do not answer something the report needs, say so in the report and name what is missing. Never fill the gap with a plausible number or date.",
+  "Do not close by summarising what you just wrote.",
+].join("\n");
+
+/**
  * How many filenames the manifest names before it starts counting instead.
  *
  * The manifest rides in the cacheable prefix, so its cost is amortised rather
@@ -88,9 +110,16 @@ function manifestNames(names: string[]): string {
   return `${shown}, and ${rest} more`;
 }
 
+/**
+ * What shape of output a turn is asking for. "normal" and "brainstorm" are
+ * session modes a conversation sits in (`lib/session-mode.ts`); "report" is not
+ * — it is the shape of one call, and a session never enters it.
+ */
+export type PromptMode = "normal" | "brainstorm" | "report";
+
 export function buildSystemPrefix(input: {
   persona: string | null;
-  mode: "normal" | "brainstorm";
+  mode: PromptMode;
   docNames: string[];
 }): string {
   const persona =
@@ -99,6 +128,8 @@ export function buildSystemPrefix(input: {
   let prefix = persona;
   if (input.mode === "brainstorm") {
     prefix += `\n\n${BRAINSTORM_INSTRUCTIONS}`;
+  } else if (input.mode === "report") {
+    prefix += `\n\n${REPORT_INSTRUCTIONS}`;
   } else {
     prefix += `\n\n${CONCISION_INSTRUCTIONS}`;
   }
@@ -121,10 +152,7 @@ export function buildSystemPrefix(input: {
  * `0` is a legitimate setting and means "as close to the same answer every time
  * as this model gets", so the check is against null and not against falsiness.
  */
-export function temperatureFor(
-  mode: "normal" | "brainstorm",
-  override?: number | null,
-): number | undefined {
+export function temperatureFor(mode: PromptMode, override?: number | null): number | undefined {
   if (override !== null && override !== undefined) return override;
   return mode === "brainstorm" ? 0.9 : undefined;
 }
@@ -155,6 +183,12 @@ export function reasoningEffortFor(override?: string | null): ReasoningEffort | 
 // dimension (4x input on gpt-4o), so a cap protects against runaway replies
 // without touching typical answers. Brainstorm needs more room for 5-10 ideas
 // plus critique; normal chat replies rarely approach the lower cap. Tunable.
-export function maxTokensFor(mode: "normal" | "brainstorm"): number {
+export function maxTokensFor(mode: PromptMode): number {
+  // A report is the one output whose length is the point, and output tokens are
+  // the expensive dimension — so this is the number that decides what a report
+  // costs. 4096 is about eight pages of English and nearer four of Turkish,
+  // which needs more tokens for the same text, the same asymmetry
+  // `TITLE_MAX_TOKENS` in `lib/session-title.ts` allows for.
+  if (mode === "report") return 4096;
   return mode === "brainstorm" ? 3072 : 1536;
 }

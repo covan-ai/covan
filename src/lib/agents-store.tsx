@@ -5,6 +5,7 @@ import { api, type Bundle } from "./api-client";
 import { canWriteAsRole } from "./roles";
 import type { ReasoningEffort } from "./agent-meta";
 import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
+import { reportBundleMarker, reportBundleName, findReportBundle } from "./reports";
 import { useHasSession } from "./session-presence";
 
 export type Agent = {
@@ -124,6 +125,12 @@ type Store = {
   moveDocument: (docId: string, bundleId: string) => Promise<void>;
   createBundle: (name: string, description?: string) => Promise<Bundle>;
   ensureChatBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
+  ensureReportBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
+  writeReport: (
+    sessionId: string,
+    agent: { id: string; name: string },
+    instruction: string,
+  ) => Promise<Agent["documents"][number]>;
   uploadToBundle: (
     bundleId: string,
     file: File,
@@ -187,6 +194,27 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
   const canWrite = me ? canWriteAsRole(me.members.find((m) => m.id === me.user.id)?.role) : true;
 
   const value = useMemo<Store>(() => {
+    // Hoisted rather than written inline twice: `writeReport` needs the bundle
+    // before it can ask for a report, and the store is a plain object literal,
+    // so one entry has no way to call another.
+    const ensureReportBundle = async (agent: { id: string; name: string }): Promise<Bundle> => {
+      const existing = findReportBundle(bundles, agent.id);
+      const bundle =
+        existing ??
+        (await api.bundles.create(reportBundleName(agent.name), reportBundleMarker(agent.id)));
+      if (!existing) await queryClient.invalidateQueries({ queryKey: ["bundles"] });
+
+      // Attached, or the Knowledge tab never shows it: that list is
+      // `agent.documents`, which is every document in every *attached* bundle.
+      // An unattached report would be a file with no screen.
+      const attached = agents.find((a) => a.id === agent.id)?.bundleIds.includes(bundle.id);
+      if (!attached) {
+        await api.bundles.attach(agent.id, bundle.id);
+        await queryClient.invalidateQueries({ queryKey: ["agents"] });
+      }
+      return bundle;
+    };
+
     return {
       agents,
       sessions,
@@ -235,6 +263,25 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           await queryClient.invalidateQueries({ queryKey: ["agents"] });
         }
         return bundle;
+      },
+
+      // A separate bundle from chat uploads on purpose: chat uploads are
+      // sources the agent was given, reports are what it produced. Keeping them
+      // apart is what lets someone detach the reports — so the agent stops
+      // reading its own output back as evidence — without also detaching the
+      // files they uploaded.
+      ensureReportBundle,
+
+      writeReport: async (sessionId, agent, instruction) => {
+        const bundle = await ensureReportBundle(agent);
+        const doc = await api.reports.create(sessionId, { instruction, bundleId: bundle.id });
+        // Same refresh as an upload: bundle counts, and the agent's document
+        // list with the per-document indexing state the Knowledge tab renders.
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["bundles"] }),
+          queryClient.invalidateQueries({ queryKey: ["agents"] }),
+        ]);
+        return doc;
       },
 
       uploadToBundle: async (bundleId, file, onProgress) => {

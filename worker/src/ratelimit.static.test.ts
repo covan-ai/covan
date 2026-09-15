@@ -100,6 +100,7 @@ const PAID_ENDPOINTS: Record<string, string[]> = {
   "brainstorm.ts": ["/brainstorm/ideas/suggest"],
   "persona.ts": ["/persona/suggest"],
   "routines.ts": ["/routines/draft", "/routines/:id/run"],
+  "reports.ts": ["/sessions/:id/report"],
 };
 
 describe("the expensive rate limit", () => {

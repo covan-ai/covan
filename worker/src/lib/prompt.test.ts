@@ -8,6 +8,7 @@ import {
   CONCISION_INSTRUCTIONS,
   DEFAULT_PERSONA,
   MANIFEST_NAME_LIMIT,
+  REPORT_INSTRUCTIONS,
 } from "./prompt";
 
 describe("buildSystemPrefix", () => {
@@ -154,5 +155,40 @@ describe("maxTokensFor", () => {
     expect(maxTokensFor("normal")).toBe(1536);
     expect(maxTokensFor("brainstorm")).toBe(3072);
     expect(maxTokensFor("brainstorm")).toBeGreaterThan(maxTokensFor("normal"));
+  });
+});
+
+describe("report mode", () => {
+  it("does not ask a report to be brief", () => {
+    // CONCISION_INSTRUCTIONS opens with "Answer in as few words as the question
+    // genuinely needs", which is the right instruction for a chat turn and the
+    // wrong one for a document somebody asked to be written.
+    const out = buildSystemPrefix({ persona: "You are our PM.", mode: "report", docNames: [] });
+    expect(out).toContain(REPORT_INSTRUCTIONS);
+    expect(out).not.toContain(CONCISION_INSTRUCTIONS);
+    expect(out).not.toContain(BRAINSTORM_INSTRUCTIONS);
+  });
+
+  it("still names the documents it has", () => {
+    // The manifest is the reason the agent does not deny having files. A report
+    // is written against those files, so dropping it here would be worse than
+    // dropping it in chat.
+    const out = buildSystemPrefix({ persona: "P", mode: "report", docNames: ["a.md", "b.md"] });
+    expect(out).toContain("a.md, b.md");
+  });
+
+  it("gives a report more room than either chat mode", () => {
+    expect(maxTokensFor("report")).toBe(4096);
+    expect(maxTokensFor("report")).toBeGreaterThan(maxTokensFor("brainstorm"));
+    expect(maxTokensFor("report")).toBeGreaterThan(maxTokensFor("normal"));
+  });
+
+  it("sends no temperature of its own, and still honours the agent's", () => {
+    // Same rule as normal chat: undefined means the request carries no
+    // temperature at all, which is not the same as sending the provider's
+    // default. The agent's dial (0048) wins when it has been moved.
+    expect(temperatureFor("report")).toBeUndefined();
+    expect(temperatureFor("report", 0.2)).toBe(0.2);
+    expect(temperatureFor("report", 0)).toBe(0);
   });
 });

@@ -131,15 +131,15 @@ client for all of it.
 
 ### Agents
 
-|                                                |                                  |
-| ---------------------------------------------- | -------------------------------- |
-| `GET /agents`                                  | Every agent in the workspace     |
-| `POST /agents`                                 | Create one                       |
+|                                                |                                        |
+| ---------------------------------------------- | -------------------------------------- |
+| `GET /agents`                                  | Every agent in the workspace           |
+| `POST /agents`                                 | Create one                             |
 | `PATCH /agents/:id`                            | Rename, re-persona, change model, tune |
-| `DELETE /agents/:id`                           | Delete                           |
-| `POST /agents/:id/bundles/:bundleId`           | Attach a knowledge bundle        |
-| `DELETE /agents/:id/bundles/:bundleId`         | Detach it                        |
-| `GET /favorites` · `POST /agents/:id/favorite` | Your own shortcuts               |
+| `DELETE /agents/:id`                           | Delete                                 |
+| `POST /agents/:id/bundles/:bundleId`           | Attach a knowledge bundle              |
+| `DELETE /agents/:id/bundles/:bundleId`         | Detach it                              |
+| `GET /favorites` · `POST /agents/:id/favorite` | Your own shortcuts                     |
 
 ### Conversations
 
@@ -152,10 +152,18 @@ client for all of it.
 | `DELETE /messages/after/:id`                   | Truncate, for a re-ask        |
 | `POST /chat/stream`                            | Ask. Streams SSE.             |
 | `POST /transcribe`                             | Audio to text                 |
+| `POST /sessions/:id/report`                    | Write it up as a document     |
 
 A session is private to you unless its `visibility` is `shared`, in which case
 the workspace can read it. Assistant replies cannot be written by any client,
 including this one — see [Your team](team.md).
+
+`POST /sessions/:id/report` takes `{ "instruction", "bundleId" }` and answers
+with the document it wrote, the same shape an upload returns. It is one call and
+a slow one — up to a minute — so it does not stream; `chunkCount` comes back `0`
+because a report is not embedded when it is written. `POST
+/documents/:id/reindex` is how it becomes retrievable. See
+[Knowledge bundles](knowledge.md).
 
 ### Knowledge
 

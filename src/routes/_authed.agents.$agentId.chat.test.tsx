@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
@@ -486,5 +486,60 @@ describe("what a reply looks like on its way in", () => {
     // Stopped: the text stays until the server's copy replaces it, but it is
     // no longer arriving, so it no longer claims to be.
     await waitFor(() => expect(container.querySelector(".stream-live")).not.toBeInTheDocument());
+  });
+});
+
+describe("what a screen reader is told", () => {
+  it("reads the transcript as a log, and only what is added to it", async () => {
+    await renderChat();
+
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(within(log).getByText(question.content)).toBeInTheDocument();
+    // Not `additions text`, which is the default: an edited message rewrites
+    // text already read out, and re-reading it is nobody's request.
+    expect(log).toHaveAttribute("aria-relevant", "additions");
+  });
+
+  it("says a reply is coming without reading it a token at a time", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(openStream())),
+    );
+    await renderChat();
+
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    const status = await screen.findByRole("status");
+    await waitFor(() => expect(status).toHaveTextContent(`${agent.name} is replying`));
+    // And the words themselves are outside the log, so they are not announced
+    // again on every delta.
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(within(log).queryByText(/Forty/)).not.toBeInTheDocument();
+  });
+
+  it("falls quiet once nothing is arriving", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "delta", text: "Forty." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+    await renderChat();
+    // What the server returns once the answer is written — the refetch that
+    // follows `done` reads this, and without it the mock would hand back a
+    // list from before the reply and take the answer straight back off screen.
+    listMessages.mockResolvedValue([question, answer]);
+
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    await waitFor(() => expect(screen.getByRole("status")).toBeEmptyDOMElement());
+    // The answer is in the log by then, which is where it gets read out.
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(within(log).getByText(answer.content)).toBeInTheDocument();
   });
 });

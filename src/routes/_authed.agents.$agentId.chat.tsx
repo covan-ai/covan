@@ -848,40 +848,61 @@ function ChatTab() {
             </div>
           ) : (
             <div className="space-y-8">
-              {messages.map((m, idx, arr) => {
-                // `role`, not ownership — this decides the LAYOUT. A
-                // teammate's message in a shared session is still somebody's
-                // turn and still draws as one, with their name above it.
-                const isPersonsTurn = m.role === "user";
-                if (isPersonsTurn) {
-                  if (editingId === m.id) {
+              {/*
+                A log, which is what a transcript is, and what makes a screen
+                reader read a reply out when it lands instead of leaving the
+                screen silent. `additions` and not the default `additions text`
+                on purpose: an edited message rewrites text that has already
+                been read, and re-reading it is not what anyone asked for.
+
+                The reply *while it is arriving* is deliberately outside this —
+                see the block below. Announcing a growing string on every token
+                is not access, it is a torrent.
+              */}
+              <div
+                role="log"
+                aria-label="Conversation"
+                aria-relevant="additions"
+                className="space-y-8"
+              >
+                {messages.map((m, idx, arr) => {
+                  // `role`, not ownership — this decides the LAYOUT. A
+                  // teammate's message in a shared session is still somebody's
+                  // turn and still draws as one, with their name above it.
+                  const isPersonsTurn = m.role === "user";
+                  if (isPersonsTurn) {
+                    if (editingId === m.id) {
+                      return (
+                        <EditTurn
+                          key={m.id}
+                          value={editText}
+                          onChange={setEditText}
+                          onCancel={() => setEditingId(null)}
+                          onSave={() => void saveEdit(m.id)}
+                        />
+                      );
+                    }
                     return (
-                      <EditTurn
-                        key={m.id}
-                        value={editText}
-                        onChange={setEditText}
-                        onCancel={() => setEditingId(null)}
-                        onSave={() => void saveEdit(m.id)}
-                      />
-                    );
-                  }
-                  return (
-                    <div key={m.id} className="group flex flex-col items-end gap-1">
-                      {isShared && m.sender && (
-                        <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-                          {m.sender.avatarUrl ? (
-                            <img src={m.sender.avatarUrl} alt="" className="h-4 w-4 rounded-full" />
-                          ) : null}
-                          <span>{m.sender.name ?? "Someone"}</span>
+                      <div key={m.id} className="group flex flex-col items-end gap-1">
+                        {isShared && m.sender && (
+                          <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+                            {m.sender.avatarUrl ? (
+                              <img
+                                src={m.sender.avatarUrl}
+                                alt=""
+                                className="h-4 w-4 rounded-full"
+                              />
+                            ) : null}
+                            <span>{m.sender.name ?? "Someone"}</span>
+                          </div>
+                        )}
+                        <span className="px-1 text-xs text-muted-foreground">
+                          {formatTime(m.createdAt)}
+                        </span>
+                        <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-[15px] leading-[1.45] text-primary-foreground">
+                          {m.content}
                         </div>
-                      )}
-                      <span className="px-1 text-xs text-muted-foreground">
-                        {formatTime(m.createdAt)}
-                      </span>
-                      <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-[15px] leading-[1.45] text-primary-foreground">
-                        {m.content}
-                      </div>
-                      {/* Ownership, not role. This used to branch on the same
+                        {/* Ownership, not role. This used to branch on the same
                           flag as the layout above, so in a shared session an
                           Edit button appeared over a colleague's message —
                           and answered 404, because messages_update_owner is
@@ -889,66 +910,66 @@ function ChatTab() {
                           discards every reply after the edited turn, which is
                           not something to offer over somebody else's
                           conversation even if the policy allowed it. */}
-                      {isOwner && (
-                        <button
-                          onClick={() => startEdit(m.id, m.content)}
-                          disabled={busy}
-                          className="flex items-center gap-1 px-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
-                        >
-                          <Pencil className="h-3 w-3" /> Edit
-                        </button>
-                      )}
-                    </div>
-                  );
-                }
-                const sources = m.sources ?? [];
-                const prevUser = idx > 0 && arr[idx - 1].role === "user" ? arr[idx - 1] : null;
-                const isLast = idx === arr.length - 1;
-                return (
-                  <div key={m.id} className="group flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
-                      <span className="text-sm font-semibold">{agent.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {formatTime(m.createdAt)}
-                      </span>
-                    </div>
-                    <div className="pl-9">
-                      <Markdown
-                        content={m.content}
-                        className="text-[15px] leading-relaxed text-foreground"
-                      />
+                        {isOwner && (
+                          <button
+                            onClick={() => startEdit(m.id, m.content)}
+                            disabled={busy}
+                            className="flex items-center gap-1 px-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
+                          >
+                            <Pencil className="h-3 w-3" /> Edit
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+                  const sources = m.sources ?? [];
+                  const prevUser = idx > 0 && arr[idx - 1].role === "user" ? arr[idx - 1] : null;
+                  const isLast = idx === arr.length - 1;
+                  return (
+                    <div key={m.id} className="group flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
+                        <span className="text-sm font-semibold">{agent.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatTime(m.createdAt)}
+                        </span>
+                      </div>
+                      <div className="pl-9">
+                        <Markdown
+                          content={m.content}
+                          className="text-[15px] leading-relaxed text-foreground"
+                        />
 
-                      {sources.length > 0 && (
-                        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs text-muted-foreground">Sources</span>
-                          {sources.map((source, i) => (
-                            <SourceChip
-                              key={source.id ?? `${source.name}:${i}`}
-                              source={source}
-                              uploadedAt={source.id ? uploadedAt.get(source.id) : undefined}
-                            />
-                          ))}
-                        </div>
-                      )}
+                        {sources.length > 0 && (
+                          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                            <span className="text-xs text-muted-foreground">Sources</span>
+                            {sources.map((source, i) => (
+                              <SourceChip
+                                key={source.id ?? `${source.name}:${i}`}
+                                source={source}
+                                uploadedAt={source.id ? uploadedAt.get(source.id) : undefined}
+                              />
+                            ))}
+                          </div>
+                        )}
 
-                      <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                        <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>
-                          <Copy className="h-3.5 w-3.5" />
-                        </MsgAction>
-                        <MsgAction
-                          label="This answer was good — say why"
-                          onClick={() => setRating({ messageId: m.id, kind: "other" })}
-                        >
-                          <ThumbsUp className="h-3.5 w-3.5" />
-                        </MsgAction>
-                        <MsgAction
-                          label="Something's wrong with this answer"
-                          onClick={() => setRating({ messageId: m.id, kind: "problem" })}
-                        >
-                          <ThumbsDown className="h-3.5 w-3.5" />
-                        </MsgAction>
-                        {/* Ownership, not role — the same rule as Edit above,
+                        <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                          <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>
+                            <Copy className="h-3.5 w-3.5" />
+                          </MsgAction>
+                          <MsgAction
+                            label="This answer was good — say why"
+                            onClick={() => setRating({ messageId: m.id, kind: "other" })}
+                          >
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                          </MsgAction>
+                          <MsgAction
+                            label="Something's wrong with this answer"
+                            onClick={() => setRating({ messageId: m.id, kind: "problem" })}
+                          >
+                            <ThumbsDown className="h-3.5 w-3.5" />
+                          </MsgAction>
+                          {/* Ownership, not role — the same rule as Edit above,
                             and for the same reason. Regenerating discards
                             every message after the anchor, and
                             messages_delete_owner is keyed to whoever owns the
@@ -956,31 +977,42 @@ function ChatTab() {
                             thread it deleted nothing, reported nothing, and
                             then failed to answer a question that already had
                             an answer sitting under it. */}
-                        {isLast && prevUser && isOwner && (
-                          <MsgAction
-                            label="Regenerate"
-                            onClick={() => void regenerate(prevUser.id)}
-                          >
-                            <RefreshCw className="h-3.5 w-3.5" />
-                          </MsgAction>
-                        )}
+                          {isLast && prevUser && isOwner && (
+                            <MsgAction
+                              label="Regenerate"
+                              onClick={() => void regenerate(prevUser.id)}
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            </MsgAction>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
 
               {(replyingIn === active?.id || settlingIn === active?.id) && (
-                <div className="flex flex-col gap-2">
+                // Outside the log, and silent. The words arrive here one token
+                // at a time; a screen reader is told *that* a reply is coming
+                // by the status line below, and reads the reply itself once it
+                // lands in the log above as a finished thing.
+                <div className="flex flex-col gap-2" aria-live="off">
                   <div className="flex items-center gap-2">
                     <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
                     <span className="text-sm font-semibold">{agent.name}</span>
                   </div>
                   <div className="pl-9">
                     {thinking ? (
+                      // `aria-hidden`, where this used to carry an `aria-label`
+                      // on a bare `<div>` — a label on an element with no role
+                      // is a string most screen readers have nowhere to put.
+                      // The words are in the status line at the foot of the
+                      // conversation instead, where they are announced rather
+                      // than merely present.
                       <div
                         className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                        aria-label={`${agent.name} is thinking`}
+                        aria-hidden="true"
                       >
                         <span className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground" />
                         <span
@@ -1029,6 +1061,23 @@ function ChatTab() {
               )}
             </div>
           )}
+
+          {/*
+            What the conversation is doing, for somebody who cannot see it.
+            Derived rather than stored: every value here is already on screen
+            as a typing indicator, a caret or their absence, and a second copy
+            in state would be a second thing to keep true.
+
+            It says what is happening and not what is being said. The saying is
+            the log's job, once there is a whole answer to read.
+          */}
+          <span role="status" aria-live="polite" className="sr-only">
+            {replyingIn === active?.id
+              ? thinking
+                ? `${agent.name} is thinking`
+                : `${agent.name} is replying`
+              : ""}
+          </span>
         </div>
       </div>
 

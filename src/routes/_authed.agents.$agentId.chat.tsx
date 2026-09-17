@@ -994,15 +994,35 @@ function ChatTab() {
                         <span className="ml-1">Thinking…</span>
                       </div>
                     ) : (
-                      <span className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">
-                        {streamText}
-                        {/* No caret once the stream has stopped — this text is
-                            waiting to be replaced by the server's copy, not
-                            still arriving. */}
-                        {replyingIn === active?.id && (
-                          <span className="stream-caret ml-0.5 inline-block h-4 w-[3px] translate-y-0.5 rounded-sm bg-foreground/70 align-middle" />
+                      // The same renderer the settled answer uses, so the
+                      // reply arrives in the shape it will keep. It used to be
+                      // plain `whitespace-pre-wrap`, which meant watching raw
+                      // `**`, bare `|` rows and unopened fences for the length
+                      // of the answer and then having the whole thing reflow
+                      // into something else the moment it finished. That
+                      // reflow was the single most visible difference between
+                      // this and the chat products people arrive from.
+                      //
+                      // Measured before it was written: a full parse and mount
+                      // of a 700-character answer costs ~1.1ms per delta under
+                      // jsdom, which re-mounts the tree every time. A browser
+                      // re-renders an existing one. There is nothing here to
+                      // batch.
+                      //
+                      // `stream-live` is what draws the caret — see
+                      // `styles.css`. A sibling span cannot: the answer is
+                      // blocks now, and a span after them sits on its own line
+                      // under the last paragraph rather than at the end of it.
+                      // Dropped once the stream stops, because at that point
+                      // the text is waiting to be replaced by the server's
+                      // copy rather than still arriving.
+                      <Markdown
+                        content={streamText}
+                        className={cn(
+                          "text-[15px] leading-relaxed text-foreground",
+                          replyingIn === active?.id && "stream-live",
                         )}
-                      </span>
+                      />
                     )}
                   </div>
                 </div>

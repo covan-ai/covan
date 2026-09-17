@@ -438,3 +438,53 @@ describe("the keys beside Enter", () => {
     expect(screen.queryByLabelText("Edit your message")).not.toBeInTheDocument();
   });
 });
+
+describe("what a reply looks like on its way in", () => {
+  it("renders the markdown as it arrives, not once it has finished", async () => {
+    // What this used to be: raw `**`, bare `|` rows and an unopened fence on
+    // screen for the length of the answer, then the whole thing reflowing into
+    // something else the moment `done` landed. The reflow was the most visible
+    // difference between this and the chat products people arrive from.
+    const held = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const text of ["## Pricing\n\n", "**Forty** dollars", " a seat."]) {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ type: "delta", text })}\n\n`),
+          );
+        }
+        // Left open: this is the middle of a reply, which is the whole point.
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve({ ok: true, status: 200, body: held, json: async () => null })),
+    );
+
+    const { container } = await renderChat();
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    await waitFor(() => expect(container.querySelector("strong")).toBeInTheDocument());
+    expect(container.querySelector("strong")).toHaveTextContent("Forty");
+    expect(screen.getByText("Pricing")).toBeInTheDocument();
+    // And nothing on screen still shows the marks themselves.
+    expect(screen.queryByText(/\*\*Forty\*\*/)).not.toBeInTheDocument();
+  });
+
+  it("carries the caret while the reply is arriving, and drops it after", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(openStream())),
+    );
+    const { container } = await renderChat();
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    await waitFor(() => expect(container.querySelector(".stream-live")).toBeInTheDocument());
+
+    fireEvent.keyDown(screen.getByPlaceholderText(`Message ${agent.name}`), { key: "Escape" });
+
+    // Stopped: the text stays until the server's copy replaces it, but it is
+    // no longer arriving, so it no longer claims to be.
+    await waitFor(() => expect(container.querySelector(".stream-live")).not.toBeInTheDocument());
+  });
+});

@@ -344,6 +344,31 @@
   animation: caret-blink 1s steps(1) infinite;
 }
 
+/*
+ * The caret, once the streamed answer became Markdown rather than plain text.
+ *
+ * It used to be a sibling `<span>` after the text, which worked while the text
+ * was one inline run. It cannot now: the answer renders as blocks, and a span
+ * after them lands on a line of its own under the last paragraph rather than
+ * at the end of it.
+ *
+ * So it is drawn by the last block instead. `::after` on a `<p>` sits at the
+ * end of its last line, which is where a caret belongs; after a code block or
+ * a table it falls to the line below, which is also where it belongs, since
+ * those are boxes and the next thing written will start under them.
+ */
+.stream-live > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: color-mix(in oklab, var(--foreground) 70%, transparent);
+  animation: caret-blink 1s steps(1) infinite;
+}
+
 /* Subtle messaging-app wallpaper for the chat surface. */
 .chat-bg {
   background-color: var(--surface-muted);
@@ -353,7 +378,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
-  .stream-caret {
+  .stream-caret,
+  .stream-live > :last-child::after {
     animation: none;
   }
 }

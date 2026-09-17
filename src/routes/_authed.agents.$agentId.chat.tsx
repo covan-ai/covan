@@ -10,6 +10,8 @@ import { IdeaBoard } from "@/components/idea-board";
 import {
   ArrowDown,
   ArrowUp,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   FileText,
   Lock,
@@ -35,6 +37,13 @@ import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
+import { modelsFor } from "@/lib/agent-meta";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -116,6 +125,13 @@ function ChatTab() {
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const currentUserId = me?.user.id;
+  // What "try that again on something else" can offer: what this deployment
+  // can actually serve, minus the model the agent is already on. Offering that
+  // one back is not an offer.
+  const pickableModels = useMemo(
+    () => modelsFor(me?.models, agent.model).filter((m) => m !== agent.model),
+    [me?.models, agent.model],
+  );
   const isOwner = !!active && active.ownerId === currentUserId;
   const isShared = active?.visibility === "shared";
   const isBrainstorm = active?.kind === "brainstorm";
@@ -435,7 +451,10 @@ function ChatTab() {
   // Stream a real reply for `sessionId` from the Worker's SSE endpoint. The
   // session's message history (already persisted) is read server-side, so
   // the caller only needs to make sure the latest user turn has landed.
-  const streamReply = async (sessionId: string, opts: { continuing?: string } = {}) => {
+  const streamReply = async (
+    sessionId: string,
+    opts: { continuing?: string; regenerate?: boolean; model?: string } = {},
+  ) => {
     if (streamAbort.current) return;
     if (reconcileTimer.current) {
       window.clearTimeout(reconcileTimer.current);
@@ -468,7 +487,12 @@ function ChatTab() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ sessionId, ...(opts.continuing ? { continue: true } : {}) }),
+        body: JSON.stringify({
+          sessionId,
+          ...(opts.continuing ? { continue: true } : {}),
+          ...(opts.regenerate ? { regenerate: true } : {}),
+          ...(opts.model ? { model: opts.model } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -795,19 +819,32 @@ function ChatTab() {
     void streamReply(active.id, { continuing: messageId });
   };
 
-  // Regenerate: drop the reply after a user turn and answer it again. The
-  // user message is unchanged, so we only need its id to trim after it.
-  const regenerate = async (userMessageId: string) => {
+  // Answer the last question again, keeping the answer that is already there.
+  //
+  // This used to delete: `deleteAfter` dropped the reply, then the stream
+  // wrote a new one, and there was no way back — so what the button asked was
+  // "are you sure the next answer will be better than this one", which nobody
+  // can know before seeing it. The server versions it now (0050), so pressing
+  // this is free and the old answer is one click away.
+  //
+  // `model` is for one reply only. The agent's own model is a setting somebody
+  // chose, and "try that again on something stronger" has no business
+  // overwriting it.
+  const regenerate = (model?: string) => {
+    if (!active || busy) return;
+    void streamReply(active.id, { regenerate: true, model });
+  };
+
+  // Back to a version that was put aside. The server does the swap in one
+  // statement — see 0050 for why it cannot be two.
+  const showVersion = async (messageId: string) => {
     if (!active || busy) return;
     try {
-      await api.messages.deleteAfter(userMessageId);
+      await api.messages.show(messageId);
     } catch (e) {
       rewriteFailed(e);
-      invalidateMessages(active.id);
-      return;
     }
     invalidateMessages(active.id);
-    await streamReply(active.id);
   };
 
   // Edit a past user message, discard everything after it, and re-answer.
@@ -1095,6 +1132,21 @@ function ChatTab() {
                           )}
                         />
 
+                        {/* Which take on this answer is showing, when there
+                            is more than one. Beside the answer rather than in
+                            the hover actions, because it is a fact about what
+                            is on screen: somebody reading a regenerated reply
+                            needs to know the other one still exists without
+                            having to go looking. */}
+                        {m.versions && m.versions.length > 1 && (
+                          <VersionPicker
+                            versions={m.versions}
+                            current={m.id}
+                            busy={busy}
+                            onShow={(id) => void showVersion(id)}
+                          />
+                        )}
+
                         {sources.length > 0 && (
                           <div className="mt-3 flex flex-wrap items-center gap-1.5">
                             <span className="text-xs text-muted-foreground">Sources</span>
@@ -1145,21 +1197,26 @@ function ChatTab() {
                           >
                             <ThumbsDown className="h-3.5 w-3.5" />
                           </MsgAction>
-                          {/* Ownership, not role — the same rule as Edit above,
-                            and for the same reason. Regenerating discards
-                            every message after the anchor, and
-                            messages_delete_owner is keyed to whoever owns the
-                            SESSION. Offered to a colleague reading a shared
-                            thread it deleted nothing, reported nothing, and
-                            then failed to answer a question that already had
-                            an answer sitting under it. */}
+                          {/* Ownership, not role — the same rule as Edit
+                            above. `messages_delete_owner` is keyed to whoever
+                            owns the SESSION, and so is `show_message_version`;
+                            offered to a colleague reading a shared thread this
+                            changed nothing, reported nothing, and then failed
+                            to answer a question that already had an answer
+                            under it.
+
+                            The last answer only. Regenerating one in the
+                            middle would leave every turn after it replying to
+                            something no longer there, and making those turns a
+                            branch is a conversation tree rather than a version
+                            list — a different feature, and a much larger one. */}
                           {isLast && prevUser && isOwner && (
-                            <MsgAction
-                              label="Regenerate"
-                              onClick={() => void regenerate(prevUser.id)}
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                            </MsgAction>
+                            <>
+                              <MsgAction label="Regenerate" onClick={() => regenerate()}>
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              </MsgAction>
+                              <RetryOn models={pickableModels} onPick={regenerate} />
+                            </>
                           )}
                         </div>
                       </div>
@@ -1563,6 +1620,94 @@ function EditTurn({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Which take on an answer is showing, and how to get to the others.
+ *
+ * `‹ 2/3 ›` rather than a list, because the versions have no names and never
+ * will: they are the same question answered twice. What somebody wants is to
+ * flick between them and stop on the one they liked, which is two buttons and
+ * a count.
+ */
+function VersionPicker({
+  versions,
+  current,
+  busy,
+  onShow,
+}: {
+  versions: string[];
+  current: string;
+  busy: boolean;
+  onShow: (id: string) => void;
+}) {
+  const at = versions.indexOf(current);
+  // A chain that does not contain the message showing is a transcript and a
+  // version list that disagree, and drawing `0/3` over it helps nobody.
+  if (at === -1) return null;
+  const step = (by: number) => onShow(versions[at + by]);
+  return (
+    <div className="mt-2 flex items-center gap-0.5 text-xs text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => step(-1)}
+        disabled={busy || at === 0}
+        aria-label="Previous version of this answer"
+        className="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+      <span className="tabular-nums" aria-label={`Version ${at + 1} of ${versions.length}`}>
+        {at + 1}/{versions.length}
+      </span>
+      <button
+        type="button"
+        onClick={() => step(1)}
+        disabled={busy || at === versions.length - 1}
+        aria-label="Next version of this answer"
+        className="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Answer that again, on something else.
+ *
+ * Beside Regenerate rather than replacing it: the common press is "try again",
+ * and burying it behind a menu to make room for a choice nobody makes most of
+ * the time is a worse default. Absent entirely on a deployment that serves one
+ * model, where the menu would have nothing in it.
+ */
+function RetryOn({ models, onPick }: { models: string[]; onPick: (model: string) => void }) {
+  if (models.length === 0) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          title="Answer again on another model"
+          aria-label="Answer again on another model"
+          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {models.map((model) => (
+          <DropdownMenuItem
+            key={model}
+            onSelect={() => onPick(model)}
+            className="font-mono text-xs"
+          >
+            {model}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

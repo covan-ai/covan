@@ -381,6 +381,13 @@ export const api = {
     update: (id: string, content: string): Promise<Message> =>
       request("PATCH", `/messages/${id}`, { content }),
     deleteAfter: (id: string): Promise<void> => request("DELETE", `/messages/after/${id}`),
+    /**
+     * Put a different version of an answer back on screen.
+     *
+     * Regenerating keeps the reply it replaced rather than deleting it (0050),
+     * and this is how somebody goes back to one.
+     */
+    show: (id: string): Promise<{ ok: true }> => request("POST", `/messages/${id}/show`),
   },
   ideas: {
     list: (sessionId: string): Promise<Idea[]> => request("GET", `/sessions/${sessionId}/ideas`),

@@ -57,6 +57,14 @@ export type Message = {
   // In a shared session, the human author of a user message. Absent for
   // assistant messages and for one's own optimistic messages before refetch.
   sender?: { id: string; name: string | null; avatarUrl: string | null };
+  /**
+   * Every version of this answer, oldest first, when there is more than one.
+   *
+   * Absent on a reply nobody has regenerated, which is almost all of them.
+   * Ids only — the screen asks the server for whichever one it wants to show
+   * rather than holding five drafts of an answer nobody is reading.
+   */
+  versions?: string[];
 };
 
 export type ChatSession = {

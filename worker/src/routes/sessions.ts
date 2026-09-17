@@ -203,6 +203,11 @@ sessions.get("/sessions/:id/messages", async (c) => {
     .from("messages")
     .select("*, sender:profiles(id,name,avatar_url)")
     .eq("session_id", id)
+    // Superseded replies are earlier takes on an answer that is already here.
+    // They belong to the version picker, not to the transcript — somebody
+    // scrolling back should see the conversation they had, not every draft of
+    // it. 0050's partial index is on exactly this predicate.
+    .is("superseded_at", null)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(limit);
@@ -211,7 +216,45 @@ sessions.get("/sessions/:id/messages", async (c) => {
     return c.json({ error: "failed to load messages" }, 500);
   }
 
-  return c.json((data ?? []).slice().reverse().map(mapMessage));
+  const visible = (data ?? []).slice().reverse();
+
+  // Which answers have more than one version, in one query rather than one
+  // per answer.
+  //
+  // Every version but the first carries `original_message_id`, so this row set
+  // *is* the grouping: a root with nothing pointing at it has never been
+  // regenerated. The root's own id comes from the pointer rather than from a
+  // second read, and it is always the earliest version, so prepending it is
+  // the whole of the ordering.
+  //
+  // A session where nothing has been regenerated pays for one empty indexed
+  // result, which is almost all of them.
+  const { data: alternates, error: alternatesError } = await db
+    .from("messages")
+    .select("id, original_message_id, created_at")
+    .eq("session_id", id)
+    .not("original_message_id", "is", null)
+    .order("created_at");
+
+  if (alternatesError) {
+    return c.json({ error: "failed to load messages" }, 500);
+  }
+
+  const chains = new Map<string, string[]>();
+  for (const row of (alternates ?? []) as Array<{ id: string; original_message_id: string }>) {
+    const chain = chains.get(row.original_message_id);
+    if (chain) chain.push(row.id);
+    else chains.set(row.original_message_id, [row.original_message_id, row.id]);
+  }
+
+  return c.json(
+    visible.map(
+      (row: Parameters<typeof mapMessage>[0] & { original_message_id?: string | null }) => {
+        const versions = chains.get(row.original_message_id ?? row.id);
+        return { ...mapMessage(row), ...(versions ? { versions } : {}) };
+      },
+    ),
+  );
 });
 
 export { sessions };

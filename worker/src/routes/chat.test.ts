@@ -283,6 +283,8 @@ async function post(app: Hono<AppEnv>, body: Record<string, unknown>) {
 
 const ask = (app: Hono<AppEnv>) => post(app, { sessionId: SESSION.id });
 const carryOn = (app: Hono<AppEnv>) => post(app, { sessionId: SESSION.id, continue: true });
+const again = (app: Hono<AppEnv>, model?: string) =>
+  post(app, { sessionId: SESSION.id, regenerate: true, ...(model ? { model } : {}) });
 
 /**
  * The messages the model was actually sent for the REPLY, by role.
@@ -924,5 +926,72 @@ describe("finishing a reply that stopped mid-sentence", () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toMatch(/nothing to continue/);
+  });
+});
+
+describe("answering the same question again", () => {
+  const FIRST_ANSWER = "Twenty days, I think.";
+
+  it("keeps the answer it replaces instead of deleting it", async () => {
+    // What regenerate used to be: the reply went, the question was re-asked,
+    // and there was no way back — so the button really asked "are you sure the
+    // next answer will be better", which nobody can know before seeing it.
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: FIRST_ANSWER });
+
+    await again(app);
+
+    expect(serviceUpdate.mock.calls[0][0]).toMatchObject({ id: "m1" });
+    expect(serviceUpdate.mock.calls[0][0].superseded_at).toEqual(expect.any(String));
+    // And the new one joins the chain rather than starting its own.
+    expect(serviceInsert.mock.calls[0][0]).toMatchObject({ original_message_id: "m1" });
+  });
+
+  it("does not show the model the answer it is replacing", async () => {
+    // Left in front of it, the model reads its own previous reply and writes a
+    // variation on it rather than a second attempt at the question.
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: FIRST_ANSWER });
+
+    await again(app);
+
+    expect(sentMessages().some((m) => m.content === FIRST_ANSWER)).toBe(false);
+  });
+
+  it("answers on another model for one reply, without moving the agent to it", async () => {
+    const { app } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: FIRST_ANSWER,
+      agentModel: "gpt-4o",
+    });
+
+    await again(app, "gpt-4.1-mini");
+
+    const reply = completionCreate.mock.calls.find((call) => call[0].stream);
+    expect(reply![0].model).toBe("gpt-4.1-mini");
+    // Nothing was written to the agent — the override lives in the request.
+    expect(serviceUpdate.mock.calls.every((call) => "superseded_at" in call[0])).toBe(true);
+  });
+
+  it("ignores a model this deployment does not serve", async () => {
+    // The same answer `resolveModel` already gives an agent whose model had its
+    // key rotated out: fall back rather than fail the reply.
+    const { app } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: FIRST_ANSWER,
+      agentModel: "gpt-4o",
+    });
+
+    await again(app, "some-model-nobody-has");
+
+    const reply = completionCreate.mock.calls.find((call) => call[0].stream);
+    expect(reply![0].model).toBe("gpt-4o");
+  });
+
+  it("refuses when the conversation ends on a question", async () => {
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    const res = await again(app);
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatch(/nothing to regenerate/);
   });
 });

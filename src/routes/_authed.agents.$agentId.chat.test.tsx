@@ -59,15 +59,21 @@ vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
 
 const listMessages = vi.fn();
 const createMessage = vi.fn();
+const showVersion = vi.fn();
 vi.mock("@/lib/api-client", () => ({
   ApiError: class ApiError extends Error {
     status = 500;
   },
   getAccessToken: () => Promise.resolve("token"),
   api: {
-    me: () => Promise.resolve({ user: { id: "user-1" } }),
+    me: () => Promise.resolve({ user: { id: "user-1" }, models: ["gpt-4.1", "claude-opus-5"] }),
     sessions: { messages: listMessages, setVisibility: vi.fn() },
-    messages: { create: createMessage, update: vi.fn(), deleteAfter: vi.fn() },
+    messages: {
+      create: createMessage,
+      update: vi.fn(),
+      deleteAfter: vi.fn(),
+      show: showVersion,
+    },
     brainstorm: { suggest: vi.fn() },
     ideas: { create: vi.fn() },
   },
@@ -736,5 +742,73 @@ describe("the pause before an answer", () => {
     // And it goes with the stream: the row does not carry it, so leaving it on
     // screen would be showing something the transcript does not contain.
     await waitFor(() => expect(screen.queryByText("Thinking")).not.toBeInTheDocument());
+  });
+});
+
+describe("an answer that was asked for twice", () => {
+  const versioned = { ...answer, versions: ["v1", "msg-2"] };
+
+  it("says which take is showing, and offers the others", async () => {
+    listMessages.mockResolvedValue([question, versioned]);
+    await renderChat();
+
+    expect(await screen.findByLabelText("Version 2 of 2")).toBeInTheDocument();
+    expect(screen.getByLabelText("Previous version of this answer")).toBeEnabled();
+    expect(screen.getByLabelText("Next version of this answer")).toBeDisabled();
+  });
+
+  it("goes back to the one that was put aside", async () => {
+    listMessages.mockResolvedValue([question, versioned]);
+    showVersion.mockResolvedValue({ ok: true });
+    await renderChat();
+
+    await userEvent.click(await screen.findByLabelText("Previous version of this answer"));
+
+    expect(showVersion).toHaveBeenCalledWith("v1");
+  });
+
+  it("says nothing at all about versions on an answer with one", async () => {
+    listMessages.mockResolvedValue([question, answer]);
+    await renderChat();
+
+    expect(screen.queryByLabelText(/Version \d+ of/)).not.toBeInTheDocument();
+  });
+
+  it("asks the server to answer again rather than deleting first", async () => {
+    // What this used to do: `deleteAfter`, then a fresh stream, with no way
+    // back to the answer that was there.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(streamOf([{ type: "delta", text: "Again." }, { type: "done" }])),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    listMessages.mockResolvedValue([question, answer]);
+    await renderChat();
+
+    await userEvent.click(await screen.findByLabelText("Regenerate"));
+
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(init.body as string)).toEqual({
+      sessionId: "session-1",
+      regenerate: true,
+    });
+  });
+
+  it("can answer again on another model, for that reply only", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(streamOf([{ type: "delta", text: "Again." }, { type: "done" }])),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    listMessages.mockResolvedValue([question, answer]);
+    await renderChat();
+
+    await userEvent.click(await screen.findByLabelText("Answer again on another model"));
+    await userEvent.click(await screen.findByText("claude-opus-5"));
+
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(init.body as string)).toEqual({
+      sessionId: "session-1",
+      regenerate: true,
+      model: "claude-opus-5",
+    });
   });
 });

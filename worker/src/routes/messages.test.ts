@@ -11,13 +11,20 @@ const ANCHOR = { id: "msg-1", session_id: "sess-1", created_at: "2026-09-01T10:0
  * @param sessionOwner who owns the conversation the anchor message belongs to.
  * `null` stands for a session the caller cannot see at all.
  */
-function appWith(spec: { sessionOwner: string | null; anchorFound?: boolean }) {
+function appWith(spec: {
+  sessionOwner: string | null;
+  anchorFound?: boolean;
+  /** The role of the message the route looks up. Replies have versions; questions do not. */
+  anchorRole?: string;
+}) {
   const deleted: QueryContext[] = [];
+  const rpcCalls: Array<Record<string, unknown>> = [];
   const dbSpec: FakeDbSpec = {
     tables: {
       messages: {
         select: () => ({
-          data: (spec.anchorFound ?? true) ? ANCHOR : null,
+          data:
+            (spec.anchorFound ?? true) ? { ...ANCHOR, role: spec.anchorRole ?? "assistant" } : null,
           error: null,
         }),
         delete: (ctx) => {
@@ -32,6 +39,12 @@ function appWith(spec: { sessionOwner: string | null; anchorFound?: boolean }) {
         }),
       },
     },
+    rpc: {
+      show_message_version: (args: Record<string, unknown>) => {
+        rpcCalls.push(args);
+        return { data: null, error: null };
+      },
+    },
   };
   const { db } = fakeDb(dbSpec);
 
@@ -42,7 +55,7 @@ function appWith(spec: { sessionOwner: string | null; anchorFound?: boolean }) {
     await next();
   });
   app.route("/", messages);
-  return { app, deleted };
+  return { app, deleted, rpcCalls };
 }
 
 async function deleteAfter(app: Hono<AppEnv>) {
@@ -85,5 +98,45 @@ describe("DELETE /messages/after/:id", () => {
     const { app, deleted } = appWith({ sessionOwner: null });
     expect((await deleteAfter(app)).status).toBe(404);
     expect(deleted).toHaveLength(0);
+  });
+});
+
+describe("POST /messages/:id/show", () => {
+  const show = (app: Hono<AppEnv>, id = "msg-1") =>
+    app.request(`/messages/${id}/show`, { method: "POST" });
+
+  it("switches the version through the one statement that has no gap in it", async () => {
+    const { app, rpcCalls } = appWith({ sessionOwner: USER.id });
+
+    const res = await show(app);
+
+    expect(res.status).toBe(200);
+    expect(rpcCalls).toEqual([{ p_message_id: "msg-1" }]);
+  });
+
+  it("answers a non-owner honestly rather than doing nothing quietly", async () => {
+    // `show_message_version` is SECURITY DEFINER and reports success after
+    // matching no rows, which is a silent no-op the interface cannot act on.
+    const { app, rpcCalls } = appWith({ sessionOwner: "someone-else" });
+
+    const res = await show(app);
+
+    expect(res.status).toBe(403);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("refuses a question, which has no versions to switch between", async () => {
+    const { app, rpcCalls } = appWith({ sessionOwner: USER.id, anchorRole: "user" });
+
+    const res = await show(app);
+
+    expect(res.status).toBe(400);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("is a 404 for a message the caller cannot see", async () => {
+    const { app } = appWith({ sessionOwner: USER.id, anchorFound: false });
+
+    expect((await show(app)).status).toBe(404);
   });
 });

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
-import { resolveModel, modelSpec, titleModelFor } from "../lib/models";
+import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
 import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
 import { selectHistory } from "../lib/history";
@@ -30,6 +30,30 @@ const streamChatSchema = z.object({
    * button that appears in response to it calls.
    */
   continue: z.boolean().optional(),
+  /**
+   * Answer the last question again, keeping the answer that is already there.
+   *
+   * Regenerating used to delete: the reply went, the question was re-asked,
+   * and there was no way back — so what the button actually asked was "are you
+   * sure the next answer will be better than this one", which nobody can know
+   * before seeing it. Migration 0050 gives an answer versions; this writes one.
+   *
+   * The last answer only. Regenerating one in the middle of a conversation
+   * would leave every turn after it replying to something that is no longer
+   * there, and making those turns a branch is a conversation tree rather than
+   * a version list — a different feature, and a much larger one.
+   */
+  regenerate: z.boolean().optional(),
+  /**
+   * Answer on a different model than the agent's, for this reply only.
+   *
+   * The agent's own model is a setting somebody chose; this is "try that
+   * again on something stronger" and has no business overwriting it. Checked
+   * against what this deployment can actually serve — an id that is not
+   * offered here falls through to `resolveModel`, which is the same thing it
+   * does for an agent carrying a model whose key has been rotated out.
+   */
+  model: z.string().optional(),
 });
 
 /**
@@ -78,7 +102,7 @@ chat.post("/chat/stream", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { sessionId, continue: continuing = false } = parsed.data;
+  const { sessionId, continue: continuing = false, regenerate = false } = parsed.data;
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
@@ -121,9 +145,9 @@ chat.post("/chat/stream", async (c) => {
   const lastMessage = rows[rows.length - 1];
   // Which end of the conversation this turn is working from. Answering needs a
   // question to answer; continuing needs an answer to continue.
-  if (continuing) {
+  if (continuing || regenerate) {
     if (!lastMessage || lastMessage.role !== "assistant") {
-      return c.json({ error: "nothing to continue" }, 400);
+      return c.json({ error: continuing ? "nothing to continue" : "nothing to regenerate" }, 400);
     }
   } else if (!lastMessage || lastMessage.role !== "user") {
     return c.json({ error: "no user message to respond to" }, 400);
@@ -133,9 +157,16 @@ chat.post("/chat/stream", async (c) => {
   // message — that is the half-written answer. It is the question that answer
   // was already halfway through, so the second half is grounded in the same
   // documents as the first.
-  const question = continuing
-    ? ([...rows].reverse().find((m: { role: string }) => m.role === "user")?.content ?? "")
-    : lastMessage.content;
+  const question =
+    continuing || regenerate
+      ? ([...rows].reverse().find((m: { role: string }) => m.role === "user")?.content ?? "")
+      : lastMessage.content;
+
+  // What the model is shown. A regeneration is being asked the same question
+  // over again, so the answer it is replacing must not be in front of it —
+  // left there, the model reads its own previous reply and writes a variation
+  // on it rather than a second attempt at the question.
+  const turns = regenerate ? rows.slice(0, -1) : rows;
 
   const mode: "normal" | "brainstorm" = effectiveMode(session, agent);
 
@@ -148,7 +179,7 @@ chat.post("/chat/stream", async (c) => {
     env,
     session.agent_id,
     question,
-    rows.map((m: { role: string; content: string }) => ({
+    turns.map((m: { role: string; content: string }) => ({
       role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
       content: m.content,
     })),
@@ -166,7 +197,7 @@ chat.post("/chat/stream", async (c) => {
   // Budget the history down to the most recent turns that fit, so long chats
   // (and giant pasted messages) don't re-inflate the input on every turn.
   const history = selectHistory(
-    rows.map((m: { role: string; content: string }) => ({
+    turns.map((m: { role: string; content: string }) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
@@ -189,7 +220,18 @@ chat.post("/chat/stream", async (c) => {
     ...(continuing ? [{ role: "user" as const, content: CONTINUE_INSTRUCTION }] : []),
   ];
 
-  const model = resolveModel(agent.model, env);
+  // The agent's model, unless this one reply asked for another.
+  //
+  // Checked against what this deployment can actually serve rather than taken
+  // on trust: an id nobody offers falls back to the agent's own, which is the
+  // same thing `resolveModel` already does for an agent carrying a model whose
+  // key has been rotated out. The override is per-reply on purpose — the
+  // agent's model is a setting somebody chose, and "try that again on
+  // something stronger" has no business overwriting it.
+  const requested = parsed.data.model;
+  const picked =
+    requested && (availableModels(env) as string[]).includes(requested) ? requested : agent.model;
+  const model = resolveModel(picked, env);
 
   // `availableModels` (`lib/models.ts`) is computed from the deployment's own
   // environment and carried to the frontend once, by `/me` — it has no idea
@@ -209,8 +251,8 @@ chat.post("/chat/stream", async (c) => {
   // once, here, is the whole scope.
   const claudeDroppedForWorkspaceKey =
     Boolean(c.get("providerEnv")) &&
-    modelSpec(agent.model)?.provider === "anthropic" &&
-    model !== agent.model;
+    modelSpec(picked)?.provider === "anthropic" &&
+    model !== picked;
 
   const signal = c.req.raw.signal;
   const service = serviceClient(c.env);
@@ -349,10 +391,29 @@ chat.post("/chat/stream", async (c) => {
         const before = lastMessage as {
           id: string;
           content: string;
+          original_message_id: string | null;
           prompt_tokens: number | null;
           completion_tokens: number | null;
           cached_tokens: number | null;
         };
+        // A regeneration keeps the answer it replaces. Superseded here rather
+        // than before the stream opened: a reply that errors out or comes back
+        // empty must leave the conversation exactly as it found it, and the
+        // answer already on screen is the thing it would otherwise have taken.
+        //
+        // The new version points at the chain's *root*, not at the version it
+        // is replacing — see 0050 for why the pointer goes where it does.
+        if (regenerate) {
+          const { error: supersedeError } = await service
+            .from("messages")
+            .update({ superseded_at: new Date().toISOString() })
+            .eq("id", before.id);
+          if (supersedeError) {
+            console.error("failed to supersede the previous answer", supersedeError);
+            return null;
+          }
+        }
+
         const { data: inserted, error: insertError } = continuing
           ? await service
               .from("messages")
@@ -377,6 +438,9 @@ chat.post("/chat/stream", async (c) => {
                 prompt_tokens: opts.promptTokens,
                 completion_tokens: opts.completionTokens,
                 cached_tokens: opts.cachedTokens,
+                ...(regenerate
+                  ? { original_message_id: before.original_message_id ?? before.id }
+                  : {}),
               })
               .select("*")
               .single();

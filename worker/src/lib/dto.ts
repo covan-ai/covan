@@ -65,6 +65,16 @@ export type MessageDTO = {
   createdAt: number;
   sources?: SourceDTO[];
   sender?: { id: string; name: string | null; avatarUrl: string | null };
+  /**
+   * Every version of this answer, oldest first, when there is more than one.
+   *
+   * Absent on a reply nobody has regenerated, which is almost all of them —
+   * an empty array and an absent field would mean the same thing to the
+   * screen, and the absent one does not travel. Ids only: the screen asks for
+   * whichever it wants to show, and shipping five drafts of an answer to draw
+   * a `2/3` would be four answers nobody asked to read.
+   */
+  versions?: string[];
 };
 
 export type ChatSessionDTO = {

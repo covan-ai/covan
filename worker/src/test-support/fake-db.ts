@@ -26,7 +26,11 @@ export type QueryResult = {
   error: { message: string; code?: string } | null;
 };
 
-export type Filter = { column: string; value: unknown; kind: "eq" | "in" | "gt" | "ilike" | "is" };
+export type Filter = {
+  column: string;
+  value: unknown;
+  kind: "eq" | "in" | "gt" | "ilike" | "is" | "not";
+};
 
 export type QueryContext = {
   table: string;
@@ -121,6 +125,15 @@ class Chain implements PromiseLike<QueryResult> {
   // that reached for `eq` here would silently stop excluding revoked rows.
   is(column: string, value: unknown) {
     this.ctx.filters.push({ column, value, kind: "is" });
+    return this;
+  }
+
+  // PostgREST spells a negated filter `not(column, operator, value)`. The
+  // operator is recorded with the value because the two together are the
+  // condition — `not("x", "is", null)` and `not("x", "eq", null)` are
+  // different questions.
+  not(column: string, operator: string, value: unknown) {
+    this.ctx.filters.push({ column, value: { operator, value }, kind: "not" });
     return this;
   }
 

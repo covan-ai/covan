@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
@@ -159,9 +159,12 @@ async function renderChat() {
       <ChatTab />
     </QueryClientProvider>,
   );
-  // Whichever the conversation has: the question it opened with, or the empty
-  // state's own composer. Either way the first query has settled by here.
+  // Waits on the Share button rather than the composer, which renders before
+  // anything has loaded. Share needs `isOwner`, which needs `/me` — so by the
+  // time it is on screen both queries have settled and the shortcuts that turn
+  // on ownership behave the way they will in a browser.
   await screen.findByPlaceholderText(`Message ${agent.name}`);
+  await screen.findByText("Share");
   return { ...view, client };
 }
 
@@ -183,10 +186,39 @@ function place(el: HTMLElement, { scrollTop, scrollHeight, clientHeight }: Recor
   el.dispatchEvent(new Event("scroll"));
 }
 
+/**
+ * Whether this is a phone, which is the one thing Enter's meaning turns on.
+ *
+ * A local stub rather than one in `test-setup.ts`, for the reason
+ * `theme.test.tsx` gives for its own: a global would let a later test rely on
+ * media queries working without ever saying that it does.
+ */
+let onAPhone = false;
+const stubMatchMedia = () => {
+  window.matchMedia = ((query: string) => ({
+    matches: onAPhone,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+};
+
+/** A reply that starts and does not finish, for anything about stopping one. */
+function openStream() {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(`data: {"type":"delta","text":"Forty"}\n\n`));
+    },
+  });
+  return { ok: true, status: 200, body, json: () => Promise.resolve(null) };
+}
+
 let scrollTo: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  onAPhone = false;
+  stubMatchMedia();
   listMessages.mockResolvedValue([question]);
   createMessage.mockResolvedValue(question);
   // jsdom implements no scrolling at all, so the component's own call is the
@@ -314,5 +346,95 @@ describe("the way back down", () => {
     act(() => place(scroller(container), { scrollTop: 0, scrollHeight: 4000, clientHeight: 600 }));
 
     expect(screen.queryByLabelText("Jump to the latest message")).not.toBeInTheDocument();
+  });
+});
+
+describe("what Enter means", () => {
+  const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "delta", text: "Forty dollars a seat." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+  });
+
+  it("sends, at a keyboard", async () => {
+    await renderChat();
+    await userEvent.type(composer(), "and per seat?{Enter}");
+
+    await waitFor(() => expect(createMessage).toHaveBeenCalled());
+  });
+
+  it("does not send a word an IME is still offering", async () => {
+    // An IME takes Enter to mean "accept the suggestion". Without this guard a
+    // Japanese, Chinese or Korean sentence posted itself one word in — and the
+    // half-written question is then what the agent answers.
+    await renderChat();
+    await userEvent.type(composer(), "日本");
+    fireEvent.keyDown(composer(), { key: "Enter", isComposing: true });
+
+    expect(createMessage).not.toHaveBeenCalled();
+  });
+
+  it("starts a new line on a phone, where it is the newline key", async () => {
+    onAPhone = true;
+    await renderChat();
+    await userEvent.type(composer(), "and per seat?{Enter}");
+
+    expect(createMessage).not.toHaveBeenCalled();
+    expect(composer()).toHaveValue("and per seat?\n");
+  });
+
+  it("sends on a phone when it is asked to, with a modifier", async () => {
+    onAPhone = true;
+    await renderChat();
+    await userEvent.type(composer(), "and per seat?");
+    fireEvent.keyDown(composer(), { key: "Enter", metaKey: true });
+
+    await waitFor(() => expect(createMessage).toHaveBeenCalled());
+  });
+});
+
+describe("the keys beside Enter", () => {
+  const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
+
+  it("stops a running reply on Escape", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(openStream())),
+    );
+    await renderChat();
+
+    await userEvent.type(composer(), "and per seat?{Enter}");
+    await screen.findByLabelText("Stop generating");
+
+    fireEvent.keyDown(composer(), { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByLabelText("Stop generating")).not.toBeInTheDocument());
+  });
+
+  it("opens the last thing you said on an empty composer and the up arrow", async () => {
+    await renderChat();
+    fireEvent.keyDown(composer(), { key: "ArrowUp" });
+
+    expect(await screen.findByLabelText("Edit your message")).toHaveValue(question.content);
+  });
+
+  it("leaves the arrow alone once there is a draft to move around in", async () => {
+    // The shortcut is for an empty box. With something typed, up is how you
+    // get to the line above it.
+    await renderChat();
+    await userEvent.type(composer(), "half a thought");
+    fireEvent.keyDown(composer(), { key: "ArrowUp" });
+
+    expect(screen.queryByLabelText("Edit your message")).not.toBeInTheDocument();
   });
 });

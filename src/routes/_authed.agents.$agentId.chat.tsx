@@ -36,6 +36,8 @@ import { parseReportCommand } from "@/lib/reports";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
+import { useAutoGrow } from "@/lib/use-auto-grow";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId } from "@/lib/chat-messages";
 import { SourceChip } from "@/components/source-chip";
 import { FeedbackDialog } from "@/components/feedback-dialog";
@@ -222,6 +224,12 @@ function ChatTab() {
   }, [activeId, active?.visibility, queryClient]);
 
   const [input, setInput] = useState("");
+  // `max-h-44` on the composer below was unreachable until this: nothing grew
+  // the box, so its minimum was its only height. See `use-auto-grow.ts`.
+  const composerRef = useAutoGrow<HTMLTextAreaElement>(input);
+  // Enter means something different on a phone, where it is the newline key
+  // and the send button is already under your thumb.
+  const isMobile = useIsMobile();
   // Spoken into the composer rather than typed. The transcript is appended to
   // the draft and left there — nothing is sent until the person sends it, since
   // a transcription is a guess and this is where they get to correct it.
@@ -848,32 +856,13 @@ function ChatTab() {
                 if (isPersonsTurn) {
                   if (editingId === m.id) {
                     return (
-                      <div key={m.id} className="flex flex-col items-end gap-1.5">
-                        <div className="w-full max-w-[560px] rounded-2xl bg-popover p-2 shadow-card">
-                          <Textarea
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            rows={2}
-                            autoFocus
-                            className="min-h-[40px] resize-none border-0 bg-transparent p-1.5 text-sm shadow-none focus-visible:ring-0"
-                          />
-                          <div className="flex justify-end gap-1.5 pt-1">
-                            <button
-                              onClick={() => setEditingId(null)}
-                              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              onClick={() => void saveEdit(m.id)}
-                              disabled={!editText.trim()}
-                              className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-                            >
-                              Save & send
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                      <EditTurn
+                        key={m.id}
+                        value={editText}
+                        onChange={setEditText}
+                        onCancel={() => setEditingId(null)}
+                        onSave={() => void saveEdit(m.id)}
+                      />
                     );
                   }
                   return (
@@ -1051,6 +1040,7 @@ function ChatTab() {
             <ChatReceipts uploads={uploads} />
             <ChatReportReceipt reports={reports} />
             <Textarea
+              ref={composerRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onPaste={(e) => {
@@ -1061,15 +1051,56 @@ function ChatTab() {
                 e.preventDefault();
                 void uploads.addFiles(files);
               }}
+              // Every shortcut this screen has lives on the composer rather
+              // than on the document. A global key listener here would be
+              // fighting three Radix dialogs, the command palette and the
+              // rename field in the sidebar over the same keys — and the
+              // person these are for has their hands in this box already.
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                // Sends from anywhere, phone included, where a bare Enter is
+                // the newline key.
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
                   send();
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  // Mid-composition. An IME takes Enter to mean "accept the
+                  // word you are suggesting", so without this a Japanese,
+                  // Chinese or Korean sentence posted itself one word in — and
+                  // the half-written question is then what the agent answers.
+                  if (e.nativeEvent.isComposing) return;
+                  // On a phone Enter is how you start a new line and the send
+                  // button is under your thumb already. Sending on it turns
+                  // every paragraph break into a premature message.
+                  if (isMobile) return;
+                  e.preventDefault();
+                  send();
+                  return;
+                }
+                // Stop, without reaching for the mouse. Scoped to the reply
+                // running in *this* conversation, the same rule the button
+                // beside it follows.
+                if (e.key === "Escape" && replyingIn === active?.id) {
+                  e.preventDefault();
+                  stop();
+                  return;
+                }
+                // An empty composer and the up arrow: edit what you last said.
+                // Only your own turn, and only in a conversation you own —
+                // editing discards every reply after it, which is the same
+                // reason the Edit button beside a message is ownership-gated.
+                if (e.key === "ArrowUp" && input === "" && !busy && isOwner) {
+                  const mine = [...messages].reverse().find((m) => m.role === "user");
+                  if (mine) {
+                    e.preventDefault();
+                    startEdit(mine.id, mine.content);
+                  }
                 }
               }}
               placeholder={`Message ${agent.name}`}
               rows={1}
-              className="max-h-44 min-h-[44px] w-full resize-none border-0 bg-transparent px-4 pt-3 text-sm shadow-none focus-visible:ring-0"
+              className="max-h-44 min-h-[44px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pt-3 text-sm shadow-none focus-visible:ring-0"
             />
             <div className="flex items-center justify-between px-3 pb-2.5">
               <div className="flex items-center gap-2">
@@ -1198,6 +1229,71 @@ function ChatTab() {
         </div>
       </ResizablePanel>
     </ResizablePanelGroup>
+  );
+}
+
+/**
+ * A past question, open for editing.
+ *
+ * Its own component only so it can hold a hook: `useAutoGrow` cannot be called
+ * from inside the message loop, which renders this conditionally. The box had
+ * the same fixed-height problem as the composer and for the same reason — two
+ * rows, no growing — and it is the worse of the two places to have it, because
+ * what is being edited is by definition something already long enough to be
+ * worth fixing.
+ */
+function EditTurn({
+  value,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const ref = useAutoGrow<HTMLTextAreaElement>(value);
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="w-full max-w-[560px] rounded-2xl bg-popover p-2 shadow-card">
+        <Textarea
+          ref={ref}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+              return;
+            }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && value.trim()) {
+              e.preventDefault();
+              onSave();
+            }
+          }}
+          rows={1}
+          autoFocus
+          aria-label="Edit your message"
+          className="max-h-60 min-h-[40px] resize-none overflow-y-auto border-0 bg-transparent p-1.5 text-sm shadow-none focus-visible:ring-0"
+        />
+        <div className="flex justify-end gap-1.5 pt-1">
+          <button
+            onClick={onCancel}
+            className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSave}
+            disabled={!value.trim()}
+            className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            Save & send
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

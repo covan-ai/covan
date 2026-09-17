@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec } from "../test-support/fake-db";
 import { REPORT_INSTRUCTIONS } from "../lib/prompt";
-import { reports } from "./reports";
+import { chunkText } from "../lib/embeddings";
+import { reports, REPORT_CHUNK_SIZE, REPORT_CHUNK_OVERLAP } from "./reports";
 
 /**
  * What this file is for: what the route spends, and what it leaves behind when
@@ -32,6 +33,7 @@ const MESSAGES = [
 ];
 
 const completionCreate = vi.fn();
+const embedTexts = vi.fn();
 const retrieveForAgent = vi.fn();
 const guardQuota = vi.fn();
 const recordQuota = vi.fn();
@@ -55,6 +57,13 @@ vi.mock("../lib/retrieval", () => ({
   retrieveForAgent: (...args: unknown[]) => retrieveForAgent(...args),
 }));
 
+vi.mock("../lib/embeddings", async (importOriginal) => ({
+  // `chunkText` is real: how a report is cut is the thing under test, not a
+  // detail to stub. Only the network call is replaced.
+  ...(await importOriginal<typeof import("../lib/embeddings")>()),
+  embedTexts: (...args: unknown[]) => embedTexts(...args),
+}));
+
 vi.mock("../lib/docstore", () => ({
   getDocStore: () => ({ put: storePut, delete: storeDelete }),
 }));
@@ -74,6 +83,7 @@ function appWith(spec?: Partial<FakeDbSpec["tables"]>) {
       knowledge_bundles: { select: () => ({ data: BUNDLE, error: null }) },
       messages: { select: () => ({ data: [...MESSAGES].reverse(), error: null }) },
       documents: { insert: () => ({ data: DOC_ROW, error: null }) },
+      document_chunks: { insert: () => ({ data: null, error: null }) },
       ...spec,
     },
   });
@@ -110,6 +120,10 @@ beforeEach(() => {
   recordQuota.mockResolvedValue(undefined);
   storePut.mockResolvedValue(undefined);
   storeDelete.mockResolvedValue(undefined);
+  embedTexts.mockImplementation(async (_env: unknown, texts: string[]) => ({
+    vectors: texts.map(() => [0.1, 0.2, 0.3]),
+    tokens: texts.length * 100,
+  }));
   retrieveForAgent.mockResolvedValue({
     docNames: ["numbers.csv"],
     bundleIds: ["bundle-1"],
@@ -170,22 +184,57 @@ describe("POST /sessions/:id/report", () => {
     expect(inserted.name).toMatch(/^Report \d{4}-\d{2}-\d{2}\.md$/);
   });
 
-  it("leaves the report unindexed", async () => {
-    // Deliberate: embedding a report at birth costs ~44x its storage, and the
-    // Knowledge tab's existing reindex button is how someone opts into it.
+  it("embeds the report, so it retrieves like any other document", async () => {
+    // It was born unindexed at first, to save storage, and the stored-text
+    // fallback was supposed to be how it was read. It was not: that path only
+    // runs when retrieval found nothing at all, and an agent that has a report
+    // has the documents it was written from, one of which always matches. The
+    // report became the one file that could be named and never read.
     const { app, fake } = appWith();
 
     const res = await post(app, ask);
 
-    expect(fake.callsTo("document_chunks")).toHaveLength(0);
+    expect(fake.callsTo("document_chunks").length).toBeGreaterThan(0);
+    expect(await res.json()).toMatchObject({ indexed: true });
+  });
+
+  it("cuts a report into coarser passages than an upload", async () => {
+    // The storage a chunk costs is mostly its vector and its index, both fixed
+    // per chunk whatever the passage says — so fewer, larger passages is the
+    // dial. A report is one coherent document rather than a pile of unrelated
+    // pages, which is what makes the coarser cut safe here and not on uploads.
+    const long = `# Q3 Review\n\n${"Revenue rose. ".repeat(1200)}`;
+    modelAnswers(long);
+    const { app, fake } = appWith();
+
+    await post(app, ask);
+
+    const rows = fake.callsTo("document_chunks").flatMap((c) => c.values as unknown as unknown[]);
+    expect(rows).toHaveLength(
+      chunkText(long.trim(), REPORT_CHUNK_SIZE, REPORT_CHUNK_OVERLAP).length,
+    );
+    expect(rows.length).toBeLessThan(chunkText(long.trim()).length / 2);
+  });
+
+  it("still saves the report when the embedding fails", async () => {
+    // Best effort, the same as an upload: a document that exists and retrieves
+    // nothing beats losing what the model just wrote and charging for it.
+    embedTexts.mockRejectedValue(new Error("embeddings are down"));
+    const { app, fake } = appWith();
+
+    const res = await post(app, ask);
+
+    expect(res.status).toBe(201);
+    expect(fake.callsTo("documents")).toHaveLength(1);
     expect(await res.json()).toMatchObject({ chunkCount: 0, indexed: false });
   });
 
-  it("charges the turn for the generation and the retrieval together", async () => {
+  it("charges the turn for the generation, the retrieval and the indexing", async () => {
     await post(appWith().app, ask);
 
-    // 3000 prompt + 1200 completion + ceil(200 * 0.01) embedding
-    expect(recordQuota).toHaveBeenCalledWith(expect.anything(), 4202);
+    // 3000 prompt + 1200 completion + ceil(200 * 0.01) retrieval embedding
+    // + ceil(100 * 0.01) for embedding the one passage this report cut into.
+    expect(recordQuota).toHaveBeenCalledWith(expect.anything(), 4203);
   });
 
   it("still charges for the retrieval when the generation fails", async () => {

@@ -11,8 +11,36 @@ import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } f
 import { reportTitle, reportFileName } from "../lib/report";
 import { EXCERPT_LIMIT, safeName } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
+import { chunkText, embedTexts } from "../lib/embeddings";
+import { insertChunkRows } from "../lib/chunk-store";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
+
+/**
+ * How a report is cut for retrieval, and why it is not how an upload is cut.
+ *
+ * It was not cut at all to begin with. A report was stored without embeddings
+ * to save the ~17 KB a chunk costs, on the argument that the stored-text
+ * fallback in `lib/retrieval.ts` would carry it. That was wrong, and wrong in a
+ * way only production showed: the fallback runs only when retrieval matched
+ * *nothing*, and an agent that has a report also has the documents the report
+ * was written from — one of them always matches. Asked about by name, the
+ * agent could see the file in its manifest and never read a word of it.
+ *
+ * So it is embedded now, and the storage argument is answered by the size of
+ * the passages instead. Nearly all of a chunk's cost is its vector and its
+ * index, both fixed per chunk however much text it holds, so cutting a report
+ * into passages 2.4x the usual size costs roughly 2.4x less to keep. That is
+ * safe here and would not be on an upload: a report is one coherent document
+ * written in one pass, where a pile of unrelated pages is what the finer cut
+ * exists for.
+ *
+ * Not larger than this. `buildContextBlock` gives a whole turn 4000 characters,
+ * so a passage of 2400 already takes most of it — and a report that matched
+ * would crowd out everything else in a turn that was only partly about it.
+ */
+export const REPORT_CHUNK_SIZE = 2400;
+export const REPORT_CHUNK_OVERLAP = 200;
 
 const reports = new Hono<AppEnv>();
 
@@ -204,9 +232,38 @@ reports.post("/sessions/:id/report", async (c) => {
     return c.json({ error: "failed to save the report" }, 500);
   }
 
-  await recordQuota(c, embeddingCost(embeddingTokens) + totalTokens(usage));
+  // Best effort, the same bargain the upload route makes: a document that
+  // exists and retrieves nothing beats losing what the model just wrote — and
+  // charging for it — because the embedding provider was down. A report that
+  // lands with no chunks reads as "Not indexed" in the Knowledge tab, and the
+  // reindex control beside it is the way back.
+  let chunkCount = 0;
+  let indexTokens = 0;
+  try {
+    const chunks = chunkText(markdown, REPORT_CHUNK_SIZE, REPORT_CHUNK_OVERLAP);
+    if (chunks.length > 0) {
+      const embedded = await embedTexts(env, chunks);
+      indexTokens = embedded.tokens;
+      const rows = chunks.map((ch, i) => ({
+        document_id: doc.id,
+        bundle_id: bundleId,
+        workspace_id: bundle.workspace_id,
+        chunk_index: i,
+        content: ch,
+        context: doc.name,
+        embedding: embedded.vectors[i],
+      }));
+      const { error: chunkErr } = await insertChunkRows(db, rows);
+      if (chunkErr) console.error("failed to insert report chunks", chunkErr);
+      else chunkCount = rows.length;
+    }
+  } catch (e) {
+    console.error("report embedding failed (report saved without chunks)", e);
+  }
 
-  return c.json(mapDocument({ ...doc, document_chunks: [{ count: 0 }] }), 201);
+  await recordQuota(c, embeddingCost(embeddingTokens + indexTokens) + totalTokens(usage));
+
+  return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunkCount }] }), 201);
 });
 
 export { reports };

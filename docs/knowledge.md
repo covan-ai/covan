@@ -213,15 +213,22 @@ sources the agent was given, and this one holds what the agent produced. Keeping
 them apart means you can detach the reports — so the agent stops reading its own
 output back as if it were evidence — without also detaching your files.
 
-**A report arrives unindexed, and that is on purpose.** It has no chunks, so no
-passage inside it can be matched by the retrieval described below, and the
-Knowledge tab labels it "Not indexed". It is still not invisible to the agent:
-asking about it by name reaches it through the stored-text fallback further
-down, which covers the first 8000 characters of any document. If you want a
-report searchable the way an uploaded file is, reindex it — that is what the
-refresh control beside it does, and it is the moment the report starts costing
-storage in earnest. Embedding every report the moment it was written would have
-made that decision for everyone, and most reports are read once.
+A report is chunked and embedded when it is written, so it is searchable in chat
+from then on like any file you uploaded. It is cut into larger passages than an
+upload is — most of what a passage costs to store is its vector and its index,
+both fixed however much text the passage holds, so fewer and larger passages is
+what keeps a report from costing what a whole upload does. That is safe for a
+report and would not be for an upload: a report is one coherent document written
+in one pass, where the finer cut exists for a pile of unrelated pages.
+
+It was not always so. Reports were stored without embeddings at first, to save
+that storage, on the argument that the stored-text path described below would
+carry them. It did not: that path runs only when retrieval matched nothing at
+all, and an agent that has a report also has the documents the report was
+written from — one of which always matches. The report became the one file the
+agent could see in its list and never read a word of. If a report ever does show
+"Not indexed" now, its embedding failed rather than being skipped, and the
+refresh control beside it is the way back.
 
 A report is one model call, capped at roughly eight pages, and it takes up to a
 minute. It is charged to your monthly allowance like a reply, and costs about

@@ -196,13 +196,22 @@ regardless. Anthropic's exists only if you say so:
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-That one line adds three models to every picker:
+That one line adds six models to every picker:
 
-| Model               | Roughly       | Good for                                                    |
-| ------------------- | ------------- | ----------------------------------------------------------- |
-| `claude-sonnet-4-6` | $3 / $15 a M  | The default Claude pick — strongest of the three.             |
-| `claude-sonnet-4-5` | $3 / $15 a M  | The previous Sonnet, kept for agents already tuned against it. |
-| `claude-haiku-4-5`  | $1 / $5 a M   | Cheapest here — under half of `gpt-4o` on input.               |
+| Model               | Roughly       | Good for                                                       |
+| ------------------- | ------------- | -------------------------------------------------------------- |
+| `claude-opus-5`     | $5 / $25 a M  | The strongest here. Deliberates by default, so it is also the slowest. |
+| `claude-sonnet-5`   | $3 / $15 a M  | The one to reach for first — Opus-family reasoning at Sonnet prices. |
+| `claude-opus-4-8`   | $5 / $25 a M  | The previous Opus, kept for agents already tuned against it.     |
+| `claude-sonnet-4-6` | $3 / $15 a M  | The previous Sonnet. Still takes a temperature, which the three above do not. |
+| `claude-sonnet-4-5` | $3 / $15 a M  | Older still, and the last one that takes no reasoning effort.    |
+| `claude-haiku-4-5`  | $1 / $5 a M   | Cheapest here — and what names your conversations whichever of the six answers them. |
+
+The first four take a **reasoning effort** (agent settings, or leave it unset
+for the model's own default); the two 4.5 models do not, and setting one on
+those is an error rather than a slower answer. The three newest **do not accept
+a temperature** — the parameter was removed from those endpoints — so an agent's
+temperature dial, and brainstorm mode's own, apply from Sonnet 4.6 down.
 
 Two properties worth stating plainly, because both are the kind of thing that
 is otherwise discovered later:
@@ -210,7 +219,7 @@ is otherwise discovered later:
 - **Leave the key unset and nothing reaches Anthropic.** The ids are not in the
   picker, `PATCH /workspace` refuses them, and an agent already carrying one
   falls back to the default rather than failing. That last part matters if you
-  ever remove the key: agents keep answering, on `gpt-4o`.
+  ever remove the key: agents keep answering, on `gpt-4.1`.
 - **It does not replace `OPENAI_API_KEY`.** Document embeddings and voice-note
   transcription have no Anthropic equivalent wired up here and stay exactly
   where they were.
@@ -236,7 +245,7 @@ OPENAI_API_KEY=ignored-by-ollama-but-still-required
 ```
 
 Set both. The model list Covan ships is a list of OpenAI's names, so with only
-the base URL set every agent would ask your endpoint for `gpt-4o` and get a 404. `OPENAI_MODEL` overrides that list outright, per-agent picker included —
+the base URL set every agent would ask your endpoint for `gpt-4.1` and get a 404. `OPENAI_MODEL` overrides that list outright, per-agent picker included —
 which means the model dropdown in agent settings has no effect while it is set.
 It still shows OpenAI's models; ignore it.
 

@@ -686,7 +686,7 @@ describe("saying so when a Claude pick is dropped (Task 9)", () => {
     const { body } = await ask(app);
 
     expect(body).toContain('"type":"notice"');
-    expect(body).toMatch(/gpt-4o/);
+    expect(body).toMatch(/gpt-4\.1/);
   });
 
   it("says nothing when the workspace has an Anthropic key too", async () => {
@@ -826,7 +826,7 @@ describe("naming the conversation", () => {
     const titling = completionCreate.mock.calls.find((c) => !c[0].stream);
     const answering = completionCreate.mock.calls.find((c) => c[0].stream);
     expect(titling![0].model).toBe("gpt-4o-mini");
-    expect(answering![0].model).toBe("gpt-4o");
+    expect(answering![0].model).toBe("gpt-4.1");
   });
 
   // Renaming on every turn would cost money and move a label out from under

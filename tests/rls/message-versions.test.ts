@@ -96,6 +96,7 @@ describe("the constraint, which is the security half", () => {
       session_id: sessionId,
       role: "user",
       content: "How many vacation days?",
+      sender_id: owner.id,
       superseded_at: new Date().toISOString(),
     });
 
@@ -109,6 +110,7 @@ describe("the constraint, which is the security half", () => {
       session_id: sessionId,
       role: "user",
       content: "How many vacation days?",
+      sender_id: owner.id,
       original_message_id: reply,
     });
 
@@ -120,6 +122,7 @@ describe("the constraint, which is the security half", () => {
       session_id: sessionId,
       role: "user",
       content: "And carry-over?",
+      sender_id: owner.id,
     });
 
     expect(error).toBeNull();
@@ -178,7 +181,7 @@ describe("show_message_version", () => {
   it("does nothing to a question", async () => {
     const { data } = await owner.db
       .from("messages")
-      .insert({ session_id: sessionId, role: "user", content: "Anything else?" })
+      .insert({ session_id: sessionId, role: "user", content: "Anything else?", sender_id: owner.id })
       .select("id")
       .single();
 

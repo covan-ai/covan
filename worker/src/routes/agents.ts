@@ -26,6 +26,7 @@ const AGENT_SELECT =
 const tuningFields = {
   temperature: z.number().min(0).max(2).nullable().optional(),
   reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
+  webSearch: z.boolean().optional(),
 };
 
 const createAgentSchema = z.object({
@@ -73,6 +74,7 @@ function agentColumns(body: z.infer<typeof updateAgentSchema>): Record<string, u
   if ("mode" in body) patch.mode = body.mode;
   if ("temperature" in body) patch.temperature = body.temperature;
   if ("reasoningEffort" in body) patch.reasoning_effort = body.reasoningEffort;
+  if ("webSearch" in body) patch.web_search = body.webSearch;
   return patch;
 }
 
@@ -114,7 +116,7 @@ agents.post("/agents", async (c) => {
     return c.json({ error: "no workspace found for user" }, 400);
   }
 
-  const { name, emoji, model, persona, mode, temperature, reasoningEffort } = parsed.data;
+  const { name, emoji, model, persona, mode, temperature, reasoningEffort, webSearch } = parsed.data;
 
   const { data, error } = await db
     .from("agents")
@@ -129,6 +131,7 @@ agents.post("/agents", async (c) => {
       // agent created before 0048 has.
       temperature: temperature ?? null,
       reasoning_effort: reasoningEffort ?? null,
+      web_search: webSearch ?? false,
       created_by: user.id,
     })
     .select("*")

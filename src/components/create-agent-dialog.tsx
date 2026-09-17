@@ -124,7 +124,14 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
     if (!name.trim() || saving) return;
     setSaving(true);
     try {
-      const agent = await createAgent({ name: name.trim(), emoji, model, persona, mode: "normal" });
+      const agent = await createAgent({
+        name: name.trim(),
+        emoji,
+        model,
+        persona,
+        mode: "normal",
+        webSearch: false,
+      });
       // Documents are bundle-scoped now. Put the Train-step files into a fresh
       // bundle named after the agent and attach it, so they're retrievable in
       // chat. Don't fail agent creation if bundle setup or a doc upload fails;

@@ -98,6 +98,17 @@ export type CompletionRequest = {
    * Nothing on a non-reasoning model, which has no such setting.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Enable web search tool.
+   *
+   * Anthropic: web_search_20260209 on models that support it (Opus 5/4.8/4.7/4.6,
+   * Sonnet 5/4.6). Older models get web_search_20250305.
+   * OpenAI: web_search tool on models that support it.
+   *
+   * Off by default. Web search is an escape hatch from "your knowledge" rather
+   * than the default behavior, and an agent opts into it explicitly (0051).
+   */
+  webSearch?: boolean;
 };
 
 /**
@@ -201,7 +212,8 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
   // See `reasoningHeadroom`.
   const headroom = reasons ? reasoningHeadroom(req.reasoningEffort) : 0;
   const cap = req.maxTokens !== undefined ? req.maxTokens + headroom : req.maxTokens;
-  return {
+
+  const base: OpenAI.Chat.Completions.ChatCompletionCreateParams = {
     model: req.model,
     messages: req.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     ...(cap !== undefined ? { max_completion_tokens: cap } : {}),
@@ -213,6 +225,12 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
       : {}),
     ...(req.json ? { response_format: { type: "json_object" as const } } : {}),
   };
+
+  // Web search is not yet publicly available in OpenAI SDK or may require beta
+  // access. When it becomes available, add it here similar to Anthropic.
+  // For now, webSearch flag is accepted but has no effect on OpenAI models.
+
+  return base;
 }
 
 // ---- Anthropic -------------------------------------------------------------
@@ -413,6 +431,26 @@ function anthropicParams(
   }
   const systemText = [system, req.json ? JSON_ONLY_INSTRUCTION : ""].filter(Boolean).join("\n\n");
   const { thinking, outputConfig, headroom } = anthropicThinking(req);
+
+  // Web search tool. Newer models (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6) get
+  // web_search_20260209; older models get web_search_20250305.
+  const tools: Array<Anthropic.Messages.WebSearchTool20260209 | Anthropic.Messages.WebSearchTool20250305 | Anthropic.Tool> = [];
+  if (req.webSearch) {
+    const newerModels = [
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-5",
+      "claude-sonnet-4-6",
+    ];
+    if (newerModels.includes(req.model)) {
+      tools.push({ type: "web_search_20260209", name: "web_search" });
+    } else {
+      tools.push({ type: "web_search_20250305", name: "web_search" });
+    }
+  }
+
   return {
     model: req.model,
     messages:
@@ -439,6 +477,7 @@ function anthropicParams(
     ...(req.temperature !== undefined && acceptsTemperature(req.model)
       ? { temperature: req.temperature }
       : {}),
+    ...(tools.length > 0 ? { tools } : {}),
   };
 }
 

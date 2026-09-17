@@ -39,6 +39,7 @@ export type AgentDTO = {
    */
   temperature: number | null;
   reasoningEffort: string | null;
+  webSearch: boolean;
   documents: DocumentDTO[];
   bundleIds: string[];
   createdAt: number;
@@ -219,6 +220,7 @@ export function mapAgent(row: {
   mode?: string | null;
   temperature?: number | null;
   reasoning_effort?: string | null;
+  web_search?: boolean | null;
   created_at: string;
   agent_bundles?: Array<{
     bundle_id: string;
@@ -243,6 +245,7 @@ export function mapAgent(row: {
     mode: row.mode === "brainstorm" ? "brainstorm" : "normal",
     temperature: row.temperature ?? null,
     reasoningEffort: row.reasoning_effort ?? null,
+    webSearch: row.web_search ?? false,
     documents: agentBundles.flatMap((ab) => ab.knowledge_bundles?.documents ?? []).map(mapDocument),
     bundleIds: agentBundles.map((ab) => ab.bundle_id),
     createdAt: toEpochMs(row.created_at),

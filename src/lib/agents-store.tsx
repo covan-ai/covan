@@ -26,6 +26,8 @@ export type Agent = {
   temperature: number | null;
   /** How long the agent thinks first, or null for whatever the model does. */
   reasoningEffort: ReasoningEffort | null;
+  /** Whether the agent can search the web to answer questions. */
+  webSearch: boolean;
   documents: {
     id: string;
     name: string;
@@ -116,16 +118,14 @@ type Store = {
    */
   canWrite: boolean;
   /**
-   * The tuning settings are optional here and required nowhere else: a new
-   * agent is created on Auto, and both surfaces that create one say so by not
-   * mentioning them. Settings is where they are chosen, once there is an agent
-   * to choose them for.
+   * The tuning settings (temperature, reasoningEffort) are optional here and
+   * required nowhere else: a new agent is created on Auto, and both surfaces
+   * that create one say so by not mentioning them. Settings is where they are
+   * chosen, once there is an agent to choose them for. webSearch is required
+   * and defaults to false.
    */
   createAgent: (
-    a: Omit<
-      Agent,
-      "id" | "createdAt" | "documents" | "bundleIds" | "temperature" | "reasoningEffort"
-    >,
+    a: Omit<Agent, "id" | "createdAt" | "documents" | "bundleIds" | "temperature" | "reasoningEffort">,
   ) => Promise<Agent>;
   updateAgent: (id: string, patch: Partial<Agent>) => void;
   removeDocument: (agentId: string, docId: string) => Promise<void>;

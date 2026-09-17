@@ -467,6 +467,7 @@ chat.post("/chat/stream", async (c) => {
             // deliberate, the alternative is a long pause with nothing on
             // screen, which reads as a product that has stopped working.
             showThinking: true,
+            webSearch: agent.web_search ?? false,
           },
           { signal },
         );

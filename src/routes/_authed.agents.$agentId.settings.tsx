@@ -98,6 +98,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(
     agent.reasoningEffort ?? null,
   );
+  const [webSearch, setWebSearch] = useState(agent.webSearch);
   // What the *currently picked* model accepts, not what the saved one did — so
   // switching to gpt-5 in this form greys the temperature out before you save,
   // rather than after the reply comes back wrong.
@@ -112,6 +113,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
       mode,
       temperature,
       reasoningEffort,
+      webSearch,
     });
     toast.success("Changes saved");
   };
@@ -180,6 +182,22 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
               <p className="text-xs text-muted-foreground">
                 Brainstorm mode makes this agent generate and pressure-test ideas instead of
                 answering directly — good for finding new directions.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="web-search"
+                  checked={webSearch}
+                  onCheckedChange={(checked) => setWebSearch(checked === true)}
+                />
+                <Label htmlFor="web-search" className="text-sm font-normal cursor-pointer">
+                  Enable web search
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Allow this agent to search the internet when your team's documents don't contain
+                the answer. Useful for current events or public information.
               </p>
             </div>
             <TemperatureField

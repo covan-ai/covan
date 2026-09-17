@@ -3,6 +3,8 @@ import {
   resolveModel,
   providerFor,
   acceptsTemperature,
+  reasonsBeforeAnswering,
+  thinksByDefault,
   availableModels,
   modelSpec,
   titleModelFor,
@@ -51,6 +53,15 @@ describe("acceptsTemperature", () => {
     expect(acceptsTemperature("gpt-5-nano")).toBe(false);
   });
 
+  it("refuses one for the newest Claude models, which removed the parameter", () => {
+    // The same failure as the GPT-5 row above and for the same reason: the
+    // field was removed from these endpoints, so brainstorm mode's 0.9 — or an
+    // agent's own dial — is a 400 rather than a value the model declines.
+    expect(acceptsTemperature("claude-opus-5")).toBe(false);
+    expect(acceptsTemperature("claude-sonnet-5")).toBe(false);
+    expect(acceptsTemperature("claude-opus-4-8")).toBe(false);
+  });
+
   it("allows one everywhere else, unknown endpoints included", () => {
     expect(acceptsTemperature("gpt-4o")).toBe(true);
     // The model new agents start on (`DEFAULT_NEW_AGENT_MODEL`, frontend). It
@@ -60,6 +71,36 @@ describe("acceptsTemperature", () => {
     expect(acceptsTemperature("gpt-4.1-mini")).toBe(true);
     expect(acceptsTemperature("claude-sonnet-4-6")).toBe(true);
     expect(acceptsTemperature("llama3.3:70b")).toBe(true);
+  });
+});
+
+describe("what a model does before it answers", () => {
+  it("offers the effort picker on every Claude model that takes one", () => {
+    expect(reasonsBeforeAnswering("claude-opus-5")).toBe(true);
+    expect(reasonsBeforeAnswering("claude-sonnet-5")).toBe(true);
+    expect(reasonsBeforeAnswering("claude-opus-4-8")).toBe(true);
+    expect(reasonsBeforeAnswering("claude-sonnet-4-6")).toBe(true);
+  });
+
+  it("withholds it from the 4.5 models, where an effort is a 400", () => {
+    expect(reasonsBeforeAnswering("claude-sonnet-4-5")).toBe(false);
+    expect(reasonsBeforeAnswering("claude-haiku-4-5")).toBe(false);
+  });
+
+  it("knows which single model deliberates with nothing asked of it", () => {
+    // Opus 5 alone. Its predecessor does not, which is the trap: omitting the
+    // parameter means "think" on one and "do not" on the other, and the output
+    // ceiling in lib/completion.ts turns on the difference.
+    expect(thinksByDefault("claude-opus-5")).toBe(true);
+    expect(thinksByDefault("claude-opus-4-8")).toBe(false);
+    expect(thinksByDefault("claude-sonnet-5")).toBe(false);
+    expect(thinksByDefault("gpt-5")).toBe(false);
+  });
+
+  it("assumes an unknown id does not, rather than widening its ceiling", () => {
+    // Under OPENAI_BASE_URL every id is unknown. The optimistic answer would
+    // spend a self-hoster's ceiling on deliberation we could not confirm.
+    expect(thinksByDefault("llama3.3:70b")).toBe(false);
   });
 });
 

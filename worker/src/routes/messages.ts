@@ -137,4 +137,61 @@ messages.delete("/messages/after/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// POST /messages/:id/show
+//
+// Put a different version of an answer back on screen. Regenerating keeps the
+// reply it replaced (0050), and this is how somebody goes back to it.
+messages.post("/messages/:id/show", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+  const id = c.req.param("id");
+
+  // Read through the caller's own client, so a message they cannot see is a
+  // 404 rather than a version switch on somebody else's conversation.
+  const { data: target, error: targetError } = await db
+    .from("messages")
+    .select("id, session_id, role")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (targetError) {
+    return c.json({ error: "failed to load message" }, 500);
+  }
+  if (!target) {
+    return c.json({ error: "not found" }, 404);
+  }
+  if (target.role !== "assistant") {
+    return c.json({ error: "only a reply has versions" }, 400);
+  }
+
+  // The same check, and for the same reason, as DELETE /messages/after/:id
+  // above: `show_message_version` is SECURITY DEFINER and answers a caller who
+  // does not own the conversation by matching nothing and reporting success.
+  // An honest 403 is what the interface can act on.
+  const { data: session, error: sessionError } = await db
+    .from("chat_sessions")
+    .select("user_id")
+    .eq("id", target.session_id)
+    .maybeSingle();
+
+  if (sessionError) {
+    return c.json({ error: "failed to load session" }, 500);
+  }
+  if (!session) {
+    return c.json({ error: "not found" }, 404);
+  }
+  if (session.user_id !== user.id) {
+    return c.json({ error: "only the owner of a conversation can rewrite it" }, 403);
+  }
+
+  // One statement inside the function, because the two-statement version has a
+  // window in which the conversation has no answer in it. See 0050.
+  const { error } = await db.rpc("show_message_version", { p_message_id: id });
+  if (error) {
+    return c.json({ error: "failed to switch version" }, 500);
+  }
+
+  return c.json({ ok: true });
+});
+
 export { messages };

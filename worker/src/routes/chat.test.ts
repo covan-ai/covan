@@ -36,6 +36,7 @@ const completionCreate = vi.fn();
  */
 const anthropicCreate = vi.fn();
 const serviceInsert = vi.fn();
+const serviceUpdate = vi.fn();
 const sessionUpdate = vi.fn();
 /** The OPENAI_API_KEY every `createOpenAI(env)` call was actually made with. */
 const createOpenAIKeys: Array<string | undefined> = [];
@@ -64,24 +65,33 @@ vi.mock("../lib/supabase", () => ({
   serviceClient: () => ({
     from: (table: string) => {
       if (table === "messages") {
+        const answered = (row: Record<string, unknown>, id: string) => ({
+          select: () => ({
+            single: async () => ({
+              data: {
+                id,
+                role: "assistant",
+                content: row.content,
+                created_at: "2026-09-02T10:00:00Z",
+                sources: row.sources,
+              },
+              error: null,
+            }),
+          }),
+        });
         return {
           insert: (row: Record<string, unknown>) => {
             serviceInsert(row);
-            return {
-              select: () => ({
-                single: async () => ({
-                  data: {
-                    id: "assistant-1",
-                    role: "assistant",
-                    content: row.content,
-                    created_at: "2026-09-02T10:00:00Z",
-                    sources: row.sources,
-                  },
-                  error: null,
-                }),
-              }),
-            };
+            return answered(row, "assistant-1");
           },
+          // A continuation writes into the reply it finishes rather than
+          // beside it, so this is the other half of the same path.
+          update: (row: Record<string, unknown>) => ({
+            eq: (_column: string, id: string) => {
+              serviceUpdate({ id, ...row });
+              return answered(row, id);
+            },
+          }),
         };
       }
       // chat_sessions, which the route touches twice: the `updated_at` bump
@@ -179,13 +189,27 @@ function appWith(spec: {
   agentModel?: string | null;
   /** The agent's own tuning (0048). Undefined leaves both on Auto. */
   agentTuning?: { temperature?: number | null; reasoning_effort?: string | null };
+  /**
+   * A reply already sitting at the end of the conversation, stopped at its
+   * length cap. What "continue" has to work from.
+   */
+  cutOffReply?: string;
 }) {
   const documents = spec.documents ?? [];
-  const rows = [...(spec.history ?? []), { role: "user", content: spec.question }].map((m, i) => ({
+  const rows = [
+    ...(spec.history ?? []),
+    { role: "user", content: spec.question },
+    ...(spec.cutOffReply ? [{ role: "assistant", content: spec.cutOffReply }] : []),
+  ].map((m, i) => ({
     id: `m${i}`,
     role: m.role,
     content: m.content,
     created_at: `2026-09-0${i + 1}T10:00:00Z`,
+    // What the first half of a cut-off reply cost, so a continuation can be
+    // checked for adding to it rather than overwriting it.
+    ...(m.role === "assistant"
+      ? { prompt_tokens: 400, completion_tokens: 1536, cached_tokens: 0 }
+      : {}),
   }));
 
   const agent = {
@@ -244,18 +268,23 @@ function appWith(spec: {
   return { app, calls, rpcCalls };
 }
 
-async function ask(app: Hono<AppEnv>) {
+async function post(app: Hono<AppEnv>, body: Record<string, unknown>) {
   const res = await app.request(
     "/chat/stream",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: SESSION.id }),
+      body: JSON.stringify(body),
     },
     {} as never,
   );
   return { status: res.status, body: await res.text() };
 }
+
+const ask = (app: Hono<AppEnv>) => post(app, { sessionId: SESSION.id });
+const carryOn = (app: Hono<AppEnv>) => post(app, { sessionId: SESSION.id, continue: true });
+const again = (app: Hono<AppEnv>, model?: string) =>
+  post(app, { sessionId: SESSION.id, regenerate: true, ...(model ? { model } : {}) });
 
 /**
  * The messages the model was actually sent for the REPLY, by role.
@@ -659,7 +688,7 @@ describe("saying so when a Claude pick is dropped (Task 9)", () => {
     const { body } = await ask(app);
 
     expect(body).toContain('"type":"notice"');
-    expect(body).toMatch(/gpt-4o/);
+    expect(body).toMatch(/gpt-4\.1/);
   });
 
   it("says nothing when the workspace has an Anthropic key too", async () => {
@@ -799,7 +828,7 @@ describe("naming the conversation", () => {
     const titling = completionCreate.mock.calls.find((c) => !c[0].stream);
     const answering = completionCreate.mock.calls.find((c) => c[0].stream);
     expect(titling![0].model).toBe("gpt-4o-mini");
-    expect(answering![0].model).toBe("gpt-4o");
+    expect(answering![0].model).toBe("gpt-4.1");
   });
 
   // Renaming on every turn would cost money and move a label out from under
@@ -829,5 +858,140 @@ describe("naming the conversation", () => {
     expect(res.status).toBe(200);
     expect(res.body).toContain("Twenty days.");
     expect(writtenTitle()).toBeUndefined();
+  });
+});
+
+describe("finishing a reply that stopped mid-sentence", () => {
+  const CUT_OFF = "Vacation is twenty days, and the carry-over rule is";
+
+  it("asks for the rest in words, and never ends on the model's own turn", async () => {
+    // The obvious shape is to end the list with the half-written answer and
+    // let the model run on from it. That is a prefill, and it is a 400 on
+    // every Claude model from 4.6 onward — so the ask is a short user turn.
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: CUT_OFF });
+
+    await carryOn(app);
+
+    const sent = sentMessages();
+    const last = sent[sent.length - 1];
+    expect(last.role).toBe("user");
+    expect(last.content).toMatch(/cut off at its length limit/);
+    // And the half it is finishing is there for it to read.
+    expect(sent.some((m) => m.role === "assistant" && m.content === CUT_OFF)).toBe(true);
+  });
+
+  it("writes the rest into the reply it finishes, not beside it", async () => {
+    // Two assistant messages where the model wrote one answer is not a
+    // transcript — and the next turn would send the halves as separate turns,
+    // which is not what it said.
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: CUT_OFF });
+
+    await carryOn(app);
+
+    expect(serviceInsert).not.toHaveBeenCalled();
+    const written = serviceUpdate.mock.calls[0][0];
+    expect(written.id).toBe("m1");
+    expect(written.content).toBe(`${CUT_OFF}Twenty days.`);
+  });
+
+  it("adds what the second half cost to what the first half cost", async () => {
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: CUT_OFF });
+
+    await carryOn(app);
+
+    const written = serviceUpdate.mock.calls[0][0];
+    expect(written.prompt_tokens).toBe(400 + 100);
+    expect(written.completion_tokens).toBe(1536 + 20);
+  });
+
+  it("grounds the second half in the question, not in the half-answer", async () => {
+    const { app } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: CUT_OFF,
+      documents: [HANDBOOK],
+    });
+
+    await carryOn(app);
+
+    expect(embedTexts).toHaveBeenCalled();
+    const embedded = embedTexts.mock.calls[0][1] as string[];
+    expect(embedded.join(" ")).toMatch(/vacation days/i);
+  });
+
+  it("refuses when the conversation ends on a question", async () => {
+    // Nothing to carry on from. The ordinary path answers that.
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    const res = await carryOn(app);
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatch(/nothing to continue/);
+  });
+});
+
+describe("answering the same question again", () => {
+  const FIRST_ANSWER = "Twenty days, I think.";
+
+  it("keeps the answer it replaces instead of deleting it", async () => {
+    // What regenerate used to be: the reply went, the question was re-asked,
+    // and there was no way back — so the button really asked "are you sure the
+    // next answer will be better", which nobody can know before seeing it.
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: FIRST_ANSWER });
+
+    await again(app);
+
+    expect(serviceUpdate.mock.calls[0][0]).toMatchObject({ id: "m1" });
+    expect(serviceUpdate.mock.calls[0][0].superseded_at).toEqual(expect.any(String));
+    // And the new one joins the chain rather than starting its own.
+    expect(serviceInsert.mock.calls[0][0]).toMatchObject({ original_message_id: "m1" });
+  });
+
+  it("does not show the model the answer it is replacing", async () => {
+    // Left in front of it, the model reads its own previous reply and writes a
+    // variation on it rather than a second attempt at the question.
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: FIRST_ANSWER });
+
+    await again(app);
+
+    expect(sentMessages().some((m) => m.content === FIRST_ANSWER)).toBe(false);
+  });
+
+  it("answers on another model for one reply, without moving the agent to it", async () => {
+    const { app } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: FIRST_ANSWER,
+      agentModel: "gpt-4o",
+    });
+
+    await again(app, "gpt-4.1-mini");
+
+    const reply = completionCreate.mock.calls.find((call) => call[0].stream);
+    expect(reply![0].model).toBe("gpt-4.1-mini");
+    // Nothing was written to the agent — the override lives in the request.
+    expect(serviceUpdate.mock.calls.every((call) => "superseded_at" in call[0])).toBe(true);
+  });
+
+  it("ignores a model this deployment does not serve", async () => {
+    // The same answer `resolveModel` already gives an agent whose model had its
+    // key rotated out: fall back rather than fail the reply.
+    const { app } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: FIRST_ANSWER,
+      agentModel: "gpt-4o",
+    });
+
+    await again(app, "some-model-nobody-has");
+
+    const reply = completionCreate.mock.calls.find((call) => call[0].stream);
+    expect(reply![0].model).toBe("gpt-4o");
+  });
+
+  it("refuses when the conversation ends on a question", async () => {
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    const res = await again(app);
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatch(/nothing to regenerate/);
   });
 });

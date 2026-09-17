@@ -485,6 +485,101 @@ describe("complete, on Anthropic", () => {
       }),
     ).rejects.toThrow(/ANTHROPIC_API_KEY/);
   });
+
+  describe("how a Claude model is asked to think", () => {
+    const ask = (over: Partial<Parameters<typeof complete>[1]> = {}) =>
+      complete(env, {
+        model: "claude-sonnet-4-6",
+        messages: [{ role: "user", content: "Why?" }],
+        maxTokens: 1000,
+        ...over,
+      });
+
+    it("sends adaptive thinking and an effort, never a token budget", async () => {
+      await ask({ reasoningEffort: "high" });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call.thinking).toEqual({ type: "adaptive", display: "omitted" });
+      expect(call.output_config).toEqual({ effort: "high" });
+      // The translation that reads like the obvious one, and is a 400 on every
+      // model this branch can reach. Pinned because it is the thing a future
+      // edit is most likely to reach for.
+      expect(call.thinking).not.toHaveProperty("budget_tokens");
+      expect(call).not.toHaveProperty("reasoning_effort");
+    });
+
+    it("widens the ceiling only by what the asked-for effort needs", async () => {
+      await ask({ reasoningEffort: "high" });
+      expect(anthropicCreate.mock.calls[0][0].max_tokens).toBe(1000 + 8192);
+    });
+
+    it("leaves the ceiling alone on a turn that does not think", async () => {
+      // The whole point of making the headroom follow the request rather than
+      // the model. Sonnet 4.6 *can* deliberate, so reading the decision off the
+      // id would widen every reply's ceiling by 4096 to make room for thinking
+      // that is not happening.
+      await ask();
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call.max_tokens).toBe(1000);
+      expect(call).not.toHaveProperty("thinking");
+      expect(call).not.toHaveProperty("output_config");
+    });
+
+    it("treats 'minimal' as thinking off, not as Anthropic's lowest effort", async () => {
+      // What the persona drafter and the idea extractor mean by it. Anthropic's
+      // scale has no floor below "low", so translating it into a level would
+      // charge the one caller that opted out for thinking it opted out of.
+      await ask({ reasoningEffort: "minimal" });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call).not.toHaveProperty("thinking");
+      expect(call).not.toHaveProperty("output_config");
+      expect(call.max_tokens).toBe(1000);
+    });
+
+    it("makes room on a model that thinks unasked", async () => {
+      // Opus 5 deliberates when the parameter is absent, which is the opposite
+      // of every other model here. Its ceiling needs the room whether or not an
+      // agent asked for anything.
+      await ask({ model: "claude-opus-5" });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call.thinking).toEqual({ type: "adaptive", display: "omitted" });
+      expect(call).not.toHaveProperty("output_config");
+      expect(call.max_tokens).toBe(1000 + REASONING_HEADROOM);
+    });
+
+    it("turns thinking off explicitly where silence would turn it on", async () => {
+      await ask({ model: "claude-opus-5", reasoningEffort: "minimal" });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call.thinking).toEqual({ type: "disabled" });
+      expect(call.max_tokens).toBe(1000);
+    });
+
+    it("says nothing at all to a model that takes no effort", async () => {
+      // An effort on a 4.5 model is a 400, so an agent carrying one must not
+      // have it forwarded — it would break that agent on that model alone.
+      await ask({ model: "claude-haiku-4-5", reasoningEffort: "high" });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call).not.toHaveProperty("thinking");
+      expect(call).not.toHaveProperty("output_config");
+      expect(call.max_tokens).toBe(1000);
+    });
+
+    it("drops a temperature the newest models reject", async () => {
+      // Brainstorm mode sets 0.9 and an agent can set its own. Both are a 400
+      // on Opus 5, the same way they already are on the GPT-5 family.
+      await ask({ model: "claude-opus-5", temperature: 0.9 });
+      expect(anthropicCreate.mock.calls[0][0]).not.toHaveProperty("temperature");
+
+      anthropicCreate.mockClear();
+      await ask({ temperature: 0.9 });
+      expect(anthropicCreate.mock.calls[0][0].temperature).toBe(0.9);
+    });
+  });
 });
 
 describe("streamCompletion", () => {
@@ -543,12 +638,52 @@ describe("streamCompletion", () => {
     expect(events).toEqual([
       { type: "delta", text: "Hel" },
       { type: "delta", text: "lo" },
+      // Its own event, not folded into the answer. A consumer that cannot tell
+      // the two apart writes an account of the model's deliberation into the
+      // transcript — which is what happens the first time somebody
+      // "simplifies" these two branches into one.
+      { type: "thinking", text: "hmm" },
       {
         type: "end",
         finishReason: null,
         usage: { promptTokens: 10, completionTokens: 2, cachedTokens: 1 },
       },
     ]);
+  });
+
+  it("asks for the reasoning in words only when a caller will show it", async () => {
+    // The thinking happens either way — `reasoningEffort` decides that. This
+    // decides whether the model also writes a readable account of it, which
+    // costs output tokens and is worth nothing to the callers that drop it.
+    anthropicCreate.mockResolvedValue(
+      replay([{ type: "message_delta", usage: { output_tokens: 0 } }]),
+    );
+
+    await collect(
+      streamCompletion(env, {
+        model: "claude-sonnet-4-6",
+        messages: [{ role: "user", content: "Hi" }],
+        reasoningEffort: "high",
+        showThinking: true,
+      }),
+    );
+    expect(anthropicCreate.mock.calls[0][0].thinking).toEqual({
+      type: "adaptive",
+      display: "summarized",
+    });
+
+    anthropicCreate.mockClear();
+    await collect(
+      streamCompletion(env, {
+        model: "claude-sonnet-4-6",
+        messages: [{ role: "user", content: "Hi" }],
+        reasoningEffort: "high",
+      }),
+    );
+    expect(anthropicCreate.mock.calls[0][0].thinking).toEqual({
+      type: "adaptive",
+      display: "omitted",
+    });
   });
 
   it("still reports usage when a stream carried no text at all", async () => {

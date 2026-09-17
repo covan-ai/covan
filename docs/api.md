@@ -143,16 +143,32 @@ client for all of it.
 
 ### Conversations
 
-|                                                |                               |
-| ---------------------------------------------- | ----------------------------- |
-| `GET /sessions` · `POST /sessions`             | List and open conversations   |
-| `PATCH /sessions/:id` · `DELETE /sessions/:id` | Rename, share, delete         |
-| `GET /sessions/:id/messages`                   | The transcript                |
-| `POST /messages` · `PATCH /messages/:id`       | Write and edit your own lines |
-| `DELETE /messages/after/:id`                   | Truncate, for a re-ask        |
-| `POST /chat/stream`                            | Ask. Streams SSE.             |
-| `POST /transcribe`                             | Audio to text                 |
-| `POST /sessions/:id/report`                    | Write it up as a document     |
+|                                                |                                 |
+| ---------------------------------------------- | ------------------------------- |
+| `GET /sessions` · `POST /sessions`             | List and open conversations     |
+| `PATCH /sessions/:id` · `DELETE /sessions/:id` | Rename, share, delete           |
+| `GET /sessions/:id/messages`                   | The transcript, newest first    |
+| `POST /messages` · `PATCH /messages/:id`       | Write and edit your own lines   |
+| `DELETE /messages/after/:id`                   | Truncate, after an edit         |
+| `POST /messages/:id/show`                      | Show another version of a reply |
+| `POST /chat/stream`                            | Ask. Streams SSE.               |
+| `POST /transcribe`                             | Audio to text                   |
+| `POST /sessions/:id/report`                    | Write it up as a document       |
+
+`POST /chat/stream` takes `{ "sessionId" }` and three optional flags.
+`continue: true` finishes a reply that stopped at its length limit, writing the
+rest into the same message. `regenerate: true` answers the last question again
+and keeps the reply it replaces — the old one stops showing rather than being
+deleted, and `POST /messages/:id/show` brings it back. `model` answers on
+another model for that one reply, without moving the agent to it.
+
+An assistant message carries `versions` — the ids of every take on it, oldest
+first — when there is more than one. It is absent when there is not.
+
+`GET /sessions/:id/messages` answers with the newest hundred turns, oldest
+first. `?limit=` asks for more, up to five hundred. It pages from the _new_ end
+deliberately: a conversation longer than one page is missing its beginning,
+which is the only end anybody can stand to lose.
 
 A session is private to you unless its `visibility` is `shared`, in which case
 the workspace can read it. Assistant replies cannot be written by any client,

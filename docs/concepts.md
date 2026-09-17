@@ -84,12 +84,13 @@ construction — there is no owner column that grants anything, so every member 
 the workspace sees the same agent and can edit it.
 
 The model is one of seven OpenAI ids (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1`,
-`gpt-4.1-mini`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`), or one of three Anthropic
-ones (`claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-haiku-4-5`) on an
-install whose operator set `ANTHROPIC_API_KEY`. Anything the API does not
-recognise — an id from an older list, or a Claude one on an install with no key
-for it — resolves to `gpt-4o`, which is what keeps every agent answering across
-a change to either list. A _new_ agent starts on `gpt-4.1-mini` instead, unless
+`gpt-4.1-mini`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`), or one of six Anthropic
+ones (`claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`,
+`claude-sonnet-4-6`, `claude-sonnet-4-5`, `claude-haiku-4-5`) on an install
+whose operator set `ANTHROPIC_API_KEY`. Anything the API does not recognise —
+an id from an older list, or a Claude one on an install with no key for it —
+resolves to `gpt-4.1`, which is what keeps every agent answering across a
+change to either list. A _new_ agent starts on `gpt-4.1-mini` instead, unless
 the workspace names a default of its own: roughly a sixth of the price, and the
 one most people never change. The mode is
 `normal` or `brainstorm`, and brainstorm layers a facilitation instruction block

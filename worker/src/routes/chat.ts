@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
-import { resolveModel, modelSpec, titleModelFor } from "../lib/models";
+import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
 import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
 import { selectHistory } from "../lib/history";
@@ -18,7 +18,58 @@ const chat = new Hono<AppEnv>();
 
 const streamChatSchema = z.object({
   sessionId: z.string().min(1),
+  /**
+   * Finish the reply already at the end of this conversation, rather than
+   * answering a new question.
+   *
+   * A chat reply is capped at `maxTokensFor("normal")` — 1536 tokens, which is
+   * a deliberate cost decision and not an accident. The consequence is that a
+   * long answer stops mid-thought and otherwise looks finished, which is the
+   * worst way for a reply to be wrong: nothing on screen says the end is
+   * missing. The stream says `truncated` when it happens; this is what the
+   * button that appears in response to it calls.
+   */
+  continue: z.boolean().optional(),
+  /**
+   * Answer the last question again, keeping the answer that is already there.
+   *
+   * Regenerating used to delete: the reply went, the question was re-asked,
+   * and there was no way back — so what the button actually asked was "are you
+   * sure the next answer will be better than this one", which nobody can know
+   * before seeing it. Migration 0050 gives an answer versions; this writes one.
+   *
+   * The last answer only. Regenerating one in the middle of a conversation
+   * would leave every turn after it replying to something that is no longer
+   * there, and making those turns a branch is a conversation tree rather than
+   * a version list — a different feature, and a much larger one.
+   */
+  regenerate: z.boolean().optional(),
+  /**
+   * Answer on a different model than the agent's, for this reply only.
+   *
+   * The agent's own model is a setting somebody chose; this is "try that
+   * again on something stronger" and has no business overwriting it. Checked
+   * against what this deployment can actually serve — an id that is not
+   * offered here falls through to `resolveModel`, which is the same thing it
+   * does for an agent carrying a model whose key has been rotated out.
+   */
+  model: z.string().optional(),
 });
+
+/**
+ * What the model is told when it is asked to carry on.
+ *
+ * Sent as a *user* turn with the cut-off reply as the assistant turn before
+ * it, which is not the obvious shape — the obvious shape is to end the message
+ * list with the partial answer and let the model run on from it. That is a
+ * prefill, and it returns a 400 on every Claude model from 4.6 onward. Asking
+ * in words works on both providers and costs one short turn.
+ */
+const CONTINUE_INSTRUCTION =
+  "Your previous reply was cut off at its length limit. Carry on from exactly " +
+  "where it stops — continue the same sentence if it was mid-sentence. Do not " +
+  "repeat anything you already wrote, do not start over, and do not introduce " +
+  "the continuation.";
 
 // Hard cap on rows pulled from the DB — an upper bound so the query stays cheap.
 // The real trimming is done by selectHistory() below against a character budget.
@@ -51,7 +102,7 @@ chat.post("/chat/stream", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { sessionId } = parsed.data;
+  const { sessionId, continue: continuing = false, regenerate = false } = parsed.data;
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
@@ -92,9 +143,30 @@ chat.post("/chat/stream", async (c) => {
 
   const rows = (recentDesc ?? []).slice().reverse();
   const lastMessage = rows[rows.length - 1];
-  if (!lastMessage || lastMessage.role !== "user") {
+  // Which end of the conversation this turn is working from. Answering needs a
+  // question to answer; continuing needs an answer to continue.
+  if (continuing || regenerate) {
+    if (!lastMessage || lastMessage.role !== "assistant") {
+      return c.json({ error: continuing ? "nothing to continue" : "nothing to regenerate" }, 400);
+    }
+  } else if (!lastMessage || lastMessage.role !== "user") {
     return c.json({ error: "no user message to respond to" }, 400);
   }
+
+  // What the retrieval is *for*, which on a continuation is not the last
+  // message — that is the half-written answer. It is the question that answer
+  // was already halfway through, so the second half is grounded in the same
+  // documents as the first.
+  const question =
+    continuing || regenerate
+      ? ([...rows].reverse().find((m: { role: string }) => m.role === "user")?.content ?? "")
+      : lastMessage.content;
+
+  // What the model is shown. A regeneration is being asked the same question
+  // over again, so the answer it is replacing must not be in front of it —
+  // left there, the model reads its own previous reply and writes a variation
+  // on it rather than a second attempt at the question.
+  const turns = regenerate ? rows.slice(0, -1) : rows;
 
   const mode: "normal" | "brainstorm" = effectiveMode(session, agent);
 
@@ -106,8 +178,8 @@ chat.post("/chat/stream", async (c) => {
     db,
     env,
     session.agent_id,
-    lastMessage.content,
-    rows.map((m: { role: string; content: string }) => ({
+    question,
+    turns.map((m: { role: string; content: string }) => ({
       role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
       content: m.content,
     })),
@@ -125,7 +197,7 @@ chat.post("/chat/stream", async (c) => {
   // Budget the history down to the most recent turns that fit, so long chats
   // (and giant pasted messages) don't re-inflate the input on every turn.
   const history = selectHistory(
-    rows.map((m: { role: string; content: string }) => ({
+    turns.map((m: { role: string; content: string }) => ({
       role: m.role as "user" | "assistant",
       content: m.content,
     })),
@@ -142,9 +214,24 @@ chat.post("/chat/stream", async (c) => {
     ...priorTurns,
     ...(ragBlock ? [{ role: "system" as const, content: ragBlock }] : []),
     ...(latestTurn ? [latestTurn] : []),
+    // On a continuation `latestTurn` is the cut-off answer, and this is the
+    // turn that asks for the rest of it. See `CONTINUE_INSTRUCTION` for why it
+    // is a user turn rather than the obvious thing.
+    ...(continuing ? [{ role: "user" as const, content: CONTINUE_INSTRUCTION }] : []),
   ];
 
-  const model = resolveModel(agent.model, env);
+  // The agent's model, unless this one reply asked for another.
+  //
+  // Checked against what this deployment can actually serve rather than taken
+  // on trust: an id nobody offers falls back to the agent's own, which is the
+  // same thing `resolveModel` already does for an agent carrying a model whose
+  // key has been rotated out. The override is per-reply on purpose — the
+  // agent's model is a setting somebody chose, and "try that again on
+  // something stronger" has no business overwriting it.
+  const requested = parsed.data.model;
+  const picked =
+    requested && (availableModels(env) as string[]).includes(requested) ? requested : agent.model;
+  const model = resolveModel(picked, env);
 
   // `availableModels` (`lib/models.ts`) is computed from the deployment's own
   // environment and carried to the frontend once, by `/me` — it has no idea
@@ -164,8 +251,8 @@ chat.post("/chat/stream", async (c) => {
   // once, here, is the whole scope.
   const claudeDroppedForWorkspaceKey =
     Boolean(c.get("providerEnv")) &&
-    modelSpec(agent.model)?.provider === "anthropic" &&
-    model !== agent.model;
+    modelSpec(picked)?.provider === "anthropic" &&
+    model !== picked;
 
   const signal = c.req.raw.signal;
   const service = serviceClient(c.env);
@@ -190,7 +277,7 @@ chat.post("/chat/stream", async (c) => {
   // add to them.
   const titling = session.title
     ? null
-    : generateSessionTitle(env, titleModelFor(model, env), lastMessage.content);
+    : generateSessionTitle(env, titleModelFor(model, env), question);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -287,21 +374,76 @@ chat.post("/chat/stream", async (c) => {
       ) => {
         if (persisted || text.trim().length === 0) return null;
         persisted = true;
-        const { data: inserted, error: insertError } = await service
-          .from("messages")
-          .insert({
-            session_id: sessionId,
-            role: "assistant",
-            content: text,
-            sender_id: null,
-            sources: sources.length > 0 ? sources : null,
-            grounding,
-            prompt_tokens: opts.promptTokens,
-            completion_tokens: opts.completionTokens,
-            cached_tokens: opts.cachedTokens,
-          })
-          .select("*")
-          .single();
+
+        // A continuation is written *into* the reply it finishes, not beside
+        // it. Two assistant messages where the model wrote one answer is not a
+        // transcript — and the next turn would then send the two halves as two
+        // separate turns, which is not what the model said.
+        //
+        // Joined with nothing between them: the instruction asks it to carry
+        // on from exactly where the text stops, which is often mid-sentence,
+        // and a space inserted there would be a space in the middle of a word.
+        //
+        // The tokens add rather than replace, because the row is what the
+        // usage view sums and both halves were paid for. `sources` and
+        // `grounding` are left alone: the retrieval ran again for the same
+        // question and the row already says what grounded it.
+        const before = lastMessage as {
+          id: string;
+          content: string;
+          original_message_id: string | null;
+          prompt_tokens: number | null;
+          completion_tokens: number | null;
+          cached_tokens: number | null;
+        };
+        // A regeneration keeps the answer it replaces. Superseded here rather
+        // than before the stream opened: a reply that errors out or comes back
+        // empty must leave the conversation exactly as it found it, and the
+        // answer already on screen is the thing it would otherwise have taken.
+        //
+        // The new version points at the chain's *root*, not at the version it
+        // is replacing — see 0050 for why the pointer goes where it does.
+        if (regenerate) {
+          const { error: supersedeError } = await service
+            .from("messages")
+            .update({ superseded_at: new Date().toISOString() })
+            .eq("id", before.id);
+          if (supersedeError) {
+            console.error("failed to supersede the previous answer", supersedeError);
+            return null;
+          }
+        }
+
+        const { data: inserted, error: insertError } = continuing
+          ? await service
+              .from("messages")
+              .update({
+                content: before.content + text,
+                prompt_tokens: (before.prompt_tokens ?? 0) + (opts.promptTokens ?? 0),
+                completion_tokens: (before.completion_tokens ?? 0) + (opts.completionTokens ?? 0),
+                cached_tokens: (before.cached_tokens ?? 0) + (opts.cachedTokens ?? 0),
+              })
+              .eq("id", before.id)
+              .select("*")
+              .single()
+          : await service
+              .from("messages")
+              .insert({
+                session_id: sessionId,
+                role: "assistant",
+                content: text,
+                sender_id: null,
+                sources: sources.length > 0 ? sources : null,
+                grounding,
+                prompt_tokens: opts.promptTokens,
+                completion_tokens: opts.completionTokens,
+                cached_tokens: opts.cachedTokens,
+                ...(regenerate
+                  ? { original_message_id: before.original_message_id ?? before.id }
+                  : {}),
+              })
+              .select("*")
+              .single();
         if (insertError || !inserted) return null;
         // Bump updated_at via the service client (RLS-bypassing) so ordering is
         // correct regardless of who drove the reply.
@@ -321,6 +463,11 @@ chat.post("/chat/stream", async (c) => {
             maxTokens: maxTokensFor(mode),
             temperature: temperatureFor(mode, agent.temperature),
             reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
+            // The one caller that shows it. On a model and an effort that
+            // deliberate, the alternative is a long pause with nothing on
+            // screen, which reads as a product that has stopped working.
+            showThinking: true,
+            webSearch: agent.web_search ?? false,
           },
           { signal },
         );
@@ -329,6 +476,14 @@ chat.post("/chat/stream", async (c) => {
           if (event.type === "delta") {
             full += event.text;
             send({ type: "delta", text: event.text });
+          } else if (event.type === "thinking") {
+            // Forwarded and not kept. The reasoning is context for the answer
+            // while somebody is watching it appear, not part of the answer:
+            // it is not written to the row, so it is not in the transcript and
+            // not re-sent as history on the next turn. Adding it to `full`
+            // would put an account of the model's deliberation into the reply
+            // itself.
+            send({ type: "thinking", text: event.text });
           } else {
             promptTokens = event.usage.promptTokens;
             completionTokens = event.usage.completionTokens;

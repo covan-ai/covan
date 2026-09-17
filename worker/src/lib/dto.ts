@@ -39,6 +39,7 @@ export type AgentDTO = {
    */
   temperature: number | null;
   reasoningEffort: string | null;
+  webSearch: boolean;
   documents: DocumentDTO[];
   bundleIds: string[];
   createdAt: number;
@@ -65,6 +66,23 @@ export type MessageDTO = {
   createdAt: number;
   sources?: SourceDTO[];
   sender?: { id: string; name: string | null; avatarUrl: string | null };
+  /**
+   * Every version of this answer, oldest first, when there is more than one.
+   *
+   * Absent on a reply nobody has regenerated, which is almost all of them —
+   * an empty array and an absent field would mean the same thing to the
+   * screen, and the absent one does not travel. Ids only: the screen asks for
+   * whichever it wants to show, and shipping five drafts of an answer to draw
+   * a `2/3` would be four answers nobody asked to read.
+   */
+  versions?: string[];
+  /**
+   * Token usage for assistant replies. Null on user messages and on replies
+   * written before 0006. cachedTokens is null on replies written before 0025.
+   */
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  cachedTokens?: number | null;
 };
 
 export type ChatSessionDTO = {
@@ -209,6 +227,7 @@ export function mapAgent(row: {
   mode?: string | null;
   temperature?: number | null;
   reasoning_effort?: string | null;
+  web_search?: boolean | null;
   created_at: string;
   agent_bundles?: Array<{
     bundle_id: string;
@@ -233,6 +252,7 @@ export function mapAgent(row: {
     mode: row.mode === "brainstorm" ? "brainstorm" : "normal",
     temperature: row.temperature ?? null,
     reasoningEffort: row.reasoning_effort ?? null,
+    webSearch: row.web_search ?? false,
     documents: agentBundles.flatMap((ab) => ab.knowledge_bundles?.documents ?? []).map(mapDocument),
     bundleIds: agentBundles.map((ab) => ab.bundle_id),
     createdAt: toEpochMs(row.created_at),
@@ -272,6 +292,9 @@ export function mapMessage(row: {
   sources?: unknown;
   sender_id?: string | null;
   sender?: unknown;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  cached_tokens?: number | null;
 }): MessageDTO {
   const sender = firstEmbedded<{ id: string; name: string | null; avatar_url: string | null }>(
     row.sender,
@@ -283,6 +306,9 @@ export function mapMessage(row: {
     createdAt: toEpochMs(row.created_at),
     sources: Array.isArray(row.sources) ? row.sources.map(mapSource).filter(isSource) : undefined,
     sender: sender ? { id: sender.id, name: sender.name, avatarUrl: sender.avatar_url } : undefined,
+    promptTokens: row.prompt_tokens ?? undefined,
+    completionTokens: row.completion_tokens ?? undefined,
+    cachedTokens: row.cached_tokens ?? undefined,
   };
 }
 

@@ -358,7 +358,18 @@ export const api = {
       kind?: "chat" | "brainstorm";
     }): Promise<ChatSession> => request("POST", "/sessions", input),
     remove: (id: string): Promise<void> => request("DELETE", `/sessions/${id}`),
-    messages: (id: string): Promise<Message[]> => request("GET", `/sessions/${id}/messages`),
+    /**
+     * The transcript, newest `limit` turns of it, oldest first.
+     *
+     * The limit is the endpoint's whether or not it is named here — it serves
+     * a hundred turns by default. Naming one is how the screen asks for more
+     * of a conversation somebody has scrolled back through.
+     */
+    messages: (id: string, opts?: { limit?: number }): Promise<Message[]> =>
+      request(
+        "GET",
+        opts?.limit ? `/sessions/${id}/messages?limit=${opts.limit}` : `/sessions/${id}/messages`,
+      ),
     setVisibility: (id: string, visibility: "private" | "shared"): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, { visibility }),
     rename: (id: string, title: string): Promise<ChatSession> =>
@@ -370,6 +381,13 @@ export const api = {
     update: (id: string, content: string): Promise<Message> =>
       request("PATCH", `/messages/${id}`, { content }),
     deleteAfter: (id: string): Promise<void> => request("DELETE", `/messages/after/${id}`),
+    /**
+     * Put a different version of an answer back on screen.
+     *
+     * Regenerating keeps the reply it replaced rather than deleting it (0050),
+     * and this is how somebody goes back to one.
+     */
+    show: (id: string): Promise<{ ok: true }> => request("POST", `/messages/${id}/show`),
   },
   ideas: {
     list: (sessionId: string): Promise<Idea[]> => request("GET", `/sessions/${sessionId}/ideas`),
@@ -392,6 +410,22 @@ export const api = {
       request("POST", "/persona/suggest", { name, model }),
   },
   me: (): Promise<Me> => request("GET", "/me"),
+  search: {
+    /**
+     * Full-text search across messages.
+     *
+     * Returns only what RLS allows: the caller's own conversations plus any
+     * shared into their workspace. Ordered newest first; relevance is the
+     * tiebreaker within the same timestamp.
+     */
+    messages: (q: string, opts?: { limit?: number }): Promise<Message[]> =>
+      request(
+        "GET",
+        opts?.limit
+          ? `/search/messages?q=${encodeURIComponent(q)}&limit=${opts.limit}`
+          : `/search/messages?q=${encodeURIComponent(q)}`,
+      ),
+  },
   profile: {
     update: (patch: { name: string }): Promise<Me["user"]> => request("PATCH", "/me", patch),
   },

@@ -128,3 +128,142 @@ describe("PATCH /sessions/:id", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("GET /sessions/:id/messages", () => {
+  const row = (id: string, at: string) => ({
+    id,
+    role: "user",
+    content: id,
+    created_at: at,
+    sender: null,
+  });
+
+  /**
+   * The database answering newest-first, which is how the route asks.
+   *
+   * Two reads now: the transcript, and the one that finds which answers have
+   * been regenerated. They are told apart by the columns asked for, which is
+   * the only thing that distinguishes them at this level.
+   */
+  const withTranscript = (rows: ReturnType<typeof row>[], alternates: unknown[] = []) =>
+    appWith({
+      tables: {
+        messages: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("original_message_id")
+              ? { data: alternates, error: null }
+              : { data: rows, error: null },
+        },
+      },
+    });
+
+  it("reads the newest page and hands it back oldest first", async () => {
+    // The bug this replaces: a bare ascending read with no limit, capped by
+    // PostgREST at a thousand rows and cutting from the far end — so a long
+    // conversation returned its first thousand messages and silently dropped
+    // every one after them. The transcript stopped months ago and went on
+    // accepting new messages that never appeared.
+    const { app, fake } = withTranscript([
+      row("newest", "2026-09-17T12:00:00.000Z"),
+      row("older", "2026-09-17T11:00:00.000Z"),
+    ]);
+
+    const res = await app.request("/sessions/session-1/messages");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string }[];
+    expect(body.map((m) => m.id)).toEqual(["older", "newest"]);
+
+    const query = fake.callsTo("messages")[0];
+    expect(query.order).toEqual([
+      { column: "created_at", ascending: false },
+      // `created_at` is not unique. Without a tiebreaker two messages written
+      // in the same millisecond come back in whatever order the planner likes,
+      // and a page boundary between them shows one twice and the other never.
+      { column: "id", ascending: false },
+    ]);
+    expect(query.limit).toBe(100);
+  });
+
+  it("honours a limit the caller asked for", async () => {
+    const { app, fake } = withTranscript([]);
+
+    await app.request("/sessions/session-1/messages?limit=5");
+
+    expect(fake.callsTo("messages")[0].limit).toBe(5);
+  });
+
+  it("refuses a limit past what the endpoint will serve", async () => {
+    const { app } = withTranscript([]);
+
+    const res = await app.request("/sessions/session-1/messages?limit=5000");
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("answers that have been regenerated", () => {
+  const reply = (id: string, at: string, root?: string) => ({
+    id,
+    role: "assistant",
+    content: id,
+    created_at: at,
+    sender: null,
+    ...(root ? { original_message_id: root } : {}),
+  });
+
+  const app = (rows: unknown[], alternates: unknown[]) =>
+    appWith({
+      tables: {
+        messages: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("original_message_id")
+              ? { data: alternates, error: null }
+              : { data: rows, error: null },
+        },
+      },
+    });
+
+  it("leaves the superseded versions out of the transcript", async () => {
+    // A reader scrolling back should see the conversation they had, not every
+    // draft of it.
+    const { app: server, fake } = app([reply("v2", "2026-09-17T11:00:00.000Z", "v1")], []);
+
+    await server.request("/sessions/session-1/messages");
+
+    const transcript = fake.callsTo("messages")[0];
+    expect(transcript.filters).toContainEqual({
+      column: "superseded_at",
+      value: null,
+      kind: "is",
+    });
+  });
+
+  it("names every version of an answer, oldest first", async () => {
+    const { app: server } = app(
+      [reply("v3", "2026-09-17T12:00:00.000Z", "v1")],
+      [
+        { id: "v2", original_message_id: "v1", created_at: "2026-09-17T11:00:00.000Z" },
+        { id: "v3", original_message_id: "v1", created_at: "2026-09-17T12:00:00.000Z" },
+      ],
+    );
+
+    const res = await server.request("/sessions/session-1/messages");
+
+    const body = (await res.json()) as Array<{ id: string; versions?: string[] }>;
+    // The root comes from the pointer rather than from a second read, and it is
+    // always the earliest, so it goes first.
+    expect(body[0].versions).toEqual(["v1", "v2", "v3"]);
+  });
+
+  it("says nothing about versions on a reply nobody has regenerated", async () => {
+    // Almost every reply. An empty array and an absent field mean the same
+    // thing to the screen, and the absent one does not travel.
+    const { app: server } = app([reply("only", "2026-09-17T11:00:00.000Z")], []);
+
+    const res = await server.request("/sessions/session-1/messages");
+
+    const body = (await res.json()) as Array<{ versions?: string[] }>;
+    expect(body[0]).not.toHaveProperty("versions");
+  });
+});

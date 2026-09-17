@@ -26,7 +26,11 @@ export type QueryResult = {
   error: { message: string; code?: string } | null;
 };
 
-export type Filter = { column: string; value: unknown; kind: "eq" | "in" | "gt" | "ilike" | "is" };
+export type Filter = {
+  column: string;
+  value: unknown;
+  kind: "eq" | "in" | "gt" | "ilike" | "is" | "not" | "textSearch";
+};
 
 export type QueryContext = {
   table: string;
@@ -40,6 +44,10 @@ export type QueryContext = {
   single: boolean;
   /** Set when the caller ended the chain with `.range(from, to)`, as paged reads do. */
   range?: { from: number; to: number };
+  /** Columns passed to `.order(...)`, in the order they were applied. */
+  order?: Array<{ column: string; ascending: boolean }>;
+  /** Set when the caller narrowed the read with `.limit(n)`. */
+  limit?: number;
 };
 
 export type Handler = (ctx: QueryContext) => QueryResult | Promise<QueryResult>;
@@ -120,14 +128,40 @@ class Chain implements PromiseLike<QueryResult> {
     return this;
   }
 
-  // Ordering and limiting change which rows come back, not whether the route is
-  // allowed to see them. Handlers return a fixed set, so these are no-ops that
-  // exist only so the chain does not break.
-  order() {
+  // PostgREST spells a negated filter `not(column, operator, value)`. The
+  // operator is recorded with the value because the two together are the
+  // condition — `not("x", "is", null)` and `not("x", "eq", null)` are
+  // different questions.
+  not(column: string, operator: string, value: unknown) {
+    this.ctx.filters.push({ column, value: { operator, value }, kind: "not" });
     return this;
   }
 
-  limit() {
+  // Full-text search (`GET /search/messages` uses this). The fake records the
+  // column and query but does not actually filter — handlers return a fixed set
+  // anyway, and the real filtering happens in Postgres.
+  textSearch(column: string, query: string, _options?: { type?: string; config?: string }) {
+    this.ctx.filters.push({ column, value: query, kind: "textSearch" });
+    return this;
+  }
+
+  // Recorded rather than swallowed, which these used to be on the grounds that
+  // ordering and limiting change which rows come back and not whether a route
+  // is allowed to see them. True until a route's correctness turned on them:
+  // `GET /sessions/:id/messages` reads the *newest* page and reverses it, and
+  // a fake that shrugged at the direction would let it go back to reading the
+  // oldest — which is the bug that route exists to have fixed. The same
+  // argument `range()` below already makes for itself.
+  //
+  // Still not terminators: both return the builder, because both are middles
+  // of a chain and neither ends one.
+  order(column: string, options?: { ascending?: boolean }) {
+    (this.ctx.order ??= []).push({ column, ascending: options?.ascending ?? true });
+    return this;
+  }
+
+  limit(count: number) {
+    this.ctx.limit = count;
     return this;
   }
 

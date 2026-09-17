@@ -36,3 +36,20 @@ export function mergeRealtimeMessage(list: Message[], incoming: Message): Messag
   if (at === -1) return [...withoutOptimistic, incoming];
   return [...withoutOptimistic.slice(0, at), incoming, ...withoutOptimistic.slice(at)];
 }
+
+/**
+ * Fold the server's own copy of a message into the list on screen.
+ *
+ * Different from `mergeRealtimeMessage` in one way that matters: an id already
+ * on the list is *replaced* rather than left alone. Realtime only ever
+ * announces rows that are new, so skipping a known id is right there. The end
+ * of a stream is not the same thing — a continuation rewrites the reply it
+ * finishes, so the row that comes back carries an id already on screen and
+ * content that is longer than what is under it. Skipping it would leave the
+ * first half showing and the second half nowhere.
+ */
+export function settleMessage(list: Message[], incoming: Message): Message[] {
+  const at = list.findIndex((m) => m.id === incoming.id);
+  if (at === -1) return mergeRealtimeMessage(list, incoming);
+  return [...list.slice(0, at), incoming, ...list.slice(at + 1)];
+}

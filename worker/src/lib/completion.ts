@@ -6,6 +6,7 @@ import {
   providerFor,
   acceptsTemperature,
   reasonsBeforeAnswering,
+  thinksByDefault,
   type ReasoningEffort,
 } from "./models";
 
@@ -63,6 +64,20 @@ export type CompletionRequest = {
   /** Ask for a single JSON object back. */
   json?: boolean;
   /**
+   * Stream the model's reasoning as well as its answer.
+   *
+   * Off by default, and off is not the same as "do not think": thinking is
+   * decided by `reasoningEffort` and happens either way. This decides whether
+   * the model also writes a readable account of it, which costs output tokens
+   * of its own and is worth nothing to a caller that throws it away — which is
+   * every caller but the chat stream. See `anthropicThinking`.
+   *
+   * Anthropic only. OpenAI's chat completions endpoint does not return
+   * reasoning summaries at all, so a GPT-5 turn sets this and gets nothing,
+   * which is the honest outcome rather than a silent one.
+   */
+  showThinking?: boolean;
+  /**
    * How long the model may deliberate before it starts writing.
    *
    * Two kinds of caller set this, and they arrive from opposite directions.
@@ -83,6 +98,17 @@ export type CompletionRequest = {
    * Nothing on a non-reasoning model, which has no such setting.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Enable web search tool.
+   *
+   * Anthropic: web_search_20260209 on models that support it (Opus 5/4.8/4.7/4.6,
+   * Sonnet 5/4.6). Older models get web_search_20250305.
+   * OpenAI: web_search tool on models that support it.
+   *
+   * Off by default. Web search is an escape hatch from "your knowledge" rather
+   * than the default behavior, and an agent opts into it explicitly (0051).
+   */
+  webSearch?: boolean;
 };
 
 /**
@@ -186,7 +212,8 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
   // See `reasoningHeadroom`.
   const headroom = reasons ? reasoningHeadroom(req.reasoningEffort) : 0;
   const cap = req.maxTokens !== undefined ? req.maxTokens + headroom : req.maxTokens;
-  return {
+
+  const base: OpenAI.Chat.Completions.ChatCompletionCreateParams = {
     model: req.model,
     messages: req.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     ...(cap !== undefined ? { max_completion_tokens: cap } : {}),
@@ -198,6 +225,12 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
       : {}),
     ...(req.json ? { response_format: { type: "json_object" as const } } : {}),
   };
+
+  // Web search is not yet publicly available in OpenAI SDK or may require beta
+  // access. When it becomes available, add it here similar to Anthropic.
+  // For now, webSearch flag is accepted but has no effect on OpenAI models.
+
+  return base;
 }
 
 // ---- Anthropic -------------------------------------------------------------
@@ -316,6 +349,77 @@ function withCacheBreakpoint(message: Anthropic.MessageParam): Anthropic.Message
   };
 }
 
+/**
+ * What this turn asks a Claude model to do before it writes, and the room that
+ * needs.
+ *
+ * `openaiParams` above reads the same decision off the model id alone, because
+ * a GPT-5 model deliberates on every call whatever anyone asks. No Claude model
+ * here does: thinking happens when this build sends the parameter, and — on one
+ * model — when it does not. So the question is about the request, not the id,
+ * and it is worth its own function rather than four conditions inside the
+ * params builder.
+ *
+ * Two things here are easy to get wrong, and the obvious reading of each is
+ * the wrong one.
+ *
+ * **`"minimal"` is not an Anthropic effort.** Its scale is low/medium/high and
+ * has no floor below `"low"`. The translation that looks obvious — call it
+ * `"low"` — is exactly backwards: `"minimal"` is what the persona drafter and
+ * the idea extractor say to mean *do not deliberate at all*, and rendering that
+ * as "deliberate a little" would make the one caller that opted out pay for
+ * thinking it opted out of. So `"minimal"` turns thinking off rather than down.
+ *
+ * **The headroom follows the thinking, not the model.** `reasoningHeadroom`
+ * widens the output ceiling to leave room for deliberation. Widening it on
+ * every Claude turn because the model *could* think would change how long a
+ * runaway answer is allowed to get — for every agent, to make room for
+ * something that is not happening. So it is zero unless this turn thinks.
+ */
+function anthropicThinking(req: CompletionRequest): {
+  thinking?: Anthropic.ThinkingConfigParam;
+  outputConfig?: Anthropic.OutputConfig;
+  headroom: number;
+} {
+  // The 4.5 models take no effort at all — sending one is a 400 — so they are
+  // `reasoning: false` in `lib/models.ts` and leave here untouched, on whatever
+  // the model does by itself.
+  if (!reasonsBeforeAnswering(req.model)) return { headroom: 0 };
+
+  // Narrowed in one expression rather than through a flag, so the type carries
+  // what the prose says: an effort that reaches Anthropic is one of its own
+  // three, never Covan's fourth.
+  const effort =
+    req.reasoningEffort && req.reasoningEffort !== "minimal" ? req.reasoningEffort : undefined;
+
+  // No thinking this turn: the caller either said `"minimal"`, or said nothing
+  // to a model that does nothing by itself.
+  if (effort === undefined && (req.reasoningEffort === "minimal" || !thinksByDefault(req.model))) {
+    // Silence means "do not think" on every model here but one, where it means
+    // the opposite and so has to be said out loud.
+    return thinksByDefault(req.model)
+      ? { thinking: { type: "disabled" }, headroom: 0 }
+      : { headroom: 0 };
+  }
+
+  return {
+    // Summarised only for a caller that says it will show it. Left summarised
+    // for everyone, the model writes a readable account of its reasoning and
+    // streams it, and every caller but the chat route drops those deltas on
+    // the floor. The thinking is billed either way; the *summary* is not, and
+    // this is about not paying for a paragraph nobody will see.
+    thinking: {
+      type: "adaptive",
+      display: req.showThinking ? "summarized" : "omitted",
+    },
+    // Absent on a model that thinks unasked and was given no effort: that is
+    // the caller saying "whatever you do by default", and a default effort is
+    // what the API already applies.
+    ...(effort ? { outputConfig: { effort } } : {}),
+    headroom: reasoningHeadroom(effort),
+  };
+}
+
 // Without `stream`, so the two call sites below can each add their own and get
 // back the overload they want rather than a union of both.
 function anthropicParams(
@@ -326,13 +430,43 @@ function anthropicParams(
     throw new Error("a completion needs at least one user message");
   }
   const systemText = [system, req.json ? JSON_ONLY_INSTRUCTION : ""].filter(Boolean).join("\n\n");
+  const { thinking, outputConfig, headroom } = anthropicThinking(req);
+
+  // Web search tool. Newer models (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6) get
+  // web_search_20260209; older models get web_search_20250305.
+  const tools: Array<
+    | Anthropic.Messages.WebSearchTool20260209
+    | Anthropic.Messages.WebSearchTool20250305
+    | Anthropic.Tool
+  > = [];
+  if (req.webSearch) {
+    const newerModels = [
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-5",
+      "claude-sonnet-4-6",
+    ];
+    if (newerModels.includes(req.model)) {
+      tools.push({ type: "web_search_20260209", name: "web_search" });
+    } else {
+      tools.push({ type: "web_search_20250305", name: "web_search" });
+    }
+  }
+
   return {
     model: req.model,
     messages:
       cacheIndex === null
         ? messages
         : messages.map((m, i) => (i === cacheIndex ? withCacheBreakpoint(m) : m)),
-    max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+    // Anthropic requires the field, so a caller that omits one gets
+    // `DEFAULT_MAX_TOKENS`. The headroom is added to whichever it is — see
+    // `anthropicThinking`; it is zero on every turn that does not deliberate.
+    max_tokens: (req.maxTokens ?? DEFAULT_MAX_TOKENS) + headroom,
+    ...(thinking ? { thinking } : {}),
+    ...(outputConfig ? { output_config: outputConfig } : {}),
     ...(systemText
       ? {
           system: [
@@ -347,6 +481,7 @@ function anthropicParams(
     ...(req.temperature !== undefined && acceptsTemperature(req.model)
       ? { temperature: req.temperature }
       : {}),
+    ...(tools.length > 0 ? { tools } : {}),
   };
 }
 
@@ -413,6 +548,15 @@ export async function complete(
 export type CompletionEvent =
   | { type: "delta"; text: string }
   /**
+   * A piece of the model's reasoning, when a caller asked to see it.
+   *
+   * Separate from `delta` rather than folded into it, because these are two
+   * different things going to two different places: one is the answer and one
+   * is an account of how it was arrived at. A consumer that cannot tell them
+   * apart writes the reasoning into the transcript.
+   */
+  | { type: "thinking"; text: string }
+  /**
    * The last event of every stream: what the turn cost, and why it stopped.
    *
    * `finishReason` is normalised to OpenAI's vocabulary, so a caller asking
@@ -451,6 +595,10 @@ export async function* streamCompletion(
         usage = anthropicUsage(event.message.usage);
       } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
         if (event.delta.text) yield { type: "delta", text: event.delta.text };
+      } else if (event.type === "content_block_delta" && event.delta.type === "thinking_delta") {
+        // Only ever non-empty when `showThinking` asked for a summary — with
+        // `display: "omitted"` the blocks still arrive and their text does not.
+        if (event.delta.thinking) yield { type: "thinking", text: event.delta.thinking };
       } else if (event.type === "message_delta") {
         // The final, cumulative output count. `message_start` carried an early
         // value for the same field; this one replaces it.

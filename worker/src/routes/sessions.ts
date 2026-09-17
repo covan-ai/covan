@@ -156,21 +156,107 @@ sessions.delete("/sessions/:id", async (c) => {
 // on trusting anyway. It was not always so: the same route with the same
 // filter handed an ex-member their old transcripts until 0031 closed the owner
 // branch above it.
+/**
+ * The transcript page size: what a client gets by default, and the most it may
+ * ask for.
+ *
+ * Not the same number as `MSG_HISTORY_LIMIT` in `routes/chat.ts`, and
+ * deliberately not sharing one with it. That one bounds what the *model* is
+ * shown and is sized against a token budget; this one bounds what a *person*
+ * is shown and is sized against a scroll. They move for different reasons.
+ */
+const MESSAGE_PAGE_DEFAULT = 100;
+const MESSAGE_PAGE_MAX = 500;
+
 sessions.get("/sessions/:id/messages", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
+  // How many turns a client gets if it asks for no particular number. Well
+  // inside anything a conversation view renders at once, and well inside
+  // PostgREST's own ceiling, which is the reason this parameter exists at all.
+  const parsed = z
+    .object({ limit: z.coerce.number().int().min(1).max(MESSAGE_PAGE_MAX).optional() })
+    .safeParse(c.req.query());
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400);
+  }
+  const limit = parsed.data.limit ?? MESSAGE_PAGE_DEFAULT;
+
+  // Newest first on the way out of the database, oldest first on the way to
+  // the client — and that inversion is the whole point of this query.
+  //
+  // It used to be a bare ascending `order` with no limit, which meant the
+  // limit was PostgREST's (1000 by default on Supabase) and it cut from the
+  // far end: a conversation past that many turns returned its first thousand
+  // messages and silently dropped everything after them. Not an error, not a
+  // truncation anybody could see — the transcript simply stopped, months ago,
+  // and kept accepting new messages that never appeared. Taking the newest
+  // rows and reversing them makes the part that gets dropped the old part,
+  // which is the only end anyone can stand to lose.
+  //
+  // `id` as a tiebreaker because `created_at` is not unique — two messages
+  // written in the same millisecond would otherwise come back in whatever
+  // order the planner felt like, and a client asking for the next page would
+  // see one of them twice and the other never.
   const { data, error } = await db
     .from("messages")
-    .select("*, sender:profiles(id,name,avatar_url)")
+    .select(
+      "*, sender:profiles(id,name,avatar_url), prompt_tokens, completion_tokens, cached_tokens",
+    )
     .eq("session_id", id)
-    .order("created_at");
+    // Superseded replies are earlier takes on an answer that is already here.
+    // They belong to the version picker, not to the transcript — somebody
+    // scrolling back should see the conversation they had, not every draft of
+    // it. 0050's partial index is on exactly this predicate.
+    .is("superseded_at", null)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
 
   if (error) {
     return c.json({ error: "failed to load messages" }, 500);
   }
 
-  return c.json((data ?? []).map(mapMessage));
+  const visible = (data ?? []).slice().reverse();
+
+  // Which answers have more than one version, in one query rather than one
+  // per answer.
+  //
+  // Every version but the first carries `original_message_id`, so this row set
+  // *is* the grouping: a root with nothing pointing at it has never been
+  // regenerated. The root's own id comes from the pointer rather than from a
+  // second read, and it is always the earliest version, so prepending it is
+  // the whole of the ordering.
+  //
+  // A session where nothing has been regenerated pays for one empty indexed
+  // result, which is almost all of them.
+  const { data: alternates, error: alternatesError } = await db
+    .from("messages")
+    .select("id, original_message_id, created_at")
+    .eq("session_id", id)
+    .not("original_message_id", "is", null)
+    .order("created_at");
+
+  if (alternatesError) {
+    return c.json({ error: "failed to load messages" }, 500);
+  }
+
+  const chains = new Map<string, string[]>();
+  for (const row of (alternates ?? []) as Array<{ id: string; original_message_id: string }>) {
+    const chain = chains.get(row.original_message_id);
+    if (chain) chain.push(row.id);
+    else chains.set(row.original_message_id, [row.original_message_id, row.id]);
+  }
+
+  return c.json(
+    visible.map(
+      (row: Parameters<typeof mapMessage>[0] & { original_message_id?: string | null }) => {
+        const versions = chains.get(row.original_message_id ?? row.id);
+        return { ...mapMessage(row), ...(versions ? { versions } : {}) };
+      },
+    ),
+  );
 });
 
 export { sessions };

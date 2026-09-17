@@ -26,6 +26,8 @@ export type Agent = {
   temperature: number | null;
   /** How long the agent thinks first, or null for whatever the model does. */
   reasoningEffort: ReasoningEffort | null;
+  /** Whether the agent can search the web to answer questions. */
+  webSearch: boolean;
   documents: {
     id: string;
     name: string;
@@ -57,6 +59,21 @@ export type Message = {
   // In a shared session, the human author of a user message. Absent for
   // assistant messages and for one's own optimistic messages before refetch.
   sender?: { id: string; name: string | null; avatarUrl: string | null };
+  /**
+   * Every version of this answer, oldest first, when there is more than one.
+   *
+   * Absent on a reply nobody has regenerated, which is almost all of them.
+   * Ids only — the screen asks the server for whichever one it wants to show
+   * rather than holding five drafts of an answer nobody is reading.
+   */
+  versions?: string[];
+  /**
+   * Token usage for assistant replies. Null on user messages and on replies
+   * written before 0006. cachedTokens is null on replies written before 0025.
+   */
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  cachedTokens?: number | null;
 };
 
 export type ChatSession = {
@@ -108,10 +125,11 @@ type Store = {
    */
   canWrite: boolean;
   /**
-   * The tuning settings are optional here and required nowhere else: a new
-   * agent is created on Auto, and both surfaces that create one say so by not
-   * mentioning them. Settings is where they are chosen, once there is an agent
-   * to choose them for.
+   * The tuning settings (temperature, reasoningEffort) are optional here and
+   * required nowhere else: a new agent is created on Auto, and both surfaces
+   * that create one say so by not mentioning them. Settings is where they are
+   * chosen, once there is an agent to choose them for. webSearch is required
+   * and defaults to false.
    */
   createAgent: (
     a: Omit<

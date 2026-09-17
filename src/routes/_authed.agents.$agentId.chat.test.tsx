@@ -674,3 +674,67 @@ describe("an answer that stopped at its length limit", () => {
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
   });
 });
+
+describe("the pause before an answer", () => {
+  it("shows what the model is working through, folded away", async () => {
+    // On a reasoning model at a real effort there is a long silence before the
+    // first word, and a silence is indistinguishable from a product that has
+    // stopped working.
+    const held = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const event of [
+          { type: "thinking", text: "The handbook says forty" },
+          { type: "thinking", text: " — check the volume rule." },
+        ]) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve({ ok: true, status: 200, body: held, json: async () => null })),
+    );
+
+    const { container } = await renderChat();
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    const block = await waitFor(() => {
+      const el = container.querySelector("details");
+      expect(el).toBeInTheDocument();
+      return el as HTMLDetailsElement;
+    });
+    expect(block.open).toBe(false);
+    expect(block).toHaveTextContent("The handbook says forty — check the volume rule.");
+    // And the typing dots have nothing left to say once the model is saying it.
+    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+  });
+
+  it("keeps the reasoning out of the answer", async () => {
+    // Two different things going to two different places. A client that cannot
+    // tell them apart writes an account of the model's deliberation into the
+    // transcript.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "thinking", text: "Checking the handbook." },
+            { type: "delta", text: "Forty dollars a seat." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+
+    await renderChat();
+    listMessages.mockResolvedValue([question, answer]);
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    const settled = await screen.findByText("Forty dollars a seat.");
+    expect(settled).not.toHaveTextContent("Checking the handbook");
+    // And it goes with the stream: the row does not carry it, so leaving it on
+    // screen would be showing something the transcript does not contain.
+    await waitFor(() => expect(screen.queryByText("Thinking")).not.toBeInTheDocument());
+  });
+});

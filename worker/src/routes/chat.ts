@@ -399,6 +399,10 @@ chat.post("/chat/stream", async (c) => {
             maxTokens: maxTokensFor(mode),
             temperature: temperatureFor(mode, agent.temperature),
             reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
+            // The one caller that shows it. On a model and an effort that
+            // deliberate, the alternative is a long pause with nothing on
+            // screen, which reads as a product that has stopped working.
+            showThinking: true,
           },
           { signal },
         );
@@ -407,6 +411,14 @@ chat.post("/chat/stream", async (c) => {
           if (event.type === "delta") {
             full += event.text;
             send({ type: "delta", text: event.text });
+          } else if (event.type === "thinking") {
+            // Forwarded and not kept. The reasoning is context for the answer
+            // while somebody is watching it appear, not part of the answer:
+            // it is not written to the row, so it is not in the transcript and
+            // not re-sent as history on the next turn. Adding it to `full`
+            // would put an account of the model's deliberation into the reply
+            // itself.
+            send({ type: "thinking", text: event.text });
           } else {
             promptTokens = event.usage.promptTokens;
             completionTokens = event.usage.completionTokens;

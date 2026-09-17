@@ -295,6 +295,21 @@ function ChatTab() {
   const [replyingIn, setReplyingIn] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
   const [streamText, setStreamText] = useState("");
+  /**
+   * The model's account of how it got to the answer, while it is getting
+   * there.
+   *
+   * Live only. It is not written to the row and not sent back as history, so
+   * it goes when the reply settles — which is the honest thing for something
+   * the transcript does not contain. Keeping it would mean a column and a
+   * migration, and that is a decision about what a message *is* rather than a
+   * decision about this screen.
+   *
+   * What it is for is the pause. On a reasoning model at a real effort there
+   * is a long silence before the first word of the answer, and a silence is
+   * indistinguishable from a product that has stopped working.
+   */
+  const [thinkingText, setThinkingText] = useState("");
   // The session whose revealed text is waiting for the server's copy to arrive.
   // Separate from `replyingIn` because the two end at different moments: the
   // composer is handed back the instant a stream stops, while the text that was
@@ -435,6 +450,7 @@ function ChatTab() {
     // screen and the next words land on the end of it.
     setThinking(!opts.continuing);
     setStreamText("");
+    setThinkingText("");
     // Whether the model ran into the cap again on the way. Local to this
     // stream — the id it belongs to is not known until `done` carries it.
     let ranLong = false;
@@ -442,6 +458,7 @@ function ChatTab() {
     const controller = new AbortController();
     streamAbort.current = controller;
     let partial = "";
+    let reasoning = "";
 
     try {
       const token = await getAccessToken();
@@ -477,6 +494,7 @@ function ChatTab() {
         );
         setThinking(false);
         setStreamText("");
+        setThinkingText("");
         setReplyingIn(null);
         void queryClient.invalidateQueries({ queryKey: ["usage"] });
         return;
@@ -486,6 +504,7 @@ function ChatTab() {
         toast.error("Couldn't reach the assistant. Please try again.");
         setThinking(false);
         setStreamText("");
+        setThinkingText("");
         setReplyingIn(null);
         return;
       }
@@ -518,6 +537,12 @@ function ChatTab() {
             setThinking(false);
             partial += event.text;
             setStreamText(partial);
+          } else if (event.type === "thinking" && typeof event.text === "string") {
+            // The dots stand for "something is happening and we cannot say
+            // what". Once the model is saying what, they have nothing to add.
+            setThinking(false);
+            reasoning += event.text;
+            setThinkingText(reasoning);
           } else if (event.type === "truncated") {
             // The model ran into its output cap. The answer stops mid-thought
             // and otherwise looks finished, which is the worst way for a reply
@@ -564,6 +589,7 @@ function ChatTab() {
               if (ranLong) setTruncated({ sessionId, messageId: settled.id });
             }
             setStreamText("");
+            setThinkingText("");
             setThinking(false);
             setReplyingIn(null);
             setContinuingId(null);
@@ -575,6 +601,7 @@ function ChatTab() {
             terminalSeen = true;
             toast.error(event.error ?? "The assistant hit an error.");
             setStreamText("");
+            setThinkingText("");
             setThinking(false);
             setReplyingIn(null);
             setContinuingId(null);
@@ -595,6 +622,7 @@ function ChatTab() {
         reconcileTimer.current = window.setTimeout(() => {
           setSettlingIn(null);
           setStreamText("");
+          setThinkingText("");
           invalidateMessages(sessionId);
         }, 700);
         if (hadPartial) toast.error("The connection dropped before the reply finished.");
@@ -607,6 +635,7 @@ function ChatTab() {
       }
       toast.error("The assistant hit an error.");
       setStreamText("");
+      setThinkingText("");
       setThinking(false);
       setReplyingIn(null);
       setSettlingIn(null);
@@ -636,6 +665,7 @@ function ChatTab() {
     reconcileTimer.current = window.setTimeout(() => {
       setSettlingIn(null);
       setStreamText("");
+      setThinkingText("");
       invalidateMessages(sessionId);
     }, 700);
   };
@@ -1152,6 +1182,27 @@ function ChatTab() {
                       <span className="text-sm font-semibold">{agent.name}</span>
                     </div>
                     <div className="pl-9">
+                      {/*
+                      What the model is working through, while it works
+                      through it. A `<details>` rather than a state flag and a
+                      chevron: it opens and closes on its own, it is in the tab
+                      order, and a screen reader already knows what it is.
+
+                      Closed by default. This is context for a pause, not the
+                      answer — somebody who wants to know why an answer came out
+                      the way it did can open it, and everybody else should not
+                      have to scroll past it to read the reply.
+                    */}
+                      {thinkingText && (
+                        <details className="mb-3 rounded-lg border border-border bg-muted/40">
+                          <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-muted-foreground marker:text-muted-foreground hover:text-foreground">
+                            Thinking
+                          </summary>
+                          <div className="border-t border-border px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                            <Markdown content={thinkingText} className="text-xs" />
+                          </div>
+                        </details>
+                      )}
                       {thinking ? (
                         // `aria-hidden`, where this used to carry an `aria-label`
                         // on a bare `<div>` — a label on an element with no role

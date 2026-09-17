@@ -638,12 +638,52 @@ describe("streamCompletion", () => {
     expect(events).toEqual([
       { type: "delta", text: "Hel" },
       { type: "delta", text: "lo" },
+      // Its own event, not folded into the answer. A consumer that cannot tell
+      // the two apart writes an account of the model's deliberation into the
+      // transcript — which is what happens the first time somebody
+      // "simplifies" these two branches into one.
+      { type: "thinking", text: "hmm" },
       {
         type: "end",
         finishReason: null,
         usage: { promptTokens: 10, completionTokens: 2, cachedTokens: 1 },
       },
     ]);
+  });
+
+  it("asks for the reasoning in words only when a caller will show it", async () => {
+    // The thinking happens either way — `reasoningEffort` decides that. This
+    // decides whether the model also writes a readable account of it, which
+    // costs output tokens and is worth nothing to the callers that drop it.
+    anthropicCreate.mockResolvedValue(
+      replay([{ type: "message_delta", usage: { output_tokens: 0 } }]),
+    );
+
+    await collect(
+      streamCompletion(env, {
+        model: "claude-sonnet-4-6",
+        messages: [{ role: "user", content: "Hi" }],
+        reasoningEffort: "high",
+        showThinking: true,
+      }),
+    );
+    expect(anthropicCreate.mock.calls[0][0].thinking).toEqual({
+      type: "adaptive",
+      display: "summarized",
+    });
+
+    anthropicCreate.mockClear();
+    await collect(
+      streamCompletion(env, {
+        model: "claude-sonnet-4-6",
+        messages: [{ role: "user", content: "Hi" }],
+        reasoningEffort: "high",
+      }),
+    );
+    expect(anthropicCreate.mock.calls[0][0].thinking).toEqual({
+      type: "adaptive",
+      display: "omitted",
+    });
   });
 
   it("still reports usage when a stream carried no text at all", async () => {

@@ -64,6 +64,20 @@ export type CompletionRequest = {
   /** Ask for a single JSON object back. */
   json?: boolean;
   /**
+   * Stream the model's reasoning as well as its answer.
+   *
+   * Off by default, and off is not the same as "do not think": thinking is
+   * decided by `reasoningEffort` and happens either way. This decides whether
+   * the model also writes a readable account of it, which costs output tokens
+   * of its own and is worth nothing to a caller that throws it away — which is
+   * every caller but the chat stream. See `anthropicThinking`.
+   *
+   * Anthropic only. OpenAI's chat completions endpoint does not return
+   * reasoning summaries at all, so a GPT-5 turn sets this and gets nothing,
+   * which is the honest outcome rather than a silent one.
+   */
+  showThinking?: boolean;
+  /**
    * How long the model may deliberate before it starts writing.
    *
    * Two kinds of caller set this, and they arrive from opposite directions.
@@ -371,12 +385,15 @@ function anthropicThinking(req: CompletionRequest): {
   }
 
   return {
-    // `display: "omitted"` because nothing reads the thinking. Left summarised,
-    // the model writes a readable account of its reasoning and streams it, and
-    // the loop in `streamCompletion` drops every one of those deltas on the
-    // floor — it only forwards `text_delta`. The thinking is billed either way;
-    // this is about not shipping a paragraph nobody will see.
-    thinking: { type: "adaptive", display: "omitted" },
+    // Summarised only for a caller that says it will show it. Left summarised
+    // for everyone, the model writes a readable account of its reasoning and
+    // streams it, and every caller but the chat route drops those deltas on
+    // the floor. The thinking is billed either way; the *summary* is not, and
+    // this is about not paying for a paragraph nobody will see.
+    thinking: {
+      type: "adaptive",
+      display: req.showThinking ? "summarized" : "omitted",
+    },
     // Absent on a model that thinks unasked and was given no effort: that is
     // the caller saying "whatever you do by default", and a default effort is
     // what the API already applies.
@@ -488,6 +505,15 @@ export async function complete(
 export type CompletionEvent =
   | { type: "delta"; text: string }
   /**
+   * A piece of the model's reasoning, when a caller asked to see it.
+   *
+   * Separate from `delta` rather than folded into it, because these are two
+   * different things going to two different places: one is the answer and one
+   * is an account of how it was arrived at. A consumer that cannot tell them
+   * apart writes the reasoning into the transcript.
+   */
+  | { type: "thinking"; text: string }
+  /**
    * The last event of every stream: what the turn cost, and why it stopped.
    *
    * `finishReason` is normalised to OpenAI's vocabulary, so a caller asking
@@ -526,6 +552,10 @@ export async function* streamCompletion(
         usage = anthropicUsage(event.message.usage);
       } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
         if (event.delta.text) yield { type: "delta", text: event.delta.text };
+      } else if (event.type === "content_block_delta" && event.delta.type === "thinking_delta") {
+        // Only ever non-empty when `showThinking` asked for a summary — with
+        // `display: "omitted"` the blocks still arrive and their text does not.
+        if (event.delta.thinking) yield { type: "thinking", text: event.delta.thinking };
       } else if (event.type === "message_delta") {
         // The final, cumulative output count. `message_start` carried an early
         // value for the same field; this one replaces it.

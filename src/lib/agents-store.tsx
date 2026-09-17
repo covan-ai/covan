@@ -67,6 +67,13 @@ export type Message = {
    * rather than holding five drafts of an answer nobody is reading.
    */
   versions?: string[];
+  /**
+   * Token usage for assistant replies. Null on user messages and on replies
+   * written before 0006. cachedTokens is null on replies written before 0025.
+   */
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  cachedTokens?: number | null;
 };
 
 export type ChatSession = {

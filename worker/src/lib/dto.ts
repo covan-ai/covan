@@ -76,6 +76,13 @@ export type MessageDTO = {
    * a `2/3` would be four answers nobody asked to read.
    */
   versions?: string[];
+  /**
+   * Token usage for assistant replies. Null on user messages and on replies
+   * written before 0006. cachedTokens is null on replies written before 0025.
+   */
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  cachedTokens?: number | null;
 };
 
 export type ChatSessionDTO = {
@@ -285,6 +292,9 @@ export function mapMessage(row: {
   sources?: unknown;
   sender_id?: string | null;
   sender?: unknown;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  cached_tokens?: number | null;
 }): MessageDTO {
   const sender = firstEmbedded<{ id: string; name: string | null; avatar_url: string | null }>(
     row.sender,
@@ -296,6 +306,9 @@ export function mapMessage(row: {
     createdAt: toEpochMs(row.created_at),
     sources: Array.isArray(row.sources) ? row.sources.map(mapSource).filter(isSource) : undefined,
     sender: sender ? { id: sender.id, name: sender.name, avatarUrl: sender.avatar_url } : undefined,
+    promptTokens: row.prompt_tokens ?? undefined,
+    completionTokens: row.completion_tokens ?? undefined,
+    cachedTokens: row.cached_tokens ?? undefined,
   };
 }
 

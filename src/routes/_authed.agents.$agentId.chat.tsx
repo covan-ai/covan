@@ -39,6 +39,7 @@ import { parseReportCommand } from "@/lib/reports";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
 import { modelsFor } from "@/lib/agent-meta";
+import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1218,6 +1219,28 @@ function ChatTab() {
                             </button>
                           </div>
                         )}
+
+                        {/* Token usage badge - hover only, assistant messages only */}
+                        {m.role === "assistant" &&
+                          m.promptTokens != null &&
+                          m.completionTokens != null && (
+                            <div className="mt-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                              {formatTokens(m.promptTokens)} in · {formatTokens(m.completionTokens)}{" "}
+                              out
+                              {m.cachedTokens != null && m.cachedTokens > 0 && (
+                                <> · {formatTokens(m.cachedTokens)} cached</>
+                              )}
+                              {" · "}
+                              {formatCost(
+                                estimateCostUsd(
+                                  agent.model || "gpt-4.1",
+                                  m.promptTokens,
+                                  m.completionTokens,
+                                  m.cachedTokens ?? 0,
+                                ),
+                              )}
+                            </div>
+                          )}
 
                         <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
                           <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>

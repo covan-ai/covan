@@ -410,6 +410,22 @@ export const api = {
       request("POST", "/persona/suggest", { name, model }),
   },
   me: (): Promise<Me> => request("GET", "/me"),
+  search: {
+    /**
+     * Full-text search across messages.
+     *
+     * Returns only what RLS allows: the caller's own conversations plus any
+     * shared into their workspace. Ordered newest first; relevance is the
+     * tiebreaker within the same timestamp.
+     */
+    messages: (q: string, opts?: { limit?: number }): Promise<Message[]> =>
+      request(
+        "GET",
+        opts?.limit
+          ? `/search/messages?q=${encodeURIComponent(q)}&limit=${opts.limit}`
+          : `/search/messages?q=${encodeURIComponent(q)}`,
+      ),
+  },
   profile: {
     update: (patch: { name: string }): Promise<Me["user"]> => request("PATCH", "/me", patch),
   },

@@ -29,7 +29,7 @@ export type QueryResult = {
 export type Filter = {
   column: string;
   value: unknown;
-  kind: "eq" | "in" | "gt" | "ilike" | "is" | "not";
+  kind: "eq" | "in" | "gt" | "ilike" | "is" | "not" | "textSearch";
 };
 
 export type QueryContext = {
@@ -134,6 +134,14 @@ class Chain implements PromiseLike<QueryResult> {
   // different questions.
   not(column: string, operator: string, value: unknown) {
     this.ctx.filters.push({ column, value: { operator, value }, kind: "not" });
+    return this;
+  }
+
+  // Full-text search (`GET /search/messages` uses this). The fake records the
+  // column and query but does not actually filter — handlers return a fixed set
+  // anyway, and the real filtering happens in Postgres.
+  textSearch(column: string, query: string, _options?: { type?: string; config?: string }) {
+    this.ctx.filters.push({ column, value: query, kind: "textSearch" });
     return this;
   }
 

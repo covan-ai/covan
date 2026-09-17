@@ -18,7 +18,34 @@ const chat = new Hono<AppEnv>();
 
 const streamChatSchema = z.object({
   sessionId: z.string().min(1),
+  /**
+   * Finish the reply already at the end of this conversation, rather than
+   * answering a new question.
+   *
+   * A chat reply is capped at `maxTokensFor("normal")` — 1536 tokens, which is
+   * a deliberate cost decision and not an accident. The consequence is that a
+   * long answer stops mid-thought and otherwise looks finished, which is the
+   * worst way for a reply to be wrong: nothing on screen says the end is
+   * missing. The stream says `truncated` when it happens; this is what the
+   * button that appears in response to it calls.
+   */
+  continue: z.boolean().optional(),
 });
+
+/**
+ * What the model is told when it is asked to carry on.
+ *
+ * Sent as a *user* turn with the cut-off reply as the assistant turn before
+ * it, which is not the obvious shape — the obvious shape is to end the message
+ * list with the partial answer and let the model run on from it. That is a
+ * prefill, and it returns a 400 on every Claude model from 4.6 onward. Asking
+ * in words works on both providers and costs one short turn.
+ */
+const CONTINUE_INSTRUCTION =
+  "Your previous reply was cut off at its length limit. Carry on from exactly " +
+  "where it stops — continue the same sentence if it was mid-sentence. Do not " +
+  "repeat anything you already wrote, do not start over, and do not introduce " +
+  "the continuation.";
 
 // Hard cap on rows pulled from the DB — an upper bound so the query stays cheap.
 // The real trimming is done by selectHistory() below against a character budget.
@@ -51,7 +78,7 @@ chat.post("/chat/stream", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { sessionId } = parsed.data;
+  const { sessionId, continue: continuing = false } = parsed.data;
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
@@ -92,9 +119,23 @@ chat.post("/chat/stream", async (c) => {
 
   const rows = (recentDesc ?? []).slice().reverse();
   const lastMessage = rows[rows.length - 1];
-  if (!lastMessage || lastMessage.role !== "user") {
+  // Which end of the conversation this turn is working from. Answering needs a
+  // question to answer; continuing needs an answer to continue.
+  if (continuing) {
+    if (!lastMessage || lastMessage.role !== "assistant") {
+      return c.json({ error: "nothing to continue" }, 400);
+    }
+  } else if (!lastMessage || lastMessage.role !== "user") {
     return c.json({ error: "no user message to respond to" }, 400);
   }
+
+  // What the retrieval is *for*, which on a continuation is not the last
+  // message — that is the half-written answer. It is the question that answer
+  // was already halfway through, so the second half is grounded in the same
+  // documents as the first.
+  const question = continuing
+    ? ([...rows].reverse().find((m: { role: string }) => m.role === "user")?.content ?? "")
+    : lastMessage.content;
 
   const mode: "normal" | "brainstorm" = effectiveMode(session, agent);
 
@@ -106,7 +147,7 @@ chat.post("/chat/stream", async (c) => {
     db,
     env,
     session.agent_id,
-    lastMessage.content,
+    question,
     rows.map((m: { role: string; content: string }) => ({
       role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
       content: m.content,
@@ -142,6 +183,10 @@ chat.post("/chat/stream", async (c) => {
     ...priorTurns,
     ...(ragBlock ? [{ role: "system" as const, content: ragBlock }] : []),
     ...(latestTurn ? [latestTurn] : []),
+    // On a continuation `latestTurn` is the cut-off answer, and this is the
+    // turn that asks for the rest of it. See `CONTINUE_INSTRUCTION` for why it
+    // is a user turn rather than the obvious thing.
+    ...(continuing ? [{ role: "user" as const, content: CONTINUE_INSTRUCTION }] : []),
   ];
 
   const model = resolveModel(agent.model, env);
@@ -190,7 +235,7 @@ chat.post("/chat/stream", async (c) => {
   // add to them.
   const titling = session.title
     ? null
-    : generateSessionTitle(env, titleModelFor(model, env), lastMessage.content);
+    : generateSessionTitle(env, titleModelFor(model, env), question);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -287,21 +332,54 @@ chat.post("/chat/stream", async (c) => {
       ) => {
         if (persisted || text.trim().length === 0) return null;
         persisted = true;
-        const { data: inserted, error: insertError } = await service
-          .from("messages")
-          .insert({
-            session_id: sessionId,
-            role: "assistant",
-            content: text,
-            sender_id: null,
-            sources: sources.length > 0 ? sources : null,
-            grounding,
-            prompt_tokens: opts.promptTokens,
-            completion_tokens: opts.completionTokens,
-            cached_tokens: opts.cachedTokens,
-          })
-          .select("*")
-          .single();
+
+        // A continuation is written *into* the reply it finishes, not beside
+        // it. Two assistant messages where the model wrote one answer is not a
+        // transcript — and the next turn would then send the two halves as two
+        // separate turns, which is not what the model said.
+        //
+        // Joined with nothing between them: the instruction asks it to carry
+        // on from exactly where the text stops, which is often mid-sentence,
+        // and a space inserted there would be a space in the middle of a word.
+        //
+        // The tokens add rather than replace, because the row is what the
+        // usage view sums and both halves were paid for. `sources` and
+        // `grounding` are left alone: the retrieval ran again for the same
+        // question and the row already says what grounded it.
+        const before = lastMessage as {
+          id: string;
+          content: string;
+          prompt_tokens: number | null;
+          completion_tokens: number | null;
+          cached_tokens: number | null;
+        };
+        const { data: inserted, error: insertError } = continuing
+          ? await service
+              .from("messages")
+              .update({
+                content: before.content + text,
+                prompt_tokens: (before.prompt_tokens ?? 0) + (opts.promptTokens ?? 0),
+                completion_tokens: (before.completion_tokens ?? 0) + (opts.completionTokens ?? 0),
+                cached_tokens: (before.cached_tokens ?? 0) + (opts.cachedTokens ?? 0),
+              })
+              .eq("id", before.id)
+              .select("*")
+              .single()
+          : await service
+              .from("messages")
+              .insert({
+                session_id: sessionId,
+                role: "assistant",
+                content: text,
+                sender_id: null,
+                sources: sources.length > 0 ? sources : null,
+                grounding,
+                prompt_tokens: opts.promptTokens,
+                completion_tokens: opts.completionTokens,
+                cached_tokens: opts.cachedTokens,
+              })
+              .select("*")
+              .single();
         if (insertError || !inserted) return null;
         // Bump updated_at via the service client (RLS-bypassing) so ordering is
         // correct regardless of who drove the reply.

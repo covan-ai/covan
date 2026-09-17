@@ -596,3 +596,81 @@ describe("a conversation longer than one page", () => {
     await waitFor(() => expect(listMessages).toHaveBeenCalledWith("session-1", { limit: 200 }));
   });
 });
+
+describe("an answer that stopped at its length limit", () => {
+  const cutOff = { ...answer, content: "Forty dollars a seat, and the volume rule is" };
+
+  const truncatedReply = () =>
+    streamOf([
+      { type: "delta", text: cutOff.content },
+      { type: "truncated" },
+      { type: "done", message: cutOff },
+    ]);
+
+  it("says so under the answer, and keeps saying it", async () => {
+    // This was a toast, which is gone in four seconds and leaves a
+    // half-finished answer sitting there looking whole.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(truncatedReply())),
+    );
+    await renderChat();
+    listMessages.mockResolvedValue([question, cutOff]);
+
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    expect(await screen.findByText("This answer hit its length limit.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+  });
+
+  it("asks the server to finish the reply rather than answer again", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(truncatedReply()));
+    vi.stubGlobal("fetch", fetchMock);
+    await renderChat();
+    listMessages.mockResolvedValue([question, cutOff]);
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await screen.findByRole("button", { name: "Continue" });
+
+    fetchMock.mockClear();
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        streamOf([
+          { type: "delta", text: " two seats free." },
+          { type: "done", message: { ...cutOff, content: `${cutOff.content} two seats free.` } },
+        ]),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ sessionId: "session-1", continue: true });
+  });
+
+  it("grows the answer in place rather than starting a second one", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(truncatedReply()));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = await renderChat();
+    listMessages.mockResolvedValue([question, cutOff]);
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await screen.findByRole("button", { name: "Continue" });
+
+    const whole = `${cutOff.content} two seats free.`;
+    listMessages.mockResolvedValue([question, { ...cutOff, content: whole }]);
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        streamOf([
+          { type: "delta", text: " two seats free." },
+          { type: "done", message: { ...cutOff, content: whole } },
+        ]),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    // One reply, holding both halves — not two replies that silently become
+    // one when the stream ends.
+    await waitFor(() => expect(screen.getByText(whole)).toBeInTheDocument());
+    expect(container.querySelectorAll(`[class*="pl-9"]`).length).toBe(1);
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+  });
+});

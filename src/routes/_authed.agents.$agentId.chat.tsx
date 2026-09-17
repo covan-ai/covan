@@ -38,7 +38,7 @@ import { startersFor } from "@/lib/chat-starters";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { mergeRealtimeMessage, optimisticId } from "@/lib/chat-messages";
+import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { SourceChip } from "@/components/source-chip";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 
@@ -302,6 +302,23 @@ function ChatTab() {
   // used to be the same flag, so the "keep it visible" delay below was keeping
   // nothing visible — the answer blinked out and blinked back 700ms later.
   const [settlingIn, setSettlingIn] = useState<string | null>(null);
+  /**
+   * The reply that stopped at its length limit, and is offering to go on.
+   *
+   * A chat reply is capped at 1536 output tokens, which is a cost decision
+   * rather than an accident — so an answer running past it is a normal event
+   * and not an error. What was wrong was how it was reported: a toast, which
+   * is gone in four seconds, over an answer that looks finished and is not.
+   *
+   * Held for as long as the conversation is open rather than stored on the
+   * row. There is no column for it, and this is an offer to act now rather
+   * than a fact about the message — the same reason an undo lives in a toast
+   * and not in the database. Somebody who reloads can still ask in words.
+   */
+  const [truncated, setTruncated] = useState<{ sessionId: string; messageId: string } | null>(null);
+  // The reply a continuation is being written into, so the text arriving can
+  // be drawn on the end of it rather than under it as a second answer.
+  const [continuingId, setContinuingId] = useState<string | null>(null);
   const streamAbort = useRef<AbortController | null>(null);
   // Tracks the pending reconcile timeout (from `stop()` or the drop-fallback
   // below) so a fast stop→resend can't let a stale timer fire mid-stream.
@@ -403,7 +420,7 @@ function ChatTab() {
   // Stream a real reply for `sessionId` from the Worker's SSE endpoint. The
   // session's message history (already persisted) is read server-side, so
   // the caller only needs to make sure the latest user turn has landed.
-  const streamReply = async (sessionId: string) => {
+  const streamReply = async (sessionId: string, opts: { continuing?: string } = {}) => {
     if (streamAbort.current) return;
     if (reconcileTimer.current) {
       window.clearTimeout(reconcileTimer.current);
@@ -411,8 +428,16 @@ function ChatTab() {
     }
     setReplyingIn(sessionId);
     setSettlingIn(null);
-    setThinking(true);
+    // Whatever was cut off is being dealt with now, one way or the other.
+    setTruncated(null);
+    setContinuingId(opts.continuing ?? null);
+    // Nothing is "thinking" on a continuation: the answer is already on
+    // screen and the next words land on the end of it.
+    setThinking(!opts.continuing);
     setStreamText("");
+    // Whether the model ran into the cap again on the way. Local to this
+    // stream — the id it belongs to is not known until `done` carries it.
+    let ranLong = false;
 
     const controller = new AbortController();
     streamAbort.current = controller;
@@ -426,7 +451,7 @@ function ChatTab() {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ sessionId }),
+        body: JSON.stringify({ sessionId, ...(opts.continuing ? { continue: true } : {}) }),
         signal: controller.signal,
       });
 
@@ -497,7 +522,13 @@ function ChatTab() {
             // The model ran into its output cap. The answer stops mid-thought
             // and otherwise looks finished, which is the worst way for a reply
             // to be wrong: nothing on screen says the end is missing.
-            toast.message("That answer hit its length limit — ask it to carry on.");
+            //
+            // Recorded rather than announced. This used to be a toast, which
+            // is gone in four seconds and leaves the half-finished answer
+            // sitting there looking whole. What it becomes instead is a button
+            // under the reply, and the button is the only way the cap is
+            // survivable at all — see `truncated` above.
+            ranLong = true;
           } else if (event.type === "notice" && typeof event.text === "string") {
             // The worker sends this at most once, when the agent's stored
             // model was Claude but this reply ran on a workspace key with no
@@ -522,15 +553,20 @@ function ChatTab() {
             // the function that folds a server copy into this list, and it
             // drops the matching optimistic turn and keeps the order right on
             // the way through.
+            // `settleMessage` and not `mergeRealtimeMessage`: a continuation
+            // comes back under the id already on screen, with the whole answer
+            // in it. Merging would see a known id and keep the first half.
             const settled = event.message;
             if (settled) {
               queryClient.setQueryData<Message[]>(["messages", sessionId], (old) =>
-                mergeRealtimeMessage(old ?? [], settled),
+                settleMessage(old ?? [], settled),
               );
+              if (ranLong) setTruncated({ sessionId, messageId: settled.id });
             }
             setStreamText("");
             setThinking(false);
             setReplyingIn(null);
+            setContinuingId(null);
             // Still invalidated, but now for what the stream could not carry —
             // the session list's ordering and the usage figures — rather than
             // for the answer itself.
@@ -541,6 +577,7 @@ function ChatTab() {
             setStreamText("");
             setThinking(false);
             setReplyingIn(null);
+            setContinuingId(null);
           }
         }
       }
@@ -548,6 +585,7 @@ function ChatTab() {
       if (!terminalSeen && !controller.signal.aborted) {
         setThinking(false);
         setReplyingIn(null);
+        setContinuingId(null);
         // The server persists the partial (service-role) when the connection
         // drops before a terminal event; keep the revealed text visible until
         // the refetch reconciles so it doesn't flash out.
@@ -572,6 +610,7 @@ function ChatTab() {
       setThinking(false);
       setReplyingIn(null);
       setSettlingIn(null);
+      setContinuingId(null);
     } finally {
       streamAbort.current = null;
     }
@@ -591,6 +630,7 @@ function ChatTab() {
     streamAbort.current = null;
     setThinking(false);
     setReplyingIn(null);
+    setContinuingId(null);
     setSettlingIn(sessionId);
     if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);
     reconcileTimer.current = window.setTimeout(() => {
@@ -715,6 +755,14 @@ function ChatTab() {
         ? "Only the person who started this conversation can rewrite it."
         : "Couldn't update the conversation.";
     toast.error(message);
+  };
+
+  // Finish an answer that stopped at its length cap. The server writes the
+  // rest into the same row, so there is one reply on screen and one reply in
+  // the transcript — which is also what the next turn will send.
+  const carryOn = (messageId: string) => {
+    if (!active || busy) return;
+    void streamReply(active.id, { continuing: messageId });
   };
 
   // Regenerate: drop the reply after a user turn and answer it again. The
@@ -1000,9 +1048,21 @@ function ChatTab() {
                         </span>
                       </div>
                       <div className="pl-9">
+                        {/* A continuation is drawn on the end of the reply it
+                            finishes, not under it. The server writes it into
+                            the same row, so anything else would show two
+                            answers for the length of the stream and then
+                            silently become one. */}
                         <Markdown
-                          content={m.content}
-                          className="text-[15px] leading-relaxed text-foreground"
+                          content={
+                            continuingId === m.id && replyingIn === active?.id
+                              ? m.content + streamText
+                              : m.content
+                          }
+                          className={cn(
+                            "text-[15px] leading-relaxed text-foreground",
+                            continuingId === m.id && replyingIn === active?.id && "stream-live",
+                          )}
                         />
 
                         {sources.length > 0 && (
@@ -1015,6 +1075,27 @@ function ChatTab() {
                                 uploadedAt={source.id ? uploadedAt.get(source.id) : undefined}
                               />
                             ))}
+                          </div>
+                        )}
+
+                        {/* Not hidden behind hover like the actions below it.
+                            Those are conveniences; this one is the only thing
+                            saying the answer above it is unfinished, and an
+                            answer that stops mid-thought otherwise looks
+                            exactly like one that finished. */}
+                        {truncated?.messageId === m.id && truncated.sessionId === active?.id && (
+                          <div className="mt-3 flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">
+                              This answer hit its length limit.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => carryOn(m.id)}
+                              disabled={busy}
+                              className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
+                            >
+                              Continue
+                            </button>
                           </div>
                         )}
 
@@ -1057,73 +1138,76 @@ function ChatTab() {
                 })}
               </div>
 
-              {(replyingIn === active?.id || settlingIn === active?.id) && (
-                // Outside the log, and silent. The words arrive here one token
-                // at a time; a screen reader is told *that* a reply is coming
-                // by the status line below, and reads the reply itself once it
-                // lands in the log above as a finished thing.
-                <div className="flex flex-col gap-2" aria-live="off">
-                  <div className="flex items-center gap-2">
-                    <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
-                    <span className="text-sm font-semibold">{agent.name}</span>
-                  </div>
-                  <div className="pl-9">
-                    {thinking ? (
-                      // `aria-hidden`, where this used to carry an `aria-label`
-                      // on a bare `<div>` — a label on an element with no role
-                      // is a string most screen readers have nowhere to put.
-                      // The words are in the status line at the foot of the
-                      // conversation instead, where they are announced rather
-                      // than merely present.
-                      <div
-                        className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                        aria-hidden="true"
-                      >
-                        <span className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                        <span
-                          className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                          style={{ animationDelay: "0.15s" }}
+              {/* Not while a continuation is running: those words are being
+                  drawn on the end of the reply above instead. */}
+              {continuingId === null &&
+                (replyingIn === active?.id || settlingIn === active?.id) && (
+                  // Outside the log, and silent. The words arrive here one token
+                  // at a time; a screen reader is told *that* a reply is coming
+                  // by the status line below, and reads the reply itself once it
+                  // lands in the log above as a finished thing.
+                  <div className="flex flex-col gap-2" aria-live="off">
+                    <div className="flex items-center gap-2">
+                      <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
+                      <span className="text-sm font-semibold">{agent.name}</span>
+                    </div>
+                    <div className="pl-9">
+                      {thinking ? (
+                        // `aria-hidden`, where this used to carry an `aria-label`
+                        // on a bare `<div>` — a label on an element with no role
+                        // is a string most screen readers have nowhere to put.
+                        // The words are in the status line at the foot of the
+                        // conversation instead, where they are announced rather
+                        // than merely present.
+                        <div
+                          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                          aria-hidden="true"
+                        >
+                          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+                          <span
+                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
+                            style={{ animationDelay: "0.15s" }}
+                          />
+                          <span
+                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
+                            style={{ animationDelay: "0.3s" }}
+                          />
+                          <span className="ml-1">Thinking…</span>
+                        </div>
+                      ) : (
+                        // The same renderer the settled answer uses, so the
+                        // reply arrives in the shape it will keep. It used to be
+                        // plain `whitespace-pre-wrap`, which meant watching raw
+                        // `**`, bare `|` rows and unopened fences for the length
+                        // of the answer and then having the whole thing reflow
+                        // into something else the moment it finished. That
+                        // reflow was the single most visible difference between
+                        // this and the chat products people arrive from.
+                        //
+                        // Measured before it was written: a full parse and mount
+                        // of a 700-character answer costs ~1.1ms per delta under
+                        // jsdom, which re-mounts the tree every time. A browser
+                        // re-renders an existing one. There is nothing here to
+                        // batch.
+                        //
+                        // `stream-live` is what draws the caret — see
+                        // `styles.css`. A sibling span cannot: the answer is
+                        // blocks now, and a span after them sits on its own line
+                        // under the last paragraph rather than at the end of it.
+                        // Dropped once the stream stops, because at that point
+                        // the text is waiting to be replaced by the server's
+                        // copy rather than still arriving.
+                        <Markdown
+                          content={streamText}
+                          className={cn(
+                            "text-[15px] leading-relaxed text-foreground",
+                            replyingIn === active?.id && "stream-live",
+                          )}
                         />
-                        <span
-                          className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                          style={{ animationDelay: "0.3s" }}
-                        />
-                        <span className="ml-1">Thinking…</span>
-                      </div>
-                    ) : (
-                      // The same renderer the settled answer uses, so the
-                      // reply arrives in the shape it will keep. It used to be
-                      // plain `whitespace-pre-wrap`, which meant watching raw
-                      // `**`, bare `|` rows and unopened fences for the length
-                      // of the answer and then having the whole thing reflow
-                      // into something else the moment it finished. That
-                      // reflow was the single most visible difference between
-                      // this and the chat products people arrive from.
-                      //
-                      // Measured before it was written: a full parse and mount
-                      // of a 700-character answer costs ~1.1ms per delta under
-                      // jsdom, which re-mounts the tree every time. A browser
-                      // re-renders an existing one. There is nothing here to
-                      // batch.
-                      //
-                      // `stream-live` is what draws the caret — see
-                      // `styles.css`. A sibling span cannot: the answer is
-                      // blocks now, and a span after them sits on its own line
-                      // under the last paragraph rather than at the end of it.
-                      // Dropped once the stream stops, because at that point
-                      // the text is waiting to be replaced by the server's
-                      // copy rather than still arriving.
-                      <Markdown
-                        content={streamText}
-                        className={cn(
-                          "text-[15px] leading-relaxed text-foreground",
-                          replyingIn === active?.id && "stream-live",
-                        )}
-                      />
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
             </div>
           )}
 

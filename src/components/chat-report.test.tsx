@@ -20,6 +20,8 @@ function writerWith(over: Partial<ReportWriter> = {}): ReportWriter {
     write: vi.fn(async () => {}),
     dismiss: vi.fn(),
     download: vi.fn(),
+    content: null,
+    loadingContent: false,
     ...over,
   };
 }

@@ -1551,6 +1551,55 @@ function ChatTab() {
     </section>
   );
 
+  // Report preview: show split layout when report content is loaded
+  if (reports.content && active) {
+    return (
+      <ResizablePanelGroup className="h-[calc(100dvh-3.5rem)] lg:h-screen">
+        <ResizablePanel defaultSize="55" minSize="35">
+          {chatPane}
+        </ResizablePanel>
+        <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
+        <ResizablePanel defaultSize="45" minSize="25">
+          <div className="flex h-full flex-col border-l border-border">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <FileText className="h-4 w-4 text-muted-foreground" /> Report preview
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={reports.download}
+                  className="rounded-sm px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  Download
+                </button>
+                <button
+                  type="button"
+                  onClick={reports.dismiss}
+                  className="rounded-sm px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label="Close preview"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {reports.loadingContent ? (
+                <div className="flex items-center justify-center py-12">
+                  <p className="text-sm text-muted-foreground">Loading preview...</p>
+                </div>
+              ) : (
+                <div className="prose prose-sm max-w-none dark:prose-invert">
+                  <Markdown content={reports.content} />
+                </div>
+              )}
+            </div>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    );
+  }
+
   if (!isBrainstorm || !active) return chatPane;
 
   return (

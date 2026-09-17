@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { api } from "@/lib/api-client";
+import { api, getAccessToken } from "@/lib/api-client";
 import { useAgentsStore } from "@/lib/agents-store";
 
 export type ReportReceipt = {
@@ -21,6 +21,11 @@ export type ReportWriter = {
   write: (instruction: string) => Promise<void>;
   dismiss: () => void;
   download: () => void;
+  /**
+   * Report content for live preview. Loaded after the report is written.
+   */
+  content: string | null;
+  loadingContent: boolean;
 };
 
 /**
@@ -45,15 +50,40 @@ export function useReportWriter(
   const [pending, setPending] = useState(false);
   const [receipt, setReceipt] = useState<ReportReceipt | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [content, setContent] = useState<string | null>(null);
+  const [loadingContent, setLoadingContent] = useState(false);
 
   const write = useCallback(
     async (instruction: string) => {
       if (!sessionId || pending) return;
 
       setPending(true);
+      setContent(null);
       try {
         const doc = await writeReport(sessionId, agent, instruction);
-        setReceipt({ documentId: doc.id, name: doc.name, indexed: doc.indexed });
+        const rec = { documentId: doc.id, name: doc.name, indexed: doc.indexed };
+        setReceipt(rec);
+
+        // Load content for preview
+        setLoadingContent(true);
+        try {
+          const token = await getAccessToken();
+          const response = await fetch(
+            `${import.meta.env.VITE_API_URL}/documents/${doc.id}/download`,
+            {
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
+            },
+          );
+          if (response.ok) {
+            const blob = await response.blob();
+            const text = await blob.text();
+            setContent(text);
+          }
+        } catch (err) {
+          console.error("Failed to load report content:", err);
+        } finally {
+          setLoadingContent(false);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "";
         toast.error(
@@ -73,13 +103,20 @@ export function useReportWriter(
       .catch(() => toast.error("Couldn't download the report"));
   }, [receipt]);
 
+  const dismiss = useCallback(() => {
+    setReceipt(null);
+    setContent(null);
+  }, []);
+
   return {
     pending,
     receipt,
     dialogOpen,
     setDialogOpen,
     write,
-    dismiss: () => setReceipt(null),
+    dismiss,
     download,
+    content,
+    loadingContent,
   };
 }

@@ -1,0 +1,318 @@
+import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
+import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type React from "react";
+
+/**
+ * The chat screen, from the composer to the end of a reply.
+ *
+ * There was no test here at all, which is most of why the three defects this
+ * file pins survived so long: every one of them is a frame of the interface
+ * rather than a value a function returned, and none of them throws. The answer
+ * blinked out and came back. The view stopped following a long reply. There
+ * was no way back down once it had.
+ *
+ * The harness is large because this screen is: uploads, dictation, reports,
+ * quota, an idea board and a realtime subscription all hang off it. None of
+ * that is what these tests are about, so it is all stubbed down to nothing and
+ * the stream is the only thing left moving.
+ */
+
+const navigate = vi.fn();
+
+vi.mock("@tanstack/react-router", () => ({
+  createFileRoute: () => (options: { component: () => React.ReactElement }) => ({
+    ...options,
+    useParams: () => ({ agentId: "agent-1" }),
+    useSearch: () => ({ s: "session-1" }),
+  }),
+  useNavigate: () => navigate,
+}));
+
+const agent = {
+  id: "agent-1",
+  name: "GTM Agent",
+  emoji: "📈",
+  model: "gpt-4.1",
+  mode: "normal" as const,
+  documents: [] as { id: string; name: string; indexed: boolean; createdAt: number }[],
+};
+
+const session = {
+  id: "session-1",
+  agentId: "agent-1",
+  ownerId: "user-1",
+  visibility: "private" as const,
+  kind: "chat" as const,
+  title: "Pricing",
+  updatedAt: Date.parse("2026-09-17T10:00:00Z"),
+};
+
+const store = {
+  agents: [agent],
+  sessions: [session],
+  startSession: vi.fn(),
+  canWrite: true,
+};
+vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
+
+const listMessages = vi.fn();
+const createMessage = vi.fn();
+vi.mock("@/lib/api-client", () => ({
+  ApiError: class ApiError extends Error {
+    status = 500;
+  },
+  getAccessToken: () => Promise.resolve("token"),
+  api: {
+    me: () => Promise.resolve({ user: { id: "user-1" } }),
+    sessions: { messages: listMessages, setVisibility: vi.fn() },
+    messages: { create: createMessage, update: vi.fn(), deleteAfter: vi.fn() },
+    brainstorm: { suggest: vi.fn() },
+    ideas: { create: vi.fn() },
+  },
+}));
+
+vi.mock("@/lib/supabase/client", () => ({
+  supabase: {
+    channel: () => ({ on: () => ({ subscribe: () => ({}) }) }),
+    removeChannel: vi.fn(),
+  },
+}));
+
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), message: vi.fn() }),
+}));
+
+vi.mock("@/lib/quota", () => ({ useQuota: () => null, quotaSentence: () => "" }));
+vi.mock("@/lib/use-chat-uploads", () => ({
+  useChatUploads: () => ({ receipts: [], destinations: [], addFiles: vi.fn() }),
+}));
+vi.mock("@/lib/use-dictation", () => ({
+  useDictation: () => ({ supported: false, recording: false, start: vi.fn(), stop: vi.fn() }),
+  appendDictation: (draft: string) => draft,
+}));
+vi.mock("@/lib/use-report", () => ({
+  useReportWriter: () => ({
+    pending: false,
+    receipt: null,
+    dialogOpen: false,
+    setDialogOpen: vi.fn(),
+    write: vi.fn(),
+    dismiss: vi.fn(),
+    download: vi.fn(),
+  }),
+}));
+
+vi.mock("@/components/chat-attach", () => ({ ChatAttach: () => null, ChatReceipts: () => null }));
+vi.mock("@/components/chat-report", () => ({
+  ChatReport: () => null,
+  ChatReportReceipt: () => null,
+}));
+vi.mock("@/components/chat-mic", () => ({ ChatMic: () => null }));
+vi.mock("@/components/feedback-dialog", () => ({ FeedbackDialog: () => null }));
+vi.mock("@/components/idea-board", () => ({ IdeaBoard: () => null }));
+vi.mock("@/components/source-chip", () => ({ SourceChip: () => null }));
+
+const question = {
+  id: "msg-1",
+  role: "user" as const,
+  content: "What do we charge?",
+  createdAt: Date.parse("2026-09-17T10:00:00Z"),
+};
+
+/**
+ * A `fetch` that answers `/chat/stream` with the events given, as the real
+ * endpoint frames them.
+ *
+ * Hand-rolled rather than a `Response`: the route reads four things off what
+ * comes back — `status`, `ok`, `body.getReader()` and `json()` — and building
+ * those directly keeps what the test controls visible in the test.
+ */
+function streamOf(events: Record<string, unknown>[]) {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      for (const event of events) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  });
+  return { ok: true, status: 200, body, json: () => Promise.resolve(null) };
+}
+
+const answer = {
+  id: "msg-2",
+  role: "assistant" as const,
+  content: "Forty dollars a seat.",
+  createdAt: Date.parse("2026-09-17T10:00:05Z"),
+};
+
+const { Route } = await import("./_authed.agents.$agentId.chat");
+const ChatTab = (Route as unknown as { component: () => React.ReactElement }).component;
+
+async function renderChat() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(
+    <QueryClientProvider client={client}>
+      <ChatTab />
+    </QueryClientProvider>,
+  );
+  // Whichever the conversation has: the question it opened with, or the empty
+  // state's own composer. Either way the first query has settled by here.
+  await screen.findByPlaceholderText(`Message ${agent.name}`);
+  return { ...view, client };
+}
+
+/** The scrolling element, which has no other handle on it. */
+const scroller = (container: HTMLElement) =>
+  container.querySelector(".overflow-y-auto") as HTMLElement;
+
+/**
+ * Put the scroll box somewhere and say so, the way a browser would.
+ *
+ * jsdom lays nothing out, so all three of these read zero and every box looks
+ * like it is at its own bottom. `isPinnedToBottom` is real in these tests, so
+ * the numbers have to be.
+ */
+function place(el: HTMLElement, { scrollTop, scrollHeight, clientHeight }: Record<string, number>) {
+  for (const [name, value] of Object.entries({ scrollTop, scrollHeight, clientHeight })) {
+    Object.defineProperty(el, name, { value, configurable: true, writable: true });
+  }
+  el.dispatchEvent(new Event("scroll"));
+}
+
+let scrollTo: ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  listMessages.mockResolvedValue([question]);
+  createMessage.mockResolvedValue(question);
+  // jsdom implements no scrolling at all, so the component's own call is the
+  // only evidence of what it asked for.
+  scrollTo = vi.fn();
+  Element.prototype.scrollTo = scrollTo as unknown as Element["scrollTo"];
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("the end of a reply", () => {
+  it("shows the answer the stream handed over, without waiting for a refetch", async () => {
+    // The defect this pins: `done` carries the row the server has just written,
+    // and the route used to drop it and ask for the message list again. The
+    // streamed text is cleared in the same breath, so for one round trip the
+    // answer was on screen nowhere — it blinked out and back, every turn.
+    //
+    // The refetch here never resolves, which is the whole test: if the answer
+    // is on screen, it got there from the stream.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "delta", text: "Forty dollars" },
+            { type: "delta", text: " a seat." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+
+    const { client } = await renderChat();
+    listMessages.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "and per seat?");
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    await screen.findByText("Forty dollars a seat.");
+    // And it is in the cache, not just in the streaming block — the block
+    // unmounts the moment the stream ends, so anything still rendered came
+    // from the list.
+    await waitFor(() => {
+      const cached = client.getQueryData(["messages", "session-1"]) as { id: string }[];
+      expect(cached.map((m) => m.id)).toContain("msg-2");
+    });
+    expect(screen.getByText("Forty dollars a seat.")).toBeInTheDocument();
+  });
+
+  it("survives a done event with no message on it", async () => {
+    // Older workers, and any future one that stops sending the row. The answer
+    // is then the refetch's job again, which is what this used to be always.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(streamOf([{ type: "delta", text: "Forty." }, { type: "done" }]))),
+    );
+
+    await renderChat();
+    // With nothing handed over, the refetch is the only thing that can supply
+    // the answer — which is what this path was, always, before the stream
+    // started carrying it.
+    listMessages.mockResolvedValue([question, answer]);
+
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "and per seat?");
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    expect(await screen.findByText("Forty dollars a seat.")).toBeInTheDocument();
+  });
+});
+
+describe("following a reply down the page", () => {
+  it("scrolls instantly rather than smoothly", async () => {
+    // A smooth scroll is an animation that outlives the token that started it.
+    // The follow effect refires on every token, so each one restarted the
+    // animation, and while it was in flight the box sat far enough from the
+    // bottom that the scroll listener read it as the reader having scrolled
+    // away — after which nothing followed the rest of the answer.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "delta", text: "Forty." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+
+    await renderChat();
+    await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+    for (const call of scrollTo.mock.calls) {
+      expect(call[0].behavior).toBe("auto");
+    }
+  });
+});
+
+describe("the way back down", () => {
+  it("offers a way back only once the reader has left the bottom", async () => {
+    const { container } = await renderChat();
+    expect(screen.queryByLabelText("Jump to the latest message")).not.toBeInTheDocument();
+
+    act(() => place(scroller(container), { scrollTop: 0, scrollHeight: 4000, clientHeight: 600 }));
+
+    expect(screen.getByLabelText("Jump to the latest message")).toBeInTheDocument();
+  });
+
+  it("goes back to the end and starts following again", async () => {
+    const { container } = await renderChat();
+    const el = scroller(container);
+    act(() => place(el, { scrollTop: 0, scrollHeight: 4000, clientHeight: 600 }));
+
+    scrollTo.mockClear();
+    await userEvent.click(screen.getByLabelText("Jump to the latest message"));
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 4000, behavior: "auto" });
+    expect(screen.queryByLabelText("Jump to the latest message")).not.toBeInTheDocument();
+  });
+
+  it("stays out of the way while the conversation is empty", async () => {
+    listMessages.mockResolvedValue([]);
+    const { container } = await renderChat();
+    act(() => place(scroller(container), { scrollTop: 0, scrollHeight: 4000, clientHeight: 600 }));
+
+    expect(screen.queryByLabelText("Jump to the latest message")).not.toBeInTheDocument();
+  });
+});

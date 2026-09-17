@@ -8,6 +8,7 @@ import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-clie
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
+  ArrowDown,
   ArrowUp,
   Copy,
   FileText,
@@ -259,26 +260,77 @@ function ChatTab() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // Whether the reader is still following the bottom. Kept in a ref rather than
-  // state because it changes on every scroll event and nothing renders from it.
+  // state because it changes on every scroll event, and the effect below — the
+  // thing that acts on it — runs after render either way.
   const pinned = useRef(true);
+  // The same fact, for the one thing that does render from it: the jump button.
+  //
+  // Holds the conversation somebody has scrolled up inside, rather than a bare
+  // boolean — the shape `replyingIn` and `settlingIn` above already use, and
+  // for the same reason. A boolean would need clearing when the reader opens
+  // another conversation, which is an effect writing state for no reason other
+  // than that another piece of state moved; scoped to a session it is simply
+  // read against the open one and a flag left over from somewhere else does
+  // not match.
+  //
+  // Setting it on every scroll event is cheap: React drops an update to the
+  // value already held, so this re-renders when the answer flips rather than
+  // once a frame while somebody drags a scrollbar.
+  const [adriftIn, setAdriftIn] = useState<string | null>(null);
+  const adrift = adriftIn !== null && adriftIn === active?.id;
+
+  const followEnd = useCallback((el: HTMLDivElement) => {
+    // Instant, never smooth.
+    //
+    // A smooth scroll is an animation that outlives the token that started it,
+    // and the effect below refires on every token. So each one restarted the
+    // animation from wherever the last had got to, and while that was in
+    // flight the element sat far enough from the bottom that the listener
+    // above read it as the reader having scrolled away — `pinned` latched
+    // false, and the rest of a long answer arrived off-screen with nothing
+    // left to bring it back.
+    //
+    // An instant scroll has no such window: `scrollTop` is final before the
+    // scroll event is dispatched, so the listener sees the bottom, which is
+    // where it actually is. The animation was never worth a reply you have to
+    // chase.
+    el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+  }, []);
+
+  // Re-registered when the open conversation changes, so the handler closes
+  // over the session it is actually reporting about.
+  const openSessionId = active?.id;
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || !openSessionId) return;
     const onScroll = () => {
-      pinned.current = isPinnedToBottom(el);
+      const atEnd = isPinnedToBottom(el);
+      pinned.current = atEnd;
+      setAdriftIn(atEnd ? null : openSessionId);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [openSessionId]);
   // Opening a conversation starts at its end, wherever the last one was left.
   useEffect(() => {
     pinned.current = true;
-  }, [active?.id]);
+  }, [openSessionId]);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pinned.current) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [messages.length, thinking, streamText]);
+    followEnd(el);
+  }, [messages.length, thinking, streamText, followEnd]);
+
+  // Back to the end, from wherever the reader had got to. Also re-arms the
+  // follow above, which is the point: the button is what somebody presses to
+  // say "carry on taking me with you".
+  const jumpToEnd = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinned.current = true;
+    setAdriftIn(null);
+    followEnd(el);
+  };
 
   const invalidateMessages = (sessionId: string) => {
     void queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
@@ -394,9 +446,33 @@ function ChatTab() {
             toast.message(event.text);
           } else if (event.type === "done") {
             terminalSeen = true;
+            // The server sends the row it has just written, and until now this
+            // threw it away and asked for it again.
+            //
+            // That cost a gap at the end of every single reply. Clearing
+            // `replyingIn` below unmounts the block the streamed text was
+            // drawn in, and the answer did not exist anywhere else until the
+            // refetch landed a round trip later — so it blinked out and back,
+            // every turn, on the product's main screen. It is the same defect
+            // `settlingIn` was added for on the dropped-connection path; the
+            // path that works had it too.
+            //
+            // `mergeRealtimeMessage` rather than a bare append: it is already
+            // the function that folds a server copy into this list, and it
+            // drops the matching optimistic turn and keeps the order right on
+            // the way through.
+            const settled = event.message;
+            if (settled) {
+              queryClient.setQueryData<Message[]>(["messages", sessionId], (old) =>
+                mergeRealtimeMessage(old ?? [], settled),
+              );
+            }
             setStreamText("");
             setThinking(false);
             setReplyingIn(null);
+            // Still invalidated, but now for what the stream could not carry —
+            // the session list's ordering and the usage figures — rather than
+            // for the answer itself.
             invalidateMessages(sessionId);
           } else if (event.type === "error") {
             terminalSeen = true;
@@ -948,7 +1024,22 @@ function ChatTab() {
       </div>
 
       {/* Composer */}
-      <div className="border-t border-border bg-background px-4 pb-4 pt-3 lg:px-6">
+      <div className="relative border-t border-border bg-background px-4 pb-4 pt-3 lg:px-6">
+        {/* Back to the end. Floats just above the composer rather than inside
+            the transcript, because it is a control and the transcript is
+            content — and because anchored here it cannot scroll away from the
+            reader who needs it. Hidden on an empty conversation, where there
+            is no end to go back to. */}
+        {adrift && !isEmpty && (
+          <button
+            type="button"
+            onClick={jumpToEnd}
+            aria-label="Jump to the latest message"
+            className="absolute -top-5 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-card transition-colors duration-200 hover:text-foreground"
+          >
+            <ArrowDown className="h-4 w-4" />
+          </button>
+        )}
         <div className="mx-auto max-w-3xl">
           {quota && quota.level !== "fine" && (
             <div className="mb-2 flex items-center gap-2 rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">

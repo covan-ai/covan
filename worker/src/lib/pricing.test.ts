@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { estimateCostUsd } from "./pricing";
-import { MODEL_IDS } from "./models";
+import { MODEL_IDS, DEFAULT_MODEL } from "./models";
 
 describe("estimateCostUsd", () => {
   it("prices prompt and completion tokens per the model's rate", () => {
@@ -15,7 +15,9 @@ describe("estimateCostUsd", () => {
   });
 
   it("falls back to the default model's price for an unknown model", () => {
-    expect(estimateCostUsd("mystery-model", 1_000_000, 0)).toBeCloseTo(2.5, 6);
+    // gpt-4.1: $2/M in. Tracks `DEFAULT_MODEL` in lib/models.ts, which is where
+    // an unrecognised id actually resolves to.
+    expect(estimateCostUsd("mystery-model", 1_000_000, 0)).toBeCloseTo(2, 6);
   });
 
   it("prices cached prompt tokens at the discounted rate", () => {
@@ -63,13 +65,18 @@ describe("estimateCostUsd", () => {
   });
 
   it("has a rate for every model the picker offers", () => {
-    // Falling back to gpt-4o's rate is the right answer for a self-hosted
-    // endpoint whose catalogue we cannot know. It is the wrong answer for a
-    // model we ship: the usage view would quote 2.5x for haiku and stay silent
-    // about it. So an id added to the catalogue without a price fails here.
+    // Falling back to the default model's rate is the right answer for a
+    // self-hosted endpoint whose catalogue we cannot know. It is the wrong
+    // answer for a model we ship: the usage view would quote the wrong number
+    // and stay silent about it.
+    //
+    // `PRICES` is keyed by `ModelId`, so a missing row is now a type error and
+    // this can no longer be the first thing to notice one. It is kept because
+    // it catches what the type cannot: a row that is present but copied from
+    // the wrong model and therefore identical to the fallback.
     const fallback = estimateCostUsd("mystery-model", 1_000_000, 0);
     for (const id of MODEL_IDS) {
-      if (id === "gpt-4o") continue; // the fallback itself
+      if (id === DEFAULT_MODEL) continue; // the fallback itself
       expect(estimateCostUsd(id, 1_000_000, 0), id).not.toBe(fallback);
     }
   });

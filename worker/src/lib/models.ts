@@ -29,6 +29,9 @@ export const MODEL_IDS = [
   "gpt-5",
   "gpt-5-mini",
   "gpt-5-nano",
+  "claude-opus-5",
+  "claude-sonnet-5",
+  "claude-opus-4-8",
   "claude-sonnet-4-6",
   "claude-sonnet-4-5",
   "claude-haiku-4-5",
@@ -79,8 +82,29 @@ export type ModelSpec = {
    *
    * `lib/completion.ts` is where this is paid for, in one of two ways depending
    * on whether the caller wants the thinking at all.
+   *
+   * It is also what the settings screen reads to decide whether to offer the
+   * effort picker at all, which is why the Claude models carry it. What they do
+   * *not* share with the GPT-5 family is when the thinking happens: a GPT-5
+   * model deliberates on every call, while a Claude model here only deliberates
+   * when this build asks it to — see `thinksByDefault` below, and the headroom
+   * branch in `lib/completion.ts` that follows from it.
    */
   reasoning: boolean;
+  /**
+   * Whether the model deliberates with nothing asked of it.
+   *
+   * Claude Opus 5 does: omitting the thinking parameter runs adaptive thinking
+   * rather than none, which is the opposite of every other model on this list
+   * and of Opus 4.8, its immediate predecessor. It matters here for one reason
+   * — the output ceiling. A model that thinks unasked needs room for it on
+   * every call, and a model that does not must not be handed that room, because
+   * the room is not free: it is the number that decides how long a runaway
+   * answer is allowed to get.
+   *
+   * Absent means "only when asked", which is the normal case.
+   */
+  thinksByDefault?: boolean;
 };
 
 /**
@@ -96,12 +120,43 @@ const SPECS: Record<ModelId, ModelSpec> = {
   "gpt-5": { provider: "openai", temperature: false, reasoning: true },
   "gpt-5-mini": { provider: "openai", temperature: false, reasoning: true },
   "gpt-5-nano": { provider: "openai", temperature: false, reasoning: true },
-  "claude-sonnet-4-6": { provider: "anthropic", temperature: true, reasoning: false },
+  // `temperature: false` on the three newest Claude models is not a style
+  // choice mirroring the GPT-5 rows above it — the parameter was removed from
+  // those endpoints and sending one is a 400, exactly as it is on GPT-5. The
+  // 4.6 and 4.5 models still take it, which is why they still say true.
+  //
+  // `reasoning: true` from Sonnet 4.6 onward: all four take adaptive thinking
+  // and an effort. The two 4.5 models do not — an effort on those is a 400 —
+  // so they stay false and their agents keep getting the model's own default.
+  "claude-opus-5": {
+    provider: "anthropic",
+    temperature: false,
+    reasoning: true,
+    thinksByDefault: true,
+  },
+  "claude-sonnet-5": { provider: "anthropic", temperature: false, reasoning: true },
+  "claude-opus-4-8": { provider: "anthropic", temperature: false, reasoning: true },
+  "claude-sonnet-4-6": { provider: "anthropic", temperature: true, reasoning: true },
   "claude-sonnet-4-5": { provider: "anthropic", temperature: true, reasoning: false },
   "claude-haiku-4-5": { provider: "anthropic", temperature: true, reasoning: false },
 };
 
-export const DEFAULT_MODEL = "gpt-4o";
+/**
+ * What an agent runs on when nothing else decides.
+ *
+ * Moved off `gpt-4o`, which had been the default since before this file knew
+ * about a second provider. `gpt-4.1` is the same tier and the same shape of
+ * model — it takes a temperature, it does not deliberate first — so no agent
+ * changes behaviour by landing here, and it is cheaper per token in both
+ * directions. That is the whole of the reasoning: a strictly better version of
+ * the same choice, not a new one.
+ *
+ * Deliberately *not* one of the mini models. This is the fallback for an agent
+ * whose stored model this build does not recognise, which includes every agent
+ * created before the picker existed. Making those quietly cheaper is a decision
+ * about somebody else's answers, and it is not ours to make silently.
+ */
+export const DEFAULT_MODEL = "gpt-4.1";
 
 /** The environment a model decision reads. A subset of `RoutineEnv`. */
 export type ModelEnv = {
@@ -152,6 +207,18 @@ export function acceptsTemperature(model: string | null | undefined): boolean {
  */
 export function reasonsBeforeAnswering(model: string | null | undefined): boolean {
   return modelSpec(model)?.reasoning ?? false;
+}
+
+/**
+ * Whether `model` deliberates without being asked to.
+ *
+ * Unknown ids: no. Same reasoning as `reasonsBeforeAnswering` above — under
+ * `OPENAI_BASE_URL` every id is unknown, and the optimistic answer would widen
+ * a self-hoster's ceiling on every call because we could not identify their
+ * model.
+ */
+export function thinksByDefault(model: string | null | undefined): boolean {
+  return modelSpec(model)?.thinksByDefault ?? false;
 }
 
 /**

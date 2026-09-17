@@ -6,6 +6,7 @@ import {
   providerFor,
   acceptsTemperature,
   reasonsBeforeAnswering,
+  thinksByDefault,
   type ReasoningEffort,
 } from "./models";
 
@@ -316,6 +317,74 @@ function withCacheBreakpoint(message: Anthropic.MessageParam): Anthropic.Message
   };
 }
 
+/**
+ * What this turn asks a Claude model to do before it writes, and the room that
+ * needs.
+ *
+ * `openaiParams` above reads the same decision off the model id alone, because
+ * a GPT-5 model deliberates on every call whatever anyone asks. No Claude model
+ * here does: thinking happens when this build sends the parameter, and — on one
+ * model — when it does not. So the question is about the request, not the id,
+ * and it is worth its own function rather than four conditions inside the
+ * params builder.
+ *
+ * Two things here are easy to get wrong, and the obvious reading of each is
+ * the wrong one.
+ *
+ * **`"minimal"` is not an Anthropic effort.** Its scale is low/medium/high and
+ * has no floor below `"low"`. The translation that looks obvious — call it
+ * `"low"` — is exactly backwards: `"minimal"` is what the persona drafter and
+ * the idea extractor say to mean *do not deliberate at all*, and rendering that
+ * as "deliberate a little" would make the one caller that opted out pay for
+ * thinking it opted out of. So `"minimal"` turns thinking off rather than down.
+ *
+ * **The headroom follows the thinking, not the model.** `reasoningHeadroom`
+ * widens the output ceiling to leave room for deliberation. Widening it on
+ * every Claude turn because the model *could* think would change how long a
+ * runaway answer is allowed to get — for every agent, to make room for
+ * something that is not happening. So it is zero unless this turn thinks.
+ */
+function anthropicThinking(req: CompletionRequest): {
+  thinking?: Anthropic.ThinkingConfigParam;
+  outputConfig?: Anthropic.OutputConfig;
+  headroom: number;
+} {
+  // The 4.5 models take no effort at all — sending one is a 400 — so they are
+  // `reasoning: false` in `lib/models.ts` and leave here untouched, on whatever
+  // the model does by itself.
+  if (!reasonsBeforeAnswering(req.model)) return { headroom: 0 };
+
+  // Narrowed in one expression rather than through a flag, so the type carries
+  // what the prose says: an effort that reaches Anthropic is one of its own
+  // three, never Covan's fourth.
+  const effort =
+    req.reasoningEffort && req.reasoningEffort !== "minimal" ? req.reasoningEffort : undefined;
+
+  // No thinking this turn: the caller either said `"minimal"`, or said nothing
+  // to a model that does nothing by itself.
+  if (effort === undefined && (req.reasoningEffort === "minimal" || !thinksByDefault(req.model))) {
+    // Silence means "do not think" on every model here but one, where it means
+    // the opposite and so has to be said out loud.
+    return thinksByDefault(req.model)
+      ? { thinking: { type: "disabled" }, headroom: 0 }
+      : { headroom: 0 };
+  }
+
+  return {
+    // `display: "omitted"` because nothing reads the thinking. Left summarised,
+    // the model writes a readable account of its reasoning and streams it, and
+    // the loop in `streamCompletion` drops every one of those deltas on the
+    // floor — it only forwards `text_delta`. The thinking is billed either way;
+    // this is about not shipping a paragraph nobody will see.
+    thinking: { type: "adaptive", display: "omitted" },
+    // Absent on a model that thinks unasked and was given no effort: that is
+    // the caller saying "whatever you do by default", and a default effort is
+    // what the API already applies.
+    ...(effort ? { outputConfig: { effort } } : {}),
+    headroom: reasoningHeadroom(effort),
+  };
+}
+
 // Without `stream`, so the two call sites below can each add their own and get
 // back the overload they want rather than a union of both.
 function anthropicParams(
@@ -326,13 +395,19 @@ function anthropicParams(
     throw new Error("a completion needs at least one user message");
   }
   const systemText = [system, req.json ? JSON_ONLY_INSTRUCTION : ""].filter(Boolean).join("\n\n");
+  const { thinking, outputConfig, headroom } = anthropicThinking(req);
   return {
     model: req.model,
     messages:
       cacheIndex === null
         ? messages
         : messages.map((m, i) => (i === cacheIndex ? withCacheBreakpoint(m) : m)),
-    max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+    // Anthropic requires the field, so a caller that omits one gets
+    // `DEFAULT_MAX_TOKENS`. The headroom is added to whichever it is — see
+    // `anthropicThinking`; it is zero on every turn that does not deliberate.
+    max_tokens: (req.maxTokens ?? DEFAULT_MAX_TOKENS) + headroom,
+    ...(thinking ? { thinking } : {}),
+    ...(outputConfig ? { output_config: outputConfig } : {}),
     ...(systemText
       ? {
           system: [

@@ -40,6 +40,7 @@ import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
 import { modelsFor } from "@/lib/agent-meta";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
+import { groupMessagesByDate } from "@/lib/message-groups";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1085,6 +1086,34 @@ function ChatTab() {
                 className="space-y-8"
               >
                 {messages.map((m, idx, arr) => {
+                  // Date divider: show when date changes
+                  const showDateDivider = (() => {
+                    if (idx === 0) return true;
+                    const prev = arr[idx - 1];
+                    const prevDate = new Date(prev.createdAt).toDateString();
+                    const currDate = new Date(m.createdAt).toDateString();
+                    return prevDate !== currDate;
+                  })();
+
+                  const dateLabel = (() => {
+                    const date = new Date(m.createdAt);
+                    const today = new Date();
+                    const yesterday = new Date(today);
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    const isSameDay = (a: Date, b: Date) =>
+                      a.getFullYear() === b.getFullYear() &&
+                      a.getMonth() === b.getMonth() &&
+                      a.getDate() === b.getDate();
+                    if (isSameDay(date, today)) return "Today";
+                    if (isSameDay(date, yesterday)) return "Yesterday";
+                    const sameYear = date.getFullYear() === today.getFullYear();
+                    return date.toLocaleDateString("en-US", {
+                      month: "long",
+                      day: "numeric",
+                      ...(sameYear ? {} : { year: "numeric" }),
+                    });
+                  })();
+
                   // `role`, not ownership — this decides the LAYOUT. A
                   // teammate's message in a shared session is still somebody's
                   // turn and still draws as one, with their name above it.
@@ -1145,8 +1174,18 @@ function ChatTab() {
                   const prevUser = idx > 0 && arr[idx - 1].role === "user" ? arr[idx - 1] : null;
                   const isLast = idx === arr.length - 1;
                   return (
-                    <div key={m.id} className="group flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
+                    <>
+                      {showDateDivider && (
+                        <div className="flex items-center gap-3 py-4">
+                          <div className="h-px flex-1 bg-border" />
+                          <span className="text-xs font-medium text-muted-foreground">
+                            {dateLabel}
+                          </span>
+                          <div className="h-px flex-1 bg-border" />
+                        </div>
+                      )}
+                      <div key={m.id} className="group flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
                         <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
                         <span className="text-sm font-semibold">{agent.name}</span>
                         <span className="text-xs text-muted-foreground">
@@ -1282,6 +1321,7 @@ function ChatTab() {
                         </div>
                       </div>
                     </div>
+                    </>
                   );
                 })}
               </div>

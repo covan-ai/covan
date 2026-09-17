@@ -116,7 +116,8 @@ agents.post("/agents", async (c) => {
     return c.json({ error: "no workspace found for user" }, 400);
   }
 
-  const { name, emoji, model, persona, mode, temperature, reasoningEffort, webSearch } = parsed.data;
+  const { name, emoji, model, persona, mode, temperature, reasoningEffort, webSearch } =
+    parsed.data;
 
   const { data, error } = await db
     .from("agents")

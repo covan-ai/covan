@@ -434,7 +434,11 @@ function anthropicParams(
 
   // Web search tool. Newer models (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6) get
   // web_search_20260209; older models get web_search_20250305.
-  const tools: Array<Anthropic.Messages.WebSearchTool20260209 | Anthropic.Messages.WebSearchTool20250305 | Anthropic.Tool> = [];
+  const tools: Array<
+    | Anthropic.Messages.WebSearchTool20260209
+    | Anthropic.Messages.WebSearchTool20250305
+    | Anthropic.Tool
+  > = [];
   if (req.webSearch) {
     const newerModels = [
       "claude-opus-5",

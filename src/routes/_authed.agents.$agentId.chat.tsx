@@ -1209,130 +1209,130 @@ function ChatTab() {
                       )}
                       <div key={m.id} className="group flex flex-col gap-2">
                         <div className="flex items-center gap-2">
-                        <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
-                        <span className="text-sm font-semibold">{agent.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatTime(m.createdAt)}
-                        </span>
-                      </div>
-                      <div className="pl-9">
-                        {/* A continuation is drawn on the end of the reply it
+                          <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
+                          <span className="text-sm font-semibold">{agent.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatTime(m.createdAt)}
+                          </span>
+                        </div>
+                        <div className="pl-9">
+                          {/* A continuation is drawn on the end of the reply it
                             finishes, not under it. The server writes it into
                             the same row, so anything else would show two
                             answers for the length of the stream and then
                             silently become one. */}
-                        <Markdown
-                          content={
-                            continuingId === m.id && replyingIn === active?.id
-                              ? m.content + streamText
-                              : m.content
-                          }
-                          className={cn(
-                            "text-[15px] leading-relaxed text-foreground",
-                            continuingId === m.id && replyingIn === active?.id && "stream-live",
-                          )}
-                        />
+                          <Markdown
+                            content={
+                              continuingId === m.id && replyingIn === active?.id
+                                ? m.content + streamText
+                                : m.content
+                            }
+                            className={cn(
+                              "text-[15px] leading-relaxed text-foreground",
+                              continuingId === m.id && replyingIn === active?.id && "stream-live",
+                            )}
+                          />
 
-                        {/* Which take on this answer is showing, when there
+                          {/* Which take on this answer is showing, when there
                             is more than one. Beside the answer rather than in
                             the hover actions, because it is a fact about what
                             is on screen: somebody reading a regenerated reply
                             needs to know the other one still exists without
                             having to go looking. */}
-                        {m.versions && m.versions.length > 1 && (
-                          <VersionPicker
-                            versions={m.versions}
-                            current={m.id}
-                            busy={busy}
-                            onShow={(id) => void showVersion(id)}
-                          />
-                        )}
+                          {m.versions && m.versions.length > 1 && (
+                            <VersionPicker
+                              versions={m.versions}
+                              current={m.id}
+                              busy={busy}
+                              onShow={(id) => void showVersion(id)}
+                            />
+                          )}
 
-                        {sources.length > 0 && (
-                          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                            <span className="text-xs text-muted-foreground">Sources</span>
-                            {sources.map((source, i) => (
-                              <SourceChip
-                                key={source.id ?? `${source.name}:${i}`}
-                                source={source}
-                                uploadedAt={source.id ? uploadedAt.get(source.id) : undefined}
-                              />
-                            ))}
-                          </div>
-                        )}
+                          {sources.length > 0 && (
+                            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                              <span className="text-xs text-muted-foreground">Sources</span>
+                              {sources.map((source, i) => (
+                                <SourceChip
+                                  key={source.id ?? `${source.name}:${i}`}
+                                  source={source}
+                                  uploadedAt={source.id ? uploadedAt.get(source.id) : undefined}
+                                />
+                              ))}
+                            </div>
+                          )}
 
-                        {/* Not hidden behind hover like the actions below it.
+                          {/* Not hidden behind hover like the actions below it.
                             Those are conveniences; this one is the only thing
                             saying the answer above it is unfinished, and an
                             answer that stops mid-thought otherwise looks
                             exactly like one that finished. */}
-                        {truncated?.messageId === m.id && truncated.sessionId === active?.id && (
-                          <div className="mt-3 flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">
-                              This answer hit its length limit.
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => carryOn(m.id)}
-                              disabled={busy}
-                              className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
-                            >
-                              Continue
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Token usage badge - hover only, assistant messages only */}
-                        {m.role === "assistant" &&
-                          m.promptTokens != null &&
-                          m.completionTokens != null && (
-                            <div className="mt-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-                              {formatTokens(m.promptTokens)} in · {formatTokens(m.completionTokens)}{" "}
-                              out
-                              {m.cachedTokens != null && m.cachedTokens > 0 && (
-                                <> · {formatTokens(m.cachedTokens)} cached</>
-                              )}
-                              {" · "}
-                              {formatCost(
-                                estimateCostUsd(
-                                  agent.model || "gpt-4.1",
-                                  m.promptTokens,
-                                  m.completionTokens,
-                                  m.cachedTokens ?? 0,
-                                ),
-                              )}
+                          {truncated?.messageId === m.id && truncated.sessionId === active?.id && (
+                            <div className="mt-3 flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">
+                                This answer hit its length limit.
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => carryOn(m.id)}
+                                disabled={busy}
+                                className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
+                              >
+                                Continue
+                              </button>
                             </div>
                           )}
 
-                        <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                          <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>
-                            <Copy className="h-3.5 w-3.5" />
-                          </MsgAction>
-                          {tts.supported && (
-                            <MsgAction
-                              label={tts.speaking ? "Stop reading" : "Read aloud"}
-                              onClick={() => (tts.speaking ? tts.stop() : tts.speak(m.content))}
-                            >
-                              {tts.speaking ? (
-                                <VolumeX className="h-3.5 w-3.5" />
-                              ) : (
-                                <Volume2 className="h-3.5 w-3.5" />
-                              )}
+                          {/* Token usage badge - hover only, assistant messages only */}
+                          {m.role === "assistant" &&
+                            m.promptTokens != null &&
+                            m.completionTokens != null && (
+                              <div className="mt-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                                {formatTokens(m.promptTokens)} in ·{" "}
+                                {formatTokens(m.completionTokens)} out
+                                {m.cachedTokens != null && m.cachedTokens > 0 && (
+                                  <> · {formatTokens(m.cachedTokens)} cached</>
+                                )}
+                                {" · "}
+                                {formatCost(
+                                  estimateCostUsd(
+                                    agent.model || "gpt-4.1",
+                                    m.promptTokens,
+                                    m.completionTokens,
+                                    m.cachedTokens ?? 0,
+                                  ),
+                                )}
+                              </div>
+                            )}
+
+                          <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                            <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>
+                              <Copy className="h-3.5 w-3.5" />
                             </MsgAction>
-                          )}
-                          <MsgAction
-                            label="This answer was good — say why"
-                            onClick={() => setRating({ messageId: m.id, kind: "other" })}
-                          >
-                            <ThumbsUp className="h-3.5 w-3.5" />
-                          </MsgAction>
-                          <MsgAction
-                            label="Something's wrong with this answer"
-                            onClick={() => setRating({ messageId: m.id, kind: "problem" })}
-                          >
-                            <ThumbsDown className="h-3.5 w-3.5" />
-                          </MsgAction>
-                          {/* Ownership, not role — the same rule as Edit
+                            {tts.supported && (
+                              <MsgAction
+                                label={tts.speaking ? "Stop reading" : "Read aloud"}
+                                onClick={() => (tts.speaking ? tts.stop() : tts.speak(m.content))}
+                              >
+                                {tts.speaking ? (
+                                  <VolumeX className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Volume2 className="h-3.5 w-3.5" />
+                                )}
+                              </MsgAction>
+                            )}
+                            <MsgAction
+                              label="This answer was good — say why"
+                              onClick={() => setRating({ messageId: m.id, kind: "other" })}
+                            >
+                              <ThumbsUp className="h-3.5 w-3.5" />
+                            </MsgAction>
+                            <MsgAction
+                              label="Something's wrong with this answer"
+                              onClick={() => setRating({ messageId: m.id, kind: "problem" })}
+                            >
+                              <ThumbsDown className="h-3.5 w-3.5" />
+                            </MsgAction>
+                            {/* Ownership, not role — the same rule as Edit
                             above. `messages_delete_owner` is keyed to whoever
                             owns the SESSION, and so is `show_message_version`;
                             offered to a colleague reading a shared thread this
@@ -1345,17 +1345,17 @@ function ChatTab() {
                             something no longer there, and making those turns a
                             branch is a conversation tree rather than a version
                             list — a different feature, and a much larger one. */}
-                          {isLast && prevUser && isOwner && (
-                            <>
-                              <MsgAction label="Regenerate" onClick={() => regenerate()}>
-                                <RefreshCw className="h-3.5 w-3.5" />
-                              </MsgAction>
-                              <RetryOn models={pickableModels} onPick={regenerate} />
-                            </>
-                          )}
+                            {isLast && prevUser && isOwner && (
+                              <>
+                                <MsgAction label="Regenerate" onClick={() => regenerate()}>
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                </MsgAction>
+                                <RetryOn models={pickableModels} onPick={regenerate} />
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
                     </>
                   );
                 })}

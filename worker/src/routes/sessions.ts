@@ -201,7 +201,9 @@ sessions.get("/sessions/:id/messages", async (c) => {
   // see one of them twice and the other never.
   const { data, error } = await db
     .from("messages")
-    .select("*, sender:profiles(id,name,avatar_url), prompt_tokens, completion_tokens, cached_tokens")
+    .select(
+      "*, sender:profiles(id,name,avatar_url), prompt_tokens, completion_tokens, cached_tokens",
+    )
     .eq("session_id", id)
     // Superseded replies are earlier takes on an answer that is already here.
     // They belong to the version picker, not to the transcript — somebody

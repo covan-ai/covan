@@ -132,7 +132,10 @@ type Store = {
    * and defaults to false.
    */
   createAgent: (
-    a: Omit<Agent, "id" | "createdAt" | "documents" | "bundleIds" | "temperature" | "reasoningEffort">,
+    a: Omit<
+      Agent,
+      "id" | "createdAt" | "documents" | "bundleIds" | "temperature" | "reasoningEffort"
+    >,
   ) => Promise<Agent>;
   updateAgent: (id: string, patch: Partial<Agent>) => void;
   removeDocument: (agentId: string, docId: string) => Promise<void>;

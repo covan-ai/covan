@@ -196,8 +196,8 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 </Label>
               </div>
               <p className="text-xs text-muted-foreground">
-                Allow this agent to search the internet when your team's documents don't contain
-                the answer. Useful for current events or public information.
+                Allow this agent to search the internet when your team's documents don't contain the
+                answer. Useful for current events or public information.
               </p>
             </div>
             <TemperatureField

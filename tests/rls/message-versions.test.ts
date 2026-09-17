@@ -181,7 +181,12 @@ describe("show_message_version", () => {
   it("does nothing to a question", async () => {
     const { data } = await owner.db
       .from("messages")
-      .insert({ session_id: sessionId, role: "user", content: "Anything else?", sender_id: owner.id })
+      .insert({
+        session_id: sessionId,
+        role: "user",
+        content: "Anything else?",
+        sender_id: owner.id,
+      })
       .select("id")
       .single();
 

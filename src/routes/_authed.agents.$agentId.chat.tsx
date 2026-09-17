@@ -17,6 +17,7 @@ import {
   Lock,
   Pencil,
   RefreshCw,
+  Search,
   Sparkles,
   Square,
   ThumbsDown,
@@ -87,6 +88,13 @@ function ChatTab() {
   // agent's chat bundle, which is created on the first one.
   const uploads = useChatUploads(agent);
   const [dragging, setDragging] = useState(false);
+  /**
+   * What the reader is searching for in this conversation.
+   *
+   * Local only — no server round-trip, no index. Full-text against content
+   * and sender name; case-insensitive; results highlighted in place.
+   */
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Named after a real file once one is indexed, so the first tap on a fresh
   // agent returns an answer with a citation on it rather than a general one.
@@ -193,11 +201,23 @@ function ChatTab() {
   // have, and taking it back on the next one is answering a question they did
   // not ask.
   const [pageSize, setPageSize] = useState(MESSAGE_PAGE);
-  const { data: messages = [] } = useQuery({
+  const { data: allMessages = [] } = useQuery({
     queryKey: ["messages", active?.id],
     queryFn: () => api.sessions.messages(active!.id, { limit: pageSize }),
     enabled: !!active?.id,
   });
+
+  // What the screen actually shows: either everything, or what matches the
+  // search. Filtered in the client because the query is live — every keystroke
+  // re-runs it, and a server round-trip per keystroke is not a search box.
+  const lowerQuery = searchQuery.toLowerCase();
+  const messages = searchQuery
+    ? allMessages.filter(
+        (m) =>
+          m.content.toLowerCase().includes(lowerQuery) ||
+          m.sender?.name?.toLowerCase().includes(lowerQuery),
+      )
+    : allMessages;
 
   // A full page came back, so there is probably another behind it. "Probably"
   // is the honest word: a conversation of exactly a hundred turns offers a
@@ -945,6 +965,24 @@ function ChatTab() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {/* Conversation search: local filter, Esc to clear. */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              id="conversation-search"
+              type="text"
+              placeholder="Search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setSearchQuery("");
+                  e.currentTarget.blur();
+                }
+              }}
+              className="h-7 w-40 rounded-md border border-input bg-background pl-7 pr-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
           {isOwner && active && (
             <button
               type="button"
@@ -1337,6 +1375,29 @@ function ChatTab() {
           </span>
         </div>
       </div>
+
+      {/* Search results indicator */}
+      {searchQuery && (
+        <div className="border-t border-border bg-muted/30 px-4 py-2">
+          <div className="flex items-center gap-2 text-sm">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">
+              {messages.length === 0
+                ? "No matches"
+                : messages.length === allMessages.length
+                  ? `All ${messages.length} messages`
+                  : `${messages.length} of ${allMessages.length} messages`}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Composer */}
       <div className="relative border-t border-border bg-background px-4 pb-4 pt-3 lg:px-6">

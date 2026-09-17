@@ -812,3 +812,49 @@ describe("an answer that was asked for twice", () => {
     });
   });
 });
+
+describe("finding what was said", () => {
+  const older = {
+    id: "msg-3",
+    role: "assistant" as const,
+    content: "Twenty days, plus up to five can roll over.",
+    createdAt: Date.parse("2026-09-17T09:00:00Z"),
+  };
+
+  it("filters the conversation to what matches the search", async () => {
+    listMessages.mockResolvedValue([older, question, answer]);
+    await renderChat();
+
+    const box = screen.getByPlaceholderText("Search");
+    await userEvent.type(box, "roll");
+
+    await waitFor(() => {
+      expect(screen.getByText(/Twenty days, plus up to five can roll over/)).toBeInTheDocument();
+      expect(screen.queryByText("What do we charge?")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("1 of 3 messages")).toBeInTheDocument();
+  });
+
+  it("says how many matched, or that nothing did", async () => {
+    listMessages.mockResolvedValue([question, answer]);
+    await renderChat();
+
+    await userEvent.type(screen.getByPlaceholderText("Search"), "vacation");
+
+    await waitFor(() => expect(screen.getByText("No matches")).toBeInTheDocument());
+  });
+
+  it("clears the search on Escape", async () => {
+    listMessages.mockResolvedValue([older, question, answer]);
+    await renderChat();
+
+    const box = screen.getByPlaceholderText("Search");
+    await userEvent.type(box, "roll");
+    await waitFor(() => expect(screen.getByText("1 of 3 messages")).toBeInTheDocument());
+
+    fireEvent.keyDown(box, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByText("1 of 3 messages")).not.toBeInTheDocument());
+    expect(screen.getByText(/What do we charge/)).toBeInTheDocument();
+  });
+});

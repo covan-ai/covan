@@ -128,3 +128,61 @@ describe("PATCH /sessions/:id", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("GET /sessions/:id/messages", () => {
+  const row = (id: string, at: string) => ({
+    id,
+    role: "user",
+    content: id,
+    created_at: at,
+    sender: null,
+  });
+
+  /** The database answering newest-first, which is how the route asks. */
+  const withTranscript = (rows: ReturnType<typeof row>[]) =>
+    appWith({ tables: { messages: { select: () => ({ data: rows, error: null }) } } });
+
+  it("reads the newest page and hands it back oldest first", async () => {
+    // The bug this replaces: a bare ascending read with no limit, capped by
+    // PostgREST at a thousand rows and cutting from the far end — so a long
+    // conversation returned its first thousand messages and silently dropped
+    // every one after them. The transcript stopped months ago and went on
+    // accepting new messages that never appeared.
+    const { app, fake } = withTranscript([
+      row("newest", "2026-09-17T12:00:00.000Z"),
+      row("older", "2026-09-17T11:00:00.000Z"),
+    ]);
+
+    const res = await app.request("/sessions/session-1/messages");
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string }[];
+    expect(body.map((m) => m.id)).toEqual(["older", "newest"]);
+
+    const query = fake.callsTo("messages")[0];
+    expect(query.order).toEqual([
+      { column: "created_at", ascending: false },
+      // `created_at` is not unique. Without a tiebreaker two messages written
+      // in the same millisecond come back in whatever order the planner likes,
+      // and a page boundary between them shows one twice and the other never.
+      { column: "id", ascending: false },
+    ]);
+    expect(query.limit).toBe(100);
+  });
+
+  it("honours a limit the caller asked for", async () => {
+    const { app, fake } = withTranscript([]);
+
+    await app.request("/sessions/session-1/messages?limit=5");
+
+    expect(fake.callsTo("messages")[0].limit).toBe(5);
+  });
+
+  it("refuses a limit past what the endpoint will serve", async () => {
+    const { app } = withTranscript([]);
+
+    const res = await app.request("/sessions/session-1/messages?limit=5000");
+
+    expect(res.status).toBe(400);
+  });
+});

@@ -147,12 +147,17 @@ client for all of it.
 | ---------------------------------------------- | ----------------------------- |
 | `GET /sessions` · `POST /sessions`             | List and open conversations   |
 | `PATCH /sessions/:id` · `DELETE /sessions/:id` | Rename, share, delete         |
-| `GET /sessions/:id/messages`                   | The transcript                |
+| `GET /sessions/:id/messages`                   | The transcript, newest first  |
 | `POST /messages` · `PATCH /messages/:id`       | Write and edit your own lines |
 | `DELETE /messages/after/:id`                   | Truncate, for a re-ask        |
 | `POST /chat/stream`                            | Ask. Streams SSE.             |
 | `POST /transcribe`                             | Audio to text                 |
 | `POST /sessions/:id/report`                    | Write it up as a document     |
+
+`GET /sessions/:id/messages` answers with the newest hundred turns, oldest
+first. `?limit=` asks for more, up to five hundred. It pages from the *new* end
+deliberately: a conversation longer than one page is missing its beginning,
+which is the only end anybody can stand to lose.
 
 A session is private to you unless its `visibility` is `shared`, in which case
 the workspace can read it. Assistant replies cannot be written by any client,

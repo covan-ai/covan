@@ -543,3 +543,56 @@ describe("what a screen reader is told", () => {
     expect(within(log).getByText(answer.content)).toBeInTheDocument();
   });
 });
+
+describe("a conversation longer than one page", () => {
+  const manyMessages = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `msg-${i}`,
+      role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content: `turn ${i}`,
+      createdAt: Date.parse("2026-09-17T10:00:00Z") + i * 1000,
+    }));
+
+  it("asks for a page, and says so when there is more behind it", async () => {
+    listMessages.mockResolvedValue(manyMessages(100));
+    await renderChat();
+
+    expect(listMessages).toHaveBeenCalledWith("session-1", { limit: 100 });
+    expect(screen.getByRole("button", { name: "Load earlier messages" })).toBeInTheDocument();
+  });
+
+  it("offers nothing to load when the whole conversation already fits", async () => {
+    listMessages.mockResolvedValue(manyMessages(12));
+    await renderChat();
+
+    expect(screen.queryByRole("button", { name: "Load earlier messages" })).not.toBeInTheDocument();
+  });
+
+  it("asks for a deeper page, and keeps it for the refetch after the next reply", async () => {
+    listMessages.mockResolvedValue(manyMessages(100));
+    await renderChat();
+
+    listMessages.mockResolvedValue(manyMessages(200));
+    await userEvent.click(screen.getByRole("button", { name: "Load earlier messages" }));
+
+    await waitFor(() => expect(listMessages).toHaveBeenCalledWith("session-1", { limit: 200 }));
+
+    // And the depth survives a turn: the refetch that follows a reply used to
+    // snap back to the first page and throw the scrollback away.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "delta", text: "Forty." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+    listMessages.mockClear();
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+    await waitFor(() => expect(listMessages).toHaveBeenCalledWith("session-1", { limit: 200 }));
+  });
+});

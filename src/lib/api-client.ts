@@ -358,7 +358,18 @@ export const api = {
       kind?: "chat" | "brainstorm";
     }): Promise<ChatSession> => request("POST", "/sessions", input),
     remove: (id: string): Promise<void> => request("DELETE", `/sessions/${id}`),
-    messages: (id: string): Promise<Message[]> => request("GET", `/sessions/${id}/messages`),
+    /**
+     * The transcript, newest `limit` turns of it, oldest first.
+     *
+     * The limit is the endpoint's whether or not it is named here — it serves
+     * a hundred turns by default. Naming one is how the screen asks for more
+     * of a conversation somebody has scrolled back through.
+     */
+    messages: (id: string, opts?: { limit?: number }): Promise<Message[]> =>
+      request(
+        "GET",
+        opts?.limit ? `/sessions/${id}/messages?limit=${opts.limit}` : `/sessions/${id}/messages`,
+      ),
     setVisibility: (id: string, visibility: "private" | "shared"): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, { visibility }),
     rename: (id: string, title: string): Promise<ChatSession> =>

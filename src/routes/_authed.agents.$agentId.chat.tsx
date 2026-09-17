@@ -49,6 +49,19 @@ export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
   }),
 });
 
+/**
+ * How much of a conversation loads at once, and how much more each press of
+ * "Load earlier" asks for.
+ *
+ * Matches the default the endpoint serves (`MESSAGE_PAGE_DEFAULT`,
+ * `worker/src/routes/sessions.ts`). They are two constants rather than one
+ * because the frontend cannot import from the worker, and the only thing that
+ * goes wrong if they drift is that the first page arrives smaller than this
+ * screen expected — which is why `hasEarlier` is derived from what came back
+ * rather than from what was asked for.
+ */
+const MESSAGE_PAGE = 100;
+
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -148,11 +161,51 @@ function ChatTab() {
 
   // Messages for the active session live under their own query — the store's
   // `sessions` no longer carry messages.
+  //
+  // How much of the conversation is loaded, and deliberately *not* part of the
+  // query key. Keying on it would make every "load earlier" its own cache
+  // entry, and the entry the streamed reply is handed to at the end of a turn
+  // is `["messages", id]` — one key, or the answer lands somewhere nothing is
+  // reading. Held as state rather than a ref because the button below renders
+  // from it, and because `queryFn` is rebuilt every render and so always
+  // closes over the current value: the refetch after each reply re-reads
+  // however much was loaded instead of snapping back to the first page and
+  // throwing the scrollback away.
+  //
+  // It is not reset when the reader opens another conversation. Somebody who
+  // asked for more of one is telling you how much conversation they like to
+  // have, and taking it back on the next one is answering a question they did
+  // not ask.
+  const [pageSize, setPageSize] = useState(MESSAGE_PAGE);
   const { data: messages = [] } = useQuery({
     queryKey: ["messages", active?.id],
-    queryFn: () => api.sessions.messages(active!.id),
+    queryFn: () => api.sessions.messages(active!.id, { limit: pageSize }),
     enabled: !!active?.id,
   });
+
+  // A full page came back, so there is probably another behind it. "Probably"
+  // is the honest word: a conversation of exactly a hundred turns offers a
+  // button that loads nothing and then goes away, which is a better failure
+  // than a conversation that silently begins in the middle.
+  const hasEarlier = messages.length >= pageSize;
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const loadEarlier = async () => {
+    if (!active) return;
+    const next = pageSize + MESSAGE_PAGE;
+    setPageSize(next);
+    setLoadingEarlier(true);
+    try {
+      // Fetched and written rather than refetched: `refetch()` would re-run
+      // the `queryFn` from *this* render, which still closes over the old
+      // size, and load the same page again.
+      const deeper = await api.sessions.messages(active.id, { limit: next });
+      queryClient.setQueryData<Message[]>(["messages", active.id], deeper);
+    } catch {
+      toast.error("Couldn't load earlier messages.");
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
 
   // Make sure a session always exists, and keep the URL pointing at the active
   // one so the sidebar highlight and this view stay in sync.
@@ -859,6 +912,18 @@ function ChatTab() {
                 see the block below. Announcing a growing string on every token
                 is not access, it is a torrent.
               */}
+              {hasEarlier && (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => void loadEarlier()}
+                    disabled={loadingEarlier}
+                    className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+                  >
+                    {loadingEarlier ? "Loading…" : "Load earlier messages"}
+                  </button>
+                </div>
+              )}
               <div
                 role="log"
                 aria-label="Conversation"

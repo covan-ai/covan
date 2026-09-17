@@ -156,21 +156,62 @@ sessions.delete("/sessions/:id", async (c) => {
 // on trusting anyway. It was not always so: the same route with the same
 // filter handed an ex-member their old transcripts until 0031 closed the owner
 // branch above it.
+/**
+ * The transcript page size: what a client gets by default, and the most it may
+ * ask for.
+ *
+ * Not the same number as `MSG_HISTORY_LIMIT` in `routes/chat.ts`, and
+ * deliberately not sharing one with it. That one bounds what the *model* is
+ * shown and is sized against a token budget; this one bounds what a *person*
+ * is shown and is sized against a scroll. They move for different reasons.
+ */
+const MESSAGE_PAGE_DEFAULT = 100;
+const MESSAGE_PAGE_MAX = 500;
+
 sessions.get("/sessions/:id/messages", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
+  // How many turns a client gets if it asks for no particular number. Well
+  // inside anything a conversation view renders at once, and well inside
+  // PostgREST's own ceiling, which is the reason this parameter exists at all.
+  const parsed = z
+    .object({ limit: z.coerce.number().int().min(1).max(MESSAGE_PAGE_MAX).optional() })
+    .safeParse(c.req.query());
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400);
+  }
+  const limit = parsed.data.limit ?? MESSAGE_PAGE_DEFAULT;
+
+  // Newest first on the way out of the database, oldest first on the way to
+  // the client — and that inversion is the whole point of this query.
+  //
+  // It used to be a bare ascending `order` with no limit, which meant the
+  // limit was PostgREST's (1000 by default on Supabase) and it cut from the
+  // far end: a conversation past that many turns returned its first thousand
+  // messages and silently dropped everything after them. Not an error, not a
+  // truncation anybody could see — the transcript simply stopped, months ago,
+  // and kept accepting new messages that never appeared. Taking the newest
+  // rows and reversing them makes the part that gets dropped the old part,
+  // which is the only end anyone can stand to lose.
+  //
+  // `id` as a tiebreaker because `created_at` is not unique — two messages
+  // written in the same millisecond would otherwise come back in whatever
+  // order the planner felt like, and a client asking for the next page would
+  // see one of them twice and the other never.
   const { data, error } = await db
     .from("messages")
     .select("*, sender:profiles(id,name,avatar_url)")
     .eq("session_id", id)
-    .order("created_at");
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
 
   if (error) {
     return c.json({ error: "failed to load messages" }, 500);
   }
 
-  return c.json((data ?? []).map(mapMessage));
+  return c.json((data ?? []).slice().reverse().map(mapMessage));
 });
 
 export { sessions };

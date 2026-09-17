@@ -24,6 +24,8 @@ import {
   ThumbsUp,
   Upload,
   Users,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -41,6 +43,7 @@ import { startersFor } from "@/lib/chat-starters";
 import { modelsFor } from "@/lib/agent-meta";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
 import { groupMessagesByDate } from "@/lib/message-groups";
+import { useTTS } from "@/lib/use-tts";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -327,6 +330,7 @@ function ChatTab() {
   const dictation = useDictation(
     useCallback((text: string) => setInput((draft) => appendDictation(draft, text)), []),
   );
+  const tts = useTTS();
   // Reply-in-progress state, scoped to the session it belongs to. `thinking`
   // shows the typing bubble; `streamText` reveals the answer character by
   // character before it's committed to the store.
@@ -1150,6 +1154,25 @@ function ChatTab() {
                         <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-[15px] leading-[1.45] text-primary-foreground">
                           {m.content}
                         </div>
+                        {/* Show pending uploads under user message while composing */}
+                        {idx === arr.length - 1 && uploads.receipts.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {uploads.receipts.map((r) => (
+                              <div
+                                key={r.id}
+                                className="flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs"
+                              >
+                                <FileText className="h-3 w-3 text-muted-foreground" />
+                                <span className="text-muted-foreground">{r.name}</span>
+                                {r.state === "uploading" && (
+                                  <span className="tabular-nums text-muted-foreground">
+                                    {r.progress}%
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {/* Ownership, not role. This used to branch on the same
                           flag as the layout above, so in a shared session an
                           Edit button appeared over a colleague's message —
@@ -1285,6 +1308,18 @@ function ChatTab() {
                           <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>
                             <Copy className="h-3.5 w-3.5" />
                           </MsgAction>
+                          {tts.supported && (
+                            <MsgAction
+                              label={tts.speaking ? "Stop reading" : "Read aloud"}
+                              onClick={() => (tts.speaking ? tts.stop() : tts.speak(m.content))}
+                            >
+                              {tts.speaking ? (
+                                <VolumeX className="h-3.5 w-3.5" />
+                              ) : (
+                                <Volume2 className="h-3.5 w-3.5" />
+                              )}
+                            </MsgAction>
+                          )}
                           <MsgAction
                             label="This answer was good — say why"
                             onClick={() => setRating({ messageId: m.id, kind: "other" })}

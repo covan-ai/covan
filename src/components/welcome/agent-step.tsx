@@ -54,7 +54,7 @@ export function AgentStep({
         model,
         persona: persona.trim(),
         mode: "normal",
-        webSearch: false,
+        webSearch: true,
       });
       onCreated();
     } catch {

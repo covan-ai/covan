@@ -130,7 +130,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
         model,
         persona,
         mode: "normal",
-        webSearch: false,
+        webSearch: true,
       });
       // Documents are bundle-scoped now. Put the Train-step files into a fresh
       // bundle named after the agent and attach it, so they're retrievable in

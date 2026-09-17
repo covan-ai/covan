@@ -132,7 +132,10 @@ agents.post("/agents", async (c) => {
       // agent created before 0048 has.
       temperature: temperature ?? null,
       reasoning_effort: reasoningEffort ?? null,
-      web_search: webSearch ?? false,
+      // Web search is on by default. Models that support it (Opus 5/4.8/4.7/4.6,
+      // Sonnet 5/4.6) get web_search_20260209; the toggle remains for edge cases
+      // where the team explicitly wants answers limited to their documents only.
+      web_search: webSearch ?? true,
       created_by: user.id,
     })
     .select("*")

@@ -150,7 +150,12 @@ reports.post("/sessions/:id/report", async (c) => {
   const messages: CompletionMessage[] = [
     {
       role: "system",
-      content: buildSystemPrefix({ persona: agent.persona, mode: "report", docNames }),
+      content: buildSystemPrefix({
+        persona: agent.persona,
+        mode: "report",
+        docNames,
+        webSearchEnabled: agent.web_search ?? false,
+      }),
     },
     ...history,
     ...(ragBlock ? [{ role: "system" as const, content: ragBlock }] : []),

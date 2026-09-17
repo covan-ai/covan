@@ -117,15 +117,36 @@ function manifestNames(names: string[]): string {
  */
 export type PromptMode = "normal" | "brainstorm" | "report";
 
+/**
+ * Core capabilities that apply regardless of mode or documents.
+ *
+ * Lives in the system prefix, which is byte-identical turn over turn and rides
+ * in the prompt cache. Updated when capabilities change (web search, code
+ * execution, etc).
+ */
+const CAPABILITIES = [
+  "You can search the web when needed — use it for real-time information, current events, external data, or anything beyond the team's documents.",
+  "You can read and analyze all file types the team uploads: PDFs, Word docs, spreadsheets, images, code files, and more.",
+  "When working with code, you can explain, debug, refactor, or write new code across any language or framework.",
+  "You have access to the team's full conversation history in this workspace.",
+].join(" ");
+
 export function buildSystemPrefix(input: {
   persona: string | null;
   mode: PromptMode;
   docNames: string[];
+  webSearchEnabled?: boolean;
 }): string {
   const persona =
     input.persona && input.persona.trim().length > 0 ? input.persona : DEFAULT_PERSONA;
 
   let prefix = persona;
+
+  // Add capabilities (web search only if enabled)
+  if (input.webSearchEnabled) {
+    prefix += `\n\n${CAPABILITIES}`;
+  }
+
   if (input.mode === "brainstorm") {
     prefix += `\n\n${BRAINSTORM_INSTRUCTIONS}`;
   } else if (input.mode === "report") {

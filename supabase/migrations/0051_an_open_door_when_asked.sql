@@ -2,15 +2,12 @@
 -- An open door when asked
 --
 -- Web search: the feature that decides whether an agent can look beyond what
--- its documents say. Covan's positioning is "based on your team's knowledge",
--- which is a deliberate claim — RAG over the workspace's uploads is not just
--- the first answer but the *intended* one. The web is an escape hatch, not
--- the default behaviour, and opening it by default would contradict what the
--- product promises to do.
+-- its documents say. Web search is ON by default for new agents as of
+-- 2026-09-17. Models that support it (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6) get
+-- web_search_20260209; older models get web_search_20250305.
 --
--- So this is off for every agent that exists, and off for every new one until
--- somebody turns it on. That is not a limitation: it is the shape the feature
--- was designed to have.
+-- The toggle remains for edge cases where teams explicitly want answers
+-- limited to their documents only (e.g., summarizing confidential files).
 --
 -- **Why a column and not an env var?** The shape of a question decides
 -- whether looking at the internet helps. "Summarise this brief" should stay

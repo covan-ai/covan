@@ -192,6 +192,7 @@ chat.post("/chat/stream", async (c) => {
     persona: agent.persona,
     mode,
     docNames,
+    webSearchEnabled: agent.web_search ?? false,
   });
 
   // Budget the history down to the most recent turns that fit, so long chats

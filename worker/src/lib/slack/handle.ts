@@ -147,7 +147,7 @@ export async function handleSlackEvent(
 
   const { data: agent, error: agentError } = await deps.db
     .from("agents")
-    .select("id,name,persona,model,mode,temperature,reasoning_effort,workspace_id")
+    .select("id,name,persona,model,mode,temperature,reasoning_effort,web_search,workspace_id")
     .eq("id", installation.agent_id)
     .eq("workspace_id", installation.workspace_id)
     .maybeSingle();
@@ -210,6 +210,7 @@ export async function handleSlackEvent(
     persona: agent.persona,
     mode,
     docNames: retrieval.docNames,
+    webSearchEnabled: agent.web_search ?? false,
   });
 
   // Same assembly as the chat route: the stable prefix and prior turns first so

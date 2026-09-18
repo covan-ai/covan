@@ -147,6 +147,52 @@ describe("inline marks", () => {
   });
 });
 
+describe("math", () => {
+  it("renders display math from a $$ block", () => {
+    const { container } = draw("$$E = mc^2$$");
+
+    expect(container.querySelector(".katex-display")).toBeInTheDocument();
+  });
+
+  it("renders display math split across lines", () => {
+    const { container } = draw(
+      ["$$", "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}", "$$"].join("\n"),
+    );
+
+    expect(container.querySelector(".katex-display")).toBeInTheDocument();
+  });
+
+  it("renders inline math from $...$", () => {
+    const { container } = draw("The identity is $x^2 + y^2 = r^2$ here.");
+
+    expect(container.querySelector(".katex")).toBeInTheDocument();
+    // Inline, not display — the paragraph around it keeps flowing.
+    expect(container.querySelector(".katex-display")).not.toBeInTheDocument();
+  });
+
+  it("does not treat a dollar amount as math", () => {
+    draw("The cost is $40 per seat.");
+
+    expect(screen.getByText(/\$40 per seat/)).toBeInTheDocument();
+  });
+
+  it("leaves an unclosed math block as raw text while it streams", () => {
+    // What a display block looks like for every line of it but the last one,
+    // for the whole time an answer is arriving.
+    const { container } = draw(["$$", "E = mc^2"].join("\n"));
+
+    expect(container.querySelector(".katex")).not.toBeInTheDocument();
+    expect(screen.getByText(/E = mc\^2/)).toBeInTheDocument();
+  });
+
+  it("leaves an unclosed inline dollar as raw text", () => {
+    const { container } = draw("The value is $x with no closing mark");
+
+    expect(container.querySelector(".katex")).not.toBeInTheDocument();
+    expect(screen.getByText(/\$x with no closing mark/)).toBeInTheDocument();
+  });
+});
+
 describe("half an answer", () => {
   it("renders a code block that has been opened and not closed", () => {
     // Every streamed code block is this, for as long as it takes to write.

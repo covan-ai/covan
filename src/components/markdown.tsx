@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { renderToString } from "katex";
 import { cn } from "@/lib/utils";
 import { highlight } from "@/lib/highlighter";
 
@@ -7,9 +8,11 @@ import { highlight } from "@/lib/highlighter";
  * Small, dependency-free Markdown renderer tuned for chat replies.
  *
  * Supports: fenced code blocks, headings, tables, ordered and unordered lists
- * with nesting, blockquotes, horizontal rules, paragraphs, and inline bold /
- * italic / strikethrough / `code` / [links](url). Output is composed entirely
- * of real React nodes — no raw HTML is ever injected.
+ * with nesting, blockquotes, horizontal rules, paragraphs, display (`$$`) and
+ * inline (`$`) math, and inline bold / italic / strikethrough / `code` /
+ * [links](url). Output is composed entirely of real React nodes — except the
+ * two constructs (code highlighting, math) that hand fixed markup to a
+ * library that already produces it correctly.
  *
  * ## Two things it is deliberately not
  *
@@ -81,6 +84,19 @@ function parseBlocks(src: string): ReactNode[] {
       // there is not one yet. Either way the block renders with what it has.
       i++;
       out.push(<CodeBlock key={key++} lang={lang} code={body.join("\n")} />);
+      continue;
+    }
+
+    // Display math: `$$...$$` on one line, or `$$` / body / `$$` across several.
+    // Only committed to once a closing `$$` actually turns up — an opener with
+    // none yet is exactly what every line of it looks like but the last while
+    // the answer is still streaming, and that renders as text, not broken TeX.
+    const mathEnd = mathBlockEnd(lines, i);
+    if (mathEnd !== -1) {
+      const trimmed = line.trim();
+      const tex = mathEnd === i ? trimmed.slice(2, -2) : lines.slice(i + 1, mathEnd).join("\n");
+      out.push(<MathBlock key={key++} tex={tex} />);
+      i = mathEnd + 1;
       continue;
     }
 
@@ -177,8 +193,24 @@ function startsABlock(lines: string[], at: number): boolean {
     BLOCKQUOTE.test(line) ||
     UNORDERED.test(line) ||
     ORDERED.test(line) ||
-    (line.includes("|") && at + 1 < lines.length && TABLE_RULE.test(lines[at + 1]))
+    (line.includes("|") && at + 1 < lines.length && TABLE_RULE.test(lines[at + 1])) ||
+    mathBlockEnd(lines, at) !== -1
   );
+}
+
+/**
+ * The line index of the `$$` that closes the display-math block opening at
+ * `at`, `at` itself when both markers are on that one line, or `-1` when
+ * `at` is not a math opener or nothing has closed it yet.
+ */
+function mathBlockEnd(lines: string[], at: number): number {
+  const trimmed = lines[at].trim();
+  if (!trimmed.startsWith("$$")) return -1;
+  if (trimmed.length > 4 && trimmed.endsWith("$$")) return at;
+  for (let j = at + 1; j < lines.length; j++) {
+    if (lines[j].trim() === "$$") return j;
+  }
+  return -1;
 }
 
 function headingClass(level: number): string {
@@ -315,6 +347,28 @@ function Table({ header, aligns, rows }: { header: string[]; aligns: Align[]; ro
 }
 
 /**
+ * A `$$...$$` block, handed to KaTeX rather than rendered as React nodes —
+ * the output is markup a layout engine already gets right, not something this
+ * renderer's inline-mark parser should redo. `throwOnError: false` matches
+ * the fenced-code path's tolerance for a construct that streams in pieces:
+ * an expression that is not valid TeX yet renders as inline error text
+ * instead of throwing mid-answer. `trust: false` (KaTeX's own default, pinned
+ * here rather than relied on) keeps `\href` / `\includegraphics` — the
+ * commands that can embed a URL — disabled, since the TeX reaching this is
+ * model output, not something this renderer authored.
+ */
+function MathBlock({ tex }: { tex: string }) {
+  const html = renderToString(tex, { throwOnError: false, displayMode: true, trust: false });
+  return <div className="overflow-x-auto py-1" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** The inline form of {@link MathBlock} — same library, `displayMode: false`. */
+function InlineMath({ tex }: { tex: string }) {
+  const html = renderToString(tex, { throwOnError: false, displayMode: false, trust: false });
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/**
  * Inline marks: **bold**, *italic*, ~~struck~~, `code`, [text](url).
  *
  * Each wrapping mark recurses on what it wrapped, which is what makes
@@ -326,9 +380,16 @@ function Table({ header, aligns, rows }: { header: string[]; aligns: Align[]; ro
  * Non-greedy rather than negated, so the closing mark is the nearest one and
  * an unmatched opener at the end of a streaming reply stays literal text
  * instead of swallowing the rest of the answer.
+ *
+ * The `$...$` alternative requires a non-space, non-`$`, non-digit character
+ * right after the opening `$` — the same heuristic the display-math check
+ * uses at the line level, here to tell `$x^2$` from a price. `$40` starts
+ * with a digit and is excluded; `$$...$$` is excluded because its second `$`
+ * cannot itself follow that rule, which is also why a `$$` block left
+ * unclosed by the end of the answer never gets mistaken for two empty ones.
  */
 const INLINE =
-  /(\*\*(.+?)\*\*|~~(.+?)~~|\*(.+?)\*|`([^`]+)`|\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\))/s;
+  /(\*\*(.+?)\*\*|~~(.+?)~~|\*(.+?)\*|`([^`]+)`|\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|\$([^\s$0-9][^$]*?)\$)/s;
 
 function parseInline(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -356,6 +417,10 @@ function parseInline(text: string): ReactNode[] {
           {m[5]}
         </code>,
       );
+    } else if (m[8] !== undefined) {
+      // No recursion, same reason as a code span: the content is TeX, not
+      // Markdown that happens to be wrapped in dollar signs.
+      nodes.push(<InlineMath key={key++} tex={m[8]} />);
     } else {
       // Only safe schemes — blocks javascript:/data: URLs (XSS).
       const href = /^(https?:|mailto:|\/|#)/i.test(m[7].trim()) ? m[7] : "#";

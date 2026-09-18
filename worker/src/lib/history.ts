@@ -1,5 +1,9 @@
 export type HistoryTurn = { role: "user" | "assistant"; content: string };
 
+export const MSG_HISTORY_LIMIT = 60;
+export const HISTORY_CHAR_BUDGET = 32000;
+export const PER_MESSAGE_CHAR_CAP = 6000;
+
 // Marker appended when a single message is truncated to the per-message cap, so
 // the model can tell the content was cut rather than genuinely ending there.
 const TRUNCATION_MARK = "\n…[truncated]";
@@ -30,7 +34,10 @@ function capContent(content: string, cap: number): string {
  */
 export function selectHistory(
   rows: HistoryTurn[],
-  { maxChars = 24000, perMessageCap = 6000 }: { maxChars?: number; perMessageCap?: number } = {},
+  {
+    maxChars = HISTORY_CHAR_BUDGET,
+    perMessageCap = PER_MESSAGE_CHAR_CAP,
+  }: { maxChars?: number; perMessageCap?: number } = {},
 ): HistoryTurn[] {
   if (rows.length === 0) return [];
 

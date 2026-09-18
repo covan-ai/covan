@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { highlight } from "@/lib/highlighter";
 
 /**
  * Small, dependency-free Markdown renderer tuned for chat replies.
@@ -378,6 +379,27 @@ function parseInline(text: string): ReactNode[] {
 
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
+  const [html, setHtml] = useState<string | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!lang) return;
+    // Skip highlighting while the parent is still streaming — re-running Shiki
+    // on every delta would thrash the WASM bridge for output nobody can read yet.
+    // The `stream-live` class is set on the Markdown wrapper during streaming and
+    // removed when the stream completes, which triggers this effect one last time.
+    const streaming = wrapperRef.current?.closest(".stream-live");
+    if (streaming) return;
+
+    let cancelled = false;
+    highlight(code, lang).then((result) => {
+      if (!cancelled && result) setHtml(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, lang]);
+
   const copy = () => {
     navigator.clipboard?.writeText(code).then(() => {
       setCopied(true);
@@ -385,7 +407,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     });
   };
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-muted/50">
+    <div ref={wrapperRef} className="overflow-hidden rounded-lg border border-border bg-muted/50">
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
         <span className="font-mono text-xs text-muted-foreground">{lang || "code"}</span>
         <button
@@ -397,9 +419,16 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto px-3 py-2.5">
-        <code className="font-mono text-xs leading-relaxed">{code}</code>
-      </pre>
+      {html ? (
+        <div
+          className="shiki-wrapper overflow-x-auto [&_pre]:px-3 [&_pre]:py-2.5 [&_pre]:!bg-transparent [&_code]:font-mono [&_code]:text-xs [&_code]:leading-relaxed"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : (
+        <pre className="overflow-x-auto px-3 py-2.5">
+          <code className="font-mono text-xs leading-relaxed">{code}</code>
+        </pre>
+      )}
     </div>
   );
 }

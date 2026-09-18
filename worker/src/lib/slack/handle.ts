@@ -3,7 +3,12 @@ import type { Bindings } from "../../types";
 import type { Entitlements } from "../entitlements";
 import { embeddingCost } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
-import { selectHistory } from "../history";
+import {
+  selectHistory,
+  MSG_HISTORY_LIMIT,
+  HISTORY_CHAR_BUDGET,
+  PER_MESSAGE_CHAR_CAP,
+} from "../history";
 import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../prompt";
 import { resolveModel } from "../models";
 import { complete, type CompletionMessage } from "../completion";
@@ -29,11 +34,6 @@ import { toMrkdwn } from "./mrkdwn";
  * - **Nothing streams.** Slack has no notion of a partial message worth the
  *   three edits per second it would take to fake one.
  */
-
-/** How much history one thread carries into a turn. Matches `routes/chat.ts`. */
-const HISTORY_CHAR_BUDGET = 16000;
-const PER_MESSAGE_CHAR_CAP = 4000;
-const MSG_HISTORY_LIMIT = 40;
 
 /** How much of the first question becomes the conversation's title in Covan. */
 const TITLE_LIMIT = 80;

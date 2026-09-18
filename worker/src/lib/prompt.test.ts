@@ -151,18 +151,17 @@ describe("reasoningEffortFor", () => {
 });
 
 describe("maxTokensFor", () => {
-  it("caps output for both modes, giving brainstorm more room", () => {
-    expect(maxTokensFor("normal")).toBe(1536);
-    expect(maxTokensFor("brainstorm")).toBe(3072);
-    expect(maxTokensFor("brainstorm")).toBeGreaterThan(maxTokensFor("normal"));
+  it("caps output, giving report the most room", () => {
+    expect(maxTokensFor("normal")).toBe(4096);
+    expect(maxTokensFor("brainstorm")).toBe(4096);
+    expect(maxTokensFor("brainstorm")).toBeGreaterThanOrEqual(maxTokensFor("normal"));
   });
 });
 
 describe("report mode", () => {
   it("does not ask a report to be brief", () => {
-    // CONCISION_INSTRUCTIONS opens with "Answer in as few words as the question
-    // genuinely needs", which is the right instruction for a chat turn and the
-    // wrong one for a document somebody asked to be written.
+    // CONCISION_INSTRUCTIONS shapes chat-length replies, which is the wrong
+    // instruction for a document somebody asked to be written.
     const out = buildSystemPrefix({ persona: "You are our PM.", mode: "report", docNames: [] });
     expect(out).toContain(REPORT_INSTRUCTIONS);
     expect(out).not.toContain(CONCISION_INSTRUCTIONS);
@@ -178,7 +177,7 @@ describe("report mode", () => {
   });
 
   it("gives a report more room than either chat mode", () => {
-    expect(maxTokensFor("report")).toBe(4096);
+    expect(maxTokensFor("report")).toBe(8192);
     expect(maxTokensFor("report")).toBeGreaterThan(maxTokensFor("brainstorm"));
     expect(maxTokensFor("report")).toBeGreaterThan(maxTokensFor("normal"));
   });

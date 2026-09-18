@@ -15,6 +15,7 @@ import {
 import { buildSystemPrefix, temperatureFor, maxTokensFor, reasoningEffortFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
+import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
@@ -518,6 +519,29 @@ chat.post("/chat/stream", async (c) => {
           // Before `done`, which is the client's terminal event.
           if (finishReason === "length") send({ type: "truncated" });
           send({ type: "done", message: mapMessage(inserted) });
+
+          // Follow-up suggestions: a lightweight second call on the cheapest
+          // model, after the answer is already on screen. Skipped on
+          // continuations (a half-answer has no meaningful follow-up),
+          // regenerations (the question hasn't changed), and truncations
+          // (the user needs "Continue" not new questions).
+          if (!continuing && !regenerate && finishReason !== "length" && !signal.aborted) {
+            try {
+              const { questions, tokens: fuTokens } = await generateFollowUps(
+                env,
+                titleModelFor(model, env),
+                question,
+                full.slice(0, 800),
+              );
+              if (questions.length > 0) {
+                send({ type: "suggestions", questions });
+              }
+              if (fuTokens > 0) await recordQuota(c, fuTokens);
+            } catch {
+              // Suggestions are optional — a failure here must not break the
+              // stream or leave the user staring at a spinner.
+            }
+          }
         } else {
           await recordSpend();
           send({

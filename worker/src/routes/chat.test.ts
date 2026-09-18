@@ -842,7 +842,13 @@ describe("naming the conversation", () => {
     await ask(app);
 
     expect(writtenTitle()).toBeUndefined();
-    expect(completionCreate.mock.calls.filter((c) => !c[0].stream)).toHaveLength(0);
+    // No titling call — follow-up suggestions may still fire.
+    const titlingCalls = completionCreate.mock.calls.filter(
+      (c) =>
+        !c[0].stream &&
+        c[0].messages?.some((m: { content: string }) => m.content.includes("name conversations")),
+    );
+    expect(titlingCalls).toHaveLength(0);
   });
 
   // A name is a convenience riding along with an answer somebody asked for.

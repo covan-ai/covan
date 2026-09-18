@@ -376,6 +376,7 @@ function ChatTab() {
   // The reply a continuation is being written into, so the text arriving can
   // be drawn on the end of it rather than under it as a second answer.
   const [continuingId, setContinuingId] = useState<string | null>(null);
+  const [followUps, setFollowUps] = useState<string[]>([]);
   const streamAbort = useRef<AbortController | null>(null);
   // Tracks the pending reconcile timeout (from `stop()` or the drop-fallback
   // below) so a fast stop→resend can't let a stale timer fire mid-stream.
@@ -647,6 +648,15 @@ function ChatTab() {
             // the session list's ordering and the usage figures — rather than
             // for the answer itself.
             invalidateMessages(sessionId);
+          } else if (
+            event.type === "suggestions" &&
+            Array.isArray((event as { questions?: unknown }).questions)
+          ) {
+            setFollowUps(
+              (event as { questions: unknown[] }).questions.filter(
+                (q): q is string => typeof q === "string",
+              ),
+            );
           } else if (event.type === "error") {
             terminalSeen = true;
             toast.error(event.error ?? "The assistant hit an error.");
@@ -730,6 +740,7 @@ function ChatTab() {
     if (!text || !active || busy || sending.current) return;
     sending.current = true;
     setInput("");
+    setFollowUps([]);
     // Sending is a deliberate move to the end of the conversation, even if the
     // reader had scrolled up.
     pinned.current = true;
@@ -1519,6 +1530,20 @@ function ChatTab() {
             <div className="mb-2 flex items-center gap-2 rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
               <span className="h-2 w-2 shrink-0 bg-accent-orange" />
               <span>{quotaSentence(quota)}</span>
+            </div>
+          )}
+          {followUps.length > 0 && !busy && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {followUps.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => void submit(q)}
+                  className="rounded-full border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground"
+                >
+                  {q}
+                </button>
+              ))}
             </div>
           )}
           <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">

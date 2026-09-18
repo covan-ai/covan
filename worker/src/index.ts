@@ -66,7 +66,7 @@ app.use(
       // Fallback to the primary configured origin (unknown origins simply won't match).
       return allowed.split(",")[0].trim();
     },
-    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: ["Authorization", "Content-Type"],
     credentials: true,
   }),

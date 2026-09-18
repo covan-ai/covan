@@ -6,7 +6,12 @@ import { resolveModel } from "../lib/models";
 import { complete, totalTokens } from "../lib/completion";
 import type { CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
-import { selectHistory, MSG_HISTORY_LIMIT, HISTORY_CHAR_BUDGET, PER_MESSAGE_CHAR_CAP } from "../lib/history";
+import {
+  selectHistory,
+  MSG_HISTORY_LIMIT,
+  HISTORY_CHAR_BUDGET,
+  PER_MESSAGE_CHAR_CAP,
+} from "../lib/history";
 import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../lib/prompt";
 import { reportTitle, reportFileName } from "../lib/report";
 import { EXCERPT_LIMIT, safeName } from "../lib/extract";
@@ -51,7 +56,6 @@ const reportSchema = z.object({
   instruction: z.string().trim().min(1).max(2000),
   bundleId: z.string().min(1),
 });
-
 
 // POST /sessions/:id/report — write the conversation up as a document.
 //

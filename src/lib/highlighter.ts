@@ -50,10 +50,7 @@ function resolveLang(lang: string): string | null {
   return LANG_ALIASES[lower] ?? null;
 }
 
-export async function highlight(
-  code: string,
-  lang: string,
-): Promise<string | null> {
+export async function highlight(code: string, lang: string): Promise<string | null> {
   const resolved = resolveLang(lang);
   if (!resolved) return null;
   try {

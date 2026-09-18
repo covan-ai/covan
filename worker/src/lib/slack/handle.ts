@@ -3,7 +3,12 @@ import type { Bindings } from "../../types";
 import type { Entitlements } from "../entitlements";
 import { embeddingCost } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
-import { selectHistory, MSG_HISTORY_LIMIT, HISTORY_CHAR_BUDGET, PER_MESSAGE_CHAR_CAP } from "../history";
+import {
+  selectHistory,
+  MSG_HISTORY_LIMIT,
+  HISTORY_CHAR_BUDGET,
+  PER_MESSAGE_CHAR_CAP,
+} from "../history";
 import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../prompt";
 import { resolveModel } from "../models";
 import { complete, type CompletionMessage } from "../completion";
@@ -29,7 +34,6 @@ import { toMrkdwn } from "./mrkdwn";
  * - **Nothing streams.** Slack has no notion of a partial message worth the
  *   three edits per second it would take to fake one.
  */
-
 
 /** How much of the first question becomes the conversation's title in Covan. */
 const TITLE_LIMIT = 80;

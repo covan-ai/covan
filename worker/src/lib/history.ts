@@ -34,7 +34,10 @@ function capContent(content: string, cap: number): string {
  */
 export function selectHistory(
   rows: HistoryTurn[],
-  { maxChars = HISTORY_CHAR_BUDGET, perMessageCap = PER_MESSAGE_CHAR_CAP }: { maxChars?: number; perMessageCap?: number } = {},
+  {
+    maxChars = HISTORY_CHAR_BUDGET,
+    perMessageCap = PER_MESSAGE_CHAR_CAP,
+  }: { maxChars?: number; perMessageCap?: number } = {},
 ): HistoryTurn[] {
   if (rows.length === 0) return [];
 

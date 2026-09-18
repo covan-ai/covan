@@ -6,7 +6,12 @@ import { serviceClient } from "../lib/supabase";
 import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
 import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
-import { selectHistory, MSG_HISTORY_LIMIT, HISTORY_CHAR_BUDGET, PER_MESSAGE_CHAR_CAP } from "../lib/history";
+import {
+  selectHistory,
+  MSG_HISTORY_LIMIT,
+  HISTORY_CHAR_BUDGET,
+  PER_MESSAGE_CHAR_CAP,
+} from "../lib/history";
 import { buildSystemPrefix, temperatureFor, maxTokensFor, reasoningEffortFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
@@ -70,7 +75,6 @@ const CONTINUE_INSTRUCTION =
   "where it stops — continue the same sentence if it was mid-sentence. Do not " +
   "repeat anything you already wrote, do not start over, and do not introduce " +
   "the continuation.";
-
 
 // POST /chat/stream
 chat.post("/chat/stream", async (c) => {

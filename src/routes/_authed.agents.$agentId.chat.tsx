@@ -648,15 +648,11 @@ function ChatTab() {
             // the session list's ordering and the usage figures — rather than
             // for the answer itself.
             invalidateMessages(sessionId);
-          } else if (
-            event.type === "suggestions" &&
-            Array.isArray((event as { questions?: unknown }).questions)
-          ) {
-            setFollowUps(
-              (event as { questions: unknown[] }).questions.filter(
-                (q): q is string => typeof q === "string",
-              ),
-            );
+          } else if (event.type === "suggestions") {
+            const qs = (event as unknown as { questions?: unknown }).questions;
+            if (Array.isArray(qs)) {
+              setFollowUps(qs.filter((q): q is string => typeof q === "string"));
+            }
           } else if (event.type === "error") {
             terminalSeen = true;
             toast.error(event.error ?? "The assistant hit an error.");

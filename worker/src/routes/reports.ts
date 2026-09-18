@@ -6,7 +6,7 @@ import { resolveModel } from "../lib/models";
 import { complete, totalTokens } from "../lib/completion";
 import type { CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
-import { selectHistory } from "../lib/history";
+import { selectHistory, MSG_HISTORY_LIMIT, HISTORY_CHAR_BUDGET, PER_MESSAGE_CHAR_CAP } from "../lib/history";
 import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../lib/prompt";
 import { reportTitle, reportFileName } from "../lib/report";
 import { EXCERPT_LIMIT, safeName } from "../lib/extract";
@@ -52,11 +52,6 @@ const reportSchema = z.object({
   bundleId: z.string().min(1),
 });
 
-// Same budget as a chat turn. A report re-sends the conversation it came out of
-// for the same reason a reply does — and pays for it the same way.
-const HISTORY_CHAR_BUDGET = 16000;
-const PER_MESSAGE_CHAR_CAP = 4000;
-const MSG_HISTORY_LIMIT = 40;
 
 // POST /sessions/:id/report — write the conversation up as a document.
 //

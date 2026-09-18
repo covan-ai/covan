@@ -6,7 +6,7 @@ import { serviceClient } from "../lib/supabase";
 import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
 import { streamCompletion, type CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
-import { selectHistory } from "../lib/history";
+import { selectHistory, MSG_HISTORY_LIMIT, HISTORY_CHAR_BUDGET, PER_MESSAGE_CHAR_CAP } from "../lib/history";
 import { buildSystemPrefix, temperatureFor, maxTokensFor, reasoningEffortFor } from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
@@ -71,16 +71,6 @@ const CONTINUE_INSTRUCTION =
   "repeat anything you already wrote, do not start over, and do not introduce " +
   "the continuation.";
 
-// Hard cap on rows pulled from the DB — an upper bound so the query stays cheap.
-// The real trimming is done by selectHistory() below against a character budget.
-const MSG_HISTORY_LIMIT = 40;
-
-// Per-turn history budget (a cheap char proxy for tokens) and per-message cap.
-// Every turn re-sends the surviving history, so without a budget a long chat —
-// or one giant pasted message — makes cost grow quadratically. ~16k chars is
-// roughly 4k tokens of recent context; a single message is capped at ~4k chars.
-const HISTORY_CHAR_BUDGET = 16000;
-const PER_MESSAGE_CHAR_CAP = 4000;
 
 // POST /chat/stream
 chat.post("/chat/stream", async (c) => {

@@ -16,17 +16,10 @@ export const BRAINSTORM_INSTRUCTIONS = [
   "Tone: energetic and non-judgmental while generating; sharp and honest while critiquing. Prefer short, scannable lists over long prose.",
 ].join("\n");
 
-// Output tokens are the expensive half of a reply — 4x input on every model in
-// models.ts — and measured production replies average ~800 output tokens on the
-// flagship agents. Much of that is preamble, restatement of the question and a
-// closing recap rather than answer, so this names those three specifically
-// instead of asking vaguely for brevity, which models tend to read as "write
-// the same thing with shorter words".
-//
-// A default rather than a ceiling: it yields the moment the user asks for
-// depth, so it trims habitual padding without making the agent unhelpful.
-// `maxTokensFor` remains the hard stop; this is the one that changes the
-// typical reply.
+// Shapes the typical reply without capping it. The goal is to prevent habitual
+// padding (preamble, restated question, closing recap) while letting the model
+// write as much as the question genuinely needs — a one-sentence answer for a
+// factual lookup, a structured walkthrough for a design question.
 //
 // Normal mode only — brainstorm deliberately wants 5-10 ideas plus critique and
 // already carries its own "short, scannable lists over long prose" line.
@@ -35,11 +28,11 @@ export const BRAINSTORM_INSTRUCTIONS = [
 // rides in OpenAI's automatic prompt cache: it costs its ~60 tokens once per
 // cache window, not once per turn.
 export const CONCISION_INSTRUCTIONS = [
-  "Answer in as few words as the question genuinely needs.",
-  "Open with the answer — no preamble, and do not restate the question back.",
-  "Do not close with a summary of what you just said.",
-  "Length should track the question: a one-line question gets a one-line answer.",
-  "Expand freely when the user asks for detail, or when the subject genuinely requires it — brevity must never cost accuracy or omit a caveat that matters.",
+  "Match your response length to what the question needs — a simple question gets a direct answer, a complex question gets a thorough one.",
+  "Open with the answer, not with a restatement of the question.",
+  "Do not close by summarizing what you just said.",
+  "Use structure (headings, lists, code blocks) when it helps readability.",
+  "Be conversational and clear. Never terse for terseness' sake.",
 ].join("\n");
 
 /**
@@ -202,14 +195,14 @@ export function reasoningEffortFor(override?: string | null): ReasoningEffort | 
 
 // Upper bound on generated tokens. Output tokens are the most expensive
 // dimension (4x input on gpt-4o), so a cap protects against runaway replies
-// without touching typical answers. Brainstorm needs more room for 5-10 ideas
-// plus critique; normal chat replies rarely approach the lower cap. Tunable.
+// without touching typical answers. 4096 for chat is a ceiling, not a target:
+// the system prompt shapes typical length, and most replies land well below it.
+// Reports get double because their length is the deliverable.
 export function maxTokensFor(mode: PromptMode): number {
   // A report is the one output whose length is the point, and output tokens are
   // the expensive dimension — so this is the number that decides what a report
-  // costs. 4096 is about eight pages of English and nearer four of Turkish,
-  // which needs more tokens for the same text, the same asymmetry
-  // `TITLE_MAX_TOKENS` in `lib/session-title.ts` allows for.
-  if (mode === "report") return 4096;
-  return mode === "brainstorm" ? 3072 : 1536;
+  // costs. 8192 is about sixteen pages of English and nearer eight of Turkish,
+  // which needs more tokens for the same text.
+  if (mode === "report") return 8192;
+  return 4096;
 }

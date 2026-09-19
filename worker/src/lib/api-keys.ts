@@ -1,6 +1,7 @@
 import type { User } from "@supabase/supabase-js";
 import type { Bindings } from "../types";
 import { serviceClient } from "./supabase";
+import { base64url, signHs256 } from "./jwt";
 
 /**
  * API keys: a credential that outlives a browser session.
@@ -161,33 +162,3 @@ export async function touchApiKey(env: Bindings, key: ResolvedApiKey): Promise<v
 }
 
 // ---- signing ---------------------------------------------------------------
-
-function base64url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function encodeSegment(value: object): string {
-  return base64url(new TextEncoder().encode(JSON.stringify(value)));
-}
-
-/**
- * WebCrypto rather than a JWT library: both runtimes this ships on have it, and
- * the whole of HS256 is one `sign` call. A dependency here would be a supply
- * chain for eleven lines.
- */
-async function signHs256(secret: string, payload: object): Promise<string> {
-  const body = `${encodeSegment({ alg: "HS256", typ: "JWT" })}.${encodeSegment(payload)}`;
-
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
-
-  return `${body}.${base64url(new Uint8Array(signature))}`;
-}

@@ -12,8 +12,12 @@
 -- WHY YOU WOULD RUN THIS
 --
 -- Covan embeds with `text-embedding-3-small`, which returns 1536 dimensions,
--- and migration 0004 declared `document_chunks.embedding` as `vector(1536)` to
--- match. Point EMBEDDING_BASE_URL at a local server and you are almost
+-- and migration 0004 declared `document_chunks.embedding` to match — as
+-- `vector(1536)` then, and `halfvec(1536)` since 0052 halved it. This file
+-- writes the same half-precision shape at your width, so changing the width
+-- does not quietly undo that. The retrieval function still takes a full
+-- `vector` and casts, which is what keeps PostgREST and the worker's rpc call
+-- unchanged. Point EMBEDDING_BASE_URL at a local server and you are almost
 -- certainly on a different width: nomic-embed-text is 768, mxbai-embed-large
 -- and bge-m3 are 1024. pgvector fixes the width at DDL time, so the column, the
 -- HNSW index and `match_chunks` all have to move together. This file moves all
@@ -79,13 +83,13 @@ begin
   -- unchanged would delete every embedding in the database and rebuild the
   -- column exactly as it was, which looks like nothing happened until somebody
   -- asks a question.
-  if v_current = format('vector(%s)', v_dims) then
+  if v_current = format('halfvec(%s)', v_dims) then
     raise notice 'embedding is already %, nothing to do', v_current;
     return;
   end if;
 
   select count(*) into v_chunks from public.document_chunks;
-  raise notice 'changing % to vector(%), discarding % chunks', v_current, v_dims, v_chunks;
+  raise notice 'changing % to halfvec(%), discarding % chunks', v_current, v_dims, v_chunks;
 
   delete from public.document_chunks;
 
@@ -95,12 +99,12 @@ begin
   drop index if exists public.idx_document_chunks_embedding;
 
   execute format(
-    'alter table public.document_chunks alter column embedding type vector(%s)',
+    'alter table public.document_chunks alter column embedding type halfvec(%s)',
     v_dims
   );
 
   create index idx_document_chunks_embedding on public.document_chunks
-    using hnsw (embedding vector_cosine_ops);
+    using hnsw (embedding halfvec_cosine_ops);
 
   -- The retrieval function takes the query vector by the same width, so it has
   -- to be replaced too. Body copied from migration
@@ -120,7 +124,7 @@ begin
   execute format($fmt$
     create function public.match_chunks(
       p_agent_id uuid,
-      p_query_embedding vector(%s),
+      p_query_embedding vector(%1$s),
       p_match_count int,
       p_min_similarity float default 0,
       p_query_terms text[] default '{}'
@@ -140,19 +144,19 @@ begin
       ),
       vector_matches as (
         select dc.id, dc.document_id, d.name as document_name, dc.content,
-               1 - (dc.embedding <=> p_query_embedding) as similarity,
-               row_number() over (order by dc.embedding <=> p_query_embedding) as rank
+               1 - (dc.embedding <=> p_query_embedding::halfvec(%1$s)) as similarity,
+               row_number() over (order by dc.embedding <=> p_query_embedding::halfvec(%1$s)) as rank
         from public.document_chunks dc
         join public.documents d on d.id = dc.document_id
         join public.knowledge_bundles b on b.id = dc.bundle_id
         where dc.embedding is not null
           and d.deleted_at is null
           and b.deleted_at is null
-          and (1 - (dc.embedding <=> p_query_embedding)) >= p_min_similarity
+          and (1 - (dc.embedding <=> p_query_embedding::halfvec(%1$s))) >= p_min_similarity
           and dc.bundle_id in (
             select ab.bundle_id from public.agent_bundles ab where ab.agent_id = p_agent_id
           )
-        order by dc.embedding <=> p_query_embedding
+        order by dc.embedding <=> p_query_embedding::halfvec(%1$s)
         limit p_match_count * 4
       ),
       lexical_matches as (

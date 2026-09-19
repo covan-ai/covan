@@ -40,12 +40,25 @@ dist-ssr
 .claude/worktrees/
 .superpowers/
 
+# Throwaway working directory: one-off SQL run against a database by hand,
+# scripts that drive a browser around someone else's product, and the
+# screenshots they produce. None of it is a migration and none of it is a test —
+# the migration a file here applied already lives in `supabase/migrations/`, and
+# a copy of it that ran once on one machine is not a second source of truth.
+scratchpad/
+
 # Real wrangler configs carry account IDs — commit only the .example templates
 worker/wrangler.toml
 worker/wrangler.cron.toml
 
 # Internal design docs never ship to the public repository
 docs/superpowers/
+
+# Competitor and market research. It is written here because this is where the
+# agent is pointed, not because it belongs to the code — it belongs with the
+# positioning docs, in their own repository. Publishing a teardown of a named
+# company from the product's own public tree is a different act than writing it.
+tasklet-ai-analysis.md
 
 # MCP server configuration, written by whichever agent tool is being run in this
 # checkout. It is not project configuration and it does not belong to anyone but

@@ -1,4 +1,5 @@
-import type { SupabaseClient, User } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { TokenUser } from "./lib/jwt";
 import type { Entitlements } from "./lib/entitlements";
 // Type-only, and therefore erased: `lib/keys/resolve` imports `RoutineEnv` back
 // out of this file, and a value import either way would be a real cycle.
@@ -242,7 +243,14 @@ export type Bindings = SyncEnv & {
  * so Postgres RLS (`auth.uid()`) resolves to the authenticated user.
  */
 export type Variables = {
-  user: User;
+  /**
+   * Not Supabase's `User`. Routes read `id` and `email` from this and nothing
+   * else, and a session token carries both — which is what lets
+   * `middleware/auth.ts` establish a caller without asking GoTrue for the rest
+   * of a record nobody reads. Narrow on purpose: if a route ever needs more,
+   * the compiler says so here rather than the field arriving undefined.
+   */
+  user: TokenUser;
   db: SupabaseClient;
   /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
   entitlements: Entitlements;

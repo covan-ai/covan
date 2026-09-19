@@ -40,8 +40,31 @@ vi.mock("../lib/api-keys", async () => {
   };
 });
 
-const { authMiddleware } = await import("./auth");
+const { authMiddleware, resetAuthCache } = await import("./auth");
 const { API_KEY_PREFIX } = await import("../lib/api-keys");
+const { signHs256 } = await import("../lib/jwt");
+
+/**
+ * A session token, signed the way a self-hosted GoTrue signs one.
+ *
+ * Real rather than opaque because the middleware now reads the token before it
+ * trusts anything about it: a string that is not a JWT is refused without a
+ * round trip, which is correct and would make every fixture below a 401.
+ */
+const SECRET = "a-signing-secret";
+
+async function session(over: Record<string, unknown> = {}): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return signHs256(SECRET, {
+    sub: "user-1",
+    email: "a@example.com",
+    role: "authenticated",
+    aud: "authenticated",
+    iat: now,
+    exp: now + 3600,
+    ...over,
+  });
+}
 
 /** Records what the middleware put on the context, if it let the request past. */
 function app() {
@@ -73,6 +96,7 @@ const get = (server: Hono<AppEnv>, headers: Record<string, string> = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetAuthCache();
 });
 
 describe("authMiddleware", () => {
@@ -104,11 +128,22 @@ describe("authMiddleware", () => {
     expect(authGetUser).not.toHaveBeenCalled();
   });
 
+  it("refuses a token that is not a JWT at all, without asking", async () => {
+    const { server, seen } = app();
+
+    const res = await get(server, { Authorization: "Bearer not-a-jwt" });
+
+    expect(res.status).toBe(401);
+    expect(seen.reached).toBe(false);
+    expect(authGetUser).not.toHaveBeenCalled();
+    expect(userClient).not.toHaveBeenCalled();
+  });
+
   it("refuses a token Supabase rejects", async () => {
     authGetUser.mockResolvedValue({ data: null, error: { message: "invalid JWT" } });
     const { server, seen } = app();
 
-    const res = await get(server, { Authorization: "Bearer expired-token" });
+    const res = await get(server, { Authorization: `Bearer ${await session()}` });
 
     expect(res.status).toBe(401);
     await expect(res.json()).resolves.toEqual({ error: "unauthorized" });
@@ -123,7 +158,7 @@ describe("authMiddleware", () => {
     authGetUser.mockResolvedValue({ data: { user: null }, error: null });
     const { server, seen } = app();
 
-    const res = await get(server, { Authorization: "Bearer ghost" });
+    const res = await get(server, { Authorization: `Bearer ${await session()}` });
 
     expect(res.status).toBe(401);
     expect(seen.reached).toBe(false);
@@ -135,7 +170,7 @@ describe("authMiddleware", () => {
     authGetUser.mockResolvedValue({ data: { user }, error: null });
     const { server, seen } = app();
 
-    const res = await get(server, { Authorization: "Bearer good-token" });
+    const res = await get(server, { Authorization: `Bearer ${await session()}` });
 
     expect(res.status).toBe(200);
     expect(seen.reached).toBe(true);
@@ -146,22 +181,110 @@ describe("authMiddleware", () => {
     // This is the assertion that keeps RLS wired up: the client on `db` has to
     // be the token-scoped one, not the anon client used to validate the token.
     authGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    const token = await session();
     const { server, seen } = app();
 
-    await get(server, { Authorization: "Bearer good-token" });
+    await get(server, { Authorization: `Bearer ${token}` });
 
-    expect(userClient).toHaveBeenCalledWith(ENV, "good-token");
-    expect(seen.db).toEqual({ marker: "user-client", token: "good-token" });
+    expect(userClient).toHaveBeenCalledWith(ENV, token);
+    expect(seen.db).toEqual({ marker: "user-client", token });
   });
 
   it("trims padding around the token rather than passing it on", async () => {
     authGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    const token = await session();
     const { server } = app();
 
-    await get(server, { Authorization: "Bearer   padded-token  " });
+    await get(server, { Authorization: `Bearer   ${token}  ` });
 
-    expect(authGetUser).toHaveBeenCalledWith("padded-token");
-    expect(userClient).toHaveBeenCalledWith(ENV, "padded-token");
+    expect(authGetUser).toHaveBeenCalledWith(token);
+    expect(userClient).toHaveBeenCalledWith(ENV, token);
+  });
+
+  it("asks Supabase once for a burst of requests carrying the same token", async () => {
+    authGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    const token = await session();
+    const { server } = app();
+
+    await get(server, { Authorization: `Bearer ${token}` });
+    await get(server, { Authorization: `Bearer ${token}` });
+    await get(server, { Authorization: `Bearer ${token}` });
+
+    expect(authGetUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cache a refusal", async () => {
+    // A token refused once and accepted a moment later is an ordinary sequence
+    // — a clock, a replica catching up. Caching the no would hold it out.
+    authGetUser.mockResolvedValueOnce({ data: null, error: { message: "nope" } });
+    authGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    const token = await session();
+    const { server } = app();
+
+    expect((await get(server, { Authorization: `Bearer ${token}` })).status).toBe(401);
+    expect((await get(server, { Authorization: `Bearer ${token}` })).status).toBe(200);
+  });
+});
+
+/**
+ * The signature check that removes the round trip.
+ *
+ * `ENV` above holds no secret, so every test in the block above falls through
+ * to GoTrue — which is the supported configuration for a self-hosted stack that
+ * has not set one, and is why those tests still describe a real path. These
+ * assert the other one: given something to check the signature against, the
+ * middleware decides for itself and Supabase is never asked.
+ */
+describe("authMiddleware, verifying the token itself", () => {
+  const verify = (server: Hono<AppEnv>, token: string) =>
+    server.request("/probe", { headers: { Authorization: `Bearer ${token}` } }, KEYED_ENV);
+
+  it("admits a correctly signed token without asking Supabase", async () => {
+    const { server, seen } = app();
+
+    const res = await verify(server, await session());
+
+    expect(res.status).toBe(200);
+    expect(seen.user).toEqual({ id: "user-1", email: "a@example.com" });
+    expect(authGetUser).not.toHaveBeenCalled();
+  });
+
+  it("still builds the data client from the caller's own token", async () => {
+    // The same tripwire as above, on the path that no longer calls GoTrue:
+    // verifying locally must not change which token reaches Postgres.
+    const token = await session();
+    const { server, seen } = app();
+
+    await verify(server, token);
+
+    expect(userClient).toHaveBeenCalledWith(KEYED_ENV, token);
+    expect(seen.db).toEqual({ marker: "user-client", token });
+  });
+
+  it("refuses a token signed with something else", async () => {
+    const forged = await signHs256("not-the-deployment-secret", {
+      sub: "user-2",
+      aud: "authenticated",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    });
+    const { server, seen } = app();
+
+    const res = await verify(server, forged);
+
+    expect(res.status).toBe(401);
+    expect(seen.reached).toBe(false);
+    expect(authGetUser).not.toHaveBeenCalled();
+    expect(userClient).not.toHaveBeenCalled();
+  });
+
+  it("refuses an expired token", async () => {
+    const { server, seen } = app();
+
+    const res = await verify(server, await session({ exp: Math.floor(Date.now() / 1000) - 1 }));
+
+    expect(res.status).toBe(401);
+    expect(seen.reached).toBe(false);
+    expect(authGetUser).not.toHaveBeenCalled();
   });
 });
 

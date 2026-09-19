@@ -103,7 +103,8 @@ export type CompletionRequest = {
    *
    * Anthropic: web_search_20260209 on models that support it (Opus 5/4.8/4.7/4.6,
    * Sonnet 5/4.6). Older models get web_search_20250305.
-   * OpenAI: web_search tool on models that support it.
+   * OpenAI: no effect on any model offered here — see `openaiParams` below for
+   * why this isn't a gap that closes by passing a parameter.
    *
    * Off by default. Web search is an escape hatch from "your knowledge" rather
    * than the default behavior, and an agent opts into it explicitly (0051).
@@ -226,9 +227,16 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
     ...(req.json ? { response_format: { type: "json_object" as const } } : {}),
   };
 
-  // Web search is not yet publicly available in OpenAI SDK or may require beta
-  // access. When it becomes available, add it here similar to Anthropic.
-  // For now, webSearch flag is accepted but has no effect on OpenAI models.
+  // Not a missing parameter — the SDK has had `web_search_options` since
+  // before this was written. It is that OpenAI's Chat Completions API only
+  // accepts it on specialized search-only models (`gpt-5-search-api`;
+  // `gpt-4o-search-preview` and `gpt-4o-mini-search-preview` were retired
+  // 2026-07-23), none of which are in `MODEL_IDS`. Every general-purpose
+  // model this app offers would 400 on the field, so `req.webSearch` stays
+  // silently ignored here rather than wired to something that only works on
+  // a model nobody picks for chat. See covan#142 for the planned fix: an
+  // app-owned search tool over function-calling, which isn't restricted this
+  // way.
 
   return base;
 }

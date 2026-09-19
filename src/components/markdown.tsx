@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import { renderToString } from "katex";
 import { cn } from "@/lib/utils";
 import { highlight } from "@/lib/highlighter";
+import { peekMath, renderMath } from "@/lib/katex";
 
 /**
  * Small, dependency-free Markdown renderer tuned for chat replies.
@@ -347,24 +347,57 @@ function Table({ header, aligns, rows }: { header: string[]; aligns: Align[]; ro
 }
 
 /**
+ * KaTeX's markup for an expression, or null until the library has arrived.
+ *
+ * The same shape as {@link CodeBlock}'s effect and for the same two reasons:
+ * the library is fetched on demand, and the answer around it is still being
+ * written. `peekMath` seeds the state so an expression that has already been
+ * rendered — the overwhelmingly common case once a reply has settled — paints
+ * on its first frame rather than flashing back to its own source.
+ *
+ * The rendering options live with the library in `@/lib/katex`.
+ */
+function useMath(tex: string, displayMode: boolean): string | null {
+  // The cache is read during render rather than copied into state, so there is
+  // one source of truth and an expression that is already rendered needs no
+  // round trip through an effect to appear. State here is only a signal that
+  // something arrived — hence a counter rather than the markup itself.
+  const [, arrived] = useState(0);
+  const html = peekMath(tex, displayMode);
+
+  useEffect(() => {
+    if (peekMath(tex, displayMode) !== null) return;
+    let cancelled = false;
+    renderMath(tex, displayMode).then(() => {
+      if (!cancelled) arrived((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tex, displayMode]);
+
+  return html;
+}
+
+/**
  * A `$$...$$` block, handed to KaTeX rather than rendered as React nodes —
  * the output is markup a layout engine already gets right, not something this
- * renderer's inline-mark parser should redo. `throwOnError: false` matches
- * the fenced-code path's tolerance for a construct that streams in pieces:
- * an expression that is not valid TeX yet renders as inline error text
- * instead of throwing mid-answer. `trust: false` (KaTeX's own default, pinned
- * here rather than relied on) keeps `\href` / `\includegraphics` — the
- * commands that can embed a URL — disabled, since the TeX reaching this is
- * model output, not something this renderer authored.
+ * renderer's inline-mark parser should redo.
+ *
+ * Until it arrives the TeX shows as itself, which is the same bargain the
+ * fenced-code path makes with its unstyled `<pre>`: what is on screen is
+ * always what the model wrote, rendered as well as we can render it yet.
  */
 function MathBlock({ tex }: { tex: string }) {
-  const html = renderToString(tex, { throwOnError: false, displayMode: true, trust: false });
+  const html = useMath(tex, true);
+  if (html === null) return <div className="overflow-x-auto py-1 font-mono text-xs">{tex}</div>;
   return <div className="overflow-x-auto py-1" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /** The inline form of {@link MathBlock} — same library, `displayMode: false`. */
 function InlineMath({ tex }: { tex: string }) {
-  const html = renderToString(tex, { throwOnError: false, displayMode: false, trust: false });
+  const html = useMath(tex, false);
+  if (html === null) return <span className="font-mono text-xs">{tex}</span>;
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

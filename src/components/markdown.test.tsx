@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { Markdown } from "./markdown";
 
 /**
@@ -148,26 +148,44 @@ describe("inline marks", () => {
 });
 
 describe("math", () => {
-  it("renders display math from a $$ block", () => {
+  // KaTeX arrives on its own chunk, so these wait. What is asserted is the
+  // settled frame; the frame before it is its own test, below.
+  it("renders display math from a $$ block", async () => {
     const { container } = draw("$$E = mc^2$$");
 
-    expect(container.querySelector(".katex-display")).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".katex-display")).toBeInTheDocument());
   });
 
-  it("renders display math split across lines", () => {
+  it("renders display math split across lines", async () => {
     const { container } = draw(
       ["$$", "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}", "$$"].join("\n"),
     );
 
-    expect(container.querySelector(".katex-display")).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".katex-display")).toBeInTheDocument());
   });
 
-  it("renders inline math from $...$", () => {
+  it("renders inline math from $...$", async () => {
     const { container } = draw("The identity is $x^2 + y^2 = r^2$ here.");
 
-    expect(container.querySelector(".katex")).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".katex")).toBeInTheDocument());
     // Inline, not display — the paragraph around it keeps flowing.
     expect(container.querySelector(".katex-display")).not.toBeInTheDocument();
+  });
+
+  it("shows the TeX itself until KaTeX has loaded", async () => {
+    // The frame before the one above. A reader who sees only this one sees the
+    // expression they asked about, not a gap where it will be — the same
+    // bargain the fenced-code path already makes with its unstyled <pre>.
+    // An expression no other test in this file renders: the module caches by
+    // expression, and a cached one paints on its first frame by design.
+    const { container } = draw("$$\\oint_C v \\cdot dr = 0$$");
+
+    // Nothing from KaTeX yet — it is still being fetched — but the expression
+    // is already on screen as its own source.
+    expect(container.querySelector(".katex")).not.toBeInTheDocument();
+    expect(container.textContent).toContain("\\oint_C v \\cdot dr = 0");
+
+    await waitFor(() => expect(container.querySelector(".katex-display")).toBeInTheDocument());
   });
 
   it("does not treat a dollar amount as math", () => {

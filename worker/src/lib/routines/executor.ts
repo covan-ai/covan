@@ -2,7 +2,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { nextRunAt } from "./schedule";
-import { fetchSource, UpstreamError, type FetchDeps, type SourceResult } from "./source";
+import { fetchSource, type FetchDeps, type SourceResult } from "./source";
+import { UpstreamError } from "./upstream-error";
 import { fetchConnectionItems } from "./connection-source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";

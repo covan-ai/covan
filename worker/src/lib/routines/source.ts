@@ -1,5 +1,6 @@
 import { assertFetchableUrl, assertResolvedHostIsPublic } from "./url-guard";
 import { parseFeed, type Cursor, type FeedItem } from "./feed";
+import { UpstreamError } from "./upstream-error";
 
 /**
  * Resolve on Node, skip on Workers.
@@ -9,8 +10,19 @@ import { parseFeed, type Cursor, type FeedItem } from "./feed";
  * build, so this is a dynamic import behind a runtime check — and the check
  * fails safe: if `navigator` is missing or shaped unexpectedly, `onWorkers` is
  * `false` and this runtime is treated as Node, i.e. the stricter path.
+ *
+ * Both of those properties are pinned by `workers-bundle.static.test.ts`. They
+ * read like style and are not: a static import here fails `wrangler deploy`,
+ * and losing the `navigator` check silently disables the guard on Node, which
+ * is the runtime that actually needs it.
+ *
+ * Exported because every outbound fetch to an address a user chose owes the
+ * same check, not only the ones that read a source — a delivery channel's host
+ * is user-supplied too, and it is checked again at delivery time because a URL
+ * that was public when it was saved can point at `169.254.169.254` a week
+ * later.
  */
-async function resolvesPublicly(hostname: string): Promise<void> {
+export async function resolvesPublicly(hostname: string): Promise<void> {
   const onWorkers =
     typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
   if (onWorkers) return;
@@ -47,8 +59,14 @@ async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Reads at most `maxBytes`, so a hostile endpoint cannot exhaust the worker. */
-async function readCapped(res: Response, maxBytes: number): Promise<string> {
+/**
+ * Reads at most `maxBytes`, so a hostile endpoint cannot exhaust the worker.
+ *
+ * The cap is enforced as the body arrives and the stream is cancelled the
+ * moment it is passed. Reading to the end and slicing afterwards spends the
+ * memory first and only then decides it was too much, which is no cap at all.
+ */
+export async function readCapped(res: Response, maxBytes: number): Promise<string> {
   const reader = res.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
@@ -116,31 +134,6 @@ async function guardedFetch(
     return res;
   }
   throw new Error("too many redirects");
-}
-
-/**
- * A source that answered, but not with content.
- *
- * `transient` is the distinction the executor's pause logic turns on. A 404 or
- * a 403 is a statement about the routine — the feed moved, or we are not
- * allowed to read it — and no amount of retrying changes that. A 429 or a 5xx
- * is a statement about the remote's current mood: Reddit rate-limits
- * datacenter IPs hard enough to fail a healthy routine several ticks in a row,
- * and pausing for that would take a working routine offline until someone
- * noticed and resumed it by hand.
- */
-export class UpstreamError extends Error {
-  readonly status: number;
-
-  constructor(status: number) {
-    super(`upstream ${status}`);
-    this.name = "UpstreamError";
-    this.status = status;
-  }
-
-  get transient(): boolean {
-    return this.status === 429 || this.status >= 500;
-  }
 }
 
 export async function fetchSource(

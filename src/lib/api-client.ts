@@ -670,6 +670,9 @@ export const api = {
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
   workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
+  /** Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. */
+  coverage: (days = 30): Promise<CoverageResponse> =>
+    request("GET", `/coverage/workspace?days=${days}`),
   apiKeys: {
     list: (): Promise<ApiKeyList> => request("GET", "/api-keys"),
     /** The only response that carries the key itself. Nothing can return it again. */
@@ -895,6 +898,56 @@ export type WorkspaceUsageResponse = {
   agents: AgentUsage[];
   totals: UsageTotals;
   months: UsageMonth[];
+};
+
+/**
+ * How answers were grounded, in four buckets.
+ *
+ * `covered` is the one that means the team had written something *for that
+ * question* — a passage cleared the similarity floor. `fallback` means nothing
+ * did and whole documents went instead: usually still a good answer, and the
+ * signal that nobody has written the thing being asked about. `ungrounded`
+ * means nothing grounded it at all, which is a setup problem rather than a
+ * coverage one. See `0039` for the column and `0053` for the read.
+ *
+ * `unrecorded` is the honest footnote on the other three: replies from before
+ * the column existed. `answers` excludes them, so it is the denominator.
+ */
+export type CoverageTotals = {
+  answers: number;
+  covered: number;
+  fallback: number;
+  ungrounded: number;
+  unrecorded: number;
+};
+
+export type CoverageAgent = {
+  agentId: string;
+  name: string;
+  emoji: string | null;
+  answers: number;
+  covered: number;
+  fallback: number;
+  ungrounded: number;
+};
+
+/**
+ * What the team asked that nothing written was close to, for an admin.
+ *
+ * By agent and by window, never by person and never the question itself — the
+ * functions in `0053` do not select a `user_id` and return no content. Listing
+ * the questions is a separate feature with a consent step in front of it.
+ *
+ * `available` is false in exactly one situation: the API is deployed and
+ * `0053` has not been applied yet, the same window `WorkspaceUsageResponse`
+ * describes.
+ */
+export type CoverageResponse = {
+  available: boolean;
+  /** The window these figures cover, in days, after clamping. */
+  days: number;
+  totals: CoverageTotals;
+  agents: CoverageAgent[];
 };
 
 export type ApiKey = {

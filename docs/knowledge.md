@@ -468,6 +468,39 @@ entirely in someone else's may not clear the floor. And if the reply reads like 
 summary of the tops of several documents rather than an answer, that is the
 fallback, which means nothing matched.
 
+## What nothing was close to
+
+Everything above is about one answer. The question an admin eventually has is
+about all of them: **is the team asking things nobody has written down?**
+
+Every reply records which of three ways it was grounded — a passage that
+matched, the whole-document fallback, or nothing at all — and Settings shows an
+admin the split over the last 7, 30 or 90 days, for the workspace and per
+agent.
+
+The middle number is the one worth the screen. A reply that fell back to whole
+documents is usually still a good answer, and it means no passage in anything
+the team wrote was close to what was asked. A run of those is not a bug; it is
+a list of the things worth writing down, and an agent sitting well above the
+rest is usually one that was never given the bundle it needed. A reply with
+nothing to stand on is a different fault entirely — that agent has no attached
+bundle, or nothing in it with extractable text — which is why the two are
+counted apart rather than added together.
+
+**By agent and by window. Never by person, and never the question itself.** The
+functions behind the screen do not select a user, and they return counts rather
+than content, so there is no per-person view and nothing to read. That bound is
+deliberate and it is also a limitation: knowing that a third of the month's
+questions landed on nothing does not tell you *which* questions. Listing those
+means showing an admin what colleagues typed in private rooms, so it needs the
+consent of whoever asked, and it is a separate feature rather than a column
+added to this one.
+
+Replies written before the recording existed are counted separately and left
+out of every percentage, and the screen says how many there were — a workspace
+older than the column would otherwise read its first report as a census when it
+is a sample.
+
 ## Keeping a bundle current
 
 Everything above assumes somebody dragged the file in, which is accurate on the

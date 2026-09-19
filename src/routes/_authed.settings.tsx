@@ -8,6 +8,7 @@ import { UserAvatar } from "@/components/avatars";
 import { DeliveryChannelsCard } from "@/components/routines/delivery-channels-card";
 import { UsageSection } from "@/components/usage-section";
 import { WorkspaceUsageSection } from "@/components/workspace-usage-section";
+import { WorkspaceCoverageSection } from "@/components/workspace-coverage-section";
 import { PreferencesSection } from "@/components/preferences-section";
 import { ApiKeysSection } from "@/components/api-keys-section";
 import { ExportWorkspaceSection } from "@/components/export-workspace-section";
@@ -250,6 +251,13 @@ function SettingsPage() {
             the functions behind it refuse anybody else anyway, so this is so
             the section is not there to be confused by. */}
         {isAdmin && <WorkspaceUsageSection />}
+
+        {/* After what the workspace costs, because the two are the same
+            question from opposite ends: that section says what the answers
+            were worth to buy, this one says whether the team had written
+            anything for them. Admin only, and the functions behind it refuse
+            anybody else in their own right. */}
+        {isAdmin && <WorkspaceCoverageSection />}
 
         <DeliveryChannelsCard />
 

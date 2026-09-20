@@ -678,6 +678,18 @@ export function mapDeliveryChannel(row: {
  * What it does carry is everything needed to answer "is this working?": when it
  * last ran, when it will next, and the reason if it stopped.
  */
+/** Mirrors 0057's CHECK and `PausedCode` in `lib/connections/sync.ts`. */
+export type ConnectionPausedCode =
+  | "needs_folder"
+  | "owner_left"
+  | "owner_gone"
+  | "grant_revoked"
+  | "repeated_failures"
+  | "provider_unconfigured"
+  | "unknown_provider"
+  | "access_narrowed"
+  | "restored";
+
 export type ConnectionDTO = {
   id: string;
   provider: "notion" | "google_drive";
@@ -686,9 +698,27 @@ export type ConnectionDTO = {
   bundleId: string;
   /** Denormalised for display, so the page does not need a second request. */
   bundleName: string | null;
-  userId: string;
+  /**
+   * The grant holder: whose OAuth grant this carries, whose allowance its
+   * embeddings are charged to, and whose view of the source decides what syncs.
+   *
+   * Null since 0057, when they closed their Covan account. Deliberately not
+   * called the owner — the workspace owns the connection, which is what lets it
+   * outlive this field.
+   */
+  userId: string | null;
   status: "active" | "paused";
   pausedReason: string | null;
+  /**
+   * Why the engine paused it, or null when a person did.
+   *
+   * The interface branches on this rather than on the sentence beside it: a
+   * revoked grant needs Reconnect, a narrowed one needs somebody to look and
+   * then Resume, and repeated failures need neither until the cause is fixed.
+   * Matching prose to decide that was the alternative, and it is the kind of
+   * thing that works until somebody improves a message.
+   */
+  pausedCode: ConnectionPausedCode | null;
   /**
    * Whether this connection still needs setting up before it can sync. True
    * only for a Drive connection with no folder chosen — the state between the
@@ -705,15 +735,28 @@ export type ConnectionDTO = {
   createdAt: number;
 };
 
+const PAUSED_CODES = new Set<string>([
+  "needs_folder",
+  "owner_left",
+  "owner_gone",
+  "grant_revoked",
+  "repeated_failures",
+  "provider_unconfigured",
+  "unknown_provider",
+  "access_narrowed",
+  "restored",
+]);
+
 export function mapConnection(row: {
   id: string;
   provider: string;
   account_label: string;
   bundle_id: string;
   knowledge_bundles?: { name?: string } | null;
-  user_id: string;
+  user_id: string | null;
   status: string;
   paused_reason: string | null;
+  paused_code?: string | null;
   config: Record<string, unknown> | null;
   sync_interval_minutes: number;
   next_sync_at: string | null;
@@ -730,9 +773,16 @@ export function mapConnection(row: {
     accountLabel: row.account_label,
     bundleId: row.bundle_id,
     bundleName: row.knowledge_bundles?.name ?? null,
-    userId: row.user_id,
+    userId: row.user_id ?? null,
     status: row.status === "paused" ? "paused" : "active",
     pausedReason: row.paused_reason,
+    // Through an explicit list rather than a cast, and defaulting to null: a
+    // row read by a build older than 0057 — or by a query that did not select
+    // the column — is a pause with no code, which is what a person pausing it
+    // looks like and is the one reading that offers no wrong action.
+    pausedCode: PAUSED_CODES.has(row.paused_code ?? "")
+      ? (row.paused_code as ConnectionPausedCode)
+      : null,
     needsFolder: provider === "google_drive" && !folderId,
     folderName,
     syncIntervalMinutes: row.sync_interval_minutes,

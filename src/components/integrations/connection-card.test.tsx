@@ -5,11 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Connection } from "@/lib/connections-api";
 import { ConnectionCard, ConnectSourceCard } from "./connection-card";
 
-const { update, sync, disconnect, start } = vi.hoisted(() => ({
+const { update, sync, disconnect, start, reconnect } = vi.hoisted(() => ({
   update: { mutate: vi.fn(), isPending: false },
   sync: { mutate: vi.fn(), isPending: false },
   disconnect: { mutate: vi.fn(), isPending: false },
   start: { mutate: vi.fn(), isPending: false },
+  reconnect: { mutate: vi.fn(), isPending: false },
 }));
 // Mocked whole rather than partially: the real module constructs a Supabase
 // client at import time, which needs an origin no unit test has. It arrives here
@@ -26,6 +27,7 @@ vi.mock("@/hooks/use-connections", () => ({
   useSyncConnection: () => sync,
   useDisconnect: () => disconnect,
   useStartConnection: () => start,
+  useReconnectConnection: () => reconnect,
 }));
 
 function connection(overrides: Partial<Connection> = {}): Connection {
@@ -38,6 +40,7 @@ function connection(overrides: Partial<Connection> = {}): Connection {
     userId: "user-1",
     status: "active",
     pausedReason: null,
+    pausedCode: null,
     needsFolder: false,
     folderName: null,
     syncIntervalMinutes: 360,
@@ -190,5 +193,88 @@ describe("a source that could be connected", () => {
 
     expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * What a person can do about a pause, which is decided by the code rather than
+ * by the sentence beside it.
+ *
+ * The thing that makes this worth testing is that the wrong offer is worse than
+ * no offer: Resume on a revoked grant starts a sync, fails on the first call,
+ * and pauses the connection again with the message already on screen.
+ */
+describe("a paused connection", () => {
+  const paused = (pausedCode: Connection["pausedCode"], pausedReason = "something happened") =>
+    connection({ status: "paused", pausedCode, pausedReason });
+
+  it("offers a new grant, and not Resume, when the old one was revoked", () => {
+    renderCard(<ConnectionCard connection={paused("grant_revoked")} />);
+
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+    // And no Sync now either: there is nothing to sync with.
+    expect(screen.queryByRole("button", { name: /sync now/i })).not.toBeInTheDocument();
+  });
+
+  it("does the same when nobody holds the grant any more", () => {
+    // 0057 let the row survive its grant holder closing their account. A
+    // workspace's connection that only an ex-colleague could fix would be the
+    // same bug in a different place.
+    renderCard(<ConnectionCard connection={{ ...paused("owner_gone"), userId: null }} />);
+
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
+  });
+
+  it("asks the question rather than answering it when access narrowed", async () => {
+    const user = userEvent.setup();
+    renderCard(<ConnectionCard connection={paused("access_narrowed")} />);
+
+    // Both answers, and the destructive one named for what it does. "Resume"
+    // would not say that documents are about to be removed.
+    const accept = screen.getByRole("button", { name: /remove them and resume/i });
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
+
+    await user.click(accept);
+    expect(update.mutate).toHaveBeenCalledWith({
+      id: "conn-1",
+      patch: { status: "active" },
+    });
+  });
+
+  it("offers nothing to press when it is the operator's to fix", () => {
+    renderCard(<ConnectionCard connection={paused("provider_unconfigured")} />);
+
+    expect(screen.queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
+    expect(screen.getByText(/An operator has to set this up again/)).toBeInTheDocument();
+  });
+
+  it("still just resumes after a run of ordinary failures", () => {
+    renderCard(<ConnectionCard connection={paused("repeated_failures")} />);
+
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+  });
+
+  it("resumes a pause somebody pressed themselves", () => {
+    // No code at all, which is what a person pausing it looks like — and is
+    // also what every row written before 0057 looks like.
+    renderCard(<ConnectionCard connection={paused(null, "")} />);
+
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+  });
+});
+
+describe("replacing a grant on a working connection", () => {
+  it("is offered quietly, without disconnecting first", async () => {
+    const user = userEvent.setup();
+    renderCard(<ConnectionCard connection={connection()} />);
+
+    await user.click(screen.getByRole("button", { name: "Reconnect" }));
+
+    // The old route to this was disconnect-and-connect-again, which left a
+    // second connection on the same bundle and orphaned the documents until a
+    // later sync adopted them back.
+    expect(reconnect.mutate).toHaveBeenCalledWith("conn-1", expect.anything());
   });
 });

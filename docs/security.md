@@ -77,6 +77,16 @@ That distinction is one database function, named by all thirteen write policies
 on the five shared tables, rather than thirteen copies of the same predicate.
 Copies are how one of them ends up different.
 
+Row level security decides which _rows_ you reach; it cannot hide a column. So
+several tables also carry column-level grants, and the ones worth knowing are
+where the two differ: an OAuth token and a webhook secret are withheld from
+every client including the person they belong to, and the columns an engine
+writes to explain itself — why a connection paused, and the code the interface
+branches on — are readable by the workspace and writable by nobody. That second
+one was a real gap rather than a precaution: a member who can write could
+otherwise rewrite the engine's explanation into a sentence the integrations page
+prints on a colleague's screen.
+
 ## What a conversation is
 
 A session is private to the person who opened it. Not private by convention or

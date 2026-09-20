@@ -16,6 +16,24 @@ export type ProviderAvailability = {
   configured: boolean;
 };
 
+/**
+ * Why the engine paused a connection. Mirrors migration 0057's CHECK.
+ *
+ * `access_narrowed` is the one that is not a fault: the source suddenly shows
+ * far less than it did, which is what a reconnect with a narrower grant looks
+ * like from the engine's side. Nothing was removed and somebody is being asked.
+ */
+export type ConnectionPausedCode =
+  | "needs_folder"
+  | "owner_left"
+  | "owner_gone"
+  | "grant_revoked"
+  | "repeated_failures"
+  | "provider_unconfigured"
+  | "unknown_provider"
+  | "access_narrowed"
+  | "restored";
+
 export type Connection = {
   id: string;
   provider: ProviderId;
@@ -23,10 +41,24 @@ export type Connection = {
   accountLabel: string;
   bundleId: string;
   bundleName: string | null;
-  userId: string;
+  /**
+   * The grant holder: whose OAuth grant this carries and whose view of the
+   * source decides what syncs. Null once they have closed their account — the
+   * workspace owns the connection, which is what lets it outlive them.
+   */
+  userId: string | null;
   status: "active" | "paused";
-  /** Why it stopped. Set by the engine, cleared on resume. */
+  /** Why it stopped, in a sentence. Set by the engine, cleared on resume. */
   pausedReason: string | null;
+  /**
+   * Why it stopped, as something to branch on. Null when a person pressed
+   * Pause, which needs no explanation.
+   *
+   * The screen decides between Resume and Reconnect from this rather than from
+   * the sentence beside it — a revoked grant needs a new one, and resuming it
+   * would simply fail again and pause it a second time.
+   */
+  pausedCode: ConnectionPausedCode | null;
   /**
    * A Drive connection between the grant and the folder picker. A step rather
    * than a fault, which is why it is not `pausedReason`.
@@ -102,6 +134,12 @@ export const CONNECT_ERRORS: Record<string, string> = {
   grant_failed: "The provider refused the grant. Try connecting again.",
   exchange_failed: "We could not complete the exchange with the provider. Try again.",
   save_failed: "The grant worked but we could not save it. Try again.",
+  connection_gone:
+    "The connection you were reconnecting has been removed, or moved to another workspace. " +
+    "Nothing was changed — connect the source again to start over.",
+  wrong_provider:
+    "That grant is for a different provider than the connection you were reconnecting. " +
+    "Nothing was changed.",
 };
 
 export function connectErrorMessage(code: string): string {

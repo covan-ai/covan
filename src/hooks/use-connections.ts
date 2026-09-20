@@ -44,6 +44,23 @@ export function useStartConnection() {
   });
 }
 
+/**
+ * Replace the grant on a connection that already exists.
+ *
+ * Same navigation as `useStartConnection`, and same reason. What differs is
+ * where the browser comes back to: the callback updates the row rather than
+ * inserting one, so the page reloads with one connection whose account has
+ * changed rather than with two pointed at the same bundle.
+ */
+export function useReconnectConnection() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { url } = await api.connections.reconnect(id);
+      window.location.assign(url);
+    },
+  });
+}
+
 export function useStartSlackInstall() {
   return useMutation({
     mutationFn: async () => {

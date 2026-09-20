@@ -7,6 +7,7 @@ import {
   mapIdea,
   mapRoutine,
   mapRoutineRun,
+  mapConnection,
 } from "./dto";
 
 describe("mapDocument", () => {
@@ -382,5 +383,47 @@ describe("mapDocument provenance", () => {
     const dto = mapDocument({ ...row, routine_id: "r1", routines: null });
     expect(dto.routineId).toBe("r1");
     expect(dto.routineName).toBeNull();
+  });
+});
+
+describe("mapConnection", () => {
+  const row = {
+    id: "cn1",
+    provider: "google_drive",
+    account_label: "alice@example.com",
+    bundle_id: "b1",
+    user_id: "u1",
+    status: "paused",
+    paused_reason: "access revoked",
+    config: { folderId: "f1", folderName: "Handbook" },
+    sync_interval_minutes: 360,
+    next_sync_at: null,
+    last_sync_at: null,
+    created_at: "2026-09-20T09:00:00Z",
+  };
+
+  it("carries the code the interface branches on", () => {
+    expect(mapConnection({ ...row, paused_code: "grant_revoked" }).pausedCode).toBe(
+      "grant_revoked",
+    );
+  });
+
+  // Not a cast. An unrecognised value is a build reading a row a newer one
+  // wrote, and the honest answer is the one that offers no wrong action.
+  it("refuses a code it does not know", () => {
+    expect(mapConnection({ ...row, paused_code: "something_new" }).pausedCode).toBeNull();
+  });
+
+  it("reads a row from before the column existed as a pause with no code", () => {
+    // Which is what a person pressing Pause looks like, and is right: the
+    // interface then offers Resume, which is what those rows need.
+    expect(mapConnection(row).pausedCode).toBeNull();
+    expect(mapConnection(row).pausedReason).toBe("access revoked");
+  });
+
+  // 0057 made `user_id` nullable so a connection outlives its grant holder.
+  // Before it, closing an account DELETED the connection.
+  it("says plainly that nobody holds the grant", () => {
+    expect(mapConnection({ ...row, user_id: null }).userId).toBeNull();
   });
 });

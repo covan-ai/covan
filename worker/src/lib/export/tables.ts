@@ -90,7 +90,7 @@ export const EXPORTED: TableSpec[] = [
     order: "created_at",
     columns:
       "id,workspace_id,bundle_id,user_id,provider,account_label,config,status," +
-      "paused_reason,sync_interval_minutes,next_sync_at,last_sync_at," +
+      "paused_reason,paused_code,sync_interval_minutes,next_sync_at,last_sync_at," +
       "consecutive_failures,created_at,updated_at",
   },
   {

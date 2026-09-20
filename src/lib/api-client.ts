@@ -590,6 +590,15 @@ export const api = {
      */
     start: (provider: ProviderId, bundleId: string): Promise<{ url: string }> =>
       request("POST", `/connections/${provider}/start`, { bundleId }),
+    /**
+     * A new grant for a connection that already exists.
+     *
+     * The same consent flow as `start`, aimed at a row rather than at a bundle.
+     * The alternative — delete and connect again — left a second connection
+     * pointed at the same bundle and the old one sitting there paused.
+     */
+    reconnect: (id: string): Promise<{ url: string }> =>
+      request("POST", `/connections/${id}/reconnect`),
     /** One level of a Drive tree. The browser holds no Google token of its own. */
     folders: (id: string, parent?: string): Promise<DriveFolder[]> =>
       request("GET", `/connections/${id}/folders${parent ? `?parent=${parent}` : ""}`),

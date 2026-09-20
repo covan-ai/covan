@@ -32,7 +32,7 @@ const connections = new Hono<AppEnv>();
 const connectionsPublic = new Hono<AppEnv>();
 
 const CONNECTION_SELECT =
-  "id,provider,account_label,bundle_id,user_id,status,paused_reason,config," +
+  "id,provider,account_label,bundle_id,user_id,status,paused_reason,paused_code,config," +
   "sync_interval_minutes,next_sync_at,last_sync_at,created_at," +
   "knowledge_bundles(name),documents(count)";
 
@@ -158,6 +158,67 @@ connections.post("/connections/:provider/start", async (c) => {
 });
 
 /**
+ * POST /connections/:id/reconnect — a new grant for a connection that has one.
+ *
+ * The same OAuth flow as Connect, pointed at a row that already exists. It is
+ * a separate route rather than a flag on `start` because the two answer
+ * different questions — Connect asks which bundle, Reconnect asks which
+ * connection — and folding them together would mean one handler where half the
+ * inputs are ignored depending on the other half.
+ *
+ * WHY IT EXISTS AT ALL. Without it, the way to fix a revoked Google grant was
+ * to delete the connection and connect again, which produced a SECOND
+ * connection pointed at the same bundle, left the first one sitting there
+ * paused, and relied on `adoptOrphans` to re-attach documents whose
+ * `connection_id` the delete had nulled. Every part of that worked and the
+ * result was a page with two rows for one Drive folder and no way to tell which
+ * one mattered.
+ *
+ * WHO MAY. `loadForCaller` proves they can see it; the write below is made
+ * through the caller's own client, so 0057's policy decides — the grant holder,
+ * an admin, or any writing member when the row is unowned. A viewer gets
+ * nothing back and a 403.
+ */
+connections.post("/connections/:id/reconnect", async (c) => {
+  const loaded = await loadForCaller(c, c.req.param("id"));
+  if ("response" in loaded) return loaded.response;
+  const { connection, provider } = loaded;
+
+  if (!provider.isConfigured(c.env)) {
+    return c.json({ error: `${provider.label} is not configured on this deployment` }, 501);
+  }
+
+  // The permission question, asked of the database by making the smallest
+  // change there is — the same trick `POST /connections/:id/sync` uses, and for
+  // the same reason: seeing a connection is membership, replacing its
+  // credential is writing, and nothing downstream of here consults RLS again.
+  const { data: allowed, error: allowedError } = await c
+    .get("db")
+    .from("connections")
+    .update({ status: connection.status })
+    .eq("id", connection.id)
+    .select("id")
+    .maybeSingle();
+  if (allowedError) return c.json({ error: "failed to load connection" }, 500);
+  if (!allowed) {
+    return c.json({ error: "you do not have permission to reconnect this connection" }, 403);
+  }
+
+  const state = await signState(
+    {
+      provider: provider.id,
+      userId: c.get("user").id,
+      workspaceId: connection.workspace_id,
+      bundleId: connection.bundle_id,
+      connectionId: connection.id,
+    },
+    c.env.ROUTINE_SECRET_KEY,
+  );
+
+  return c.json({ url: provider.authorizeUrl(c.env, state, redirectUri(c)) });
+});
+
+/**
  * GET /connections/callback — the other end of the grant.
  *
  * Unauthenticated, and everything it trusts comes out of `state`, which only
@@ -223,6 +284,75 @@ connectionsPublic.get("/connections/callback", async (c) => {
     return fail(err instanceof ProviderError ? "grant_failed" : "exchange_failed");
   }
 
+  const secret = await encryptSecret(JSON.stringify(exchanged.token), c.env.ROUTINE_SECRET_KEY);
+
+  // Replacing a grant, not making one. The id came out of the state this
+  // deployment issued to this person for this workspace, and it is matched
+  // against that workspace again here — so a state whose connection has since
+  // been deleted, or moved, writes nothing rather than writing somewhere else.
+  if (state.connectionId) {
+    const { data } = await admin
+      .from("connections")
+      .select("id,provider,config")
+      .eq("id", state.connectionId)
+      .eq("workspace_id", state.workspaceId)
+      .maybeSingle();
+    // Named rather than inferred: this client carries no generated schema, so
+    // postgrest-js widens a multi-column select to a union it cannot narrow.
+    const existing = data as { id: string; provider: string; config: unknown } | null;
+    if (!existing) return fail("connection_gone");
+    // The provider is fixed at creation. A Notion grant arriving for a Drive
+    // connection would mean a state issued for one row was completed against
+    // another, and the safe answer to something that should be impossible is
+    // to refuse it rather than to write it.
+    if (existing.provider !== provider.id) return fail("wrong_provider");
+
+    // A Drive reconnect keeps the folder that was already chosen. It is the
+    // whole reason this is an update: the person is replacing a credential,
+    // not setting the connection up again, and asking them to find the folder
+    // a second time would be asking them to state the same intention twice.
+    // A folder the new grant cannot see surfaces as a listing that has lost
+    // documents, which is exactly what `access_narrowed` is for.
+    const keptConfig = {
+      ...(exchanged.config ?? {}),
+      ...((existing.config as Record<string, unknown> | null) ?? {}),
+    };
+    const stillNeedsFolder =
+      provider.id === "google_drive" &&
+      typeof (keptConfig as { folderId?: unknown }).folderId !== "string";
+
+    const { error: updateError } = await admin
+      .from("connections")
+      .update({
+        // The new grant holder, which is the point of the whole route: whoever
+        // just granted access is whose view the sync now has and whose
+        // allowance it now spends.
+        user_id: state.userId,
+        account_label: exchanged.accountLabel,
+        config: keptConfig,
+        secret_ciphertext: secret,
+        status: stillNeedsFolder ? "paused" : "active",
+        paused_reason: null,
+        paused_code: stillNeedsFolder ? "needs_folder" : null,
+        consecutive_failures: 0,
+        next_sync_at: new Date().toISOString(),
+        // Deliberately NOT cleared, and deliberately not set. A reconnect is
+        // the single most likely cause of a narrowing, so the next run has to
+        // be free to notice one — an approval carried over from a previous
+        // pause would let the new grant's smaller view delete the difference
+        // without asking.
+        removals_approved_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+    if (updateError) {
+      console.error("failed to reconnect connection", updateError);
+      return fail("save_failed");
+    }
+
+    return c.redirect(`${home}?reconnected=${provider.id}&connection=${existing.id}`, 302);
+  }
+
   // A Drive connection has no folder yet and must not sync until it has one.
   // Notion's scope came from Notion's own picker, so it is ready immediately.
   const needsFolder = provider.id === "google_drive";
@@ -236,12 +366,10 @@ connectionsPublic.get("/connections/callback", async (c) => {
       provider: provider.id,
       account_label: exchanged.accountLabel,
       config: exchanged.config,
-      secret_ciphertext: await encryptSecret(
-        JSON.stringify(exchanged.token),
-        c.env.ROUTINE_SECRET_KEY,
-      ),
+      secret_ciphertext: secret,
       status: needsFolder ? "paused" : "active",
       paused_reason: null,
+      paused_code: needsFolder ? "needs_folder" : null,
     })
     .select("id")
     .single();
@@ -324,9 +452,6 @@ connections.patch("/connections/:id", async (c) => {
   const granted: Record<string, unknown> = {
     status: body.status ?? (body.folderId ? "active" : connection.status),
   };
-  // Resuming clears the reason the engine paused it. Leaving it would have the
-  // interface explain a state the connection is no longer in.
-  if (resuming) granted.paused_reason = null;
   if (body.syncIntervalMinutes) granted.sync_interval_minutes = body.syncIntervalMinutes;
 
   const { data: allowed, error: grantedError } = await c
@@ -354,6 +479,29 @@ connections.patch("/connections/:id", async (c) => {
   if (resuming) {
     bookkeeping.consecutive_failures = 0;
     bookkeeping.next_sync_at = new Date().toISOString();
+    // Resuming clears the reason the engine paused it, and the code beside it.
+    // Leaving either would have the interface explain a state the connection is
+    // no longer in.
+    //
+    // Both are written here rather than in the granted half above, and that
+    // moved in 0057: `update (paused_reason)` used to be granted to
+    // `authenticated` for exactly this clear, which also let any member who can
+    // write put an arbitrary sentence in a column the interface prints. The
+    // grant is gone; the need is met by the service role, on a row the policy
+    // has just admitted this caller to.
+    bookkeeping.paused_reason = null;
+    bookkeeping.paused_code = null;
+
+    // Resuming from THIS pause is not "start again", it is "yes, really remove
+    // those". The run that paused counted the documents the source has stopped
+    // showing and removed none of them; without a recorded decision the next
+    // run would count the same documents and pause again, forever.
+    //
+    // Recorded here and not writable by a client, because the thing that makes
+    // it safe is that the API checked which pause it is answering.
+    if (connection.paused_code === "access_narrowed") {
+      bookkeeping.removals_approved_at = new Date().toISOString();
+    }
   }
 
   const { data, error } = await serviceClient(c.env)
@@ -502,8 +650,12 @@ async function loadForCaller(
   const { data, error } = await c
     .get("db")
     .from("connections")
+    // One string literal, not a concatenation: postgrest-js reads this as a
+    // literal type to work out the row shape, and `a + b` widens it to `string`
+    // and takes the inference with it.
+    // prettier-ignore
     .select(
-      "id,workspace_id,bundle_id,user_id,provider,account_label,config,status,sync_interval_minutes,consecutive_failures",
+      "id,workspace_id,bundle_id,user_id,provider,account_label,config,status,paused_code,sync_interval_minutes,consecutive_failures",
     )
     .eq("id", id)
     .maybeSingle();

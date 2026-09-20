@@ -330,8 +330,9 @@ visible instead of merely expensive.
 
 ## Where the work gets delivered
 
-A delivery channel is a Slack incoming webhook or an email address, created on
-Settings, that [routines](routines.md) post their results to. What belongs on
+A delivery channel is a Slack incoming webhook, an email address, or a signed
+webhook to an endpoint you run, created on Settings, that
+[routines](routines.md) post their results to. What belongs on
 this page is who it belongs to: **a channel is yours, not the workspace's.** The
 select policy on `delivery_channels` returns only rows whose `user_id` is the
 caller, so a colleague cannot see, use or delete a channel you added, and cannot

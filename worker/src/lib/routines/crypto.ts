@@ -12,12 +12,16 @@
  * A display-safe hint, computed once at creation time and stored as the
  * channel's label. The full secret is never returned to a client.
  */
-export function maskSecret(kind: "slack_webhook" | "email", secret: string): string {
+export function maskSecret(kind: "slack_webhook" | "email" | "webhook", secret: string): string {
   if (kind === "email") {
     const [local, domain] = secret.split("@");
     const shown = local.length <= 2 ? local : `${local[0]}…${local[local.length - 1]}`;
     return `${shown}@${domain}`;
   }
+  // Both URL kinds mask the same way, and the host is the half that identifies
+  // it: "hooks.slack.com/…aB3x" and "deploy.acme.example/…7f2c" are each
+  // recognisable in a list without being usable by somebody reading over a
+  // shoulder. The last four characters distinguish two hooks on one host.
   const host = new URL(secret).host;
   return `${host}/…${secret.slice(-4)}`;
 }

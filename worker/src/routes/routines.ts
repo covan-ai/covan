@@ -9,7 +9,16 @@ import { runOneRoutine } from "../lib/routines/dispatcher";
 import type { RoutineRow } from "../lib/routines/executor";
 import { isValidCron, nextRunAt } from "../lib/routines/schedule";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
-import { encryptSecret } from "../lib/secret-box";
+import { encryptSecret, decryptSecret } from "../lib/secret-box";
+import { deliver, deliveryDepsFrom } from "../lib/routines/delivery";
+import {
+  generateSigningSecret,
+  parseWebhookSecret,
+  serialiseWebhookSecret,
+  EVENT_TEST,
+} from "../lib/routines/webhook";
+import { getRateLimiter } from "../lib/ratelimit";
+import { rateLimitKey } from "../middleware/ratelimit";
 import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { resolveModel } from "../lib/models";
@@ -73,9 +82,39 @@ routines.post("/routines/draft", async (c) => {
 // ---- delivery channels -----------------------------------------------------
 
 const channelSchema = z.object({
-  kind: z.enum(["slack_webhook", "email"]),
+  kind: z.enum(["slack_webhook", "email", "webhook"]),
   secret: z.string().min(1),
 });
+
+/**
+ * What the caller sends as `secret`, checked for the shape its kind requires.
+ *
+ * The Slack check is narrower than the generic one on purpose and stays that
+ * way: `slack_webhook` formats its body as Slack expects and would produce
+ * nonsense anywhere else, so accepting an arbitrary URL under that kind would
+ * be accepting a channel that cannot work. `webhook` is the kind for
+ * everywhere else, and it gets the same guard every outbound fetch in this
+ * codebase gets — scheme, private address, our own hosts — and no vendor rule
+ * at all, because naming vendors is the thing this feature exists not to do.
+ */
+function channelSecretProblem(
+  kind: "slack_webhook" | "email" | "webhook",
+  secret: string,
+  ownHosts: string[],
+): string | null {
+  if (kind === "email") {
+    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(secret) ? null : "not an email address";
+  }
+  try {
+    const url = assertFetchableUrl(secret, ownHosts);
+    if (kind === "slack_webhook" && url.host !== "hooks.slack.com") {
+      return "not a slack webhook url";
+    }
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "invalid url";
+  }
+}
 
 // GET /delivery-channels — masked labels only; RLS scopes to the caller and the
 // column grant means the secret is not selectable even by mistake.
@@ -101,22 +140,19 @@ routines.post("/delivery-channels", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const { kind, secret } = parsed.data;
 
-  if (kind === "slack_webhook") {
-    try {
-      const url = assertFetchableUrl(secret, ownHostsFrom(c.env));
-      if (url.host !== "hooks.slack.com") {
-        return c.json({ error: "not a slack webhook url" }, 400);
-      }
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "invalid url" }, 400);
-    }
-  } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(secret)) {
-    return c.json({ error: "not an email address" }, 400);
-  }
+  const problem = channelSecretProblem(kind, secret, ownHostsFrom(c.env));
+  if (problem) return c.json({ error: problem }, 400);
 
   const user = c.get("user");
   const workspaceId = await getActiveWorkspaceId(c.get("db"), user.id);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
+
+  // A webhook channel's secret is the URL *and* a signing secret, as one JSON
+  // object under the same envelope — see 0054 for why they share the column and
+  // why the signing secret is minted per channel instead of derived from
+  // ROUTINE_SECRET_KEY.
+  const signingSecret = kind === "webhook" ? generateSigningSecret() : null;
+  const plaintext = signingSecret ? serialiseWebhookSecret({ url: secret, signingSecret }) : secret;
 
   const { data, error } = await serviceClient(c.env)
     .from("delivery_channels")
@@ -125,13 +161,146 @@ routines.post("/delivery-channels", async (c) => {
       user_id: user.id,
       kind,
       label: maskSecret(kind, secret),
-      secret_ciphertext: await encryptSecret(secret, c.env.ROUTINE_SECRET_KEY),
+      secret_ciphertext: await encryptSecret(plaintext, c.env.ROUTINE_SECRET_KEY),
     })
     .select("id, kind, label, created_at")
     .single();
 
   if (error) return c.json({ error: "failed to create channel" }, 500);
-  return c.json(mapDeliveryChannel(data), 201);
+
+  // The only response that ever carries it. It is stored encrypted rather than
+  // hashed because signing needs the secret back, but that is not a reason to
+  // hand it out again on every list: a receiver is configured once, and a
+  // secret that can be re-read is a secret that leaks through a screenshot of
+  // the settings page. Lost it? Rotate.
+  return c.json(
+    signingSecret ? { ...mapDeliveryChannel(data), signingSecret } : mapDeliveryChannel(data),
+    201,
+  );
+});
+
+/**
+ * A new signing secret for an existing webhook channel.
+ *
+ * The URL is carried over rather than re-sent by the caller: rotation is about
+ * the secret, and letting the request name a destination would turn "give me a
+ * new key" into "point this channel somewhere else" — past the guard that runs
+ * on create, from a route nobody would think to read that way.
+ *
+ * Both halves of the row are rewritten together because they live in one
+ * ciphertext. There is a window of exactly one statement in which the old
+ * secret is still the live one; a receiver updated before this call verifies
+ * nothing and a receiver updated after it verifies everything, which is what a
+ * rotation is.
+ */
+routines.post("/delivery-channels/:id/rotate", async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+
+  const db = serviceClient(c.env);
+  // Scoped to the caller by hand: the service role bypasses RLS, so `user_id`
+  // here is doing the job `delivery_channels_select_own` does everywhere else.
+  const { data: channel, error } = await db
+    .from("delivery_channels")
+    .select("kind, secret_ciphertext")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid channel id" }, 400);
+    return c.json({ error: "failed to load channel" }, 500);
+  }
+  if (!channel) return c.json({ error: "no such channel" }, 404);
+  if (channel.kind !== "webhook") {
+    return c.json({ error: "only a webhook channel has a signing secret" }, 400);
+  }
+
+  let url: string;
+  try {
+    const config = parseWebhookSecret(
+      await decryptSecret(channel.secret_ciphertext, c.env.ROUTINE_SECRET_KEY),
+    );
+    url = config.url;
+  } catch {
+    return c.json({ error: "this channel's secret could not be read" }, 500);
+  }
+
+  const signingSecret = generateSigningSecret();
+  const { error: updateError } = await db
+    .from("delivery_channels")
+    .update({
+      secret_ciphertext: await encryptSecret(
+        serialiseWebhookSecret({ url, signingSecret }),
+        c.env.ROUTINE_SECRET_KEY,
+      ),
+    })
+    .eq("id", id)
+    .eq("user_id", user.id);
+
+  if (updateError) return c.json({ error: "failed to rotate the signing secret" }, 500);
+  return c.json({ signingSecret });
+});
+
+/**
+ * Send one message through a channel, now, so somebody can see it arrive.
+ *
+ * Every kind, not only the new one. "Did my Slack URL paste correctly" has been
+ * unanswerable since 0012 except by waiting for a routine to run, and the
+ * answer for a webhook — is the signature what my receiver expects — is worth
+ * even more, because getting it wrong is silent on both ends.
+ *
+ * NOT mounted behind `rateLimit("expensive")` in index.ts, deliberately. That
+ * middleware's mount list is what `ratelimit.static.test.ts` compares against
+ * the set of endpoints that buy a completion, and this endpoint buys none:
+ * adding it there would break the ratchet's first claim and the honest fix
+ * would be to weaken the ratchet. It takes the same limiter by hand instead,
+ * which is the same bound without the false statement.
+ */
+routines.post("/delivery-channels/:id/test", async (c) => {
+  const verdict = await getRateLimiter(c.env, "expensive").check(`channel-test:${rateLimitKey(c)}`);
+  if (!verdict.allowed) {
+    c.header("Retry-After", String(verdict.retryAfterSeconds));
+    return c.json({ error: "rate_limited" }, 429);
+  }
+
+  const user = c.get("user");
+  const { data: channel, error } = await serviceClient(c.env)
+    .from("delivery_channels")
+    .select("kind, secret_ciphertext")
+    .eq("id", c.req.param("id"))
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid channel id" }, 400);
+    return c.json({ error: "failed to load channel" }, 500);
+  }
+  if (!channel) return c.json({ error: "no such channel" }, 404);
+
+  try {
+    await deliver(
+      channel,
+      {
+        subject: "Covan test delivery",
+        body:
+          "This is a test message from Covan, sent because somebody pressed " +
+          "Send test on this delivery channel. No routine produced it.",
+      },
+      deliveryDepsFrom(c.env),
+      // No routine block: there is no routine behind this, and saying so is
+      // the point — a receiver that files results must be able to leave this
+      // one out.
+      { event: EVENT_TEST },
+    );
+  } catch (err) {
+    // The receiver's own words. This endpoint exists to report them: a test
+    // send that failed with "could not deliver" would be worth less than not
+    // having the button.
+    return c.json({ error: err instanceof Error ? err.message : "delivery failed" }, 502);
+  }
+
+  return c.body(null, 204);
 });
 
 routines.delete("/delivery-channels/:id", async (c) => {

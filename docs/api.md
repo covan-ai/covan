@@ -118,6 +118,13 @@ stands in front of the six endpoints that buy a completion or a transcription:
 `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`,
 `/routines/draft` and `/routines/:id/run`.
 
+`POST /delivery-channels/:id/test` takes the expensive tier's limiter without
+being mounted behind that middleware. It buys no completion, and the list of
+paths mounted behind `rateLimit("expensive")` is pinned by a test against
+exactly the set of endpoints that do — so adding it there would have made that
+check state something untrue. It is bounded the same; it just says so in the
+route.
+
 A hosted workspace also has a monthly token allowance, which is a ceiling on the
 bill rather than on the rate. A self-hosted install has none: the operator brings
 their own OpenAI key and decides what to spend on it.
@@ -207,6 +214,8 @@ it is already gone or was never visible. Same for `DELETE /agents/:id`.
 | `GET /routines/:id/runs`                       | What happened                    |
 | `POST /routines/draft`                         | Turn a sentence into a routine   |
 | `GET`/`POST`/`DELETE /delivery-channels`       | Where output goes                |
+| `POST /delivery-channels/:id/test`             | One message through it, now      |
+| `POST /delivery-channels/:id/rotate`           | A new webhook signing secret     |
 
 ### Workspace and people
 

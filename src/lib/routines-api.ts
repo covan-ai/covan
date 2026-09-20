@@ -59,13 +59,25 @@ export type RoutineRun = {
   startedAt: number;
 };
 
+export type DeliveryChannelKind = "slack_webhook" | "email" | "webhook";
+
 /** The secret is never returned; `label` is the mask computed at creation. */
 export type DeliveryChannel = {
   id: string;
-  kind: "slack_webhook" | "email";
+  kind: DeliveryChannelKind;
   label: string;
   createdAt: number;
 };
+
+/**
+ * What creating a channel answers with.
+ *
+ * `signingSecret` is present only for `webhook`, only on this response, and
+ * never again: the API stores it encrypted because signing needs it back, but
+ * nothing reads it out to a client a second time. A screen that does not show
+ * it here has lost it, and the only way forward is to rotate.
+ */
+export type CreatedDeliveryChannel = DeliveryChannel & { signingSecret?: string };
 
 /**
  * What POST /routines/draft returns. Note the field names differ from

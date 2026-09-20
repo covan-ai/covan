@@ -7,6 +7,7 @@ import { UpstreamError } from "./upstream-error";
 import { fetchConnectionItems } from "./connection-source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
+import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { embeddingCost, type Entitlements } from "../entitlements";
 import {
   billsTheOperator,
@@ -148,6 +149,17 @@ export type ExecutorDeps = {
   ) => Promise<{ ragBlock: string; embeddingTokens: number }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
+  /**
+   * What set this run going, reported to a webhook receiver as
+   * `run.triggeredBy`.
+   *
+   * A string on the wire rather than a boolean, because the answer already has
+   * more than two values in prospect: the cron tick, the button on the
+   * routine's page, and — once a routine can be poked from outside — an
+   * incoming request. Defaults to the schedule, which is what a caller that
+   * has not thought about it almost always means.
+   */
+  trigger?: string;
   /** What the routine's owner may spend. Unmetered on a self-hosted install. */
   entitlements: Entitlements;
   now: () => Date;
@@ -513,6 +525,18 @@ export async function runRoutine(
       channel,
       { subject: routine.name, body: withOverflowNote(summary.text, overflow) },
       deps.deliveryDeps,
+      {
+        event: EVENT_DELIVERED,
+        routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
+        // `items.length` rather than the claimed keys: what the summary is
+        // about. `overflow` is what it is missing, which is the number a
+        // receiver needs to know the digest is not the whole story.
+        run: {
+          itemsNew: items.length,
+          itemsOverflow: overflow,
+          triggeredBy: deps.trigger ?? "schedule",
+        },
+      },
     );
     // Past this point the message is out. Releasing the claims would let the
     // next tick re-win them and send it again — the duplicate this whole
@@ -810,7 +834,13 @@ async function notifyOwner(
       .maybeSingle();
     if (!channel) return;
 
-    await deliver(channel, message, deps.deliveryDeps);
+    await deliver(channel, message, deps.deliveryDeps, {
+      // Named so a webhook receiver can file a notice apart from a result. No
+      // `run` block: this is a message about the routine, not about a run —
+      // the run that prompted it already failed and reported nothing.
+      event: kind === "routine_paused" ? EVENT_PAUSED : EVENT_QUOTA_EXHAUSTED,
+      routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
+    });
   } catch {
     // Nothing left to do; the reason is already recorded against the run.
   }

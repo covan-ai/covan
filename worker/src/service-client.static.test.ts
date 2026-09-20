@@ -24,7 +24,7 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
   [
     "routes/routines.ts",
-    "delivery_channels has no INSERT policy: the row holds a secret the route encrypts, so the route decides what goes in it, not the database",
+    "delivery_channels has no INSERT policy: the row holds a secret the route encrypts, so the route decides what goes in it, not the database. The same column is why rotating a webhook's signing secret and sending a test both go this way — 0023 grants authenticated `update (label)` and no sight of secret_ciphertext at all, so neither reading the destination back nor writing a new secret over it is something a caller's own client can do. Both are scoped to `user_id = the caller` by hand, which is the job delivery_channels_select_own does everywhere else",
   ],
   [
     "routes/connections.ts",

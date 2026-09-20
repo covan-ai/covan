@@ -239,8 +239,8 @@ fallback — falls back to a persona-only answer rather than failing the turn.
 
 A routine is: a source (an RSS feed, a web page, a connection, or nothing), an
 instruction, a cron expression with a timezone, and a delivery channel (a Slack
-webhook or an email address). The engine wakes up, asks the database what is
-due, and runs it.
+webhook, an email address, or a signed POST to an endpoint the workspace runs).
+The engine wakes up, asks the database what is due, and runs it.
 
 ### Claiming
 

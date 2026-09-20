@@ -5,6 +5,7 @@ import { serviceClient } from "../supabase";
 import { runRoutine as defaultRunRoutine, type ExecutorDeps, type RoutineRow } from "./executor";
 import { summariseWithModel } from "./summarise";
 import { ownHostsFrom } from "./url-guard";
+import { deliveryDepsFrom } from "./delivery";
 import { entitlementsFor } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
 
@@ -70,12 +71,10 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
     },
     entitlements: entitlementsFor(env),
     fetchDeps: { fetchImpl: boundFetch, ownHosts },
-    deliveryDeps: {
-      fetchImpl: boundFetch,
-      secretKey: env.ROUTINE_SECRET_KEY,
-      resendApiKey: env.RESEND_API_KEY,
-      resendFrom: env.RESEND_FROM,
-    },
+    // Built from the env rather than inline, so the routine engine and the
+    // test-send button cannot end up with different ideas of which hosts a
+    // channel may point at — `ownHosts` is the one a copy would forget.
+    deliveryDeps: deliveryDepsFrom(env),
     now: () => new Date(),
   };
 }
@@ -96,7 +95,10 @@ export async function runOneRoutine(
 ): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
   const db = overrides.db ?? serviceClient(env);
   const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
-  return runRoutine(routine, executorDeps(env, db));
+  // The one place a run has a person behind it. A webhook receiver is told, so
+  // a result that arrived at an odd hour can be explained by somebody having
+  // pressed the button rather than read as the schedule having drifted.
+  return runRoutine(routine, { ...executorDeps(env, db), trigger: "manual" });
 }
 
 export async function runDueRoutines(

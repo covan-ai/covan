@@ -185,12 +185,19 @@ a copy of the source.
 ## Delivery
 
 A delivery channel is created in Settings, not on the routine, and routines pick
-from the channels you already have. There are two kinds: a Slack incoming
-webhook, which must be on `hooks.slack.com`, and an email address.
+from the channels you already have. There are three kinds: a Slack incoming
+webhook, which must be on `hooks.slack.com`; an email address; and a **webhook**,
+which is a signed POST to any endpoint you run.
 
 Slack delivery posts JSON to the webhook with the routine's name in bold above
 the summary. Email goes through [Resend](https://resend.com), with the routine's
-name as the subject and the summary as plain text.
+name as the subject and the summary as plain text. The webhook kind is
+documented in full below — it is the one a program rather than a person reads.
+
+Every kind has a **Send test** button on its row in Settings. It sends one
+message through the channel immediately and reports what the receiver said,
+including the receiver's own error text when it refuses. "Did I paste that URL
+correctly" had no answer before it except waiting for a routine to run.
 
 A channel belongs to the person who created it rather than to the workspace, and
 a routine may only point at a channel belonging to its own owner. That is
@@ -217,10 +224,101 @@ now** on an email routine in that state answers with a readable error instead of
 running. A scheduled run has nobody to tell, so it fails and records whatever
 Resend said.
 
+### The webhook kind
+
+A webhook channel POSTs one JSON body per delivery to a URL you choose. Nothing
+about it is specific to a vendor: the point is that a routine's output becomes
+an input somewhere else — a deploy, a ticket, a queue, a row in your own
+database — without Covan having to ship a connector per destination.
+
+The URL gets the same guard as every other outbound fetch in this codebase, and
+gets it twice: once when the channel is saved and again immediately before each
+delivery. A hostname that resolved to a public address in March can resolve to
+`169.254.169.254` in September, and the check that catches that is the one at
+delivery time. Private addresses, non-HTTP schemes, and this deployment's own
+hosts are all refused.
+
+**The payload.** `version` is the contract; it is bumped only for a change a
+receiver has to notice.
+
+```json
+{
+  "version": 1,
+  "event": "routine.delivered",
+  "deliveryId": "6f1e…",
+  "sentAt": "2026-09-20T09:00:00.000Z",
+  "routine": { "id": "…", "name": "Weekly digest", "agentId": "…" },
+  "run": { "itemsNew": 3, "itemsOverflow": 0, "triggeredBy": "schedule" },
+  "subject": "Weekly digest",
+  "body": "…the summary the agent wrote…"
+}
+```
+
+`event` is what to switch on, and there are four: `routine.delivered` is a
+result; `routine.paused` and `routine.quota_exhausted` are the engine's own
+notices, which go through the routine's channel the same way they go to a
+person; `routine.test` is the Send test button. A `routine.test` carries no
+`routine` and no `run`, because no routine sent it.
+
+There is no `run.id`, deliberately. The POST happens before the run row is
+written, so at that moment there is no id to send, and inventing one that the
+row later disagrees with would be worse than leaving it out. What a receiver
+needs for deduplication is `deliveryId`, which is unique per POST — including
+per retry of a POST that failed after you had already processed it.
+
+**The headers.**
+
+| Header              | Value                                                  |
+| ------------------- | ------------------------------------------------------ |
+| `X-Covan-Event`     | the same string as `event` in the body                 |
+| `X-Covan-Delivery`  | the same string as `deliveryId` — your idempotency key |
+| `X-Covan-Timestamp` | seconds since the epoch, as a decimal string           |
+| `X-Covan-Signature` | `v1=<hex>`                                             |
+
+**The signature.** HMAC-SHA256 over `v1:<timestamp>:<raw body>`, keyed by the
+signing secret, hex-encoded. This is byte-for-byte Slack's scheme with a
+different version string, which is the point: any snippet that verifies a Slack
+request works here with two names changed. Verify over the **raw** bytes you
+received — re-serialising the parsed JSON produces a different string and a
+signature that will never match. Compare in constant time, and reject a
+timestamp that is too old, or one captured request replays forever.
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(rawBody, headers, signingSecret) {
+  const timestamp = headers["x-covan-timestamp"];
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+
+  const expected = `v1=${createHmac("sha256", signingSecret)
+    .update(`v1:${timestamp}:${rawBody}`, "utf8")
+    .digest("hex")}`;
+  const got = headers["x-covan-signature"] ?? "";
+  return expected.length === got.length && timingSafeEqual(Buffer.from(expected), Buffer.from(got));
+}
+```
+
+**What we do with your answer.** Any 2xx is a delivery. Every 3xx is refused
+rather than followed: a POST is not idempotent, so a redirect either replays a
+signed body at a host the signature does not name or drops the body and sends a
+GET, and neither is a delivery — re-point the channel instead. A 4xx is treated
+as a statement about the channel and counts toward the pause threshold. A 429 or
+a 5xx is treated as a statement about your afternoon and counts toward a much
+higher one; see [When a run fails](#when-a-run-fails). Your response body is read to at most 64 KB
+and the first 200 characters of it are kept on the run, so your error text is
+what somebody sees on the routine's page. You have ten seconds to answer.
+
+**The signing secret** is shown once, when the channel is created. It is stored
+encrypted rather than hashed — signing needs the secret back, not a digest of it
+— but no endpoint reads it out again, so a screenshot of the settings page is
+not a copy of it. Lost it, or want to retire it? **Rotate** mints a new one and
+shows it once; the destination URL is unchanged and the old secret stops working
+immediately, so update your receiver in the same sitting.
+
 ### The secret you hand it
 
-A webhook URL and an email address are both secrets, and both are encrypted with
-AES-GCM before they reach Postgres, as `v1.<iv>.<ciphertext>` — the version
+A webhook URL and an email address are both secrets, and all three kinds are
+encrypted with AES-GCM before they reach Postgres, as `v1.<iv>.<ciphertext>` — the version
 prefix is what makes a later key rotation readable rather than a wave of decrypt
 failures. The key is `ROUTINE_SECRET_KEY`, held as a deployment secret and never
 in the database. Encrypting is also why creating a channel is a server-side
@@ -233,6 +331,15 @@ revoked and every column except the ciphertext handed back. What the interface
 shows is a mask computed once at creation — a webhook reduced to its host and its
 last four characters, an address to a letter or two of its local part and the
 domain.
+
+A `webhook` channel stores two things rather than one, as a single JSON object
+inside that same ciphertext: `{"v":1,"url":…,"signingSecret":…}`. They share the
+column so `secret_ciphertext` stays the one column on the table that carries a
+secret, which is what makes the column grant the whole answer to what a client
+may read. The signing secret is minted per channel rather than derived from
+`ROUTINE_SECRET_KEY`: that key also opens every other channel and every OAuth
+token behind a connection, so a receiver's leaked copy of a derived secret would
+force all of them to be rotated at once. One channel's secret rotates alone.
 
 ## Scheduling
 
@@ -314,9 +421,10 @@ actually notice.
 
 Every run writes a row either way, and the routine's page shows the last fifty:
 what it sent, or why it did not. A failed row is red and carries the error text
-as it was recorded. The response body of a failing delivery is truncated to 200
-characters first, so an upstream answering with an HTML error page cannot write
-a megabyte into the database.
+as it was recorded. A failing delivery's response body is read to at most 64 KB
+and then truncated to 200 characters, so a receiver answering with an HTML error
+page — or with an endless stream — cannot write a megabyte into the database or
+spend the engine's memory getting there.
 
 What happens around that row, in order:
 
@@ -331,13 +439,21 @@ What happens around that row, in order:
    run happens sooner than that — **Run now** and resuming both ignore it.
 3. **Consecutive failures eventually pause it.** The counter is compared against
    one of two limits, and which one is decided by the failure that just
-   happened: five, or twenty if that last failure was the source's fault rather
-   than the routine's — a `429` or a `5xx`. The limits differ because backoff
-   means twenty transient failures represent days of an unreachable source,
-   while three rate-limited ticks in an afternoon represent nothing. Because
-   only the latest failure picks the limit, a routine four hard failures deep
-   that then gets rate-limited is judged against twenty rather than five, and
-   survives that tick.
+   happened: five, or twenty if that last failure was somebody else's fault
+   rather than the routine's — a `429` or a `5xx`, whether it came from the
+   source being read or from the channel being delivered to. The limits differ
+   because backoff means twenty transient failures represent days of something
+   being unreachable, while three rate-limited ticks in an afternoon represent
+   nothing. Because only the latest failure picks the limit, a routine four hard
+   failures deep that then gets rate-limited is judged against twenty rather
+   than five, and survives that tick.
+
+   Delivery was not always counted this way: until the webhook kind was added,
+   every delivery failure counted the same and five of them paused the routine,
+   so a Slack outage could take a working routine offline until somebody noticed
+   and resumed it by hand. A wrong URL or a revoked secret still pauses at five,
+   which is the case where retrying changes nothing.
+
 4. **A pause is announced**, through the channel the routine already delivers to,
    unless the owner has turned that notice off in Settings. It is best-effort:
    the pause is already recorded and visible, and a dead delivery channel is

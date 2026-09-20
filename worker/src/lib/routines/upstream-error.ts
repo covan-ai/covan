@@ -19,8 +19,14 @@
 export class UpstreamError extends Error {
   readonly status: number;
 
-  constructor(status: number) {
-    super(`upstream ${status}`);
+  /**
+   * `detail` is whatever the remote said, already truncated by the caller. It
+   * reaches `routine_runs.error` and, on a pause, `routines.paused_reason` —
+   * the two places a person looks to find out what went wrong — so dropping it
+   * would answer "why is my routine paused" with the word "upstream".
+   */
+  constructor(status: number, detail?: string) {
+    super(detail ? `upstream ${status}: ${detail}` : `upstream ${status}`);
     this.name = "UpstreamError";
     this.status = status;
   }

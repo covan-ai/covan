@@ -776,8 +776,54 @@ describe("runRoutine", () => {
 
     expect(out.status).toBe("failed");
     const run = inserts.find((i) => i.table === "routine_runs")!;
-    expect(run.values.error).toMatch(/delivery failed/);
+    // A 500 from the receiver is the remote's fault, so it reads as an upstream
+    // failure and counts against the higher limit — but what the receiver
+    // actually said is still in the string, and so is the claim warning.
+    expect(run.values.error).toMatch(/upstream 500/);
+    expect(run.values.error).toMatch(/no/);
     expect(run.values.error).toMatch(/could not be released/);
+  });
+
+  // The change this pairs with: a receiver having a bad ten minutes must not
+  // pause a working routine at five, and a receiver that is simply pointed at
+  // the wrong URL must not be retried twenty times before anybody is told.
+  it("counts a 5xx from the delivery channel against the transient limit", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db, updates } = makeDb();
+    const deps = makeDeps(db) as any;
+    deps.deliveryDeps.fetchImpl = vi.fn(async () => new Response("gateway", { status: 503 }));
+
+    await runRoutine(
+      routine({
+        consecutive_failures: MAX_FAILURES - 1,
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+      }),
+      deps,
+    );
+
+    const patch = updates.find((u) => u.table === "routines" && "consecutive_failures" in u.values);
+    expect(patch?.values.consecutive_failures).toBe(MAX_FAILURES);
+    // Would have paused before this change. MAX_TRANSIENT_FAILURES is the bar.
+    expect(patch?.values.status).toBeUndefined();
+  });
+
+  it("still pauses at five when the channel itself is wrong", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db, updates } = makeDb();
+    const deps = makeDeps(db) as any;
+    deps.deliveryDeps.fetchImpl = vi.fn(async () => new Response("no such hook", { status: 404 }));
+
+    await runRoutine(
+      routine({
+        consecutive_failures: MAX_FAILURES - 1,
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+      }),
+      deps,
+    );
+
+    const patch = updates.find((u) => u.table === "routines" && "consecutive_failures" in u.values);
+    expect(patch?.values.status).toBe("paused");
+    expect(patch?.values.paused_reason).toMatch(/404/);
   });
 
   it("checks the delivery channel before summarising, so a missing channel skips the LLM call", async () => {

@@ -87,13 +87,16 @@ export function StepTrail({ steps, className }: { steps: AgentStepView[]; classN
 export function SettledSteps({ steps }: { steps: AgentStepView[] }) {
   if (steps.length === 0) return null;
   const failed = steps.filter((s) => s.status === "failed" || s.status === "refused").length;
+  // The same shape and the same classes as the Thinking block in the chat
+  // screen, deliberately: they are two foldable notes about one reply, and
+  // two vocabularies for that would be a deviation rather than a choice.
   return (
-    <details className="mt-3 rounded-[10px] border border-hairline bg-surface">
+    <details className="mt-3 rounded-lg border border-border bg-muted/40">
       <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-muted-foreground marker:text-muted-foreground hover:text-foreground">
         {steps.length === 1 ? "1 step" : `${steps.length} steps`}
         {failed > 0 ? ` · ${failed} did not complete` : ""}
       </summary>
-      <div className="border-t border-hairline px-3 py-2">
+      <div className="border-t border-border px-3 py-2">
         <StepTrail steps={steps} />
       </div>
     </details>
@@ -202,7 +205,7 @@ export function ConfirmCard({
   onAnswer: (approve: boolean) => void;
 }) {
   return (
-    <div className="mt-3 flex flex-col gap-3 rounded-xl border border-hairline bg-card p-4">
+    <div className="mt-3 flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
       <div className="flex items-start gap-2.5">
         <span className="mt-[5px] h-2 w-2 shrink-0 rounded-[2px] bg-accent-orange" />
         <div className="flex min-w-0 flex-col gap-1">

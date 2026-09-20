@@ -869,3 +869,158 @@ describe("finding what was said", () => {
     expect(screen.getByText(/What do we charge/)).toBeInTheDocument();
   });
 });
+
+/**
+ * The three frames the harness added, from the screen's side.
+ *
+ * All three are new, which means every client older than them ignores them —
+ * the dispatch chain drops a `type` it cannot name, and has since it was
+ * written. That is worth a test of its own, because it is the property that
+ * lets a worker ship ahead of a browser tab somebody left open.
+ */
+describe("a reply that used a tool", () => {
+  it("shows what it is doing, then what it did", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            {
+              type: "step",
+              index: 0,
+              tool: "query_database",
+              status: "running",
+              label: "query_database · select count(*) from orders",
+            },
+            {
+              type: "step",
+              index: 0,
+              tool: "query_database",
+              status: "ok",
+              label: "query_database · select count(*) from orders",
+            },
+            { type: "delta", text: "Forty." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+
+    await renderChat();
+    listMessages.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "how many orders?");
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    // The same index arriving twice is one row changing, not two rows.
+    await screen.findByText("Forty dollars a seat.");
+  });
+
+  it("ignores a step status it has no word for, rather than breaking the turn", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "step", index: 0, tool: "t", status: "teleporting", label: "t" },
+            // And a whole frame type this build has never heard of.
+            { type: "something-from-a-newer-worker", payload: 1 },
+            { type: "delta", text: "Forty." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+
+    await renderChat();
+    listMessages.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "go");
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    await screen.findByText("Forty dollars a seat.");
+  });
+});
+
+describe("a reply that stopped to ask", () => {
+  const confirmFrames = [
+    { type: "delta", text: "I can set that up." },
+    {
+      type: "confirm",
+      id: "paused-1",
+      tool: "schedule_job",
+      summary: "Create a routine on 0 17 * * 1?",
+      proposal: { kind: "schedule_job", name: "Monday orders", cron: "0 17 * * 1" },
+    },
+    { type: "paused", reason: "confirmation" },
+    { type: "done", message: answer },
+  ];
+
+  it("puts the question on screen with what it would do", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(streamOf(confirmFrames))));
+
+    await renderChat();
+    listMessages.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "every monday");
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    await screen.findByText("Create a routine on 0 17 * * 1?");
+    expect(screen.getByText("Monday orders")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
+  /**
+   * Declining is not closing the card. It goes to the same endpoint with
+   * `approve: false`, so the agent is told and finishes its turn — the
+   * alternative leaves the conversation ending mid-sentence with a parked
+   * turn nobody ever answers.
+   */
+  it("reports both answers to the worker, at the confirm endpoint", async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(
+        url.includes("/chat/confirm/")
+          ? streamOf([{ type: "delta", text: " Not doing it." }, { type: "done", message: answer }])
+          : streamOf(confirmFrames),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+    listMessages.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "every monday");
+    await userEvent.click(screen.getByLabelText("Send message"));
+    await screen.findByRole("button", { name: "Not now" });
+    await userEvent.click(screen.getByRole("button", { name: "Not now" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/chat/confirm/"));
+      expect(call?.[0]).toContain("/chat/confirm/paused-1");
+      expect(JSON.parse((call?.[1] as { body: string }).body)).toEqual({ approve: false });
+    });
+  });
+
+  it("takes the card away once it has been answered", async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(
+        url.includes("/chat/confirm/")
+          ? streamOf([{ type: "delta", text: " Created." }, { type: "done", message: answer }])
+          : streamOf(confirmFrames),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+    listMessages.mockReturnValue(new Promise(() => {}));
+
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "every monday");
+    await userEvent.click(screen.getByLabelText("Send message"));
+    await screen.findByRole("button", { name: "Approve" });
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    });
+  });
+});

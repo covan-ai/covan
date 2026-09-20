@@ -138,7 +138,10 @@ describe("schedule_job", () => {
    * do this in — the decision has already been made.
    */
   it("refuses an unparseable schedule before anybody is asked about it", async () => {
-    const result = await scheduleJobTool.run({ ...args, cron: "nonsense every day" }, ctxWith(CHANNEL));
+    const result = await scheduleJobTool.run(
+      { ...args, cron: "nonsense every day" },
+      ctxWith(CHANNEL),
+    );
     expect(result).toMatchObject({ kind: "error" });
     expect(createRoutine).not.toHaveBeenCalled();
   });

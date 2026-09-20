@@ -23,9 +23,7 @@ const step = (over: Partial<Parameters<typeof toStepViews>[0][number]> = {}) => 
 
 describe("toStepViews", () => {
   it("labels a step with what it was pointed at, not only which tool ran", () => {
-    expect(toStepViews([step()])[0].label).toBe(
-      "query_database · select count(*) from orders",
-    );
+    expect(toStepViews([step()])[0].label).toBe("query_database · select count(*) from orders");
   });
 
   it("falls back to the tool's name when the arguments say nothing readable", () => {
@@ -79,7 +77,7 @@ describe("the settled trail", () => {
     expect(screen.queryByRole("group")).not.toHaveAttribute("open");
   });
 
-  it("counts one step in the singular, because \"1 steps\" is a bug people notice", () => {
+  it('counts one step in the singular, because "1 steps" is a bug people notice', () => {
     render(<SettledSteps steps={[{ index: 0, tool: "a", status: "ok", label: "a" }]} />);
     expect(screen.getByText("1 step")).toBeInTheDocument();
   });
@@ -89,7 +87,7 @@ describe("the confirmation card", () => {
   const pending = {
     id: "p1",
     tool: "schedule_job",
-    summary: "Create a routine \"Monday orders\" on 0 17 * * 1?",
+    summary: 'Create a routine "Monday orders" on 0 17 * * 1?',
     proposal: {
       kind: "schedule_job",
       name: "Monday orders",

@@ -25,7 +25,11 @@ function dbWith(connections: unknown[], channels: unknown[]): SupabaseClient {
   return {
     from: (table: string) =>
       table === "tool_connections"
-        ? { select: () => ({ eq: () => ({ order: async () => ({ data: connections, error: null }) }) }) }
+        ? {
+            select: () => ({
+              eq: () => ({ order: async () => ({ data: connections, error: null }) }),
+            }),
+          }
         : { select: () => ({ eq: async () => ({ data: channels, error: null }) }) },
   } as unknown as SupabaseClient;
 }
@@ -76,10 +80,9 @@ describe("capabilitiesFor", () => {
   });
 
   it("leaves out a tool this deployment cannot run, however many rows it has", async () => {
-    const { tools } = await ask(
-      dbWith([], [CHANNEL]),
-      { ALLOWED_ORIGIN: "https://app.covan.test" } as ToolEnv,
-    );
+    const { tools } = await ask(dbWith([], [CHANNEL]), {
+      ALLOWED_ORIGIN: "https://app.covan.test",
+    } as ToolEnv);
     // No Resend key: sending is not offered. Scheduling still is — it creates
     // a routine and does not send anything itself.
     expect(tools.map((t) => t.name)).not.toContain("send_email");

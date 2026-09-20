@@ -107,9 +107,11 @@ export type AgentTool = {
    *
    * 0058 spells the same idea `connection_capabilities.is_destructive`, and
    * this is deliberately the same word: the day a capability catalogue row
-   * exists for one of these, this field is what it is populated from. Until
-   * then it decides one thing — a destructive tool is named in the step line
-   * with what it did, never folded into a count.
+   * exists for one of these, this field is what it is populated from.
+   *
+   * Until then it does one thing, which is small and worth keeping: the
+   * Integrations page says which tools can change something, so "what can
+   * this agent actually do" is answerable without reading this file.
    */
   destructive: boolean;
   /**

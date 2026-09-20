@@ -10,6 +10,7 @@ import { ConnectionCard, ConnectSourceCard } from "@/components/integrations/con
 import {
   AddToolConnectionCard,
   ToolConnectionCard,
+  ToolList,
 } from "@/components/integrations/tool-connection-card";
 import { SlackCard } from "@/components/integrations/slack-card";
 import { SlackMark } from "@/components/integrations/brand-marks";
@@ -158,6 +159,7 @@ function IntegrationsPage() {
               />
             )}
             <AddToolConnectionCard />
+            <ToolList tools={tools.data?.tools ?? []} />
           </div>
         </section>
 

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Database, Globe, Plus, Trash2 } from "lucide-react";
-import type { ToolConnection } from "@/lib/connections-api";
+import type { ToolAvailability, ToolConnection } from "@/lib/connections-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Chip, SectionCard } from "@/components/section-card";
+import { PanelEyebrow } from "@/components/page-container";
 import {
   Select,
   SelectContent,
@@ -114,6 +115,48 @@ export function ToolConnectionCard({ connection }: { connection: ToolConnection 
           </Button>
         )}
       </div>
+    </SectionCard>
+  );
+}
+
+/**
+ * What an agent can actually do, listed rather than left to the docs.
+ *
+ * Every tool this build has, configured or not — the same rule
+ * `ConnectSourceCard` follows for a provider with no credentials, and for the
+ * same reason: a self-hoster reading the docs for a feature their own build
+ * appears not to have is the failure that pattern exists to avoid.
+ *
+ * "Can change things" is the one fact worth putting on a row here, and it is
+ * a word rather than a colour: a chip is never destructive, and amber on six
+ * rows would be six pointers pointing nowhere.
+ */
+export function ToolList({ tools }: { tools: ToolAvailability[] }) {
+  if (tools.length === 0) return null;
+  return (
+    <SectionCard className="flex flex-col gap-3">
+      <PanelEyebrow>What an agent can do with these</PanelEyebrow>
+      <ul className="flex flex-col gap-2.5">
+        {tools.map((tool) => (
+          <li key={tool.name} className="flex items-start gap-2.5">
+            <span
+              className={`mt-[6px] h-2 w-2 shrink-0 rounded-[2px] ${
+                tool.configured ? "bg-foreground" : "bg-muted-foreground/40"
+              }`}
+            />
+            <span className="flex min-w-0 flex-col gap-[3px]">
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span className="font-mono text-xs">{tool.name}</span>
+                {tool.destructive ? <Chip tone="neutral">Can change things</Chip> : null}
+                {tool.configured ? null : <Chip tone="neutral">Not configured here</Chip>}
+              </span>
+              <span className="text-meta leading-[1.45] text-muted-foreground">
+                {tool.description}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
     </SectionCard>
   );
 }

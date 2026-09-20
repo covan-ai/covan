@@ -215,15 +215,18 @@ What it changes for you:
   puts the model in two minds and gets neither.
 
 A workspace with no connected service runs exactly as it always did: one call,
-no loop, nothing extra to pay for.
+no loop, nothing extra to pay for. The tick asks once, for the whole batch,
+whether any of the workspaces it claimed has a service connected — so knowing
+the answer costs one database read per tick rather than one per routine.
 
 ### It may not fit on Cloudflare Free
 
 This is a real limit and worth checking before you rely on it. A tick on
-Workers Free gets **50 subrequests**, and the batch size is sized against that:
-one for the claim, up to twelve per routine, four routines — 49. An agent turn
-spends more than twelve on its own, because each tool call is at least one
-request and the model is called again after each.
+Workers Free gets **50 subrequests**, and the batch size is sized against
+that: two for the tick itself — the claim, and the one read above — and up to
+twelve per routine, so three routines comes to 38. An agent turn spends more
+than twelve on its own, because each tool call is at least one request and the
+model is called again after each.
 
 So for routines that use tools, on Workers Free, either:
 

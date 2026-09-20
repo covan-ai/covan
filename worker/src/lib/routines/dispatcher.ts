@@ -21,17 +21,29 @@ import { retrieveForAgent } from "../retrieval";
  * How many routines one tick may run, bounded by the Workers **Free** plan's
  * limit of 50 subrequests per invocation.
  *
- * A tick spends 1 subrequest on the claim RPC. Each routine then spends up to
- * 12: the membership check, the source fetch (1, or 4 when it follows the
- * maximum 3 redirects), the delivery claim, the channel and agent reads, the
- * LLM call, the delivery itself, and the two bookkeeping writes. So
- * 1 + 4 x 12 = 49 fits; 5 would not. Most ticks cost far less — a 304 costs 4
- * per routine — but the cap has to hold for the worst case.
+ * A tick spends 1 subrequest on the claim RPC, and **one more** asking which
+ * of the claimed routines' workspaces have a connected service at all — see
+ * `workspacesWithConnections` below for why that is one read per tick rather
+ * than one per routine. Each routine then spends up to 12: the membership
+ * check, the source fetch (1, or 4 when it follows the maximum 3 redirects),
+ * the delivery claim, the channel and agent reads, the LLM call, the delivery
+ * itself, and the two bookkeeping writes. So 2 + 4 x 12 = 50 — exactly the
+ * cap, with nothing left over, which is not a number to ship.
+ *
+ * Hence 3: 2 + 3 x 12 = 38. What that costs is throughput on Free alone, and
+ * a tick that cannot drain the backlog leaves the rest for the next one five
+ * minutes later. What the alternative costs is the last routine of a busy
+ * tick failing at the ceiling, being recorded as a failure, backing off
+ * geometrically and eventually pausing — for a reason nothing in the run log
+ * would explain.
  *
  * On Workers Paid the limit is 10,000 and this can go well past 10 — there the
- * binding constraint becomes CPU time (30s) rather than subrequests.
+ * binding constraint becomes CPU time (30s) rather than subrequests. A routine
+ * whose agent actually HAS tools spends far more than 12 and does not fit on
+ * Free at all; `docs/routines.md` says so rather than leaving it to be
+ * discovered.
  */
-const BATCH_SIZE = 4;
+const BATCH_SIZE = 3;
 
 export type DispatcherDeps = {
   db: SupabaseClient;
@@ -46,7 +58,11 @@ export type DispatcherDeps = {
  * The batch is capped: a tick that cannot drain the backlog leaves the rest for
  * the next tick, rather than running until it is killed.
  */
-function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
+function executorDeps(
+  env: RoutineEnv,
+  db: SupabaseClient,
+  hasConnections?: (workspaceId: string) => boolean,
+): ExecutorDeps {
   // WORKER_HOST is optional — on workers.dev the guard already blocks the whole
   // domain class, so it only matters once a custom domain fronts this worker.
   const ownHosts = ownHostsFrom(env);
@@ -69,7 +85,11 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
     // when it has connected none, which sends the run back to the single
     // call above. The env this is built with is the house one; the run env
     // arrives per call, for the reason `summarise` takes one.
-    runWithTools: (input, runEnv) => runRoutineWithTools(env, db)(input, runEnv),
+    //
+    // `hasConnections` is how a tick avoids paying a lookup per routine to
+    // learn the same "no" several times over. Absent on the single-routine
+    // paths, where there is nothing to amortise over and the run asks.
+    runWithTools: (input, runEnv) => runRoutineWithTools(env, db, hasConnections)(input, runEnv),
     // The same retrieval chat and Slack use, reached through the same module.
     // `retrieval.ts` exists precisely because a second surface needed to ask an
     // agent something and two copies would have drifted rather than failed —
@@ -162,6 +182,37 @@ export async function runPokedRoutine(
   return runRoutine(routine, executorDeps(env, db), trigger);
 }
 
+/**
+ * Which of this batch's workspaces have a connected service, in one read.
+ *
+ * The alternative is each run asking for itself, which is the same question
+ * asked up to `BATCH_SIZE` times and answered "no" every time on a
+ * deployment that has connected nothing — the ordinary case. On the cron
+ * Worker a read is a subrequest and Free allows fifty, so "the same question,
+ * cheaper" is not tidiness here, it is the difference between a tick that
+ * finishes and one that runs out.
+ *
+ * Failure is answered `"none"` rather than raised: a tick that cannot read
+ * this table should still run its routines the way it ran them before any of
+ * this existed, which is exactly what an empty set produces.
+ */
+async function workspacesWithConnections(
+  db: SupabaseClient,
+  due: RoutineRow[],
+): Promise<Set<string>> {
+  const ids = [...new Set(due.map((r) => r.workspace_id))];
+  if (ids.length === 0) return new Set();
+  const { data, error } = await db
+    .from("tool_connections")
+    .select("workspace_id")
+    .in("workspace_id", ids);
+  if (error) {
+    console.error("could not read tool connections for this tick", error);
+    return new Set();
+  }
+  return new Set((data ?? []).map((row: { workspace_id: string }) => row.workspace_id));
+}
+
 export async function runDueRoutines(
   env: RoutineEnv,
   overrides: Partial<DispatcherDeps> = {},
@@ -175,7 +226,8 @@ export async function runDueRoutines(
   const due = (data ?? []) as RoutineRow[];
   if (due.length === 0) return { claimed: 0, ok: 0, failed: 0 };
 
-  const deps = executorDeps(env, db);
+  const connected = await workspacesWithConnections(db, due);
+  const deps = executorDeps(env, db, (workspaceId) => connected.has(workspaceId));
 
   // One routine blowing up must not strand the others in a claimed state.
   const results = await Promise.allSettled(due.map((r) => runRoutine(r, deps)));

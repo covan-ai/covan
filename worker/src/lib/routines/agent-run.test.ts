@@ -66,6 +66,30 @@ describe("runRoutineWithTools", () => {
     expect(runAgentTurn).not.toHaveBeenCalled();
   });
 
+  /**
+   * The free half of the same question. On the cron Worker a read is a
+   * subrequest, so a tick answers this once for its whole batch and hands
+   * the answer down — see `workspacesWithConnections` in the dispatcher.
+   */
+  it("answers null without reading anything when the tick already said no", async () => {
+    const out = await runRoutineWithTools(env, db, () => false)(input, env);
+    expect(out).toBeNull();
+    expect(capabilitiesFor).not.toHaveBeenCalled();
+  });
+
+  it("still looks when the tick said this workspace has something", async () => {
+    await runRoutineWithTools(env, db, () => true)(input, env);
+    expect(capabilitiesFor).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not offer the tools a run with nobody watching could never finish", async () => {
+    await runRoutineWithTools(env, db)(input, env);
+    // `schedule_job` would ask a person and a tick has nobody to ask;
+    // `send_email` duplicates the delivery the routine is about to make. Not
+    // offering them also saves the delivery_channels read behind them.
+    expect(capabilitiesFor.mock.calls[0][0]).toMatchObject({ surface: "schedule" });
+  });
+
   it("runs the loop and reports what the whole turn cost", async () => {
     const out = await runRoutineWithTools(env, db)(input, env);
     expect(out).toEqual({ text: "Forty orders.", tokens: 140, declined: false });

@@ -36,14 +36,37 @@ import type { AgentRunInput, AgentRunResult } from "./executor";
  * `summariseWithModel`, which is the one-call path every routine used before
  * this existed and is strictly cheaper.
  */
-export function runRoutineWithTools(env: RoutineEnv, db: SupabaseClient) {
+/**
+ * @param hasConnections whether this workspace has any connected service at
+ * all, answered once per tick by the dispatcher rather than once per run.
+ *
+ * It is a parameter rather than a lookup for one reason, and it is not
+ * elegance: on the cron Worker every database read is a subrequest, and
+ * Workers Free allows fifty per invocation. A tick runs several routines, so
+ * a per-run lookup is several subrequests spent discovering that the answer
+ * is "no" — which it is for every deployment that has connected nothing.
+ * `lib/routines/dispatcher.ts` does the arithmetic.
+ *
+ * Undefined means "ask" — which is what the single-routine paths (the Run now
+ * button, a poked routine) do, because one run has no tick to amortise
+ * anything over.
+ */
+export function runRoutineWithTools(
+  env: RoutineEnv,
+  db: SupabaseClient,
+  hasConnections?: (workspaceId: string) => boolean,
+) {
   return async (input: AgentRunInput, runEnv: RoutineEnv): Promise<AgentRunResult | null> => {
+    // The free half of the question, when somebody has already answered it.
+    if (hasConnections && !hasConnections(input.workspaceId)) return null;
+
     const toolEnv = runEnv as ToolEnv;
     const { tools, manifest } = await capabilitiesFor({
       db,
       env: toolEnv,
       workspaceId: input.workspaceId,
       userId: input.userId,
+      surface: "schedule",
     });
     if (tools.length === 0) return null;
 

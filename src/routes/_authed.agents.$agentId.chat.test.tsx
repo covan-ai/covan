@@ -957,7 +957,10 @@ describe("a reply that stopped to ask", () => {
   ];
 
   it("puts the question on screen with what it would do", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(streamOf(confirmFrames))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(streamOf(confirmFrames))),
+    );
 
     await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
@@ -977,13 +980,17 @@ describe("a reply that stopped to ask", () => {
    * turn nobody ever answers.
    */
   it("reports both answers to the worker, at the confirm endpoint", async () => {
-    const fetchMock = vi.fn((url: string) =>
-      Promise.resolve(
+    const fetchMock = vi.fn((url: string, init?: { body?: string }) => {
+      void init;
+      return Promise.resolve(
         url.includes("/chat/confirm/")
-          ? streamOf([{ type: "delta", text: " Not doing it." }, { type: "done", message: answer }])
+          ? streamOf([
+              { type: "delta", text: " Not doing it." },
+              { type: "done", message: answer },
+            ])
           : streamOf(confirmFrames),
-      ),
-    );
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     await renderChat();
@@ -997,7 +1004,7 @@ describe("a reply that stopped to ask", () => {
     await waitFor(() => {
       const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("/chat/confirm/"));
       expect(call?.[0]).toContain("/chat/confirm/paused-1");
-      expect(JSON.parse((call?.[1] as { body: string }).body)).toEqual({ approve: false });
+      expect(JSON.parse(call?.[1]?.body ?? "{}")).toEqual({ approve: false });
     });
   });
 
@@ -1005,10 +1012,14 @@ describe("a reply that stopped to ask", () => {
     const fetchMock = vi.fn((url: string) =>
       Promise.resolve(
         url.includes("/chat/confirm/")
-          ? streamOf([{ type: "delta", text: " Created." }, { type: "done", message: answer }])
+          ? streamOf([
+              { type: "delta", text: " Created." },
+              { type: "done", message: answer },
+            ])
           : streamOf(confirmFrames),
       ),
     );
+
     vi.stubGlobal("fetch", fetchMock);
 
     await renderChat();

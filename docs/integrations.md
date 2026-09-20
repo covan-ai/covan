@@ -408,6 +408,10 @@ duplicated.
 - **No search connectors.** Covan answers from what was deliberately imported,
   not from everything an account can reach.
 - **No write access.** Every scope is read-only. Nothing Covan does can change a
-  Notion page or a Drive file.
+  Notion page or a Drive file. The database has the schema for how a write would
+  be permitted one day — see
+  [a question row level security cannot be asked](security.md#a-question-row-level-security-cannot-be-asked) —
+  and it is empty, which means every agent is refused every action. That is the
+  same sentence as this bullet, written somewhere a program can check it.
 - **No per-file permissions.** A bundle is the unit of access. If different
   people should see different documents, put them in different bundles.

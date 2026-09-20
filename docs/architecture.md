@@ -381,6 +381,11 @@ production, at the moment a user uploads a file or sends a message.
   update live.
 - `routines`, `routine_runs`, `routine_deliveries`, `delivery_channels` — the
   scheduling side.
+- `connection_capabilities`, `connection_grants`, `capability_calls` — what an
+  agent may do at a connected source, as opposed to what a person may do in
+  Postgres. All three are empty, which is an exact description of today's
+  behaviour rather than a feature waiting to be switched on:
+  [no row means no](security.md#a-question-row-level-security-cannot-be-asked).
 
 Migrations are numbered and applied in order, and an applied migration is never
 edited — corrections go in a new file.

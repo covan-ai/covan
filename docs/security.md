@@ -87,6 +87,58 @@ one was a real gap rather than a precaution: a member who can write could
 otherwise rewrite the engine's explanation into a sentence the integrations page
 prints on a colleague's screen.
 
+## A question row level security cannot be asked
+
+Every policy above gates on `auth.uid()`: may **this person** see or change
+**this row**. That question has one answer and it lives in one place, which is
+why an API key carries no scopes — see
+[API and keys](api.md#what-a-key-can-do). A scope would re-answer a question
+Postgres has already answered, and two systems answering the same question can
+disagree.
+
+There is a second question, and it is not the same one wearing a hat. *May this
+**agent** perform this action at Notion?* There is no `auth.uid()` in that
+sentence. The actor is an agent rather than a person, the hour may be three in
+the morning with nobody signed in, the verb is not select, insert, update or
+delete, and the object is not a row in this database at all. RLS is structurally
+unable to be asked it, so answering it elsewhere cannot contradict anything.
+
+Covan has the schema for that answer and, deliberately, nothing yet that uses
+it. Three tables: a catalogue of what this build can do at each provider, a
+table of grants keyed on **(agent, connection, capability)**, and a log of every
+attempt including the refused ones.
+
+The rule is one sentence: **no row means no.** There is no `never` to store —
+the absence of a grant is what `never` is, and a check constraint keeps it from
+becoming a second, storable way of saying the same thing. Two representations of
+"no" can disagree; one cannot. A grant says either `ask`, which produces a
+pending approval and stops, or `always`, which means the approval was given in
+advance.
+
+So the grants table being empty is not a feature waiting to be switched on. It
+is an exact description of what Covan does today: agents read, and that is the
+whole list. The catalogue ships empty too, which is stronger — with nothing in
+it a grant cannot be created at all, because there is nothing for it to point
+at. A capability becomes grantable in the same change that ships the code
+performing it, never before.
+
+Every human action in this is still an ordinary policy, because every one of
+them is a person changing a row: members see grants, anyone who can write may
+create one or take one away, and only an admin may promote a **destructive**
+capability to `always` — a standing permission to do something that cannot be
+undone is a decision about the workspace rather than about one piece of work.
+Lowering or revoking that same grant needs no admin, because taking a permission
+away is never the unsafe direction.
+
+The one thing without a policy in front of it is the process that reads these
+rows at 3am, which has no caller to have a policy about. It goes through a
+single `security definer` function whose EXECUTE grant is the boundary, the same
+arrangement the sync scheduler uses. And because that function runs as the
+service role — which bypasses row level security entirely — the guarantee that a
+grant cannot join an agent in one workspace to a connection in another is a
+foreign key rather than a predicate. A policy is no boundary at all against a
+caller that does not consult policies.
+
 ## What a conversation is
 
 A session is private to the person who opened it. Not private by convention or

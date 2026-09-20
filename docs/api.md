@@ -44,6 +44,14 @@ Scopes would be a second permission system standing next to that one, and two
 systems that disagree about the same question are worse than one. What a key
 gives up in granularity it gains in there being nothing to get wrong.
 
+The test is whether the second system answers the same question. Covan does have
+a second permission table — the one that decides what an **agent** may do at a
+connected source — and it is not a counter-example to any of the above, because
+"may this agent send this mail at 3am" is not a question `auth.uid()` can be
+asked. See
+[a question row level security cannot be asked](security.md#a-question-row-level-security-cannot-be-asked).
+A scope fails that test; a capability passes it.
+
 Three things a key cannot do, each by explicit refusal:
 
 - **Create another key.** Otherwise a leaked key writes itself permanent

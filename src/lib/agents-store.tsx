@@ -36,6 +36,22 @@ export type Agent = {
     createdAt: number;
     chunkCount: number;
     indexed: boolean;
+    /**
+     * The routine that wrote it, or null for an upload or a synced file.
+     *
+     * Provenance is derived from this rather than declared: no `kind` column,
+     * no new chip, no new colour. A filed summary is an ordinary document and
+     * behaves like one — it is only the line under the filename that differs.
+     */
+    routineId?: string | null;
+    /**
+     * That routine's name, or null when the caller cannot see the routine.
+     *
+     * A colleague's private routine filing into a shared bundle produces
+     * exactly that: a real id with no name. The document is theirs to read and
+     * the routine is not theirs to see, so the line says "a routine".
+     */
+    routineName?: string | null;
   }[];
   bundleIds: string[];
   createdAt: number;

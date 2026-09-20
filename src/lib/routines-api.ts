@@ -27,6 +27,14 @@ export type Routine = {
   scheduleCron: string;
   timezone: string;
   triggerKind: RoutineTriggerKind;
+  /**
+   * The bundle each delivered summary is filed into as a document, or null to
+   * keep nothing — which is the default, and what every routine did before
+   * filing existed.
+   */
+  outputBundleId: string | null;
+  /** How many of its own filed documents this routine keeps. 52 by default. */
+  outputRetention: number;
   status: "active" | "paused";
   /** Set when the engine paused this itself after repeated failures. */
   pausedReason: string | null;
@@ -57,6 +65,18 @@ export type RoutineRun = {
   /** What was delivered. Null for skipped and failed runs, and for runs
    *  recorded before routine_runs.summary existed. */
   summary: string | null;
+  /** The document this run filed, when it filed one. */
+  documentId: string | null;
+  /**
+   * Why a run that was supposed to file did not.
+   *
+   * Null in both ordinary cases — the routine files nothing, or filing worked —
+   * so a note on screen always means the optional half of an otherwise
+   * successful run failed. Worth showing rather than hiding: it is the only way
+   * somebody finds out their scheduled worker has no document storage bound, or
+   * that they were demoted to viewer last month.
+   */
+  filingNote: string | null;
   startedAt: number;
 };
 
@@ -122,6 +142,9 @@ export type CreateRoutineInput = {
   timezone: string;
   /** Omitted means `schedule`, which is what every routine was before this. */
   triggerKind?: RoutineTriggerKind;
+  /** Null or omitted means the routine keeps nothing, which is the default. */
+  outputBundleId?: string | null;
+  outputRetention?: number;
 };
 
 export type UpdateRoutineInput = Partial<{
@@ -132,4 +155,10 @@ export type UpdateRoutineInput = Partial<{
   status: "active" | "paused";
   visibility: "private" | "shared";
   deliveryChannelId: string;
+  /**
+   * Nullable as well as optional, and the difference is the feature: absent
+   * means "leave filing alone", null means "stop filing".
+   */
+  outputBundleId: string | null;
+  outputRetention: number;
 }>;

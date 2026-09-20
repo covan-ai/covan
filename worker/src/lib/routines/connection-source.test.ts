@@ -150,3 +150,24 @@ describe("fetchConnectionItems", () => {
     expect(items[0].key).toBe("d1:2026-09-05T10:00:00Z");
   });
 });
+
+describe("the loop guard", () => {
+  it("never reads a document a routine wrote", async () => {
+    const { db, filters } = makeDb({ documents: [] });
+
+    await fetchConnectionItems(db, { workspaceId: "w1", connectionId: "cn1" });
+
+    // Since 0056 a routine can file its summary into a bundle as an ordinary
+    // document. If that bundle is also a connection's, then one routine's
+    // output is another's input — and with two pointed at each other, every run
+    // manufactures the material for the next one, forever, paying for a model
+    // call each time.
+    //
+    // The filter is asserted rather than the returned rows, because the rows
+    // would look identical either way: before this line existed the loop was
+    // shut only by the fact that a filed document happens to have no
+    // `connection_id`, which is a side effect of a different rule rather than
+    // this one.
+    expect(filters).toContainEqual({ table: "documents", column: "routine_id", value: null });
+  });
+});

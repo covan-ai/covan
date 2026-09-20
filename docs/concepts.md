@@ -274,8 +274,17 @@ point at a channel belonging to its own creator, enforced in the insert and
 update policies rather than left to the API, because the foreign key alone is
 checked by the system and the system does not consult RLS.
 
-Each run records what it did, including the summary it sent, so "what did it send
-me last Tuesday?" has an answer inside the product. The engine deliberately
+A routine can also keep what it sends. Point it at a knowledge bundle and each
+delivered summary is filed there as an ordinary document, so a year of weekly
+digests becomes something the agent can be asked a question of rather than a
+channel somebody has to scroll. Filing is a write into the workspace's
+knowledge, so it needs the same permission as uploading a file — a viewer's
+routine keeps delivering and stops filing — and the engine re-reads that
+permission on every run rather than trusting what was true when the routine was
+made.
+
+Each run records what it did, including the summary it sent and the document it
+filed, so "what did it send me last Tuesday?" has an answer inside the product. The engine deliberately
 stores no source content beyond fingerprints: a feed a workspace watches is never
 mirrored into the database. The scheduling side — claiming, retries, and why a
 routine pauses itself — is in [Routines](architecture.md#routines).

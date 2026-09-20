@@ -50,7 +50,7 @@ export const INGEST_TOKEN_PREFIX = "covan_whk_";
 const ROUTINE_COLUMNS =
   "id, agent_id, user_id, workspace_id, name, source_kind, source_config, instruction, " +
   "delivery_channel_id, schedule_cron, timezone, next_run_at, cursor, consecutive_failures, " +
-  "status, trigger_kind, deleted_at";
+  "status, trigger_kind, output_bundle_id, output_retention, deleted_at";
 
 /** 32 bytes of CSPRNG, base64url — the shape `lib/api-keys.ts` settled on. */
 export function generateIngestToken(): { token: string; tokenHash: Promise<string> } {
@@ -73,8 +73,7 @@ export async function hashIngestToken(token: string): Promise<string> {
 }
 
 export type IngestResolution =
-  | { ok: true; routine: RoutineRow }
-  | { ok: false; status: 401 | 409; error: string };
+  { ok: true; routine: RoutineRow } | { ok: false; status: 401 | 409; error: string };
 
 /**
  * The routine this token fires, or why it does not.

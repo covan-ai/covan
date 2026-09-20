@@ -395,8 +395,15 @@ function KnowledgeTab() {
                   className="min-w-0 flex-1 text-left"
                 >
                   <div className="truncate hover:underline">{d.name}</div>
+                  {/* Where it came from, on the line that is already there.
+                      No chip, no colour, no second column: origin is derived
+                      from a foreign key, and the only document that needs no
+                      explanation at all is the one somebody uploaded. A
+                      routine id with no name is a colleague's private routine,
+                      which is a thing the reader cannot be shown. */}
                   <div className="text-xs text-muted-foreground">
                     {(d.size / 1024).toFixed(0)} KB
+                    {d.routineId ? ` · Written by ${d.routineName ?? "a routine"}` : ""}
                   </div>
                 </button>
                 {/* Amber = indexed and retrievable; neutral = not yet.

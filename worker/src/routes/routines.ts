@@ -345,6 +345,20 @@ const createSchema = z.object({
    * never be granted to an existing RSS routine afterwards.
    */
   triggerKind: z.enum(["schedule", "webhook", "both"]).default("schedule"),
+  /**
+   * Where a delivered summary is kept, or null to keep nothing — which is the
+   * default and what every routine did before 0056.
+   *
+   * Not validated here beyond its shape. The bundle has to be one in the
+   * routine's own workspace, and 0056's policies are what say so: the subquery
+   * resolves through `knowledge_bundles`' RLS, so a bundle in somebody else's
+   * workspace is refused by the same mechanism that refuses somebody else's
+   * agent. Checking it here as well would be a second opinion that can drift
+   * from the one that counts.
+   */
+  outputBundleId: z.string().uuid().nullable().optional(),
+  /** Bounded here as well as by 0056's CHECK, so the refusal names the field. */
+  outputRetention: z.number().int().min(1).max(520).optional(),
 });
 
 // agentId and workspaceId are deliberately absent from updateSchema. The
@@ -361,6 +375,12 @@ const updateSchema = z
     visibility: z.enum(["private", "shared"]).optional(),
     deliveryChannelId: z.string().uuid().optional(),
     triggerKind: z.enum(["schedule", "webhook", "both"]).optional(),
+    // Nullable as well as optional, and the difference is the feature: absent
+    // means "leave filing as it is", null means "stop filing". A field that
+    // could only be absent or a uuid would let somebody turn filing on and
+    // never off.
+    outputBundleId: z.string().uuid().nullable().optional(),
+    outputRetention: z.number().int().min(1).max(520).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "no fields to update" });
 
@@ -438,6 +458,8 @@ routines.post("/routines", async (c) => {
       // column is `not null` and six other places assume a string is there.
       // 0055 says why that was the cheaper of the two mistakes.
       trigger_kind: body.triggerKind,
+      output_bundle_id: body.outputBundleId ?? null,
+      ...(body.outputRetention !== undefined ? { output_retention: body.outputRetention } : {}),
       // The first run is scheduled, not immediate. Creating "every day at
       // 09:00" used to send a real message within one 5-minute tick, because
       // claim_due_routines claims anything already due and `now()` is. Use
@@ -451,7 +473,11 @@ routines.post("/routines", async (c) => {
     const status = insertErrorStatus(error);
     if (status === 400) {
       return c.json(
-        { error: "the delivery channel or agent is not available to you in this workspace" },
+        {
+          error:
+            "the delivery channel, agent or output bundle is not available to you in this " +
+            "workspace, or this source cannot have a webhook trigger",
+        },
         400,
       );
     }
@@ -481,8 +507,12 @@ routines.patch("/routines/:id", async (c) => {
   if (body.visibility !== undefined) patch.visibility = body.visibility;
   if (body.deliveryChannelId !== undefined) patch.delivery_channel_id = body.deliveryChannelId;
   // The CHECK in 0055 refuses `webhook` or `both` on a routine that watches
-  // something, and `insertErrorStatus` turns that into a 400 rather than a 500.
+  // something; the error path below turns that into a 400 rather than a 500.
   if (body.triggerKind !== undefined) patch.trigger_kind = body.triggerKind;
+  // `!== undefined` rather than a truthiness test, so an explicit null turns
+  // filing off instead of being read as "no change".
+  if (body.outputBundleId !== undefined) patch.output_bundle_id = body.outputBundleId;
+  if (body.outputRetention !== undefined) patch.output_retention = body.outputRetention;
 
   // Validate the pair that will actually be in effect, not just the field that
   // changed — a timezone the cron parser cannot resolve leaves the executor
@@ -520,7 +550,25 @@ routines.patch("/routines/:id", async (c) => {
     .select("*")
     .maybeSingle();
 
-  if (error) return c.json({ error: "failed to update routine" }, 500);
+  if (error) {
+    // The same classification the create path makes, and for the same reason:
+    // `routines_update_own`'s WITH CHECK carries every guard the INSERT policy
+    // does, so a patch that repoints a routine at another workspace's bundle
+    // comes back as a policy refusal rather than as a missing row. Reporting
+    // that as a 500 would tell the caller the server is broken when what is
+    // broken is what they asked for.
+    if (insertErrorStatus(error) === 400) {
+      return c.json(
+        {
+          error:
+            "the delivery channel or output bundle is not available to you in this workspace, " +
+            "or this source cannot have a webhook trigger",
+        },
+        400,
+      );
+    }
+    return c.json({ error: "failed to update routine" }, 500);
+  }
   if (!data) return c.json({ error: "routine not found" }, 404);
   return c.json(mapRoutine(data));
 });

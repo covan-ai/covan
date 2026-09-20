@@ -17,6 +17,8 @@ const base: Routine = {
   scheduleCron: "0 * * * *",
   timezone: "UTC",
   triggerKind: "schedule" as const,
+  outputBundleId: null,
+  outputRetention: 52,
   status: "active",
   pausedReason: null,
   nextRunAt: null,

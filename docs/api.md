@@ -227,6 +227,15 @@ it is already gone or was never visible. Same for `DELETE /agents/:id`.
 | `POST /delivery-channels/:id/rotate`           | A new webhook signing secret     |
 | `GET`/`POST`/`DELETE /routines/:id/trigger`    | The URL that can start it        |
 
+`POST /routines` and `PATCH /routines/:id` also carry `outputBundleId` and
+`outputRetention`: the bundle each delivered summary is filed into as a
+document, and how many of them to keep. `null` files nothing, which is the
+default. The bundle has to be one in the routine's own workspace — that is
+decided by a policy rather than by this API, so a bundle elsewhere comes back as
+a `400` and not as a silent no-op. `GET /routines/:id/runs` answers with
+`documentId` for a run that filed, and `filingNote` for one that was supposed to
+and could not.
+
 ### Workspace and people
 
 |                                                              |                                                                                                                |

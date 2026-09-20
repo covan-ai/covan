@@ -23,6 +23,8 @@ const routine = (over: Partial<Routine>): Routine => ({
   deliveryChannelId: "c1",
   scheduleCron: "0 * * * *",
   timezone: "UTC",
+  outputBundleId: null,
+  outputRetention: 52,
   triggerKind: "schedule" as const,
   status: "active",
   pausedReason: null,

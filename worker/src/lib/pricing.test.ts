@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  estimateCostUsd,
-  referenceReplyCostUsd,
-  modelCostsFor,
-  REFERENCE_REPLY,
-} from "./pricing";
+import { estimateCostUsd, referenceReplyCostUsd, modelCostsFor, REFERENCE_REPLY } from "./pricing";
 import { MODEL_IDS, DEFAULT_MODEL } from "./models";
 
 describe("estimateCostUsd", () => {

@@ -95,24 +95,16 @@ export type RoutineEnv = {
 };
 
 /**
- * What the connection engine needs, which is strictly more than the routine
- * engine and strictly less than the API.
+ * What it takes to write a document: embed its text and put its bytes
+ * somewhere.
  *
- * A sync writes documents: it embeds text and puts bytes in the document store,
- * so it needs the embedding configuration and one of the two storage bindings —
- * neither of which the routine engine has ever touched. Naming that as its own
- * type is what lets `cron.ts` stay honest: it is deployed with `RoutineEnv` and
- * may or may not have been given the rest, so it asks rather than claiming them
- * in a type and finding out in production.
- *
- * The storage binding is what `canSyncConnections` tests, but it is not the
- * whole of what a sync needs — the OAuth client credentials below are the other
- * half, and a Worker holding one without the other is the dangerous
- * combination rather than the harmless one. `lib/background` checks for both
- * before a tick claims anything, and the comment there says what goes wrong if
- * it does not.
+ * Split out of `SyncEnv` because there are now two things that write documents
+ * and only one of them is a connection. A routine that files its summary needs
+ * exactly this and none of the OAuth credentials below — and a Worker holding
+ * this and no credentials is a perfectly good deployment that files routine
+ * output and offers no connected sources.
  */
-export type SyncEnv = RoutineEnv & {
+export type DocumentEnv = RoutineEnv & {
   /**
    * Where document embeddings go. Unset means api.openai.com, which is also
    * what `OPENAI_BASE_URL` on its own leaves them at — the two do not inherit
@@ -132,6 +124,27 @@ export type SyncEnv = RoutineEnv & {
   DOCS?: R2Bucket;
   /** Filesystem document root, on the Node runtime only. Absent on Cloudflare. */
   DOCS_DIR?: string;
+};
+
+/**
+ * What the connection engine needs, which is strictly more than the routine
+ * engine and strictly less than the API.
+ *
+ * A sync writes documents: it embeds text and puts bytes in the document store,
+ * so it needs the embedding configuration and one of the two storage bindings —
+ * neither of which the routine engine has ever touched. Naming that as its own
+ * type is what lets `cron.ts` stay honest: it is deployed with `RoutineEnv` and
+ * may or may not have been given the rest, so it asks rather than claiming them
+ * in a type and finding out in production.
+ *
+ * The storage binding is what `canSyncConnections` tests, but it is not the
+ * whole of what a sync needs — the OAuth client credentials below are the other
+ * half, and a Worker holding one without the other is the dangerous
+ * combination rather than the harmless one. `lib/background` checks for both
+ * before a tick claims anything, and the comment there says what goes wrong if
+ * it does not.
+ */
+export type SyncEnv = DocumentEnv & {
   /**
    * OAuth client credentials, one pair per connectable source. Every one is
    * optional and absence is a supported configuration: a deployment that sets
@@ -154,6 +167,31 @@ export type SyncEnv = RoutineEnv & {
  */
 export function canSyncConnections(env: RoutineEnv): env is SyncEnv {
   const candidate = env as SyncEnv;
+  return Boolean(candidate.DOCS || candidate.DOCS_DIR);
+}
+
+/**
+ * Whether this environment can write a document at all.
+ *
+ * The sibling of `canSyncConnections`, testing the same binding and answering a
+ * different question — and the separation is the point rather than an
+ * accident. A routine that files its output needs a document store and no
+ * OAuth credentials; a connection sync needs both. Folding the two into one
+ * predicate would mean a Worker with storage and no Notion credentials could
+ * not file routine output either, for a reason that has nothing to do with it.
+ *
+ * WHY THIS EXISTS AT ALL, which is the part worth reading. The cron Worker is
+ * deployed with `RoutineEnv` and, on Cloudflare, frequently has no R2 binding —
+ * `wrangler.cron.toml.example` says so, because an R2 bucket cannot be shared
+ * across accounts. Filing is the only optional thing a routine run does, and
+ * `getDocStore` THROWS when nothing is bound. An unguarded call would land in
+ * `runRoutine`'s catch, be recorded as a failure, back the schedule off
+ * geometrically, and at `MAX_FAILURES` pause a routine that is delivering
+ * perfectly — because of an extra nobody would have missed. The guard is what
+ * turns that into one sentence in the run history.
+ */
+export function canFileDocuments(env: RoutineEnv): env is DocumentEnv {
+  const candidate = env as DocumentEnv;
   return Boolean(candidate.DOCS || candidate.DOCS_DIR);
 }
 

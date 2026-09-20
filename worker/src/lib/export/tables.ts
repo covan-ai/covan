@@ -108,11 +108,6 @@ export const EXPORTED: TableSpec[] = [
     order: "created_at",
   },
   {
-    table: "documents",
-    scope: { kind: "in", column: "bundle_id", from: { table: "knowledge_bundles", column: "id" } },
-    order: "created_at",
-  },
-  {
     table: "chat_sessions",
     scope: { kind: "workspace", column: "workspace_id" },
     order: "created_at",
@@ -156,6 +151,24 @@ export const EXPORTED: TableSpec[] = [
     columns: "id,workspace_id,user_id,kind,label,created_at",
   },
   {
+    // BELOW `routines`, which is not where it reads most naturally — a document
+    // belongs next to its bundle — and is where its foreign keys put it.
+    //
+    // `documents.routine_id` (0056) points at `routines`, and unlike
+    // `routines.delivery_channel_id` it is an ordinary constraint: there was no
+    // cycle to break, so there was no reason to make it deferrable. A filed
+    // summary inserted before the routine that wrote it is a failed transaction
+    // on restore, not a dropped column. `connection_id` puts the same
+    // requirement on `connections`, which is above, and `bundle_id` on
+    // `knowledge_bundles`, which is further above still — so this is the first
+    // position that satisfies all three.
+    table: "documents",
+    scope: { kind: "in", column: "bundle_id", from: { table: "knowledge_bundles", column: "id" } },
+    order: "created_at",
+  },
+  {
+    // Last, and now for two reasons rather than one: `routine_id` points at
+    // `routines` and `document_id` (0056) at `documents`, both above.
     table: "routine_runs",
     scope: { kind: "in", column: "routine_id", from: { table: "routines", column: "id" } },
     order: "started_at",

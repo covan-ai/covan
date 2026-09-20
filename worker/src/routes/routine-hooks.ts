@@ -88,8 +88,7 @@ routineHooks.post("/routine-hooks/:token", async (c) => {
   // useless — two genuine "the deploy finished" events are identical, and
   // would silently become one.
   const eventId =
-    EVENT_ID_HEADERS.map((h) => c.req.header(h)).find((v) => v && v.trim()) ??
-    crypto.randomUUID();
+    EVENT_ID_HEADERS.map((h) => c.req.header(h)).find((v) => v && v.trim()) ?? crypto.randomUUID();
 
   // 202 now, work afterwards. A routine run reads documents, calls a model and
   // delivers, which is tens of seconds; every webhook sender worth the name

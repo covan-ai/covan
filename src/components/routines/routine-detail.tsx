@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, Minus, X } from "lucide-react";
 import { SectionCard } from "@/components/section-card";
 import { RoutineWebhookCard } from "@/components/routines/routine-webhook-card";
+import { RoutineOutputCard } from "@/components/routines/routine-output-card";
 import { SectionHeading } from "@/components/page-container";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,7 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { RoutineStatus } from "@/components/routines/routine-status";
 import { cronToProse } from "@/lib/cron-to-prose";
 import { formatRelative } from "@/lib/relative-time";
-import type { Routine, RoutineRun } from "@/lib/routines-api";
+import type { Routine, RoutineRun, UpdateRoutineInput } from "@/lib/routines-api";
 import type { Connection } from "@/lib/connections-api";
 
 /**
@@ -79,6 +80,11 @@ function RunRow({ run }: { run: RoutineRun }) {
             <span className="tabular-nums">{run.itemsOverflow}</span> skipped
           </span>
         )}
+        {/* One word, because that is the whole of what happened: the summary
+            is now also a document in a bundle. No chip and no colour — filing
+            is the ordinary outcome for a routine that files, and a badge on
+            fifty-two consecutive rows says nothing. */}
+        {run.documentId !== null && <span className="text-muted-foreground"> · Filed</span>}
       </span>
     ) : run.status === "failed" ? (
       <span className="text-sm text-destructive">{run.error ?? "Failed"}</span>
@@ -102,15 +108,33 @@ function RunRow({ run }: { run: RoutineRun }) {
     </span>
   );
 
+  // Only ever set on a run that was supposed to file and did not, so it is
+  // never on screen for the two ordinary cases. Shown without expanding the
+  // row, because it is the only way anybody finds out that their scheduled
+  // worker has no document storage bound, or that they were demoted to viewer
+  // last month — the mail keeps arriving either way, which is exactly why
+  // nothing else would tell them.
+  //
+  // Muted rather than red. The run succeeded; what failed is the optional half
+  // of it, and colouring it as a failure would teach people to ignore the
+  // colour that means one.
+  const filingNote =
+    run.filingNote === null ? null : (
+      <p className="mt-1 pl-[1.625rem] text-xs text-muted-foreground">{run.filingNote}</p>
+    );
+
   // Runs that sent nothing have nothing to reveal, and so do delivered runs
   // recorded before routine_runs.summary existed — there is nothing to backfill
   // those with, so they stay plain rows rather than expanding to an empty box.
   if (run.summary === null) {
     return (
-      <li className="flex items-center gap-3 px-5 py-3">
-        {icon}
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        {when}
+      <li className="px-5 py-3">
+        <div className="flex items-center gap-3">
+          {icon}
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {when}
+        </div>
+        {filingNote}
       </li>
     );
   }
@@ -129,6 +153,7 @@ function RunRow({ run }: { run: RoutineRun }) {
         </button>
         {when}
       </div>
+      {filingNote}
       {open && (
         <p className="mt-2 whitespace-pre-wrap border-l-2 border-border pl-3 text-sm text-muted-foreground">
           {run.summary}
@@ -142,11 +167,15 @@ export function RoutineDetail({
   routine,
   runs,
   connections = [],
+  bundles = [],
+  attachedBundleIds = [],
+  canWrite = true,
   channelLabel,
   isOwner,
   onTogglePause,
   onDelete,
   onToggleShared,
+  onSave,
   onRunNow,
   running,
   busy,
@@ -160,12 +189,32 @@ export function RoutineDetail({
    * routine of any other kind gets.
    */
   connections?: Connection[];
+  /**
+   * The workspace's knowledge bundles, for the one control that picks one.
+   * Empty renders the card with nothing to choose, which is the honest state of
+   * a workspace that has no bundles yet.
+   */
+  bundles?: Array<{ id: string; name: string }>;
+  /** Which of them this routine's agent reads, so the card can say so. */
+  attachedBundleIds?: string[];
+  /**
+   * Whether the caller may write to the workspace's knowledge. Only used to
+   * stop the filing card promising something a viewer's runs will not do.
+   * Defaults to true, which is what an unknown role does everywhere else here.
+   */
+  canWrite?: boolean;
   /** null when the viewer is not the owner — RLS hides other people's channels. */
   channelLabel: string | null;
   isOwner: boolean;
   onTogglePause: () => void;
   onDelete: () => void;
   onToggleShared: (shared: boolean) => void;
+  /**
+   * Any other patch this screen makes. Separate from the single-purpose
+   * callbacks above because what it carries is open-ended, and optional so a
+   * caller that renders this read-only does not have to invent one.
+   */
+  onSave?: (patch: UpdateRoutineInput) => void;
   onRunNow: () => void;
   /** A manual run is synchronous and can take a while — the LLM call is in it. */
   running: boolean;
@@ -266,6 +315,21 @@ export function RoutineDetail({
           get an empty card and a button that 404s. */}
       {isOwner && routine.triggerKind !== "schedule" && (
         <RoutineWebhookCard routineId={routine.id} />
+      )}
+
+      {/* Owner only, for the same reason the pause and delete controls are:
+          filing is a write into the workspace's knowledge, and offering the
+          control to somebody whose PATCH will be refused produces an error
+          they cannot act on. */}
+      {isOwner && (
+        <RoutineOutputCard
+          routine={routine}
+          bundles={bundles}
+          attachedBundleIds={attachedBundleIds}
+          canWrite={canWrite}
+          onSave={onSave ?? (() => {})}
+          saving={busy}
+        />
       )}
 
       <section className="mt-10">

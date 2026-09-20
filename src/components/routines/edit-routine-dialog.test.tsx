@@ -18,6 +18,8 @@ const routine: Routine = {
   scheduleCron: "0 */6 * * *",
   timezone: "Europe/Istanbul",
   triggerKind: "schedule" as const,
+  outputBundleId: null,
+  outputRetention: 52,
   status: "active",
   pausedReason: null,
   nextRunAt: Date.now() + 60_000,

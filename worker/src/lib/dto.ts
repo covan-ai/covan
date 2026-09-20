@@ -43,6 +43,29 @@ export type DocumentDTO = {
   connectionId?: string | null;
   /** The page or file at the source, for a synced document. */
   externalUrl?: string | null;
+  /**
+   * The routine that wrote it, or null for an upload or a synced file.
+   *
+   * This and `connectionId` are the whole of a document's provenance, and the
+   * Knowledge tab derives what it says from the two of them rather than from a
+   * `kind` column, a chip or a colour: null and null is a file somebody
+   * uploaded, which is the case that needs no explanation at all.
+   *
+   * Undefined means "not fetched", which is not the same answer as "written by
+   * nobody" — the same distinction `connectionId` makes.
+   */
+  routineId?: string | null;
+  /**
+   * That routine's name, for the line under the filename.
+   *
+   * Null while `routineId` is set is a real and expected combination rather
+   * than a bug: `routines_select_visible` shares a routine with the workspace
+   * only when its owner marked it shared, so a colleague's private routine
+   * filing into a shared bundle produces exactly this. The document is theirs
+   * to read and the routine is not theirs to see, so the interface says "a
+   * routine" and stops there.
+   */
+  routineName?: string | null;
 };
 
 export type AgentDTO = {
@@ -245,8 +268,12 @@ export function mapDocument(row: {
   bundle_id?: string | null;
   connection_id?: string | null;
   external_url?: string | null;
+  routine_id?: string | null;
+  /** The embedded `routines(name)`, in either shape PostgREST returns it. */
+  routines?: unknown;
 }): DocumentDTO {
   const chunkCount = row.document_chunks?.[0]?.count ?? 0;
+  const routine = firstEmbedded<{ name?: string | null }>(row.routines);
   return {
     id: row.id,
     name: row.name,
@@ -257,6 +284,10 @@ export function mapDocument(row: {
     ...(row.bundle_id ? { bundleId: row.bundle_id } : {}),
     ...(row.connection_id !== undefined ? { connectionId: row.connection_id } : {}),
     ...(row.external_url !== undefined ? { externalUrl: row.external_url } : {}),
+    ...(row.routine_id !== undefined ? { routineId: row.routine_id } : {}),
+    // Only when the id was fetched. A name on its own would be a claim about
+    // provenance made by a query that never asked about it.
+    ...(row.routine_id !== undefined ? { routineName: routine?.name ?? null } : {}),
   };
 }
 
@@ -283,6 +314,8 @@ export function mapAgent(row: {
         bundle_id?: string | null;
         connection_id?: string | null;
         external_url?: string | null;
+        routine_id?: string | null;
+        routines?: unknown;
       }> | null;
     } | null;
   }> | null;
@@ -469,6 +502,13 @@ export type RoutineDTO = {
    * after creation.
    */
   triggerKind: "schedule" | "webhook" | "both";
+  /**
+   * The bundle each delivered summary is filed into, or null to file nothing —
+   * which is every routine made before 0056 and the default since.
+   */
+  outputBundleId: string | null;
+  /** How many filed documents this routine keeps. 52 unless somebody changed it. */
+  outputRetention: number;
   status: "active" | "paused";
   pausedReason: string | null;
   nextRunAt: number | null;
@@ -489,6 +529,8 @@ export function mapRoutine(row: {
   schedule_cron: string;
   timezone: string;
   trigger_kind?: string | null;
+  output_bundle_id?: string | null;
+  output_retention?: number | null;
   status: string;
   paused_reason: string | null;
   next_run_at: string | null;
@@ -512,9 +554,13 @@ export function mapRoutine(row: {
     // absent: a row read by a build older than 0055 — or by a query written
     // before this field existed — is a scheduled routine, which is what it was.
     triggerKind:
-      row.trigger_kind === "webhook" || row.trigger_kind === "both"
-        ? row.trigger_kind
-        : "schedule",
+      row.trigger_kind === "webhook" || row.trigger_kind === "both" ? row.trigger_kind : "schedule",
+    outputBundleId: row.output_bundle_id ?? null,
+    // 52 rather than 0 when the column is absent, because the DTO has to name
+    // the number the database would use: a row read by a query written before
+    // 0056 still has the default behind it, and reporting 0 here would put "0
+    // kept" in front of somebody whose routine keeps a year of them.
+    outputRetention: row.output_retention ?? 52,
     status: row.status === "paused" ? "paused" : "active",
     pausedReason: row.paused_reason ?? null,
     nextRunAt: row.next_run_at ? toEpochMs(row.next_run_at) : null,
@@ -548,6 +594,19 @@ export type RoutineRunDTO = {
   /** What was delivered. Null for skipped and failed runs, and for any run
    *  recorded before routine_runs.summary existed. */
   summary: string | null;
+  /** The document this run filed, if it filed one. */
+  documentId: string | null;
+  /**
+   * Why this run filed nothing when it was supposed to.
+   *
+   * Null in the two ordinary cases — the routine files nothing, or filing
+   * worked — so a note on screen always means something went wrong with the
+   * optional half of a run that otherwise succeeded. That is a state worth
+   * showing rather than hiding: a person who set up filing and sees no
+   * documents has no other way to find out that their cron Worker has no
+   * storage bound, or that they were demoted to viewer last month.
+   */
+  filingNote: string | null;
   startedAt: number;
 };
 
@@ -559,6 +618,8 @@ export function mapRoutineRun(row: {
   duration_ms: number | null;
   error: string | null;
   summary?: string | null;
+  document_id?: string | null;
+  filing_note?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -570,6 +631,8 @@ export function mapRoutineRun(row: {
     durationMs: row.duration_ms ?? null,
     error: row.error ?? null,
     summary: row.summary ?? null,
+    documentId: row.document_id ?? null,
+    filingNote: row.filing_note ?? null,
     startedAt: toEpochMs(row.started_at),
   };
 }

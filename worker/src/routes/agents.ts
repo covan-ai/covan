@@ -8,8 +8,13 @@ import { REASONING_EFFORTS } from "../lib/models";
 
 const agents = new Hono<AppEnv>();
 
+// `routines(name)` is embedded through `documents.routine_id`, and it resolves
+// through `routines`' own RLS rather than through the document's: a colleague's
+// private routine filing into a shared bundle comes back as a null name beside
+// a real id, which is exactly what the Knowledge tab should say about it. See
+// `DocumentDTO.routineName`.
 const AGENT_SELECT =
-  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,document_chunks(count))))";
+  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,routine_id,routines(name),document_chunks(count))))";
 
 /**
  * The two tuning settings, on both schemas.

@@ -5,6 +5,8 @@ const triggerSelect = vi.fn();
 const routineSelect = vi.fn();
 const updated: unknown[] = [];
 let triggerFilter: { column: string; value: unknown } | null = null;
+/** The column list the routine read asked for, so a narrowing is visible. */
+let routineColumns = "";
 
 vi.mock("../supabase", () => ({
   serviceClient: () => ({
@@ -23,7 +25,12 @@ vi.mock("../supabase", () => ({
           },
         };
       }
-      return { select: () => ({ eq: () => ({ maybeSingle: routineSelect }) }) };
+      return {
+        select: (columns: string) => {
+          routineColumns = columns;
+          return { eq: () => ({ maybeSingle: routineSelect }) };
+        },
+      };
     },
   }),
 }));
@@ -166,6 +173,52 @@ describe("resolveIngestToken", () => {
   it("does not blame the caller for a failed lookup", async () => {
     triggerSelect.mockResolvedValue({ data: null, error: { message: "boom" } });
     expect(await resolveIngestToken(ENV, TOKEN)).toMatchObject({ status: 409 });
+  });
+});
+
+/**
+ * The column list this module reads a routine with.
+ *
+ * It is written out rather than `*`, which is the right call — a widening
+ * should be deliberate — and has the failure mode that goes with it: a column
+ * added for a feature and wired into the executor makes a POKED run behave
+ * differently from a scheduled one, silently, because `claim_due_routines`
+ * returns whole rows and this returns the ones somebody remembered.
+ *
+ * That has already happened once. 0056's filing columns were added to the
+ * executor and not here, so a poked routine delivered and quietly filed
+ * nothing. This is the list of columns whose absence changes behaviour rather
+ * than the whole schema, so adding a column nobody reads does not fail it.
+ */
+describe("the columns a poked run is given", () => {
+  it("includes everything the executor branches on", async () => {
+    triggerSelect.mockResolvedValue({ data: { routine_id: "r1" }, error: null });
+    routineSelect.mockResolvedValue({ data: routine(), error: null });
+    await resolveIngestToken(ENV, TOKEN);
+
+    for (const column of [
+      "id",
+      "agent_id",
+      "user_id",
+      "workspace_id",
+      "name",
+      "source_kind",
+      "source_config",
+      "instruction",
+      "delivery_channel_id",
+      "schedule_cron",
+      "timezone",
+      "next_run_at",
+      "cursor",
+      "consecutive_failures",
+      "status",
+      "trigger_kind",
+      "output_bundle_id",
+      "output_retention",
+      "deleted_at",
+    ]) {
+      expect(routineColumns.split(/,\s*/), column).toContain(column);
+    }
   });
 });
 

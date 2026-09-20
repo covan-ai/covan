@@ -465,6 +465,139 @@ The worst outcome is a misleading summary in the owner's own inbox — the same
 thing a hostile RSS feed could already produce. Treat the token as the security
 boundary, because it is the one.
 
+## Keeping what it sends
+
+A routine delivers and then forgets. Turn on **Keep a copy** on the routine's
+page and it also files each delivered summary into a knowledge bundle, as an
+ordinary document — chunked, embedded, retrievable in chat, exportable,
+deletable, exactly like something somebody uploaded.
+
+This is the difference between a routine that mails you and a routine that
+accumulates. Fifty-two weekly competitor digests in a bundle are a year of
+history the agent can be asked a question of, and "what did they ship in Q2?" is
+a question no Slack channel answers.
+
+It is off by default, and that is about intent rather than cost — see the end of
+this section for what it costs, which is single figures.
+
+### One document per run
+
+Each delivering run writes one document, named after the routine and the day:
+
+```
+Competitor digest — 2026-09-20.md
+```
+
+Inside, the text opens with that same line as a heading and then carries exactly
+what was delivered — including the sentence about entries the per-run cap
+dropped, if there was one. A digest that was missing thirty entries is still
+missing them a year later, and a tidier filed copy would be the more
+complete-looking of the two.
+
+Two alternatives were considered and dropped. Appending to one growing document
+re-cuts every chunk boundary on each append, so the whole history is re-embedded
+every time and the cost grows with the square of the number of runs. Replacing
+the document each run — the way a connected source does — is wrong for a
+different reason: a connection _reconciles_, answering "what is there now",
+while a routine has a cursor and answers "what changed since". Week 12's summary
+is not made wrong by week 13. It is history, which is the whole point.
+
+Two runs on one day produce two documents with the same name. That is what
+happened, and the timestamps tell them apart.
+
+### How many it keeps
+
+**Keep the last** bounds it: 52 by default, which is about a year on the
+dominant schedule. When a run files the 53rd, the oldest is removed — and
+"removed" means what it means everywhere else in Covan, so it is recoverable
+until the purge window passes. It does not appear in **Recently deleted**,
+because nobody deleted it; it aged out.
+
+### Who may file
+
+Filing is a **write** into the workspace's knowledge, so it needs
+`can_write_in_workspace` — the same permission as uploading a file. Delivering
+is only reading.
+
+The two come apart when somebody is demoted. A viewer's routine keeps
+delivering, because their mail is theirs, and stops filing, because the bundle
+is the workspace's. The engine re-reads the owner's role on every run rather
+than trusting what was true when the routine was set up, and the run history
+says so when it happens.
+
+This one check is genuinely load-bearing. The engine holds a service-role client
+and row level security does not constrain it, so nothing else in the system
+would notice.
+
+### Where it does not work, and how you find out
+
+The scheduled worker can be deployed without document storage — on Cloudflare
+that is the normal case, because an R2 bucket cannot be shared across accounts
+and `wrangler.cron.toml.example` says so. Such a worker can deliver routines and
+cannot write documents.
+
+When that happens, **the run still succeeds**. It delivers, it is recorded as
+`Sent`, and a line under it reads:
+
+```
+not filed: this deployment's scheduled worker has no document storage bound
+```
+
+The alternative was worse in a way worth naming. An unguarded write would throw,
+the run would be recorded as a failure, the schedule would back off
+geometrically, and after five of them a routine that was delivering perfectly
+would be **paused** — for the sake of an optional extra. Every way filing can
+fail is therefore a sentence in the run history rather than a failure: a missing
+bundle, a demoted owner, an embedding provider having a bad afternoon. The
+sentence is only ever there when something went wrong, so seeing one means
+something.
+
+### The loop
+
+A filed document is a real document, so it can be read back. There are two ways
+that matters and they are closed differently.
+
+**A routine watching a connection never sees what a routine wrote.** The
+connection source filters on provenance, so filed documents are invisible to it
+whatever bundle they are in. Without that, two routines pointed at one bundle
+would manufacture each other's input forever, paying for a model call each time.
+This is a structural rule rather than a coincidence: before the provenance
+column existed it was held shut only by the fact that a filed document happens
+to have no connection.
+
+**A routine can read its own earlier output**, when its agent has the output
+bundle attached. That is often exactly what you want — a digest that knows what
+it said last week — so it is not prevented, and the card says plainly when the
+arrangement is in place. It does not compound: each run still summarises fresh
+material. Excluding one routine's own output while leaving chat and every other
+routine able to read it is a narrower change than it sounds and is not in this
+release.
+
+### What it costs
+
+The embeddings are charged with the run that bought them, in the same number on
+the same row — there is no second meter. A 3,000-character summary is about two
+chunks, roughly 800 embedding tokens, which the usage counter weights down to
+single figures against one chat turn.
+
+### What it looks like afterwards
+
+In the agent's **Knowledge** tab, a filed document sits in the list like any
+other, with one extra phrase on the line under its name:
+
+```
+14 KB · Written by Competitor digest
+```
+
+No chip, no colour, no new column. Where a document came from is derived from
+what it points at, and a document nobody has to explain — one somebody uploaded
+— says nothing at all. If a colleague's routine filed it and that routine is
+private, the line reads `Written by a routine`: the document is yours to read
+and the routine is not yours to see.
+
+One honest gap: a document written by **Save as document** from a chat session
+still looks exactly like an upload, because nothing records that either.
+
 ## Scheduling
 
 A schedule is a five-field cron expression plus an IANA timezone, and the

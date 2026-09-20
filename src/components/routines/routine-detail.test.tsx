@@ -36,6 +36,8 @@ const routine: Routine = {
   scheduleCron: "0 * * * *",
   timezone: "Europe/Istanbul",
   triggerKind: "schedule" as const,
+  outputBundleId: null,
+  outputRetention: 52,
   status: "active",
   pausedReason: null,
   nextRunAt: null,
@@ -53,6 +55,8 @@ const runs: RoutineRun[] = [
     durationMs: 1400,
     error: null,
     summary: "Three new posts about pricing.",
+    documentId: null,
+    filingNote: null,
     startedAt: 0,
   },
   {
@@ -64,6 +68,8 @@ const runs: RoutineRun[] = [
     durationMs: 300,
     error: null,
     summary: null,
+    documentId: null,
+    filingNote: null,
     startedAt: 0,
   },
   {
@@ -75,6 +81,8 @@ const runs: RoutineRun[] = [
     durationMs: 2100,
     error: "upstream 503",
     summary: null,
+    documentId: null,
+    filingNote: null,
     startedAt: 0,
   },
 ];

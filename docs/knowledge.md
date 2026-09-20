@@ -235,6 +235,30 @@ minute. It is charged to your monthly allowance like a reply, and costs about
 what two to seven replies do — more than a chat turn, because the length is the
 point.
 
+## What a routine files
+
+A [routine](routines.md#keeping-what-it-sends) can file each summary it delivers
+into a bundle you choose. The result is an ordinary document — it is chunked and
+embedded when it is written, retrieves in chat, downloads, moves, deletes and
+goes into the workspace export like anything you uploaded. One document per run,
+named after the routine and the day.
+
+In the list it carries one extra phrase on the line under its name:
+
+```
+14 KB · Written by Competitor digest
+```
+
+That is the whole of the difference. Where a document came from is derived from
+what it points at rather than declared with a chip or a colour, and a document
+nobody has to explain — one somebody uploaded — says nothing at all. If it was
+filed by a colleague's private routine, the line reads `Written by a routine`:
+the document is yours to read and the routine is not yours to see.
+
+A routine keeps a bounded number of its own documents — 52 by default, about a
+year of weekly — and removes the oldest past that. They do not appear in
+**Recently deleted**, because nobody deleted them.
+
 ## Attaching, detaching and deleting
 
 The switch beside each bundle attaches it to the agent whose tab you are on.

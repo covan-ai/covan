@@ -8,6 +8,7 @@ import { fetchConnectionItems } from "./connection-source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
+import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
 import { embeddingCost, type Entitlements } from "../entitlements";
 import {
   billsTheOperator,
@@ -68,6 +69,15 @@ export type RoutineRow = {
   next_run_at: string;
   cursor: Cursor | null;
   consecutive_failures: number;
+  /**
+   * The bundle a delivered summary is filed into, or null to file nothing —
+   * which is every routine made before 0056 and the default for every one
+   * made since. Optional on the type as well as nullable in the column, so a
+   * caller reading a narrower projection is not forced to invent one.
+   */
+  output_bundle_id?: string | null;
+  /** How many filed documents this routine keeps. 0056's default is 52. */
+  output_retention?: number | null;
 };
 
 export type SummariseInput = {
@@ -158,6 +168,26 @@ export type ExecutorDeps = {
   ) => Promise<{ ragBlock: string; embeddingTokens: number }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
+  /**
+   * Files a delivered summary into the routine's output bundle.
+   *
+   * Injected for the reason `summarise` and `retrieve` are — this module is
+   * meant to be drivable without an environment — and **optional for a second
+   * reason that is not about testing at all**: the dispatcher leaves it
+   * undefined when this Worker has no document store bound.
+   *
+   * That is the ordinary state of the cron Worker on Cloudflare, where an R2
+   * bucket cannot be shared across accounts and `wrangler.cron.toml.example`
+   * says as much. Expressing it as an absent dependency rather than a runtime
+   * check inside the filing code is what makes the failure impossible to get
+   * wrong: there is nothing here that could throw, so there is nothing that
+   * could be counted as a failure and eventually pause a routine that is
+   * delivering perfectly well. See `canFileDocuments`.
+   *
+   * Takes the resolved run env for the same reason the other two do: embedding
+   * is a paid call and goes to whichever key is answering this run.
+   */
+  file?: (input: FilingInput, env: RoutineEnv) => Promise<FilingResult>;
   /**
    * What set this run going, reported to a webhook receiver as
    * `run.triggeredBy`.
@@ -264,9 +294,18 @@ export async function runRoutine(
     // workspace agent's output to their personal Slack forever. Checked here
     // rather than in the member-removal handler so it holds however membership
     // ends (direct delete, workspace transfer, cascade).
+    //
+    // `role` as well as `user_id`, and the second column is not decoration.
+    // Delivering is reading — a viewer may have a routine that mails them a
+    // digest, and demoting somebody must not silently stop their mail. Filing
+    // is WRITING: 0021 drew that line with `can_write_in_workspace`, and every
+    // other write in the product is refused by RLS. This one cannot be, because
+    // the executor holds the service role and RLS is not filtering it. So the
+    // role is read here and the difference is applied below: a viewer's routine
+    // keeps delivering and stops filing.
     const { data: membership, error: membershipError } = await deps.db
       .from("workspace_members")
-      .select("user_id")
+      .select("user_id, role")
       .eq("workspace_id", routine.workspace_id)
       .eq("user_id", routine.user_id)
       .maybeSingle();
@@ -564,39 +603,60 @@ export async function runRoutine(
       return { status: "skipped", itemsNew: 0 };
     }
 
-    await deliver(
-      channel,
-      { subject: routine.name, body: withOverflowNote(summary.text, overflow) },
-      deps.deliveryDeps,
-      {
-        event: EVENT_DELIVERED,
-        routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
-        // `items.length` rather than the claimed keys: what the summary is
-        // about. `overflow` is what it is missing, which is the number a
-        // receiver needs to know the digest is not the whole story.
-        run: {
-          itemsNew: items.length,
-          itemsOverflow: overflow,
-          // A poke names itself, whatever the dispatcher was built as.
-          triggeredBy: trigger ? "webhook" : (deps.trigger ?? "schedule"),
-        },
+    // What is sent and, if this routine files, what is kept — the same text,
+    // overflow note included. A digest that was missing thirty entries is still
+    // missing them a year later, and a filed copy that quietly dropped the
+    // sentence saying so would be the more complete-looking of the two.
+    const body = withOverflowNote(summary.text, overflow);
+
+    await deliver(channel, { subject: routine.name, body }, deps.deliveryDeps, {
+      event: EVENT_DELIVERED,
+      routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
+      // `items.length` rather than the claimed keys: what the summary is
+      // about. `overflow` is what it is missing, which is the number a
+      // receiver needs to know the digest is not the whole story.
+      run: {
+        itemsNew: items.length,
+        itemsOverflow: overflow,
+        // A poke names itself, whatever the dispatcher was built as.
+        triggeredBy: trigger ? "webhook" : (deps.trigger ?? "schedule"),
       },
-    );
+    });
     // Past this point the message is out. Releasing the claims would let the
     // next tick re-win them and send it again — the duplicate this whole
     // claim-first ordering exists to prevent. Leaving them claimed makes the
     // retry a no-op that simply advances the cursor.
     delivered = true;
 
+    // Filing happens after the message is out and before the bookkeeping, and
+    // it cannot fail the run. `fileOutput` returns a note instead of throwing;
+    // the note reaches `routine_runs.filing_note`, where somebody looking at a
+    // run that says "Sent" and shows no document can read why.
+    const filing = await fileOutput(routine, deps, runEnv, {
+      ownerMayWrite: membership.role !== "viewer",
+      summary: body,
+      at: startedAt,
+    });
+
     await finish(routine, deps, startedAt, {
       status: "ok",
       itemsNew: items.length,
       itemsOverflow: overflow,
+      documentId: filing.documentId,
+      filingNote: filing.note,
       // One counter write for the run, so the embeddings this run paid for are
       // charged with the completion rather than in a second place that a later
       // change could forget — including the decision about whose key paid,
       // which `finish` makes once from `keys`.
-      tokens: summary.tokens + embeddingCost(embeddingTokens),
+      //
+      // `filing.indexTokens` joins the retrieval embeddings in the same sum for
+      // exactly that reason: filing buys embeddings too, and a second
+      // `record()` call for them would be a second place to forget whose key
+      // paid. A 3,000-character summary is about two chunks — roughly 800
+      // embedding tokens, which `embeddingCost` weights down to single figures
+      // against a chat token. Filing is opt-in because of what it means, not
+      // because of what it costs.
+      tokens: summary.tokens + embeddingCost(embeddingTokens + filing.indexTokens),
       cursor: nextCursor,
       summary: summary.text,
       keys,
@@ -653,6 +713,66 @@ export async function runRoutine(
 }
 
 /**
+ * Files a delivered summary, if this routine files anything and this Worker can.
+ *
+ * Returns rather than throws, in every branch, and that is the whole design.
+ * The message has already gone out by the time this is called. An exception
+ * here would be caught by `runRoutine`, recorded as a failure, backed off
+ * geometrically and at `MAX_FAILURES` would pause a routine that is delivering
+ * perfectly — for the sake of an optional extra. Every way this can go wrong is
+ * therefore a sentence, written to the run, where a person will read it.
+ *
+ * The three refusals, in the order they are asked:
+ *
+ *   1. The routine files nothing. No note: there is nothing to explain.
+ *   2. This Worker has no document store. Not the owner's doing and not a
+ *      fault — see `canFileDocuments` for why the cron Worker is routinely in
+ *      this state — so it says which deployment is missing what.
+ *   3. The owner is a viewer. Delivering is reading and filing is writing; the
+ *      service role would happily do both, and this is the only thing standing
+ *      where RLS normally stands.
+ */
+async function fileOutput(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  runEnv: RoutineEnv,
+  input: { ownerMayWrite: boolean; summary: string; at: Date },
+): Promise<{ documentId?: string; note?: string; indexTokens: number }> {
+  if (!routine.output_bundle_id) return { indexTokens: 0 };
+  if (!deps.file) return { note: NOTE_NO_DOCUMENT_STORE, indexTokens: 0 };
+  if (!input.ownerMayWrite) return { note: NOTE_VIEWER, indexTokens: 0 };
+
+  try {
+    const result = await deps.file(
+      {
+        routineId: routine.id,
+        routineName: routine.name,
+        workspaceId: routine.workspace_id,
+        bundleId: routine.output_bundle_id,
+        // 0056 defaults the column and bounds it; this only covers a row read
+        // through a projection that did not select it.
+        retention: routine.output_retention ?? 52,
+        summary: input.summary,
+        at: input.at,
+      },
+      runEnv,
+    );
+    return result.filed
+      ? { documentId: result.documentId, indexTokens: result.indexTokens }
+      : { note: result.note, indexTokens: 0 };
+  } catch (err) {
+    // `fileRoutineOutput` is documented never to throw. This catch is for the
+    // injected dependency rather than for that one: a test double, or a future
+    // implementation that forgets the contract, must not be able to turn a
+    // delivered run into a failed one.
+    return {
+      note: `not filed: ${err instanceof Error ? err.message : String(err)}`,
+      indexTokens: 0,
+    };
+  }
+}
+
+/**
  * Writes the run row and the routine's next state. A failure backs the interval
  * off geometrically and, at MAX_FAILURES, pauses with a reason — a routine that
  * dies quietly while the UI still says "active" is the failure that destroys
@@ -680,6 +800,10 @@ type RunOutcome = {
   error?: string;
   /** What was delivered. Absent for skipped and failed runs, which sent nothing. */
   summary?: string;
+  /** The document this run filed, when it filed one. */
+  documentId?: string;
+  /** Why it filed nothing, when it was supposed to. See `fileOutput`. */
+  filingNote?: string;
   /** The remote's fault, not the routine's — judged against the higher limit. */
   transient?: boolean;
   /** Pause the routine with this reason, independently of the failure count. */
@@ -732,6 +856,8 @@ async function finish(
     duration_ms: finishedAt.getTime() - startedAt.getTime(),
     error: outcome.error ?? null,
     summary: outcome.summary ?? null,
+    document_id: outcome.documentId ?? null,
+    filing_note: outcome.filingNote ?? null,
   });
   if (runError) throw new Error(`routine_runs insert failed: ${runError.message}`);
 

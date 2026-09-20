@@ -1,6 +1,7 @@
 // worker/src/lib/routines/dispatcher.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
+import { canFileDocuments } from "../../types";
 import { serviceClient } from "../supabase";
 import {
   runRoutine as defaultRunRoutine,
@@ -11,6 +12,7 @@ import {
 import { summariseWithModel } from "./summarise";
 import { ownHostsFrom } from "./url-guard";
 import { deliveryDepsFrom } from "./delivery";
+import { fileRoutineOutput } from "./filing";
 import { entitlementsFor } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
 
@@ -80,6 +82,30 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
     // test-send button cannot end up with different ideas of which hosts a
     // channel may point at — `ownHosts` is the one a copy would forget.
     deliveryDeps: deliveryDepsFrom(env),
+    // Absent, deliberately, when this Worker has no document store bound.
+    //
+    // This is where the guard lives rather than inside the filing code, and the
+    // difference matters: an undefined dependency is something the executor can
+    // report in one sentence, while a `getDocStore()` that throws inside a run
+    // is a failure, a geometric backoff and eventually a paused routine. The
+    // cron Worker on Cloudflare is routinely in exactly this state — an R2
+    // bucket cannot cross accounts, and `wrangler.cron.toml.example` says so —
+    // so this is the ordinary path, not the edge case.
+    //
+    // The narrowed env goes in here and not into `ExecutorDeps`: the executor
+    // keeps taking `RoutineEnv`, which is what the cron Worker is deployed
+    // with, and the one thing that needs more than that is the one thing that
+    // is optional.
+    //
+    // Both envs are spread, in that order, and neither alone would do. `env` is
+    // the one `canFileDocuments` narrowed, so it is what carries the storage
+    // binding into the type. `runEnv` is the one this particular run resolved,
+    // so it carries whichever provider key is paying — and filing embeds, which
+    // is a paid call. An owner who brought their own key pays for the filing
+    // half of their run as well as the answering half.
+    file: canFileDocuments(env)
+      ? (input, runEnv) => fileRoutineOutput(db, { ...env, ...runEnv }, input)
+      : undefined,
     now: () => new Date(),
   };
 }

@@ -90,10 +90,31 @@ export async function fetchConnectionItems(
   // removals. Saying "the pricing sheet was taken down" would be worth having;
   // it needs the cursor to remember what it saw rather than only what was new,
   // and that is a wider change than this.
+
+  // THE LOOP GUARD, and it is structural rather than incidental.
+  //
+  // Since 0056 a routine can file its delivered summary into a bundle as an
+  // ordinary document. If that bundle is also a connection's, and a routine
+  // watches that connection, then routine A's output is routine B's input —
+  // and with two of them pointed at each other, or one at itself, every run
+  // manufactures the material for the next one, forever, paying for a model
+  // call each time.
+  //
+  // That was already shut before this line existed, but only by accident: a
+  // filed document has no `connection_id`, so the filter above never matched
+  // it. Accidents are not guarantees, and a later change that gave filed
+  // documents a connection — adopting them on reconnect, say — would have
+  // opened it silently. `routine_id is null` says the rule instead of relying
+  // on a side effect of a different one.
+  //
+  // A routine still reads its OWN previous output through retrieval when its
+  // agent has the bundle attached. That is narrower, it does not compound, and
+  // closing it needs a sixth `match_chunks` parameter — see `filing.ts`.
   const { data, error } = await db
     .from("documents")
     .select("id, name, content, external_url, external_version, synced_at")
     .eq("connection_id", connectionId)
+    .is("routine_id", null)
     .is("deleted_at", null)
     .order("synced_at", { ascending: false })
     .limit(limit);

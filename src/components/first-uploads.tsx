@@ -40,7 +40,7 @@ const FIRST_UPLOADS: Array<{ what: string; why: string }> = [
 export function FirstUploads({ className }: { className?: string }) {
   return (
     <SectionCard className={className}>
-      <p className="font-dm text-[18px] leading-tight">Start with four files</p>
+      <p className="font-dm text-title leading-tight">Start with four files</p>
       <p className="mt-2 max-w-prose text-sm leading-[1.45] text-muted-foreground">
         A bundle is a group of documents any agent can read. It is worth more than the sum of the
         files in it once it covers the questions people actually ask, so start with the ones they

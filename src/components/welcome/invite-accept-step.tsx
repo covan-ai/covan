@@ -54,7 +54,7 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
           className="flex flex-wrap items-center gap-3 rounded-xl border border-hairline bg-card px-4 py-3.5"
         >
           <span aria-hidden className="h-2 w-2 shrink-0 bg-accent-orange" />
-          <span className="min-w-0 flex-1 text-[15px]">
+          <span className="min-w-0 flex-1 text-base">
             <strong className="font-medium">{invite.workspaceName}</strong>
             <span className="text-muted-foreground"> · as {invite.role}</span>
           </span>
@@ -66,7 +66,7 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
       <button
         type="button"
         onClick={onDone}
-        className="w-full text-center text-[13px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        className="w-full text-center text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
       >
         Not now
       </button>

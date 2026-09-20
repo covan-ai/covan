@@ -196,7 +196,7 @@ export function KnowledgeStep({ agent, onDone }: { agent: Agent; onDone: () => v
           type="button"
           onClick={onDone}
           disabled={saving}
-          className="w-full text-center text-[13px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          className="w-full text-center text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
           I'll add documents later
         </button>

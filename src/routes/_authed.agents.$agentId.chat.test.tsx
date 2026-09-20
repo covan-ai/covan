@@ -165,13 +165,19 @@ async function renderChat() {
       <ChatTab />
     </QueryClientProvider>,
   );
-  // Waits on the Share button rather than the composer, which renders before
-  // anything has loaded. Share needs `isOwner`, which needs `/me` — so by the
-  // time it is on screen both queries have settled and the shortcuts that turn
-  // on ownership behave the way they will in a browser.
+  // Waits on the share toggle rather than the composer, which renders before
+  // anything has loaded. The toggle needs `isOwner`, which needs `/me` — so by
+  // the time it is on screen both queries have settled and the shortcuts that
+  // turn on ownership behave the way they will in a browser.
   await screen.findByPlaceholderText(`Message ${agent.name}`);
-  await screen.findByText("Share");
+  await screen.findByRole("button", { name: "Share with your workspace" });
   return { ...view, client };
+}
+
+/** Opens the conversation search and hands back the field. */
+async function openSearch() {
+  await userEvent.click(screen.getByRole("button", { name: "Search this conversation" }));
+  return screen.getByPlaceholderText("Search this conversation");
 }
 
 /** The scrolling element, which has no other handle on it. */
@@ -472,7 +478,8 @@ describe("what a reply looks like on its way in", () => {
 
     await waitFor(() => expect(container.querySelector("strong")).toBeInTheDocument());
     expect(container.querySelector("strong")).toHaveTextContent("Forty");
-    expect(screen.getByText("Pricing")).toBeInTheDocument();
+    const answer = container.querySelector('[data-turn="answer"]') as HTMLElement;
+    expect(within(answer).getByText("Pricing")).toBeInTheDocument();
     // And nothing on screen still shows the marks themselves.
     expect(screen.queryByText(/\*\*Forty\*\*/)).not.toBeInTheDocument();
   });
@@ -676,7 +683,7 @@ describe("an answer that stopped at its length limit", () => {
     // One reply, holding both halves — not two replies that silently become
     // one when the stream ends.
     await waitFor(() => expect(screen.getByText(whole)).toBeInTheDocument());
-    expect(container.querySelectorAll(`[class*="pl-9"]`).length).toBe(1);
+    expect(container.querySelectorAll(`[data-turn="answer"]`).length).toBe(1);
     expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
   });
 });
@@ -825,36 +832,40 @@ describe("finding what was said", () => {
     listMessages.mockResolvedValue([older, question, answer]);
     await renderChat();
 
-    const box = screen.getByPlaceholderText("Search");
+    const box = await openSearch();
     await userEvent.type(box, "roll");
 
     await waitFor(() => {
       expect(screen.getByText(/Twenty days, plus up to five can roll over/)).toBeInTheDocument();
       expect(screen.queryByText("What do we charge?")).not.toBeInTheDocument();
     });
-    expect(screen.getByText("1 of 3 messages")).toBeInTheDocument();
+    expect(screen.getByLabelText("1 of 3 messages match")).toBeInTheDocument();
   });
 
   it("says how many matched, or that nothing did", async () => {
     listMessages.mockResolvedValue([question, answer]);
     await renderChat();
 
-    await userEvent.type(screen.getByPlaceholderText("Search"), "vacation");
+    await userEvent.type(await openSearch(), "vacation");
 
-    await waitFor(() => expect(screen.getByText("No matches")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/Nothing in this conversation matches/)).toBeInTheDocument(),
+    );
   });
 
   it("clears the search on Escape", async () => {
     listMessages.mockResolvedValue([older, question, answer]);
     await renderChat();
 
-    const box = screen.getByPlaceholderText("Search");
+    const box = await openSearch();
     await userEvent.type(box, "roll");
-    await waitFor(() => expect(screen.getByText("1 of 3 messages")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("1 of 3 messages match")).toBeInTheDocument());
 
     fireEvent.keyDown(box, { key: "Escape" });
 
-    await waitFor(() => expect(screen.queryByText("1 of 3 messages")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByLabelText("1 of 3 messages match")).not.toBeInTheDocument(),
+    );
     expect(screen.getByText(/What do we charge/)).toBeInTheDocument();
   });
 });

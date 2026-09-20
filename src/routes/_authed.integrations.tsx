@@ -148,8 +148,8 @@ function IntegrationsPage() {
                   <Code2 className="h-[22px] w-[22px]" />
                 </span>
                 <span className="flex min-w-0 flex-col gap-[3px]">
-                  <span className="font-dm text-[18px] font-medium leading-tight">REST API</span>
-                  <span className="text-[13px] leading-tight text-muted-foreground">
+                  <span className="font-dm text-title font-medium leading-tight">REST API</span>
+                  <span className="text-meta leading-tight text-muted-foreground">
                     Call any shared agent programmatically, with a key you mint in Settings.
                   </span>
                 </span>
@@ -163,10 +163,10 @@ function IntegrationsPage() {
                   <SlackMark className="h-[22px] w-[22px]" />
                 </span>
                 <span className="flex min-w-0 flex-col gap-[3px]">
-                  <span className="font-dm text-[18px] font-medium leading-tight">
+                  <span className="font-dm text-title font-medium leading-tight">
                     Slack webhook
                   </span>
-                  <span className="text-[13px] leading-tight text-muted-foreground">
+                  <span className="text-meta leading-tight text-muted-foreground">
                     Deliver a routine's results to a channel, through a webhook URL you paste in
                     Settings.
                   </span>

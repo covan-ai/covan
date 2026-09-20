@@ -505,25 +505,25 @@ function PersonaPreview({
         <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
         <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
         <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-        <span className="ml-2.5 text-[13px] font-medium text-muted-foreground">Preview</span>
+        <span className="ml-2.5 text-meta font-medium text-muted-foreground">Preview</span>
       </div>
       <div className="flex flex-col gap-3 px-5 py-5">
         <PanelEyebrow>{model}</PanelEyebrow>
         {/* Three 14px corners and one 4px corner on the speaker's side. */}
-        <div className="self-end rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-[15px] leading-[1.45] text-primary-foreground">
+        <div className="self-end rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-base text-primary-foreground">
           How can you help?
         </div>
         <div className="flex items-start gap-2.5">
           <AgentAvatar emoji={emoji} className="mt-0.5 h-6 w-6 text-xs" />
           <div className="min-w-0">
-            <div className="text-[13px] font-medium text-muted-foreground">{name}</div>
-            <div className="mt-1 whitespace-pre-wrap rounded-2xl rounded-bl-sm bg-surface px-4 py-3 text-[15px] leading-[1.45]">
+            <div className="text-meta font-medium text-muted-foreground">{name}</div>
+            <div className="mt-1 whitespace-pre-wrap rounded-2xl rounded-bl-sm bg-surface px-4 py-3 text-base">
               {reply}
             </div>
           </div>
         </div>
       </div>
-      <p className="border-t border-hairline px-5 py-3 text-[13px] leading-[1.45] text-muted-foreground">
+      <p className="border-t border-hairline px-5 py-3 text-meta leading-[1.45] text-muted-foreground">
         Illustrative only — updates as you type.
       </p>
     </div>

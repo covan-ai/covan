@@ -61,7 +61,7 @@ function KnowledgeTab() {
           upload is worse than not offering it. */}
       {canWrite ? <KnowledgeTemplates openByDefault={agent.documents.length === 0} /> : null}
 
-      <p className="mt-8 text-[13px] text-muted-foreground">
+      <p className="mt-8 text-meta text-muted-foreground">
         Every bundle in the workspace, including the ones no agent reads, is on the{" "}
         <Link to="/knowledge" className="underline hover:text-foreground">
           Knowledge page

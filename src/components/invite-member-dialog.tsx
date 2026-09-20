@@ -85,7 +85,7 @@ export function InviteMemberDialog({
     >
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-lg">Invite teammate</DialogTitle>
+          <DialogTitle>Invite teammate</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">

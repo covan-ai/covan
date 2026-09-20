@@ -109,9 +109,7 @@ function AuthedLayout() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md text-center">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">
-            Can't reach Covan
-          </h1>
+          <h1 className="font-dm text-title-lg font-medium text-foreground">Can't reach Covan</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             You're still signed in — this is a connection problem, not your account. Trying again on
             its own.

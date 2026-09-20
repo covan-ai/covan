@@ -98,7 +98,7 @@ function Group({
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-dm text-[17px] font-medium leading-tight">
+                    <span className="truncate font-dm text-title font-medium leading-tight">
                       {r.name}
                     </span>
                     {r.visibility === "shared" && <Chip tone="on">Shared</Chip>}

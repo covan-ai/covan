@@ -111,49 +111,49 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        {/* Top: back to library + collapse toggle */}
+        {/* Identity: where you came from, who you are talking to, and the
+            rail's own toggle — one row where there used to be two. The first
+            of those rows carried a single text link and a button and was
+            otherwise empty, which cost 48px at the top of every agent screen
+            to say "All agents" in 12px type. */}
         <div
           className={cn(
             "flex items-center gap-2 border-b border-sidebar-border px-3 py-3",
-            collapsed ? "lg:flex-col" : "justify-between",
+            collapsed && "lg:flex-col",
           )}
         >
           <Link
             to="/app"
             title="All agents"
-            className={cn(
-              "inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground",
-              collapsed && "lg:hidden",
-            )}
+            aria-label="All agents"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors duration-200 hover:bg-sidebar-accent/60 hover:text-foreground"
           >
-            <ArrowLeft className="h-3.5 w-3.5" /> All agents
+            <ArrowLeft className="h-4 w-4" />
           </Link>
+
+          {/* The same avatar the gallery shows, so an agent reads as the same
+              thing everywhere. */}
+          <AgentAvatar emoji={agent.emoji} tone="accent" className="h-8 w-8 text-base" />
+
+          <div className={cn("min-w-0 flex-1", collapsed && "lg:hidden")}>
+            <div className="truncate font-dm text-base font-medium leading-tight">{agent.name}</div>
+            <div className="truncate text-meta leading-tight text-muted-foreground">
+              {agent.model}
+            </div>
+          </div>
+
           <button
             onClick={() => setCollapsed((v) => !v)}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-label="Toggle sidebar"
-            className="hidden h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground lg:grid"
+            className="hidden h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors duration-200 hover:bg-sidebar-accent/60 hover:text-foreground lg:grid"
           >
             <PanelLeft className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Agent identity — the gradient avatar is the same one the gallery
-            shows, so an agent reads as the same thing everywhere. */}
-        <div className={cn("flex items-center gap-3 px-3 py-3", collapsed && "lg:justify-center")}>
-          <AgentAvatar emoji={agent.emoji} tone="accent" className="h-9 w-9 text-lg" />
-          <div className={cn("min-w-0", collapsed && "lg:hidden")}>
-            <div className="truncate font-dm text-[17px] font-medium leading-tight">
-              {agent.name}
-            </div>
-            <div className="mt-1 truncate text-[13px] leading-tight text-muted-foreground">
-              {agent.model}
-            </div>
-          </div>
-        </div>
-
         {/* New chat — primary CTA, matching the main app rail. */}
-        <div className="space-y-0.5 px-3">
+        <div className="mt-3 space-y-0.5 px-3">
           <Button
             onClick={newChat}
             title="New chat"
@@ -232,7 +232,7 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
                 Private to you
               </div>
               {mySessions.length === 0 ? (
-                <p className="px-3 py-1 text-xs text-sidebar-foreground/50">No chats yet.</p>
+                <p className="px-3 py-1 text-meta text-sidebar-foreground/50">No chats yet.</p>
               ) : (
                 mySessions.map((s) => (
                   <SessionRow

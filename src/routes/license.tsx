@@ -42,7 +42,7 @@ const REPO = "https://github.com/covan-ai/covan";
 function LicensePage() {
   return (
     <LegalLayout title="Licence" updated="September 2026">
-      <p className="text-[15px] leading-[1.55] text-muted-foreground">
+      <p className="text-base text-muted-foreground">
         Covan is open source under the{" "}
         <a
           href="https://www.gnu.org/licenses/agpl-3.0.html"
@@ -53,8 +53,8 @@ function LicensePage() {
           GNU Affero General Public License, version 3
         </a>
         . The full text ships in this repository as{" "}
-        <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[13px]">LICENSE</code> and
-        it is the authority; everything on this page is a summary and loses to it wherever the two
+        <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-meta">LICENSE</code> and it
+        is the authority; everything on this page is a summary and loses to it wherever the two
         differ.
       </p>
 
@@ -116,7 +116,7 @@ function LicensePage() {
         <p>
           A commercial licence exists for that. It is possible because every contribution arrives
           with a grant permitting release under the AGPL or another licence — see{" "}
-          <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[13px]">
+          <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-meta">
             CONTRIBUTING.md
           </code>{" "}
           — so the rights are the maintainer's to give. Write to{" "}

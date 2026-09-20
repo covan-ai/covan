@@ -34,7 +34,7 @@ export function SourceChip({
     <span
       title={age ? `${source.name} — uploaded ${age.label}` : source.name}
       className={cn(
-        "inline-flex max-w-[260px] items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]",
+        "inline-flex max-w-[260px] items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
         age?.stale
           ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
           : "border-hairline bg-popover text-muted-foreground",

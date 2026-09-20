@@ -33,6 +33,33 @@
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-dm: "DM Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
 
+  /* The type ladder. Ten steps, and a role for each — pick by ROLE, never by
+     how big the box happens to be. The app used to write these as literals at
+     the call site, which is how it ended up with 17px and 18px card titles
+     side by side and a 15px that was a row title in one file and a paragraph
+     in the next.
+
+       12  text-xs     eyebrows, timestamps, chips, keycaps
+       13  text-meta   supporting text: descriptions, subtitles, row meta
+       14  text-sm     interface: nav, buttons, inputs, list rows
+       16  text-base   reading: chat replies, ledes, legal prose
+       18  text-title  DM Sans — card and row titles
+       22  text-title-lg   DM Sans — dialog titles
+       28/32           DM Sans — section headlines (DESIGN.md)
+       38/44           DM Sans — page titles (DESIGN.md)
+
+     Reading text is 16/1.6 rather than the framework's 16/1.5: a chat reply is
+     a paragraph somebody reads, not a label they scan. */
+  --text-meta: 13px;
+  --text-meta--line-height: 1.45;
+  --text-base--line-height: 1.6;
+  --text-title: 18px;
+  --text-title--line-height: 1.15;
+  --text-title--letter-spacing: -0.01em;
+  --text-title-lg: 22px;
+  --text-title-lg--line-height: 1.15;
+  --text-title-lg--letter-spacing: -0.01em;
+
   --color-accent-orange: var(--accent-orange);
   --color-accent-orange-foreground: var(--accent-orange-foreground);
 
@@ -243,9 +270,6 @@
   --gradient-hero: none;
 }
 
-.dark {
-}
-
 @layer base {
   * {
     border-color: var(--color-border);
@@ -367,13 +391,6 @@
   border-radius: 1px;
   background: color-mix(in oklab, var(--foreground) 70%, transparent);
   animation: caret-blink 1s steps(1) infinite;
-}
-
-/* Subtle messaging-app wallpaper for the chat surface. */
-.chat-bg {
-  background-color: var(--surface-muted);
-  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
-  background-size: 22px 22px;
 }
 
 @media (prefers-reduced-motion: reduce) {

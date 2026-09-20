@@ -686,7 +686,7 @@ function SelectionBar({
   onDelete: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-hairline bg-surface-muted px-4 py-2 text-[13px]">
+    <div className="flex flex-wrap items-center gap-2 border-b border-hairline bg-surface-muted px-4 py-2 text-meta">
       <span className="font-medium">{selected.length} selected</span>
       {selected.length < total ? (
         <Button type="button" variant="ghost" size="sm" onClick={onSelectAll}>
@@ -781,7 +781,7 @@ function BundleRail({
             onChange={(e) => setRailQuery(e.target.value)}
             placeholder="Find a bundle"
             aria-label="Find a bundle by name"
-            className="h-8 pl-8 text-[13px]"
+            className="h-8 pl-8 text-meta"
           />
         </div>
       ) : null}
@@ -815,7 +815,7 @@ function BundleRail({
         <>
           {agent ? <RailHeading>Attached</RailHeading> : null}
           {attached.length === 0 ? (
-            <p className="px-4 py-3 text-[13px] text-muted-foreground">
+            <p className="px-4 py-3 text-meta text-muted-foreground">
               Nothing attached, so this agent reads nothing but its persona.
             </p>
           ) : (
@@ -861,7 +861,7 @@ function BundleRail({
 
 function RailHeading({ children }: { children: ReactNode }) {
   return (
-    <p className="border-b border-hairline bg-surface-muted px-4 py-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+    <p className="border-b border-hairline bg-surface-muted px-4 py-1.5 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
       {children}
     </p>
   );
@@ -1118,7 +1118,7 @@ function PaneHeader({
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
           <span className="shrink-0 text-muted-foreground">Knowledge</span>
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate font-dm text-[17px] font-medium">{title}</span>
+          <span className="truncate font-dm text-title font-medium">{title}</span>
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
             {count} {count === 1 ? "file" : "files"}
           </span>
@@ -1141,7 +1141,7 @@ function PaneHeader({
           onChange={(e) => onQuery(e.target.value)}
           placeholder="Search files by name"
           aria-label="Search files by name"
-          className="h-8 pl-8 text-[13px]"
+          className="h-8 pl-8 text-meta"
         />
       </div>
 
@@ -1149,7 +1149,7 @@ function PaneHeader({
           attached is a folder of files no answer can ever stand on, and the
           count in the rail says nothing about that. */}
       {readers ? (
-        <p className="mt-2 text-[13px] text-muted-foreground">
+        <p className="mt-2 text-meta text-muted-foreground">
           {readers.length === 0
             ? "No agent reads this bundle yet — attach it from an agent's Knowledge tab and everything in it becomes retrievable."
             : `Read by ${listOf(readers)}.`}
@@ -1178,7 +1178,7 @@ function PaneHeader({
       ) : null}
 
       {openBundle && !canWrite ? (
-        <p className="mt-2 text-[13px] text-muted-foreground">
+        <p className="mt-2 text-meta text-muted-foreground">
           You can read everything here. Uploading, moving and deleting are a member's job.
         </p>
       ) : null}
@@ -1608,7 +1608,7 @@ function DocumentTile({
       <button
         type="button"
         onClick={() => onOpen(doc)}
-        className="text-left text-[13px] font-medium leading-tight [overflow-wrap:anywhere]"
+        className="text-left text-meta font-medium leading-tight [overflow-wrap:anywhere]"
       >
         {doc.name}
       </button>
@@ -1769,7 +1769,7 @@ function UploadWell({
         <Upload
           className={cn("h-5 w-5", dragging ? "text-accent-orange" : "text-muted-foreground")}
         />
-        <span className="font-dm text-[15px] font-medium">
+        <span className="font-dm text-base font-medium">
           {bundle
             ? dragging
               ? "Drop to upload"

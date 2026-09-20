@@ -97,7 +97,7 @@ export function WorkspaceCoverageSection() {
       )}
 
       {untouched > 0 && (
-        <p className="mt-3 text-[13px] text-muted-foreground">
+        <p className="mt-3 text-meta text-muted-foreground">
           {untouched} {untouched === 1 ? "agent" : "agents"} nobody asked anything in this window.
         </p>
       )}
@@ -216,8 +216,8 @@ function Bucket({
     <div className="flex items-start gap-2.5">
       <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-[2px] ${swatch}`} aria-hidden />
       <div className="min-w-0">
-        <dt className="text-[13px] leading-tight text-muted-foreground">{label}</dt>
-        <dd className="text-[15px] font-medium leading-tight tabular-nums">
+        <dt className="text-meta leading-tight text-muted-foreground">{label}</dt>
+        <dd className="text-base font-medium leading-tight tabular-nums">
           {count} <span className="text-muted-foreground">· {share}%</span>
         </dd>
       </div>

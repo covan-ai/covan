@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Textarea } from "@/components/ui/textarea";
@@ -101,6 +101,15 @@ function ChatTab() {
    * and sender name; case-insensitive; results highlighted in place.
    */
   const [searchQuery, setSearchQuery] = useState("");
+  /**
+   * Whether that field is on screen.
+   *
+   * It used to be: a 160px input sitting in the header of every conversation,
+   * competing with the title for the eye whether or not anybody was searching.
+   * A conversation you are reading has one subject — what is in it — and the
+   * way to find something in it is a control you reach for.
+   */
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // Named after a real file once one is indexed, so the first tap on a fresh
   // agent returns an answer with a citation on it rather than a general one.
@@ -925,7 +934,7 @@ function ChatTab() {
    */
   const [rating, setRating] = useState<{ messageId: string; kind: FeedbackKind } | null>(null);
 
-  const isEmpty = !active || messages.length === 0;
+  const isEmpty = !active || allMessages.length === 0;
 
   const chatPane = (
     <section
@@ -955,78 +964,86 @@ function ChatTab() {
         <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-xl border border-dashed border-accent-orange bg-background/80">
           <div className="flex flex-col items-center gap-2">
             <Upload className="h-6 w-6 text-accent-orange" />
-            <div className="font-dm text-[17px] font-medium">Drop to add to {agent.name}</div>
+            <div className="font-dm text-title font-medium">Drop to add to {agent.name}</div>
             <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
           </div>
         </div>
       )}
-      {/* Conversation header */}
-      <div className="flex items-center justify-between gap-3 border-b border-border bg-background/80 px-4 py-3 backdrop-blur lg:px-6">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <AgentAvatar emoji={agent.emoji} tone="accent" className="h-9 w-9 text-base" />
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2 text-sm font-semibold leading-tight">
-              <span className="truncate">{agent.name}</span>
-              {agent.mode === "brainstorm" && (
-                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                  🧠 Brainstorm
-                </span>
-              )}
-            </div>
-            <div className="truncate text-xs leading-tight text-muted-foreground">
-              {agent.model} · {isShared ? "shared with your workspace" : "private to you"}
-            </div>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {/* Conversation search: local filter, Esc to clear. */}
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      {/* Conversation header.
+
+          The title, and the two things you can do to a conversation. What used
+          to be here as well — the agent's avatar, its name, its model, and
+          whether the thread is shared — said nothing the rail two inches to the
+          left was not already saying, and said it over the top of the one thing
+          only this bar knows, which is what this conversation is called. The
+          grounding line moved to the foot of the composer, where it is read
+          once before you type rather than every time you look up. */}
+      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur lg:px-6">
+        {searchOpen ? (
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
               id="conversation-search"
+              autoFocus
               type="text"
-              placeholder="Search"
+              placeholder={`Search this conversation`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onBlur={() => {
+                // Nothing typed and the caret left: the field was opened by
+                // accident, so it closes itself rather than staying behind.
+                if (searchQuery === "") setSearchOpen(false);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   setSearchQuery("");
-                  e.currentTarget.blur();
+                  setSearchOpen(false);
                 }
               }}
-              className="h-7 w-40 rounded-md border border-input bg-background pl-7 pr-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
-          {isOwner && active && (
-            <button
-              type="button"
+        ) : (
+          <h1 className="min-w-0 flex-1 truncate font-dm text-base font-medium">
+            {active?.title?.trim() || (isBrainstorm ? "New brainstorm" : "New chat")}
+          </h1>
+        )}
+
+        <div className="flex shrink-0 items-center gap-0.5">
+          {searchQuery !== "" && (
+            <span
+              className="mr-1 text-xs tabular-nums text-muted-foreground"
+              aria-label={`${messages.length} of ${allMessages.length} messages match`}
+            >
+              {messages.length}/{allMessages.length}
+            </span>
+          )}
+          {!searchOpen && (
+            <HeaderAction label="Search this conversation" onClick={() => setSearchOpen(true)}>
+              <Search className="h-4 w-4" />
+            </HeaderAction>
+          )}
+          {/* Owners get the toggle; everyone else gets the state it is in.
+              One home per control (DESIGN.md §5). */}
+          {isOwner && active ? (
+            <HeaderAction
+              label="Share with your workspace"
+              active={isShared}
               onClick={() =>
                 setVisibilityMutation.mutate({
                   id: active.id,
                   visibility: isShared ? "private" : "shared",
                 })
               }
-              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-secondary"
             >
-              <Users className="h-3.5 w-3.5" />
-              {isShared ? "Shared" : "Share"}
-            </button>
-          )}
-          {/* Owners get the toggle above; everyone else gets the read-only
-              state. One home per control (DESIGN.md §5). */}
-          {!isOwner && (
-            <span className="hidden items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground sm:inline-flex">
-              {isShared ? (
-                <>
-                  <Users className="h-3 w-3" />
-                  Shared
-                </>
-              ) : (
-                <>
-                  <Lock className="h-3 w-3" />
-                  Private
-                </>
-              )}
+              {isShared ? <Users className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+            </HeaderAction>
+          ) : (
+            <span
+              title={isShared ? "Shared with your workspace" : "Private to you"}
+              className="grid h-9 w-9 place-items-center text-muted-foreground"
+            >
+              {isShared ? <Users className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
             </span>
           )}
         </div>
@@ -1050,7 +1067,7 @@ function ChatTab() {
               <h3 className="mt-5 font-dm text-[28px] font-medium leading-[1.05] tracking-[-0.01em]">
                 {agent.name}
               </h3>
-              <p className="mx-auto mt-2 max-w-xs text-[15px] leading-[1.45] text-muted-foreground">
+              <p className="mx-auto mt-2 max-w-sm text-base text-muted-foreground">
                 Ask anything — this chat is private to you, grounded in your team's shared
                 knowledge.
               </p>
@@ -1067,7 +1084,7 @@ function ChatTab() {
               </div>
             </div>
           ) : (
-            <div className="space-y-8">
+            <div className="space-y-6">
               {/*
                 A log, which is what a transcript is, and what makes a screen
                 reader read a reply out when it lands instead of leaving the
@@ -1091,11 +1108,16 @@ function ChatTab() {
                   </button>
                 </div>
               )}
+              {searchQuery !== "" && messages.length === 0 && (
+                <p className="py-16 text-center text-sm text-muted-foreground">
+                  Nothing in this conversation matches “{searchQuery}”.
+                </p>
+              )}
               <div
                 role="log"
                 aria-label="Conversation"
                 aria-relevant="additions"
-                className="space-y-8"
+                className="space-y-6"
               >
                 {messages.map((m, idx, arr) => {
                   // Date divider: show when date changes
@@ -1133,55 +1155,56 @@ function ChatTab() {
                   if (isPersonsTurn) {
                     if (editingId === m.id) {
                       return (
-                        <EditTurn
-                          key={m.id}
-                          value={editText}
-                          onChange={setEditText}
-                          onCancel={() => setEditingId(null)}
-                          onSave={() => void saveEdit(m.id)}
-                        />
+                        <Fragment key={m.id}>
+                          {showDateDivider && <DateDivider label={dateLabel} />}
+                          <EditTurn
+                            value={editText}
+                            onChange={setEditText}
+                            onCancel={() => setEditingId(null)}
+                            onSave={() => void saveEdit(m.id)}
+                          />
+                        </Fragment>
                       );
                     }
                     return (
-                      <div key={m.id} className="group flex flex-col items-end gap-1">
-                        {isShared && m.sender && (
-                          <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-                            {m.sender.avatarUrl ? (
-                              <img
-                                src={m.sender.avatarUrl}
-                                alt=""
-                                className="h-4 w-4 rounded-full"
-                              />
-                            ) : null}
-                            <span>{m.sender.name ?? "Someone"}</span>
+                      <Fragment key={m.id}>
+                        {showDateDivider && <DateDivider label={dateLabel} />}
+                        <div className="group flex flex-col items-end gap-1.5">
+                          {isShared && m.sender && (
+                            <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+                              {m.sender.avatarUrl ? (
+                                <img
+                                  src={m.sender.avatarUrl}
+                                  alt=""
+                                  className="h-4 w-4 rounded-full"
+                                />
+                              ) : null}
+                              <span>{m.sender.name ?? "Someone"}</span>
+                            </div>
+                          )}
+                          <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-base text-primary-foreground">
+                            {m.content}
                           </div>
-                        )}
-                        <span className="px-1 text-xs text-muted-foreground">
-                          {formatTime(m.createdAt)}
-                        </span>
-                        <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-[15px] leading-[1.45] text-primary-foreground">
-                          {m.content}
-                        </div>
-                        {/* Show pending uploads under user message while composing */}
-                        {idx === arr.length - 1 && uploads.receipts.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {uploads.receipts.map((r) => (
-                              <div
-                                key={r.id}
-                                className="flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs"
-                              >
-                                <FileText className="h-3 w-3 text-muted-foreground" />
-                                <span className="text-muted-foreground">{r.name}</span>
-                                {r.state === "uploading" && (
-                                  <span className="tabular-nums text-muted-foreground">
-                                    {r.progress}%
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {/* Ownership, not role. This used to branch on the same
+                          {/* Show pending uploads under user message while composing */}
+                          {idx === arr.length - 1 && uploads.receipts.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {uploads.receipts.map((r) => (
+                                <div
+                                  key={r.id}
+                                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs"
+                                >
+                                  <FileText className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-muted-foreground">{r.name}</span>
+                                  {r.state === "uploading" && (
+                                    <span className="tabular-nums text-muted-foreground">
+                                      {r.progress}%
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {/* Ownership, not role. This used to branch on the same
                           flag as the layout above, so in a shared session an
                           Edit button appeared over a colleague's message —
                           and answered 404, because messages_update_owner is
@@ -1189,41 +1212,55 @@ function ChatTab() {
                           discards every reply after the edited turn, which is
                           not something to offer over somebody else's
                           conversation even if the policy allowed it. */}
-                        {isOwner && (
-                          <button
-                            onClick={() => startEdit(m.id, m.content)}
-                            disabled={busy}
-                            className="flex items-center gap-1 px-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
-                          >
-                            <Pencil className="h-3 w-3" /> Edit
-                          </button>
-                        )}
-                      </div>
+                          {/* The clock and the one thing you can do to your
+                          own turn, on a single line under it. The time used
+                          to have a line of its own *above* the bubble, which
+                          put a second piece of furniture between every pair
+                          of messages in the transcript.
+
+                          Ownership, not role. This used to branch on the same
+                          flag as the layout above, so in a shared session an
+                          Edit button appeared over a colleague's message —
+                          and answered 404, because messages_update_owner is
+                          keyed to whoever owns the SESSION. Editing also
+                          discards every reply after the edited turn, which is
+                          not something to offer over somebody else's
+                          conversation even if the policy allowed it. */}
+                          <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+                            <span className="tabular-nums">{formatTime(m.createdAt)}</span>
+                            {isOwner && (
+                              <button
+                                onClick={() => startEdit(m.id, m.content)}
+                                disabled={busy}
+                                className="flex items-center gap-1 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
+                              >
+                                <Pencil className="h-3 w-3" /> Edit
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </Fragment>
                     );
                   }
                   const sources = m.sources ?? [];
                   const prevUser = idx > 0 && arr[idx - 1].role === "user" ? arr[idx - 1] : null;
                   const isLast = idx === arr.length - 1;
                   return (
-                    <>
-                      {showDateDivider && (
-                        <div className="flex items-center gap-3 py-4">
-                          <div className="h-px flex-1 bg-border" />
-                          <span className="text-xs font-medium text-muted-foreground">
-                            {dateLabel}
-                          </span>
-                          <div className="h-px flex-1 bg-border" />
-                        </div>
-                      )}
-                      <div key={m.id} className="group flex flex-col gap-2">
-                        <div className="flex items-center gap-2">
-                          <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
-                          <span className="text-sm font-semibold">{agent.name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatTime(m.createdAt)}
-                          </span>
-                        </div>
-                        <div className="pl-9">
+                    <Fragment key={m.id}>
+                      {showDateDivider && <DateDivider label={dateLabel} />}
+                      {/* No avatar, no name, no indent.
+
+                          There is one agent in this conversation and its name
+                          is in the rail, in the header of the screen it was
+                          opened from, and under the composer. Repeating it
+                          above every reply — with a tile and a clock beside it
+                          — meant three lines of furniture for every answer,
+                          and pushed the answer itself nine pixels off the
+                          margin the questions are measured from. The reply is
+                          the only thing on this side of the transcript, so it
+                          is allowed to simply be the text. */}
+                      <div className="group flex flex-col gap-2">
+                        <div className="min-w-0" data-turn="answer">
                           {/* A continuation is drawn on the end of the reply it
                             finishes, not under it. The server writes it into
                             the same row, so anything else would show two
@@ -1236,7 +1273,7 @@ function ChatTab() {
                                 : m.content
                             }
                             className={cn(
-                              "text-[15px] leading-relaxed text-foreground",
+                              "text-base text-foreground",
                               continuingId === m.id && replyingIn === active?.id && "stream-live",
                             )}
                           />
@@ -1313,6 +1350,12 @@ function ChatTab() {
                             )}
 
                           <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                            {/* On the same line as the actions, and on the same
+                              hover. A timestamp on every answer is the kind of
+                              fact you want once and never again. */}
+                            <span className="mr-1.5 text-xs tabular-nums text-muted-foreground">
+                              {formatTime(m.createdAt)}
+                            </span>
                             <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>
                               <Copy className="h-3.5 w-3.5" />
                             </MsgAction>
@@ -1368,7 +1411,7 @@ function ChatTab() {
                           </div>
                         </div>
                       </div>
-                    </>
+                    </Fragment>
                   );
                 })}
               </div>
@@ -1382,11 +1425,7 @@ function ChatTab() {
                   // by the status line below, and reads the reply itself once it
                   // lands in the log above as a finished thing.
                   <div className="flex flex-col gap-2" aria-live="off">
-                    <div className="flex items-center gap-2">
-                      <AgentAvatar emoji={agent.emoji} className="h-7 w-7 text-sm" />
-                      <span className="text-sm font-semibold">{agent.name}</span>
-                    </div>
-                    <div className="pl-9">
+                    <div className="min-w-0" data-turn="answer">
                       {/*
                       What the model is working through, while it works
                       through it. A `<details>` rather than a state flag and a
@@ -1456,7 +1495,7 @@ function ChatTab() {
                         <Markdown
                           content={streamText}
                           className={cn(
-                            "text-[15px] leading-relaxed text-foreground",
+                            "text-base text-foreground",
                             replyingIn === active?.id && "stream-live",
                           )}
                         />
@@ -1485,29 +1524,6 @@ function ChatTab() {
           </span>
         </div>
       </div>
-
-      {/* Search results indicator */}
-      {searchQuery && (
-        <div className="border-t border-border bg-muted/30 px-4 py-2">
-          <div className="flex items-center gap-2 text-sm">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground">
-              {messages.length === 0
-                ? "No matches"
-                : messages.length === allMessages.length
-                  ? `All ${messages.length} messages`
-                  : `${messages.length} of ${allMessages.length} messages`}
-            </span>
-            <button
-              type="button"
-              onClick={() => setSearchQuery("")}
-              className="ml-auto text-xs text-muted-foreground hover:text-foreground"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Composer */}
       <div className="relative border-t border-border bg-background px-4 pb-4 pt-3 lg:px-6">
@@ -1611,14 +1627,10 @@ function ChatTab() {
               }}
               placeholder={`Message ${agent.name}`}
               rows={1}
-              className="max-h-44 min-h-[44px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pt-3 text-sm shadow-none focus-visible:ring-0"
+              className="max-h-44 min-h-[48px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pt-3.5 text-base shadow-none focus-visible:ring-0"
             />
             <div className="flex items-center justify-between px-3 pb-2.5">
-              <div className="flex items-center gap-2">
-                <span className="flex items-center gap-1.5 rounded-sm bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                  <span className="text-sm leading-none">{agent.emoji}</span>
-                  {agent.name}
-                </span>
+              <div className="flex items-center gap-1">
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
                 <ChatReport reports={reports} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
@@ -1649,9 +1661,12 @@ function ChatTab() {
               )}
             </div>
           </div>
-          <p className="mt-2 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+          {/* What the header used to say twice over, said once, here, where
+              it is read before you type rather than every time you look up. */}
+          <p className="mt-2 flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted-foreground">
             {isShared ? <Users className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-            {isShared ? "Shared with your workspace" : "Private to you"} · grounded in{" "}
+            {agent.name} · {agent.model} ·{" "}
+            {isShared ? "shared with your workspace" : "private to you"} · grounded in{" "}
             {agent.documents.length} team {agent.documents.length === 1 ? "document" : "documents"}
             {quota?.level === "fine" && <> · {quotaSentence(quota)}</>}
           </p>
@@ -1987,5 +2002,57 @@ function MsgAction({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A control in the conversation header.
+ *
+ * The same object as `MsgAction` one step up the ladder: 36px rather than 28px,
+ * because it sits in a 56px bar and not in a hover strip, and because a header
+ * control is a target you reach for deliberately.
+ */
+function HeaderAction({
+  label,
+  active,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={cn(
+        "grid h-9 w-9 place-items-center rounded-md transition-colors duration-200 hover:bg-accent",
+        active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * "Today", "Yesterday", "March 4" — the one thing between two turns.
+ *
+ * Its own component because three of the four branches in the message loop
+ * draw it, and it used to be written out in exactly one of them: a day that
+ * began with a question rather than an answer got no divider at all.
+ */
+function DateDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <div className="h-px flex-1 bg-border" />
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <div className="h-px flex-1 bg-border" />
+    </div>
   );
 }

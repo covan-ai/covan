@@ -15,7 +15,7 @@ import { COST_BANDS, costBandIndex, formatReplyCost } from "@/lib/agent-meta";
 export function ModelCost({ cost }: { cost: number | null }) {
   if (cost === null) return null;
   return (
-    <span className="ml-3 shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+    <span className="ml-3 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
       {formatReplyCost(cost)}
     </span>
   );
@@ -56,7 +56,7 @@ export function ModelCostScale({ cost }: { cost: number | null }) {
           ))}
         </div>
         {cost !== null && (
-          <span className="shrink-0 font-mono text-[11px] tabular-nums">
+          <span className="shrink-0 font-mono text-xs tabular-nums">
             {formatReplyCost(cost)} / reply
           </span>
         )}
@@ -66,7 +66,7 @@ export function ModelCostScale({ cost }: { cost: number | null }) {
         {COST_BANDS.map((band, i) => (
           <span
             key={band.label}
-            className={`flex-1 text-[10px] ${
+            className={`flex-1 text-xs ${
               i === active ? "text-foreground" : "text-muted-foreground"
             }`}
           >

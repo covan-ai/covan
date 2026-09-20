@@ -191,14 +191,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex w-full items-center gap-3 rounded-md p-2 text-left transition-colors duration-200 hover:bg-sidebar-accent/60">
-                <UserAvatar
-                  name={userName}
-                  url={me?.user.avatarUrl}
-                  className="h-9 w-9 text-[11px]"
-                />
+                <UserAvatar name={userName} url={me?.user.avatarUrl} className="h-9 w-9 text-xs" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{userName ?? "…"}</div>
-                  <div className="truncate text-xs text-muted-foreground">
+                  <div className="truncate text-meta text-muted-foreground">
                     {workspaceName ?? "…"}
                   </div>
                 </div>
@@ -208,7 +204,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DropdownMenuContent align="end" side="top" className="w-60">
               <DropdownMenuLabel className="font-normal">
                 <div className="text-sm font-medium">{userName ?? "…"}</div>
-                <div className="text-xs text-muted-foreground">{userEmail ?? "…"}</div>
+                <div className="text-meta text-muted-foreground">{userEmail ?? "…"}</div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
@@ -304,7 +300,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               <Search className="h-4 w-4" />
               <span className="hidden sm:inline">Search</span>
-              <kbd className="hidden rounded-sm bg-muted px-1.5 font-mono text-[11px] leading-5 sm:inline">
+              <kbd className="hidden rounded-sm bg-muted px-1.5 font-mono text-xs leading-5 sm:inline">
                 ⌘K
               </kbd>
             </button>
@@ -406,11 +402,11 @@ function TeamPresence({ members }: { members: WorkspaceMember[] }) {
             key={m.id}
             name={m.name}
             url={m.avatarUrl}
-            className="h-7 w-7 text-[9px] ring-2 ring-background"
+            className="h-7 w-7 text-[10px] ring-2 ring-background"
           />
         ))}
         {extra > 0 && (
-          <span className="grid h-7 w-7 place-items-center rounded-md bg-muted text-[9px] font-semibold text-muted-foreground ring-2 ring-background">
+          <span className="grid h-7 w-7 place-items-center rounded-md bg-muted text-[10px] font-semibold text-muted-foreground ring-2 ring-background">
             +{extra}
           </span>
         )}

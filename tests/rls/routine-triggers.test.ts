@@ -72,19 +72,33 @@ describe("the token hash", () => {
     expect(error?.code).toBe("42501");
   });
 
-  it("does not arrive in a select of everything", async () => {
-    const { data, error } = await owner.db
+  // And a `select *` does not quietly come back without it — the whole read is
+  // refused. PostgREST expands `*` to every column the table has, including the
+  // one the grant withholds, so Postgres answers 42501 for the row rather than
+  // handing back the part you were allowed. That is stricter than "the column
+  // is absent" and it is the reason `lib/export/tables.ts` names its columns
+  // for tables like this one instead of asking for everything.
+  it("is not reachable by asking for everything either", async () => {
+    const { error } = await owner.db
       .from("routine_triggers")
       .select("*")
       .eq("routine_id", shared.routineId)
       .single();
 
+    expect(error?.code).toBe("42501");
+  });
+
+  it("leaves the three columns the grant does name readable", async () => {
+    const { data, error } = await owner.db
+      .from("routine_triggers")
+      .select("routine_id, created_at, last_used_at")
+      .eq("routine_id", shared.routineId)
+      .single();
+
     expect(error).toBeNull();
-    expect(data).not.toHaveProperty("token_hash");
-    // The three columns the grant does name are there, so this is a withheld
-    // column rather than a failed read.
     expect(data).toMatchObject({ routine_id: shared.routineId });
     expect(data).toHaveProperty("last_used_at");
+    expect(data).not.toHaveProperty("token_hash");
   });
 
   // The takeover. Without the separate table and its missing UPDATE grant, this
@@ -214,6 +228,38 @@ describe("trigger_kind", () => {
 });
 
 describe("claim_due_routines", () => {
+  /**
+   * A routine with no source, which is what a poke-only one has to be — 0055
+   * refuses `trigger_kind = 'webhook'` on a routine that still has a feed to
+   * read.
+   *
+   * Created rather than edited. 0027 pins `source_kind` and `source_config` for
+   * the life of the row, with a trigger and not merely a policy, because a
+   * routine whose URL can be changed after it was checked is the vulnerability
+   * that migration closed. So `seedWorkspace` followed by an update is not a
+   * shortcut, it is a thing the database refuses.
+   */
+  async function seedSourcelessRoutine(name: string): Promise<string> {
+    const { data, error } = await owner.db
+      .from("routines")
+      .insert({
+        workspace_id: owner.workspaceId,
+        agent_id: shared.agentId,
+        user_id: owner.id,
+        name,
+        visibility: "private",
+        source_kind: "none",
+        source_config: {},
+        instruction: "summarise",
+        delivery_channel_id: shared.channelId,
+        schedule_cron: "0 9 * * *",
+      })
+      .select("id")
+      .single();
+    if (error || !data) throw new Error(`seeding a sourceless routine failed: ${error?.message}`);
+    return data.id as string;
+  }
+
   /** Make a routine due, the way a tick would find it. */
   async function makeDue(routineId: string, triggerKind: string) {
     await sql()`
@@ -233,19 +279,17 @@ describe("claim_due_routines", () => {
   }
 
   it("skips a routine that only runs when poked", async () => {
-    const poked = await seedWorkspace(owner, "private");
-    await sql()`update public.routines set source_kind = 'none', source_config = '{}'::jsonb where id = ${poked.routineId}`;
-    await makeDue(poked.routineId, "webhook");
+    const poked = await seedSourcelessRoutine("Poke only");
+    await makeDue(poked, "webhook");
 
-    expect(await claimedIds()).not.toContain(poked.routineId);
+    expect(await claimedIds()).not.toContain(poked);
   });
 
   it("still claims one that does both", async () => {
-    const both = await seedWorkspace(owner, "private");
-    await sql()`update public.routines set source_kind = 'none', source_config = '{}'::jsonb where id = ${both.routineId}`;
-    await makeDue(both.routineId, "both");
+    const both = await seedSourcelessRoutine("Poke or schedule");
+    await makeDue(both, "both");
 
-    expect(await claimedIds()).toContain(both.routineId);
+    expect(await claimedIds()).toContain(both);
   });
 
   it("still claims an ordinary scheduled one", async () => {
@@ -264,9 +308,8 @@ describe("claim_due_routines", () => {
     await makeDue(scheduled.routineId, "schedule");
 
     for (let i = 0; i < 3; i++) {
-      const poked = await seedWorkspace(owner, "private");
-      await sql()`update public.routines set source_kind = 'none', source_config = '{}'::jsonb where id = ${poked.routineId}`;
-      await makeDue(poked.routineId, "webhook");
+      const poked = await seedSourcelessRoutine(`Poke only ${i}`);
+      await makeDue(poked, "webhook");
     }
 
     const { data, error } = await serviceClient().rpc("claim_due_routines", { p_limit: 1 });

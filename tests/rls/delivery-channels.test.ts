@@ -76,6 +76,12 @@ describe("delivery_channels.kind", () => {
   // And there must be exactly one constraint deciding it. Two — the old one
   // left in place beside the new — would refuse every webhook row while the
   // migration reported success.
+  //
+  // The pattern is the RENDERED shape rather than the wording. `kind in (a, b)`
+  // is not stored; Postgres parses it and `pg_get_constraintdef` prints back
+  // `kind = ANY (ARRAY['a'::text, ...])`. Looking for the source text finds
+  // nothing and passes for the wrong reason — which is the same mistake 0054
+  // itself made, and the reason this assertion is here at all.
   it("is decided by exactly one constraint", async () => {
     const { sql } = await import("./harness");
     const rows = await sql()`
@@ -83,7 +89,7 @@ describe("delivery_channels.kind", () => {
       from pg_constraint con
       where con.conrelid = 'public.delivery_channels'::regclass
         and con.contype = 'c'
-        and pg_get_constraintdef(con.oid) like '%kind in (%'
+        and pg_get_constraintdef(con.oid) like '%kind = ANY%'
     `;
     expect(rows).toHaveLength(1);
     expect(rows[0].def).toContain("webhook");
@@ -114,17 +120,31 @@ describe("a webhook channel's secret", () => {
     expect(error?.code).toBe("42501");
   });
 
-  it("does not arrive in a select of everything", async () => {
-    const { data, error } = await owner.db
+  // Nor does `select *` quietly come back without it: the whole read is
+  // refused. PostgREST expands `*` to every column the table has, including the
+  // one 0023 withheld, so Postgres answers 42501 for the row rather than
+  // handing back the part you were allowed. Stricter than "the column is
+  // absent", and the reason `lib/export/tables.ts` names this table's columns
+  // instead of asking for everything.
+  it("is not reachable by asking for everything either", async () => {
+    const { error } = await owner.db
       .from("delivery_channels")
       .select("*")
       .eq("id", channelId)
       .single();
 
+    expect(error?.code).toBe("42501");
+  });
+
+  it("leaves the six columns the grant does name readable", async () => {
+    const { data, error } = await owner.db
+      .from("delivery_channels")
+      .select("id, workspace_id, user_id, kind, label, created_at")
+      .eq("id", channelId)
+      .single();
+
     expect(error).toBeNull();
     expect(data).not.toHaveProperty("secret_ciphertext");
-    // The six columns the grant does name are all there, so this is a
-    // withheld column rather than a failed read.
     expect(data).toMatchObject({ id: channelId, kind: "webhook" });
   });
 

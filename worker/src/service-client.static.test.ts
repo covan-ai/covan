@@ -63,6 +63,14 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "a POST from GitHub or a CI job carries no Covan session, so there is no auth.uid() for RLS to resolve — the same exemption routes/slack.ts holds. What stands in for a caller is the ingest token, and routine_triggers.token_hash is readable by no client role at all (0055), so the hash comparison could not be done with a user client even if there were one. It reads one row by hash, reads the routine that row names, and writes that routine's last_used_at; the route itself never names serviceClient, which is why the lookup lives here",
   ],
   [
+    "lib/harness/secrets.ts",
+    "the one place the agent harness reaches past RLS, and it never decides anything with it: every function there takes a row the caller has already been found — through their own client — to be allowed to have, and fills in the one column 0059 and 0012 withhold from every client role. Same shape and same order as withSecret in routes/connections.ts. The cache write is here for a second reason: 0059 grants `update (config)` only to the connection's creator or a workspace admin, which is the right rule for editing one and the wrong one for a summary nobody chose to cache",
+  ],
+  [
+    "routes/tool-connections.ts",
+    "tool_connections has no INSERT grant, for the reason 0059 gives and 0043 gave before it: the row holds a credential this route encrypts before the database sees it, so a client that could insert could insert a plaintext token — and the column grant means it could never read back what it wrote to check. Creation is the only write here that goes this way; the caller's own client does the permission check in front of it, and every other verb in the file goes through that client and its policies",
+  ],
+  [
     "lib/keys/store.ts",
     "workspace_provider_keys has RLS on and no policy for authenticated at all — not even a workspace's own admin selects a row. Every caller of this module is responsible for having checked who is asking before it does: routes/provider-keys.ts checks the admin role, and readWorkspaceKeys is read mid-chat-request for whoever the request already resolved to a member of",
   ],

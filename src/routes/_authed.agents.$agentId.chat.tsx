@@ -57,6 +57,14 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { SourceChip } from "@/components/source-chip";
 import { FeedbackDialog } from "@/components/feedback-dialog";
+import {
+  ConfirmCard,
+  SettledSteps,
+  StepTrail,
+  toStepViews,
+  type AgentStepView,
+  type PendingConfirmation,
+} from "@/components/agent-steps";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
   component: ChatTab,
@@ -77,6 +85,16 @@ export const Route = createFileRoute("/_authed/agents/$agentId/chat")({
  * rather than from what was asked for.
  */
 const MESSAGE_PAGE = 100;
+
+/**
+ * The step statuses this build knows how to draw.
+ *
+ * Anything else falls back to "running", which is the honest reading of a
+ * status a newer worker invented: something happened and this build cannot
+ * name it. The dispatch chain below already ignores whole event types it does
+ * not know, and this is the same forwards compatibility one level down.
+ */
+const STEP_STATUSES = new Set(["running", "ok", "failed", "refused", "pending"]);
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -387,6 +405,25 @@ function ChatTab() {
   // be drawn on the end of it rather than under it as a second answer.
   const [continuingId, setContinuingId] = useState<string | null>(null);
   const [followUps, setFollowUps] = useState<string[]>([]);
+  /**
+   * The tools this reply is running, while it runs them.
+   *
+   * Live only. Once the reply lands, the steps come back on the message and
+   * are read from there — a second copy held here would be the one that is
+   * wrong after a reload.
+   */
+  const [liveSteps, setLiveSteps] = useState<AgentStepView[]>([]);
+  /**
+   * The thing the agent has stopped to ask about, if it has.
+   *
+   * Keyed by session, because somebody can switch conversations while a card
+   * is open and must not come back to another agent's question. The turn is
+   * parked server-side either way (`paused_turns`), so leaving the page loses
+   * the card and not the question.
+   */
+  const [pendingConfirm, setPendingConfirm] = useState<
+    (PendingConfirmation & { sessionId: string }) | null
+  >(null);
   const streamAbort = useRef<AbortController | null>(null);
   // Tracks the pending reconcile timeout (from `stop()` or the drop-fallback
   // below) so a fast stop→resend can't let a stale timer fire mid-stream.
@@ -490,7 +527,20 @@ function ChatTab() {
   // the caller only needs to make sure the latest user turn has landed.
   const streamReply = async (
     sessionId: string,
-    opts: { continuing?: string; regenerate?: boolean; model?: string } = {},
+    opts: {
+      continuing?: string;
+      regenerate?: boolean;
+      model?: string;
+      /**
+       * Answering a question the agent asked, rather than asking one.
+       *
+       * The same stream and the same events, from a different endpoint — so
+       * everything below this point is shared rather than written twice. The
+       * worker picks the conversation up from `paused_turns` instead of from
+       * the `messages` table, which is the whole difference.
+       */
+      confirm?: { id: string; approve: boolean };
+    } = {},
   ) => {
     if (streamAbort.current) return;
     if (reconcileTimer.current) {
@@ -507,6 +557,9 @@ function ChatTab() {
     setThinking(!opts.continuing);
     setStreamText("");
     setThinkingText("");
+    setLiveSteps([]);
+    // Answering one question does not leave the previous one on screen.
+    setPendingConfirm(null);
     // Whether the model ran into the cap again on the way. Local to this
     // stream — the id it belongs to is not known until `done` carries it.
     let ranLong = false;
@@ -518,20 +571,29 @@ function ChatTab() {
 
     try {
       const token = await getAccessToken();
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/chat/stream`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      const res = await fetch(
+        opts.confirm
+          ? `${import.meta.env.VITE_API_URL}/chat/confirm/${opts.confirm.id}`
+          : `${import.meta.env.VITE_API_URL}/chat/stream`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(
+            opts.confirm
+              ? { approve: opts.confirm.approve }
+              : {
+                  sessionId,
+                  ...(opts.continuing ? { continue: true } : {}),
+                  ...(opts.regenerate ? { regenerate: true } : {}),
+                  ...(opts.model ? { model: opts.model } : {}),
+                },
+          ),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          sessionId,
-          ...(opts.continuing ? { continue: true } : {}),
-          ...(opts.regenerate ? { regenerate: true } : {}),
-          ...(opts.model ? { model: opts.model } : {}),
-        }),
-        signal: controller.signal,
-      });
+      );
 
       if (res.status === 402) {
         // Out of allowance. The user's message is already saved, so the
@@ -587,7 +649,23 @@ function ChatTab() {
           const line = block.trim();
           if (!line.startsWith("data: ")) continue;
           const payload = line.slice("data: ".length);
-          let event: { type: string; text?: string; message?: Message; error?: string };
+          let event: {
+            type: string;
+            text?: string;
+            message?: Message;
+            error?: string;
+            // The harness's own three. Read defensively, because an older
+            // worker sends none of them and a newer one may send a status
+            // this build has no word for.
+            index?: number;
+            tool?: string;
+            status?: string;
+            label?: string;
+            id?: string;
+            summary?: string;
+            proposal?: unknown;
+            reason?: string;
+          };
           try {
             event = JSON.parse(payload);
           } catch {
@@ -604,6 +682,44 @@ function ChatTab() {
             setThinking(false);
             reasoning += event.text;
             setThinkingText(reasoning);
+          } else if (event.type === "step" && typeof event.index === "number") {
+            // The dots mean "something is happening and we cannot say what".
+            // A step line says what, so they have nothing left to add.
+            setThinking(false);
+            const step: AgentStepView = {
+              index: event.index,
+              tool: event.tool ?? "",
+              status: STEP_STATUSES.has(event.status ?? "")
+                ? (event.status as AgentStepView["status"])
+                : "running",
+              label: event.label ?? event.tool ?? "",
+            };
+            // Upsert by index: every step arrives twice, once running and
+            // once settled, and the second is the same row changing rather
+            // than a new one.
+            setLiveSteps((current) => {
+              const at = current.findIndex((s) => s.index === step.index);
+              if (at === -1) return [...current, step];
+              const next = current.slice();
+              next[at] = step;
+              return next;
+            });
+          } else if (event.type === "confirm" && typeof event.id === "string") {
+            setPendingConfirm({
+              sessionId,
+              id: event.id,
+              tool: event.tool ?? "",
+              summary: event.summary ?? "",
+              proposal: event.proposal ?? null,
+            });
+          } else if (event.type === "paused") {
+            // Said out loud only when there is nothing to press. A pause for
+            // confirmation already has a card under the reply; a pause
+            // because the budget ran out has nothing, and an answer that
+            // stops early with no explanation is the thing this avoids.
+            if (event.reason === "budget") {
+              toast.message("The agent used every tool call it is allowed for one turn.");
+            }
           } else if (event.type === "truncated") {
             // The model ran into its output cap. The answer stops mid-thought
             // and otherwise looks finished, which is the worst way for a reply
@@ -860,6 +976,24 @@ function ChatTab() {
   const carryOn = (messageId: string) => {
     if (!active || busy) return;
     void streamReply(active.id, { continuing: messageId });
+  };
+
+  /**
+   * Say yes or no to something the agent asked to do.
+   *
+   * Both answers go to the server, and "Not now" is not a dismissal: the tool
+   * result becomes "the person declined", the agent is told, and it gets to
+   * say something about it. Closing the card locally would leave the turn
+   * parked until it expired and the conversation ending mid-sentence.
+   *
+   * The same stream as a reply, from a different endpoint — see
+   * `streamReply`'s `confirm` option for why that is one function and not
+   * two.
+   */
+  const answerConfirmation = async (approve: boolean) => {
+    if (!active || busy || !pendingConfirm) return;
+    const { id } = pendingConfirm;
+    await streamReply(active.id, { confirm: { id, approve } });
   };
 
   // Answer the last question again, keeping the answer that is already there.
@@ -1293,6 +1427,16 @@ function ChatTab() {
                             />
                           )}
 
+                          {/* Above Sources, because it is the earlier half of
+                            the same sentence: these are the places the answer
+                            went looking, and those are the documents it came
+                            back with. Folded shut — somebody checking an
+                            answer opens it, and everybody else reads the
+                            reply. */}
+                          {m.steps && m.steps.length > 0 && (
+                            <SettledSteps steps={toStepViews(m.steps)} />
+                          )}
+
                           {sources.length > 0 && (
                             <div className="mt-3 flex flex-wrap items-center gap-1.5">
                               <span className="text-xs text-muted-foreground">Sources</span>
@@ -1447,6 +1591,12 @@ function ChatTab() {
                           </div>
                         </details>
                       )}
+                      {/* Between the reasoning and the answer, which is
+                        where they happen. A step line is the one thing on
+                        this screen that says the agent left the room — it
+                        went and read something — and it belongs above the
+                        words that came back from it. */}
+                      {liveSteps.length > 0 && <StepTrail steps={liveSteps} className="mb-3" />}
                       {thinking ? (
                         // `aria-hidden`, where this used to carry an `aria-label`
                         // on a bare `<div>` — a label on an element with no role
@@ -1504,6 +1654,19 @@ function ChatTab() {
                   </div>
                 )}
             </div>
+          )}
+
+          {/* At the foot of the conversation rather than attached to a
+            message, because it is the next thing to happen rather than a
+            fact about something that already did — and because the reply it
+            belongs to may not exist yet: an agent that asks before it says
+            anything has no message to hang a card off. */}
+          {pendingConfirm && pendingConfirm.sessionId === active?.id && (
+            <ConfirmCard
+              pending={pendingConfirm}
+              busy={busy}
+              onAnswer={(approve) => void answerConfirmation(approve)}
+            />
           )}
 
           {/*

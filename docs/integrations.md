@@ -62,7 +62,7 @@ lands in a shared bundle.
 What belongs to a person is the **grant**: the OAuth access it carries. That
 decides three things — which files are visible, whose monthly allowance the
 embeddings are charged to, and who the provider thinks is reading. So a
-connection has a *grant holder* rather than an owner, and the two can come apart.
+connection has a _grant holder_ rather than an owner, and the two can come apart.
 
 They come apart most obviously when somebody closes their Covan account. The
 connection survives, unowned and paused, with the documents it already imported
@@ -101,7 +101,7 @@ only the credential and the grant holder change.
 It is offered on a working connection too, not just a broken one, because
 "this is syncing as the wrong person" is a real thing to want to fix. Before it
 existed the only route was to disconnect and connect again, which produced a
-*second* connection pointed at the same bundle, left the first sitting there
+_second_ connection pointed at the same bundle, left the first sitting there
 paused, and relied on the next sync adopting the orphaned documents back.
 
 ### When a reconnect would delete half the bundle
@@ -130,7 +130,7 @@ keep them: they stop being refreshed and become ordinary uploads. Disconnecting
 a source is not a request to unlearn what it taught.
 
 Choosing to remove them puts them in the trash rather than destroying them, with
-the same thirty days as anything else you delete — and a document the *source*
+the same thirty days as anything else you delete — and a document the _source_
 removed goes the same way, so a Drive permission that changed for an afternoon
 costs you nothing.
 
@@ -191,7 +191,7 @@ to the current home.
    `http://localhost:8787/connections/callback` for a local stack. It must match
    byte for byte; Notion compares it again when the code is exchanged.
 4. Choose the installation scope. **This cannot be changed afterwards** — a
-   connection meant for other people's workspaces needs *Any workspace*, and
+   connection meant for other people's workspaces needs _Any workspace_, and
    getting it wrong means deleting the connection and starting again.
 5. Set `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET` from the **Configuration**
    tab. The secret is shown once.
@@ -236,7 +236,7 @@ and what each scope is used for, and a written justification for why
 it has to show the scope being used, not just the app existing.
 
 **If everyone who will use it is in one Google Workspace organisation, none of
-this applies.** Set the audience to *Internal* and there is no warning screen
+this applies.** Set the audience to _Internal_ and there is no warning screen
 and no verification — but only accounts in that organisation can grant access,
 which makes it right for a self-hosted deployment inside one company and wrong
 for a product sold to others.
@@ -272,28 +272,29 @@ ordinary folder tree.
 ### Setting it up
 
 Google renamed all of this. What used to be the "OAuth consent screen" is now
-**Google Auth Platform**, split into *Branding*, *Audience*, *Data Access* and
-*Clients*, and OAuth clients are created under the last of those rather than
+**Google Auth Platform**, split into _Branding_, _Audience_, _Data Access_ and
+_Clients_, and OAuth clients are created under the last of those rather than
 under APIs & Services → Credentials.
 
-1. **Enable the Google Drive API.** APIs & Services → Library → *Google Drive
-   API* → Enable.
+1. **Enable the Google Drive API.** APIs & Services → Library → _Google Drive
+   API_ → Enable.
 2. **Google Auth Platform → Branding.** App name, support email, home page,
    privacy policy and terms URLs, and the authorised domain — which has to be
    verified in Search Console before Google will accept it.
-3. **Google Auth Platform → Audience.** User type *External*, then **publish the
+3. **Google Auth Platform → Audience.** User type _External_, then **publish the
    app to Production**.
 
-   Do not leave it in *Testing*. A project in Testing with an external audience
+   Do not leave it in _Testing_. A project in Testing with an external audience
    has its **refresh tokens revoked after seven days** for any scope beyond
    basic profile, and a Drive connection is nothing but a refresh token — so
    every connection would pause itself once a week with "the grant was revoked",
    which looks exactly like a customer having removed access. Testing also only
    admits the hundred test users you list by hand.
+
 4. **Google Auth Platform → Data Access.** Add
    `https://www.googleapis.com/auth/drive.readonly`. Google will mark it as
    restricted and ask about verification; see above for what that costs.
-5. **Google Auth Platform → Clients → Create client.** Type *Web application*,
+5. **Google Auth Platform → Clients → Create client.** Type _Web application_,
    and add `<your API URL>/connections/callback` as an authorised redirect URI —
    for example `https://api.example.com/connections/callback`, or
    `http://localhost:8787/connections/callback` for a local stack. It must match
@@ -326,7 +327,7 @@ question as whoever installed the app, would retrieve with that person's access
 and log every question as theirs.
 
 **Answers are written in Slack's own formatting.** The agent writes Markdown,
-which Slack does not read — its `text` is *mrkdwn*, a different language — so
+which Slack does not read — its `text` is _mrkdwn_, a different language — so
 replies are translated on the way out: bold, italic, strikethrough, links,
 headings and lists all arrive formatted rather than as visible asterisks and
 brackets. Code blocks are passed through untouched, since both languages spell
@@ -389,6 +390,155 @@ syncs and its runs list is empty, that is the first thing to check.
 
 ---
 
+---
+
+## Services an agent can call
+
+The two directions above are about documents. This one is not: a **service** is
+a database or an API an agent reaches _while it is answering_, and it is the
+one place in Covan where the agent goes and looks something up rather than
+being handed something in advance.
+
+Adding one is a form on the Integrations page. There is no per-service code
+behind it and there is not meant to be: the worker has six general tools, and
+a service is a row telling one of them where to go.
+
+| What you want                                                          | What it takes                                                   |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------- |
+| A Postgres (hosted Supabase, self-hosted Supabase, your own PostgREST) | One row, plus the function below installed on it                |
+| HubSpot, Stripe, Linear, any REST API with a token                     | One row                                                         |
+| A service that needs OAuth rather than a token                         | A one-off addition to the code, then one row per account        |
+| A service that speaks MCP and has no HTTP API                          | A one-off addition to the code — not built, and deliberately so |
+
+### What the form asks for
+
+- **Name.** What the agent calls it. It is shown the name and the id, so
+  "Covan Supabase" and "HubSpot (prod)" are how it tells two apart.
+- **Base address.** Every request stays inside it. The model names a _path_,
+  never a URL, and a path that resolves outside the base — a full URL, a
+  protocol-relative `//host`, a `..` that climbs out — is refused before
+  anything is sent. Leaving the origin is not forbidden, it is impossible.
+- **Methods you allow** (HTTP only). Your decision, not the agent's, and it
+  cannot widen the list. The default is `GET` alone, which means nothing the
+  agent does through that connection can change anything.
+- **Credential headers.** One or more, encrypted together before they reach
+  Postgres. They are never sent back to the browser: rotating a token is
+  removing the connection and adding it again.
+- **What it holds.** For an API this is the only thing the agent knows about
+  it, so name the paths that matter. For a database it is optional — the agent
+  reads the schema itself the first time it asks, and remembers.
+
+### Connecting a Postgres
+
+Covan talks to a database over HTTPS, through PostgREST, because a Cloudflare
+Worker cannot open a raw TCP socket and Covan has to keep running on both of
+its runtimes (`docs/architecture.md`, "the two seams"). PostgREST will not
+accept raw SQL, but it will call a function — so the function is the carrier.
+
+Install this on the database you are connecting. It is **not** one of Covan's
+migrations and never will be; it belongs to your database, and its name is
+yours to choose:
+
+```sql
+create or replace function public.covan_query(p_sql text, p_limit int default 500)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare v_result jsonb;
+begin
+  -- The whole of the read-onlyness, and it does not depend on parsing the SQL:
+  -- a hidden INSERT, an UPDATE inside a CTE, or any DDL is refused by Postgres
+  -- at the transaction level.
+  set local transaction read only;
+  set local statement_timeout = '10s';
+  execute format('select coalesce(jsonb_agg(t), ''[]''::jsonb) from (%s limit %s) t',
+                 p_sql, p_limit)
+    into v_result;
+  return v_result;
+end;
+$$;
+
+-- Postgres grants EXECUTE on a new function to PUBLIC, and PostgREST exposes
+-- `public` functions as RPC endpoints. Without this line the function is
+-- callable by anybody holding the anon key.
+revoke all on function public.covan_query(text, int) from public, anon;
+grant execute on function public.covan_query(text, int) to service_role;
+```
+
+Then own it with a role that can only read. `security definer` means the
+function runs as its owner, so the owner is the ceiling on what any query
+through it can reach — a read-only role with rights on two schemas describes
+and queries two schemas, and nothing else exists as far as the agent is
+concerned.
+
+Fill in the form with:
+
+| Field              | Value                                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Kind               | Postgres behind PostgREST                                                                                       |
+| Base address       | the PostgREST base — for hosted Supabase, the project URL with `/rest/v1` on the end                            |
+| Read-only function | `covan_query`                                                                                                   |
+| Credential headers | `Authorization: Bearer <key>` **and** `apikey: <key>` for Supabase behind Kong; one header for a bare PostgREST |
+
+**The methods list means nothing for a database connection**, and the form does
+not show it. A query is one POST whatever it does, so the method cannot be what
+decides — the function is. Reading "POST" as "can write" is the one wrong
+conclusion available here, which is why this paragraph exists.
+
+### What the agent does with it
+
+It writes its own SQL. There is no list of queries somebody prepared in
+advance, because that list would need a new entry — which is to say a release —
+for every new question. So the sequence is: read the schema once
+(`describe_connection`, remembered afterwards), then write a query
+(`query_database`), then answer.
+
+Every call is written down. A reply that used a tool carries the steps under
+it in the transcript, with what the agent asked for and how it went, and those
+rows are in your export.
+
+### Read-only, and where that comes from
+
+For a database: the function above, enforced by Postgres, in the database you
+control. Covan also refuses anything that does not read like a `SELECT` before
+it sends it, but that is a second line whose job is to give the agent a
+readable reason — it is not what holds.
+
+For an API: the methods you allowed. The default is `GET`.
+
+**The first connection you open to a write method is the one that needs a
+permission model**, and Covan has the schema for one and no rows in it — see
+[a question row level security cannot be asked](security.md#a-question-row-level-security-cannot-be-asked).
+Until then, treat a write-enabled connection as something the agent can do
+anything with inside the methods and origin you gave it.
+
+### What an agent cannot do with a service
+
+- **It cannot reach anywhere you did not name.** Origin-locked, redirects
+  refused, and the same SSRF guard every outbound request in Covan goes
+  through — loopback, RFC1918, link-local and cloud metadata addresses are
+  refused at call time, not only when you set the connection up.
+- **It cannot choose a method you did not allow**, and it is told not to try
+  another one.
+- **It cannot send mail to an address.** `send_email` takes one of _your_
+  delivery channels, so the worst an instruction hidden in fetched data can
+  achieve is a message to your own inbox.
+- **It cannot create a routine on its own.** It proposes one and you approve
+  it; what gets created is an ordinary routine on the Routines screen, which
+  you can edit, pause or delete like any other.
+
+### Prompt injection, honestly
+
+Text an agent fetches can contain instructions, and a model that reads them may
+follow them. That was true before any of this — a hostile RSS feed could
+already mislead a digest — and what has changed is the blast radius, so it is
+worth saying what bounds it now: an origin you chose, methods you allowed,
+read-only by default, delivery only to your own channels, and a person's yes in
+front of anything that changes the world. On a scheduled run there is nobody to
+ask, so anything needing approval is recorded and does not happen.
+
 ## Where the credentials live
 
 Every token is encrypted with AES-GCM before it reaches Postgres, under
@@ -405,10 +555,14 @@ duplicated.
 
 ## What is not here
 
-- **No search connectors.** Covan answers from what was deliberately imported,
-  not from everything an account can reach.
-- **No write access.** Every scope is read-only. Nothing Covan does can change a
-  Notion page or a Drive file. The database has the schema for how a write would
+- **No search connectors.** A _source_ is imported, not queried: Covan answers
+  from what was deliberately brought in rather than from everything an account
+  can reach. A _service_ is the opposite by design and is scoped by the origin
+  and methods you gave it rather than by what the credential could do.
+- **No write access to a source.** Every OAuth scope is read-only. Nothing
+  Covan does can change a Notion page or a Drive file. A _service_ connection
+  can be opened to write methods, which is a different decision and a
+  deliberate one — see above. The database has the schema for how a write would
   be permitted one day — see
   [a question row level security cannot be asked](security.md#a-question-row-level-security-cannot-be-asked) —
   and it is empty, which means every agent is refused every action. That is the

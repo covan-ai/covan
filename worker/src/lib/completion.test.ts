@@ -784,3 +784,343 @@ describe("streamCompletion", () => {
     });
   });
 });
+
+/**
+ * Tool calling, which is the one thing this file gained that the two providers
+ * disagree about in every particular: where the schema goes, how a result is
+ * addressed, how a partial call is streamed, and what the model says when it
+ * has asked for one.
+ *
+ * The tests below are deliberately written against the *request body* and the
+ * *event list* rather than against a fake that understands tools. What breaks
+ * in practice is a field in the wrong place, and a fake clever enough to hide
+ * that is a fake that would have passed either way.
+ */
+describe("tools, on the way out", () => {
+  const search = {
+    name: "search_documents",
+    description: "Look something up.",
+    input: { type: "object", properties: { query: { type: "string" } } },
+  };
+
+  it("sends nothing at all when the caller named no tools", async () => {
+    await complete(openaiOnly, { model: "gpt-4.1", messages: [{ role: "user", content: "hi" }] });
+    expect(openaiCreate.mock.calls[0][0]).not.toHaveProperty("tools");
+    expect(openaiCreate.mock.calls[0][0]).not.toHaveProperty("tool_choice");
+  });
+
+  it("wraps a tool as an OpenAI function, with the schema under parameters", async () => {
+    await complete(openaiOnly, {
+      model: "gpt-4.1",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [search],
+    });
+    const body = openaiCreate.mock.calls[0][0];
+    expect(body.tool_choice).toBe("auto");
+    expect(body.tools).toEqual([
+      {
+        type: "function",
+        function: {
+          name: "search_documents",
+          description: "Look something up.",
+          parameters: search.input,
+        },
+      },
+    ]);
+  });
+
+  it("sends the same tool to Anthropic with the schema under input_schema", async () => {
+    await complete(env, {
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [search],
+    });
+    expect(anthropicCreate.mock.calls[0][0].tools).toEqual([
+      {
+        name: "search_documents",
+        description: "Look something up.",
+        input_schema: search.input,
+      },
+    ]);
+  });
+
+  it("keeps the web search tool alongside an app tool rather than replacing it", async () => {
+    await complete(env, {
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "hi" }],
+      webSearch: true,
+      tools: [search],
+    });
+    const names = anthropicCreate.mock.calls[0][0].tools.map((t: { name?: string }) => t.name);
+    expect(names).toEqual(["web_search", "search_documents"]);
+  });
+});
+
+describe("a tool result, on its way back to the model", () => {
+  const conversation = [
+    { role: "user" as const, content: "how many orders?" },
+    {
+      role: "assistant" as const,
+      content: "Let me look.",
+      toolCalls: [{ id: "call_1", name: "query_database", arguments: '{"sql":"select 1"}' }],
+    },
+    { role: "tool" as const, toolCallId: "call_1", content: '[{"count":4}]' },
+  ];
+
+  it("addresses it by tool_call_id on OpenAI, not by a field beside the content", async () => {
+    await complete(openaiOnly, { model: "gpt-4.1", messages: conversation });
+    const sent = openaiCreate.mock.calls[0][0].messages;
+    expect(sent[1]).toEqual({
+      role: "assistant",
+      content: "Let me look.",
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "query_database", arguments: '{"sql":"select 1"}' },
+        },
+      ],
+    });
+    expect(sent[2]).toEqual({
+      role: "tool",
+      tool_call_id: "call_1",
+      content: '[{"count":4}]',
+    });
+  });
+
+  it("sends content: null for an assistant turn that only asked", async () => {
+    await complete(openaiOnly, {
+      model: "gpt-4.1",
+      messages: [
+        { role: "user", content: "go" },
+        { role: "assistant", content: "", toolCalls: [{ id: "c", name: "t", arguments: "{}" }] },
+        { role: "tool", toolCallId: "c", content: "done" },
+      ],
+    });
+    expect(openaiCreate.mock.calls[0][0].messages[1].content).toBeNull();
+  });
+
+  it("becomes tool_use and tool_result blocks on Anthropic", () => {
+    const { messages } = toAnthropicMessages(conversation);
+    expect(messages[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "Let me look." },
+        { type: "tool_use", id: "call_1", name: "query_database", input: { sql: "select 1" } },
+      ],
+    });
+    expect(messages[2]).toEqual({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "call_1", content: '[{"count":4}]' }],
+    });
+  });
+
+  it("puts several results in one user turn rather than several", () => {
+    const { messages } = toAnthropicMessages([
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "a", name: "t", arguments: "{}" },
+          { id: "b", name: "t", arguments: "{}" },
+        ],
+      },
+      { role: "tool", toolCallId: "a", content: "one" },
+      { role: "tool", toolCallId: "b", content: "two" },
+    ]);
+    expect(messages).toHaveLength(3);
+    expect(messages[2].content).toHaveLength(2);
+  });
+
+  it("keeps an assistant turn that said nothing but asked for something", () => {
+    const { messages } = toAnthropicMessages([
+      { role: "user", content: "go" },
+      { role: "assistant", content: "", toolCalls: [{ id: "a", name: "t", arguments: "{}" }] },
+    ]);
+    expect(messages).toHaveLength(2);
+    expect(messages[1].content).toEqual([{ type: "tool_use", id: "a", name: "t", input: {} }]);
+  });
+
+  it("answers an empty tool result with a word, which the API requires", () => {
+    const { messages } = toAnthropicMessages([
+      { role: "user", content: "go" },
+      { role: "assistant", content: "", toolCalls: [{ id: "a", name: "t", arguments: "{}" }] },
+      { role: "tool", toolCallId: "a", content: "" },
+    ]);
+    expect(messages[2].content).toEqual([
+      { type: "tool_result", tool_use_id: "a", content: "(no output)" },
+    ]);
+  });
+
+  /**
+   * The case that turns a trimmed history into a 400. History trimming can
+   * leave an assistant turn first; that turn is dropped, and the result of
+   * the call it made would otherwise be sent with nothing to answer.
+   */
+  it("drops a result whose call was trimmed out of the history", () => {
+    const { messages } = toAnthropicMessages([
+      { role: "assistant", content: "", toolCalls: [{ id: "gone", name: "t", arguments: "{}" }] },
+      { role: "tool", toolCallId: "gone", content: "orphan" },
+      { role: "user", content: "and now?" },
+    ]);
+    expect(messages).toEqual([{ role: "user", content: "and now?" }]);
+  });
+
+  it("sends an empty object when the model truncated its arguments mid-write", () => {
+    const { messages } = toAnthropicMessages([
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "a", name: "t", arguments: '{"q":"un' }],
+      },
+    ]);
+    expect(messages[1].content).toEqual([{ type: "tool_use", id: "a", name: "t", input: {} }]);
+  });
+});
+
+describe("a streamed tool call", () => {
+  it("accumulates OpenAI's fragments into whole calls and stops the turn", async () => {
+    openaiCreate.mockResolvedValue(
+      replay([
+        { choices: [{ delta: { content: "Looking." } }] },
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  { index: 0, id: "call_1", function: { name: "search_documents", arguments: "" } },
+                ],
+              },
+            },
+          ],
+        },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"que' } }] } }] },
+        {
+          choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'ry":"x"}' } }] } }],
+        },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+        { choices: [], usage: { prompt_tokens: 9, completion_tokens: 3 } },
+      ]),
+    );
+    const events = await collect(
+      streamCompletion(openaiOnly, {
+        model: "gpt-4.1",
+        messages: [{ role: "user", content: "x" }],
+      }),
+    );
+    expect(events).toEqual([
+      { type: "delta", text: "Looking." },
+      {
+        type: "tools",
+        calls: [{ id: "call_1", name: "search_documents", arguments: '{"query":"x"}' }],
+      },
+      {
+        type: "end",
+        usage: { promptTokens: 9, completionTokens: 3, cachedTokens: null },
+        finishReason: "tool_calls",
+      },
+    ]);
+  });
+
+  it("drops a call OpenAI never gave an id, which could never be answered", async () => {
+    openaiCreate.mockResolvedValue(
+      replay([
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "{}" } }] } }] },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ]),
+    );
+    const events = await collect(
+      streamCompletion(openaiOnly, {
+        model: "gpt-4.1",
+        messages: [{ role: "user", content: "x" }],
+      }),
+    );
+    expect(events.some((e) => e.type === "tools")).toBe(false);
+  });
+
+  it("accumulates Anthropic's blocks by index and normalises its stop reason", async () => {
+    anthropicCreate.mockResolvedValue(
+      replay([
+        { type: "message_start", message: { usage: { input_tokens: 40 } } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "One sec." } },
+        {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "toolu_1", name: "http_request", input: {} },
+        },
+        {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json: '{"path"' },
+        },
+        {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json: ':"/v1/x"}' },
+        },
+        { type: "message_delta", usage: { output_tokens: 7 }, delta: { stop_reason: "tool_use" } },
+      ]),
+    );
+    const events = await collect(
+      streamCompletion(env, {
+        model: "claude-sonnet-4-5",
+        messages: [{ role: "user", content: "x" }],
+      }),
+    );
+    expect(events[1]).toEqual({
+      type: "tools",
+      calls: [{ id: "toolu_1", name: "http_request", arguments: '{"path":"/v1/x"}' }],
+    });
+    // Normalised to OpenAI's word, so a consumer asks the question once.
+    expect(events[2]).toMatchObject({ type: "end", finishReason: "tool_calls" });
+  });
+});
+
+describe("complete, when the model asked for something", () => {
+  it("no longer loses an Anthropic tool_use block to the text filter", async () => {
+    anthropicCreate.mockResolvedValue({
+      content: [
+        { type: "text", text: "Checking." },
+        { type: "tool_use", id: "toolu_1", name: "search_documents", input: { query: "x" } },
+      ],
+      usage: { input_tokens: 10, output_tokens: 4 },
+    });
+    const out = await complete(env, {
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "x" }],
+    });
+    expect(out.text).toBe("Checking.");
+    expect(out.toolCalls).toEqual([
+      { id: "toolu_1", name: "search_documents", arguments: '{"query":"x"}' },
+    ]);
+  });
+
+  it("reads OpenAI's tool_calls off the message", async () => {
+    openaiCreate.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [{ id: "c1", type: "function", function: { name: "t", arguments: "{}" } }],
+          },
+        },
+      ],
+      usage: { prompt_tokens: 3, completion_tokens: 1 },
+    });
+    const out = await complete(openaiOnly, {
+      model: "gpt-4.1",
+      messages: [{ role: "user", content: "x" }],
+    });
+    expect(out.toolCalls).toEqual([{ id: "c1", name: "t", arguments: "{}" }]);
+  });
+
+  it("leaves toolCalls absent on an ordinary reply", async () => {
+    const out = await complete(openaiOnly, {
+      model: "gpt-4.1",
+      messages: [{ role: "user", content: "x" }],
+    });
+    expect(out).not.toHaveProperty("toolCalls");
+  });
+});

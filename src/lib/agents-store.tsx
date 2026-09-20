@@ -116,6 +116,22 @@ export type Message = {
    * Token usage for assistant replies. Null on user messages and on replies
    * written before 0006. cachedTokens is null on replies written before 0025.
    */
+  /**
+   * What the reply did before it wrote, when it did anything — one entry per
+   * tool it ran, in the order it ran them.
+   *
+   * Absent on every reply that ran no tool, which is most of them and all of
+   * them written before the harness existed. The result of each step is
+   * deliberately not here: it is already in the answer above it, and sending
+   * both would put every tool's whole output into every transcript load.
+   */
+  steps?: {
+    index: number;
+    tool: string;
+    status: "ok" | "failed" | "refused" | "pending";
+    request: unknown;
+    durationMs: number | null;
+  }[];
   promptTokens?: number | null;
   completionTokens?: number | null;
   cachedTokens?: number | null;

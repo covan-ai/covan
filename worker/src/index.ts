@@ -36,6 +36,7 @@ import { trash } from "./routes/trash";
 import { events } from "./routes/events";
 import { runPurge } from "./lib/purge";
 import { connections, connectionsPublic } from "./routes/connections";
+import { toolConnections } from "./routes/tool-connections";
 import { slack, slackPublic } from "./routes/slack";
 import { routineHooks } from "./routes/routine-hooks";
 
@@ -126,6 +127,10 @@ api.use("/*", entitlementsMiddleware);
 // substitutes: a monthly allowance is a ceiling on the bill, not on the rate at
 // which it is reached, and the open build ships no allowance at all.
 api.use("/chat/stream", rateLimit("expensive"));
+// The second half of a turn that stopped to ask: the same loop, the same
+// tools, the same bill. A limit on the first half alone would be a limit on
+// nothing, because a confirmation can resume into several more model calls.
+api.use("/chat/confirm/:id", rateLimit("expensive"));
 api.use("/transcribe", rateLimit("expensive"));
 api.use("/brainstorm/ideas/suggest", rateLimit("expensive"));
 api.use("/persona/suggest", rateLimit("expensive"));
@@ -165,6 +170,7 @@ api.route("/", feedback);
 api.route("/", trash);
 api.route("/", events);
 api.route("/", connections);
+api.route("/", toolConnections);
 api.route("/", slack);
 
 // Outside the authenticated router, and the only route that is. A browser

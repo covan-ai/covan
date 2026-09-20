@@ -102,6 +102,68 @@ export type AgentDTO = {
  */
 export type SourceDTO = { id: string | null; name: string };
 
+/**
+ * One tool a reply ran, as the transcript shows it.
+ *
+ * `request` is deliberately here and `resultExcerpt` deliberately is not. A
+ * person checking an answer wants to know what the agent asked for — which
+ * query, which path — and the result is already in the answer they are
+ * reading. Sending both would put the whole of every tool's output into the
+ * payload of every transcript load, for a line of interface that shows a
+ * chip.
+ */
+/**
+ * A connected service, as every screen sees it — which is to say without its
+ * credential, because no client role may select one (0059).
+ *
+ * `config` is forwarded whole rather than picked apart. It holds the rpc name
+ * and the cached description, both of which the settings screen edits, and
+ * neither of which anything else has an opinion about.
+ */
+export type ToolConnectionDTO = {
+  id: string;
+  label: string;
+  transport: "http" | "sql";
+  baseUrl: string;
+  allowedMethods: string[];
+  /** What the agent is told this service holds, when anybody has recorded it. */
+  summary: string | null;
+  /** The read-only function a `sql` connection speaks through. */
+  rpc: string | null;
+  createdAt: number;
+};
+
+export function mapToolConnection(row: {
+  id: string;
+  label: string;
+  transport: string;
+  base_url: string;
+  allowed_methods?: unknown;
+  config?: unknown;
+  created_at: string;
+}): ToolConnectionDTO {
+  const config =
+    row.config && typeof row.config === "object" ? (row.config as Record<string, unknown>) : {};
+  return {
+    id: row.id,
+    label: row.label,
+    transport: row.transport === "sql" ? "sql" : "http",
+    baseUrl: row.base_url,
+    allowedMethods: Array.isArray(row.allowed_methods) ? (row.allowed_methods as string[]) : [],
+    summary: typeof config.summary === "string" ? config.summary : null,
+    rpc: typeof config.rpc === "string" ? config.rpc : null,
+    createdAt: toEpochMs(row.created_at),
+  };
+}
+
+export type MessageStepDTO = {
+  index: number;
+  tool: string;
+  status: "ok" | "failed" | "refused" | "pending";
+  request: unknown;
+  durationMs: number | null;
+};
+
 export type MessageDTO = {
   id: string;
   role: "user" | "assistant";
@@ -126,6 +188,14 @@ export type MessageDTO = {
   promptTokens?: number | null;
   completionTokens?: number | null;
   cachedTokens?: number | null;
+  /**
+   * What the reply did before it wrote, when it did anything.
+   *
+   * Absent on every reply that ran no tool, which is most of them and all of
+   * them written before 0060 — an empty array and an absent field would mean
+   * the same thing to the screen, and the absent one does not travel.
+   */
+  steps?: MessageStepDTO[];
 };
 
 export type ChatSessionDTO = {
@@ -373,10 +443,13 @@ export function mapMessage(row: {
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
   cached_tokens?: number | null;
+  /** The embedded `message_steps` rows, when the caller asked for them. */
+  message_steps?: unknown;
 }): MessageDTO {
   const sender = firstEmbedded<{ id: string; name: string | null; avatar_url: string | null }>(
     row.sender,
   );
+  const steps = mapSteps(row.message_steps);
   return {
     id: row.id,
     role: row.role === "assistant" ? "assistant" : "user",
@@ -387,7 +460,36 @@ export function mapMessage(row: {
     promptTokens: row.prompt_tokens ?? undefined,
     completionTokens: row.completion_tokens ?? undefined,
     cachedTokens: row.cached_tokens ?? undefined,
+    ...(steps.length > 0 ? { steps } : {}),
   };
+}
+
+/**
+ * The steps of one message, sorted and narrowed.
+ *
+ * PostgREST returns an embedded relation in no promised order, and the order
+ * is the whole of what `step_index` is for — a person reads "searched the
+ * handbook, then queried the orders database", not the other way round.
+ */
+function mapSteps(value: unknown): MessageStepDTO[] {
+  if (!Array.isArray(value)) return [];
+  const out: MessageStepDTO[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const row = raw as Record<string, unknown>;
+    const status = String(row.status ?? "");
+    if (status !== "ok" && status !== "failed" && status !== "refused" && status !== "pending") {
+      continue;
+    }
+    out.push({
+      index: typeof row.step_index === "number" ? row.step_index : 0,
+      tool: String(row.tool ?? ""),
+      status,
+      request: row.request ?? {},
+      durationMs: typeof row.duration_ms === "number" ? row.duration_ms : null,
+    });
+  }
+  return out.sort((a, b) => a.index - b.index);
 }
 
 export function mapChatSession(

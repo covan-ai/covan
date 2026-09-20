@@ -19,7 +19,7 @@ import { chat } from "./chat";
  */
 
 const USER = { id: "user-1", email: "a@example.com" };
-const SESSION = { id: "sess-1", agent_id: "agent-1", kind: "chat" };
+const SESSION = { id: "sess-1", agent_id: "agent-1", kind: "chat", workspace_id: "ws-1" };
 const AGENT = { id: "agent-1", persona: "You are our PM.", model: null, mode: "normal" };
 
 const embedTexts = vi.fn();
@@ -36,6 +36,8 @@ const completionCreate = vi.fn();
  */
 const anthropicCreate = vi.fn();
 const serviceInsert = vi.fn();
+const stepsWritten = vi.fn();
+const pausedWritten = vi.fn();
 const serviceUpdate = vi.fn();
 const sessionUpdate = vi.fn();
 /** The OPENAI_API_KEY every `createOpenAI(env)` call was actually made with. */
@@ -92,6 +94,29 @@ vi.mock("../lib/supabase", () => ({
               return answered(row, id);
             },
           }),
+        };
+      }
+      // What a reply did, written once the row it belongs to exists. An
+      // upsert, because a resumed turn writes the same step index again with
+      // the status it ended up having.
+      if (table === "message_steps") {
+        return {
+          upsert: (rows: Array<Record<string, unknown>>) => {
+            stepsWritten(rows);
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
+      // A turn parked waiting for somebody. Returns the id the confirm event
+      // carries.
+      if (table === "paused_turns") {
+        return {
+          insert: (row: Record<string, unknown>) => {
+            pausedWritten(row);
+            return {
+              select: () => ({ single: async () => ({ data: { id: "paused-1" }, error: null }) }),
+            };
+          },
         };
       }
       // chat_sessions, which the route touches twice: the `updated_at` bump
@@ -194,6 +219,10 @@ function appWith(spec: {
    * length cap. What "continue" has to work from.
    */
   cutOffReply?: string;
+  /** Rows standing in for `tool_connections` in this workspace. */
+  connections?: Array<Record<string, unknown>>;
+  /** Rows standing in for this person's `delivery_channels`. */
+  channels?: Array<Record<string, unknown>>;
 }) {
   const documents = spec.documents ?? [];
   const rows = [
@@ -246,6 +275,13 @@ function appWith(spec: {
           error: null,
         }),
       },
+      // What the agent can reach, which the route now reads before it builds
+      // the prompt. Empty in every test here but the ones about tools: a
+      // workspace with no connected service and no delivery channel is
+      // offered neither the tools that would point at one nor the manifest
+      // naming them, which is what keeps these assertions about retrieval.
+      tool_connections: { select: () => ({ data: spec.connections ?? [], error: null }) },
+      delivery_channels: { select: () => ({ data: spec.channels ?? [], error: null }) },
     },
     rpc: {
       match_chunks: (args: Record<string, unknown>) => {
@@ -268,6 +304,18 @@ function appWith(spec: {
   return { app, calls, rpcCalls };
 }
 
+/**
+ * The bindings a request arrives with.
+ *
+ * Two of them decide whether a tool is offered at all: `ALLOWED_ORIGIN` is
+ * what the SSRF guard checks a connection against, and `ROUTINE_SECRET_KEY`
+ * is what opens its credential. A deployment missing either cannot run the
+ * tools that reach outside, and `isConfigured` says so rather than offering
+ * one that would fail — so these have to be here for the tool tests below to
+ * be testing what they say they are.
+ */
+const ENV = { ALLOWED_ORIGIN: "https://app.covan.test", ROUTINE_SECRET_KEY: "k" };
+
 async function post(app: Hono<AppEnv>, body: Record<string, unknown>) {
   const res = await app.request(
     "/chat/stream",
@@ -276,7 +324,7 @@ async function post(app: Hono<AppEnv>, body: Record<string, unknown>) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     },
-    {} as never,
+    ENV as never,
   );
   return { status: res.status, body: await res.text() };
 }
@@ -999,5 +1047,149 @@ describe("answering the same question again", () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toMatch(/nothing to regenerate/);
+  });
+});
+
+/**
+ * The harness, from the route's side.
+ *
+ * What is under test here is the wire: which events come out, in which order,
+ * and what gets written down. The loop itself is proved next door in
+ * `lib/harness/loop.test.ts`, and the tools in their own files — re-proving
+ * either through an HTTP request would be slower and would fail in a less
+ * useful place.
+ */
+
+/** An OpenAI stream that asks for a tool and then, on the next call, answers. */
+function toolThenAnswer(toolName: string, args: string, answer: string) {
+  let asked = false;
+  return async (body: { stream?: boolean }) => {
+    if (!body.stream) return titleOf("A question");
+    if (asked) return streamOf(answer);
+    asked = true;
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  { index: 0, id: "call_1", function: { name: toolName, arguments: args } },
+                ],
+              },
+            },
+          ],
+        };
+        yield { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        yield {
+          choices: [],
+          usage: { prompt_tokens: 40, completion_tokens: 8, prompt_tokens_details: {} },
+        };
+      },
+    };
+  };
+}
+
+/** The SSE frames, parsed, in the order they were written. */
+function frames(body: string): Array<Record<string, unknown>> {
+  return body
+    .split("\n\n")
+    .map((block) => block.trim())
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => JSON.parse(line.slice("data: ".length)) as Record<string, unknown>);
+}
+
+describe("a reply that used a tool", () => {
+  it("sends the steps before the answer, and one `done` at the end", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(
+      toolThenAnswer("search_documents", '{"query":"vacation"}', "Twenty days."),
+    );
+
+    const res = await ask(app);
+    expect(res.status).toBe(200);
+    const types = frames(res.body).map((f) => f.type);
+
+    expect(types.filter((t) => t === "done")).toHaveLength(1);
+    expect(types.indexOf("step")).toBeLessThan(types.indexOf("delta"));
+    expect(types.lastIndexOf("step")).toBeLessThan(types.indexOf("done"));
+  });
+
+  it("says a step is running before it says how it went", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(
+      toolThenAnswer("search_documents", '{"query":"vacation"}', "Twenty days."),
+    );
+    const steps = frames((await ask(app)).body).filter((f) => f.type === "step");
+    expect(steps.map((s) => s.status)).toEqual(["running", "ok"]);
+    expect(steps[0].tool).toBe("search_documents");
+    // The label carries what it was pointed at, so a person reading the trail
+    // can tell two searches apart.
+    expect(String(steps[0].label)).toContain("vacation");
+  });
+
+  it("writes the step against the reply, once the reply has an id", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(
+      toolThenAnswer("search_documents", '{"query":"vacation"}', "Twenty days."),
+    );
+    await ask(app);
+    expect(stepsWritten).toHaveBeenCalledTimes(1);
+    expect(stepsWritten.mock.calls[0][0]).toEqual([
+      expect.objectContaining({
+        message_id: "assistant-1",
+        step_index: 0,
+        tool: "search_documents",
+        status: "ok",
+        request: { query: "vacation" },
+      }),
+    ]);
+  });
+
+  it("writes no steps at all for an ordinary reply", async () => {
+    const { app } = appWith({ question: "How many days?" });
+    await ask(app);
+    expect(stepsWritten).not.toHaveBeenCalled();
+  });
+
+  it("does not offer a tool that has nothing in this workspace to point at", async () => {
+    const { app } = appWith({ question: "How many days?" });
+    await ask(app);
+    const offered = (completionCreate.mock.calls.find((c) => c[0].stream)?.[0].tools ?? []).map(
+      (t: { function: { name: string } }) => t.function.name,
+    );
+    // No connected service and no delivery channel, so only the tool that
+    // needs neither.
+    expect(offered).toEqual(["search_documents"]);
+  });
+
+  it("offers the connection tools once the workspace has a connection", async () => {
+    const { app } = appWith({
+      question: "How many orders?",
+      connections: [
+        {
+          id: "conn-1",
+          workspace_id: "ws-1",
+          label: "Covan Supabase",
+          transport: "sql",
+          base_url: "https://proj.supabase.co/rest/v1",
+          auth_kind: "static_header",
+          allowed_methods: ["GET"],
+          config: {},
+        },
+      ],
+    });
+    await ask(app);
+    const body = completionCreate.mock.calls.find((c) => c[0].stream)?.[0];
+    const offered = (body.tools ?? []).map((t: { function: { name: string } }) => t.function.name);
+    expect(offered).toContain("query_database");
+    expect(offered).toContain("describe_connection");
+    // And the agent is told the id, because a tool takes one and the model
+    // has no other way to know it.
+    const system = body.messages.find(
+      (m: { role: string; content: string }) =>
+        m.role === "system" && m.content.includes("Connected services"),
+    );
+    expect(system.content).toContain("conn-1");
   });
 });

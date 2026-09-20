@@ -11,6 +11,8 @@ import type {
   ProviderId,
   SlackState,
   SyncOutcome,
+  ToolConnection,
+  ToolConnectionsResponse,
 } from "./connections-api";
 import type {
   Routine,
@@ -618,6 +620,32 @@ export const api = {
      */
     remove: (id: string, documents: "keep" | "delete" = "keep"): Promise<void> =>
       request("DELETE", `/connections/${id}?documents=${documents}`),
+  },
+  /**
+   * Services an agent can call, which is a different table and a different
+   * idea from `connections` above — see `ToolConnection` for the distinction.
+   *
+   * `headers` goes up once, on create, and never comes back: the worker
+   * encrypts it and 0059 grants the column to nobody. Changing a credential
+   * is removing the connection and making it again, which is the honest
+   * shape of "the token has been rotated".
+   */
+  toolConnections: {
+    list: (): Promise<ToolConnectionsResponse> => request("GET", "/tool-connections"),
+    create: (input: {
+      label: string;
+      transport: "http" | "sql";
+      baseUrl: string;
+      headers: Record<string, string>;
+      allowedMethods?: string[];
+      rpc?: string;
+      summary?: string;
+    }): Promise<ToolConnection> => request("POST", "/tool-connections", input),
+    update: (
+      id: string,
+      patch: { label?: string; allowedMethods?: string[]; rpc?: string; summary?: string },
+    ): Promise<ToolConnection> => request("PATCH", `/tool-connections/${id}`, patch),
+    remove: (id: string): Promise<void> => request("DELETE", `/tool-connections/${id}`),
   },
   slack: {
     get: (): Promise<SlackState> => request("GET", "/slack"),

@@ -10,6 +10,7 @@ import {
   type RoutineRow,
 } from "./executor";
 import { summariseWithModel } from "./summarise";
+import { runRoutineWithTools } from "./agent-run";
 import { ownHostsFrom } from "./url-guard";
 import { deliveryDepsFrom } from "./delivery";
 import { fileRoutineOutput } from "./filing";
@@ -64,6 +65,11 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
     // resolves that env once (house or workspace) and hands it in here, per
     // call, rather than baking one in at construction the way this used to.
     summarise: (input, runEnv) => summariseWithModel(runEnv)(input),
+    // The same run, with the tools the workspace has connected — and `null`
+    // when it has connected none, which sends the run back to the single
+    // call above. The env this is built with is the house one; the run env
+    // arrives per call, for the reason `summarise` takes one.
+    runWithTools: (input, runEnv) => runRoutineWithTools(env, db)(input, runEnv),
     // The same retrieval chat and Slack use, reached through the same module.
     // `retrieval.ts` exists precisely because a second surface needed to ask an
     // agent something and two copies would have drifted rather than failed —

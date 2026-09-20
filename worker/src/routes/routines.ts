@@ -22,6 +22,7 @@ import { generateIngestToken } from "../lib/routines/ingest";
 import { rateLimitKey } from "../middleware/ratelimit";
 import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
+import { createRoutine } from "../lib/routines/create";
 import { resolveModel } from "../lib/models";
 import { complete, totalTokens } from "../lib/completion";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
@@ -391,12 +392,6 @@ const updateSchema = z
  * carry: a `connection` routine that also stored a leftover `url` would look,
  * to anyone reading the row later, like it might fetch one.
  */
-function sourceConfigFor(body: z.infer<typeof createSchema>): Record<string, string> {
-  if (body.sourceKind === "connection") return { connectionId: body.connectionId! };
-  if (body.sourceUrl) return { url: body.sourceUrl };
-  return {};
-}
-
 routines.get("/routines", async (c) => {
   const { data, error } = await c
     .get("db")
@@ -413,26 +408,6 @@ routines.post("/routines", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const body = parsed.data;
 
-  if (!isValidCron(body.scheduleCron, body.timezone)) {
-    return c.json({ error: "unusable schedule" }, 400);
-  }
-  if (body.sourceKind === "rss" || body.sourceKind === "web") {
-    if (!body.sourceUrl) return c.json({ error: "this source needs a url" }, 400);
-    try {
-      assertFetchableUrl(body.sourceUrl, ownHostsFrom(c.env));
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "invalid url" }, 400);
-    }
-  }
-  // A connection is checked by the database, not here: 0047's policy resolves
-  // the id through the caller's own RLS, so a connection in another workspace
-  // is refused by the same mechanism that refuses another workspace's agent.
-  // This only catches the shape, so the error names the missing field instead
-  // of arriving as the policy's generic refusal below.
-  if (body.sourceKind === "connection" && !body.connectionId) {
-    return c.json({ error: "this source needs a connection" }, 400);
-  }
-
   const db = c.get("db");
   const { data: agent } = await db
     .from("agents")
@@ -441,49 +416,31 @@ routines.post("/routines", async (c) => {
     .single();
   if (!agent) return c.json({ error: "agent not found" }, 404);
 
-  const { data, error } = await db
-    .from("routines")
-    .insert({
-      workspace_id: agent.workspace_id,
-      agent_id: body.agentId,
-      user_id: c.get("user").id,
+  // The one insert site, shared with the tool an agent uses to propose a
+  // routine mid-conversation — see `lib/routines/create.ts` for why there is
+  // exactly one.
+  const created = await createRoutine(
+    db,
+    {
+      agentId: body.agentId,
+      workspaceId: agent.workspace_id as string,
+      userId: c.get("user").id,
       name: body.name,
-      source_kind: body.sourceKind,
-      source_config: sourceConfigFor(body),
+      sourceKind: body.sourceKind,
+      sourceUrl: body.sourceUrl ?? null,
+      connectionId: body.connectionId ?? null,
       instruction: body.instruction,
-      delivery_channel_id: body.deliveryChannelId,
-      schedule_cron: body.scheduleCron,
+      deliveryChannelId: body.deliveryChannelId,
+      scheduleCron: body.scheduleCron,
       timezone: body.timezone,
-      // Kept even for a webhook-only routine, which never runs on it: the
-      // column is `not null` and six other places assume a string is there.
-      // 0055 says why that was the cheaper of the two mistakes.
-      trigger_kind: body.triggerKind,
-      output_bundle_id: body.outputBundleId ?? null,
-      ...(body.outputRetention !== undefined ? { output_retention: body.outputRetention } : {}),
-      // The first run is scheduled, not immediate. Creating "every day at
-      // 09:00" used to send a real message within one 5-minute tick, because
-      // claim_due_routines claims anything already due and `now()` is. Use
-      // the Run now button for an instant first result.
-      next_run_at: nextRunAt(body.scheduleCron, body.timezone, new Date()).toISOString(),
-    })
-    .select("*")
-    .single();
-
-  if (error) {
-    const status = insertErrorStatus(error);
-    if (status === 400) {
-      return c.json(
-        {
-          error:
-            "the delivery channel, agent or output bundle is not available to you in this " +
-            "workspace, or this source cannot have a webhook trigger",
-        },
-        400,
-      );
-    }
-    return c.json({ error: "failed to create routine" }, 500);
-  }
-  return c.json(mapRoutine(data), 201);
+      triggerKind: body.triggerKind,
+      outputBundleId: body.outputBundleId ?? null,
+      ...(body.outputRetention !== undefined ? { outputRetention: body.outputRetention } : {}),
+    },
+    ownHostsFrom(c.env),
+  );
+  if (!created.ok) return c.json({ error: created.message }, created.status);
+  return c.json(mapRoutine(created.row), 201);
 });
 
 routines.patch("/routines/:id", async (c) => {

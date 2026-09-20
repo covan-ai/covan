@@ -40,12 +40,12 @@ routine behave differently today?" is not a question anyone has to answer.
 
 Four source kinds, and the difference between them is what counts as new.
 
-| Source           | What a run does                                                             |
-| ---------------- | --------------------------------------------------------------------------- |
-| RSS / Atom feed  | Fetches and parses it, and reports the entries it has not seen              |
-| Web page         | Fetches it and hashes the body, and reports only when the hash moved        |
-| Connected source | Fetches nothing — it reports the documents a connection has synced since    |
-| Scheduled prompt | Fetches nothing — it runs the instruction on the schedule                   |
+| Source           | What a run does                                                          |
+| ---------------- | ------------------------------------------------------------------------ |
+| RSS / Atom feed  | Fetches and parses it, and reports the entries it has not seen           |
+| Web page         | Fetches it and hashes the body, and reports only when the hash moved     |
+| Connected source | Fetches nothing — it reports the documents a connection has synced since |
+| Scheduled prompt | Fetches nothing — it runs the instruction on the schedule                |
 
 For the two that fetch, the request carries `If-None-Match` when a previous run
 stored an ETag. A `304` ends the run immediately: no parse, no model call, and a
@@ -181,6 +181,60 @@ The generated summary is stored on the run that sent it, so "what did it send me
 last Tuesday?" has an answer inside the product rather than only in a mailbox
 somebody may have cleared. This is the agent's own text, already delivered — not
 a copy of the source.
+
+### When the agent can go and look
+
+Everything above describes a run that is handed its material and writes about
+it. A workspace with a **connected service** (see
+[Integrations](integrations.md#services-an-agent-can-call)) changes that: the
+run goes through the same agent loop a chat turn does, so the agent can query
+the database or call the API itself while it works.
+
+The important part of that sentence is _the same loop_. There are not two ways
+a job runs. A thing you set up in a conversation and then scheduled behaves the
+same way at 3am as it did when you watched it, because it is the same code —
+and the alternative, two execution paths, produces the one bug nobody can
+debug.
+
+What it changes for you:
+
+- **The routine holds the clock, not the data.** Its source stays `none`.
+  Nothing is fetched before the model is called; the agent fetches, using the
+  tools, having read your instruction. Which is why adding a second service
+  later changes nothing about the routine.
+- **Write the instruction to be read cold.** The run has your instruction and
+  the agent's documents, and none of the conversation the job came out of. Name
+  the service and say what to report.
+- **Nothing that needs approval happens.** A tool that would ask a person —
+  sending to a channel, creating another routine — is recorded as wanted and
+  not done, and the delivered message says so at the bottom. A tick has nobody
+  to ask and nowhere to wait.
+- **The decision to stay quiet costs one extra call.** A run that may decline
+  (see [Nothing relevant](#nothing-relevant)) asks the question as a separate
+  short turn afterwards, because a request that demands JSON _and_ offers tools
+  puts the model in two minds and gets neither.
+
+A workspace with no connected service runs exactly as it always did: one call,
+no loop, nothing extra to pay for.
+
+#### It may not fit on Cloudflare's free plan
+
+This is a real limit and worth checking before you rely on it. A tick on
+Workers Free gets **50 subrequests**, and the batch size is sized against that:
+one for the claim, up to twelve per routine, four routines — 49. An agent turn
+spends more than twelve on its own, because each tool call is at least one
+request and the model is called again after each.
+
+So for routines that use tools, on Workers Free, either:
+
+- run the scheduler on the **Node/Docker** stack, where there is no subrequest
+  limit (see [self-hosting](self-hosting.md)); or
+- move to **Workers Paid**, where the limit is 10,000 and CPU time becomes the
+  binding constraint instead.
+
+Left as it is, a tick that runs out of subrequests fails the routines it was
+part way through, which is recorded as a run failure and eventually pauses
+them. That is a bad way to find out, which is why it is written here.
 
 ## Delivery
 
@@ -377,7 +431,7 @@ after a deploy.
 The database keeps a SHA-256, so nobody — including the operator — can show it
 again; if it is lost, replace it, which invalidates the old one immediately.
 
-The prefix is deliberately not `covan_sk_`: an API key is a way to *become* a
+The prefix is deliberately not `covan_sk_`: an API key is a way to _become_ a
 person, and this is permission to fire one row. The two should not be
 confusable by a secret scanner, by `authMiddleware`, or by whoever finds one.
 
@@ -398,13 +452,13 @@ what it sent, not the ability to fire it.
 
 ### What you get back
 
-| Status | Means |
-| --- | --- |
-| `202` | Accepted. The run happens after the response; the body carries the `eventId` it was filed under. |
-| `401` | The token is missing, malformed, unknown, or belongs to a routine that has been deleted — one answer for all of them, so the endpoint cannot be used to discover which tokens exist. |
-| `409` | The token is good, but the routine is paused or no longer accepts webhook triggers. You are told which, because you hold the token and can act on it. |
-| `413` | The body is over 64 KB. The stream is cancelled rather than read and measured. |
-| `429` | Too many pokes for this routine this minute. `Retry-After` says how long. |
+| Status | Means                                                                                                                                                                                |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `202`  | Accepted. The run happens after the response; the body carries the `eventId` it was filed under.                                                                                     |
+| `401`  | The token is missing, malformed, unknown, or belongs to a routine that has been deleted — one answer for all of them, so the endpoint cannot be used to discover which tokens exist. |
+| `409`  | The token is good, but the routine is paused or no longer accepts webhook triggers. You are told which, because you hold the token and can act on it.                                |
+| `413`  | The body is over 64 KB. The stream is cancelled rather than read and measured.                                                                                                       |
+| `429`  | Too many pokes for this routine this minute. `Retry-After` says how long.                                                                                                            |
 
 `202` rather than waiting: a run reads documents, calls a model and delivers,
 which takes tens of seconds, and every webhook sender worth using times out
@@ -459,11 +513,23 @@ is.** The payload is text chosen by whoever holds the token, and it goes into
 the user message with the instruction rather than into a system one, which
 helps and does not fix. A payload that talks the model into ignoring its
 instruction will succeed. What makes that survivable is the blast radius rather
-than the prompt: the agent has no tools, reads nothing it was not already
-given, and can deliver only to a channel belonging to the routine's own owner.
-The worst outcome is a misleading summary in the owner's own inbox — the same
-thing a hostile RSS feed could already produce. Treat the token as the security
-boundary, because it is the one.
+than the prompt.
+
+**In a workspace with no connected service**, that radius is what it always
+was: the agent has no tools, reads nothing it was not already given, and can
+deliver only to a channel belonging to the routine's own owner. The worst
+outcome is a misleading summary in the owner's own inbox — the same thing a
+hostile RSS feed could already produce.
+
+**With a connected service it is wider, and the sentence above stops being
+true.** The agent can query a database or call an API that somebody in the
+workspace deliberately connected. What bounds it then: the origin is one a
+person chose, the methods are ones a person allowed, nothing writes by
+default, mail goes only to the owner's own channels, and anything needing
+approval is recorded rather than done. Worth reading before you point a public
+webhook at an agent that can reach your production database.
+
+Treat the token as the security boundary, because it is the one.
 
 ## Keeping what it sends
 
@@ -760,7 +826,7 @@ claims stay, so an entry that has been judged is done with — otherwise a busy
 feed would spend a model call per run re-reaching the same answer.
 
 **A scheduled prompt is never asked.** With no source, there is nothing for its
-output to be irrelevant *to*: the instruction is the whole job. Asking anyway
+output to be irrelevant _to_: the instruction is the whole job. Asking anyway
 would let one `false` silence "remind the team to post standup" permanently.
 
 The decision comes back as a field of its own rather than as something to read

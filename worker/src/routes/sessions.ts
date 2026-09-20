@@ -202,7 +202,11 @@ sessions.get("/sessions/:id/messages", async (c) => {
   const { data, error } = await db
     .from("messages")
     .select(
-      "*, sender:profiles(id,name,avatar_url), prompt_tokens, completion_tokens, cached_tokens",
+      // `message_steps` is embedded rather than fetched separately: the
+      // alternative is a second round trip per transcript for a table that is
+      // empty for most messages, and `message_steps_read` (0060) gates it on
+      // exactly the message each row hangs off.
+      "*, sender:profiles(id,name,avatar_url), prompt_tokens, completion_tokens, cached_tokens, message_steps(step_index,tool,status,request,duration_ms)",
     )
     .eq("session_id", id)
     // Superseded replies are earlier takes on an answer that is already here.

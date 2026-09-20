@@ -8,13 +8,13 @@ If you only read one section, read [Authorization](#authorization-is-postgres).
 
 ## The pieces
 
-| Piece            | What it is                                                             |
-| ---------------- | ---------------------------------------------------------------------- |
-| Web app          | TanStack Start (React 19, Vite, Tailwind v4, shadcn/ui), `src/`         |
-| API              | Hono, `worker/src/` — one app, two entry points                        |
-| Database         | Postgres with `pgvector`, behind Supabase Auth + PostgREST             |
-| Document storage | Cloudflare R2, or a directory on disk                                  |
-| Model            | OpenAI — chat completions and `text-embedding-3-small`                 |
+| Piece            | What it is                                                      |
+| ---------------- | --------------------------------------------------------------- |
+| Web app          | TanStack Start (React 19, Vite, Tailwind v4, shadcn/ui), `src/` |
+| API              | Hono, `worker/src/` — one app, two entry points                 |
+| Database         | Postgres with `pgvector`, behind Supabase Auth + PostgREST      |
+| Document storage | Cloudflare R2, or a directory on disk                           |
+| Model            | OpenAI — chat completions and `text-embedding-3-small`          |
 
 The API has two entry points over the same Hono app:
 `worker/src/index.ts` exports `fetch` (and a `scheduled` handler) for Cloudflare
@@ -74,7 +74,7 @@ Concretely:
 - A row you cannot see is **absent**, not forbidden. Fetching another user's
   agent by id returns 404, because the `select` matched zero rows — there is no
   ownership check in the route to return 403 from.
-- RLS is row-level and cannot hide a *column*. Where a column must stay
+- RLS is row-level and cannot hide a _column_. Where a column must stay
   invisible, column grants do it: `delivery_channels` has the blanket
   `authenticated` grant revoked and every column except `secret_ciphertext`
   handed back (`0012_routines.sql`). A user can list their own delivery
@@ -89,7 +89,7 @@ Concretely:
   `role = 'assistant'` with their own `sender_id` into any session they could
   see, and every other member's client, which branches on `role` alone, rendered
   it under the agent's name. `0018_message_authorship.sql` adds `and role =
-  'user'` to the check. The server is unaffected, because it writes assistant
+'user'` to the check. The server is unaffected, because it writes assistant
   rows through the service-role client, which no policy reaches.
 - `SECURITY DEFINER` functions need their `EXECUTE` grant revoked from `PUBLIC`
   explicitly. Postgres grants it by default and every role inherits it, so
@@ -113,11 +113,11 @@ document goes stale in a way a failing test does not.
 Three of those call sites are in the shared codebase, and each has a reason that
 a request-scoped client cannot satisfy:
 
-| Where                                | Why                                                                                                                              |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Where                                               | Why                                                                                                                                                                                                                                                                                    |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `routes/chat.ts` — persisting the assistant's reply | Assistant messages are written with no `sender_id`, and `messages_insert_user_self` (`0009_lock_assistant_messages.sql`) admits only rows stamped with the caller's own id. No client can write an unattributed row, so the server writes them under a role the policy does not reach. |
-| `routes/routines.ts` — creating a delivery channel  | `INSERT` on `delivery_channels` is granted to nobody but the service role, on purpose: the destination secret has to be AES-GCM encrypted before it is written, and only the server can do that. |
-| `lib/routines/dispatcher.ts` / `executor.ts`        | A cron tick has no caller and therefore no `auth.uid()`. There is no token to scope a client with. |
+| `routes/routines.ts` — creating a delivery channel  | `INSERT` on `delivery_channels` is granted to nobody but the service role, on purpose: the destination secret has to be AES-GCM encrypted before it is written, and only the server can do that.                                                                                       |
+| `lib/routines/dispatcher.ts` / `executor.ts`        | A cron tick has no caller and therefore no `auth.uid()`. There is no token to scope a client with.                                                                                                                                                                                     |
 
 The hosted service adds one more, for its token meter: `user_usage` has a
 select-own policy and no write policy at all, because a user who could write
@@ -128,7 +128,7 @@ nothing and never reaches for the service role.
 
 The rule the codebase holds itself to: **a route that reaches for the
 service-role client to make something work is almost always a bug.** In the two
-route cases above, RLS is not being worked around — it is being *enforced*, and
+route cases above, RLS is not being worked around — it is being _enforced_, and
 the server is the only actor allowed through.
 
 The routine executor pays for its service-role client with a rule of its own,
@@ -174,13 +174,13 @@ rather than letting Postgres refuse the insert later. See
 
 `worker/src/routes/chat.ts`:
 
-1. Collect the bundles attached to the agent and the document *names* in them.
+1. Collect the bundles attached to the agent and the document _names_ in them.
    Names alone, on the hot path — the stored full text is only needed by the
    fallback below, so it is loaded lazily there rather than on every turn.
 2. Embed the latest user message, extract its search terms
    (`worker/src/lib/search-terms.ts`'s `searchTerms`), and call
    `match_chunks(p_agent_id, p_query_embedding, p_match_count => 10,
-   p_min_similarity => 0.25, p_query_terms => terms)`. `p_query_terms` is `[]`
+p_min_similarity => 0.25, p_query_terms => terms)`. `p_query_terms` is `[]`
    whenever `RAG_LEXICAL` disables the lexical arm (`lexicalSearchEnabled`) or
    the question yields no usable terms, which turns the fifth argument back
    into the pre-hybrid default and the call behaves exactly as it did before.
@@ -212,11 +212,12 @@ rather than letting Postgres refuse the insert later. See
    passes `0.25`. The lexical arm has no analogous floor: OR semantics already
    mean a bad term just fails to contribute, rather than dragging in noise the
    way a missing floor would on the vector side.
+
 4. Matching chunks are assembled by `buildContextBlock` (`lib/rag.ts`) under a
    4000-character budget, in fused-RRF order (the `order by fused_score desc`
    from step 3, not raw cosine similarity), and dropped once the budget is
    spent.
-5. The block is sent as its own system message positioned *after* the prior
+5. The block is sent as its own system message positioned _after_ the prior
    turns and before the latest one — deliberately not merged into the persona
    prefix, so that prefix stays byte-identical across turns and OpenAI's
    automatic prompt caching can discount it.
@@ -331,7 +332,59 @@ represent days of an unreachable source, while three rate-limited ticks in an
 afternoon represent nothing.
 
 "Run now" (`runOneRoutine`) deliberately skips `claim_due_routines`: the point
-is to run a routine that is *not* due, so there is nothing to claim.
+is to run a routine that is _not_ due, so there is nothing to claim.
+
+## The agent harness
+
+A chat turn used to be one call to `streamCompletion` and one answer. It is
+now a loop, and the loop is `worker/src/lib/harness/`:
+
+```
+runAgentTurn({ env, request, tools, ctx, budget, onEvent })
+  -> { text, usage, steps, finishReason, paused? }
+```
+
+Stream; if the model asked for a tool, run it, put the result in front of the
+model, stream again; stop when it asks for nothing. Everything
+provider-shaped is a layer down in `lib/completion.ts`, so nothing in the
+harness knows which provider answered.
+
+**One layout decision does most of the work here, and it is about what does
+not change when a service is added.**
+
+| Layer                 | What is in it                                                                                             | What a new service costs                  |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Core                  | `completion.ts` types, `harness/loop.ts`, the registry, the budget, `message_steps`, the SSE frames       | nothing                                   |
+| Tools                 | `search_documents`, `describe_connection`, `query_database`, `http_request`, `send_email`, `schedule_job` | nothing                                   |
+| Credential            | a `tool_connections` row: transport, base URL, auth, allowed methods                                      | **one row**                               |
+| Transport / auth kind | `http`, `sql`; `static_header`                                                                            | code, once, only for a genuinely new kind |
+
+So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
+function installed on it. A tool named after a service gets written the day
+the general road is genuinely not enough, and then it is one entry in
+`harness/registry.ts`.
+
+Four things are worth knowing before changing any of it:
+
+- **Every id a tool sees is resolved, never passed in.** `ToolContext` carries
+  the workspace, agent and user from the session the route already resolved.
+  A tool that took a workspace id as an argument would be one hallucinated
+  uuid away from a cross-tenant read. Same rule as
+  `lib/routines/executor.ts`.
+- **Tools read through the caller's own client.** RLS decides, as everywhere
+  else. The one exception is `harness/secrets.ts`, which fills in a column no
+  client role may select — and only for a row the caller has already been
+  found, through their own client, to be allowed to have. That is `withSecret`
+  in `routes/connections.ts` under another name.
+- **A tool can stop the turn.** `needs_confirmation` parks it in
+  `paused_turns` (0060) and `POST /chat/confirm/:id` picks it up from the
+  stored messages. The mechanism is deliberately general rather than
+  scheduling-shaped: it is the shape 0058's `ask -> pending -> approved` needs.
+- **The routine engine uses the same loop.** `ExecutorDeps.runWithTools` is
+  the branch, and it answers `null` for a workspace with nothing connected,
+  which sends the run back down the single-call path. Two execution paths
+  would mean a job set up in a conversation behaving differently unattended —
+  the one difference nobody could debug.
 
 ## The two seams
 

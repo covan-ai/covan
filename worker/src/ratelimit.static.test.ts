@@ -107,7 +107,7 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
 };
 
 const PAID_ENDPOINTS: Record<string, string[]> = {
-  "chat.ts": ["/chat/stream"],
+  "chat.ts": ["/chat/stream", "/chat/confirm/:id"],
   "transcribe.ts": ["/transcribe"],
   "brainstorm.ts": ["/brainstorm/ideas/suggest"],
   "persona.ts": ["/persona/suggest"],

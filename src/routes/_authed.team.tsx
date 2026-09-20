@@ -199,19 +199,17 @@ function TeamPage() {
                       key={m.id}
                       className="flex items-center gap-3.5 rounded-lg border border-hairline bg-surface px-4 py-3.5"
                     >
-                      <UserAvatar name={m.name} url={m.avatarUrl} className="h-9 w-9 text-[11px]" />
+                      <UserAvatar name={m.name} url={m.avatarUrl} className="h-9 w-9 text-xs" />
                       <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
                         <div className="flex items-center gap-2">
-                          <span className="truncate text-[15px] font-medium leading-tight">
+                          <span className="truncate text-base font-medium leading-tight">
                             {m.name ?? m.email ?? "—"}
                           </span>
                           {isSelf ? (
-                            <span className="shrink-0 text-[13px] text-micro-foreground">
-                              (you)
-                            </span>
+                            <span className="shrink-0 text-meta text-micro-foreground">(you)</span>
                           ) : null}
                         </div>
-                        <div className="truncate text-[13px] leading-tight text-muted-foreground">
+                        <div className="truncate text-meta leading-tight text-muted-foreground">
                           {m.email ?? "—"}
                         </div>
                       </div>

@@ -124,11 +124,11 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
             <Mark className="h-[22px] w-[22px]" />
           </span>
           <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="text-[15px] font-medium leading-tight [overflow-wrap:anywhere]">
+            <span className="text-base font-medium leading-tight [overflow-wrap:anywhere]">
               {connection.accountLabel}
               {connection.folderName ? ` · ${connection.folderName}` : ""}
             </span>
-            <span className="text-[13px] leading-tight text-muted-foreground">
+            <span className="text-meta leading-tight text-muted-foreground">
               {connection.bundleName ?? "a bundle"} · {connection.documentCount}{" "}
               {connection.documentCount === 1 ? "document" : "documents"}
               {connection.lastSyncAt ? ` · synced ${formatRelative(connection.lastSyncAt)}` : ""}
@@ -144,7 +144,7 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
       </div>
 
       {connection.pausedReason ? (
-        <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-[13px] leading-[1.45] text-muted-foreground">
+        <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground">
           {connection.pausedReason}
         </p>
       ) : null}
@@ -163,7 +163,7 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
           // Nothing to press. The deployment stopped offering this provider,
           // which is a configuration somebody else holds — the sentence above
           // says which variables, and a button here would only fail.
-          <span className="text-[13px] text-muted-foreground">
+          <span className="text-meta text-muted-foreground">
             An operator has to set this up again before it can resume.
           </span>
         ) : action === "decide" ? (
@@ -358,8 +358,8 @@ export function ConnectSourceCard({
             <Mark className="h-[22px] w-[22px]" />
           </span>
           <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="font-dm text-[18px] font-medium leading-tight">{provider.label}</span>
-            <span className="text-[13px] leading-tight text-muted-foreground">
+            <span className="font-dm text-title font-medium leading-tight">{provider.label}</span>
+            <span className="text-meta leading-tight text-muted-foreground">
               {PROVIDER_BLURB[provider.id]}
             </span>
           </span>
@@ -399,9 +399,9 @@ export function ConnectSourceCard({
           </Button>
         </div>
       ) : soon ? (
-        <p className="text-[13px] leading-[1.45] text-muted-foreground">Coming soon.</p>
+        <p className="text-meta leading-[1.45] text-muted-foreground">Coming soon.</p>
       ) : (
-        <p className="text-[13px] leading-[1.45] text-muted-foreground">
+        <p className="text-meta leading-[1.45] text-muted-foreground">
           Not configured on this deployment. An operator sets{" "}
           <span className="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-xs">
             {PROVIDER_ENV[provider.id]}

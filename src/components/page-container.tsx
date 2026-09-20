@@ -147,7 +147,7 @@ export function SectionHeading({
           {description}
         </p>
       ) : null}
-      {meta ? <span className="text-[13px] tabular-nums text-muted-foreground">{meta}</span> : null}
+      {meta ? <span className="text-meta tabular-nums text-muted-foreground">{meta}</span> : null}
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   );

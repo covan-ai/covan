@@ -258,7 +258,7 @@ function HomeComposer({
           }
           disabled={empty}
           rows={3}
-          className="resize-none border-0 bg-transparent px-5 pt-5 text-[15px] leading-[1.45] shadow-none focus-visible:ring-0"
+          className="resize-none border-0 bg-transparent px-5 pt-5 text-base shadow-none focus-visible:ring-0"
         />
         <div className="flex items-center justify-between gap-2 px-4 pb-4">
           {empty ? (
@@ -320,7 +320,7 @@ function HomeComposer({
         </div>
       </div>
       {!empty && (
-        <p className="mt-3 text-center text-[13px] text-micro-foreground">
+        <p className="mt-3 text-center text-meta text-micro-foreground">
           Enter to send · Shift + Enter for a new line · new chats start private
         </p>
       )}
@@ -541,7 +541,7 @@ function AgentCard({
       <div className="pointer-events-none flex items-start gap-3.5">
         <AgentAvatar emoji={a.emoji} className="h-9 w-9 text-lg" />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-dm text-[18px] font-medium leading-tight">{a.name}</div>
+          <div className="truncate font-dm text-title font-medium leading-tight">{a.name}</div>
           <div className="mt-1.5">
             {/* Models are named in a code chip, not colour-coded. */}
             <Chip tone="code">{a.model}</Chip>
@@ -563,11 +563,11 @@ function AgentCard({
         </button>
       </div>
 
-      <p className="pointer-events-none mt-4 line-clamp-2 min-h-[2.6rem] text-[15px] leading-[1.35] text-muted-foreground">
+      <p className="pointer-events-none mt-4 line-clamp-2 min-h-[2.6rem] text-base leading-snug text-muted-foreground">
         {a.persona}
       </p>
 
-      <div className="pointer-events-none mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-[13px] text-muted-foreground">
+      <div className="pointer-events-none mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-meta text-muted-foreground">
         <span className="inline-flex items-center gap-2">
           <span aria-hidden className="h-2 w-2 shrink-0 bg-accent-orange" />
           Shared with{" "}
@@ -672,12 +672,12 @@ function ActivityRow({
       trailing={
         <span className="flex shrink-0 items-center gap-2.5">
           <span className="hidden items-center gap-2 sm:flex">
-            <UserAvatar name={owner?.name} url={owner?.avatarUrl} className="h-6 w-6 text-[9px]" />
-            <span className="max-w-[8rem] truncate text-[13px] text-muted-foreground">
+            <UserAvatar name={owner?.name} url={owner?.avatarUrl} className="h-6 w-6 text-[10px]" />
+            <span className="max-w-[8rem] truncate text-meta text-muted-foreground">
               {owner?.name ?? owner?.email ?? "A teammate"}
             </span>
           </span>
-          <span className="text-[13px] tabular-nums text-micro-foreground">
+          <span className="text-meta tabular-nums text-micro-foreground">
             {formatRelative(s.updatedAt)}
           </span>
         </span>

@@ -188,7 +188,7 @@ function CreateKeyDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-lg">{created ? "Your new key" : "New API key"}</DialogTitle>
+          <DialogTitle>{created ? "Your new key" : "New API key"}</DialogTitle>
         </DialogHeader>
 
         {created ? (

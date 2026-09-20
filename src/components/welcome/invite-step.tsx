@@ -106,7 +106,7 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
         <button
           type="button"
           onClick={onDone}
-          className="w-full text-center text-[13px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          className="w-full text-center text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
           Skip for now
         </button>

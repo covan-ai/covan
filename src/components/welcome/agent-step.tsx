@@ -127,7 +127,7 @@ export function AgentStep({
         <button
           type="button"
           onClick={onSkip}
-          className="w-full text-center text-[13px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          className="w-full text-center text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
           I'll do this later
         </button>

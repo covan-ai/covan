@@ -26,7 +26,7 @@ export function DocsLink({
       target="_blank"
       rel="noreferrer"
       className={cn(
-        "inline-flex items-center gap-1 text-[13px] text-muted-foreground underline-offset-4 transition-colors duration-200 hover:text-foreground hover:underline",
+        "inline-flex items-center gap-1 text-meta text-muted-foreground underline-offset-4 transition-colors duration-200 hover:text-foreground hover:underline",
         className,
       )}
     >

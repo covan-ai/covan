@@ -27,7 +27,7 @@ export const Route = createFileRoute("/terms")({
 function TermsPage() {
   return (
     <LegalLayout title="Terms" updated="August 2026">
-      <p className="text-[15px] leading-[1.55] text-muted-foreground">
+      <p className="text-base text-muted-foreground">
         Covan is open-source software rather than a service, and these are the terms of the
         software. If you are using an install someone else operates — a hosted Covan, or your
         employer's — that operator may have their own agreement with you, and it governs your
@@ -59,7 +59,7 @@ function TermsPage() {
           </LegalItem>
           <LegalItem>
             The full text ships in the repository as{" "}
-            <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[13px]">LICENSE</code>,
+            <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-meta">LICENSE</code>,
             and it is the authority — this summary is a convenience and loses to it wherever the two
             differ. The{" "}
             <Link to="/license" className="text-foreground underline underline-offset-4">

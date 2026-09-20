@@ -83,7 +83,7 @@ export function DocumentPreviewDialog({
         <div className="flex items-start gap-3 border-b border-hairline px-5 py-4 pr-12">
           <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
-            <DialogTitle className="truncate text-[17px]">{name}</DialogTitle>
+            <DialogTitle className="truncate text-title">{name}</DialogTitle>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
               {preview.data ? (
                 <>
@@ -175,7 +175,7 @@ function TabButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-sm px-2.5 py-1 text-[13px] font-medium transition-colors",
+        "rounded-sm px-2.5 py-1 text-meta font-medium transition-colors",
         active
           ? "bg-primary text-primary-foreground"
           : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
@@ -253,7 +253,7 @@ function FileTab({
       ) : ext === "md" || ext === "markdown" ? (
         <Markdown content={shown} />
       ) : (
-        <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed">
+        <pre className="whitespace-pre-wrap break-words font-mono text-meta leading-relaxed">
           {ext === "json" ? prettyJson(shown) : shown}
         </pre>
       )}
@@ -288,7 +288,7 @@ function CsvTable({ text }: { text: string }) {
   return (
     <>
       <div className="overflow-x-auto rounded-lg border border-hairline">
-        <table className="w-full border-collapse text-[13px]">
+        <table className="w-full border-collapse text-meta">
           <thead>
             <tr className="bg-surface-muted">
               {header.map((cell, i) => (
@@ -347,7 +347,7 @@ function IndexedTab({
 
   return (
     <>
-      <p className="mb-3 text-[13px] leading-[1.5] text-muted-foreground">
+      <p className="mb-3 text-meta leading-[1.5] text-muted-foreground">
         {preview.indexed ? (
           <>
             Cut into {preview.chunkCount} {preview.chunkCount === 1 ? "passage" : "passages"}, each
@@ -362,7 +362,7 @@ function IndexedTab({
           </>
         )}
       </p>
-      <pre className="whitespace-pre-wrap break-words rounded-lg border border-hairline bg-surface p-4 font-mono text-[13px] leading-relaxed">
+      <pre className="whitespace-pre-wrap break-words rounded-lg border border-hairline bg-surface p-4 font-mono text-meta leading-relaxed">
         {preview.excerpt}
       </pre>
       <Note className="mt-3">
@@ -376,6 +376,6 @@ function IndexedTab({
 
 function Note({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <p className={cn("text-[13px] leading-[1.5] text-muted-foreground", className)}>{children}</p>
+    <p className={cn("text-meta leading-[1.5] text-muted-foreground", className)}>{children}</p>
   );
 }

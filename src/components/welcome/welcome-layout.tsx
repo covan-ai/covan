@@ -38,9 +38,7 @@ export function WelcomeLayout({
             <h1 className="font-dm text-[28px] font-medium leading-tight tracking-tight">
               {title}
             </h1>
-            {subtitle && (
-              <p className="mt-2 text-[15px] leading-[1.45] text-muted-foreground">{subtitle}</p>
-            )}
+            {subtitle && <p className="mt-2 text-base text-muted-foreground">{subtitle}</p>}
           </div>
           <div className="mt-7">{children}</div>
         </div>

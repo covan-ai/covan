@@ -130,7 +130,7 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
                 aria-hidden
               />
             </div>
-            <span className="text-[11px] text-muted-foreground">{monthLabel(m.month)}</span>
+            <span className="text-xs text-muted-foreground">{monthLabel(m.month)}</span>
           </div>
         ))}
       </div>

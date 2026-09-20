@@ -151,7 +151,7 @@ function ProfileForm({ user }: { user: Me["user"] | undefined }) {
       <div className="flex items-center gap-4">
         <UserAvatar name={user?.name} url={user?.avatarUrl} className="h-11 w-11 text-xs" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] text-muted-foreground">{user?.email ?? "…"}</div>
+          <div className="truncate text-meta text-muted-foreground">{user?.email ?? "…"}</div>
         </div>
       </div>
 

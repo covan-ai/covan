@@ -69,7 +69,7 @@ export function DriveFolderDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center gap-1 text-[13px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-1 text-meta text-muted-foreground">
           <button
             type="button"
             className="underline underline-offset-4 hover:text-foreground"

@@ -29,7 +29,7 @@ export function FirstWeekChecklist({
     <SectionCard className="mt-8">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-dm text-[17px] font-medium leading-tight">Getting set up</h2>
+          <h2 className="font-dm text-title font-medium leading-tight">Getting set up</h2>
           <p className="mt-1 text-sm leading-[1.45] text-muted-foreground">
             {done} of {steps.length} done. This disappears when it is finished.
           </p>
@@ -67,7 +67,7 @@ export function FirstWeekChecklist({
                 {step.label}
               </div>
               {!step.done && (
-                <p className="mt-0.5 text-[13px] leading-[1.45] text-muted-foreground">
+                <p className="mt-0.5 text-meta leading-[1.45] text-muted-foreground">
                   {step.hint} <StepLink step={step} agentId={agentId} />
                 </p>
               )}

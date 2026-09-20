@@ -30,7 +30,7 @@ export function SlackCard({ state, agents }: { state: SlackState; agents: Agent[
     return (
       <SectionCard className="flex flex-col gap-4 opacity-70">
         <SlackHeading chip={<Chip tone="neutral">Not configured</Chip>} />
-        <p className="text-[13px] leading-[1.45] text-muted-foreground">
+        <p className="text-meta leading-[1.45] text-muted-foreground">
           Not configured on this deployment. An operator registers a Slack app and sets{" "}
           <span className="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-xs">
             SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET
@@ -45,7 +45,7 @@ export function SlackCard({ state, agents }: { state: SlackState; agents: Agent[
     return (
       <SectionCard className="flex flex-col gap-4">
         <SlackHeading chip={<Chip tone="neutral">Not installed</Chip>} />
-        <p className="text-[13px] leading-[1.45] text-muted-foreground">
+        <p className="text-meta leading-[1.45] text-muted-foreground">
           Ask the agent from a channel by mentioning it, or send it a direct message. Whoever asks
           is answered as themselves — their Slack email has to match a member of this workspace.
         </p>
@@ -80,7 +80,7 @@ export function SlackCard({ state, agents }: { state: SlackState; agents: Agent[
       />
 
       {installation.agentId ? null : (
-        <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-[13px] leading-[1.45] text-muted-foreground">
+        <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground">
           The agent this was pointing at is gone, so the app answers every question by saying so.
           Choose another one.
         </p>
@@ -147,8 +147,8 @@ function SlackHeading({ subtitle, chip }: { subtitle?: string; chip: React.React
           <SlackMark className="h-[22px] w-[22px]" />
         </span>
         <span className="flex min-w-0 flex-col gap-[3px]">
-          <span className="font-dm text-[18px] font-medium leading-tight">Slack</span>
-          <span className="text-[13px] leading-tight text-muted-foreground">
+          <span className="font-dm text-title font-medium leading-tight">Slack</span>
+          <span className="text-meta leading-tight text-muted-foreground">
             {subtitle ?? "Ask an agent from a channel, without leaving Slack."}
           </span>
         </span>

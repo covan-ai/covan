@@ -47,7 +47,7 @@ export function Panel({
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-          <span className="ml-2.5 text-[13px] font-medium text-muted-foreground">{title}</span>
+          <span className="ml-2.5 text-meta font-medium text-muted-foreground">{title}</span>
         </div>
       ) : null}
       <div className="p-6">{children}</div>
@@ -79,11 +79,11 @@ export function DataRow({
     <>
       {icon}
       <span className="flex min-w-0 flex-1 flex-col gap-[3px] text-left">
-        <span className="text-[15px] font-medium leading-tight [overflow-wrap:anywhere]">
+        <span className="text-base font-medium leading-tight [overflow-wrap:anywhere]">
           {title}
         </span>
         {meta ? (
-          <span className="text-[13px] leading-tight text-muted-foreground">{meta}</span>
+          <span className="text-meta leading-tight text-muted-foreground">{meta}</span>
         ) : null}
       </span>
       {trailing}
@@ -154,7 +154,7 @@ export function EmptyState({
         className,
       )}
     >
-      <p className="font-dm text-[18px] leading-tight">{title}</p>
+      <p className="font-dm text-title leading-tight">{title}</p>
       {description ? (
         <p className="mx-auto mt-2 max-w-sm text-sm leading-[1.45] text-muted-foreground">
           {description}

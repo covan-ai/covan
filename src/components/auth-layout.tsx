@@ -23,7 +23,7 @@ export function AuthLayout({
 
         <div className="rounded-2xl border border-hairline bg-card p-7 shadow-elegant">
           <div className="text-center">
-            <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+            <h1 className="font-dm text-title-lg font-medium">{title}</h1>
             <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p>
           </div>
           <div className="mt-6">{children}</div>

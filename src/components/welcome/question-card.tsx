@@ -38,7 +38,7 @@ export function QuestionCard({
               aria-pressed={selected}
               onClick={() => onSelect(option.id)}
               className={cn(
-                "flex items-center gap-3 rounded-xl border px-4 py-3.5 text-left text-[15px] transition-colors duration-200",
+                "flex items-center gap-3 rounded-xl border px-4 py-3.5 text-left text-base transition-colors duration-200",
                 "focus-visible:shadow-glow focus-visible:outline-none",
                 selected
                   ? "border-border bg-surface"
@@ -60,7 +60,7 @@ export function QuestionCard({
           <button
             type="button"
             onClick={onSkip}
-            className="text-[13px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
             {skipLabel ?? "Skip"}
           </button>

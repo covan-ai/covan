@@ -214,12 +214,15 @@ function mathBlockEnd(lines: string[], at: number): number {
 }
 
 function headingClass(level: number): string {
-  if (level === 1) return "text-base font-semibold";
-  if (level === 2) return "text-sm font-semibold";
+  // Two ranks above the paragraph, and nothing below it. These used to be 16
+  // and 14 against a 15px reply, which put every `##` in an answer at a
+  // smaller size than the sentences it was introducing.
+  if (level === 1) return "text-title font-semibold";
+  if (level === 2) return "text-base font-semibold";
   // h3 and below all read as the same rank in a chat reply, which is three
   // ranks more than anything a reply needs. Models write `####` freely; there
   // is no visual budget for four sizes inside a paragraph of chat.
-  return "text-sm font-medium";
+  return "text-base font-medium";
 }
 
 /**

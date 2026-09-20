@@ -262,6 +262,10 @@ Slack webhook, an email address, or a signed webhook to an endpoint you run.
 The engine wakes up, asks the database which routines are due, runs them and
 delivers the result.
 
+A routine with no source of its own can also be given a URL that starts it, so
+something else's deploy or ticket or nightly job is what wakes it rather than
+the clock. What that thing POSTs is what the agent reads.
+
 A routine belongs to a workspace and an agent, but it is owned by the person who
 made it, and it follows the same visibility rule as a session: private by
 default, shared to the workspace when the owner says so, and modifiable only by

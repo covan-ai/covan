@@ -79,6 +79,41 @@ export function useCreateChannel() {
  * test send changes no row, and refetching the list after it would suggest it
  * had.
  */
+/**
+ * Whether this routine has a webhook trigger, for the routine's own page.
+ *
+ * `enabled` is the caller's decision: a routine that cannot be poked has no
+ * trigger to ask about, and asking anyway would 200 with `configured: false`
+ * on every scheduled routine anybody opens.
+ */
+export function useRoutineTrigger(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["routine-trigger", id],
+    queryFn: () => api.routines.trigger(id),
+    enabled,
+  });
+}
+
+/**
+ * Mint or rotate the ingest token. The response is the only place it exists
+ * outside the database, so the caller shows it and does not store it.
+ */
+export function useCreateRoutineTrigger() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.routines.createTrigger(id),
+    onSuccess: (_data, id) => qc.invalidateQueries({ queryKey: ["routine-trigger", id] }),
+  });
+}
+
+export function useRemoveRoutineTrigger() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.routines.removeTrigger(id),
+    onSuccess: (_data, id) => qc.invalidateQueries({ queryKey: ["routine-trigger", id] }),
+  });
+}
+
 export function useTestChannel() {
   return useMutation({ mutationFn: (id: string) => api.deliveryChannels.test(id) });
 }

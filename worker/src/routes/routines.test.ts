@@ -327,3 +327,112 @@ describe("POST /delivery-channels/:id/test", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("the ingest trigger endpoints", () => {
+  /** The caller's own client sees the routine; the service client writes the hash. */
+  function withRoutine(routine: Record<string, unknown> | null, onWrite?: (v: unknown) => void) {
+    serviceFrom.mockReturnValue({
+      upsert: (values: unknown) => {
+        onWrite?.(values);
+        return Promise.resolve({ error: null });
+      },
+    });
+    return appWith({
+      tables: {
+        routines: { select: async () => ({ data: routine, error: null }) },
+        routine_triggers: {
+          select: async () => ({ data: null, error: null }),
+          delete: async () => ({ data: null, error: null }),
+        },
+      },
+    });
+  }
+
+  it("mints a token and returns it exactly once, with the path to use it", async () => {
+    let written: unknown;
+    const request = withRoutine({ id: "r1", trigger_kind: "webhook" }, (v) => (written = v));
+
+    const { status, body } = await request("POST", "/routines/r1/trigger");
+
+    expect(status).toBe(201);
+    expect(body.token).toMatch(/^covan_whk_[A-Za-z0-9_-]{43}$/);
+    expect(body.path).toBe(`/routine-hooks/${body.token}`);
+
+    // What is stored is the digest, never the token.
+    const stored = written as { token_hash: string };
+    expect(stored.token_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(written)).not.toContain(body.token);
+  });
+
+  it("rotating clears the last-used mark, so a stale one cannot look live", async () => {
+    let written: unknown;
+    const request = withRoutine({ id: "r1", trigger_kind: "both" }, (v) => (written = v));
+
+    await request("POST", "/routines/r1/trigger");
+
+    expect(written).toMatchObject({ routine_id: "r1", last_used_at: null });
+  });
+
+  // Refused rather than switched on the caller's behalf: changing how an
+  // unattended thing is started is not a side effect of pressing a button.
+  it("refuses to mint one for a routine that does not accept pokes", async () => {
+    const request = withRoutine({ id: "r1", trigger_kind: "schedule" });
+
+    const { status, body } = await request("POST", "/routines/r1/trigger");
+
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/not set to accept webhook triggers/);
+  });
+
+  it("is a 404 for a routine the caller cannot see", async () => {
+    const request = withRoutine(null);
+
+    expect((await request("POST", "/routines/nope/trigger")).status).toBe(404);
+  });
+
+  it("reports that there is no trigger without inventing one", async () => {
+    const request = withRoutine({ id: "r1", trigger_kind: "webhook" });
+
+    const { status, body } = await request("GET", "/routines/r1/trigger");
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ configured: false });
+  });
+
+  it("never returns the hash when reporting one", async () => {
+    const request = appWith({
+      tables: {
+        routine_triggers: {
+          select: async () => ({
+            data: {
+              routine_id: "r1",
+              created_at: "2026-09-20T00:00:00.000Z",
+              last_used_at: "2026-09-21T00:00:00.000Z",
+            },
+            error: null,
+          }),
+        },
+      },
+    });
+
+    const { body } = await request("GET", "/routines/r1/trigger");
+
+    expect(body).toEqual({
+      configured: true,
+      createdAt: Date.parse("2026-09-20T00:00:00.000Z"),
+      lastUsedAt: Date.parse("2026-09-21T00:00:00.000Z"),
+    });
+    expect(JSON.stringify(body)).not.toContain("token");
+  });
+
+  // 0055 grants authenticated a DELETE and scopes it to the owner, so the
+  // database is the whole check and the service role has nothing to do here.
+  it("turns one off through the caller's own client", async () => {
+    const request = withRoutine({ id: "r1", trigger_kind: "webhook" });
+
+    const { status } = await request("DELETE", "/routines/r1/trigger");
+
+    expect(status).toBe(204);
+    expect(serviceFrom).not.toHaveBeenCalled();
+  });
+});

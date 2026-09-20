@@ -26,6 +26,7 @@ export type Routine = {
   deliveryChannelId: string;
   scheduleCron: string;
   timezone: string;
+  triggerKind: RoutineTriggerKind;
   status: "active" | "paused";
   /** Set when the engine paused this itself after repeated failures. */
   pausedReason: string | null;
@@ -94,6 +95,20 @@ export type RoutineDraft = {
   timezone: string;
 };
 
+/**
+ * What starts a routine.
+ *
+ * Only a routine with no source of its own may be poked — see the migration for
+ * why every answer to "it has a feed and somebody poked it, does it re-fetch?"
+ * is a bad one. And because a routine's source can never change after it is
+ * created, this is a decision made once, at creation.
+ */
+export type RoutineTriggerKind = "schedule" | "webhook" | "both";
+
+/** What the routine detail screen knows about a webhook trigger. Never the token. */
+export type RoutineTrigger =
+  { configured: false } | { configured: true; createdAt: number; lastUsedAt: number | null };
+
 export type CreateRoutineInput = {
   agentId: string;
   name: string;
@@ -105,6 +120,8 @@ export type CreateRoutineInput = {
   deliveryChannelId: string;
   scheduleCron: string;
   timezone: string;
+  /** Omitted means `schedule`, which is what every routine was before this. */
+  triggerKind?: RoutineTriggerKind;
 };
 
 export type UpdateRoutineInput = Partial<{

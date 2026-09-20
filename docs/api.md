@@ -118,6 +118,15 @@ stands in front of the six endpoints that buy a completion or a transcription:
 `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`,
 `/routines/draft` and `/routines/:id/run`.
 
+`POST /routine-hooks/:token` is the one endpoint in this API that takes no
+bearer token at all. It is reached by third-party systems with no Covan
+session, so an ingest token stands in for a caller — see
+[Routines](routines.md#being-poked-instead). It takes the expensive tier's
+limiter keyed by routine rather than by caller, because the routine is what
+spends, and it is the second endpoint that buys a completion without importing
+the completion seam: `ratelimit.static.test.ts` names both by hand and says why
+that list is a review item rather than a guarantee.
+
 `POST /delivery-channels/:id/test` takes the expensive tier's limiter without
 being mounted behind that middleware. It buys no completion, and the list of
 paths mounted behind `rateLimit("expensive")` is pinned by a test against
@@ -216,6 +225,7 @@ it is already gone or was never visible. Same for `DELETE /agents/:id`.
 | `GET`/`POST`/`DELETE /delivery-channels`       | Where output goes                |
 | `POST /delivery-channels/:id/test`             | One message through it, now      |
 | `POST /delivery-channels/:id/rotate`           | A new webhook signing secret     |
+| `GET`/`POST`/`DELETE /routines/:id/trigger`    | The URL that can start it        |
 
 ### Workspace and people
 

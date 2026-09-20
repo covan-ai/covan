@@ -96,12 +96,21 @@ export type SummariseInput = {
    */
   ragBlock: string;
   /**
+   * The body of an incoming webhook, when a poke started this run.
+   *
+   * Treated as what it is: text somebody outside this workspace chose. It goes
+   * into the user message with the instruction, never into a system one. See
+   * `summarise.ts` for what that does and does not buy.
+   */
+  payloadText?: string;
+  /**
    * Whether this run is allowed to decide there is nothing worth sending.
    *
    * False for a scheduled prompt, which has no source for its output to be
    * irrelevant *to* — the instruction is the whole job, and one `false` would
    * silence "remind the team to post standup" permanently. True for everything
-   * that watches something.
+   * that watches something, and for a poked run, whose payload is exactly such
+   * a thing.
    */
   mayDecline: boolean;
 };
@@ -220,9 +229,29 @@ function withOverflowNote(text: string, overflow: number): string {
  * security. Every id used below is read off the routine row itself, never
  * from a caller. Nothing in this file should ever take an id as an argument.
  */
+/**
+ * What an incoming poke brought with it, when one started this run.
+ *
+ * Absent for every scheduled run, which is the shape of the feature: a routine
+ * is started by its cron, or by somebody's POST, and only the second has a
+ * payload or an event to be idempotent about.
+ */
+export type IngestTrigger = {
+  /**
+   * The sender's own id for this event, already extracted by the route. It
+   * becomes the delivery claim, so a webhook delivered twice — which every
+   * sender worth using will do — produces one message and one visible
+   * `skipped` run rather than two reports.
+   */
+  eventId: string;
+  /** The raw body, as text. Given to the model and stored nowhere. */
+  payload: string;
+};
+
 export async function runRoutine(
   routine: RoutineRow,
   deps: ExecutorDeps,
+  trigger?: IngestTrigger,
 ): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
   const startedAt = deps.now();
   let claimedKeys: string[] = [];
@@ -387,7 +416,15 @@ export async function runRoutine(
         etag: null,
         contentHash: null,
       };
-      keysToClaim = [`slot:${routine.next_run_at}`];
+      // A poke is identified by the sender's event id rather than by a clock
+      // slot. Two deliveries of one event collide on `routine_deliveries`'
+      // unique constraint and the second is a no-op — and because the claim
+      // happens before the channel lookup and before the model call, a repeat
+      // costs nothing but the round trip. A slot key would be wrong twice over
+      // here: two different events inside one scheduled slot would collide
+      // with each other, and a retry of one event across a slot boundary
+      // would not collide at all.
+      keysToClaim = trigger ? [`hook:${trigger.eventId}`] : [`slot:${routine.next_run_at}`];
     }
 
     const hasWork = routine.source_kind === "none" || items.length > 0 || pageText !== undefined;
@@ -488,11 +525,17 @@ export async function runRoutine(
         instruction: routine.instruction,
         items,
         pageText,
+        payloadText: trigger?.payload,
         ragBlock,
         // A scheduled prompt has no source, so there is nothing for its output
         // to be irrelevant to — and one `false` would silence it permanently.
         // Everything that watches something may decline.
-        mayDecline: routine.source_kind !== "none",
+        //
+        // A poked run may, even though its source_kind is `none`: it *does*
+        // have material to be irrelevant to — the payload that arrived — and
+        // the thing a webhook routine is most often asked to do is stay quiet
+        // unless what came in matters.
+        mayDecline: routine.source_kind !== "none" || trigger !== undefined,
       },
       runEnv,
     );
@@ -534,7 +577,8 @@ export async function runRoutine(
         run: {
           itemsNew: items.length,
           itemsOverflow: overflow,
-          triggeredBy: deps.trigger ?? "schedule",
+          // A poke names itself, whatever the dispatcher was built as.
+          triggeredBy: trigger ? "webhook" : (deps.trigger ?? "schedule"),
         },
       },
     );

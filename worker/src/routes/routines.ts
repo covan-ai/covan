@@ -18,6 +18,7 @@ import {
   EVENT_TEST,
 } from "../lib/routines/webhook";
 import { getRateLimiter } from "../lib/ratelimit";
+import { generateIngestToken } from "../lib/routines/ingest";
 import { rateLimitKey } from "../middleware/ratelimit";
 import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
@@ -337,6 +338,13 @@ const createSchema = z.object({
   deliveryChannelId: z.string().uuid(),
   scheduleCron: z.string().min(1),
   timezone: z.string().default("UTC"),
+  /**
+   * `schedule` unless asked otherwise, which is what every routine was before
+   * 0055. A webhook trigger is only valid on a routine with no source of its
+   * own; the database says so with a CHECK, and 0027's trigger means it can
+   * never be granted to an existing RSS routine afterwards.
+   */
+  triggerKind: z.enum(["schedule", "webhook", "both"]).default("schedule"),
 });
 
 // agentId and workspaceId are deliberately absent from updateSchema. The
@@ -352,6 +360,7 @@ const updateSchema = z
     status: z.enum(["active", "paused"]).optional(),
     visibility: z.enum(["private", "shared"]).optional(),
     deliveryChannelId: z.string().uuid().optional(),
+    triggerKind: z.enum(["schedule", "webhook", "both"]).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "no fields to update" });
 
@@ -425,6 +434,10 @@ routines.post("/routines", async (c) => {
       delivery_channel_id: body.deliveryChannelId,
       schedule_cron: body.scheduleCron,
       timezone: body.timezone,
+      // Kept even for a webhook-only routine, which never runs on it: the
+      // column is `not null` and six other places assume a string is there.
+      // 0055 says why that was the cheaper of the two mistakes.
+      trigger_kind: body.triggerKind,
       // The first run is scheduled, not immediate. Creating "every day at
       // 09:00" used to send a real message within one 5-minute tick, because
       // claim_due_routines claims anything already due and `now()` is. Use
@@ -467,6 +480,9 @@ routines.patch("/routines/:id", async (c) => {
   if (body.instruction !== undefined) patch.instruction = body.instruction;
   if (body.visibility !== undefined) patch.visibility = body.visibility;
   if (body.deliveryChannelId !== undefined) patch.delivery_channel_id = body.deliveryChannelId;
+  // The CHECK in 0055 refuses `webhook` or `both` on a routine that watches
+  // something, and `insertErrorStatus` turns that into a 400 rather than a 500.
+  if (body.triggerKind !== undefined) patch.trigger_kind = body.triggerKind;
 
   // Validate the pair that will actually be in effect, not just the field that
   // changed — a timezone the cron parser cannot resolve leaves the executor
@@ -583,3 +599,111 @@ routines.get("/routines/:id/runs", async (c) => {
 });
 
 export { routines };
+
+// ---- ingest triggers -------------------------------------------------------
+//
+// The token itself is minted and hashed here, with the service role, for the
+// same reason a delivery channel's secret is: `routine_triggers.token_hash` is
+// granted to no client role at all (0055), so a caller's own client can neither
+// write it nor read it back. Every one of these checks ownership through the
+// caller's own client first, so RLS decides who the routine belongs to and this
+// file only decides what to do about it.
+//
+// Reading a trigger's *existence* does go through the caller's client, because
+// there the policy is the whole answer: `routine_triggers_select_own` returns
+// the row to the routine's owner and to nobody else — deliberately narrower
+// than the routine's own visibility, because sharing a routine shares what it
+// does, not the ability to fire it.
+
+/** Is the webhook wired up, and has anything ever used it? Never the token. */
+routines.get("/routines/:id/trigger", async (c) => {
+  const { data, error } = await c
+    .get("db")
+    .from("routine_triggers")
+    .select("routine_id, created_at, last_used_at")
+    .eq("routine_id", c.req.param("id"))
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid routine id" }, 400);
+    return c.json({ error: "failed to load the trigger" }, 500);
+  }
+  if (!data) return c.json({ configured: false });
+
+  return c.json({
+    configured: true,
+    createdAt: Date.parse(data.created_at as string),
+    lastUsedAt: data.last_used_at ? Date.parse(data.last_used_at as string) : null,
+  });
+});
+
+/**
+ * Mint an ingest token, or replace the one this routine has.
+ *
+ * One endpoint for both because they are the same act: the row's primary key is
+ * the routine, so writing is an upsert and rotating is what writing a second
+ * time means. Splitting them would suggest a rotation keeps something, and it
+ * keeps nothing — the old token stops working the moment this returns.
+ */
+routines.post("/routines/:id/trigger", async (c) => {
+  const id = c.req.param("id");
+
+  // Through the caller's own client: if RLS does not return the row, the answer
+  // is 404 for the same reason it is everywhere else in this API — a row you
+  // cannot see is absent, not forbidden.
+  const { data: routine, error } = await c
+    .get("db")
+    .from("routines")
+    .select("id, trigger_kind")
+    .eq("id", id)
+    .eq("user_id", c.get("user").id)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid routine id" }, 400);
+    return c.json({ error: "failed to load routine" }, 500);
+  }
+  if (!routine) return c.json({ error: "routine not found" }, 404);
+
+  // Refused rather than switched on the caller's behalf. Changing how a routine
+  // is started is a decision about a thing that runs unattended, and quietly
+  // making one because somebody pressed a button next to it is the kind of
+  // helpfulness nobody remembers having agreed to.
+  if (routine.trigger_kind === "schedule") {
+    return c.json({ error: "this routine is not set to accept webhook triggers" }, 400);
+  }
+
+  const { token, tokenHash } = generateIngestToken();
+  const { error: writeError } = await serviceClient(c.env)
+    .from("routine_triggers")
+    .upsert(
+      { routine_id: id, token_hash: await tokenHash, last_used_at: null },
+      { onConflict: "routine_id" },
+    );
+
+  if (writeError) return c.json({ error: "failed to create the trigger" }, 500);
+
+  // The only response that carries it. The database holds a SHA-256, so nobody
+  // — including us — can show it again; the path is returned with it so the
+  // interface does not have to know how this endpoint is spelled.
+  return c.json({ token, path: `/routine-hooks/${token}` }, 201);
+});
+
+/** Turn the webhook off. The routine keeps running on its schedule, if it has one. */
+routines.delete("/routines/:id/trigger", async (c) => {
+  // The caller's own client: 0055 grants `authenticated` a DELETE and
+  // `routine_triggers_delete_own` scopes it to the routine's owner, so the
+  // database is the whole check and there is nothing here for the service role
+  // to do.
+  const { error } = await c
+    .get("db")
+    .from("routine_triggers")
+    .delete()
+    .eq("routine_id", c.req.param("id"));
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid routine id" }, 400);
+    return c.json({ error: "failed to remove the trigger" }, 500);
+  }
+  return c.body(null, 204);
+});

@@ -2,7 +2,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
-import { runRoutine as defaultRunRoutine, type ExecutorDeps, type RoutineRow } from "./executor";
+import {
+  runRoutine as defaultRunRoutine,
+  type ExecutorDeps,
+  type IngestTrigger,
+  type RoutineRow,
+} from "./executor";
 import { summariseWithModel } from "./summarise";
 import { ownHostsFrom } from "./url-guard";
 import { deliveryDepsFrom } from "./delivery";
@@ -99,6 +104,30 @@ export async function runOneRoutine(
   // a result that arrived at an odd hour can be explained by somebody having
   // pressed the button rather than read as the schedule having drifted.
   return runRoutine(routine, { ...executorDeps(env, db), trigger: "manual" });
+}
+
+/**
+ * Run one routine because something poked it.
+ *
+ * Separate from `runOneRoutine` because the two differ in what they may not
+ * share: this one carries an event id that becomes the delivery claim, and a
+ * payload that reaches the model. Folding the trigger into `runOneRoutine` as
+ * an optional argument would make it possible to call the button path with one
+ * by accident, and the button path has no event to be idempotent about.
+ *
+ * The routine row comes from `resolveIngestToken`, which read it with the
+ * service role after matching the token's hash — so it is the row the token
+ * names, not one the caller described.
+ */
+export async function runPokedRoutine(
+  env: RoutineEnv,
+  routine: RoutineRow,
+  trigger: IngestTrigger,
+  overrides: Partial<DispatcherDeps> = {},
+): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
+  const db = overrides.db ?? serviceClient(env);
+  const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
+  return runRoutine(routine, executorDeps(env, db), trigger);
 }
 
 export async function runDueRoutines(

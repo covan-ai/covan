@@ -46,11 +46,13 @@ export function summariseWithModel(env: RoutineEnv) {
   return async (
     input: SummariseInput,
   ): Promise<{ text: string; tokens: number; declined: boolean }> => {
-    const body = input.pageText
-      ? `Watched page content:\n\n${input.pageText.slice(0, 20_000)}`
-      : input.items
-          .map((i) => `- ${i.title}\n  ${i.link}\n  ${i.summary.slice(0, 1_000)}`)
-          .join("\n\n");
+    const body = input.payloadText
+      ? `Incoming webhook payload:\n\n${input.payloadText.slice(0, 20_000)}`
+      : input.pageText
+        ? `Watched page content:\n\n${input.pageText.slice(0, 20_000)}`
+        : input.items
+            .map((i) => `- ${i.title}\n  ${i.link}\n  ${i.summary.slice(0, 1_000)}`)
+            .join("\n\n");
 
     const { text, usage } = await complete(env, {
       model: resolveModel(input.model, env),
@@ -80,6 +82,20 @@ export function summariseWithModel(env: RoutineEnv) {
         // documents gets exactly the prompt it got before this existed.
         ...(input.ragBlock ? [{ role: "system" as const, content: input.ragBlock }] : []),
         ...(input.mayDecline ? [{ role: "system" as const, content: DECISION_INSTRUCTION }] : []),
+        // The material rides in the user message with the instruction, which
+        // matters most when the material arrived from outside: a webhook
+        // payload is text whoever holds the ingest token chose, and a system
+        // message is the wrong place for anything a stranger wrote.
+        //
+        // What that buys, stated plainly rather than overstated: it is not a
+        // defence against prompt injection, and nothing here is. A payload
+        // that talks the model into ignoring its instruction will succeed. The
+        // reason that is survivable is the blast radius rather than the
+        // prompt — this agent has no tools, reads nothing it was not already
+        // given, and can deliver only to a channel belonging to the routine's
+        // own owner. The worst outcome is a misleading summary in the owner's
+        // own inbox, which is the same thing a hostile RSS feed could already
+        // do. It should be read that way, not as a wall.
         { role: "user", content: `${input.instruction}\n\n${body}` },
       ],
     });

@@ -19,6 +19,7 @@ import type {
   DeliveryChannelKind,
   CreatedDeliveryChannel,
   RoutineDraft,
+  RoutineTrigger,
   CreateRoutineInput,
   UpdateRoutineInput,
 } from "./routines-api";
@@ -628,6 +629,15 @@ export const api = {
       request("POST", `/routines/${id}/run`),
     draft: (text: string, timezone: string): Promise<RoutineDraft> =>
       request("POST", "/routines/draft", { text, timezone }),
+    /** Whether a webhook trigger is wired up, and when it last fired. */
+    trigger: (id: string): Promise<RoutineTrigger> => request("GET", `/routines/${id}/trigger`),
+    /**
+     * Mint an ingest token, or replace the one this routine has. The only
+     * response that carries the token; rotating invalidates the old one at once.
+     */
+    createTrigger: (id: string): Promise<{ token: string; path: string }> =>
+      request("POST", `/routines/${id}/trigger`),
+    removeTrigger: (id: string): Promise<void> => request("DELETE", `/routines/${id}/trigger`),
   },
   deliveryChannels: {
     list: (): Promise<DeliveryChannel[]> => request("GET", "/delivery-channels"),

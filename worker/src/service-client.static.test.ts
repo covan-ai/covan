@@ -59,6 +59,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "erasure is the one thing a caller cannot do as themselves: auth.users is outside RLS entirely, so deleting your own account needs auth.admin.deleteUser, and the workspaces left with nobody in them have no DELETE policy for the same reason nobody has ever needed one. Both writes are keyed to the caller's own id, and the survey that decides which workspaces those are is done through the user client on purpose",
   ],
   [
+    "lib/routines/ingest.ts",
+    "a POST from GitHub or a CI job carries no Covan session, so there is no auth.uid() for RLS to resolve — the same exemption routes/slack.ts holds. What stands in for a caller is the ingest token, and routine_triggers.token_hash is readable by no client role at all (0055), so the hash comparison could not be done with a user client even if there were one. It reads one row by hash, reads the routine that row names, and writes that routine's last_used_at; the route itself never names serviceClient, which is why the lookup lives here",
+  ],
+  [
     "lib/keys/store.ts",
     "workspace_provider_keys has RLS on and no policy for authenticated at all — not even a workspace's own admin selects a row. Every caller of this module is responsible for having checked who is asking before it does: routes/provider-keys.ts checks the admin role, and readWorkspaceKeys is read mid-chat-request for whoever the request already resolved to a member of",
   ],

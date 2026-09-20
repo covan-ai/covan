@@ -17,6 +17,7 @@ const routine: Routine = {
   deliveryChannelId: "c1",
   scheduleCron: "0 */6 * * *",
   timezone: "Europe/Istanbul",
+  triggerKind: "schedule" as const,
   status: "active",
   pausedReason: null,
   nextRunAt: Date.now() + 60_000,

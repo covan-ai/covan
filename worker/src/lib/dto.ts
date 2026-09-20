@@ -462,6 +462,13 @@ export type RoutineDTO = {
   deliveryChannelId: string;
   scheduleCron: string;
   timezone: string;
+  /**
+   * What starts this routine. `schedule` for everything made before 0055, and
+   * for everything that watches a source — a webhook trigger is only valid on
+   * a routine with no source of its own, and 0027 means that can never change
+   * after creation.
+   */
+  triggerKind: "schedule" | "webhook" | "both";
   status: "active" | "paused";
   pausedReason: string | null;
   nextRunAt: number | null;
@@ -481,6 +488,7 @@ export function mapRoutine(row: {
   delivery_channel_id: string;
   schedule_cron: string;
   timezone: string;
+  trigger_kind?: string | null;
   status: string;
   paused_reason: string | null;
   next_run_at: string | null;
@@ -500,6 +508,13 @@ export function mapRoutine(row: {
     deliveryChannelId: row.delivery_channel_id,
     scheduleCron: row.schedule_cron,
     timezone: row.timezone,
+    // Through an explicit list, and defaulting to `schedule` when the column is
+    // absent: a row read by a build older than 0055 — or by a query written
+    // before this field existed — is a scheduled routine, which is what it was.
+    triggerKind:
+      row.trigger_kind === "webhook" || row.trigger_kind === "both"
+        ? row.trigger_kind
+        : "schedule",
     status: row.status === "paused" ? "paused" : "active",
     pausedReason: row.paused_reason ?? null,
     nextRunAt: row.next_run_at ? toEpochMs(row.next_run_at) : null,

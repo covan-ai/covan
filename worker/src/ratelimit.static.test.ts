@@ -92,6 +92,18 @@ function paidRouteFiles(): string[] {
  */
 const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   "slack.ts": "handleSlackEvent",
+  // Added by hand, and that is the weakness this entry documents.
+  //
+  // `paidRouteFiles()` below finds spenders by looking for an import of the
+  // completion seam or of `transcribeAudio`. A route that spends by running a
+  // routine imports neither — `runPokedRoutine` is a dispatcher call, and the
+  // model call is three files further down — so this endpoint would have
+  // sailed past the tripwire that exists to catch exactly it.
+  //
+  // The same hole is open for anything else that reaches the model through the
+  // routine engine. Until the detection is widened, a new one has to be
+  // remembered here, which is a review item rather than a guarantee.
+  "routine-hooks.ts": "runPokedRoutine",
 };
 
 const PAID_ENDPOINTS: Record<string, string[]> = {
@@ -121,6 +133,19 @@ describe("the expensive rate limit", () => {
     const handle = readFileSync(join(SRC, "lib", "slack", "handle.ts"), "utf8");
     expect(handle).toContain("entitlements.check");
     expect(readFileSync(join(ROUTES, "slack.ts"), "utf8")).toContain("verifySlackSignature");
+
+    // The incoming-webhook route's two bounds, in the same spirit. It cannot
+    // reach a routine without resolving a token, and it takes the expensive
+    // tier's limiter by hand — keyed per routine, because the routine is what
+    // spends its owner's allowance.
+    const hooks = readFileSync(join(ROUTES, "routine-hooks.ts"), "utf8");
+    expect(hooks).toContain("resolveIngestToken");
+    expect(hooks).toContain('getRateLimiter(c.env, "expensive")');
+    // And the allowance itself: a poked run is charged to the routine's owner
+    // by the executor, with no new code, because every id comes off the row.
+    expect(readFileSync(join(SRC, "lib", "routines", "executor.ts"), "utf8")).toContain(
+      "entitlements.check(routine.user_id)",
+    );
   });
 
   it("knows about every route file that spends, so a new one cannot arrive unnoticed", () => {

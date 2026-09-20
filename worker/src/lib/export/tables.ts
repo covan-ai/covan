@@ -173,6 +173,8 @@ export const EXCLUDED: Record<string, string> = {
     "credentials. A key is not a record of what the workspace holds, it is a way to become one of its members, and an archive that carried them would be a key store that people email to each other.",
   routine_deliveries:
     "not readable by a client at all, by design since 0012: it is the engine's own log of what it sent where. Nothing in it is workspace content.",
+  routine_triggers:
+    "a credential, like api_keys, and the same answer. The row is a SHA-256 of a token somebody pasted into GitHub or a CI job: the export could not read it if it wanted to (0055 grants that column to nobody), and a hash restored into a new install would name a token nobody holds while looking like a working webhook. The routine it belongs to comes back in full, paused like every other, and minting a new token there is one press — which is also the honest state of things, because the sender has to be re-pointed at the new install's URL regardless.",
   invitations:
     "in flight rather than held. An invitation is an offer to somebody who has not accepted, and it is scoped to an install's email and token; replaying one into a new install would either do nothing or invite a stranger.",
   notification_preferences:

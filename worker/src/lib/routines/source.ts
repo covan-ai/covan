@@ -66,8 +66,14 @@ async function sha256Hex(input: string): Promise<string> {
  * moment it is passed. Reading to the end and slicing afterwards spends the
  * memory first and only then decides it was too much, which is no cap at all.
  */
-export async function readCapped(res: Response, maxBytes: number): Promise<string> {
-  const reader = res.body?.getReader();
+export async function readCapped(
+  // `Pick<Response, "body">` rather than `Response`, so a `Request` satisfies
+  // it too. The incoming-webhook route needs exactly this, on exactly the same
+  // argument: a body somebody else chose the size of.
+  source: Pick<Response, "body">,
+  maxBytes: number,
+): Promise<string> {
+  const reader = source.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
   let total = 0;

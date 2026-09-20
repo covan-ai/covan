@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Minus, X } from "lucide-react";
 import { SectionCard } from "@/components/section-card";
+import { RoutineWebhookCard } from "@/components/routines/routine-webhook-card";
 import { SectionHeading } from "@/components/page-container";
 import { Button } from "@/components/ui/button";
 import {
@@ -259,6 +260,13 @@ export function RoutineDetail({
           )}
         </dl>
       </SectionCard>
+
+      {/* Owner only, and only where there is something to show: the policy on
+          routine_triggers returns nothing to anybody else, so a teammate would
+          get an empty card and a button that 404s. */}
+      {isOwner && routine.triggerKind !== "schedule" && (
+        <RoutineWebhookCard routineId={routine.id} />
+      )}
 
       <section className="mt-10">
         <SectionHeading title="Run history" />

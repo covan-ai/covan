@@ -9,6 +9,7 @@ import {
   type RoutineRow,
 } from "./executor";
 import { encryptSecret } from "../secret-box";
+import { serialiseWebhookSecret } from "./webhook";
 import type { WorkspaceKeys } from "../keys/store";
 
 // Task 11 wires a real DNS lookup into the Node fetch path so a hostname that
@@ -210,6 +211,7 @@ function makeDeps(db: any) {
       secretKey: SECRET_KEY,
       resendApiKey: "re",
       resendFrom: "R <r@e.com>",
+      ownHosts: ["api.example.com"],
     },
     now: () => new Date("2026-08-14T10:07:00Z"),
   };
@@ -824,6 +826,100 @@ describe("runRoutine", () => {
     const patch = updates.find((u) => u.table === "routines" && "consecutive_failures" in u.values);
     expect(patch?.values.status).toBe("paused");
     expect(patch?.values.paused_reason).toMatch(/404/);
+  });
+
+  // ---- a run something else started ------------------------------------
+
+  describe("when a webhook poked it", () => {
+    const poked = (over: Partial<RoutineRow> = {}) =>
+      routine({ source_kind: "none", source_config: {}, ...over });
+    const trigger = { eventId: "evt-1", payload: '{"deploy":"finished"}' };
+
+    it("claims the sender's event id, not a clock slot", async () => {
+      const { db, inserts } = makeDb();
+
+      await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      const claim = inserts.find((i) => i.table === "routine_deliveries")!;
+      expect(claim.values).toMatchObject([{ item_key: "hook:evt-1" }]);
+    });
+
+    // Every webhook sender worth using delivers twice. The second one must cost
+    // nothing and must still be visible — a silent 200 leaves somebody
+    // wondering whether their routine ran.
+    it("is a visible skipped run the second time, with no model call", async () => {
+      const { db, inserts } = makeDb({ claimWins: () => [] });
+
+      const out = await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+      expect(summarise).not.toHaveBeenCalled();
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values.status).toBe("skipped");
+    });
+
+    it("gives the model the payload, and says where it came from", async () => {
+      const { db } = makeDb();
+
+      await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      expect(summarise.mock.calls[0][0]).toMatchObject({
+        payloadText: '{"deploy":"finished"}',
+        // A poked run has material its output can be irrelevant to, unlike a
+        // scheduled prompt — so it is allowed to decide there is nothing worth
+        // sending, which is most of what a webhook routine is asked to do.
+        mayDecline: true,
+      });
+    });
+
+    it("tells the receiver a poke started it", async () => {
+      const { db } = makeDb({
+        rows: {
+          delivery_channels: {
+            kind: "webhook",
+            secret_ciphertext: await encryptSecret(
+              serialiseWebhookSecret({
+                url: "https://receiver.example.com/covan",
+                signingSecret: "whsec_TEST",
+              }),
+              SECRET_KEY,
+            ),
+          },
+        },
+      });
+
+      await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      const body = JSON.parse(deliverCalls[0].init.body as string);
+      expect(body.run.triggeredBy).toBe("webhook");
+      expect(body.event).toBe("routine.delivered");
+    });
+
+    // 0013's claim — "a watched feed is never mirrored into our database" — has
+    // to survive a payload arriving by POST rather than being fetched. Only the
+    // summary the agent wrote is kept.
+    it("writes the payload nowhere", async () => {
+      const { db, inserts, updates } = makeDb();
+      const secret = '{"customer":"acme","card":"4111111111111111"}';
+
+      await runRoutine(poked(), makeDeps(db) as any, { eventId: "evt-2", payload: secret });
+
+      const written = JSON.stringify([...inserts, ...updates]);
+      expect(written).not.toContain("4111111111111111");
+      expect(written).not.toContain("acme");
+      // And the run row did keep what the agent wrote about it.
+      expect(inserts.find((i) => i.table === "routine_runs")!.values.summary).toBe("summary");
+    });
+
+    it("is still a scheduled run when nothing poked it", async () => {
+      const { db, inserts } = makeDb();
+
+      await runRoutine(poked(), makeDeps(db) as any);
+
+      const claim = inserts.find((i) => i.table === "routine_deliveries")!;
+      expect((claim.values as { item_key: string }[])[0].item_key).toMatch(/^slot:/);
+      expect(summarise.mock.calls[0][0].payloadText).toBeUndefined();
+    });
   });
 
   it("checks the delivery channel before summarising, so a missing channel skips the LLM call", async () => {

@@ -341,6 +341,130 @@ may read. The signing secret is minted per channel rather than derived from
 token behind a connection, so a receiver's leaked copy of a derived secret would
 force all of them to be rotated at once. One channel's secret rotates alone.
 
+## Being poked instead
+
+A routine normally runs on its cron. One with **no source of its own** can also
+be given a URL that starts it:
+
+```
+POST https://api.example.com/routine-hooks/covan_whk_<token>
+```
+
+Paste it into GitHub's webhook box, a Stripe endpoint, a Zapier step, a CI job,
+or a `curl` in somebody's deploy script. Whatever is POSTed becomes the material
+the agent reads, in place of a feed or a page. The URL shape is the feature —
+it has to be one string, because most of the things that will be calling it
+cannot be taught to set a header. For the ones that can,
+`X-Covan-Ingest-Token` is accepted and wins over the path, so the credential
+need not end up in an access log.
+
+**Only a routine with no source.** "The routine watches an RSS feed and
+somebody poked it — does it re-fetch?" has no good answer: if it does, a busy
+sender charges the owner for a feed read per request and moves a cursor on a
+schedule nobody chose; if it does not, the same routine behaves differently
+depending on what started it. So the pairing is refused by a check constraint
+at creation rather than resolved at 3am. A routine's source can never change
+after it is made (`0027`), so this is settled once, when you create it — an
+existing feed-watching routine cannot acquire a webhook, and the honest answer
+is to make a new one.
+
+A routine can run on **both**: a digest every morning that can also be poked
+after a deploy.
+
+### The token
+
+32 random bytes, `covan_whk_` prefixed, shown exactly once when you make it.
+The database keeps a SHA-256, so nobody — including the operator — can show it
+again; if it is lost, replace it, which invalidates the old one immediately.
+
+The prefix is deliberately not `covan_sk_`: an API key is a way to *become* a
+person, and this is permission to fire one row. The two should not be
+confusable by a secret scanner, by `authMiddleware`, or by whoever finds one.
+
+Its hash lives in a table of its own rather than as a column on `routines`,
+and that is security rather than filing. `routines` grants `authenticated` a
+table-level select **and** update with no column list, and a shared routine is
+visible to the whole workspace — so a hash stored there would be readable by
+every colleague, and writable by anyone who owns any routine. The second is the
+serious one: writing your own routine's hash to equal a colleague's would
+redirect their sender's payload to a routine with your instruction and your
+delivery channel. `routine_triggers.token_hash` is granted to no client role at
+all, the table is unique on it, and `tests/rls/routine-triggers.test.ts` holds
+both.
+
+**Who can see it:** the routine's owner, and nobody else — narrower than the
+routine's own visibility on purpose. Sharing a routine shares what it does and
+what it sent, not the ability to fire it.
+
+### What you get back
+
+| Status | Means |
+| --- | --- |
+| `202` | Accepted. The run happens after the response; the body carries the `eventId` it was filed under. |
+| `401` | The token is missing, malformed, unknown, or belongs to a routine that has been deleted — one answer for all of them, so the endpoint cannot be used to discover which tokens exist. |
+| `409` | The token is good, but the routine is paused or no longer accepts webhook triggers. You are told which, because you hold the token and can act on it. |
+| `413` | The body is over 64 KB. The stream is cancelled rather than read and measured. |
+| `429` | Too many pokes for this routine this minute. `Retry-After` says how long. |
+
+`202` rather than waiting: a run reads documents, calls a model and delivers,
+which takes tens of seconds, and every webhook sender worth using times out
+long before that and retries — which is how one poke becomes four.
+
+The limit is counted **per routine**, not per address. An address is the wrong
+key in both directions: one sender behind one address is what a webhook is, and
+several routines sharing that address would be counted as one caller, while
+many senders behind one NAT would be too. The routine is the thing being
+protected, because it is the row that spends its owner's allowance.
+
+### Sending the same thing twice
+
+Give us your own id for the event and a repeat costs nothing. Read from
+`X-Covan-Event-Id`, then `Idempotency-Key`, then `X-GitHub-Delivery`, in that
+order. The id becomes the run's delivery claim, so a second delivery of one
+event collides on the same unique constraint that stops a retried scheduled run
+from double-sending — and because the claim is taken before the model is
+called, the repeat costs no tokens.
+
+A repeat is recorded as a **skipped run you can see** on the routine's page,
+not a silent 200. A webhook that quietly did nothing is indistinguishable from
+one that is broken.
+
+With no id from the sender, there is nothing to deduplicate on and nothing
+pretends otherwise: the run happens. Hashing the body instead would be worse
+than useless — two genuine "the deploy finished" events are byte-identical and
+would silently become one.
+
+### What happens to the payload
+
+It is given to the agent and **stored nowhere**. `0013`'s rule — a watched
+source is never mirrored into this database — holds for a payload that arrived
+by POST as much as for one that was fetched, and a test holds it. What is kept
+is the summary the agent wrote, on the run, exactly as for every other kind.
+The only thing an incoming request writes is a clock reading: `last_used_at`,
+so the interface can answer "is this actually wired up".
+
+### What it cannot do, and what it can
+
+The run happens as the routine's owner — not by impersonation but by
+construction. The engine never resolves a caller: every id it uses comes off
+the routine row, and it re-checks the owner's workspace membership before doing
+anything. The owner's allowance is charged exactly as for a scheduled run.
+
+No session is minted for the owner, deliberately. It would not work — the four
+tables the engine writes have no policy for `authenticated` at all — and it
+would turn a leaked button into a leaked identity.
+
+**Prompt injection is not solved here, and this document will not pretend it
+is.** The payload is text chosen by whoever holds the token, and it goes into
+the user message with the instruction rather than into a system one, which
+helps and does not fix. A payload that talks the model into ignoring its
+instruction will succeed. What makes that survivable is the blast radius rather
+than the prompt: the agent has no tools, reads nothing it was not already
+given, and can deliver only to a channel belonging to the routine's own owner.
+The worst outcome is a misleading summary in the owner's own inbox — the same
+thing a hostile RSS feed could already produce. Treat the token as the security
+boundary, because it is the one.
+
 ## Scheduling
 
 A schedule is a five-field cron expression plus an IANA timezone, and the

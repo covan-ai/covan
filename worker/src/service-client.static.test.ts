@@ -24,7 +24,7 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
   [
     "routes/routines.ts",
-    "delivery_channels has no INSERT policy: the row holds a secret the route encrypts, so the route decides what goes in it, not the database",
+    "delivery_channels has no INSERT policy: the row holds a secret the route encrypts, so the route decides what goes in it, not the database. The same column is why rotating a webhook's signing secret and sending a test both go this way — 0023 grants authenticated `update (label)` and no sight of secret_ciphertext at all, so neither reading the destination back nor writing a new secret over it is something a caller's own client can do. Both are scoped to `user_id = the caller` by hand, which is the job delivery_channels_select_own does everywhere else",
   ],
   [
     "routes/connections.ts",
@@ -57,6 +57,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   [
     "routes/account.ts",
     "erasure is the one thing a caller cannot do as themselves: auth.users is outside RLS entirely, so deleting your own account needs auth.admin.deleteUser, and the workspaces left with nobody in them have no DELETE policy for the same reason nobody has ever needed one. Both writes are keyed to the caller's own id, and the survey that decides which workspaces those are is done through the user client on purpose",
+  ],
+  [
+    "lib/routines/ingest.ts",
+    "a POST from GitHub or a CI job carries no Covan session, so there is no auth.uid() for RLS to resolve — the same exemption routes/slack.ts holds. What stands in for a caller is the ingest token, and routine_triggers.token_hash is readable by no client role at all (0055), so the hash comparison could not be done with a user client even if there were one. It reads one row by hash, reads the routine that row names, and writes that routine's last_used_at; the route itself never names serviceClient, which is why the lookup lives here",
   ],
   [
     "lib/keys/store.ts",

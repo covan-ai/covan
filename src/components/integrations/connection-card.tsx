@@ -1,7 +1,12 @@
 import { useState, type ReactElement } from "react";
 import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
-import type { Connection, ProviderAvailability, ProviderId } from "@/lib/connections-api";
+import type {
+  Connection,
+  ConnectionPausedCode,
+  ProviderAvailability,
+  ProviderId,
+} from "@/lib/connections-api";
 import type { Bundle } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Chip, SectionCard } from "@/components/section-card";
@@ -15,6 +20,7 @@ import {
 import { formatRelative } from "@/lib/relative-time";
 import {
   useDisconnect,
+  useReconnectConnection,
   useStartConnection,
   useSyncConnection,
   useUpdateConnection,
@@ -50,14 +56,65 @@ const INTERVALS = [
   { minutes: 10080, label: "Weekly" },
 ];
 
+/**
+ * What a person can actually do about a pause.
+ *
+ * Decided from the code rather than from the sentence beside it, because the
+ * right action differs and offering the wrong one wastes somebody's afternoon:
+ * resuming a revoked grant fails on the first sync and pauses the connection
+ * again, with a message they have already read.
+ *
+ *   - `newGrant`   — only a fresh grant fixes it. Resume is hidden, because it
+ *                    cannot work.
+ *   - `decide`     — the engine is asking a question. Resuming means "yes,
+ *                    really remove those", and reconnecting is the other answer.
+ *   - `operator`   — nothing the person on this page can do. The deployment
+ *                    stopped offering the provider; say so and offer neither.
+ *   - `resume`     — the ordinary case, including a person's own pause.
+ */
+function pauseAction(
+  code: ConnectionPausedCode | null,
+): "newGrant" | "decide" | "operator" | "resume" {
+  switch (code) {
+    case "grant_revoked":
+    case "owner_gone":
+    case "restored":
+      return "newGrant";
+    case "access_narrowed":
+      return "decide";
+    case "provider_unconfigured":
+    case "unknown_provider":
+      return "operator";
+    default:
+      return "resume";
+  }
+}
+
 export function ConnectionCard({ connection }: { connection: Connection }) {
   const [pickingFolder, setPickingFolder] = useState(false);
   const update = useUpdateConnection();
   const sync = useSyncConnection();
   const disconnect = useDisconnect();
+  const reconnect = useReconnectConnection();
   const Mark = PROVIDER_MARK[connection.provider];
 
   const paused = connection.status === "paused";
+  const action = paused ? pauseAction(connection.pausedCode) : "resume";
+  const reconnectButton = (
+    <Button
+      size="sm"
+      variant={action === "newGrant" ? "default" : "outline"}
+      disabled={reconnect.isPending}
+      onClick={() =>
+        reconnect.mutate(connection.id, {
+          onError: (err) =>
+            toast.error(err instanceof Error ? err.message : "Could not start that"),
+        })
+      }
+    >
+      Reconnect
+    </Button>
+  );
 
   return (
     <SectionCard className="flex flex-col gap-4">
@@ -97,6 +154,32 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
           <Button size="sm" onClick={() => setPickingFolder(true)}>
             Choose a folder
           </Button>
+        ) : action === "newGrant" ? (
+          // Resume is not offered at all. It would start a sync against a token
+          // the provider has already refused, fail on the first call, and pause
+          // the connection again with the message that is already on screen.
+          reconnectButton
+        ) : action === "operator" ? (
+          // Nothing to press. The deployment stopped offering this provider,
+          // which is a configuration somebody else holds — the sentence above
+          // says which variables, and a button here would only fail.
+          <span className="text-[13px] text-muted-foreground">
+            An operator has to set this up again before it can resume.
+          </span>
+        ) : action === "decide" ? (
+          <>
+            <Button
+              size="sm"
+              disabled={update.isPending}
+              onClick={() => update.mutate({ id: connection.id, patch: { status: "active" } })}
+            >
+              Remove them and resume
+            </Button>
+            {/* The other answer to the same question, and the more likely right
+                one: the documents are still there, this grant just cannot see
+                them. */}
+            {reconnectButton}
+          </>
         ) : (
           <>
             <Button
@@ -153,6 +236,12 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
             >
               {paused ? "Resume" : "Pause"}
             </Button>
+            {/* Offered on a working connection too, quietly. Replacing a grant
+                is the answer to "this is syncing as the wrong person" as well
+                as to "this has stopped", and the old route to it was to
+                disconnect and start again — which left the documents orphaned
+                until the next sync adopted them back. */}
+            {!paused && reconnectButton}
           </>
         )}
 

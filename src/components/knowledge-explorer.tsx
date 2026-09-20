@@ -1451,6 +1451,18 @@ function DocumentRow({
         <span className="block truncate group-hover:underline [overflow-wrap:anywhere]">
           {doc.name}
         </span>
+        {/* Where it came from, on the line under the name rather than as a
+            chip or a colour: provenance is derived from a foreign key, and the
+            document that needs no explanation at all is the one somebody
+            uploaded. At every width, because it is the sort of thing a person
+            wants to know before they trust the file — and a routine id with no
+            name is a colleague's private routine, which is a thing the reader
+            cannot be shown. */}
+        {doc.routineId ? (
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            Written by {doc.routineName ?? "a routine"}
+          </span>
+        ) : null}
         {/* The columns that fold away on a narrow screen say themselves here
             instead, so nothing is reachable only at desktop width. */}
         <span className="mt-0.5 block truncate text-xs text-muted-foreground md:hidden">
@@ -1600,6 +1612,11 @@ function DocumentTile({
       >
         {doc.name}
       </button>
+      {doc.routineId ? (
+        <span className="truncate text-xs text-muted-foreground">
+          Written by {doc.routineName ?? "a routine"}
+        </span>
+      ) : null}
       <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>{formatFileSize(doc.size)}</span>
         {doc.indexed ? <Chip tone="on">Indexed</Chip> : <Chip tone="neutral">Not indexed</Chip>}

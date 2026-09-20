@@ -44,6 +44,14 @@ Scopes would be a second permission system standing next to that one, and two
 systems that disagree about the same question are worse than one. What a key
 gives up in granularity it gains in there being nothing to get wrong.
 
+The test is whether the second system answers the same question. Covan does have
+a second permission table — the one that decides what an **agent** may do at a
+connected source — and it is not a counter-example to any of the above, because
+"may this agent send this mail at 3am" is not a question `auth.uid()` can be
+asked. See
+[a question row level security cannot be asked](security.md#a-question-row-level-security-cannot-be-asked).
+A scope fails that test; a capability passes it.
+
 Three things a key cannot do, each by explicit refusal:
 
 - **Create another key.** Otherwise a leaked key writes itself permanent
@@ -117,6 +125,22 @@ stands in front of everything. The expensive tier — 20 requests, keyed by user
 stands in front of the six endpoints that buy a completion or a transcription:
 `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`,
 `/routines/draft` and `/routines/:id/run`.
+
+`POST /routine-hooks/:token` is the one endpoint in this API that takes no
+bearer token at all. It is reached by third-party systems with no Covan
+session, so an ingest token stands in for a caller — see
+[Routines](routines.md#being-poked-instead). It takes the expensive tier's
+limiter keyed by routine rather than by caller, because the routine is what
+spends, and it is the second endpoint that buys a completion without importing
+the completion seam: `ratelimit.static.test.ts` names both by hand and says why
+that list is a review item rather than a guarantee.
+
+`POST /delivery-channels/:id/test` takes the expensive tier's limiter without
+being mounted behind that middleware. It buys no completion, and the list of
+paths mounted behind `rateLimit("expensive")` is pinned by a test against
+exactly the set of endpoints that do — so adding it there would have made that
+check state something untrue. It is bounded the same; it just says so in the
+route.
 
 A hosted workspace also has a monthly token allowance, which is a ceiling on the
 bill rather than on the rate. A self-hosted install has none: the operator brings
@@ -222,6 +246,18 @@ it is already gone or was never visible. Same for `DELETE /agents/:id`.
 | `GET /routines/:id/runs`                       | What happened                    |
 | `POST /routines/draft`                         | Turn a sentence into a routine   |
 | `GET`/`POST`/`DELETE /delivery-channels`       | Where output goes                |
+| `POST /delivery-channels/:id/test`             | One message through it, now      |
+| `POST /delivery-channels/:id/rotate`           | A new webhook signing secret     |
+| `GET`/`POST`/`DELETE /routines/:id/trigger`    | The URL that can start it        |
+
+`POST /routines` and `PATCH /routines/:id` also carry `outputBundleId` and
+`outputRetention`: the bundle each delivered summary is filed into as a
+document, and how many of them to keep. `null` files nothing, which is the
+default. The bundle has to be one in the routine's own workspace — that is
+decided by a policy rather than by this API, so a bundle elsewhere comes back as
+a `400` and not as a silent no-op. `GET /routines/:id/runs` answers with
+`documentId` for a run that filed, and `filingNote` for one that was supposed to
+and could not.
 
 ### Workspace and people
 

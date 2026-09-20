@@ -9,6 +9,7 @@ import {
   type RoutineRow,
 } from "./executor";
 import { encryptSecret } from "../secret-box";
+import { serialiseWebhookSecret } from "./webhook";
 import type { WorkspaceKeys } from "../keys/store";
 
 // Task 11 wires a real DNS lookup into the Node fetch path so a hostname that
@@ -93,7 +94,10 @@ function makeDb(
 
   const rowFor = async (table: string) => {
     if (over.rows && table in over.rows) return over.rows[table];
-    if (table === "workspace_members") return { user_id: "u1" };
+    // `role` as well as `user_id`, because the executor now reads both: a
+    // viewer keeps delivering and stops filing. Defaulting to `member` is what
+    // every test above this one means.
+    if (table === "workspace_members") return { user_id: "u1", role: "member" };
     if (table === "agents") return { persona: "You are a growth specialist", model: "gpt-4o" };
     // A `connection` routine looks its connection up scoped to the routine's
     // own workspace before it reads a single document. See connection-source.ts.
@@ -210,6 +214,7 @@ function makeDeps(db: any) {
       secretKey: SECRET_KEY,
       resendApiKey: "re",
       resendFrom: "R <r@e.com>",
+      ownHosts: ["api.example.com"],
     },
     now: () => new Date("2026-08-14T10:07:00Z"),
   };
@@ -776,8 +781,148 @@ describe("runRoutine", () => {
 
     expect(out.status).toBe("failed");
     const run = inserts.find((i) => i.table === "routine_runs")!;
-    expect(run.values.error).toMatch(/delivery failed/);
+    // A 500 from the receiver is the remote's fault, so it reads as an upstream
+    // failure and counts against the higher limit — but what the receiver
+    // actually said is still in the string, and so is the claim warning.
+    expect(run.values.error).toMatch(/upstream 500/);
+    expect(run.values.error).toMatch(/no/);
     expect(run.values.error).toMatch(/could not be released/);
+  });
+
+  // The change this pairs with: a receiver having a bad ten minutes must not
+  // pause a working routine at five, and a receiver that is simply pointed at
+  // the wrong URL must not be retried twenty times before anybody is told.
+  it("counts a 5xx from the delivery channel against the transient limit", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db, updates } = makeDb();
+    const deps = makeDeps(db) as any;
+    deps.deliveryDeps.fetchImpl = vi.fn(async () => new Response("gateway", { status: 503 }));
+
+    await runRoutine(
+      routine({
+        consecutive_failures: MAX_FAILURES - 1,
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+      }),
+      deps,
+    );
+
+    const patch = updates.find((u) => u.table === "routines" && "consecutive_failures" in u.values);
+    expect(patch?.values.consecutive_failures).toBe(MAX_FAILURES);
+    // Would have paused before this change. MAX_TRANSIENT_FAILURES is the bar.
+    expect(patch?.values.status).toBeUndefined();
+  });
+
+  it("still pauses at five when the channel itself is wrong", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db, updates } = makeDb();
+    const deps = makeDeps(db) as any;
+    deps.deliveryDeps.fetchImpl = vi.fn(async () => new Response("no such hook", { status: 404 }));
+
+    await runRoutine(
+      routine({
+        consecutive_failures: MAX_FAILURES - 1,
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+      }),
+      deps,
+    );
+
+    const patch = updates.find((u) => u.table === "routines" && "consecutive_failures" in u.values);
+    expect(patch?.values.status).toBe("paused");
+    expect(patch?.values.paused_reason).toMatch(/404/);
+  });
+
+  // ---- a run something else started ------------------------------------
+
+  describe("when a webhook poked it", () => {
+    const poked = (over: Partial<RoutineRow> = {}) =>
+      routine({ source_kind: "none", source_config: {}, ...over });
+    const trigger = { eventId: "evt-1", payload: '{"deploy":"finished"}' };
+
+    it("claims the sender's event id, not a clock slot", async () => {
+      const { db, inserts } = makeDb();
+
+      await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      const claim = inserts.find((i) => i.table === "routine_deliveries")!;
+      expect(claim.values).toMatchObject([{ item_key: "hook:evt-1" }]);
+    });
+
+    // Every webhook sender worth using delivers twice. The second one must cost
+    // nothing and must still be visible — a silent 200 leaves somebody
+    // wondering whether their routine ran.
+    it("is a visible skipped run the second time, with no model call", async () => {
+      const { db, inserts } = makeDb({ claimWins: () => [] });
+
+      const out = await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+      expect(summarise).not.toHaveBeenCalled();
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values.status).toBe("skipped");
+    });
+
+    it("gives the model the payload, and says where it came from", async () => {
+      const { db } = makeDb();
+
+      await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      expect(summarise.mock.calls[0][0]).toMatchObject({
+        payloadText: '{"deploy":"finished"}',
+        // A poked run has material its output can be irrelevant to, unlike a
+        // scheduled prompt — so it is allowed to decide there is nothing worth
+        // sending, which is most of what a webhook routine is asked to do.
+        mayDecline: true,
+      });
+    });
+
+    it("tells the receiver a poke started it", async () => {
+      const { db } = makeDb({
+        rows: {
+          delivery_channels: {
+            kind: "webhook",
+            secret_ciphertext: await encryptSecret(
+              serialiseWebhookSecret({
+                url: "https://receiver.example.com/covan",
+                signingSecret: "whsec_TEST",
+              }),
+              SECRET_KEY,
+            ),
+          },
+        },
+      });
+
+      await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      const body = JSON.parse(deliverCalls[0].init.body as string);
+      expect(body.run.triggeredBy).toBe("webhook");
+      expect(body.event).toBe("routine.delivered");
+    });
+
+    // 0013's claim — "a watched feed is never mirrored into our database" — has
+    // to survive a payload arriving by POST rather than being fetched. Only the
+    // summary the agent wrote is kept.
+    it("writes the payload nowhere", async () => {
+      const { db, inserts, updates } = makeDb();
+      const secret = '{"customer":"acme","card":"4111111111111111"}';
+
+      await runRoutine(poked(), makeDeps(db) as any, { eventId: "evt-2", payload: secret });
+
+      const written = JSON.stringify([...inserts, ...updates]);
+      expect(written).not.toContain("4111111111111111");
+      expect(written).not.toContain("acme");
+      // And the run row did keep what the agent wrote about it.
+      expect(inserts.find((i) => i.table === "routine_runs")!.values.summary).toBe("summary");
+    });
+
+    it("is still a scheduled run when nothing poked it", async () => {
+      const { db, inserts } = makeDb();
+
+      await runRoutine(poked(), makeDeps(db) as any);
+
+      const claim = inserts.find((i) => i.table === "routine_deliveries")!;
+      expect((claim.values as { item_key: string }[])[0].item_key).toMatch(/^slot:/);
+      expect(summarise.mock.calls[0][0].payloadText).toBeUndefined();
+    });
   });
 
   it("checks the delivery channel before summarising, so a missing channel skips the LLM call", async () => {
@@ -1303,5 +1448,169 @@ describe("runRoutine", () => {
     await runRoutine(r, makeDeps(db) as any);
 
     expect(summarise.mock.calls[0][0].mayDecline).toBe(true);
+  });
+});
+
+/**
+ * Filing, which is the optional half of a run and is never allowed to be the
+ * half that breaks it.
+ *
+ * Every test here is really the same assertion from a different angle: the
+ * message went out, so the run is `ok`, whatever happened afterwards. The
+ * reason that matters is in `canFileDocuments` — an exception on this path
+ * would be recorded as a failure, backed off geometrically, and at
+ * `MAX_FAILURES` would pause a routine that is delivering perfectly.
+ */
+describe("runRoutine filing", () => {
+  const filed = (over: Partial<RoutineRow> = {}) =>
+    routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+      output_bundle_id: "b1",
+      output_retention: 12,
+      ...over,
+    });
+
+  function depsWithFile(db: any, file: any) {
+    return { ...makeDeps(db), file };
+  }
+
+  it("does not reach for the filing code at all when the routine files nothing", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts } = makeDb();
+    const file = vi.fn();
+
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+    const out = await runRoutine(r, depsWithFile(db, file) as any);
+
+    expect(out.status).toBe("ok");
+    expect(file).not.toHaveBeenCalled();
+    // And says nothing about it. A note here would put an explanation in front
+    // of everybody whose routine simply does not file, which is almost everybody.
+    const run = inserts.find((i) => i.table === "routine_runs")!;
+    expect(run.values.document_id).toBeNull();
+    expect(run.values.filing_note).toBeNull();
+  });
+
+  it("files exactly what was delivered, overflow note and all", async () => {
+    // Twelve new entries against a per-run cap of ten, so the delivered text
+    // carries the sentence saying two were dropped.
+    fetchImpl = vi.fn(
+      async () =>
+        new Response(ATOM(["a", ...Array.from({ length: 12 }, (_, i) => `n${i}`)]), {
+          status: 200,
+        }),
+    );
+    const { db, inserts } = makeDb();
+    const file = vi.fn(async () => ({ filed: true, documentId: "d1", indexTokens: 0 }));
+
+    await runRoutine(filed(), depsWithFile(db, file) as any);
+
+    expect(file).toHaveBeenCalledTimes(1);
+    const [input] = file.mock.calls[0] as any[];
+    expect(input.bundleId).toBe("b1");
+    expect(input.retention).toBe(12);
+    expect(input.routineId).toBe("r1");
+    expect(input.workspaceId).toBe("w1");
+    // The filed copy is not the tidier one. A digest that was missing entries
+    // is still missing them a year later.
+    expect(input.summary).toContain("were not included");
+    expect(inserts.find((i) => i.table === "routine_runs")!.values.document_id).toBe("d1");
+  });
+
+  it("charges the filing embeddings with the run's other spend, not separately", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb();
+    const file = vi.fn(async () => ({ filed: true, documentId: "d1", indexTokens: 800 }));
+
+    await runRoutine(filed(), depsWithFile(db, file) as any);
+
+    // One record() call for the whole run. 120 completion tokens plus
+    // ceil(800 x 0.01) for the embeddings — which is the point of the
+    // weighting: filing a 3,000-character summary costs single figures against
+    // a chat turn, so filing is opt-in because of what it means rather than
+    // because of what it costs.
+    expect(recorded).toEqual([{ userId: "u1", tokens: 120 + 8 }]);
+  });
+
+  it("keeps delivering and stops filing when the owner is only a viewer", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts } = makeDb({
+      rows: { workspace_members: { user_id: "u1", role: "viewer" } },
+    });
+    const file = vi.fn();
+
+    const out = await runRoutine(filed(), depsWithFile(db, file) as any);
+
+    // Delivering is reading and a viewer may read. This is the whole
+    // distinction: the mail keeps arriving, the knowledge base stops growing.
+    expect(out.status).toBe("ok");
+    expect(deliverCalls).toHaveLength(1);
+    expect(file).not.toHaveBeenCalled();
+    expect(inserts.find((i) => i.table === "routine_runs")!.values.filing_note).toContain("viewer");
+  });
+
+  it("says which deployment is missing what when no document store is bound", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts } = makeDb();
+
+    // `file` absent, which is what the dispatcher hands over on a cron Worker
+    // with no R2 binding — the ordinary state of it on Cloudflare.
+    const out = await runRoutine(filed(), makeDeps(db) as any);
+
+    expect(out.status).toBe("ok");
+    const run = inserts.find((i) => i.table === "routine_runs")!;
+    expect(run.values.document_id).toBeNull();
+    expect(run.values.filing_note).toContain("document storage");
+  });
+
+  it("records a refusal to file without failing the run", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts, updates } = makeDb();
+    const file = vi.fn(async () => ({ filed: false, note: "not filed: the bundle is gone" }));
+
+    const out = await runRoutine(filed(), depsWithFile(db, file) as any);
+
+    expect(out.status).toBe("ok");
+    expect(inserts.find((i) => i.table === "routine_runs")!.values.filing_note).toBe(
+      "not filed: the bundle is gone",
+    );
+    // The failure counter is what eventually pauses a routine. Nothing about
+    // filing may touch it.
+    expect(updates.find((u) => u.table === "routines")!.values.consecutive_failures).toBe(0);
+  });
+
+  it("survives a filing implementation that throws, which the contract forbids", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts, updates } = makeDb();
+    const file = vi.fn(async () => {
+      throw new Error("R2 said no");
+    });
+
+    const out = await runRoutine(filed(), depsWithFile(db, file) as any);
+
+    // `fileRoutineOutput` is documented never to throw. This is about the
+    // injected dependency rather than that one: a future implementation that
+    // forgets the contract must not be able to pause a working routine.
+    expect(out.status).toBe("ok");
+    expect(inserts.find((i) => i.table === "routine_runs")!.values.filing_note).toContain(
+      "R2 said no",
+    );
+    expect(updates.find((u) => u.table === "routines")!.values.consecutive_failures).toBe(0);
+  });
+
+  it("files nothing when the model declined to send anything", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb();
+    summarise = vi.fn(async () => ({ text: "", tokens: 90, declined: true }));
+    const file = vi.fn();
+
+    await runRoutine(filed(), depsWithFile(db, file) as any);
+
+    // Nothing was delivered, so there is nothing that was worth keeping. A
+    // filed record of "nothing relevant this week" fifty-two times a year is
+    // noise an agent would then retrieve.
+    expect(file).not.toHaveBeenCalled();
   });
 });

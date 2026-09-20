@@ -52,6 +52,21 @@ A workspace carries one setting of its own so far: `default_model`, which decide
 only where the model picker starts for new agents. Every agent still chooses its
 own.
 
+Every model picker prints what a reply costs on each model — real money, not a
+tier out of five, because the providers publish list prices and a number you can
+multiply by your own traffic is worth more than a rating you have to learn. The
+figure is one reference reply on every model: 2,248 prompt tokens to 921
+completion, which is the average `0025` measured over ten real replies on a live
+deployment. It is priced as a fresh prompt, so a second turn in the same
+conversation costs less than it says, and an agent reading long documents costs
+more. The scale under the picker is marked in absolute money rather than in
+percentiles of the catalogue, so adding a model never changes what is claimed
+about one already there.
+
+A deployment with `OPENAI_MODEL` set shows no prices at all. That variable sends
+every completion to one model whatever the picker says, and a price beside an id
+this deployment will never request would be describing nothing.
+
 ## Member
 
 A membership is a row in `workspace_members`: a workspace, a user, and a role
@@ -243,8 +258,13 @@ whoever administers the database.
 A routine is a standing order attached to an agent: a source (an RSS feed, a web
 page, a connected Notion or Drive source, or nothing at all), an instruction in
 plain language, a cron expression with a timezone, and a delivery channel — a
-Slack webhook or an email address. The engine wakes up, asks the database which
-routines are due, runs them and delivers the result.
+Slack webhook, an email address, or a signed webhook to an endpoint you run.
+The engine wakes up, asks the database which routines are due, runs them and
+delivers the result.
+
+A routine with no source of its own can also be given a URL that starts it, so
+something else's deploy or ticket or nightly job is what wakes it rather than
+the clock. What that thing POSTs is what the agent reads.
 
 A routine belongs to a workspace and an agent, but it is owned by the person who
 made it, and it follows the same visibility rule as a session: private by
@@ -254,8 +274,17 @@ point at a channel belonging to its own creator, enforced in the insert and
 update policies rather than left to the API, because the foreign key alone is
 checked by the system and the system does not consult RLS.
 
-Each run records what it did, including the summary it sent, so "what did it send
-me last Tuesday?" has an answer inside the product. The engine deliberately
+A routine can also keep what it sends. Point it at a knowledge bundle and each
+delivered summary is filed there as an ordinary document, so a year of weekly
+digests becomes something the agent can be asked a question of rather than a
+channel somebody has to scroll. Filing is a write into the workspace's
+knowledge, so it needs the same permission as uploading a file — a viewer's
+routine keeps delivering and stops filing — and the engine re-reads that
+permission on every run rather than trusting what was true when the routine was
+made.
+
+Each run records what it did, including the summary it sent and the document it
+filed, so "what did it send me last Tuesday?" has an answer inside the product. The engine deliberately
 stores no source content beyond fingerprints: a feed a workspace watches is never
 mirrored into the database. The scheduling side — claiming, retries, and why a
 routine pauses itself — is in [Routines](architecture.md#routines).

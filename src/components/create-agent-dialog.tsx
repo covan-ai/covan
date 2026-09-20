@@ -17,7 +17,14 @@ import {
 import { Upload, X, FileText, ChevronRight, ChevronLeft, Sparkles } from "lucide-react";
 import { useAgentsStore } from "@/lib/agents-store";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
-import { EMOJIS, DEFAULT_NEW_AGENT_MODEL, PERSONA_TEMPLATES, modelsFor } from "@/lib/agent-meta";
+import {
+  EMOJIS,
+  DEFAULT_NEW_AGENT_MODEL,
+  PERSONA_TEMPLATES,
+  modelsFor,
+  costFor,
+} from "@/lib/agent-meta";
+import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -249,11 +256,15 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
               <SelectContent>
                 {models.map((m) => (
                   <SelectItem key={m} value={m}>
-                    {m}
+                    <span className="flex w-full items-center justify-between">
+                      <span>{m}</span>
+                      <ModelCost cost={costFor(me?.modelCosts, m)} />
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <ModelCostScale cost={costFor(me?.modelCosts, model)} />
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">

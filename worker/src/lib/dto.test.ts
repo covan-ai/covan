@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { mapDocument, mapMessage, mapAgent, mapChatSession, mapIdea, mapRoutine } from "./dto";
+import {
+  mapDocument,
+  mapMessage,
+  mapAgent,
+  mapChatSession,
+  mapIdea,
+  mapRoutine,
+  mapRoutineRun,
+  mapConnection,
+} from "./dto";
 
 describe("mapDocument", () => {
   it("marks a document indexed when it has embedded chunks", () => {
@@ -296,5 +305,125 @@ describe("mapRoutine", () => {
   // controls entirely from this field.
   it("carries the owner through", () => {
     expect(mapRoutine(row).userId).toBe("u1");
+  });
+
+  it("says a routine files nothing when it files nothing", () => {
+    const dto = mapRoutine(row);
+    expect(dto.outputBundleId).toBeNull();
+    // 52, not 0. The column has a default behind it, and a row read by a query
+    // written before 0056 still has that default — reporting 0 would put "0
+    // kept" in front of somebody whose routine keeps a year of them.
+    expect(dto.outputRetention).toBe(52);
+  });
+
+  it("carries the output bundle and retention when they are set", () => {
+    const dto = mapRoutine({ ...row, output_bundle_id: "b1", output_retention: 12 });
+    expect(dto.outputBundleId).toBe("b1");
+    expect(dto.outputRetention).toBe(12);
+  });
+});
+
+describe("mapRoutineRun filing", () => {
+  const row = {
+    id: "run1",
+    status: "ok",
+    items_new: 3,
+    duration_ms: 1400,
+    error: null,
+    started_at: "2026-09-20T09:00:00Z",
+  };
+
+  it("says nothing about filing for a run from before it existed", () => {
+    const dto = mapRoutineRun(row);
+    expect(dto.documentId).toBeNull();
+    expect(dto.filingNote).toBeNull();
+  });
+
+  it("names the document a run filed", () => {
+    expect(mapRoutineRun({ ...row, document_id: "d1" }).documentId).toBe("d1");
+  });
+
+  // A note on screen always means the optional half of an otherwise successful
+  // run did not happen, which is a state worth showing: it is the only way
+  // somebody finds out their cron Worker has no storage bound.
+  it("carries the reason nothing was filed", () => {
+    expect(mapRoutineRun({ ...row, filing_note: "not filed: no storage" }).filingNote).toBe(
+      "not filed: no storage",
+    );
+  });
+});
+
+describe("mapDocument provenance", () => {
+  const row = { id: "d1", name: "Digest.md", size: 100, created_at: "2026-09-20T09:00:00Z" };
+
+  it("stays quiet about a routine when the query did not ask", () => {
+    // Undefined is not the same answer as "written by nobody", which is the
+    // same distinction connectionId makes.
+    const dto = mapDocument(row);
+    expect(dto.routineId).toBeUndefined();
+    expect(dto.routineName).toBeUndefined();
+  });
+
+  it("names the routine that wrote it", () => {
+    const dto = mapDocument({ ...row, routine_id: "r1", routines: { name: "Weekly digest" } });
+    expect(dto.routineId).toBe("r1");
+    expect(dto.routineName).toBe("Weekly digest");
+  });
+
+  it("reads an embedded routine PostgREST returned as an array", () => {
+    const dto = mapDocument({ ...row, routine_id: "r1", routines: [{ name: "Weekly digest" }] });
+    expect(dto.routineName).toBe("Weekly digest");
+  });
+
+  it("admits it cannot see a colleague's private routine", () => {
+    // `routines_select_visible` shares a routine with the workspace only when
+    // its owner marked it shared, so a private routine filing into a shared
+    // bundle comes back as a real id with no name. The document is theirs to
+    // read and the routine is not theirs to see.
+    const dto = mapDocument({ ...row, routine_id: "r1", routines: null });
+    expect(dto.routineId).toBe("r1");
+    expect(dto.routineName).toBeNull();
+  });
+});
+
+describe("mapConnection", () => {
+  const row = {
+    id: "cn1",
+    provider: "google_drive",
+    account_label: "alice@example.com",
+    bundle_id: "b1",
+    user_id: "u1",
+    status: "paused",
+    paused_reason: "access revoked",
+    config: { folderId: "f1", folderName: "Handbook" },
+    sync_interval_minutes: 360,
+    next_sync_at: null,
+    last_sync_at: null,
+    created_at: "2026-09-20T09:00:00Z",
+  };
+
+  it("carries the code the interface branches on", () => {
+    expect(mapConnection({ ...row, paused_code: "grant_revoked" }).pausedCode).toBe(
+      "grant_revoked",
+    );
+  });
+
+  // Not a cast. An unrecognised value is a build reading a row a newer one
+  // wrote, and the honest answer is the one that offers no wrong action.
+  it("refuses a code it does not know", () => {
+    expect(mapConnection({ ...row, paused_code: "something_new" }).pausedCode).toBeNull();
+  });
+
+  it("reads a row from before the column existed as a pause with no code", () => {
+    // Which is what a person pressing Pause looks like, and is right: the
+    // interface then offers Resume, which is what those rows need.
+    expect(mapConnection(row).pausedCode).toBeNull();
+    expect(mapConnection(row).pausedReason).toBe("access revoked");
+  });
+
+  // 0057 made `user_id` nullable so a connection outlives its grant holder.
+  // Before it, closing an account DELETED the connection.
+  it("says plainly that nobody holds the grant", () => {
+    expect(mapConnection({ ...row, user_id: null }).userId).toBeNull();
   });
 });

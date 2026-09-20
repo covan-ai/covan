@@ -90,7 +90,7 @@ export const EXPORTED: TableSpec[] = [
     order: "created_at",
     columns:
       "id,workspace_id,bundle_id,user_id,provider,account_label,config,status," +
-      "paused_reason,sync_interval_minutes,next_sync_at,last_sync_at," +
+      "paused_reason,paused_code,sync_interval_minutes,next_sync_at,last_sync_at," +
       "consecutive_failures,created_at,updated_at",
   },
   {
@@ -105,11 +105,6 @@ export const EXPORTED: TableSpec[] = [
       column: "bundle_id",
       from: { table: "knowledge_bundles", column: "id" },
     },
-    order: "created_at",
-  },
-  {
-    table: "documents",
-    scope: { kind: "in", column: "bundle_id", from: { table: "knowledge_bundles", column: "id" } },
     order: "created_at",
   },
   {
@@ -156,6 +151,24 @@ export const EXPORTED: TableSpec[] = [
     columns: "id,workspace_id,user_id,kind,label,created_at",
   },
   {
+    // BELOW `routines`, which is not where it reads most naturally — a document
+    // belongs next to its bundle — and is where its foreign keys put it.
+    //
+    // `documents.routine_id` (0056) points at `routines`, and unlike
+    // `routines.delivery_channel_id` it is an ordinary constraint: there was no
+    // cycle to break, so there was no reason to make it deferrable. A filed
+    // summary inserted before the routine that wrote it is a failed transaction
+    // on restore, not a dropped column. `connection_id` puts the same
+    // requirement on `connections`, which is above, and `bundle_id` on
+    // `knowledge_bundles`, which is further above still — so this is the first
+    // position that satisfies all three.
+    table: "documents",
+    scope: { kind: "in", column: "bundle_id", from: { table: "knowledge_bundles", column: "id" } },
+    order: "created_at",
+  },
+  {
+    // Last, and now for two reasons rather than one: `routine_id` points at
+    // `routines` and `document_id` (0056) at `documents`, both above.
     table: "routine_runs",
     scope: { kind: "in", column: "routine_id", from: { table: "routines", column: "id" } },
     order: "started_at",
@@ -173,6 +186,8 @@ export const EXCLUDED: Record<string, string> = {
     "credentials. A key is not a record of what the workspace holds, it is a way to become one of its members, and an archive that carried them would be a key store that people email to each other.",
   routine_deliveries:
     "not readable by a client at all, by design since 0012: it is the engine's own log of what it sent where. Nothing in it is workspace content.",
+  routine_triggers:
+    "a credential, like api_keys, and the same answer. The row is a SHA-256 of a token somebody pasted into GitHub or a CI job: the export could not read it if it wanted to (0055 grants that column to nobody), and a hash restored into a new install would name a token nobody holds while looking like a working webhook. The routine it belongs to comes back in full, paused like every other, and minting a new token there is one press — which is also the honest state of things, because the sender has to be re-pointed at the new install's URL regardless.",
   invitations:
     "in flight rather than held. An invitation is an offer to somebody who has not accepted, and it is scoped to an install's email and token; replaying one into a new install would either do nothing or invite a stranger.",
   notification_preferences:
@@ -189,6 +204,12 @@ export const EXCLUDED: Record<string, string> = {
     "the plumbing under those conversations: which Slack thread a session came from. It references an installation that is deliberately not here, and the sessions and messages it points at are exported in full without it. What is lost is the ability to keep replying in the original Slack thread, which a new install could not do regardless.",
   slack_identities:
     "a mapping between two directories, both of which exist outside this archive. It is rebuilt by matching an email the first time somebody asks the agent something, so restoring it would save one lookup and risk carrying a stale one — a person whose Slack account was reassigned would come back attached to the previous holder.",
+  connection_capabilities:
+    "a catalogue of what this build of Covan can do, not of what this workspace holds. Two installs of the same version have identical rows in it, and an install that does not implement an action has no business being handed a row claiming it does. It is populated by the migration that ships each capability's implementation, which is the only way the table can stay honest.",
+  connection_grants:
+    "a permission, and permissions do not travel. A grant says an agent may act at a third party through a connection whose OAuth token this archive deliberately does not carry, so a restored one is at best inert and at worst a standing permission arriving in an install where the person who granted it was never asked - possibly attached to somebody else's grant, since the connection comes back unowned and paused. The agents and the connections come back in full; the permissions are granted again by the people who hold them, which is the only way a permission should ever arrive anywhere. Losing them on a restore is the safe direction, because a missing grant means never.",
+  capability_calls:
+    "the engine's record of what agents attempted at third parties, in the same standing as routine_deliveries: a log of what was sent where rather than workspace content. Its pending rows are worse than useless elsewhere - a pending row is an approval request, and replaying one would ask somebody to approve an action that nothing in the new install can carry out, against a connection restored without a token. The rows are read in place, where the question they answer gets asked.",
   workspace_provider_keys:
     "credentials, and worse than api_keys above. An API key at least means something on its own; this table's ciphertext opens only under PROVIDER_KEY_SECRET, an operator secret the archive does not and must not contain, so an export of it would be simultaneously useless to whoever downloaded it and a live credential if that secret ever leaked. openai_hint would travel with it — a small disclosure with no compensating use once the ciphertext it identifies cannot be read anyway. 0046 already withholds this table from every client but service_role for the same reason; carrying it into an archive a workspace admin can download would undo that through the back door.",
 };

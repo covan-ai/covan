@@ -3,6 +3,10 @@ import {
   EMOJIS,
   MODELS,
   PERSONA_TEMPLATES,
+  COST_BANDS,
+  costFor,
+  costBandIndex,
+  formatReplyCost,
   modelsFor,
   specFor,
   DEFAULT_NEW_AGENT_MODEL,
@@ -129,5 +133,68 @@ describe("the model a new agent starts on", () => {
     // A default nobody changes should not cost more than the curated starting
     // points beside it. gpt-4o is the id this is moving away from.
     expect(PERSONA_TEMPLATES.some((t) => t.model === "gpt-4o")).toBe(false);
+  });
+});
+
+describe("costFor", () => {
+  it("reads the price the server sent", () => {
+    expect(costFor({ "gpt-4o": 0.0148 }, "gpt-4o")).toBe(0.0148);
+  });
+
+  // Three shapes of "no price", and none of them may become a guess: an id the
+  // server did not price, no map at all (an API older than the field), and no
+  // model picked yet.
+  it.each([
+    ["an unpriced id", { "gpt-4o": 0.0148 }, "some-local-model"],
+    ["no map", undefined, "gpt-4o"],
+    ["no model", { "gpt-4o": 0.0148 }, null],
+  ])("answers null for %s", (_case, costs, model) => {
+    expect(costFor(costs as Record<string, number> | undefined, model)).toBeNull();
+  });
+
+  // An empty map is what a deployment with OPENAI_MODEL set sends. It has to
+  // read as "no price", not as free.
+  it("answers null under a custom endpoint", () => {
+    expect(costFor({}, "gpt-4o")).toBeNull();
+  });
+});
+
+describe("the cost bands", () => {
+  it("places the models either side of the boundaries", () => {
+    // gpt-5-nano ≈ $0.0005, gpt-4o ≈ $0.0148, claude-opus-5 ≈ $0.034.
+    expect(costBandIndex(0.0005)).toBe(0);
+    expect(costBandIndex(0.0148)).toBe(1);
+    expect(costBandIndex(0.034)).toBe(2);
+  });
+
+  it("has no band for a model with no price", () => {
+    expect(costBandIndex(null)).toBe(-1);
+  });
+
+  // The boundaries are money, so adding a model to the catalogue cannot move
+  // another model between bands. A percentile scale would, and that is the
+  // reason these are absolute.
+  it("is defined in absolute money, with an open top", () => {
+    expect(COST_BANDS.map((b) => b.upToUsd)).toEqual([0.005, 0.015, Infinity]);
+  });
+
+  it("puts every real price in exactly one band", () => {
+    for (const cost of [0.00048, 0.0024, 0.0069, 0.012, 0.0148, 0.0206, 0.0343]) {
+      expect(costBandIndex(cost), String(cost)).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
+describe("formatReplyCost", () => {
+  it("shows cents to three places once there are any", () => {
+    expect(formatReplyCost(0.0148)).toBe("$0.015");
+    expect(formatReplyCost(0.0343)).toBe("$0.034");
+  });
+
+  // Three decimals would round the cheapest model in the catalogue to $0.00,
+  // which is the one number on this scale worth getting right.
+  it("does not round the cheapest model to free", () => {
+    expect(formatReplyCost(0.00048)).toBe("$0.0005");
+    expect(formatReplyCost(0.00089)).toBe("$0.0009");
   });
 });

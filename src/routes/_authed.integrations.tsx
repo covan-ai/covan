@@ -47,8 +47,16 @@ function useGrantOutcome() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get("connected");
+    // A reconnect comes back under its own name, because "Notion connected"
+    // after replacing a grant reads as a second connection having appeared —
+    // which is exactly what used to happen, and exactly what this stopped.
+    const reconnected = params.get("reconnected");
     const error = params.get("error");
-    if (!connected && !error) return;
+    if (!connected && !reconnected && !error) return;
+
+    if (reconnected) {
+      toast.success(`${CONNECTED_LABEL[reconnected] ?? reconnected} reconnected.`);
+    }
 
     if (connected) {
       toast.success(`${CONNECTED_LABEL[connected] ?? connected} connected.`);

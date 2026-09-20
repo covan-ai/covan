@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateCostUsd } from "./pricing";
+import { estimateCostUsd, referenceReplyCostUsd, modelCostsFor, REFERENCE_REPLY } from "./pricing";
 import { MODEL_IDS, DEFAULT_MODEL } from "./models";
 
 describe("estimateCostUsd", () => {
@@ -79,5 +79,68 @@ describe("estimateCostUsd", () => {
       if (id === DEFAULT_MODEL) continue; // the fallback itself
       expect(estimateCostUsd(id, 1_000_000, 0), id).not.toBe(fallback);
     }
+  });
+});
+
+describe("referenceReplyCostUsd", () => {
+  // The anchor. 0025 measured ten real replies and priced them on gpt-4o at
+  // "about $0.015"; if this reference ever stops reproducing that number, the
+  // sentence in the interface that cites the measurement has stopped being
+  // about the measurement.
+  it("reproduces the figure 0025 recorded for gpt-4o", () => {
+    expect(referenceReplyCostUsd("gpt-4o")).toBeCloseTo(0.015, 3);
+  });
+
+  it("prices the whole catalogue", () => {
+    for (const id of MODEL_IDS) {
+      expect(referenceReplyCostUsd(id), id).toBeGreaterThan(0);
+    }
+  });
+
+  // The bands are absolute, so the ordering they express has to be real.
+  it("agrees with the price list about which models are dearer", () => {
+    const nano = referenceReplyCostUsd("gpt-5-nano")!;
+    const mini = referenceReplyCostUsd("gpt-4o-mini")!;
+    const flagship = referenceReplyCostUsd("gpt-4o")!;
+    const opus = referenceReplyCostUsd("claude-opus-5")!;
+    expect(nano).toBeLessThan(mini);
+    expect(mini).toBeLessThan(flagship);
+    expect(flagship).toBeLessThan(opus);
+  });
+
+  // Not DEFAULT_PRICE. Under OPENAI_BASE_URL every id is unknown by design, and
+  // a borrowed number beside somebody's local model is a claim about their
+  // hardware.
+  it("has no price for an id it does not know", () => {
+    expect(referenceReplyCostUsd("llama-3.3-70b-instruct")).toBeNull();
+    expect(referenceReplyCostUsd("")).toBeNull();
+  });
+
+  it("prices a fresh prompt, so the number errs high", () => {
+    // Same tokens through the billing estimator with nothing cached.
+    expect(referenceReplyCostUsd("gpt-4o")).toBeCloseTo(
+      estimateCostUsd("gpt-4o", REFERENCE_REPLY.promptTokens, REFERENCE_REPLY.completionTokens),
+      10,
+    );
+  });
+});
+
+describe("modelCostsFor", () => {
+  it("prices every id it is given", () => {
+    const costs = modelCostsFor(["gpt-4o", "claude-opus-5"]);
+    expect(Object.keys(costs).sort()).toEqual(["claude-opus-5", "gpt-4o"]);
+  });
+
+  it("leaves out an id it cannot price rather than guessing", () => {
+    expect(modelCostsFor(["gpt-4o", "some-local-model"])).toEqual({
+      "gpt-4o": referenceReplyCostUsd("gpt-4o"),
+    });
+  });
+
+  // With OPENAI_MODEL set, resolveModel sends every completion to that one
+  // model whatever the picker says. A price beside gpt-4o would then describe
+  // a request this deployment never makes.
+  it("says nothing at all under a custom endpoint", () => {
+    expect(modelCostsFor(["gpt-4o", "gpt-4.1"], { OPENAI_MODEL: "llama-3.3-70b" })).toEqual({});
   });
 });

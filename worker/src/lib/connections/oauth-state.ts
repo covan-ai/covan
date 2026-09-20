@@ -80,6 +80,21 @@ export type OAuthState = {
    * nothing — it points an existing agent at a channel.
    */
   bundleId?: string;
+  /**
+   * The connection this grant replaces, when the flow was started by
+   * Reconnect rather than by Connect.
+   *
+   * Present means "update that row"; absent means "insert a new one", which is
+   * every flow that existed before 0057. The callback re-checks the id against
+   * the workspace in this same state before it writes, for the reason every
+   * other claim in here is re-checked: the state says what the person asked
+   * for, and the database says whether it is still true.
+   *
+   * It is the id of a row, not a capability. Holding one lets somebody replace
+   * the token on a connection in a workspace they are a writing member of,
+   * which they could already do by deleting it and connecting again.
+   */
+  connectionId?: string;
   /** Epoch milliseconds. */
   issuedAt: number;
 };

@@ -36,6 +36,7 @@ import { events } from "./routes/events";
 import { runPurge } from "./lib/purge";
 import { connections, connectionsPublic } from "./routes/connections";
 import { slack, slackPublic } from "./routes/slack";
+import { routineHooks } from "./routes/routine-hooks";
 
 const app = new Hono<AppEnv>();
 
@@ -171,6 +172,13 @@ api.route("/", slack);
 // catch-all never sees it.
 app.route("/", connectionsPublic);
 app.route("/", slackPublic);
+
+// Unauthenticated, like slackPublic and for the same reason: the sender is a
+// third-party system with no Covan session. What stands in for a caller is the
+// ingest token, resolved in lib/routines/ingest.ts. The standard per-address
+// tier above still applies; the per-routine one is inside the route, because
+// the routine rather than the address is the thing that spends.
+app.route("/", routineHooks);
 
 app.route("/", api);
 

@@ -18,6 +18,7 @@ import {
   useDeliveryChannels,
 } from "@/hooks/use-routines";
 import { useConnections } from "@/hooks/use-connections";
+import { useAgentsStore } from "@/lib/agents-store";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/routines/$routineId")({
   component: RoutineDetailPage,
@@ -34,6 +35,10 @@ function RoutineDetailPage() {
   // routine too — unlike the delivery channel below it.
   const { data: connectionData } = useConnections();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  // Already in the cache — the app shell loads both. The bundles are for the
+  // output picker; the agents are only so the card can say whether this
+  // routine's agent also reads the bundle it writes to.
+  const { bundles, agents, canWrite } = useAgentsStore();
   const updateRoutine = useUpdateRoutine();
   const deleteRoutine = useDeleteRoutine();
   const runRoutine = useRunRoutine();
@@ -132,6 +137,10 @@ function RoutineDetailPage() {
           routine={routine}
           runs={runs}
           connections={connectionData?.connections ?? []}
+          bundles={bundles}
+          attachedBundleIds={agents.find((a) => a.id === routine.agentId)?.bundleIds ?? []}
+          canWrite={canWrite}
+          onSave={(patch) => void save(patch)}
           channelLabel={isOwner ? channelLabel : null}
           isOwner={isOwner}
           onTogglePause={() => void togglePause()}

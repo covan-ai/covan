@@ -18,7 +18,7 @@ import { api, ApiError } from "@/lib/api-client";
 import { useDeliveryChannels, useCreateRoutine } from "@/hooks/use-routines";
 import { useConnections } from "@/hooks/use-connections";
 import { SchedulePicker, scheduleError } from "@/components/routines/schedule-picker";
-import type { RoutineSourceKind } from "@/lib/routines-api";
+import type { RoutineSourceKind, RoutineTriggerKind } from "@/lib/routines-api";
 
 /**
  * Says what a connection routine can and cannot see, in the units the person
@@ -64,6 +64,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
 
   const [name, setName] = useState("");
   const [sourceKind, setSourceKind] = useState<RoutineSourceKind>("rss");
+  const [triggerKind, setTriggerKind] = useState<RoutineTriggerKind>("schedule");
   const [sourceUrl, setSourceUrl] = useState("");
   const [connectionId, setConnectionId] = useState("");
   const [instruction, setInstruction] = useState("");
@@ -80,6 +81,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     setProse("");
     setName("");
     setSourceKind("rss");
+    setTriggerKind("schedule");
     setSourceUrl("");
     setConnectionId("");
     setInstruction("");
@@ -132,6 +134,11 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
         agentId,
         name: name.trim(),
         sourceKind,
+        // Only a routine with no source of its own can be poked, and the
+        // database refuses the pairing rather than trusting this. Sent as
+        // `schedule` for every other kind, which is also what the state says —
+        // the control that sets it is not rendered for them.
+        triggerKind: sourceKind === "none" ? triggerKind : "schedule",
         sourceUrl: sourceKind === "rss" || sourceKind === "web" ? sourceUrl.trim() : null,
         connectionId: sourceKind === "connection" ? connectionId : null,
         instruction: instruction.trim(),
@@ -233,6 +240,36 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Offered only where it is valid. A routine that watches
+                  something cannot also be poked — see 0055 for why the pairing
+                  is refused rather than resolved — and, because a routine's
+                  source can never change afterwards, this is a decision made
+                  once, here. */}
+              {sourceKind === "none" && (
+                <div className="space-y-2">
+                  <Label htmlFor="routine-trigger">Starts</Label>
+                  <Select
+                    value={triggerKind}
+                    onValueChange={(v) => setTriggerKind(v as RoutineTriggerKind)}
+                  >
+                    <SelectTrigger id="routine-trigger">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="schedule">On its schedule</SelectItem>
+                      <SelectItem value="webhook">When something calls it</SelectItem>
+                      <SelectItem value="both">Either</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {triggerKind !== "schedule" && (
+                    <p className="text-xs text-muted-foreground">
+                      You will get a URL to paste into whatever should start it. Whatever it POSTs
+                      is what the agent reads.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {(sourceKind === "rss" || sourceKind === "web") && (
                 <div className="space-y-2">

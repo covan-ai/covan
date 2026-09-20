@@ -72,3 +72,65 @@ export function estimateCostUsd(
     (completionTokens / 1_000_000) * p.out
   );
 }
+
+/**
+ * The reply this file prices a model against, so two models can be compared by
+ * a number rather than by a feeling.
+ *
+ * Not invented. `0025_what_the_cache_already_paid_for.sql` measured ten real
+ * assistant replies on the live project on 2026-08-23 and recorded the average:
+ * 2,248 prompt tokens to 921 completion. That migration says in as many words
+ * to treat the ratio as the finding and the absolute figures as provisional,
+ * which is exactly what this is used for — the same reply costed on every
+ * model, so what is being compared is the price list rather than the sample.
+ *
+ * Priced as a *fresh* prompt, at the `in` rate rather than `cachedIn`. A
+ * second turn in the same conversation is cheaper than this on every model, so
+ * the number errs high — and a picker is a place to err high, because the
+ * failure mode that matters is somebody discovering a bill they were not shown.
+ */
+export const REFERENCE_REPLY = { promptTokens: 2248, completionTokens: 921 } as const;
+
+/**
+ * What one reference reply costs on `model`, or `null` for an id this build
+ * has no price for.
+ *
+ * `null`, and deliberately not `DEFAULT_PRICE`. `estimateCostUsd` above falls
+ * back to the default's price because that is where an unrecognised id
+ * genuinely ends up — `resolveModel` sends it to `DEFAULT_MODEL`, so pricing it
+ * that way describes what actually answered. Nothing like that is true here.
+ * This number goes next to a name in a picker, and under `OPENAI_BASE_URL`
+ * every id is unknown by design: putting "$0.012 a reply" beside somebody's
+ * local Llama would be a claim about their electricity bill. No price is an
+ * honest answer; a borrowed one is not.
+ */
+export function referenceReplyCostUsd(model: string): number | null {
+  const p = PRICES[model as ModelId];
+  if (!p) return null;
+  return (
+    (REFERENCE_REPLY.promptTokens / 1_000_000) * p.in +
+    (REFERENCE_REPLY.completionTokens / 1_000_000) * p.out
+  );
+}
+
+/**
+ * The prices a picker may show, for the ids this deployment offers.
+ *
+ * Empty when `OPENAI_MODEL` is set, and that is the whole reason this takes an
+ * environment. With that variable set, `resolveModel` sends every completion to
+ * that one model whatever the picker says — so a price beside `gpt-4o` would be
+ * describing a request this deployment will never make. DESIGN.md's first
+ * failure mode is a claim the code cannot back, and that would be one.
+ */
+export function modelCostsFor(
+  ids: readonly string[],
+  env?: { OPENAI_MODEL?: string },
+): Record<string, number> {
+  if (env?.OPENAI_MODEL) return {};
+  const out: Record<string, number> = {};
+  for (const id of ids) {
+    const cost = referenceReplyCostUsd(id);
+    if (cost !== null) out[id] = cost;
+  }
+  return out;
+}

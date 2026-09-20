@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import type { CreateRoutineInput, UpdateRoutineInput } from "@/lib/routines-api";
+import type {
+  CreateRoutineInput,
+  UpdateRoutineInput,
+  DeliveryChannelKind,
+} from "@/lib/routines-api";
 
 // Routines are needed on three screens, so they are fetched here rather than
 // added to agents-store.tsx, which every authed page pays to load. The settings
@@ -64,10 +68,63 @@ export function useDeleteRoutine() {
 export function useCreateChannel() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { kind: "slack_webhook" | "email"; secret: string }) =>
+    mutationFn: (input: { kind: DeliveryChannelKind; secret: string }) =>
       api.deliveryChannels.create(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: channelsKey }),
   });
+}
+
+/**
+ * Sends one message through a channel. Nothing is invalidated on purpose — a
+ * test send changes no row, and refetching the list after it would suggest it
+ * had.
+ */
+/**
+ * Whether this routine has a webhook trigger, for the routine's own page.
+ *
+ * `enabled` is the caller's decision: a routine that cannot be poked has no
+ * trigger to ask about, and asking anyway would 200 with `configured: false`
+ * on every scheduled routine anybody opens.
+ */
+export function useRoutineTrigger(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["routine-trigger", id],
+    queryFn: () => api.routines.trigger(id),
+    enabled,
+  });
+}
+
+/**
+ * Mint or rotate the ingest token. The response is the only place it exists
+ * outside the database, so the caller shows it and does not store it.
+ */
+export function useCreateRoutineTrigger() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.routines.createTrigger(id),
+    onSuccess: (_data, id) => qc.invalidateQueries({ queryKey: ["routine-trigger", id] }),
+  });
+}
+
+export function useRemoveRoutineTrigger() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.routines.removeTrigger(id),
+    onSuccess: (_data, id) => qc.invalidateQueries({ queryKey: ["routine-trigger", id] }),
+  });
+}
+
+export function useTestChannel() {
+  return useMutation({ mutationFn: (id: string) => api.deliveryChannels.test(id) });
+}
+
+/**
+ * A new signing secret. The list is untouched for the same reason: the label,
+ * the kind and the destination are all unchanged, and the one thing that did
+ * change is in the response rather than in any row a client can read.
+ */
+export function useRotateChannelSecret() {
+  return useMutation({ mutationFn: (id: string) => api.deliveryChannels.rotate(id) });
 }
 
 export function useDeleteChannel() {

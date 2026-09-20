@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,6 +11,7 @@ import { DocsLink } from "@/components/docs-link";
 import { api, ApiError, type ApiKey } from "@/lib/api-client";
 import { formatRelative } from "@/lib/relative-time";
 import { toast } from "sonner";
+import { RevealedSecret } from "@/components/revealed-secret";
 
 /**
  * Keys for the REST API.
@@ -192,7 +193,7 @@ function CreateKeyDialog({
 
         {created ? (
           <div className="space-y-4">
-            <RevealedKey token={created} />
+            <RevealedSecret value={created} label="Copy key" />
             <p className="text-xs text-muted-foreground">
               This is the only time it is shown. Covan stores a hash of it, so nobody — including us
               — can show it to you again. If you lose it, revoke it and make another.
@@ -234,33 +235,5 @@ function CreateKeyDialog({
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-function RevealedKey({ token }: { token: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = () => {
-    navigator.clipboard?.writeText(token).then(
-      () => {
-        setCopied(true);
-        // Long enough to be seen, short enough that the button goes back to
-        // being one — a permanently ticked button stops looking pressable.
-        setTimeout(() => setCopied(false), 2000);
-      },
-      () => toast.error("Couldn't copy — your browser blocked it."),
-    );
-  };
-
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-hairline bg-surface p-3">
-      {/* `break-all`, not truncation: a key you can only see half of is a key
-          you cannot check you pasted correctly. */}
-      <code className="min-w-0 flex-1 break-all font-mono text-xs">{token}</code>
-      <Button variant="ghost" size="sm" onClick={copy} className="shrink-0">
-        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-        <span className="sr-only">Copy key</span>
-      </Button>
-    </div>
   );
 }

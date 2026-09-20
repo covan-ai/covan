@@ -1,10 +1,18 @@
 // worker/src/lib/routines/dispatcher.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
+import { canFileDocuments } from "../../types";
 import { serviceClient } from "../supabase";
-import { runRoutine as defaultRunRoutine, type ExecutorDeps, type RoutineRow } from "./executor";
+import {
+  runRoutine as defaultRunRoutine,
+  type ExecutorDeps,
+  type IngestTrigger,
+  type RoutineRow,
+} from "./executor";
 import { summariseWithModel } from "./summarise";
 import { ownHostsFrom } from "./url-guard";
+import { deliveryDepsFrom } from "./delivery";
+import { fileRoutineOutput } from "./filing";
 import { entitlementsFor } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
 
@@ -70,12 +78,34 @@ function executorDeps(env: RoutineEnv, db: SupabaseClient): ExecutorDeps {
     },
     entitlements: entitlementsFor(env),
     fetchDeps: { fetchImpl: boundFetch, ownHosts },
-    deliveryDeps: {
-      fetchImpl: boundFetch,
-      secretKey: env.ROUTINE_SECRET_KEY,
-      resendApiKey: env.RESEND_API_KEY,
-      resendFrom: env.RESEND_FROM,
-    },
+    // Built from the env rather than inline, so the routine engine and the
+    // test-send button cannot end up with different ideas of which hosts a
+    // channel may point at — `ownHosts` is the one a copy would forget.
+    deliveryDeps: deliveryDepsFrom(env),
+    // Absent, deliberately, when this Worker has no document store bound.
+    //
+    // This is where the guard lives rather than inside the filing code, and the
+    // difference matters: an undefined dependency is something the executor can
+    // report in one sentence, while a `getDocStore()` that throws inside a run
+    // is a failure, a geometric backoff and eventually a paused routine. The
+    // cron Worker on Cloudflare is routinely in exactly this state — an R2
+    // bucket cannot cross accounts, and `wrangler.cron.toml.example` says so —
+    // so this is the ordinary path, not the edge case.
+    //
+    // The narrowed env goes in here and not into `ExecutorDeps`: the executor
+    // keeps taking `RoutineEnv`, which is what the cron Worker is deployed
+    // with, and the one thing that needs more than that is the one thing that
+    // is optional.
+    //
+    // Both envs are spread, in that order, and neither alone would do. `env` is
+    // the one `canFileDocuments` narrowed, so it is what carries the storage
+    // binding into the type. `runEnv` is the one this particular run resolved,
+    // so it carries whichever provider key is paying — and filing embeds, which
+    // is a paid call. An owner who brought their own key pays for the filing
+    // half of their run as well as the answering half.
+    file: canFileDocuments(env)
+      ? (input, runEnv) => fileRoutineOutput(db, { ...env, ...runEnv }, input)
+      : undefined,
     now: () => new Date(),
   };
 }
@@ -96,7 +126,34 @@ export async function runOneRoutine(
 ): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
   const db = overrides.db ?? serviceClient(env);
   const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
-  return runRoutine(routine, executorDeps(env, db));
+  // The one place a run has a person behind it. A webhook receiver is told, so
+  // a result that arrived at an odd hour can be explained by somebody having
+  // pressed the button rather than read as the schedule having drifted.
+  return runRoutine(routine, { ...executorDeps(env, db), trigger: "manual" });
+}
+
+/**
+ * Run one routine because something poked it.
+ *
+ * Separate from `runOneRoutine` because the two differ in what they may not
+ * share: this one carries an event id that becomes the delivery claim, and a
+ * payload that reaches the model. Folding the trigger into `runOneRoutine` as
+ * an optional argument would make it possible to call the button path with one
+ * by accident, and the button path has no event to be idempotent about.
+ *
+ * The routine row comes from `resolveIngestToken`, which read it with the
+ * service role after matching the token's hash — so it is the row the token
+ * names, not one the caller described.
+ */
+export async function runPokedRoutine(
+  env: RoutineEnv,
+  routine: RoutineRow,
+  trigger: IngestTrigger,
+  overrides: Partial<DispatcherDeps> = {},
+): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
+  const db = overrides.db ?? serviceClient(env);
+  const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
+  return runRoutine(routine, executorDeps(env, db), trigger);
 }
 
 export async function runDueRoutines(

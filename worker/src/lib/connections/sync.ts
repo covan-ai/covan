@@ -62,6 +62,44 @@ export const MAX_DOCUMENTS_PER_RUN = 5;
 const MAX_REMOVALS_PER_RUN = 20;
 
 /**
+ * What counts as the source suddenly showing far less than it did.
+ *
+ * A sync reconciles: it lists what the source holds now and hides the
+ * documents that are no longer in that listing. That is correct by its own
+ * rules and catastrophic in one particular case — a connection reconnected
+ * with a different person's grant. Alice could see 400 files, Bob can see 120,
+ * and the next run is entirely right to conclude that 280 documents have gone.
+ * The team loses most of a bundle to somebody being helpful.
+ *
+ * `MAX_REMOVALS_PER_RUN` is not a defence against that. It bounds the
+ * subrequest cost of one run, so the 280 would go over fourteen runs instead of
+ * one — slower, and the same outcome.
+ *
+ * So a run that would remove a large share of what it has stops and asks. Both
+ * numbers matter: the fraction is what makes it proportionate to the bundle,
+ * and the floor is what stops a five-document connection tripping on a folder
+ * somebody tidied. Below the floor nothing can trip at all, which is the right
+ * answer — "three of your three documents went" is not a mass deletion, it is a
+ * small folder being emptied.
+ *
+ * This is not only about reconnects. A Drive folder someone stops sharing, a
+ * Notion integration narrowed by an admin, a provider having a bad listing day:
+ * all of them look like this from here, and the answer to all of them is to ask
+ * rather than to act.
+ */
+const NARROWING_FRACTION = 0.2;
+const MIN_NARROWING = 5;
+
+/**
+ * Whether hiding this many of that many is a narrowing rather than a tidy-up.
+ *
+ * Exported for the test, and because the interface says the same sentence.
+ */
+export function isNarrowing(removing: number, total: number): boolean {
+  return removing >= Math.max(MIN_NARROWING, Math.ceil(total * NARROWING_FRACTION));
+}
+
+/**
  * Consecutive failures before the connection pauses itself.
  *
  * The same shape as `routines`, and the same reasoning: a connection that dies
@@ -83,15 +121,54 @@ export type ConnectionRow = {
   id: string;
   workspace_id: string;
   bundle_id: string;
-  user_id: string;
+  /**
+   * The grant holder, or null once they have closed their Covan account.
+   *
+   * Nullable since 0057, and the null is the whole of that migration: a
+   * connection belongs to its workspace and has to survive the person whose
+   * OAuth grant it carries. What it cannot survive is the grant itself, so a
+   * null here means paused and waiting for somebody to reconnect it.
+   */
+  user_id: string | null;
   provider: string;
   account_label: string;
   secret_ciphertext: string;
   config: Record<string, unknown> | null;
   status: "active" | "paused";
+  /**
+   * Why the engine paused it, when it did. Read by the API rather than by the
+   * engine — `PATCH /connections/:id` needs to know which pause a person is
+   * resuming from, because resuming from `access_narrowed` means something
+   * more than "start again".
+   */
+  paused_code?: PausedCode | null;
   sync_interval_minutes: number;
   consecutive_failures: number;
+  /**
+   * Set when a person resumed this after an `access_narrowed` pause, meaning
+   * "yes, really remove those". Honoured once, by the next run.
+   */
+  removals_approved_at?: string | null;
 };
+
+/**
+ * Why the engine paused a connection, as something a program can branch on.
+ *
+ * Mirrors 0057's CHECK exactly. The interface uses it to decide between
+ * offering Resume and offering Reconnect, which it used to decide by matching
+ * the prose in `paused_reason` — and those are different answers to a revoked
+ * grant and to a folder that has gone quiet.
+ */
+export type PausedCode =
+  | "needs_folder"
+  | "owner_left"
+  | "owner_gone"
+  | "grant_revoked"
+  | "repeated_failures"
+  | "provider_unconfigured"
+  | "unknown_provider"
+  | "access_narrowed"
+  | "restored";
 
 export type SyncDeps = {
   /** Service-role client. See the scoping note in `runConnection`. */
@@ -156,6 +233,7 @@ export async function runConnection(
       more: false,
       error: `unknown provider: ${connection.provider}`,
       pause: `Covan no longer knows how to sync ${connection.provider}.`,
+      pauseCode: "unknown_provider",
     });
   }
 
@@ -172,6 +250,30 @@ export async function runConnection(
       more: false,
       error: `${provider.label} is not configured on this deployment`,
       pause: `${provider.label} is not configured on this Covan any more. An operator has to set its client credentials before this connection can resume.`,
+      pauseCode: "provider_unconfigured",
+    });
+  }
+
+  // Nobody holds the grant any more: they closed their Covan account, and
+  // 0057's `on delete set null` is what let the connection outlive them. There
+  // is no token that will work and no allowance to charge, so this stops before
+  // the membership question, which has no subject.
+  //
+  // Paused rather than failed. Nothing is broken — the row is waiting for
+  // somebody to reconnect it, which since 0057 is any member who can write.
+  if (!connection.user_id) {
+    const reason =
+      "the person whose account this source was connected with has closed their Covan account. " +
+      "Reconnect it to start syncing again; the documents it already imported are untouched.";
+    return finish(connection, deps, startedAt, {
+      status: "skipped",
+      added: 0,
+      updated: 0,
+      removed: 0,
+      more: false,
+      error: reason,
+      pause: reason,
+      pauseCode: "owner_gone",
     });
   }
 
@@ -194,6 +296,7 @@ export async function runConnection(
       more: false,
       error: reason,
       pause: reason,
+      pauseCode: "owner_left",
     });
   }
 
@@ -267,7 +370,44 @@ export async function runConnection(
     const existing = (existingRows ?? []) as ExistingDocument[];
     const byId = new Map(existing.filter((d) => d.external_id).map((d) => [d.external_id!, d]));
 
-    const removed = await removeVanished(connection, deps, existing, byExternalId);
+    // What this run would hide, before it hides anything.
+    //
+    // The count is taken over everything, not over the capped slice: the
+    // question is how much of the bundle has gone, and answering it from the
+    // first twenty would say "20 of 400" every time.
+    const vanished = existing
+      .filter((doc) => !doc.deleted_at)
+      .filter((doc) => !doc.external_id || !byExternalId.has(doc.external_id));
+    const live = existing.filter((doc) => !doc.deleted_at).length;
+    const approved = Boolean(connection.removals_approved_at);
+
+    if (!approved && isNarrowing(vanished.length, live)) {
+      // Nothing is removed and nothing is imported. Stopping before the import
+      // half matters: a reconnect with a narrower grant would otherwise spend
+      // the new holder's allowance re-embedding the files it can still see,
+      // while the bundle waits to find out whether the rest are really gone.
+      // Both numbers, because "some documents are missing" is not something
+      // anybody can act on. The sentence deliberately names neither button:
+      // the labels belong to the interface, and a message that quotes one is a
+      // message that goes stale when somebody improves it.
+      const reason =
+        `${vanished.length} of ${live} documents are no longer visible at the source. ` +
+        `That is usually an account that sees less than the last one did rather than files ` +
+        `being deleted, so nothing has been removed. Either confirm that they really are ` +
+        `gone, or reconnect with an account that can see them.`;
+      return finish(connection, deps, startedAt, {
+        status: "skipped",
+        added: 0,
+        updated: 0,
+        removed: 0,
+        more: false,
+        error: reason,
+        pause: reason,
+        pauseCode: "access_narrowed",
+      });
+    }
+
+    const removed = await removeVanished(deps, vanished);
 
     const changed = remote.filter((file) => {
       const current = byId.get(file.externalId);
@@ -296,7 +436,12 @@ export async function runConnection(
       if (result.imported === "updated") updated++;
     }
 
-    const more = changed.length > MAX_DOCUMENTS_PER_RUN;
+    // Removals are capped too, and a capped removal is work left over in
+    // exactly the sense `more` already means. Without this a person who
+    // approved a 280-document removal would watch it drain twenty per sync
+    // interval — three and a half days on the default cadence — having
+    // already said yes.
+    const more = changed.length > MAX_DOCUMENTS_PER_RUN || vanished.length > MAX_REMOVALS_PER_RUN;
     // Only what the operator is billed for reaches the counter. Asked through
     // the shared predicate rather than as `!== "workspace"`, so that a third
     // key source added later stops being counted here by default instead of
@@ -314,6 +459,13 @@ export async function runConnection(
       removed,
       more,
       tokens,
+      // One narrowing, not a standing exemption — but the whole of that one
+      // narrowing. A 280-document removal is capped at twenty per run, and
+      // clearing the approval after the first twenty would pause the
+      // connection again on the next run and ask the same question of somebody
+      // who has already answered it. So it is spent when the backlog is
+      // drained, not when it is first used.
+      clearApproval: approved && vanished.length <= MAX_REMOVALS_PER_RUN,
     });
   } catch (err) {
     // Same question as the success path above, asked the same way.
@@ -337,6 +489,9 @@ export async function runConnection(
       // There is nothing to wait for, and five days of identical errors is not
       // more informative than one.
       pause: !retryable || failures >= limit ? message : undefined,
+      // A non-retryable provider error is a revoked or removed grant, which is
+      // a different thing to offer a person than "this has failed five times".
+      pauseCode: !retryable ? "grant_revoked" : "repeated_failures",
       tokens,
     });
   }
@@ -399,15 +554,11 @@ async function adoptOrphans(
  * at the same instant either way.
  */
 async function removeVanished(
-  connection: ConnectionRow,
   deps: SyncDeps,
-  existing: ExistingDocument[],
-  remote: Map<string, RemoteFile>,
+  /** Already filtered to the live documents the source no longer lists. */
+  vanished: ExistingDocument[],
 ): Promise<number> {
-  const gone = existing
-    .filter((doc) => !doc.deleted_at)
-    .filter((doc) => !doc.external_id || !remote.has(doc.external_id))
-    .slice(0, MAX_REMOVALS_PER_RUN);
+  const gone = vanished.slice(0, MAX_REMOVALS_PER_RUN);
   if (gone.length === 0) return 0;
 
   const { data: hidden, error } = await deps.db
@@ -570,7 +721,21 @@ async function finish(
   connection: ConnectionRow,
   deps: SyncDeps,
   startedAt: Date,
-  outcome: SyncOutcome & { error?: string; pause?: string; tokens?: number },
+  outcome: SyncOutcome & {
+    error?: string;
+    pause?: string;
+    /**
+     * Required whenever `pause` is set, and that pairing is enforced by every
+     * call site rather than by the type, because the type would have to be a
+     * discriminated union for one field. The reason it matters: a pause with no
+     * code reads, to the interface, exactly like a person having pressed Pause,
+     * and the person would then be offered Resume for a revoked grant.
+     */
+    pauseCode?: PausedCode;
+    tokens?: number;
+    /** Clears an `access_narrowed` approval the run has now acted on. */
+    clearApproval?: boolean;
+  },
 ): Promise<SyncOutcome> {
   const finishedAt = deps.now();
   const intervalMs = connection.sync_interval_minutes * 60 * 1000;
@@ -607,6 +772,14 @@ async function finish(
       claimed_at: null,
       status: outcome.pause ? "paused" : connection.status,
       paused_reason: outcome.pause ?? null,
+      // Written together, always. The sentence is for a person and the code is
+      // for the interface, and a row carrying one without the other is a row
+      // that says two different things about the same pause.
+      paused_code: outcome.pause ? (outcome.pauseCode ?? "repeated_failures") : null,
+      // Spent, not kept. An approval is permission for one narrowing, not a
+      // standing exemption — leaving it set would mean the next unexpected loss
+      // of access went through without asking.
+      ...(outcome.clearApproval ? { removals_approved_at: null } : {}),
       updated_at: finishedAt.toISOString(),
     })
     .eq("id", connection.id);

@@ -9,7 +9,17 @@ import { runOneRoutine } from "../lib/routines/dispatcher";
 import type { RoutineRow } from "../lib/routines/executor";
 import { isValidCron, nextRunAt } from "../lib/routines/schedule";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
-import { encryptSecret } from "../lib/secret-box";
+import { encryptSecret, decryptSecret } from "../lib/secret-box";
+import { deliver, deliveryDepsFrom } from "../lib/routines/delivery";
+import {
+  generateSigningSecret,
+  parseWebhookSecret,
+  serialiseWebhookSecret,
+  EVENT_TEST,
+} from "../lib/routines/webhook";
+import { getRateLimiter } from "../lib/ratelimit";
+import { generateIngestToken } from "../lib/routines/ingest";
+import { rateLimitKey } from "../middleware/ratelimit";
 import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { resolveModel } from "../lib/models";
@@ -73,9 +83,39 @@ routines.post("/routines/draft", async (c) => {
 // ---- delivery channels -----------------------------------------------------
 
 const channelSchema = z.object({
-  kind: z.enum(["slack_webhook", "email"]),
+  kind: z.enum(["slack_webhook", "email", "webhook"]),
   secret: z.string().min(1),
 });
+
+/**
+ * What the caller sends as `secret`, checked for the shape its kind requires.
+ *
+ * The Slack check is narrower than the generic one on purpose and stays that
+ * way: `slack_webhook` formats its body as Slack expects and would produce
+ * nonsense anywhere else, so accepting an arbitrary URL under that kind would
+ * be accepting a channel that cannot work. `webhook` is the kind for
+ * everywhere else, and it gets the same guard every outbound fetch in this
+ * codebase gets — scheme, private address, our own hosts — and no vendor rule
+ * at all, because naming vendors is the thing this feature exists not to do.
+ */
+function channelSecretProblem(
+  kind: "slack_webhook" | "email" | "webhook",
+  secret: string,
+  ownHosts: string[],
+): string | null {
+  if (kind === "email") {
+    return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(secret) ? null : "not an email address";
+  }
+  try {
+    const url = assertFetchableUrl(secret, ownHosts);
+    if (kind === "slack_webhook" && url.host !== "hooks.slack.com") {
+      return "not a slack webhook url";
+    }
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "invalid url";
+  }
+}
 
 // GET /delivery-channels — masked labels only; RLS scopes to the caller and the
 // column grant means the secret is not selectable even by mistake.
@@ -101,22 +141,19 @@ routines.post("/delivery-channels", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const { kind, secret } = parsed.data;
 
-  if (kind === "slack_webhook") {
-    try {
-      const url = assertFetchableUrl(secret, ownHostsFrom(c.env));
-      if (url.host !== "hooks.slack.com") {
-        return c.json({ error: "not a slack webhook url" }, 400);
-      }
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "invalid url" }, 400);
-    }
-  } else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(secret)) {
-    return c.json({ error: "not an email address" }, 400);
-  }
+  const problem = channelSecretProblem(kind, secret, ownHostsFrom(c.env));
+  if (problem) return c.json({ error: problem }, 400);
 
   const user = c.get("user");
   const workspaceId = await getActiveWorkspaceId(c.get("db"), user.id);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
+
+  // A webhook channel's secret is the URL *and* a signing secret, as one JSON
+  // object under the same envelope — see 0054 for why they share the column and
+  // why the signing secret is minted per channel instead of derived from
+  // ROUTINE_SECRET_KEY.
+  const signingSecret = kind === "webhook" ? generateSigningSecret() : null;
+  const plaintext = signingSecret ? serialiseWebhookSecret({ url: secret, signingSecret }) : secret;
 
   const { data, error } = await serviceClient(c.env)
     .from("delivery_channels")
@@ -125,13 +162,146 @@ routines.post("/delivery-channels", async (c) => {
       user_id: user.id,
       kind,
       label: maskSecret(kind, secret),
-      secret_ciphertext: await encryptSecret(secret, c.env.ROUTINE_SECRET_KEY),
+      secret_ciphertext: await encryptSecret(plaintext, c.env.ROUTINE_SECRET_KEY),
     })
     .select("id, kind, label, created_at")
     .single();
 
   if (error) return c.json({ error: "failed to create channel" }, 500);
-  return c.json(mapDeliveryChannel(data), 201);
+
+  // The only response that ever carries it. It is stored encrypted rather than
+  // hashed because signing needs the secret back, but that is not a reason to
+  // hand it out again on every list: a receiver is configured once, and a
+  // secret that can be re-read is a secret that leaks through a screenshot of
+  // the settings page. Lost it? Rotate.
+  return c.json(
+    signingSecret ? { ...mapDeliveryChannel(data), signingSecret } : mapDeliveryChannel(data),
+    201,
+  );
+});
+
+/**
+ * A new signing secret for an existing webhook channel.
+ *
+ * The URL is carried over rather than re-sent by the caller: rotation is about
+ * the secret, and letting the request name a destination would turn "give me a
+ * new key" into "point this channel somewhere else" — past the guard that runs
+ * on create, from a route nobody would think to read that way.
+ *
+ * Both halves of the row are rewritten together because they live in one
+ * ciphertext. There is a window of exactly one statement in which the old
+ * secret is still the live one; a receiver updated before this call verifies
+ * nothing and a receiver updated after it verifies everything, which is what a
+ * rotation is.
+ */
+routines.post("/delivery-channels/:id/rotate", async (c) => {
+  const user = c.get("user");
+  const id = c.req.param("id");
+
+  const db = serviceClient(c.env);
+  // Scoped to the caller by hand: the service role bypasses RLS, so `user_id`
+  // here is doing the job `delivery_channels_select_own` does everywhere else.
+  const { data: channel, error } = await db
+    .from("delivery_channels")
+    .select("kind, secret_ciphertext")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid channel id" }, 400);
+    return c.json({ error: "failed to load channel" }, 500);
+  }
+  if (!channel) return c.json({ error: "no such channel" }, 404);
+  if (channel.kind !== "webhook") {
+    return c.json({ error: "only a webhook channel has a signing secret" }, 400);
+  }
+
+  let url: string;
+  try {
+    const config = parseWebhookSecret(
+      await decryptSecret(channel.secret_ciphertext, c.env.ROUTINE_SECRET_KEY),
+    );
+    url = config.url;
+  } catch {
+    return c.json({ error: "this channel's secret could not be read" }, 500);
+  }
+
+  const signingSecret = generateSigningSecret();
+  const { error: updateError } = await db
+    .from("delivery_channels")
+    .update({
+      secret_ciphertext: await encryptSecret(
+        serialiseWebhookSecret({ url, signingSecret }),
+        c.env.ROUTINE_SECRET_KEY,
+      ),
+    })
+    .eq("id", id)
+    .eq("user_id", user.id);
+
+  if (updateError) return c.json({ error: "failed to rotate the signing secret" }, 500);
+  return c.json({ signingSecret });
+});
+
+/**
+ * Send one message through a channel, now, so somebody can see it arrive.
+ *
+ * Every kind, not only the new one. "Did my Slack URL paste correctly" has been
+ * unanswerable since 0012 except by waiting for a routine to run, and the
+ * answer for a webhook — is the signature what my receiver expects — is worth
+ * even more, because getting it wrong is silent on both ends.
+ *
+ * NOT mounted behind `rateLimit("expensive")` in index.ts, deliberately. That
+ * middleware's mount list is what `ratelimit.static.test.ts` compares against
+ * the set of endpoints that buy a completion, and this endpoint buys none:
+ * adding it there would break the ratchet's first claim and the honest fix
+ * would be to weaken the ratchet. It takes the same limiter by hand instead,
+ * which is the same bound without the false statement.
+ */
+routines.post("/delivery-channels/:id/test", async (c) => {
+  const verdict = await getRateLimiter(c.env, "expensive").check(`channel-test:${rateLimitKey(c)}`);
+  if (!verdict.allowed) {
+    c.header("Retry-After", String(verdict.retryAfterSeconds));
+    return c.json({ error: "rate_limited" }, 429);
+  }
+
+  const user = c.get("user");
+  const { data: channel, error } = await serviceClient(c.env)
+    .from("delivery_channels")
+    .select("kind, secret_ciphertext")
+    .eq("id", c.req.param("id"))
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid channel id" }, 400);
+    return c.json({ error: "failed to load channel" }, 500);
+  }
+  if (!channel) return c.json({ error: "no such channel" }, 404);
+
+  try {
+    await deliver(
+      channel,
+      {
+        subject: "Covan test delivery",
+        body:
+          "This is a test message from Covan, sent because somebody pressed " +
+          "Send test on this delivery channel. No routine produced it.",
+      },
+      deliveryDepsFrom(c.env),
+      // No routine block: there is no routine behind this, and saying so is
+      // the point — a receiver that files results must be able to leave this
+      // one out.
+      { event: EVENT_TEST },
+    );
+  } catch (err) {
+    // The receiver's own words. This endpoint exists to report them: a test
+    // send that failed with "could not deliver" would be worth less than not
+    // having the button.
+    return c.json({ error: err instanceof Error ? err.message : "delivery failed" }, 502);
+  }
+
+  return c.body(null, 204);
 });
 
 routines.delete("/delivery-channels/:id", async (c) => {
@@ -168,6 +338,27 @@ const createSchema = z.object({
   deliveryChannelId: z.string().uuid(),
   scheduleCron: z.string().min(1),
   timezone: z.string().default("UTC"),
+  /**
+   * `schedule` unless asked otherwise, which is what every routine was before
+   * 0055. A webhook trigger is only valid on a routine with no source of its
+   * own; the database says so with a CHECK, and 0027's trigger means it can
+   * never be granted to an existing RSS routine afterwards.
+   */
+  triggerKind: z.enum(["schedule", "webhook", "both"]).default("schedule"),
+  /**
+   * Where a delivered summary is kept, or null to keep nothing — which is the
+   * default and what every routine did before 0056.
+   *
+   * Not validated here beyond its shape. The bundle has to be one in the
+   * routine's own workspace, and 0056's policies are what say so: the subquery
+   * resolves through `knowledge_bundles`' RLS, so a bundle in somebody else's
+   * workspace is refused by the same mechanism that refuses somebody else's
+   * agent. Checking it here as well would be a second opinion that can drift
+   * from the one that counts.
+   */
+  outputBundleId: z.string().uuid().nullable().optional(),
+  /** Bounded here as well as by 0056's CHECK, so the refusal names the field. */
+  outputRetention: z.number().int().min(1).max(520).optional(),
 });
 
 // agentId and workspaceId are deliberately absent from updateSchema. The
@@ -183,6 +374,13 @@ const updateSchema = z
     status: z.enum(["active", "paused"]).optional(),
     visibility: z.enum(["private", "shared"]).optional(),
     deliveryChannelId: z.string().uuid().optional(),
+    triggerKind: z.enum(["schedule", "webhook", "both"]).optional(),
+    // Nullable as well as optional, and the difference is the feature: absent
+    // means "leave filing as it is", null means "stop filing". A field that
+    // could only be absent or a uuid would let somebody turn filing on and
+    // never off.
+    outputBundleId: z.string().uuid().nullable().optional(),
+    outputRetention: z.number().int().min(1).max(520).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "no fields to update" });
 
@@ -256,6 +454,12 @@ routines.post("/routines", async (c) => {
       delivery_channel_id: body.deliveryChannelId,
       schedule_cron: body.scheduleCron,
       timezone: body.timezone,
+      // Kept even for a webhook-only routine, which never runs on it: the
+      // column is `not null` and six other places assume a string is there.
+      // 0055 says why that was the cheaper of the two mistakes.
+      trigger_kind: body.triggerKind,
+      output_bundle_id: body.outputBundleId ?? null,
+      ...(body.outputRetention !== undefined ? { output_retention: body.outputRetention } : {}),
       // The first run is scheduled, not immediate. Creating "every day at
       // 09:00" used to send a real message within one 5-minute tick, because
       // claim_due_routines claims anything already due and `now()` is. Use
@@ -269,7 +473,11 @@ routines.post("/routines", async (c) => {
     const status = insertErrorStatus(error);
     if (status === 400) {
       return c.json(
-        { error: "the delivery channel or agent is not available to you in this workspace" },
+        {
+          error:
+            "the delivery channel, agent or output bundle is not available to you in this " +
+            "workspace, or this source cannot have a webhook trigger",
+        },
         400,
       );
     }
@@ -298,6 +506,13 @@ routines.patch("/routines/:id", async (c) => {
   if (body.instruction !== undefined) patch.instruction = body.instruction;
   if (body.visibility !== undefined) patch.visibility = body.visibility;
   if (body.deliveryChannelId !== undefined) patch.delivery_channel_id = body.deliveryChannelId;
+  // The CHECK in 0055 refuses `webhook` or `both` on a routine that watches
+  // something; the error path below turns that into a 400 rather than a 500.
+  if (body.triggerKind !== undefined) patch.trigger_kind = body.triggerKind;
+  // `!== undefined` rather than a truthiness test, so an explicit null turns
+  // filing off instead of being read as "no change".
+  if (body.outputBundleId !== undefined) patch.output_bundle_id = body.outputBundleId;
+  if (body.outputRetention !== undefined) patch.output_retention = body.outputRetention;
 
   // Validate the pair that will actually be in effect, not just the field that
   // changed — a timezone the cron parser cannot resolve leaves the executor
@@ -335,7 +550,25 @@ routines.patch("/routines/:id", async (c) => {
     .select("*")
     .maybeSingle();
 
-  if (error) return c.json({ error: "failed to update routine" }, 500);
+  if (error) {
+    // The same classification the create path makes, and for the same reason:
+    // `routines_update_own`'s WITH CHECK carries every guard the INSERT policy
+    // does, so a patch that repoints a routine at another workspace's bundle
+    // comes back as a policy refusal rather than as a missing row. Reporting
+    // that as a 500 would tell the caller the server is broken when what is
+    // broken is what they asked for.
+    if (insertErrorStatus(error) === 400) {
+      return c.json(
+        {
+          error:
+            "the delivery channel or output bundle is not available to you in this workspace, " +
+            "or this source cannot have a webhook trigger",
+        },
+        400,
+      );
+    }
+    return c.json({ error: "failed to update routine" }, 500);
+  }
   if (!data) return c.json({ error: "routine not found" }, 404);
   return c.json(mapRoutine(data));
 });
@@ -414,3 +647,111 @@ routines.get("/routines/:id/runs", async (c) => {
 });
 
 export { routines };
+
+// ---- ingest triggers -------------------------------------------------------
+//
+// The token itself is minted and hashed here, with the service role, for the
+// same reason a delivery channel's secret is: `routine_triggers.token_hash` is
+// granted to no client role at all (0055), so a caller's own client can neither
+// write it nor read it back. Every one of these checks ownership through the
+// caller's own client first, so RLS decides who the routine belongs to and this
+// file only decides what to do about it.
+//
+// Reading a trigger's *existence* does go through the caller's client, because
+// there the policy is the whole answer: `routine_triggers_select_own` returns
+// the row to the routine's owner and to nobody else — deliberately narrower
+// than the routine's own visibility, because sharing a routine shares what it
+// does, not the ability to fire it.
+
+/** Is the webhook wired up, and has anything ever used it? Never the token. */
+routines.get("/routines/:id/trigger", async (c) => {
+  const { data, error } = await c
+    .get("db")
+    .from("routine_triggers")
+    .select("routine_id, created_at, last_used_at")
+    .eq("routine_id", c.req.param("id"))
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid routine id" }, 400);
+    return c.json({ error: "failed to load the trigger" }, 500);
+  }
+  if (!data) return c.json({ configured: false });
+
+  return c.json({
+    configured: true,
+    createdAt: Date.parse(data.created_at as string),
+    lastUsedAt: data.last_used_at ? Date.parse(data.last_used_at as string) : null,
+  });
+});
+
+/**
+ * Mint an ingest token, or replace the one this routine has.
+ *
+ * One endpoint for both because they are the same act: the row's primary key is
+ * the routine, so writing is an upsert and rotating is what writing a second
+ * time means. Splitting them would suggest a rotation keeps something, and it
+ * keeps nothing — the old token stops working the moment this returns.
+ */
+routines.post("/routines/:id/trigger", async (c) => {
+  const id = c.req.param("id");
+
+  // Through the caller's own client: if RLS does not return the row, the answer
+  // is 404 for the same reason it is everywhere else in this API — a row you
+  // cannot see is absent, not forbidden.
+  const { data: routine, error } = await c
+    .get("db")
+    .from("routines")
+    .select("id, trigger_kind")
+    .eq("id", id)
+    .eq("user_id", c.get("user").id)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid routine id" }, 400);
+    return c.json({ error: "failed to load routine" }, 500);
+  }
+  if (!routine) return c.json({ error: "routine not found" }, 404);
+
+  // Refused rather than switched on the caller's behalf. Changing how a routine
+  // is started is a decision about a thing that runs unattended, and quietly
+  // making one because somebody pressed a button next to it is the kind of
+  // helpfulness nobody remembers having agreed to.
+  if (routine.trigger_kind === "schedule") {
+    return c.json({ error: "this routine is not set to accept webhook triggers" }, 400);
+  }
+
+  const { token, tokenHash } = generateIngestToken();
+  const { error: writeError } = await serviceClient(c.env)
+    .from("routine_triggers")
+    .upsert(
+      { routine_id: id, token_hash: await tokenHash, last_used_at: null },
+      { onConflict: "routine_id" },
+    );
+
+  if (writeError) return c.json({ error: "failed to create the trigger" }, 500);
+
+  // The only response that carries it. The database holds a SHA-256, so nobody
+  // — including us — can show it again; the path is returned with it so the
+  // interface does not have to know how this endpoint is spelled.
+  return c.json({ token, path: `/routine-hooks/${token}` }, 201);
+});
+
+/** Turn the webhook off. The routine keeps running on its schedule, if it has one. */
+routines.delete("/routines/:id/trigger", async (c) => {
+  // The caller's own client: 0055 grants `authenticated` a DELETE and
+  // `routine_triggers_delete_own` scopes it to the routine's owner, so the
+  // database is the whole check and there is nothing here for the service role
+  // to do.
+  const { error } = await c
+    .get("db")
+    .from("routine_triggers")
+    .delete()
+    .eq("routine_id", c.req.param("id"));
+
+  if (error) {
+    if (error.code === "22P02") return c.json({ error: "invalid routine id" }, 400);
+    return c.json({ error: "failed to remove the trigger" }, 500);
+  }
+  return c.body(null, 204);
+});

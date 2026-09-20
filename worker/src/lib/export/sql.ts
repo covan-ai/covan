@@ -310,6 +310,11 @@ function rewriteForRestore(table: string, rows: Row[]): Row[] {
       secret_ciphertext: MISSING_SECRET,
       status: "paused",
       paused_reason: CONNECTION_PAUSED_ON_RESTORE,
+      // The code beside the sentence, so the restored workspace's integrations
+      // page offers Reconnect rather than Resume. Resuming would start a sync
+      // against a placeholder token, fail, and pause it again with a worse
+      // message.
+      paused_code: "restored",
     }));
   }
   return rows;

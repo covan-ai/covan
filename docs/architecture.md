@@ -239,8 +239,8 @@ fallback — falls back to a persona-only answer rather than failing the turn.
 
 A routine is: a source (an RSS feed, a web page, a connection, or nothing), an
 instruction, a cron expression with a timezone, and a delivery channel (a Slack
-webhook or an email address). The engine wakes up, asks the database what is
-due, and runs it.
+webhook, an email address, or a signed POST to an endpoint the workspace runs).
+The engine wakes up, asks the database what is due, and runs it.
 
 ### Claiming
 
@@ -282,10 +282,10 @@ one rather than run until the invocation is killed.
 source (through the SSRF guard for a feed or a page; through `documents` for a
 connection) → diff what it found against the routine's stored cursor → reserve
 the new item keys in `routine_deliveries` → retrieve the agent's own documents →
-summarise with the model → deliver → record a `routine_runs` row and advance
-`next_run_at`.
+summarise with the model → deliver → file the result, if the routine files →
+record a `routine_runs` row and advance `next_run_at`.
 
-Four details worth knowing:
+Five details worth knowing:
 
 - **Delivery keys are reserved before the send, not after.** That is what makes
   a retry, an overlapping "run now", or a duplicated tick harmless: whoever gets
@@ -311,6 +311,18 @@ Four details worth knowing:
   because a routine has no question; the block rides in its own system message,
   as it does in `routes/chat.ts`. It happens after the run knows it has
   something to send, so a tick that will deliver nothing does not pay to embed.
+
+- **Filing cannot fail the run** (`lib/routines/filing.ts`). It happens after
+  the message is out, so an exception there would be caught by `runRoutine`,
+  counted as a failure, backed off, and after five of them would pause a routine
+  that is delivering perfectly. So the filing function never throws — every
+  failure comes back as a sentence written to `routine_runs.filing_note` — and
+  the dispatcher does not even hand one over when the Worker has no document
+  store bound (`canFileDocuments`), which is the normal state of a cron Worker
+  on Cloudflare. The membership check at the top of the run reads the owner's
+  `role` as well as their id for the same reason it exists at all: delivering is
+  reading and filing is writing, the service role would happily do both, and
+  this is the only place that difference is enforced.
 
 Failures back off, capped at six hours past the natural next run, and a routine
 pauses itself after 5 consecutive failures — or 20 if they are transient (429s
@@ -369,6 +381,11 @@ production, at the moment a user uploads a file or sends a message.
   update live.
 - `routines`, `routine_runs`, `routine_deliveries`, `delivery_channels` — the
   scheduling side.
+- `connection_capabilities`, `connection_grants`, `capability_calls` — what an
+  agent may do at a connected source, as opposed to what a person may do in
+  Postgres. All three are empty, which is an exact description of today's
+  behaviour rather than a feature waiting to be switched on:
+  [no row means no](security.md#a-question-row-level-security-cannot-be-asked).
 
 Migrations are numbered and applied in order, and an applied migration is never
 edited — corrections go in a new file.

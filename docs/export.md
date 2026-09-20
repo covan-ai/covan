@@ -52,6 +52,11 @@ routines and their run history.
   `routines.delivery_channel_id` is `not null` too, so a workspace with any
   routine would have had nothing to restore at all.
 
+  A `webhook` channel keeps its signing secret in that same column, so a
+  restored one has neither a destination nor a secret. Re-entering the URL
+  mints a new signing secret, which means the receiver has to be updated in the
+  same sitting — the same work a rotation asks for.
+
 - **Invitations, notification preferences and onboarding state.** An invitation
   is an offer to somebody who has not accepted, scoped to an install's tokens.
   The other two follow a person rather than a workspace.

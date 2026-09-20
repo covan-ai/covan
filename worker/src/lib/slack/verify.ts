@@ -12,6 +12,8 @@
  * — and a replayed question re-answers, re-posts and re-charges.
  */
 
+import { hmacSha256Hex, timingSafeEqual } from "../hmac";
+
 /**
  * How far out of date a signed request may be.
  *
@@ -48,34 +50,10 @@ export async function verifySlackSignature(
     return { ok: false, reason: "stale" };
   }
 
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(signingSecret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`${VERSION}:${headers.timestamp}:${body}`),
-  );
-  const expected = `${VERSION}=${[...new Uint8Array(mac)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")}`;
+  const mac = await hmacSha256Hex(signingSecret, `${VERSION}:${headers.timestamp}:${body}`);
+  const expected = `${VERSION}=${mac}`;
 
   return timingSafeEqual(expected, headers.signature)
     ? { ok: true }
     : { ok: false, reason: "signature mismatch" };
-}
-
-/** Constant time in the length-equal case, which is the only one that matters. */
-function timingSafeEqual(a: string, b: string): boolean {
-  const enc = new TextEncoder();
-  const ab = enc.encode(a);
-  const bb = enc.encode(b);
-  if (ab.length !== bb.length) return false;
-  let diff = 0;
-  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
-  return diff === 0;
 }

@@ -54,18 +54,74 @@ report what it added or changed, and because it reads what the sync has already
 imported rather than going to the provider itself, running it more often than
 the connection syncs will not find changes any sooner.
 
+### Who it syncs as
+
+A connection belongs to the workspace. Everybody can see it, and what it imports
+lands in a shared bundle.
+
+What belongs to a person is the **grant**: the OAuth access it carries. That
+decides three things — which files are visible, whose monthly allowance the
+embeddings are charged to, and who the provider thinks is reading. So a
+connection has a *grant holder* rather than an owner, and the two can come apart.
+
+They come apart most obviously when somebody closes their Covan account. The
+connection survives, unowned and paused, with the documents it already imported
+still attached to it. Anyone in the workspace who can write may then reconnect
+it in place — it does not need an admin, because a team without a present admin
+would otherwise have no way to fix it at all.
+
 ### When it stops
 
-A connection pauses itself and says why on the row:
+A connection pauses itself and says why on the row. What the page offers you
+depends on which of these it is, because the wrong offer is worse than none —
+resuming a revoked grant fails on the first call and pauses it again.
 
 - **The grant was revoked** — somebody removed the integration in Notion, or
-  Covan's access in their Google account. Reconnect it.
-- **The owner left the workspace.** A connection syncs with one person's access,
-  and that access leaves with them.
+  Covan's access in their Google account. Only **Reconnect** is offered.
+- **Nobody holds the grant** — the person who set it up has closed their
+  account. Also **Reconnect**, by anyone who can write.
+- **The grant holder left the workspace.** A connection syncs with one person's
+  access, and that access leaves with them.
 - **It failed twenty times in a row** with a temporary error, which after
   backoff means the provider has been unreachable for days.
+- **The source suddenly shows far less than it did** — see below.
+- **The provider is no longer configured on this deployment.** Nothing about the
+  connection is wrong, and nothing on this page will fix it: an operator has to
+  set the client credentials again.
+- **It came back from a workspace export**, which carries no OAuth token.
 
 Resuming clears the reason and syncs immediately.
+
+### Reconnecting
+
+**Reconnect** replaces the grant on the connection that is already there. It
+keeps the bundle, the chosen Drive folder, the schedule, and every document —
+only the credential and the grant holder change.
+
+It is offered on a working connection too, not just a broken one, because
+"this is syncing as the wrong person" is a real thing to want to fix. Before it
+existed the only route was to disconnect and connect again, which produced a
+*second* connection pointed at the same bundle, left the first sitting there
+paused, and relied on the next sync adopting the orphaned documents back.
+
+### When a reconnect would delete half the bundle
+
+This is the one that needed care. A sync reconciles: it lists what the source
+holds now and hides the documents that are no longer in that listing. Correct by
+its own rules — and if Alice's grant could see 400 files and Bob's can see 120,
+the next run is entirely right to conclude that 280 documents have gone.
+
+So a run that would remove a large share of what it holds removes **nothing**
+and pauses instead, saying how many and out of how many. You get two answers:
+
+- **Remove them and resume** — yes, those files really are gone.
+- **Reconnect** — with an account that can see them.
+
+The threshold is a fifth of the live documents, with a floor of five, so a small
+folder somebody tidied does not trip it. It is not only about reconnects: a
+Drive folder that stops being shared, or a Notion integration narrowed by an
+admin, looks exactly the same from here, and the answer to all of them is to ask
+rather than to act.
 
 ### Disconnecting
 
@@ -352,6 +408,10 @@ duplicated.
 - **No search connectors.** Covan answers from what was deliberately imported,
   not from everything an account can reach.
 - **No write access.** Every scope is read-only. Nothing Covan does can change a
-  Notion page or a Drive file.
+  Notion page or a Drive file. The database has the schema for how a write would
+  be permitted one day — see
+  [a question row level security cannot be asked](security.md#a-question-row-level-security-cannot-be-asked) —
+  and it is empty, which means every agent is refused every action. That is the
+  same sentence as this bullet, written somewhere a program can check it.
 - **No per-file permissions.** A bundle is the unit of access. If different
   people should see different documents, put them in different bundles.

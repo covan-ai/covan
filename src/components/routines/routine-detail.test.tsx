@@ -4,6 +4,24 @@ import userEvent from "@testing-library/user-event";
 import { RoutineDetail } from "./routine-detail";
 import type { Routine, RoutineRun } from "@/lib/routines-api";
 
+// The webhook card this screen renders for a poke-able routine reaches the API,
+// and `lib/api-client` builds its Supabase client at module load — which throws
+// under vitest, where the VITE_ vars are unset. Every other component test that
+// touches the API mocks it for the same reason.
+//
+// The routine below is `schedule`, so the card is not rendered at all; this is
+// about the import graph rather than about the card.
+vi.mock("@/lib/api-client", () => ({
+  api: { routines: { trigger: vi.fn(), createTrigger: vi.fn(), removeTrigger: vi.fn() } },
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+}));
+
 const routine: Routine = {
   id: "r1",
   agentId: "a1",
@@ -17,6 +35,9 @@ const routine: Routine = {
   deliveryChannelId: "c1",
   scheduleCron: "0 * * * *",
   timezone: "Europe/Istanbul",
+  triggerKind: "schedule" as const,
+  outputBundleId: null,
+  outputRetention: 52,
   status: "active",
   pausedReason: null,
   nextRunAt: null,
@@ -34,6 +55,8 @@ const runs: RoutineRun[] = [
     durationMs: 1400,
     error: null,
     summary: "Three new posts about pricing.",
+    documentId: null,
+    filingNote: null,
     startedAt: 0,
   },
   {
@@ -45,6 +68,8 @@ const runs: RoutineRun[] = [
     durationMs: 300,
     error: null,
     summary: null,
+    documentId: null,
+    filingNote: null,
     startedAt: 0,
   },
   {
@@ -56,6 +81,8 @@ const runs: RoutineRun[] = [
     durationMs: 2100,
     error: "upstream 503",
     summary: null,
+    documentId: null,
+    filingNote: null,
     startedAt: 0,
   },
 ];

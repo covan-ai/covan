@@ -16,7 +16,10 @@ import type {
   Routine,
   RoutineRun,
   DeliveryChannel,
+  DeliveryChannelKind,
+  CreatedDeliveryChannel,
   RoutineDraft,
+  RoutineTrigger,
   CreateRoutineInput,
   UpdateRoutineInput,
 } from "./routines-api";
@@ -56,6 +59,12 @@ export type Me = {
    * `specFor` in `lib/agent-meta` answers for an id it was told nothing about.
    */
   modelSpecs?: Record<string, { temperature: boolean; reasoning: boolean }>;
+  /**
+   * Estimated USD for one reference reply per model. Optional because an API
+   * older than this field sends none, and empty on a deployment whose
+   * `OPENAI_MODEL` makes the picked id irrelevant — both mean "no price".
+   */
+  modelCosts?: Record<string, number>;
   onboarding: { completed: boolean; answers: OnboardingAnswers };
 };
 
@@ -581,6 +590,15 @@ export const api = {
      */
     start: (provider: ProviderId, bundleId: string): Promise<{ url: string }> =>
       request("POST", `/connections/${provider}/start`, { bundleId }),
+    /**
+     * A new grant for a connection that already exists.
+     *
+     * The same consent flow as `start`, aimed at a row rather than at a bundle.
+     * The alternative — delete and connect again — left a second connection
+     * pointed at the same bundle and the old one sitting there paused.
+     */
+    reconnect: (id: string): Promise<{ url: string }> =>
+      request("POST", `/connections/${id}/reconnect`),
     /** One level of a Drive tree. The browser holds no Google token of its own. */
     folders: (id: string, parent?: string): Promise<DriveFolder[]> =>
       request("GET", `/connections/${id}/folders${parent ? `?parent=${parent}` : ""}`),
@@ -620,13 +638,34 @@ export const api = {
       request("POST", `/routines/${id}/run`),
     draft: (text: string, timezone: string): Promise<RoutineDraft> =>
       request("POST", "/routines/draft", { text, timezone }),
+    /** Whether a webhook trigger is wired up, and when it last fired. */
+    trigger: (id: string): Promise<RoutineTrigger> => request("GET", `/routines/${id}/trigger`),
+    /**
+     * Mint an ingest token, or replace the one this routine has. The only
+     * response that carries the token; rotating invalidates the old one at once.
+     */
+    createTrigger: (id: string): Promise<{ token: string; path: string }> =>
+      request("POST", `/routines/${id}/trigger`),
+    removeTrigger: (id: string): Promise<void> => request("DELETE", `/routines/${id}/trigger`),
   },
   deliveryChannels: {
     list: (): Promise<DeliveryChannel[]> => request("GET", "/delivery-channels"),
+    /**
+     * The only response that ever carries a webhook's signing secret. Show it
+     * once; there is no endpoint that will hand it over again.
+     */
     create: (input: {
-      kind: "slack_webhook" | "email";
+      kind: DeliveryChannelKind;
       secret: string;
-    }): Promise<DeliveryChannel> => request("POST", "/delivery-channels", input),
+    }): Promise<CreatedDeliveryChannel> => request("POST", "/delivery-channels", input),
+    /** A new signing secret for a webhook channel. The destination is unchanged. */
+    rotate: (id: string): Promise<{ signingSecret: string }> =>
+      request("POST", `/delivery-channels/${id}/rotate`),
+    /**
+     * One message through the channel, now. 502 carries what the receiver
+     * said, which is the whole reason the button is worth having.
+     */
+    test: (id: string): Promise<void> => request("POST", `/delivery-channels/${id}/test`),
     remove: (id: string): Promise<void> => request("DELETE", `/delivery-channels/${id}`),
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),

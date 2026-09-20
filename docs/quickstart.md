@@ -191,10 +191,10 @@ OpenAI key and whatever it spends is between it and OpenAI.
   depth: where to draw a bundle's boundary, and how to read an answer that cites
   nothing.
 - [Routines](routines.md) — the same agent, on a schedule: point one at a feed
-  or a page, say what to do with it, and get the result by email or Slack
-  while nobody is watching.
+  or a page, say what to do with it, and get the result by email, by Slack, or
+  as a signed webhook into whatever you already run — while nobody is watching.
 - [Your team](team.md) — invite people, understand what each role can do, and
-  connect Slack or email so a routine has somewhere to deliver.
+  connect Slack, email or a webhook so a routine has somewhere to deliver.
 - [Retrieval, in detail](architecture.md#retrieval) — chunking, the similarity
   floor, and how the prompt is assembled so the cacheable part stays cacheable.
 - [Authorization](architecture.md#authorization-is-postgres) — why one person's

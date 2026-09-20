@@ -458,3 +458,73 @@ describe("finding what is wrong in a folder full of files", () => {
     expect(screen.getByText(/no bundle is called "nothing-like-this"/i)).toBeInTheDocument();
   });
 });
+
+/**
+ * Where a document came from, when it did not come from a person.
+ *
+ * Derived from `routineId` rather than declared with a chip or a colour, which
+ * is why the ordinary case — a file somebody uploaded — has to stay silent. The
+ * third state is the one worth a test of its own: a real id with no name is a
+ * colleague's private routine, and saying its name would be leaking the row
+ * `routines_select_visible` refused.
+ */
+describe("a document a routine wrote", () => {
+  const filed = [
+    {
+      id: "doc-1",
+      name: "uploaded-by-hand.md",
+      size: 512,
+      createdAt: Date.now() - DAY,
+      chunkCount: 3,
+      indexed: true,
+      bundleId: "bundle-1",
+    },
+    {
+      id: "doc-2",
+      name: "q3-competitors.md",
+      size: 14 * 1024,
+      createdAt: Date.now() - DAY,
+      chunkCount: 5,
+      indexed: true,
+      bundleId: "bundle-1",
+      routineId: "routine-1",
+      routineName: "Competitor digest",
+    },
+    {
+      id: "doc-3",
+      name: "someone-elses.md",
+      size: 2 * 1024,
+      createdAt: Date.now() - DAY,
+      chunkCount: 2,
+      indexed: true,
+      bundleId: "bundle-1",
+      routineId: "routine-2",
+      routineName: null,
+    },
+  ];
+
+  it("names the routine on the line under the filename", async () => {
+    listDocuments.mockResolvedValue(filed);
+    renderExplorer();
+
+    const row = (await screen.findByLabelText(/open q3-competitors\.md/i)) as HTMLElement;
+    expect(within(row).getByText("Written by Competitor digest")).toBeInTheDocument();
+  });
+
+  it("says `a routine` when the routine is not the reader's to see", async () => {
+    listDocuments.mockResolvedValue(filed);
+    renderExplorer();
+
+    const row = (await screen.findByLabelText(/open someone-elses\.md/i)) as HTMLElement;
+    expect(within(row).getByText("Written by a routine")).toBeInTheDocument();
+  });
+
+  // The case that needs no explanation says nothing at all.
+  it("says nothing about a file somebody uploaded", async () => {
+    listDocuments.mockResolvedValue(filed);
+    renderExplorer();
+
+    const row = (await screen.findByLabelText(/open uploaded-by-hand\.md/i)) as HTMLElement;
+    expect(within(row).queryByText(/written by/i)).not.toBeInTheDocument();
+  });
+});

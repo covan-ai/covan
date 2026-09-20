@@ -18,8 +18,17 @@ const BUNDLE_SELECT = "id,name,description,created_at,documents(count)";
 // Everything a row in the Knowledge explorer renders. `connection_id` and
 // `external_url` are here because a synced document is not freely movable —
 // the interface has to be able to say so before somebody drags one.
+// `routines(name)` is embedded through `documents.routine_id` and resolves
+// through `routines`' own RLS rather than through the document's: a colleague's
+// private routine filing into a shared bundle comes back as a null name beside
+// a real id, which is exactly what the explorer should say about it. See
+// `DocumentDTO.routineName`.
+//
+// One string literal, not a concatenation — postgrest-js infers the row type
+// from the literal, and `"a," + "b"` widens it to `string`.
+// prettier-ignore
 const DOCUMENT_SELECT =
-  "id,name,size,created_at,bundle_id,connection_id,external_url,document_chunks(count)";
+  "id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count)";
 
 const createSchema = z.object({
   name: z.string().min(1),

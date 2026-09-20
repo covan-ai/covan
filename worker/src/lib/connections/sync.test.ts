@@ -45,7 +45,7 @@ vi.mock("../keys/store", () => ({ readWorkspaceKeys }));
 import type { WorkspaceKeys } from "../keys/store";
 import { fakeDb, type QueryContext } from "../../test-support/fake-db";
 import { embedTexts } from "../embeddings";
-import { runConnection, MAX_DOCUMENTS_PER_RUN, type ConnectionRow } from "./sync";
+import { runConnection, isNarrowing, MAX_DOCUMENTS_PER_RUN, type ConnectionRow } from "./sync";
 import { encryptSecret } from "../secret-box";
 import { ProviderError } from "./types";
 
@@ -575,5 +575,250 @@ describe("syncing a connection", () => {
       documents_removed: 0,
     });
     expect(run?.values?.tokens).toBeGreaterThan(0);
+  });
+});
+
+describe("the grant holder", () => {
+  // 0057's `on delete set null` is what lets the row get here at all. Before
+  // it, closing a Covan account DELETED the connection and left its documents
+  // as orphans nothing could refresh.
+  it("stops before anything when nobody holds it any more", async () => {
+    const fake = db();
+
+    const outcome = await runConnection(await connection({ user_id: null }), deps(fake));
+
+    expect(outcome.status).toBe("skipped");
+    // Not one call to the provider: there is no token that would work and no
+    // allowance to charge, and the membership question below has no subject.
+    expect(fakeProvider.listFiles).not.toHaveBeenCalled();
+    expect(fake.callsTo("connections").find((c) => c.op === "update")?.values).toMatchObject({
+      status: "paused",
+      paused_code: "owner_gone",
+    });
+  });
+
+  it("names the pause when they have left the workspace", async () => {
+    const fake = db({ member: false });
+
+    await runConnection(await connection(), deps(fake));
+
+    // A different answer to a different problem: the person still exists and
+    // could be added back, where `owner_gone` needs a new grant from somebody.
+    expect(fake.callsTo("connections").find((c) => c.op === "update")?.values).toMatchObject({
+      status: "paused",
+      paused_code: "owner_left",
+    });
+  });
+});
+
+describe("what counts as the source showing less", () => {
+  it("is a share of what is there, with a floor", () => {
+    // The floor is what stops a small folder tripping on an ordinary tidy-up.
+    expect(isNarrowing(3, 4)).toBe(false);
+    expect(isNarrowing(4, 4)).toBe(false);
+    expect(isNarrowing(5, 10)).toBe(true);
+    // And the fraction is what keeps it proportionate to a large bundle: five
+    // gone out of four hundred is somebody deleting files, not a narrower grant.
+    expect(isNarrowing(5, 400)).toBe(false);
+    expect(isNarrowing(80, 400)).toBe(true);
+    expect(isNarrowing(280, 400)).toBe(true);
+  });
+
+  it("is never true of nothing", () => {
+    expect(isNarrowing(0, 0)).toBe(false);
+    expect(isNarrowing(0, 400)).toBe(false);
+  });
+});
+
+/**
+ * The protection without which `POST /connections/:id/reconnect` would be a
+ * regression rather than a fix.
+ *
+ * Alice's grant saw 400 files, Bob's sees 120. A sync reconciles, so the next
+ * run is entirely right — by its own rules — to conclude that 280 documents
+ * have been deleted, and the team loses most of a bundle to somebody being
+ * helpful. `MAX_REMOVALS_PER_RUN` does not help: it spreads the same 280 over
+ * fourteen runs.
+ */
+describe("a source that suddenly shows much less", () => {
+  const tenDocuments = Array.from({ length: 10 }, (_, i) => ({
+    id: `doc-${i}`,
+    external_id: `page-${i}`,
+    external_version: "v1",
+    r2_key: `bundle-1/${i}`,
+    deleted_at: null,
+  }));
+
+  it("removes nothing and asks instead", async () => {
+    // Two of ten still listed, so eight would go — past the floor and past a
+    // fifth of the bundle.
+    fakeProvider.listFiles.mockResolvedValue([file("page-0"), file("page-1")]);
+    const fake = db({ documents: tenDocuments });
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome).toMatchObject({ status: "skipped", removed: 0, added: 0, updated: 0 });
+    // Nothing hidden. The soft delete is the one documents write that sets
+    // `deleted_at` — the adoption pass above it is also a bulk update, and
+    // matching on shape alone would count that as a removal.
+    const hidden = fake
+      .callsTo("documents")
+      .filter((c) => c.op === "update" && c.values?.deleted_at !== undefined);
+    expect(hidden).toEqual([]);
+
+    const update = fake.callsTo("connections").find((c) => c.op === "update");
+    expect(update?.values).toMatchObject({ status: "paused", paused_code: "access_narrowed" });
+    // The sentence carries both numbers, because "some documents are missing"
+    // is not something a person can act on.
+    expect(update?.values?.paused_reason).toContain("8 of 10");
+  });
+
+  it("does not spend the new grant's allowance importing what it can still see", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-0", "v2"), file("page-1", "v2")]);
+    fakeProvider.readFile.mockResolvedValue("new text");
+    const fake = db({ documents: tenDocuments });
+
+    await runConnection(await connection(), deps(fake));
+
+    // Stopping before the import half matters: re-embedding the survivors while
+    // the bundle waits to find out whether the rest are really gone is paying
+    // for work that a reconnect may undo.
+    expect(fake.callsTo("documents").find((c) => c.op === "insert")).toBeUndefined();
+    expect(embedTexts).not.toHaveBeenCalled();
+  });
+
+  it("goes ahead once somebody has said so, and spends the permission", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-0"), file("page-1")]);
+    const fake = db({ documents: tenDocuments });
+
+    const outcome = await runConnection(
+      await connection({ removals_approved_at: "2026-09-02T11:00:00.000Z" }),
+      deps(fake),
+    );
+
+    expect(outcome.removed).toBe(8);
+    const update = fake.callsTo("connections").find((c) => c.op === "update");
+    // Permission for one narrowing, not a standing exemption — otherwise the
+    // next unexpected loss of access goes through without asking.
+    expect(update?.values).toMatchObject({ removals_approved_at: null });
+    expect(update?.values?.paused_code).toBeNull();
+  });
+
+  it("lets an ordinary tidy-up through untouched", async () => {
+    // Three of four gone is most of this folder and is below the floor, which
+    // is the right answer: "three of your three documents went" is a small
+    // folder being emptied, not a grant that sees less.
+    fakeProvider.listFiles.mockResolvedValue([file("page-0")]);
+    const fake = db({ documents: tenDocuments.slice(0, 4) });
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome.removed).toBe(3);
+    expect(fake.callsTo("connections").find((c) => c.op === "update")?.values?.status).not.toBe(
+      "paused",
+    );
+  });
+
+  it("counts what is live, not what is already hidden", async () => {
+    // Six already soft-deleted, four live, one still listed. Three of four
+    // would go — below the floor. Counting the hidden six as well would make
+    // this nine of ten and pause a connection over documents that went weeks
+    // ago.
+    const half = [
+      ...tenDocuments.slice(0, 4),
+      ...tenDocuments.slice(4).map((d) => ({ ...d, deleted_at: "2026-08-01T00:00:00.000Z" })),
+    ];
+    fakeProvider.listFiles.mockResolvedValue([file("page-0")]);
+    const fake = db({ documents: half });
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome.removed).toBe(3);
+  });
+});
+
+describe("why the engine paused it", () => {
+  it("says a grant was revoked rather than that something failed five times", async () => {
+    fakeProvider.listFiles.mockRejectedValue(new ProviderError("access revoked", false));
+    const fake = db();
+
+    await runConnection(await connection(), deps(fake));
+
+    // The interface offers Reconnect for this and Resume for the other, so the
+    // two must not arrive as the same shape.
+    expect(fake.callsTo("connections").find((c) => c.op === "update")?.values).toMatchObject({
+      status: "paused",
+      paused_code: "grant_revoked",
+    });
+  });
+
+  it("says the deployment stopped offering the provider", async () => {
+    fakeProvider.isConfigured.mockReturnValue(false);
+    const fake = db();
+
+    await runConnection(await connection(), deps(fake));
+
+    expect(fake.callsTo("connections").find((c) => c.op === "update")?.values).toMatchObject({
+      status: "paused",
+      paused_code: "provider_unconfigured",
+    });
+  });
+
+  it("clears the code when a run succeeds", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
+    fakeProvider.readFile.mockResolvedValue("# Handbook");
+    const fake = db();
+
+    await runConnection(await connection(), deps(fake));
+
+    // The sentence and the code are written together, always. A row carrying
+    // one without the other says two different things about the same pause.
+    const values = fake.callsTo("connections").find((c) => c.op === "update")?.values;
+    expect(values?.paused_reason).toBeNull();
+    expect(values?.paused_code).toBeNull();
+  });
+});
+
+describe("draining an approved removal", () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({
+    id: `doc-${i}`,
+    external_id: `page-${i}`,
+    external_version: "v1",
+    r2_key: `bundle-1/${i}`,
+    deleted_at: null,
+  }));
+
+  it("keeps the permission until the backlog is gone", async () => {
+    // Forty documents, none still listed. The cap takes twenty a run, so
+    // clearing the approval after the first twenty would pause the connection
+    // and ask the same question of somebody who has already answered it.
+    fakeProvider.listFiles.mockResolvedValue([]);
+    const fake = db({ documents: many });
+
+    const outcome = await runConnection(
+      await connection({ removals_approved_at: "2026-09-02T11:00:00.000Z" }),
+      deps(fake),
+    );
+
+    expect(outcome.removed).toBe(20);
+    expect(outcome.more).toBe(true);
+    const update = fake.callsTo("connections").find((c) => c.op === "update");
+    expect(update?.values?.removals_approved_at).toBeUndefined();
+  });
+
+  it("and comes straight back for the rest rather than waiting out the interval", async () => {
+    fakeProvider.listFiles.mockResolvedValue([]);
+    const fake = db({ documents: many });
+
+    await runConnection(
+      await connection({ removals_approved_at: "2026-09-02T11:00:00.000Z" }),
+      deps(fake),
+    );
+
+    // A minute, not six hours: forty at twenty a run would otherwise take two
+    // sync intervals, and four hundred would take five days.
+    const next = fake.callsTo("connections").find((c) => c.op === "update")?.values
+      ?.next_sync_at as string;
+    expect(new Date(next).getTime() - NOW.getTime()).toBeLessThanOrEqual(60_000);
   });
 });

@@ -185,12 +185,19 @@ a copy of the source.
 ## Delivery
 
 A delivery channel is created in Settings, not on the routine, and routines pick
-from the channels you already have. There are two kinds: a Slack incoming
-webhook, which must be on `hooks.slack.com`, and an email address.
+from the channels you already have. There are three kinds: a Slack incoming
+webhook, which must be on `hooks.slack.com`; an email address; and a **webhook**,
+which is a signed POST to any endpoint you run.
 
 Slack delivery posts JSON to the webhook with the routine's name in bold above
 the summary. Email goes through [Resend](https://resend.com), with the routine's
-name as the subject and the summary as plain text.
+name as the subject and the summary as plain text. The webhook kind is
+documented in full below — it is the one a program rather than a person reads.
+
+Every kind has a **Send test** button on its row in Settings. It sends one
+message through the channel immediately and reports what the receiver said,
+including the receiver's own error text when it refuses. "Did I paste that URL
+correctly" had no answer before it except waiting for a routine to run.
 
 A channel belongs to the person who created it rather than to the workspace, and
 a routine may only point at a channel belonging to its own owner. That is
@@ -217,10 +224,101 @@ now** on an email routine in that state answers with a readable error instead of
 running. A scheduled run has nobody to tell, so it fails and records whatever
 Resend said.
 
+### The webhook kind
+
+A webhook channel POSTs one JSON body per delivery to a URL you choose. Nothing
+about it is specific to a vendor: the point is that a routine's output becomes
+an input somewhere else — a deploy, a ticket, a queue, a row in your own
+database — without Covan having to ship a connector per destination.
+
+The URL gets the same guard as every other outbound fetch in this codebase, and
+gets it twice: once when the channel is saved and again immediately before each
+delivery. A hostname that resolved to a public address in March can resolve to
+`169.254.169.254` in September, and the check that catches that is the one at
+delivery time. Private addresses, non-HTTP schemes, and this deployment's own
+hosts are all refused.
+
+**The payload.** `version` is the contract; it is bumped only for a change a
+receiver has to notice.
+
+```json
+{
+  "version": 1,
+  "event": "routine.delivered",
+  "deliveryId": "6f1e…",
+  "sentAt": "2026-09-20T09:00:00.000Z",
+  "routine": { "id": "…", "name": "Weekly digest", "agentId": "…" },
+  "run": { "itemsNew": 3, "itemsOverflow": 0, "triggeredBy": "schedule" },
+  "subject": "Weekly digest",
+  "body": "…the summary the agent wrote…"
+}
+```
+
+`event` is what to switch on, and there are four: `routine.delivered` is a
+result; `routine.paused` and `routine.quota_exhausted` are the engine's own
+notices, which go through the routine's channel the same way they go to a
+person; `routine.test` is the Send test button. A `routine.test` carries no
+`routine` and no `run`, because no routine sent it.
+
+There is no `run.id`, deliberately. The POST happens before the run row is
+written, so at that moment there is no id to send, and inventing one that the
+row later disagrees with would be worse than leaving it out. What a receiver
+needs for deduplication is `deliveryId`, which is unique per POST — including
+per retry of a POST that failed after you had already processed it.
+
+**The headers.**
+
+| Header              | Value                                                  |
+| ------------------- | ------------------------------------------------------ |
+| `X-Covan-Event`     | the same string as `event` in the body                 |
+| `X-Covan-Delivery`  | the same string as `deliveryId` — your idempotency key |
+| `X-Covan-Timestamp` | seconds since the epoch, as a decimal string           |
+| `X-Covan-Signature` | `v1=<hex>`                                             |
+
+**The signature.** HMAC-SHA256 over `v1:<timestamp>:<raw body>`, keyed by the
+signing secret, hex-encoded. This is byte-for-byte Slack's scheme with a
+different version string, which is the point: any snippet that verifies a Slack
+request works here with two names changed. Verify over the **raw** bytes you
+received — re-serialising the parsed JSON produces a different string and a
+signature that will never match. Compare in constant time, and reject a
+timestamp that is too old, or one captured request replays forever.
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(rawBody, headers, signingSecret) {
+  const timestamp = headers["x-covan-timestamp"];
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+
+  const expected = `v1=${createHmac("sha256", signingSecret)
+    .update(`v1:${timestamp}:${rawBody}`, "utf8")
+    .digest("hex")}`;
+  const got = headers["x-covan-signature"] ?? "";
+  return expected.length === got.length && timingSafeEqual(Buffer.from(expected), Buffer.from(got));
+}
+```
+
+**What we do with your answer.** Any 2xx is a delivery. Every 3xx is refused
+rather than followed: a POST is not idempotent, so a redirect either replays a
+signed body at a host the signature does not name or drops the body and sends a
+GET, and neither is a delivery — re-point the channel instead. A 4xx is treated
+as a statement about the channel and counts toward the pause threshold. A 429 or
+a 5xx is treated as a statement about your afternoon and counts toward a much
+higher one; see [When a run fails](#when-a-run-fails). Your response body is read to at most 64 KB
+and the first 200 characters of it are kept on the run, so your error text is
+what somebody sees on the routine's page. You have ten seconds to answer.
+
+**The signing secret** is shown once, when the channel is created. It is stored
+encrypted rather than hashed — signing needs the secret back, not a digest of it
+— but no endpoint reads it out again, so a screenshot of the settings page is
+not a copy of it. Lost it, or want to retire it? **Rotate** mints a new one and
+shows it once; the destination URL is unchanged and the old secret stops working
+immediately, so update your receiver in the same sitting.
+
 ### The secret you hand it
 
-A webhook URL and an email address are both secrets, and both are encrypted with
-AES-GCM before they reach Postgres, as `v1.<iv>.<ciphertext>` — the version
+A webhook URL and an email address are both secrets, and all three kinds are
+encrypted with AES-GCM before they reach Postgres, as `v1.<iv>.<ciphertext>` — the version
 prefix is what makes a later key rotation readable rather than a wave of decrypt
 failures. The key is `ROUTINE_SECRET_KEY`, held as a deployment secret and never
 in the database. Encrypting is also why creating a channel is a server-side
@@ -233,6 +331,272 @@ revoked and every column except the ciphertext handed back. What the interface
 shows is a mask computed once at creation — a webhook reduced to its host and its
 last four characters, an address to a letter or two of its local part and the
 domain.
+
+A `webhook` channel stores two things rather than one, as a single JSON object
+inside that same ciphertext: `{"v":1,"url":…,"signingSecret":…}`. They share the
+column so `secret_ciphertext` stays the one column on the table that carries a
+secret, which is what makes the column grant the whole answer to what a client
+may read. The signing secret is minted per channel rather than derived from
+`ROUTINE_SECRET_KEY`: that key also opens every other channel and every OAuth
+token behind a connection, so a receiver's leaked copy of a derived secret would
+force all of them to be rotated at once. One channel's secret rotates alone.
+
+## Being poked instead
+
+A routine normally runs on its cron. One with **no source of its own** can also
+be given a URL that starts it:
+
+```
+POST https://api.example.com/routine-hooks/covan_whk_<token>
+```
+
+Paste it into GitHub's webhook box, a Stripe endpoint, a Zapier step, a CI job,
+or a `curl` in somebody's deploy script. Whatever is POSTed becomes the material
+the agent reads, in place of a feed or a page. The URL shape is the feature —
+it has to be one string, because most of the things that will be calling it
+cannot be taught to set a header. For the ones that can,
+`X-Covan-Ingest-Token` is accepted and wins over the path, so the credential
+need not end up in an access log.
+
+**Only a routine with no source.** "The routine watches an RSS feed and
+somebody poked it — does it re-fetch?" has no good answer: if it does, a busy
+sender charges the owner for a feed read per request and moves a cursor on a
+schedule nobody chose; if it does not, the same routine behaves differently
+depending on what started it. So the pairing is refused by a check constraint
+at creation rather than resolved at 3am. A routine's source can never change
+after it is made (`0027`), so this is settled once, when you create it — an
+existing feed-watching routine cannot acquire a webhook, and the honest answer
+is to make a new one.
+
+A routine can run on **both**: a digest every morning that can also be poked
+after a deploy.
+
+### The token
+
+32 random bytes, `covan_whk_` prefixed, shown exactly once when you make it.
+The database keeps a SHA-256, so nobody — including the operator — can show it
+again; if it is lost, replace it, which invalidates the old one immediately.
+
+The prefix is deliberately not `covan_sk_`: an API key is a way to *become* a
+person, and this is permission to fire one row. The two should not be
+confusable by a secret scanner, by `authMiddleware`, or by whoever finds one.
+
+Its hash lives in a table of its own rather than as a column on `routines`,
+and that is security rather than filing. `routines` grants `authenticated` a
+table-level select **and** update with no column list, and a shared routine is
+visible to the whole workspace — so a hash stored there would be readable by
+every colleague, and writable by anyone who owns any routine. The second is the
+serious one: writing your own routine's hash to equal a colleague's would
+redirect their sender's payload to a routine with your instruction and your
+delivery channel. `routine_triggers.token_hash` is granted to no client role at
+all, the table is unique on it, and `tests/rls/routine-triggers.test.ts` holds
+both.
+
+**Who can see it:** the routine's owner, and nobody else — narrower than the
+routine's own visibility on purpose. Sharing a routine shares what it does and
+what it sent, not the ability to fire it.
+
+### What you get back
+
+| Status | Means |
+| --- | --- |
+| `202` | Accepted. The run happens after the response; the body carries the `eventId` it was filed under. |
+| `401` | The token is missing, malformed, unknown, or belongs to a routine that has been deleted — one answer for all of them, so the endpoint cannot be used to discover which tokens exist. |
+| `409` | The token is good, but the routine is paused or no longer accepts webhook triggers. You are told which, because you hold the token and can act on it. |
+| `413` | The body is over 64 KB. The stream is cancelled rather than read and measured. |
+| `429` | Too many pokes for this routine this minute. `Retry-After` says how long. |
+
+`202` rather than waiting: a run reads documents, calls a model and delivers,
+which takes tens of seconds, and every webhook sender worth using times out
+long before that and retries — which is how one poke becomes four.
+
+The limit is counted **per routine**, not per address. An address is the wrong
+key in both directions: one sender behind one address is what a webhook is, and
+several routines sharing that address would be counted as one caller, while
+many senders behind one NAT would be too. The routine is the thing being
+protected, because it is the row that spends its owner's allowance.
+
+### Sending the same thing twice
+
+Give us your own id for the event and a repeat costs nothing. Read from
+`X-Covan-Event-Id`, then `Idempotency-Key`, then `X-GitHub-Delivery`, in that
+order. The id becomes the run's delivery claim, so a second delivery of one
+event collides on the same unique constraint that stops a retried scheduled run
+from double-sending — and because the claim is taken before the model is
+called, the repeat costs no tokens.
+
+A repeat is recorded as a **skipped run you can see** on the routine's page,
+not a silent 200. A webhook that quietly did nothing is indistinguishable from
+one that is broken.
+
+With no id from the sender, there is nothing to deduplicate on and nothing
+pretends otherwise: the run happens. Hashing the body instead would be worse
+than useless — two genuine "the deploy finished" events are byte-identical and
+would silently become one.
+
+### What happens to the payload
+
+It is given to the agent and **stored nowhere**. `0013`'s rule — a watched
+source is never mirrored into this database — holds for a payload that arrived
+by POST as much as for one that was fetched, and a test holds it. What is kept
+is the summary the agent wrote, on the run, exactly as for every other kind.
+The only thing an incoming request writes is a clock reading: `last_used_at`,
+so the interface can answer "is this actually wired up".
+
+### What it cannot do, and what it can
+
+The run happens as the routine's owner — not by impersonation but by
+construction. The engine never resolves a caller: every id it uses comes off
+the routine row, and it re-checks the owner's workspace membership before doing
+anything. The owner's allowance is charged exactly as for a scheduled run.
+
+No session is minted for the owner, deliberately. It would not work — the four
+tables the engine writes have no policy for `authenticated` at all — and it
+would turn a leaked button into a leaked identity.
+
+**Prompt injection is not solved here, and this document will not pretend it
+is.** The payload is text chosen by whoever holds the token, and it goes into
+the user message with the instruction rather than into a system one, which
+helps and does not fix. A payload that talks the model into ignoring its
+instruction will succeed. What makes that survivable is the blast radius rather
+than the prompt: the agent has no tools, reads nothing it was not already
+given, and can deliver only to a channel belonging to the routine's own owner.
+The worst outcome is a misleading summary in the owner's own inbox — the same
+thing a hostile RSS feed could already produce. Treat the token as the security
+boundary, because it is the one.
+
+## Keeping what it sends
+
+A routine delivers and then forgets. Turn on **Keep a copy** on the routine's
+page and it also files each delivered summary into a knowledge bundle, as an
+ordinary document — chunked, embedded, retrievable in chat, exportable,
+deletable, exactly like something somebody uploaded.
+
+This is the difference between a routine that mails you and a routine that
+accumulates. Fifty-two weekly competitor digests in a bundle are a year of
+history the agent can be asked a question of, and "what did they ship in Q2?" is
+a question no Slack channel answers.
+
+It is off by default, and that is about intent rather than cost — see the end of
+this section for what it costs, which is single figures.
+
+### One document per run
+
+Each delivering run writes one document, named after the routine and the day:
+
+```
+Competitor digest — 2026-09-20.md
+```
+
+Inside, the text opens with that same line as a heading and then carries exactly
+what was delivered — including the sentence about entries the per-run cap
+dropped, if there was one. A digest that was missing thirty entries is still
+missing them a year later, and a tidier filed copy would be the more
+complete-looking of the two.
+
+Two alternatives were considered and dropped. Appending to one growing document
+re-cuts every chunk boundary on each append, so the whole history is re-embedded
+every time and the cost grows with the square of the number of runs. Replacing
+the document each run — the way a connected source does — is wrong for a
+different reason: a connection _reconciles_, answering "what is there now",
+while a routine has a cursor and answers "what changed since". Week 12's summary
+is not made wrong by week 13. It is history, which is the whole point.
+
+Two runs on one day produce two documents with the same name. That is what
+happened, and the timestamps tell them apart.
+
+### How many it keeps
+
+**Keep the last** bounds it: 52 by default, which is about a year on the
+dominant schedule. When a run files the 53rd, the oldest is removed — and
+"removed" means what it means everywhere else in Covan, so it is recoverable
+until the purge window passes. It does not appear in **Recently deleted**,
+because nobody deleted it; it aged out.
+
+### Who may file
+
+Filing is a **write** into the workspace's knowledge, so it needs
+`can_write_in_workspace` — the same permission as uploading a file. Delivering
+is only reading.
+
+The two come apart when somebody is demoted. A viewer's routine keeps
+delivering, because their mail is theirs, and stops filing, because the bundle
+is the workspace's. The engine re-reads the owner's role on every run rather
+than trusting what was true when the routine was set up, and the run history
+says so when it happens.
+
+This one check is genuinely load-bearing. The engine holds a service-role client
+and row level security does not constrain it, so nothing else in the system
+would notice.
+
+### Where it does not work, and how you find out
+
+The scheduled worker can be deployed without document storage — on Cloudflare
+that is the normal case, because an R2 bucket cannot be shared across accounts
+and `wrangler.cron.toml.example` says so. Such a worker can deliver routines and
+cannot write documents.
+
+When that happens, **the run still succeeds**. It delivers, it is recorded as
+`Sent`, and a line under it reads:
+
+```
+not filed: this deployment's scheduled worker has no document storage bound
+```
+
+The alternative was worse in a way worth naming. An unguarded write would throw,
+the run would be recorded as a failure, the schedule would back off
+geometrically, and after five of them a routine that was delivering perfectly
+would be **paused** — for the sake of an optional extra. Every way filing can
+fail is therefore a sentence in the run history rather than a failure: a missing
+bundle, a demoted owner, an embedding provider having a bad afternoon. The
+sentence is only ever there when something went wrong, so seeing one means
+something.
+
+### The loop
+
+A filed document is a real document, so it can be read back. There are two ways
+that matters and they are closed differently.
+
+**A routine watching a connection never sees what a routine wrote.** The
+connection source filters on provenance, so filed documents are invisible to it
+whatever bundle they are in. Without that, two routines pointed at one bundle
+would manufacture each other's input forever, paying for a model call each time.
+This is a structural rule rather than a coincidence: before the provenance
+column existed it was held shut only by the fact that a filed document happens
+to have no connection.
+
+**A routine can read its own earlier output**, when its agent has the output
+bundle attached. That is often exactly what you want — a digest that knows what
+it said last week — so it is not prevented, and the card says plainly when the
+arrangement is in place. It does not compound: each run still summarises fresh
+material. Excluding one routine's own output while leaving chat and every other
+routine able to read it is a narrower change than it sounds and is not in this
+release.
+
+### What it costs
+
+The embeddings are charged with the run that bought them, in the same number on
+the same row — there is no second meter. A 3,000-character summary is about two
+chunks, roughly 800 embedding tokens, which the usage counter weights down to
+single figures against one chat turn.
+
+### What it looks like afterwards
+
+In the agent's **Knowledge** tab, a filed document sits in the list like any
+other, with one extra phrase on the line under its name:
+
+```
+14 KB · Written by Competitor digest
+```
+
+No chip, no colour, no new column. Where a document came from is derived from
+what it points at, and a document nobody has to explain — one somebody uploaded
+— says nothing at all. If a colleague's routine filed it and that routine is
+private, the line reads `Written by a routine`: the document is yours to read
+and the routine is not yours to see.
+
+One honest gap: a document written by **Save as document** from a chat session
+still looks exactly like an upload, because nothing records that either.
 
 ## Scheduling
 
@@ -314,9 +678,10 @@ actually notice.
 
 Every run writes a row either way, and the routine's page shows the last fifty:
 what it sent, or why it did not. A failed row is red and carries the error text
-as it was recorded. The response body of a failing delivery is truncated to 200
-characters first, so an upstream answering with an HTML error page cannot write
-a megabyte into the database.
+as it was recorded. A failing delivery's response body is read to at most 64 KB
+and then truncated to 200 characters, so a receiver answering with an HTML error
+page — or with an endless stream — cannot write a megabyte into the database or
+spend the engine's memory getting there.
 
 What happens around that row, in order:
 
@@ -331,13 +696,21 @@ What happens around that row, in order:
    run happens sooner than that — **Run now** and resuming both ignore it.
 3. **Consecutive failures eventually pause it.** The counter is compared against
    one of two limits, and which one is decided by the failure that just
-   happened: five, or twenty if that last failure was the source's fault rather
-   than the routine's — a `429` or a `5xx`. The limits differ because backoff
-   means twenty transient failures represent days of an unreachable source,
-   while three rate-limited ticks in an afternoon represent nothing. Because
-   only the latest failure picks the limit, a routine four hard failures deep
-   that then gets rate-limited is judged against twenty rather than five, and
-   survives that tick.
+   happened: five, or twenty if that last failure was somebody else's fault
+   rather than the routine's — a `429` or a `5xx`, whether it came from the
+   source being read or from the channel being delivered to. The limits differ
+   because backoff means twenty transient failures represent days of something
+   being unreachable, while three rate-limited ticks in an afternoon represent
+   nothing. Because only the latest failure picks the limit, a routine four hard
+   failures deep that then gets rate-limited is judged against twenty rather
+   than five, and survives that tick.
+
+   Delivery was not always counted this way: until the webhook kind was added,
+   every delivery failure counted the same and five of them paused the routine,
+   so a Slack outage could take a working routine offline until somebody noticed
+   and resumed it by hand. A wrong URL or a revoked secret still pauses at five,
+   which is the case where retrying changes nothing.
+
 4. **A pause is announced**, through the channel the routine already delivers to,
    unless the owner has turned that notice off in Settings. It is best-effort:
    the pause is already recorded and visible, and a dead delivery channel is

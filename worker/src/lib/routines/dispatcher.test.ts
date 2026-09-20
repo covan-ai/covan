@@ -133,3 +133,36 @@ describe("runOneRoutine", () => {
     expect(deps.deliveryDeps.secretKey).toBe(env.ROUTINE_SECRET_KEY);
   });
 });
+
+/**
+ * The guard that keeps an optional extra from pausing a working routine.
+ *
+ * Asserted here rather than in the executor because this is where the decision
+ * is made: the dispatcher hands the executor a filing function or it does not,
+ * and a deployment with no document store gets the second. The executor then
+ * has nothing that could throw, which is the whole point — see
+ * `canFileDocuments`.
+ */
+describe("filing is wired only where it can work", () => {
+  async function depsFor(envOver: Record<string, unknown>) {
+    const rpc = vi.fn().mockResolvedValue({ data: [dueRow("r1")], error: null });
+    const runRoutine = vi.fn().mockResolvedValue({ status: "ok", itemsNew: 0 });
+    await runDueRoutines({ ...env, ...envOver } as any, { db: { rpc } as any, runRoutine });
+    return runRoutine.mock.calls[0][1];
+  }
+
+  it("hands over no filing function when nothing is bound", async () => {
+    // The ordinary state of the cron Worker on Cloudflare: an R2 bucket cannot
+    // be shared across accounts, and `wrangler.cron.toml.example` says so.
+    expect((await depsFor({})).file).toBeUndefined();
+  });
+
+  it("hands one over on the Node runtime, which has a filesystem root", async () => {
+    expect(typeof (await depsFor({ DOCS_DIR: "/tmp/docs" })).file).toBe("function");
+  });
+
+  it("hands one over on Cloudflare once the bucket is bound", async () => {
+    const DOCS = { put: vi.fn(), get: vi.fn(), delete: vi.fn() };
+    expect(typeof (await depsFor({ DOCS })).file).toBe("function");
+  });
+});

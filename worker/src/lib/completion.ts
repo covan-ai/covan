@@ -27,7 +27,49 @@ import {
  * ask it.
  */
 
-export type CompletionMessage = { role: "system" | "user" | "assistant"; content: string };
+/**
+ * One call the model asked for, in the shape both providers can be given back.
+ *
+ * `arguments` is the raw JSON string rather than a parsed object, and stays
+ * that way until a tool is about to run. Both providers stream it a fragment
+ * at a time and neither promises it parses — a turn that ran out of output
+ * tokens mid-argument produces a truncated string, and the honest thing to do
+ * with that is fail the one tool call rather than fail the turn while parsing
+ * a list of them.
+ */
+export type ToolCall = { id: string; name: string; arguments: string };
+
+/**
+ * A tool as the model is told about it: provider-independent, because the two
+ * providers disagree about where the schema goes (`input_schema` on one,
+ * `function.parameters` on the other) and about nothing else that matters.
+ *
+ * `input` is a JSON Schema object. Typed loosely on purpose — the schemas are
+ * written by hand in `lib/harness/tools/`, checked by the provider, and a
+ * structural type for JSON Schema in TypeScript is a large amount of type to
+ * describe something neither SDK validates locally either.
+ */
+export type ToolSpec = {
+  name: string;
+  description: string;
+  input: Record<string, unknown>;
+};
+
+/**
+ * A turn in the conversation, which stopped being one shape the moment the
+ * model could ask for something.
+ *
+ * A discriminated union rather than a widened record, and every existing
+ * caller is untouched by it: `{role:"assistant", content}` is still exactly a
+ * `CompletionMessage`, and the eight call sites that build one keep compiling.
+ * What the union buys is that the two new shapes cannot be written wrong —
+ * a `tool` turn without the id of the call it answers is a type error here
+ * rather than a 400 from the provider.
+ */
+export type CompletionMessage =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
+  | { role: "tool"; content: string; toolCallId: string };
 
 export type CompletionUsage = {
   promptTokens: number | null;
@@ -110,6 +152,21 @@ export type CompletionRequest = {
    * than the default behavior, and an agent opts into it explicitly (0051).
    */
   webSearch?: boolean;
+  /**
+   * The tools this turn may ask for, translated per provider by the adaptors
+   * below.
+   *
+   * Absent — which is every caller but `lib/harness/loop.ts` — sends no tools
+   * field at all, so a request that did not opt in is byte-identical to the
+   * one this file built before tools existed. That matters more than it
+   * sounds: the cacheable prefix in `routes/chat.ts` is only worth anything
+   * while the bytes in front of the question do not move.
+   *
+   * Sending these to a model that cannot take them is the caller's mistake to
+   * avoid, not this file's to paper over — `supportsTools` in `lib/models.ts`
+   * is the question, and the loop asks it before it gets here.
+   */
+  tools?: ToolSpec[];
 };
 
 /**
@@ -203,7 +260,79 @@ export function extractJsonObject(text: string): string {
   return trimmed.slice(start, end + 1);
 }
 
+/**
+ * A tool call's arguments as an object, for the provider that wants one.
+ *
+ * Never throws. A model that ran out of output tokens halfway through writing
+ * its arguments produces a string that does not parse, and the two things that
+ * could be done about it are fail the whole turn or send an empty object. The
+ * empty object is better: the tool sees a missing required argument, says so
+ * in words the model can read, and the turn carries on. Failing the request
+ * would lose the other calls in the same turn, which are usually fine.
+ */
+function parseToolArguments(raw: string): Record<string, unknown> {
+  if (!raw || !raw.trim()) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 // ---- OpenAI ----------------------------------------------------------------
+
+/**
+ * The same flat list, in the shape Chat Completions wants.
+ *
+ * Until tools existed this was a cast: the two shapes were identical and the
+ * cast said so. They stopped being identical in two places, both of which the
+ * cast would have carried through to a 400 —
+ *
+ * - **A tool result is `{role:"tool", tool_call_id}`**, not a field named
+ *   `toolCallId` beside the content.
+ * - **An assistant turn that only asked for tools has no text**, and OpenAI
+ *   wants `content: null` there rather than an empty string.
+ *
+ * Exported for the test that pins both, which is the only reason it is not a
+ * file-local helper.
+ */
+export function toOpenAIMessages(
+  messages: CompletionMessage[],
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  return messages.map((message) => {
+    if (message.role === "tool") {
+      return { role: "tool", tool_call_id: message.toolCallId, content: message.content };
+    }
+    if (message.role === "assistant") {
+      const calls = message.toolCalls ?? [];
+      return {
+        role: "assistant",
+        content: message.content || null,
+        ...(calls.length > 0
+          ? {
+              tool_calls: calls.map((call) => ({
+                id: call.id,
+                type: "function" as const,
+                function: { name: call.name, arguments: call.arguments },
+              })),
+            }
+          : {}),
+      };
+    }
+    return { role: message.role, content: message.content };
+  });
+}
+
+/** Covan's provider-independent tool description, as OpenAI's function shape. */
+function toOpenAITools(tools: ToolSpec[]): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  return tools.map((tool) => ({
+    type: "function" as const,
+    function: { name: tool.name, description: tool.description, parameters: tool.input },
+  }));
+}
 
 function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompletionCreateParams {
   const reasons = reasonsBeforeAnswering(req.model);
@@ -216,8 +345,16 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
 
   const base: OpenAI.Chat.Completions.ChatCompletionCreateParams = {
     model: req.model,
-    messages: req.messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    messages: toOpenAIMessages(req.messages),
     ...(cap !== undefined ? { max_completion_tokens: cap } : {}),
+    // `tool_choice: "auto"` is the endpoint's own default and is sent anyway,
+    // because "auto" is not what every OpenAI-compatible server in front of
+    // this variable defaults to — several require the field before they will
+    // consider the tools at all. Omitted entirely when there are no tools, so
+    // a request that did not opt in is unchanged.
+    ...(req.tools && req.tools.length > 0
+      ? { tools: toOpenAITools(req.tools), tool_choice: "auto" as const }
+      : {}),
     // Only where it means something. A model that answers without a separate
     // thinking step has no such parameter, and sending one is a 400.
     ...(reasons && req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
@@ -276,11 +413,52 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
   // block. Null until one is seen, and resolved below for the callers that send
   // no block at all.
   let stableThrough: number | null = null;
+  /**
+   * The `tool_use` ids actually sent, so a `tool_result` that answers a call
+   * this function dropped is dropped with it.
+   *
+   * It can happen in one way and it is a 400 when it does: history trimming
+   * leaves an assistant turn first, the rule below drops it, and the results
+   * of the calls it made are still in the list behind it. Anthropic refuses a
+   * `tool_result` whose `tool_use_id` is not in the conversation, which would
+   * turn a trimmed history into a failed reply.
+   */
+  const liveCallIds = new Set<string>();
+  /** The index in `out` of the user turn currently collecting tool results. */
+  let openResultTurn: number | null = null;
 
   for (const message of messages) {
-    const content = message.content?.trim();
-    if (!content) continue;
+    const content = message.content?.trim() ?? "";
+
+    if (message.role === "tool") {
+      if (!liveCallIds.has(message.toolCallId)) continue;
+      const block: Anthropic.ToolResultBlockParam = {
+        type: "tool_result",
+        tool_use_id: message.toolCallId,
+        // Empty is a real answer — a tool that found nothing said so — and the
+        // block still has to be there, because the call it answers is. A word
+        // rather than an empty string: Anthropic rejects an empty content
+        // array and an empty string reads, to the model, like a tool that
+        // broke rather than one that found nothing.
+        content: content || "(no output)",
+      };
+      // Consecutive results belong in one user turn. Several turns in a row
+      // would be several user messages, which is the shape the API merges
+      // anyway — doing it here means the count in `cacheIndex` matches what is
+      // actually sent.
+      if (openResultTurn !== null) {
+        const turn = out[openResultTurn];
+        (turn.content as Anthropic.ContentBlockParam[]).push(block);
+      } else {
+        openResultTurn = out.length;
+        out.push({ role: "user", content: [block] });
+      }
+      continue;
+    }
+    openResultTurn = null;
+
     if (message.role === "system") {
+      if (!content) continue;
       if (out.length === 0) systemParts.push(content);
       else {
         if (stableThrough === null) stableThrough = out.length - 1;
@@ -288,10 +466,43 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
       }
       continue;
     }
-    // Nothing to answer yet, so an assistant turn here is history that lost its
-    // question. Sending it is a 400; keeping it is a reply to nobody.
-    if (message.role === "assistant" && out.length === 0) continue;
-    out.push({ role: message.role, content });
+
+    if (message.role === "assistant") {
+      const calls = message.toolCalls ?? [];
+      // An assistant turn that asked for a tool and said nothing is not empty
+      // — the request *is* the turn — so the blank check only applies when
+      // there are no calls either.
+      if (!content && calls.length === 0) continue;
+      // Nothing to answer yet, so an assistant turn here is history that lost
+      // its question. Sending it is a 400; keeping it is a reply to nobody.
+      if (out.length === 0) continue;
+      if (calls.length === 0) {
+        out.push({ role: "assistant", content });
+        continue;
+      }
+      const blocks: Anthropic.ContentBlockParam[] = content
+        ? [{ type: "text", text: content }]
+        : [];
+      for (const call of calls) {
+        liveCallIds.add(call.id);
+        blocks.push({
+          type: "tool_use",
+          id: call.id,
+          name: call.name,
+          // Parsed here and nowhere else on this path. Anthropic wants an
+          // object where OpenAI wants the string, and a string that does not
+          // parse is a turn the model truncated — sent as an empty object, so
+          // the tool reports a missing argument rather than the request
+          // failing whole.
+          input: parseToolArguments(call.arguments),
+        });
+      }
+      out.push({ role: "assistant", content: blocks });
+      continue;
+    }
+
+    if (!content) continue;
+    out.push({ role: "user", content });
   }
 
   // No retrieved block on this turn, so the volatile tail is the question alone
@@ -463,6 +674,17 @@ function anthropicParams(
     }
   }
 
+  // The app's own tools, alongside whatever server-side tool was asked for
+  // above. Anthropic's custom-tool shape is the schema under `input_schema`
+  // and nothing else, which is why `ToolSpec` needed no provider field.
+  for (const tool of req.tools ?? []) {
+    tools.push({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.input as Anthropic.Tool.InputSchema,
+    });
+  }
+
   return {
     model: req.model,
     messages:
@@ -515,12 +737,21 @@ function anthropicUsage(usage: Anthropic.Usage | null | undefined): CompletionUs
 
 // ---- the seam --------------------------------------------------------------
 
-/** One completion, waited for in full. */
+/**
+ * One completion, waited for in full.
+ *
+ * `toolCalls` is absent on every turn that asked for no tools, which is every
+ * caller of this function today — the harness streams. It is returned rather
+ * than dropped because dropping it is what this code did before, and silently:
+ * a `tool_use` block reaching the `block.type === "text" ? ... : ""` below
+ * became an empty string, so a model that asked for something looked like a
+ * model that answered with nothing.
+ */
 export async function complete(
   env: CompletionEnv,
   req: CompletionRequest,
   opts: { signal?: AbortSignal } = {},
-): Promise<{ text: string; usage: CompletionUsage }> {
+): Promise<{ text: string; usage: CompletionUsage; toolCalls?: ToolCall[] }> {
   if (providerFor(req.model) === "anthropic") {
     const client = createAnthropic(env);
     const message = await client.messages.create(
@@ -531,9 +762,17 @@ export async function complete(
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("")
       .trim();
+    const toolCalls = message.content
+      .filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use")
+      .map((block) => ({
+        id: block.id,
+        name: block.name,
+        arguments: JSON.stringify(block.input ?? {}),
+      }));
     return {
       text: req.json ? extractJsonObject(text) : text,
       usage: anthropicUsage(message.usage),
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
 
@@ -542,7 +781,18 @@ export async function complete(
     { ...openaiParams(req), stream: false },
     { signal: opts.signal },
   );
-  const text = completion.choices[0]?.message?.content ?? "";
+  const choice = completion.choices[0]?.message;
+  const text = choice?.content ?? "";
+  const toolCalls = (choice?.tool_calls ?? [])
+    .filter(
+      (call): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall =>
+        "function" in call,
+    )
+    .map((call) => ({
+      id: call.id,
+      name: call.function.name,
+      arguments: call.function.arguments,
+    }));
   return {
     text: req.json ? extractJsonObject(text) : text,
     usage: {
@@ -550,6 +800,7 @@ export async function complete(
       completionTokens: completion.usage?.completion_tokens ?? null,
       cachedTokens: completion.usage?.prompt_tokens_details?.cached_tokens ?? null,
     },
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
   };
 }
 
@@ -564,6 +815,18 @@ export type CompletionEvent =
    * apart writes the reasoning into the transcript.
    */
   | { type: "thinking"; text: string }
+  /**
+   * The model asked for one or more tools, and there is nothing more of this
+   * turn to stream.
+   *
+   * **A tool call is not streamed.** Both providers send the arguments a
+   * fragment at a time and neither fragment means anything on its own — half
+   * a JSON object cannot be run, shown, or confirmed — so the accumulation
+   * protocol is confined to this file and consumers get one event with whole
+   * calls in it. It arrives after the last `delta` (a model may write a
+   * sentence before it asks) and immediately before `end`.
+   */
+  | { type: "tools"; calls: ToolCall[] }
   /**
    * The last event of every stream: what the turn cost, and why it stopped.
    *
@@ -598,9 +861,29 @@ export async function* streamCompletion(
 
     let usage = EMPTY_USAGE;
     let finishReason: string | null = null;
+    /**
+     * Tool calls under construction, by the index of the content block each
+     * one is arriving in.
+     *
+     * Anthropic names the tool once, in `content_block_start`, and then sends
+     * its arguments as `input_json_delta` fragments carrying nothing but the
+     * block index. So the index is the only thing joining a fragment to the
+     * call it belongs to, and the map is keyed by it rather than by the call
+     * id the fragments do not repeat.
+     */
+    const building = new Map<number, ToolCall>();
     for await (const event of stream) {
       if (event.type === "message_start") {
         usage = anthropicUsage(event.message.usage);
+      } else if (event.type === "content_block_start" && event.content_block.type === "tool_use") {
+        building.set(event.index, {
+          id: event.content_block.id,
+          name: event.content_block.name,
+          arguments: "",
+        });
+      } else if (event.type === "content_block_delta" && event.delta.type === "input_json_delta") {
+        const call = building.get(event.index);
+        if (call) call.arguments += event.delta.partial_json;
       } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
         if (event.delta.text) yield { type: "delta", text: event.delta.text };
       } else if (event.type === "content_block_delta" && event.delta.type === "thinking_delta") {
@@ -618,8 +901,25 @@ export async function* streamCompletion(
         // that omits it must still yield its usage rather than throw away a
         // finished reply on the last event.
         const stop = event.delta?.stop_reason;
-        if (stop) finishReason = stop === "max_tokens" ? "length" : stop;
+        // `tool_use` is Anthropic's spelling of OpenAI's `tool_calls`,
+        // normalised for the same reason `max_tokens` is: a consumer asking
+        // "did this turn ask for something?" writes one check, not one per
+        // provider.
+        if (stop) {
+          finishReason =
+            stop === "max_tokens" ? "length" : stop === "tool_use" ? "tool_calls" : stop;
+        }
       }
+    }
+    if (building.size > 0) {
+      // Block order, which is the order the model wrote them in. `Map`
+      // preserves insertion order and the blocks arrive in index order, so
+      // this is already right — sorted anyway, because relying on that is
+      // relying on a property of the wire nobody promised.
+      yield {
+        type: "tools",
+        calls: [...building.entries()].sort((a, b) => a[0] - b[0]).map(([, call]) => call),
+      };
     }
     yield { type: "end", usage, finishReason };
     return;
@@ -639,10 +939,28 @@ export async function* streamCompletion(
 
   let usage = EMPTY_USAGE;
   let finishReason: string | null = null;
+  /**
+   * The same accumulation, by OpenAI's rules rather than Anthropic's.
+   *
+   * The joining key here is `index` on the delta, and the id and name arrive
+   * only on the first fragment of each call — every fragment after it carries
+   * `function.arguments` alone. So both are written once and the arguments
+   * are appended, which is the opposite of the obvious reading of the shape:
+   * each delta *looks* like a whole tool call with most of its fields empty.
+   */
+  const building = new Map<number, ToolCall>();
   for await (const chunk of completion) {
     const choice = chunk.choices[0];
     const delta = choice?.delta?.content;
     if (delta) yield { type: "delta", text: delta };
+    for (const part of choice?.delta?.tool_calls ?? []) {
+      const existing = building.get(part.index);
+      const call = existing ?? { id: "", name: "", arguments: "" };
+      if (!existing) building.set(part.index, call);
+      if (part.id) call.id = part.id;
+      if (part.function?.name) call.name = part.function.name;
+      if (part.function?.arguments) call.arguments += part.function.arguments;
+    }
     if (choice?.finish_reason) finishReason = choice.finish_reason;
     if (chunk.usage) {
       usage = {
@@ -651,6 +969,17 @@ export async function* streamCompletion(
         cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? null,
       };
     }
+  }
+  if (building.size > 0) {
+    // Dropping a call with no id is not tidiness. An id is what the result is
+    // sent back under, so a call without one cannot be answered — and an
+    // unanswered `tool_calls` turn is a 400 on the next request, which would
+    // end the conversation rather than one tool call.
+    const calls = [...building.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, call]) => call)
+      .filter((call) => call.id && call.name);
+    if (calls.length > 0) yield { type: "tools", calls };
   }
   yield { type: "end", usage, finishReason };
 }

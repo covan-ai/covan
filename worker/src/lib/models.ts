@@ -105,6 +105,21 @@ export type ModelSpec = {
    * Absent means "only when asked", which is the normal case.
    */
   thinksByDefault?: boolean;
+  /**
+   * Whether the model can be given tools and asked to call them.
+   *
+   * True for every id on this list, which makes it look like a field with one
+   * value — and it is not, because the interesting answer is the one for an id
+   * that is *not* on it. Under `OPENAI_BASE_URL` every id is unknown, and an
+   * Ollama or vLLM build serving a model without function calling either
+   * ignores the `tools` field or 400s on it. Neither is a failure anybody can
+   * read: the first is an agent that quietly never uses a tool, the second is
+   * a chat that stopped working the day tools shipped.
+   *
+   * So the harness asks `supportsTools` first and, when the answer is no, runs
+   * the turn with no tools and says so — see `lib/harness/loop.ts`.
+   */
+  tools: boolean;
 };
 
 /**
@@ -113,13 +128,13 @@ export type ModelSpec = {
  * model that reaches `lib/completion.ts` with no provider.
  */
 const SPECS: Record<ModelId, ModelSpec> = {
-  "gpt-4o": { provider: "openai", temperature: true, reasoning: false },
-  "gpt-4o-mini": { provider: "openai", temperature: true, reasoning: false },
-  "gpt-4.1": { provider: "openai", temperature: true, reasoning: false },
-  "gpt-4.1-mini": { provider: "openai", temperature: true, reasoning: false },
-  "gpt-5": { provider: "openai", temperature: false, reasoning: true },
-  "gpt-5-mini": { provider: "openai", temperature: false, reasoning: true },
-  "gpt-5-nano": { provider: "openai", temperature: false, reasoning: true },
+  "gpt-4o": { provider: "openai", temperature: true, reasoning: false, tools: true },
+  "gpt-4o-mini": { provider: "openai", temperature: true, reasoning: false, tools: true },
+  "gpt-4.1": { provider: "openai", temperature: true, reasoning: false, tools: true },
+  "gpt-4.1-mini": { provider: "openai", temperature: true, reasoning: false, tools: true },
+  "gpt-5": { provider: "openai", temperature: false, reasoning: true, tools: true },
+  "gpt-5-mini": { provider: "openai", temperature: false, reasoning: true, tools: true },
+  "gpt-5-nano": { provider: "openai", temperature: false, reasoning: true, tools: true },
   // `temperature: false` on the three newest Claude models is not a style
   // choice mirroring the GPT-5 rows above it — the parameter was removed from
   // those endpoints and sending one is a 400, exactly as it is on GPT-5. The
@@ -132,13 +147,14 @@ const SPECS: Record<ModelId, ModelSpec> = {
     provider: "anthropic",
     temperature: false,
     reasoning: true,
+    tools: true,
     thinksByDefault: true,
   },
-  "claude-sonnet-5": { provider: "anthropic", temperature: false, reasoning: true },
-  "claude-opus-4-8": { provider: "anthropic", temperature: false, reasoning: true },
-  "claude-sonnet-4-6": { provider: "anthropic", temperature: true, reasoning: true },
-  "claude-sonnet-4-5": { provider: "anthropic", temperature: true, reasoning: false },
-  "claude-haiku-4-5": { provider: "anthropic", temperature: true, reasoning: false },
+  "claude-sonnet-5": { provider: "anthropic", temperature: false, reasoning: true, tools: true },
+  "claude-opus-4-8": { provider: "anthropic", temperature: false, reasoning: true, tools: true },
+  "claude-sonnet-4-6": { provider: "anthropic", temperature: true, reasoning: true, tools: true },
+  "claude-sonnet-4-5": { provider: "anthropic", temperature: true, reasoning: false, tools: true },
+  "claude-haiku-4-5": { provider: "anthropic", temperature: true, reasoning: false, tools: true },
 };
 
 /**
@@ -219,6 +235,18 @@ export function reasonsBeforeAnswering(model: string | null | undefined): boolea
  */
 export function thinksByDefault(model: string | null | undefined): boolean {
   return modelSpec(model)?.thinksByDefault ?? false;
+}
+
+/**
+ * Whether `model` can be handed tools.
+ *
+ * Unknown ids: no, on the same principle as `reasonsBeforeAnswering` above —
+ * the safe answer rather than the optimistic one. An operator pointing
+ * `OPENAI_BASE_URL` at their own server gets an agent that answers without
+ * tools and says why, instead of one that 400s on every turn.
+ */
+export function supportsTools(model: string | null | undefined): boolean {
+  return modelSpec(model)?.tools ?? false;
 }
 
 /**

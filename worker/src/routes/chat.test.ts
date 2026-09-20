@@ -19,7 +19,7 @@ import { chat } from "./chat";
  */
 
 const USER = { id: "user-1", email: "a@example.com" };
-const SESSION = { id: "sess-1", agent_id: "agent-1", kind: "chat" };
+const SESSION = { id: "sess-1", agent_id: "agent-1", kind: "chat", workspace_id: "ws-1" };
 const AGENT = { id: "agent-1", persona: "You are our PM.", model: null, mode: "normal" };
 
 const embedTexts = vi.fn();
@@ -194,6 +194,10 @@ function appWith(spec: {
    * length cap. What "continue" has to work from.
    */
   cutOffReply?: string;
+  /** Rows standing in for `tool_connections` in this workspace. */
+  connections?: Array<Record<string, unknown>>;
+  /** Rows standing in for this person's `delivery_channels`. */
+  channels?: Array<Record<string, unknown>>;
 }) {
   const documents = spec.documents ?? [];
   const rows = [
@@ -246,6 +250,13 @@ function appWith(spec: {
           error: null,
         }),
       },
+      // What the agent can reach, which the route now reads before it builds
+      // the prompt. Empty in every test here but the ones about tools: a
+      // workspace with no connected service and no delivery channel is
+      // offered neither the tools that would point at one nor the manifest
+      // naming them, which is what keeps these assertions about retrieval.
+      tool_connections: { select: () => ({ data: spec.connections ?? [], error: null }) },
+      delivery_channels: { select: () => ({ data: spec.channels ?? [], error: null }) },
     },
     rpc: {
       match_chunks: (args: Record<string, unknown>) => {

@@ -4,7 +4,11 @@ import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
 import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
-import { streamCompletion, type CompletionMessage } from "../lib/completion";
+import { type CompletionMessage } from "../lib/completion";
+import { runAgentTurn, parseArguments, type AgentStep } from "../lib/harness/loop";
+import { capabilitiesFor } from "../lib/harness/available";
+import { toolByName } from "../lib/harness/registry";
+import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
 import { retrieveForAgent } from "../lib/retrieval";
 import {
   selectHistory,
@@ -183,12 +187,25 @@ chat.post("/chat/stream", async (c) => {
   // Manifest: a stable, cacheable line telling the agent which documents it has,
   // appended to the persona system prefix. This is the "file referencing" that
   // stops the agent from denying it can access uploaded files.
-  const systemPrefix = buildSystemPrefix({
-    persona: agent.persona,
-    mode,
-    docNames,
-    webSearchEnabled: agent.web_search ?? false,
+  // What this agent can reach, and the paragraph that tells it so. Read
+  // before the prefix is built because the manifest rides inside it: it is
+  // stable turn over turn, so it caches with the persona instead of being
+  // bought again on every question — the same reasoning as the document
+  // manifest it sits beside.
+  const { tools, manifest } = await capabilitiesFor({
+    db,
+    env,
+    workspaceId: session.workspace_id as string,
+    userId: c.get("user").id,
   });
+
+  const systemPrefix =
+    buildSystemPrefix({
+      persona: agent.persona,
+      mode,
+      docNames,
+      webSearchEnabled: agent.web_search ?? false,
+    }) + (manifest ? `\n\n${manifest}` : "");
 
   // Budget the history down to the most recent turns that fit, so long chats
   // (and giant pasted messages) don't re-inflate the input on every turn.
@@ -313,6 +330,11 @@ chat.post("/chat/stream", async (c) => {
 
       let persisted = false;
       let spendRecorded = false;
+      // What the turn did, and whether it stopped to ask. Both are filled by
+      // `runAgentTurn` below and read after the reply is persisted, because a
+      // step belongs to a message and the message does not exist until then.
+      let steps: AgentStep[] = [];
+      let paused: Awaited<ReturnType<typeof runAgentTurn>>["paused"] | null = null;
 
       // Collect the title started above and write it, returning what it cost so
       // the caller can charge it with the rest of the turn. Written with the
@@ -450,10 +472,57 @@ chat.post("/chat/stream", async (c) => {
         if (bumpError) console.error("failed to bump chat_sessions.updated_at", bumpError);
         return inserted;
       };
+
+      /**
+       * Park the turn and tell the client what it is waiting for.
+       *
+       * Two events rather than one, and they are different things: `confirm`
+       * is a question with an id somebody can answer, and `paused` is the
+       * fact that the turn stopped — which is also true when the budget ran
+       * out and there is nothing to answer. A client that knows neither
+       * ignores both and sees a reply that stops early, which is the honest
+       * degradation.
+       */
+      const announcePause = async (messageId: string | null) => {
+        if (!paused) return;
+        if (paused.reason === "budget") {
+          send({ type: "paused", reason: "budget" });
+          return;
+        }
+        const id = await savePausedTurn(service, {
+          sessionId,
+          messageId,
+          workspaceId: session.workspace_id as string,
+          agentId: session.agent_id as string,
+          userId: c.get("user").id,
+          model,
+          paused,
+          steps,
+        });
+        if (!id) {
+          send({ type: "error", error: "could not save what the agent asked to do" });
+          return;
+        }
+        send({
+          type: "confirm",
+          id,
+          tool: paused.call?.name ?? "",
+          summary: paused.summary ?? "",
+          proposal: paused.proposal ?? null,
+        });
+        send({ type: "paused", reason: "confirmation" });
+      };
+
       try {
-        const events = streamCompletion(
+        // `runAgentTurn` rather than `streamCompletion` directly, which is the
+        // one structural change on this path: the model may now ask for a
+        // tool, and the loop that runs it and asks again lives in
+        // `lib/harness/loop.ts`. A turn with no tools available, or a model
+        // that asks for none, goes through exactly one pass and behaves as it
+        // always did.
+        const turn = await runAgentTurn({
           env,
-          {
+          request: {
             model,
             messages,
             maxTokens: maxTokensFor(mode),
@@ -465,30 +534,51 @@ chat.post("/chat/stream", async (c) => {
             showThinking: true,
             webSearch: agent.web_search ?? false,
           },
-          { signal },
-        );
+          tools,
+          ctx: {
+            db,
+            env,
+            workspaceId: session.workspace_id as string,
+            agentId: session.agent_id as string,
+            userId: c.get("user").id,
+            sessionId,
+          },
+          signal,
+          onEvent: (event) => {
+            if (event.type === "delta") {
+              full += event.text;
+              send({ type: "delta", text: event.text });
+            } else if (event.type === "thinking") {
+              // Forwarded and not kept. The reasoning is context for the
+              // answer while somebody is watching it appear, not part of the
+              // answer: it is not written to the row, so it is not in the
+              // transcript and not re-sent as history on the next turn.
+              // Adding it to `full` would put an account of the model's
+              // deliberation into the reply itself.
+              send({ type: "thinking", text: event.text });
+            } else {
+              // An event type the client may not know. The dispatch chain in
+              // the chat screen ignores what it cannot name, so an older
+              // build keeps working and simply shows no steps.
+              send({
+                type: "step",
+                index: event.index,
+                tool: event.tool,
+                status: event.status,
+                label: event.label,
+              });
+            }
+          },
+        });
 
-        for await (const event of events) {
-          if (event.type === "delta") {
-            full += event.text;
-            send({ type: "delta", text: event.text });
-          } else if (event.type === "thinking") {
-            // Forwarded and not kept. The reasoning is context for the answer
-            // while somebody is watching it appear, not part of the answer:
-            // it is not written to the row, so it is not in the transcript and
-            // not re-sent as history on the next turn. Adding it to `full`
-            // would put an account of the model's deliberation into the reply
-            // itself.
-            send({ type: "thinking", text: event.text });
-          } else {
-            promptTokens = event.usage.promptTokens;
-            completionTokens = event.usage.completionTokens;
-            cachedTokens = event.usage.cachedTokens;
-            // Already normalised to OpenAI's vocabulary by `lib/completion.ts`,
-            // so `"length"` means truncated on either provider.
-            finishReason = event.finishReason;
-          }
-        }
+        steps = turn.steps;
+        paused = turn.paused ?? null;
+        promptTokens = turn.usage.promptTokens;
+        completionTokens = turn.usage.completionTokens;
+        cachedTokens = turn.usage.cachedTokens;
+        // Already normalised to OpenAI's vocabulary by `lib/completion.ts`,
+        // so `"length"` means truncated on either provider.
+        finishReason = turn.finishReason;
 
         if (signal.aborted) {
           deferred(
@@ -516,8 +606,16 @@ chat.post("/chat/stream", async (c) => {
             controller.close();
             return;
           }
+          // The account of what the reply did, written against the row it
+          // belongs to. After the insert because `message_steps.message_id`
+          // has nowhere to point before it, and best-effort inside
+          // `writeSteps` because a reply that arrived is worth more than its
+          // audit trail.
+          await writeSteps(service, inserted.id, steps);
+
           // Before `done`, which is the client's terminal event.
           if (finishReason === "length") send({ type: "truncated" });
+          if (paused) await announcePause(inserted.id);
           send({ type: "done", message: mapMessage(inserted) });
 
           // Follow-up suggestions: a lightweight second call on the cheapest
@@ -542,6 +640,13 @@ chat.post("/chat/stream", async (c) => {
               // stream or leave the user staring at a spinner.
             }
           }
+        } else if (paused) {
+          // A turn that asked before it said anything. There is no assistant
+          // row to hang the steps off yet, so they ride in the parked turn
+          // and are written when it resumes — see `paused_turns.steps`.
+          await recordSpend();
+          await announcePause(null);
+          send({ type: "done" });
         } else {
           await recordSpend();
           send({
@@ -581,5 +686,302 @@ chat.post("/chat/stream", async (c) => {
     },
   });
 });
+
+/**
+ * What the model is told when a person says no.
+ *
+ * A refusal is a fact about the world, not an error, and the difference
+ * matters to what happens next: told "error", a model retries: told "the
+ * person declined", it acknowledges and moves on. It is written as the tool's
+ * own result rather than as a new user turn because that is what it is — the
+ * answer to the call the model made.
+ */
+const DECLINED_RESULT =
+  "The person declined this. Do not try it again in this turn. Acknowledge it briefly and " +
+  "carry on with whatever else was asked.";
+
+const confirmSchema = z.object({ approve: z.boolean() });
+
+// POST /chat/confirm/:id
+//
+// The second half of a turn that stopped to ask. Everything about it is the
+// same machinery as `/chat/stream` — the same loop, the same tools, the same
+// persistence — and the only thing that differs is where the conversation
+// comes from: `paused_turns.messages` rather than the `messages` table, so the
+// model sees exactly what it saw when it asked.
+chat.post("/chat/confirm/:id", async (c) => {
+  const denied = await guardQuota(c);
+  if (denied) return denied;
+
+  const env = c.get("providerEnv") ?? c.env;
+  const db = c.get("db");
+  const service = serviceClient(c.env);
+
+  const parsed = confirmSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const approve = parsed.data.approve;
+
+  const loaded = await loadPausedTurn(service, c.req.param("id"));
+  if ("error" in loaded) return c.json({ error: loaded.error }, loaded.status);
+  const pause = loaded.pause;
+
+  // Who may answer, which is narrower than who may see. The tool will run
+  // with this person's standing — their delivery channels, their RLS — so
+  // letting a colleague press the button would run it as somebody who never
+  // agreed to it. 0060's read policy is deliberately the wider one; this is
+  // the narrower half it said lives here.
+  if (pause.userId !== c.get("user").id) {
+    return c.json({ error: "this is not yours to answer" }, 403);
+  }
+  // Through the caller's own client, so a session that has since been deleted
+  // or unshared is refused by the same policy that refuses it everywhere else.
+  const { data: session } = await db
+    .from("chat_sessions")
+    .select("id, agent_id, workspace_id")
+    .eq("id", pause.sessionId)
+    .maybeSingle();
+  if (!session) return c.json({ error: "not found" }, 404);
+
+  await resolvePausedTurn(service, pause.id, approve ? "approved" : "declined");
+
+  const signal = c.req.raw.signal;
+  const ctx = {
+    db,
+    env,
+    workspaceId: pause.workspaceId,
+    agentId: pause.agentId,
+    userId: pause.userId,
+    sessionId: pause.sessionId,
+    confirmed: true,
+  };
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const send = (event: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+
+      let full = "";
+      let spendRecorded = false;
+      const recordSpend = async (usage: {
+        promptTokens: number | null;
+        completionTokens: number | null;
+      }) => {
+        if (spendRecorded) return;
+        spendRecorded = true;
+        await recordQuota(c, (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
+      };
+
+      try {
+        const tool = approve ? toolByName(pause.toolCall.name) : null;
+        const started = Date.now();
+        const parsedArgs = parseArguments(pause.toolCall.arguments);
+        const result = await (async (): Promise<
+          { kind: "ok"; content: string } | { kind: "error"; message: string }
+        > => {
+          if (!approve) return { kind: "error", message: DECLINED_RESULT };
+          if (!tool) return { kind: "error", message: `no tool named ${pause.toolCall.name}` };
+          try {
+            const ran = await tool.run(parsedArgs.ok ? parsedArgs.args : {}, ctx);
+            // A tool that asks again having been told yes is a tool that has
+            // not read `ctx.confirmed`, which is a bug in the tool rather
+            // than a second question for the person. Reported as an error so
+            // it is visible instead of parking the turn a second time.
+            if (ran.kind === "needs_confirmation") {
+              return { kind: "error", message: "this tool asked for confirmation twice" };
+            }
+            return ran;
+          } catch (err) {
+            return { kind: "error", message: err instanceof Error ? err.message : String(err) };
+          }
+        })();
+
+        // The pending step, resolved. Its index is kept so the numbering the
+        // person already saw does not move under them.
+        const steps = pause.steps.map((step, i) =>
+          i === pause.steps.length - 1 && step.status === "pending"
+            ? {
+                ...step,
+                status:
+                  result.kind === "ok"
+                    ? ("ok" as const)
+                    : approve
+                      ? ("failed" as const)
+                      : ("refused" as const),
+                resultExcerpt: result.kind === "ok" ? result.content : result.message,
+                durationMs: Date.now() - started,
+              }
+            : step,
+        );
+        send({
+          type: "step",
+          index: steps[steps.length - 1]?.index ?? 0,
+          tool: pause.toolCall.name,
+          status: steps[steps.length - 1]?.status ?? "ok",
+          label: pause.toolCall.name,
+        });
+
+        const messages: CompletionMessage[] = [
+          ...pause.messages,
+          {
+            role: "tool",
+            toolCallId: pause.toolCall.id,
+            content: result.kind === "ok" ? result.content : `error: ${result.message}`,
+          },
+        ];
+
+        const { tools } = await capabilitiesFor({
+          db,
+          env,
+          workspaceId: pause.workspaceId,
+          userId: pause.userId,
+        });
+
+        const turn = await runAgentTurn({
+          env,
+          request: {
+            model: pause.model ?? resolveModel(null, env),
+            messages,
+            maxTokens: maxTokensFor("normal"),
+            showThinking: true,
+          },
+          tools,
+          // Not `ctx`: the approval covered one call, and a tool the model
+          // asks for next has to ask again. Carrying `confirmed` forward
+          // would turn one yes into a standing permission.
+          ctx: { ...ctx, confirmed: false },
+          stepsSoFar: steps,
+          signal,
+          onEvent: (event) => {
+            if (event.type === "delta") {
+              full += event.text;
+              send({ type: "delta", text: event.text });
+            } else if (event.type === "thinking") {
+              send({ type: "thinking", text: event.text });
+            } else {
+              send({
+                type: "step",
+                index: event.index,
+                tool: event.tool,
+                status: event.status,
+                label: event.label,
+              });
+            }
+          },
+        });
+
+        await recordSpend(turn.usage);
+
+        // Where the second half of the answer goes. An assistant row already
+        // exists when the model said something before it asked, and the two
+        // halves are one reply — written as two rows they would be re-sent to
+        // the model next turn as two turns, which is not what it said. This
+        // is the same rule, and the same join with nothing between the
+        // halves, that `continue` uses above.
+        const existing = pause.messageId;
+        const { data: inserted } = existing
+          ? await service
+              .from("messages")
+              .update({
+                content: await appendedContent(service, existing, turn.text),
+                prompt_tokens: turn.usage.promptTokens,
+                completion_tokens: turn.usage.completionTokens,
+                cached_tokens: turn.usage.cachedTokens,
+              })
+              .eq("id", existing)
+              .select("*")
+              .single()
+          : await service
+              .from("messages")
+              .insert({
+                session_id: pause.sessionId,
+                role: "assistant",
+                content: turn.text || "(no reply)",
+                sender_id: null,
+                prompt_tokens: turn.usage.promptTokens,
+                completion_tokens: turn.usage.completionTokens,
+                cached_tokens: turn.usage.cachedTokens,
+              })
+              .select("*")
+              .single();
+
+        if (!inserted) {
+          send({ type: "error", error: "failed to persist assistant message" });
+          controller.close();
+          return;
+        }
+
+        await writeSteps(service, inserted.id, turn.steps);
+        await service
+          .from("chat_sessions")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("id", pause.sessionId);
+
+        if (turn.paused?.reason === "confirmation") {
+          const nextId = await savePausedTurn(service, {
+            sessionId: pause.sessionId,
+            messageId: inserted.id,
+            workspaceId: pause.workspaceId,
+            agentId: pause.agentId,
+            userId: pause.userId,
+            model: pause.model ?? "",
+            paused: turn.paused,
+            steps: turn.steps,
+          });
+          if (nextId) {
+            send({
+              type: "confirm",
+              id: nextId,
+              tool: turn.paused.call?.name ?? "",
+              summary: turn.paused.summary ?? "",
+              proposal: turn.paused.proposal ?? null,
+            });
+            send({ type: "paused", reason: "confirmation" });
+          }
+        } else if (turn.paused?.reason === "budget") {
+          send({ type: "paused", reason: "budget" });
+        }
+
+        send({ type: "done", message: mapMessage(inserted) });
+        controller.close();
+      } catch (err) {
+        console.error("chat confirm error", err);
+        await recordSpend({ promptTokens: null, completionTokens: null });
+        send({ type: "error", error: "The assistant hit an error. Please try again." });
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+});
+
+/**
+ * The reply so far plus the rest of it, joined with nothing between them.
+ *
+ * Read back rather than carried through the pause, because the pause may have
+ * been answered minutes later by a different request: the row is the only
+ * thing that knows what was actually written. Falls back to the new half
+ * alone if the row has gone, which is the honest outcome of a message that was
+ * deleted while a confirmation was open.
+ */
+async function appendedContent(
+  service: ReturnType<typeof serviceClient>,
+  messageId: string,
+  addition: string,
+): Promise<string> {
+  const { data } = await service
+    .from("messages")
+    .select("content")
+    .eq("id", messageId)
+    .maybeSingle();
+  const before = typeof data?.content === "string" ? data.content : "";
+  if (!before) return addition;
+  if (!addition) return before;
+  return `${before}\n\n${addition}`;
+}
 
 export { chat };

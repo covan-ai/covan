@@ -173,6 +173,20 @@ export const EXPORTED: TableSpec[] = [
     scope: { kind: "in", column: "routine_id", from: { table: "routines", column: "id" } },
     order: "started_at",
   },
+  {
+    // Part of the transcript, not an extra. A reply that says "according to
+    // the orders database" is only checkable alongside the steps that went
+    // and looked — an archive that carried the claim and dropped the evidence
+    // would be the export deciding which half of the answer mattered.
+    //
+    // Scoped through `messages`, which is scoped through `chat_sessions`, so
+    // it inherits exactly the visibility the transcript has. Below
+    // `documents` because `messages` is far above and nothing here points
+    // anywhere else.
+    table: "message_steps",
+    scope: { kind: "in", column: "message_id", from: { table: "messages", column: "id" } },
+    order: "created_at",
+  },
 ];
 
 /**
@@ -210,6 +224,10 @@ export const EXCLUDED: Record<string, string> = {
     "a permission, and permissions do not travel. A grant says an agent may act at a third party through a connection whose OAuth token this archive deliberately does not carry, so a restored one is at best inert and at worst a standing permission arriving in an install where the person who granted it was never asked - possibly attached to somebody else's grant, since the connection comes back unowned and paused. The agents and the connections come back in full; the permissions are granted again by the people who hold them, which is the only way a permission should ever arrive anywhere. Losing them on a restore is the safe direction, because a missing grant means never.",
   capability_calls:
     "the engine's record of what agents attempted at third parties, in the same standing as routine_deliveries: a log of what was sent where rather than workspace content. Its pending rows are worse than useless elsewhere - a pending row is an approval request, and replaying one would ask somebody to approve an action that nothing in the new install can carry out, against a connection restored without a token. The rows are read in place, where the question they answer gets asked.",
+  tool_connections:
+    "a credential, and the same answer as workspace_provider_keys below. `secret_ciphertext` is granted to no client role (0059), so the export could not read it if it wanted to, and the rest of the row without it is a base URL and a label describing a service the new install cannot reach. Worse than useless, in fact: a restored row would appear in an agent's prompt as a connected service, and every call through it would fail on a credential nobody can supply. Connections are made again, by the person holding the token, in the install that is going to use them.",
+  paused_turns:
+    "in flight rather than held, in the same standing as invitations. A row here is an agent halfway through a turn, waiting for somebody to approve one action — and the whole of what it is waiting on is a prompt, a tool call and a connection this archive deliberately does not carry. Replaying one would ask somebody in a new install to approve something nothing there can perform. It expires in an hour in the install that made it, which is the honest lifetime of the question.",
   workspace_provider_keys:
     "credentials, and worse than api_keys above. An API key at least means something on its own; this table's ciphertext opens only under PROVIDER_KEY_SECRET, an operator secret the archive does not and must not contain, so an export of it would be simultaneously useless to whoever downloaded it and a live credential if that secret ever leaked. openai_hint would travel with it — a small disclosure with no compensating use once the ciphertext it identifies cannot be read anyway. 0046 already withholds this table from every client but service_role for the same reason; carrying it into an archive a workspace admin can download would undo that through the back door.",
 };

@@ -23,6 +23,26 @@ export type DocumentDTO = {
   // pending or failed), which the UI surfaces with a reindex action.
   chunkCount: number;
   indexed: boolean;
+  /**
+   * Which bundle holds it. Optional because it is absent rather than null when
+   * the caller did not fetch it: the three routes that return one document to
+   * somebody who just acted on it (upload, move, reindex) already know where it
+   * went, while the two that return a list — the explorer's own listing and the
+   * agent's document list — are the ones that have to say. A `null` here would
+   * claim the document belongs to no bundle, which the schema does not allow.
+   */
+  bundleId?: string;
+  /**
+   * The connected source that owns it, or null for a file somebody uploaded.
+   *
+   * It decides whether the document may be moved: the sync reconciles by
+   * `connection_id`, so a synced file can be moved, but its name, its text and
+   * its removal stay the source's to decide. Undefined means "not fetched",
+   * which is not the same answer as "uploaded by hand".
+   */
+  connectionId?: string | null;
+  /** The page or file at the source, for a synced document. */
+  externalUrl?: string | null;
 };
 
 export type AgentDTO = {
@@ -206,6 +226,11 @@ export function mapDocument(row: {
   // is worse than the bare filename this replaces.
   created_at: string;
   document_chunks?: Array<{ count: number }> | null;
+  // The three below are spread rather than mapped when absent, so a caller that
+  // did not select them gets a DTO that stays quiet about them. See DocumentDTO.
+  bundle_id?: string | null;
+  connection_id?: string | null;
+  external_url?: string | null;
 }): DocumentDTO {
   const chunkCount = row.document_chunks?.[0]?.count ?? 0;
   return {
@@ -215,6 +240,9 @@ export function mapDocument(row: {
     createdAt: toEpochMs(row.created_at),
     chunkCount,
     indexed: chunkCount > 0,
+    ...(row.bundle_id ? { bundleId: row.bundle_id } : {}),
+    ...(row.connection_id !== undefined ? { connectionId: row.connection_id } : {}),
+    ...(row.external_url !== undefined ? { externalUrl: row.external_url } : {}),
   };
 }
 
@@ -238,6 +266,9 @@ export function mapAgent(row: {
         size: number | null;
         created_at: string;
         document_chunks?: Array<{ count: number }> | null;
+        bundle_id?: string | null;
+        connection_id?: string | null;
+        external_url?: string | null;
       }> | null;
     } | null;
   }> | null;

@@ -457,3 +457,119 @@ describe("GET /bundles/citations", () => {
     expect(res.status).toBe(500);
   });
 });
+
+/**
+ * A stand-in covering the two reads the listing makes: the bundle (which is the
+ * RLS existence check) and its documents.
+ */
+function listingDb(opts: {
+  bundle: { id: string } | null;
+  documents?: Array<Record<string, unknown>>;
+  documentsError?: boolean;
+}) {
+  const calls = { ordered: [] as Array<{ column: string; ascending?: boolean }> };
+  const db = {
+    from(table: string) {
+      if (table === "knowledge_bundles") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: opts.bundle, error: null }) }),
+          }),
+        };
+      }
+      if (table === "documents") {
+        return {
+          select: () => ({
+            eq: () => ({
+              order: async (column: string, o?: { ascending?: boolean }) => {
+                calls.ordered.push({ column, ascending: o?.ascending });
+                return opts.documentsError
+                  ? { data: null, error: { message: "boom" } }
+                  : { data: opts.documents ?? [], error: null };
+              },
+            }),
+          }),
+        };
+      }
+      throw new Error(`listingDb: unexpected table "${table}"`);
+    },
+  };
+  return { db, calls };
+}
+
+describe("GET /bundles/:id/documents", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: "doc-1",
+    name: "handbook.md",
+    size: 2048,
+    created_at: "2026-09-01T00:00:00.000Z",
+    bundle_id: "bundle-1",
+    connection_id: null,
+    external_url: null,
+    document_chunks: [{ count: 7 }],
+    ...over,
+  });
+
+  it("lists what is in the bundle, newest first", async () => {
+    const { db, calls } = listingDb({ bundle: { id: "bundle-1" }, documents: [row()] });
+
+    const res = await appWithDb(db).request("/bundles/bundle-1/documents");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      {
+        id: "doc-1",
+        name: "handbook.md",
+        size: 2048,
+        createdAt: Date.parse("2026-09-01T00:00:00.000Z"),
+        chunkCount: 7,
+        indexed: true,
+        bundleId: "bundle-1",
+        connectionId: null,
+        externalUrl: null,
+      },
+    ]);
+    expect(calls.ordered).toEqual([{ column: "created_at", ascending: false }]);
+  });
+
+  // The whole point of the endpoint: a bundle nobody has attached has contents,
+  // and until now nothing could read them.
+  it("answers for a bundle no agent has attached", async () => {
+    const { db } = listingDb({
+      bundle: { id: "bundle-9" },
+      documents: [row({ bundle_id: "bundle-9" })],
+    });
+
+    const res = await appWithDb(db).request("/bundles/bundle-9/documents");
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as unknown[]).toHaveLength(1);
+  });
+
+  // RLS answers a bundle in another workspace with no row, and an empty list is
+  // the same reply as an empty bundle. They are not the same answer.
+  it("404s for a bundle the caller cannot see, rather than an empty list", async () => {
+    const { db } = listingDb({ bundle: null });
+
+    const res = await appWithDb(db).request("/bundles/someone-elses/documents");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("says a bundle is empty when it is", async () => {
+    const { db } = listingDb({ bundle: { id: "bundle-1" }, documents: [] });
+
+    const res = await appWithDb(db).request("/bundles/bundle-1/documents");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("500s rather than reporting an empty bundle when the read fails", async () => {
+    const { db } = listingDb({ bundle: { id: "bundle-1" }, documentsError: true });
+
+    const res = await appWithDb(db).request("/bundles/bundle-1/documents");
+
+    expect(res.status).toBe(500);
+  });
+});

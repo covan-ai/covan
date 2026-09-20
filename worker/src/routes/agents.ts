@@ -8,8 +8,13 @@ import { REASONING_EFFORTS } from "../lib/models";
 
 const agents = new Hono<AppEnv>();
 
+// `documents.bundle_id` is selected even though `agent_bundles.bundle_id` is
+// already here: `mapAgent` flattens every attached bundle's documents into one
+// list, and once flattened a row has no way back to the bundle it came from.
+// The Knowledge explorer needs it on every row — it is what the bundle chip
+// says and what a move has to know it is moving away from.
 const AGENT_SELECT =
-  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,document_chunks(count))))";
+  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,document_chunks(count))))";
 
 /**
  * The two tuning settings, on both schemas.

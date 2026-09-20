@@ -88,8 +88,12 @@ Documents are not attached to an agent directly. They go into a **bundle**, a
 named group of documents, and the bundle attaches to the agent. That indirection
 is the point: one bundle can back several agents at once, and detaching it from
 one of them is instant and destroys nothing. So the order is create a bundle,
-select it, drop files into it, then flip the switch that attaches it to this
-agent. An unattached bundle is invisible to the agent.
+open it, drop files into it, then flip the switch that attaches it to this agent.
+An unattached bundle is invisible to the agent — though not to you: every bundle
+in the workspace, attached or not, is on the **Knowledge** page in the sidebar,
+which opens any file in any of them and says which agents read each one. Filing
+works the way a file explorer does: drag a row onto a bundle, or tick several
+and move them together.
 
 That is the deliberate route. The quick one is the conversation: drop a file onto
 the chat pane, paste it, or use the paperclip, and it goes into a bundle of the
@@ -98,7 +102,7 @@ ask about it in the next message. It is a normal bundle, so anything below about
 bundles applies to it too. [Knowledge bundles](knowledge.md#uploading) has the
 longer version.
 
-If you do not have anything to drop in yet, the Knowledge tab carries six
+If you do not have anything to drop in yet, the agent's Knowledge tab carries six
 starter documents — company overview, product notes, FAQ, how we work, glossary,
 meeting notes. Each downloads as a page of headings with a prompt under each,
 which you fill in and upload back. [What a document should look

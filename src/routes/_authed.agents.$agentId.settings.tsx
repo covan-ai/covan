@@ -40,7 +40,9 @@ import {
   REASONING_EFFORTS,
   REASONING_EFFORT_HINTS,
   type ReasoningEffort,
+  costFor,
 } from "@/lib/agent-meta";
+import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAvatar } from "@/components/avatars";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
@@ -162,11 +164,15 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 <SelectContent>
                   {models.map((m) => (
                     <SelectItem key={m} value={m}>
-                      {m}
+                      <span className="flex w-full items-center justify-between">
+                        <span>{m}</span>
+                        <ModelCost cost={costFor(me?.modelCosts, m)} />
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <ModelCostScale cost={costFor(me?.modelCosts, model)} />
             </div>
             <div className="space-y-2">
               <Label className="text-xs">Mode</Label>

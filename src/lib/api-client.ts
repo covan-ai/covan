@@ -58,6 +58,12 @@ export type Me = {
    * `specFor` in `lib/agent-meta` answers for an id it was told nothing about.
    */
   modelSpecs?: Record<string, { temperature: boolean; reasoning: boolean }>;
+  /**
+   * Estimated USD for one reference reply per model. Optional because an API
+   * older than this field sends none, and empty on a deployment whose
+   * `OPENAI_MODEL` makes the picked id irrelevant — both mean "no price".
+   */
+  modelCosts?: Record<string, number>;
   onboarding: { completed: boolean; answers: OnboardingAnswers };
 };
 

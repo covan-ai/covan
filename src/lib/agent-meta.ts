@@ -107,6 +107,59 @@ export const REASONING_EFFORT_HINTS: Record<ReasoningEffort, string> = {
 export type ModelSpec = { temperature: boolean; reasoning: boolean };
 
 /**
+ * What a model costs per reply, as the server priced it, or `null`.
+ *
+ * `null` is a real answer with two causes, and neither is a gap to fill in with
+ * a guess: the id is one this build has no price for (every id is, under a
+ * custom endpoint), or the deployment has `OPENAI_MODEL` set and the picked id
+ * is not what answers at all. `lib/pricing.ts` on the server decides both.
+ */
+export function costFor(
+  costs: Record<string, number> | undefined,
+  model: string | null | undefined,
+): number | null {
+  const found = model ? costs?.[model] : undefined;
+  return typeof found === "number" ? found : null;
+}
+
+/**
+ * The bands the scale under a model picker is divided into.
+ *
+ * **Absolute, and that is the design decision.** Bands drawn as percentiles of
+ * the catalogue, or relative to its cheapest member, would move a model between
+ * tiers because a *different* model was added — the same pick, the same price,
+ * a different claim about it. That is DESIGN.md's first failure mode: something
+ * the code cannot stand behind. These boundaries are money, so adding a model
+ * moves nothing.
+ *
+ * Half a cent and one and a half cents are round numbers near two real ones:
+ * the mini models land under the first and the flagships above the second, with
+ * the middle band holding what 0025 actually measured.
+ */
+export const COST_BANDS = [
+  { upToUsd: 0.005, label: "under ½¢" },
+  { upToUsd: 0.015, label: "½¢–1½¢" },
+  { upToUsd: Infinity, label: "over 1½¢" },
+] as const;
+
+/** Which band `cost` falls in, or -1 when there is no price to place. */
+export function costBandIndex(cost: number | null): number {
+  if (cost === null) return -1;
+  return COST_BANDS.findIndex((b) => cost < b.upToUsd);
+}
+
+/**
+ * A price a person can read at a glance.
+ *
+ * Three decimals once there are cents to show, four below that — `$0.00` for
+ * gpt-5-nano would round the cheapest model in the catalogue to free, which is
+ * the one number on this scale worth getting right.
+ */
+export function formatReplyCost(cost: number): string {
+  return cost >= 0.01 ? `$${cost.toFixed(3)}` : `$${cost.toFixed(4)}`;
+}
+
+/**
  * What a model will accept, as the server described it.
  *
  * The fallback matters more than the lookup. `modelSpecs` arrives with /me and

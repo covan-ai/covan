@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError, type Me } from "@/lib/api-client";
 import { useTheme, type ThemePreference } from "@/lib/theme";
-import { modelsFor } from "@/lib/agent-meta";
+import { modelsFor, costFor } from "@/lib/agent-meta";
+import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard } from "@/components/section-card";
 import { Label } from "@/components/ui/label";
@@ -93,11 +94,18 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
               <SelectItem value={NO_DEFAULT}>No preference</SelectItem>
               {models.map((m) => (
                 <SelectItem key={m} value={m}>
-                  {m}
+                  <span className="flex w-full items-center justify-between">
+                    <span>{m}</span>
+                    <ModelCost cost={costFor(me?.modelCosts, m)} />
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {/* Only once something is picked. "No preference" is not a model and
+              has no price, and a scale sitting at nothing would read as a claim
+              that the default is free. */}
+          {defaultModel && <ModelCostScale cost={costFor(me?.modelCosts, defaultModel)} />}
           <p className="text-xs text-muted-foreground">
             Where the picker starts when anyone here creates an agent; each agent can still be
             changed afterwards. Applies to the whole workspace, and only admins can set it. The

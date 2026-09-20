@@ -40,7 +40,8 @@ import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
-import { modelsFor } from "@/lib/agent-meta";
+import { modelsFor, costFor } from "@/lib/agent-meta";
+import { ModelCost } from "@/components/model-cost";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
 import { groupMessagesByDate } from "@/lib/message-groups";
 import { useTTS } from "@/lib/use-tts";
@@ -1357,7 +1358,11 @@ function ChatTab() {
                                 <MsgAction label="Regenerate" onClick={() => regenerate()}>
                                   <RefreshCw className="h-3.5 w-3.5" />
                                 </MsgAction>
-                                <RetryOn models={pickableModels} onPick={regenerate} />
+                                <RetryOn
+                                  models={pickableModels}
+                                  costs={me?.modelCosts}
+                                  onPick={regenerate}
+                                />
                               </>
                             )}
                           </div>
@@ -1911,7 +1916,22 @@ function VersionPicker({
  * the time is a worse default. Absent entirely on a deployment that serves one
  * model, where the menu would have nothing in it.
  */
-function RetryOn({ models, onPick }: { models: string[]; onPick: (model: string) => void }) {
+/**
+ * Answer again, somewhere else.
+ *
+ * The prices are worth more here than in any settings screen: this is the one
+ * model picker somebody uses with a bill in mind, because pressing it spends
+ * again on a question that has already been answered once.
+ */
+function RetryOn({
+  models,
+  costs,
+  onPick,
+}: {
+  models: string[];
+  costs: Record<string, number> | undefined;
+  onPick: (model: string) => void;
+}) {
   if (models.length === 0) return null;
   return (
     <DropdownMenu>
@@ -1932,7 +1952,10 @@ function RetryOn({ models, onPick }: { models: string[]; onPick: (model: string)
             onSelect={() => onPick(model)}
             className="font-mono text-xs"
           >
-            {model}
+            <span className="flex w-full items-center justify-between">
+              <span>{model}</span>
+              <ModelCost cost={costFor(costs, model)} />
+            </span>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

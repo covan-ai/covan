@@ -52,6 +52,21 @@ A workspace carries one setting of its own so far: `default_model`, which decide
 only where the model picker starts for new agents. Every agent still chooses its
 own.
 
+Every model picker prints what a reply costs on each model — real money, not a
+tier out of five, because the providers publish list prices and a number you can
+multiply by your own traffic is worth more than a rating you have to learn. The
+figure is one reference reply on every model: 2,248 prompt tokens to 921
+completion, which is the average `0025` measured over ten real replies on a live
+deployment. It is priced as a fresh prompt, so a second turn in the same
+conversation costs less than it says, and an agent reading long documents costs
+more. The scale under the picker is marked in absolute money rather than in
+percentiles of the catalogue, so adding a model never changes what is claimed
+about one already there.
+
+A deployment with `OPENAI_MODEL` set shows no prices at all. That variable sends
+every completion to one model whatever the picker says, and a price beside an id
+this deployment will never request would be describing nothing.
+
 ## Member
 
 A membership is a row in `workspace_members`: a workspace, a user, and a role

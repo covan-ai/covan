@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import type { MeDTO } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { availableModels, modelSpecsFor } from "../lib/models";
+import { modelCostsFor } from "../lib/pricing";
 
 const me = new Hono<AppEnv>();
 
@@ -133,6 +134,8 @@ me.get("/me", async (c) => {
     members,
     models: availableModels(c.env),
     modelSpecs: modelSpecsFor(availableModels(c.env)),
+    // Empty under a custom endpoint, where the picked id is not what answers.
+    modelCosts: modelCostsFor(availableModels(c.env), c.env),
     onboarding: {
       completed: Boolean(onboardingRow?.completed_at),
       answers: {

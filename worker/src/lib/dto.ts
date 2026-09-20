@@ -195,6 +195,20 @@ export type MeDTO = {
    */
   modelSpecs: Record<string, { temperature: boolean; reasoning: boolean }>;
   /**
+   * Estimated USD for one reference reply on each model the picker may offer,
+   * so a choice between two names is a choice between two numbers.
+   *
+   * Server-side for the same reason `modelSpecs` is: the price list lives in
+   * `lib/pricing.ts` beside the one the usage screen bills against, and a
+   * second copy in the browser bundle would drift from it silently — a stale
+   * price is worse than no price, because it is believed.
+   *
+   * An id with no entry has no price, and that is a real state rather than a
+   * gap to paper over: the whole map is empty on a deployment with
+   * `OPENAI_MODEL` set, where the picked id is not what answers.
+   */
+  modelCosts: Record<string, number>;
+  /**
    * Where this account stands with its first run. The `_authed` layout gates on
    * `completed`, which is why this rides along with /me rather than having an
    * endpoint of its own — every page load needs the answer, and this response

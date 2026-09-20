@@ -1614,3 +1614,100 @@ describe("runRoutine filing", () => {
     expect(file).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The branch that lets a scheduled run use the tools a chat turn has.
+ *
+ * `runWithTools` is an injected dependency for the same reason `summarise` is,
+ * and the shape of the contract is the interesting part: it answers `null`
+ * when this workspace has nothing for a tool to point at, and `null` is what
+ * sends the run back down the single-call path every routine used before this
+ * existed. One question asked once, rather than a separate "does it have
+ * tools" lookup and then a second call.
+ */
+describe("a run that can use tools", () => {
+  it("does not touch summarise when the tool path answered", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    const runWithTools = vi.fn(async () => ({
+      text: "I queried the orders database.",
+      tokens: 300,
+      declined: false,
+    }));
+
+    await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools,
+    } as never);
+
+    expect(runWithTools).toHaveBeenCalledTimes(1);
+    expect(summarise).not.toHaveBeenCalled();
+    expect(deliverCalls[0].init.body).toContain("I queried the orders database.");
+  });
+
+  it("gives it the three ids a tool needs, which never come from the model", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    const runWithTools = vi.fn(async (input: Record<string, unknown>) => {
+      seen = input;
+      return { text: "done", tokens: 1, declined: false };
+    });
+    let seen: Record<string, unknown> | null = null;
+
+    await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools,
+    } as never);
+
+    expect(seen).toMatchObject({
+      agentId: "a1",
+      workspaceId: "w1",
+      userId: "u1",
+    });
+  });
+
+  it("falls back to the single call when the workspace has no service connected", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    const runWithTools = vi.fn(async () => null);
+
+    await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools,
+    } as never);
+
+    expect(runWithTools).toHaveBeenCalledTimes(1);
+    expect(summarise).toHaveBeenCalledTimes(1);
+    expect(deliverCalls[0].init.body).toContain("summary");
+  });
+
+  it("still lets a run decide it has nothing worth sending", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    const runWithTools = vi.fn(async () => ({ text: "", tokens: 90, declined: true }));
+
+    const out = await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools,
+    } as never);
+
+    expect(out.status).toBe("skipped");
+    expect(deliverCalls).toHaveLength(0);
+    // Charged anyway. A run that read its material and decided against
+    // sending has spent what it spent.
+    expect(recorded[0]).toMatchObject({ tokens: 90 });
+  });
+
+  it("charges what the whole loop cost, not what one call did", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    const runWithTools = vi.fn(async () => ({ text: "done", tokens: 940, declined: false }));
+
+    await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools,
+    } as never);
+
+    expect(recorded[0]).toMatchObject({ userId: "u1", tokens: 940 });
+  });
+});

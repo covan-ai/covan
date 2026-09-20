@@ -158,16 +158,28 @@ export async function loadPausedTurn(
   };
 }
 
-/** Close a parked turn, whichever way it went. */
+/**
+ * Close a parked turn, and say whether this caller was the one who closed it.
+ *
+ * The `status = 'pending'` filter is what makes two clicks on the same button
+ * safe: the second matches no row, gets `false` back, and is refused before
+ * the tool runs. Without it, a double-click sends the email twice — and a
+ * confirmation is exactly the kind of button people press twice.
+ */
 export async function resolvePausedTurn(
   service: SupabaseClient,
   id: string,
   status: "approved" | "declined" | "expired",
-): Promise<void> {
-  const { error } = await service
+): Promise<boolean> {
+  const { data, error } = await service
     .from("paused_turns")
     .update({ status, resolved_at: new Date().toISOString() })
     .eq("id", id)
-    .eq("status", "pending");
-  if (error) console.error("failed to resolve the paused turn", error);
+    .eq("status", "pending")
+    .select("id");
+  if (error) {
+    console.error("failed to resolve the paused turn", error);
+    return false;
+  }
+  return (data ?? []).length > 0;
 }

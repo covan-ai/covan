@@ -1,0 +1,252 @@
+import { Hono } from "hono";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { AppEnv } from "../types";
+import { fakeDb, type FakeDbSpec } from "../test-support/fake-db";
+import { decryptSecret } from "../lib/secret-box";
+
+/**
+ * Connecting a service, which is the whole of what it takes to give an agent
+ * a new one — no code, one row.
+ *
+ * Two claims here are worth more than the rest. The credential is encrypted
+ * by this route before Postgres sees it, which is why the row goes through
+ * the service client at all (0059 grants no INSERT to anybody). And the base
+ * URL goes through the same SSRF guard as every other outbound address in
+ * this codebase, at creation time, so somebody pointing a connection at
+ * `169.254.169.254` is told while they are still looking at the form.
+ */
+const serviceFrom = vi.fn();
+vi.mock("../lib/supabase", () => ({ serviceClient: () => ({ from: serviceFrom }) }));
+
+const { toolConnections } = await import("./tool-connections");
+
+const USER = { id: "user-1", email: "a@example.com" };
+const KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+const ENV = {
+  ROUTINE_SECRET_KEY: KEY,
+  ALLOWED_ORIGIN: "https://app.example.com",
+  WORKER_HOST: "api.example.com",
+};
+
+const ROW = {
+  id: "conn-1",
+  workspace_id: "ws-1",
+  label: "Covan Supabase",
+  transport: "sql",
+  base_url: "https://proj.supabase.co/rest/v1",
+  auth_kind: "static_header",
+  allowed_methods: ["GET"],
+  config: { rpc: "covan_query" },
+  created_by: USER.id,
+  created_at: "2026-09-01T10:00:00Z",
+  updated_at: "2026-09-01T10:00:00Z",
+};
+
+/** What `serviceFrom` records about the insert it was given. */
+let inserted: Record<string, unknown> | null = null;
+
+function appWith(spec: { role?: string; connection?: Record<string, unknown> | null } = {}) {
+  const dbSpec: FakeDbSpec = {
+    tables: {
+      profiles: { select: () => ({ data: { active_workspace_id: "ws-1" }, error: null }) },
+      workspace_members: {
+        select: () => ({
+          data: { workspace_id: "ws-1", role: spec.role ?? "admin" },
+          error: null,
+        }),
+      },
+      tool_connections: {
+        select: () => ({
+          data: spec.connection === undefined ? [ROW] : spec.connection,
+          error: null,
+        }),
+        update: () => ({ data: { ...ROW, label: "Renamed" }, error: null }),
+        delete: () => ({ data: null, error: null }),
+      },
+    },
+  };
+  const { db } = fakeDb(dbSpec);
+  const app = new Hono<AppEnv>();
+  app.use("/*", async (c, next) => {
+    c.set("user", USER as never);
+    c.set("db", db as never);
+    await next();
+  });
+  app.route("/", toolConnections);
+  return app;
+}
+
+async function post(app: Hono<AppEnv>, body: Record<string, unknown>) {
+  const res = await app.request(
+    "/tool-connections",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    ENV as never,
+  );
+  return {
+    status: res.status,
+    body: (await res.json().catch(() => null)) as { error?: unknown } | null,
+  };
+}
+
+const VALID = {
+  label: "Covan Supabase",
+  transport: "sql",
+  baseUrl: "https://proj.supabase.co/rest/v1",
+  headers: { Authorization: "Bearer key", apikey: "key" },
+  rpc: "covan_query",
+};
+
+beforeEach(() => {
+  inserted = null;
+  serviceFrom.mockReset();
+  serviceFrom.mockImplementation(() => ({
+    insert: (row: Record<string, unknown>) => {
+      inserted = row;
+      return { select: () => ({ single: async () => ({ data: ROW, error: null }) }) };
+    },
+  }));
+});
+
+describe("GET /tool-connections", () => {
+  it("lists the services and what this build can do with them", async () => {
+    const res = await appWith().request("/tool-connections", {}, ENV as never);
+    const body = (await res.json()) as {
+      connections: Array<{ id: string; rpc: string | null }>;
+      tools: Array<{ name: string; configured: boolean }>;
+    };
+    expect(body.connections[0]).toMatchObject({ id: "conn-1", rpc: "covan_query" });
+    // Every tool, configured or not — a self-hoster reading the docs for a
+    // feature their build appears not to have is what that list prevents.
+    expect(body.tools.map((t) => t.name)).toContain("query_database");
+  });
+
+  it("never names the credential column, which PostgREST would refuse whole", async () => {
+    const res = await appWith().request("/tool-connections", {}, ENV as never);
+    const body = (await res.json()) as { connections: Array<Record<string, unknown>> };
+    expect(body.connections[0]).not.toHaveProperty("secret_ciphertext");
+  });
+});
+
+describe("POST /tool-connections", () => {
+  it("encrypts the headers before the row is written", async () => {
+    const { status } = await post(appWith(), VALID);
+    expect(status).toBe(201);
+    const ciphertext = inserted?.secret_ciphertext as string;
+    // The envelope format, not a plaintext token sitting in a column.
+    expect(ciphertext.startsWith("v1.")).toBe(true);
+    expect(JSON.parse(await decryptSecret(ciphertext, KEY))).toEqual({
+      headers: { Authorization: "Bearer key", apikey: "key" },
+    });
+  });
+
+  it("defaults a SQL connection to the documented function name", async () => {
+    await post(appWith(), { ...VALID, rpc: undefined });
+    expect(inserted?.config).toEqual({ rpc: "covan_query" });
+  });
+
+  it("defaults an HTTP connection to GET alone", async () => {
+    await post(appWith(), {
+      label: "Orders",
+      transport: "http",
+      baseUrl: "https://orders.example.net",
+      headers: { Authorization: "Bearer k" },
+    });
+    expect(inserted?.allowed_methods).toEqual(["GET"]);
+  });
+
+  it("strips a trailing slash once, so base + path is one rule everywhere after", async () => {
+    await post(appWith(), { ...VALID, baseUrl: "https://proj.supabase.co/rest/v1/" });
+    expect(inserted?.base_url).toBe("https://proj.supabase.co/rest/v1");
+  });
+
+  it("refuses an address in private space while somebody is still looking at the form", async () => {
+    const { status, body } = await post(appWith(), {
+      ...VALID,
+      baseUrl: "http://169.254.169.254/latest/meta-data",
+    });
+    expect(status).toBe(400);
+    expect(String(body?.error)).toContain("private address");
+    expect(inserted).toBeNull();
+  });
+
+  it("refuses to be pointed back at this deployment", async () => {
+    const { status } = await post(appWith(), { ...VALID, baseUrl: "https://api.example.com/x" });
+    expect(status).toBe(400);
+    expect(inserted).toBeNull();
+  });
+
+  it("refuses a viewer, who reads and does not decide what agents can reach", async () => {
+    const { status } = await post(appWith({ role: "viewer" }), VALID);
+    expect(status).toBe(403);
+    expect(inserted).toBeNull();
+  });
+
+  it("refuses a credential with no headers in it", async () => {
+    const { status } = await post(appWith(), { ...VALID, headers: {} });
+    expect(status).toBe(201);
+    // An empty object is valid JSON and a useless credential; the schema
+    // accepts it and the tool says so at call time. What must not happen is
+    // a row with no ciphertext at all.
+    expect(inserted?.secret_ciphertext).toBeTruthy();
+  });
+
+  it("says so rather than writing a row this deployment cannot decrypt", async () => {
+    const res = await appWith().request(
+      "/tool-connections",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(VALID),
+      },
+      { ALLOWED_ORIGIN: "https://app.example.com" } as never,
+    );
+    expect(res.status).toBe(501);
+    expect(inserted).toBeNull();
+  });
+
+  it("turns a duplicate name into a sentence rather than a 500", async () => {
+    serviceFrom.mockImplementation(() => ({
+      insert: () => ({
+        select: () => ({ single: async () => ({ data: null, error: { code: "23505" } }) }),
+      }),
+    }));
+    const { status, body } = await post(appWith(), VALID);
+    expect(status).toBe(400);
+    expect(String(body?.error)).toContain("already exists");
+  });
+});
+
+describe("PATCH /tool-connections/:id", () => {
+  it("goes through the caller's own client, so the policy decides", async () => {
+    const res = await appWith({ connection: ROW }).request(
+      "/tool-connections/conn-1",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: "Renamed" }),
+      },
+      ENV as never,
+    );
+    expect(res.status).toBe(200);
+    // Nothing reached the service client, which is the claim: editing is a
+    // question RLS already answers.
+    expect(serviceFrom).not.toHaveBeenCalled();
+  });
+
+  it("is a 404 for a connection the caller cannot see", async () => {
+    const res = await appWith({ connection: null }).request(
+      "/tool-connections/conn-1",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: "Renamed" }),
+      },
+      ENV as never,
+    );
+    expect(res.status).toBe(404);
+  });
+});

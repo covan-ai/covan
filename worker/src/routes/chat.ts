@@ -738,7 +738,11 @@ chat.post("/chat/confirm/:id", async (c) => {
     .maybeSingle();
   if (!session) return c.json({ error: "not found" }, 404);
 
-  await resolvePausedTurn(service, pause.id, approve ? "approved" : "declined");
+  // Claimed before anything runs, and the claim is what makes a double-click
+  // safe: the second request finds nothing pending and is refused here rather
+  // than sending the same email twice.
+  const claimed = await resolvePausedTurn(service, pause.id, approve ? "approved" : "declined");
+  if (!claimed) return c.json({ error: "this was already answered" }, 409);
 
   const signal = c.req.raw.signal;
   const ctx = {

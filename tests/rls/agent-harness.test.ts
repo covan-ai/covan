@@ -243,13 +243,18 @@ describe("tool_connections", () => {
     expect(error).not.toBeNull();
   });
 
-  it("cannot be selected sideways through a wildcard either", async () => {
-    // `select *` expands to every column the caller may read, so this must
-    // succeed and must not contain the ciphertext — the failure mode worth
-    // checking is a grant written to include it by accident.
-    const { data, error } = await owner.db.from("tool_connections").select("*").single();
-    expect(error).toBeNull();
-    expect(data).not.toHaveProperty("secret_ciphertext");
+  /**
+   * `select *` does not quietly return the columns a caller may read — it
+   * expands to every column in the schema cache and is refused whole, with
+   * 42501. Worth pinning, because it is the shape of a real mistake: the
+   * export spec names `delivery_channels`' six columns by hand for exactly
+   * this reason (see `lib/export/tables.ts`), and anything reading this table
+   * has to do the same. A change that made the wildcard succeed would mean
+   * the credential had become selectable.
+   */
+  it("refuses a wildcard select rather than quietly dropping the credential", async () => {
+    const { error } = await owner.db.from("tool_connections").select("*");
+    expect(error?.code).toBe("42501");
   });
 
   it("cannot be created by a client, because the worker holds the key", async () => {

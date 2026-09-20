@@ -176,6 +176,7 @@ client for all of it.
 | `DELETE /messages/after/:id`                   | Truncate, after an edit         |
 | `POST /messages/:id/show`                      | Show another version of a reply |
 | `POST /chat/stream`                            | Ask. Streams SSE.               |
+| `POST /chat/confirm/:id`                       | Answer what an agent asked      |
 | `POST /transcribe`                             | Audio to text                   |
 | `POST /sessions/:id/report`                    | Write it up as a document       |
 
@@ -186,8 +187,30 @@ and keeps the reply it replaces — the old one stops showing rather than being
 deleted, and `POST /messages/:id/show` brings it back. `model` answers on
 another model for that one reply, without moving the agent to it.
 
+The stream may carry three frames beyond `delta`, `thinking`, `truncated`,
+`suggestions`, `done` and `error`, and a client that does not know them should
+ignore them rather than fail:
+
+| Frame                                                 | What it means                                                                                   |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `{"type":"step","index","tool","status","label"}`     | The reply ran a tool. Sent twice per step: `running`, then `ok`, `failed` or `refused`.         |
+| `{"type":"confirm","id","tool","summary","proposal"}` | The agent wants to do something and has stopped. Answer with `POST /chat/confirm/:id`.          |
+| `{"type":"paused","reason"}`                          | The turn stopped early: `confirmation`, or `budget` when it used every tool call it is allowed. |
+
+`POST /chat/confirm/:id` takes `{ "approve": true | false }` and answers with
+the same kind of SSE stream, picking the turn up where it stopped. **Both
+answers go to the server**: declining is not closing the card, it tells the
+agent so it can say something about it and finish the turn. Only the person
+the turn belongs to may answer, and a confirmation expires an hour after it
+was asked.
+
 An assistant message carries `versions` — the ids of every take on it, oldest
 first — when there is more than one. It is absent when there is not.
+
+It also carries `steps` when the reply ran a tool: one entry per tool, in
+order, with `tool`, `status`, the `request` the agent sent and `durationMs`.
+The result is not there — it is in the answer you are reading, and sending
+both would put every tool's output into every transcript load.
 
 `GET /sessions/:id/messages` answers with the newest hundred turns, oldest
 first. `?limit=` asks for more, up to five hundred. It pages from the _new_ end
@@ -279,13 +302,32 @@ and could not.
 
 ### Usage and keys
 
-|                                           |                                                            |
-| ----------------------------------------- | ---------------------------------------------------------- |
-| `GET /usage`                              | Your own totals and what is left of your allowance         |
-| `GET /usage/workspace`                    | Everyone's, by agent and by month. Admin. Never by person. |
+|                                           |                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET /usage`                              | Your own totals and what is left of your allowance                                   |
+| `GET /usage/workspace`                    | Everyone's, by agent and by month. Admin. Never by person.                           |
 | `GET /coverage/workspace?days=30`         | How answers were grounded, by agent. Admin. Never by person, and never the question. |
-| `GET /api-keys`                           | Your own live keys. Never anyone else's.                   |
-| `POST /api-keys` · `DELETE /api-keys/:id` | Session only, as above                                     |
+| `GET /api-keys`                           | Your own live keys. Never anyone else's.                                             |
+| `POST /api-keys` · `DELETE /api-keys/:id` | Session only, as above                                                               |
+
+### Services an agent can call
+
+|                                                                |                                        |
+| -------------------------------------------------------------- | -------------------------------------- |
+| `GET /tool-connections`                                        | The services, and this build's tools   |
+| `POST /tool-connections`                                       | Connect one. Not available to a viewer |
+| `PATCH /tool-connections/:id` · `DELETE /tool-connections/:id` | Rename, re-scope, remove               |
+
+`POST` takes `{ "label", "transport": "http" | "sql", "baseUrl", "headers" }`
+plus `allowedMethods` (HTTP only, defaults to `["GET"]`), `rpc` (SQL only,
+defaults to `covan_query`) and `summary`. `headers` is a map of header name to
+value, encrypted before it is stored and **never returned** — rotating a token
+means removing the connection and adding it again.
+
+`baseUrl` goes through the same SSRF guard as every other outbound address:
+loopback, RFC1918, link-local, cloud metadata and this deployment's own hosts
+are refused with a `400`. See [Integrations](integrations.md#services-an-agent-can-call)
+for what an agent can and cannot do with one.
 
 ### Other
 

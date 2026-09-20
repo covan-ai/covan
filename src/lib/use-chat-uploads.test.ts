@@ -145,7 +145,7 @@ describe("useChatUploads", () => {
       await result.current.remove(result.current.receipts[0].id);
     });
 
-    expect(removeDocument).toHaveBeenCalledWith("agent-1", "doc-notes.md");
+    expect(removeDocument).toHaveBeenCalledWith("doc-notes.md");
     expect(result.current.receipts).toHaveLength(0);
   });
 

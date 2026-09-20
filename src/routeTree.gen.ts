@@ -21,6 +21,7 @@ import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as AuthedAppRouteImport } from './routes/_authed.app'
 import { Route as AuthedIntegrationsRouteImport } from './routes/_authed.integrations'
+import { Route as AuthedKnowledgeRouteImport } from './routes/_authed.knowledge'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
 import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
@@ -90,6 +91,11 @@ const AuthedAppRoute = AuthedAppRouteImport.update({
 const AuthedIntegrationsRoute = AuthedIntegrationsRouteImport.update({
   id: '/integrations',
   path: '/integrations',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedKnowledgeRoute = AuthedKnowledgeRouteImport.update({
+  id: '/knowledge',
+  path: '/knowledge',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
@@ -166,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/terms': typeof TermsRoute
   '/app': typeof AuthedAppRoute
   '/integrations': typeof AuthedIntegrationsRoute
+  '/knowledge': typeof AuthedKnowledgeRoute
   '/settings': typeof AuthedSettingsRoute
   '/team': typeof AuthedTeamRoute
   '/welcome': typeof AuthedWelcomeRoute
@@ -190,6 +197,7 @@ export interface FileRoutesByTo {
   '/terms': typeof TermsRoute
   '/app': typeof AuthedAppRoute
   '/integrations': typeof AuthedIntegrationsRoute
+  '/knowledge': typeof AuthedKnowledgeRoute
   '/settings': typeof AuthedSettingsRoute
   '/team': typeof AuthedTeamRoute
   '/welcome': typeof AuthedWelcomeRoute
@@ -215,6 +223,7 @@ export interface FileRoutesById {
   '/terms': typeof TermsRoute
   '/_authed/app': typeof AuthedAppRoute
   '/_authed/integrations': typeof AuthedIntegrationsRoute
+  '/_authed/knowledge': typeof AuthedKnowledgeRoute
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/team': typeof AuthedTeamRoute
   '/_authed/welcome': typeof AuthedWelcomeRoute
@@ -241,6 +250,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/app'
     | '/integrations'
+    | '/knowledge'
     | '/settings'
     | '/team'
     | '/welcome'
@@ -265,6 +275,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/app'
     | '/integrations'
+    | '/knowledge'
     | '/settings'
     | '/team'
     | '/welcome'
@@ -289,6 +300,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/_authed/app'
     | '/_authed/integrations'
+    | '/_authed/knowledge'
     | '/_authed/settings'
     | '/_authed/team'
     | '/_authed/welcome'
@@ -401,6 +413,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedIntegrationsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/knowledge': {
+      id: '/_authed/knowledge'
+      path: '/knowledge'
+      fullPath: '/knowledge'
+      preLoaderRoute: typeof AuthedKnowledgeRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/settings': {
       id: '/_authed/settings'
       path: '/settings'
@@ -508,6 +527,7 @@ const AuthedAgentsAgentIdRouteWithChildren =
 interface AuthedRouteChildren {
   AuthedAppRoute: typeof AuthedAppRoute
   AuthedIntegrationsRoute: typeof AuthedIntegrationsRoute
+  AuthedKnowledgeRoute: typeof AuthedKnowledgeRoute
   AuthedSettingsRoute: typeof AuthedSettingsRoute
   AuthedTeamRoute: typeof AuthedTeamRoute
   AuthedWelcomeRoute: typeof AuthedWelcomeRoute
@@ -517,6 +537,7 @@ interface AuthedRouteChildren {
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAppRoute: AuthedAppRoute,
   AuthedIntegrationsRoute: AuthedIntegrationsRoute,
+  AuthedKnowledgeRoute: AuthedKnowledgeRoute,
   AuthedSettingsRoute: AuthedSettingsRoute,
   AuthedTeamRoute: AuthedTeamRoute,
   AuthedWelcomeRoute: AuthedWelcomeRoute,
@@ -541,13 +562,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

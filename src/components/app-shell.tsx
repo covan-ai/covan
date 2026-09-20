@@ -2,6 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpen,
+  FolderOpen,
   LayoutGrid,
   Users,
   Plug,
@@ -54,6 +55,10 @@ import { FeedbackButton } from "@/components/feedback-button";
 
 const nav = [
   { to: "/app", label: "Home", icon: LayoutGrid },
+  // Above Team because it is the workspace's files rather than a setting about
+  // them, and because it is the answer to "what have we written down?" — a
+  // question that used to be reachable only through an agent.
+  { to: "/knowledge", label: "Knowledge", icon: FolderOpen },
   { to: "/team", label: "Team", icon: Users },
   { to: "/integrations", label: "Integrations", icon: Plug },
   { to: "/settings", label: "Settings", icon: Settings },

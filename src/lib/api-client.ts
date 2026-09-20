@@ -90,6 +90,29 @@ export type Bundle = {
   createdAt: number;
 };
 
+/**
+ * One document, with the text the agent has of it.
+ *
+ * The excerpt and the file are two different answers and the preview screen
+ * shows both: `GET /documents/:id/preview` returns what was indexed — the
+ * extracted text cut at `excerptLimit`, which is exactly what grounds a reply
+ * when no passage matched — while the bytes come separately from
+ * `documents.bytes` for rendering the file as it is.
+ */
+export type DocumentPreview = Agent["documents"][number] & {
+  excerpt: string;
+  excerptLimit: number;
+  /**
+   * Whether the excerpt runs to the limit, which means the stored text stops
+   * before the document does. It is not a count of what is missing: nothing
+   * stores the full length, so the screen says where the excerpt ends rather
+   * than how much came after.
+   */
+  excerptTruncated: boolean;
+  /** When a connected source last refreshed it, or null for an upload. */
+  syncedAt: number | null;
+};
+
 export type DocumentCitations = {
   /**
    * The oldest reply that could be counted, as a timestamp — or null when there
@@ -132,6 +155,22 @@ function filenameFrom(header: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A document's stored bytes, with the type the store recorded for them.
+ *
+ * Outside `request()` because the response is a file rather than JSON, and
+ * shared by `documents.download` and `documents.bytes` so the preview and the
+ * download are reading the same thing through the same route.
+ */
+async function fetchDocumentBytes(id: string): Promise<{ blob: Blob; contentType: string }> {
+  const token = await getAccessToken();
+  const res = await fetch(`${import.meta.env.VITE_API_URL}/documents/${id}/download`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new ApiError(res.status, "failed to download");
+  return { blob: await res.blob(), contentType: res.headers.get("Content-Type") ?? "" };
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -278,13 +317,23 @@ export const api = {
     // not from the document row.
     move: (id: string, bundleId: string): Promise<Agent["documents"][number]> =>
       request("PATCH", `/documents/${id}`, { bundleId }),
+    /**
+     * What was indexed, rather than what was uploaded. One row, no store read.
+     */
+    preview: (id: string): Promise<DocumentPreview> => request("GET", `/documents/${id}/preview`),
+    /**
+     * The file itself, for rendering it in place.
+     *
+     * The same endpoint `download` uses. Its `Content-Disposition: attachment`
+     * does not get in the way, because fetching the response as a blob and
+     * making an object URL of it is the caller's own decision about what to do
+     * with the bytes — the header only ever addressed a browser navigating
+     * straight to the URL, which is not something this client can do anyway:
+     * the route needs a bearer token.
+     */
+    bytes: fetchDocumentBytes,
     download: async (id: string, name: string): Promise<void> => {
-      const token = await getAccessToken();
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/documents/${id}/download`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new ApiError(res.status, "failed to download");
-      const blob = await res.blob();
+      const { blob } = await fetchDocumentBytes(id);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -325,8 +374,22 @@ export const api = {
      * screen from every document scoring zero.
      */
     citations: (): Promise<DocumentCitations> => request("GET", "/bundles/citations"),
+    /**
+     * What is in one bundle.
+     *
+     * Asked for per bundle rather than folded into `list`, and lazily: a
+     * workspace with thirty bundles is a workspace where twenty-nine of the
+     * lists are not being looked at. It is also the only way to read a bundle no
+     * agent has attached — the agent's own document list covers the attached
+     * ones and nothing covers the rest.
+     */
+    documents: (id: string): Promise<Agent["documents"]> =>
+      request("GET", `/bundles/${id}/documents`),
     create: (name: string, description?: string): Promise<Bundle> =>
       request("POST", "/bundles", { name, description }),
+    /** Rename one, or change the line under its name. */
+    update: (id: string, patch: { name?: string; description?: string }): Promise<Bundle> =>
+      request("PATCH", `/bundles/${id}`, patch),
     remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/bundles/${id}`),
     attach: (agentId: string, bundleId: string): Promise<{ ok: true }> =>
       request("POST", `/agents/${agentId}/bundles/${bundleId}`),

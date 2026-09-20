@@ -826,7 +826,7 @@ ordinary routines at twelve each, and one agent turn spends more than twelve
 on its own. On Free, run the scheduler on the Node/Docker stack instead, or
 move to Workers Paid where the ceiling is 10,000. Left alone it shows up as
 routines failing part way through a tick, which is a bad way to learn it. See
-[routines](routines.md#it-may-not-fit-on-cloudflares-free-plan).
+[routines](routines.md#it-may-not-fit-on-cloudflare-free).
 
 Watch a tick with `bun run tail:cron`.
 

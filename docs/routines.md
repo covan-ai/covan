@@ -217,7 +217,7 @@ What it changes for you:
 A workspace with no connected service runs exactly as it always did: one call,
 no loop, nothing extra to pay for.
 
-#### It may not fit on Cloudflare's free plan
+### It may not fit on Cloudflare Free
 
 This is a real limit and worth checking before you rely on it. A tick on
 Workers Free gets **50 subrequests**, and the batch size is sized against that:

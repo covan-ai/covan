@@ -116,14 +116,24 @@ grant select, insert, update, delete on public.message_steps to service_role;
 --
 -- WHY A SCHEDULED RUN DOES NOT WAIT. Nobody is watching one, and a tick has
 -- nowhere to wait: a claim goes stale in thirty minutes
--- (`lib/routines/dispatcher.ts`). So an unattended run writes the row, ends,
--- and the person finds it later. That is 0058's own argument for why a
--- capability call is a record rather than a block.
+-- (`lib/routines/dispatcher.ts`). So an unattended run does the work it can
+-- do, says in its delivered message what it stopped short of, and ends. That
+-- is 0058's own argument for why a capability call is a record rather than a
+-- block.
+--
+-- It does not park a row here, and `session_id` being NOT NULL is what says
+-- so: a routine has no conversation to resume into, and a turn nobody can
+-- pick up is not paused, it is abandoned. The record of what it wanted lives
+-- where the person will actually see it, which is the message the routine
+-- delivered.
 create table if not exists public.paused_turns (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references public.chat_sessions (id) on delete cascade,
-  -- The question this turn is answering. Null for a run that nobody asked --
-  -- a routine has no message to hang off.
+  -- The reply this turn is halfway through. Null when the agent asked before
+  -- it said anything: there is no assistant row yet, and the resume writes
+  -- one. When it is set, the resume appends to that row instead, because the
+  -- two halves are one answer -- written as two rows they would be re-sent to
+  -- the model next turn as two turns, which is not what it said.
   message_id uuid references public.messages (id) on delete cascade,
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
   agent_id uuid not null references public.agents (id) on delete cascade,

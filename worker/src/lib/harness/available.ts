@@ -38,18 +38,29 @@ export async function capabilitiesFor(input: {
   env: ToolEnv;
   workspaceId: string;
   userId: string;
+  /**
+   * Who is watching, which decides whether the sending tools are worth
+   * offering — and, because it decides that, whether the read behind them
+   * happens at all.
+   *
+   * `"schedule"` drops both: `schedule_job` asks a person and a tick has
+   * nobody to ask, so it can only ever end as a note saying it did not
+   * happen; and `send_email` duplicates the delivery the routine is already
+   * about to make. Leaving them in would cost a `delivery_channels` read per
+   * run for two tools that cannot finish — and on the cron Worker a read is a
+   * subrequest, which is the budget `lib/routines/dispatcher.ts` counts.
+   */
+  surface?: "chat" | "schedule";
 }): Promise<AgentCapabilities> {
-  // Best-effort, both of them. A tool the agent cannot see is a worse turn;
-  // a turn that fails because a lookup failed is no turn at all.
+  const scheduled = input.surface === "schedule";
+
+  // Best-effort. A tool the agent cannot see is a worse turn; a turn that
+  // fails because a lookup failed is no turn at all.
   const connections = await listConnections(input.db, input.workspaceId).catch((err: unknown) => {
     console.error("could not list tool connections", err);
     return [];
   });
-  const { data: channelRows } = await input.db
-    .from("delivery_channels")
-    .select("id, kind, label")
-    .eq("user_id", input.userId);
-  const channels = channelRows ?? [];
+  const channels = scheduled ? [] : await ownChannels(input.db, input.userId);
 
   const tools = configuredTools(input.env).filter((tool) => {
     if (tool.needs === "connection") return connections.length > 0;
@@ -69,4 +80,30 @@ export async function capabilitiesFor(input: {
   }
 
   return { tools, manifest: parts.filter(Boolean).join("\n\n") };
+}
+
+/**
+ * This person's own delivery channels, or none.
+ *
+ * Best-effort like the connections read above, and for a sharper reason than
+ * symmetry: this runs before the chat stream opens, so a throw here is a 500
+ * where there would otherwise have been an answer. An agent that cannot list
+ * the channels is an agent that cannot offer to send to one, which is a worse
+ * turn and still a turn.
+ */
+async function ownChannels(
+  db: SupabaseClient,
+  userId: string,
+): Promise<Array<{ id: string; kind: string; label: string | null }>> {
+  try {
+    const { data, error } = await db
+      .from("delivery_channels")
+      .select("id, kind, label")
+      .eq("user_id", userId);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as Array<{ id: string; kind: string; label: string | null }>;
+  } catch (err) {
+    console.error("could not list delivery channels", err);
+    return [];
+  }
 }

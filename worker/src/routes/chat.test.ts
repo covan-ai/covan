@@ -38,6 +38,11 @@ const anthropicCreate = vi.fn();
 const serviceInsert = vi.fn();
 const stepsWritten = vi.fn();
 const pausedWritten = vi.fn();
+const pausedResolved = vi.fn();
+/** The row `POST /chat/confirm/:id` will find, or null for "not found". */
+let parked: Record<string, unknown> | null = null;
+/** Whether this caller is the one that claimed the turn. False is a 409. */
+let claimWins = true;
 const serviceUpdate = vi.fn();
 const sessionUpdate = vi.fn();
 /** The OPENAI_API_KEY every `createOpenAI(env)` call was actually made with. */
@@ -107,14 +112,36 @@ vi.mock("../lib/supabase", () => ({
           },
         };
       }
-      // A turn parked waiting for somebody. Returns the id the confirm event
-      // carries.
+      // A turn parked waiting for somebody. Reads hand back whatever the
+      // test parked; the update is the claim that makes a second click a
+      // 409 rather than a second send.
       if (table === "paused_turns") {
         return {
           insert: (row: Record<string, unknown>) => {
             pausedWritten(row);
             return {
               select: () => ({ single: async () => ({ data: { id: "paused-1" }, error: null }) }),
+            };
+          },
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: parked, error: null }),
+              eq: () => ({
+                select: async () => ({ data: parked ? [{ id: parked.id }] : [], error: null }),
+              }),
+            }),
+          }),
+          update: (row: Record<string, unknown>) => {
+            pausedResolved(row);
+            return {
+              eq: () => ({
+                eq: () => ({
+                  select: async () => ({
+                    data: claimWins ? [{ id: "paused-1" }] : [],
+                    error: null,
+                  }),
+                }),
+              }),
             };
           },
         };
@@ -367,6 +394,8 @@ function citedNames(): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  parked = null;
+  claimWins = true;
   createOpenAIKeys.length = 0;
   embedTexts.mockResolvedValue({ vectors: [[0.1, 0.2]], tokens: 8 });
   answersWith(streamOf("Twenty days."));
@@ -1191,5 +1220,125 @@ describe("a reply that used a tool", () => {
         m.role === "system" && m.content.includes("Connected services"),
     );
     expect(system.content).toContain("conn-1");
+  });
+});
+
+/**
+ * The second half of a turn that stopped to ask.
+ *
+ * Two of these are about things that go wrong quietly. A confirmation is a
+ * button people press twice, and answering the same parked turn twice would
+ * send the same email twice. And the two halves of one answer are written
+ * into one message, so a second half produced on a different temperature is
+ * a paragraph that reads like somebody else finished the sentence.
+ */
+describe("POST /chat/confirm/:id", () => {
+  const PARKED = {
+    id: "paused-1",
+    session_id: SESSION.id,
+    message_id: null,
+    workspace_id: "ws-1",
+    agent_id: AGENT.id,
+    user_id: USER.id,
+    tool: "schedule_job",
+    tool_call: { id: "call_1", name: "schedule_job", arguments: "{}" },
+    summary: "Create a routine?",
+    proposal: { cron: "0 17 * * 1" },
+    messages: [{ role: "user", content: "every monday" }],
+    steps: [
+      {
+        index: 0,
+        tool: "schedule_job",
+        request: {},
+        resultExcerpt: "Create a routine?",
+        status: "pending",
+        durationMs: 3,
+      },
+    ],
+    model: "gpt-4.1",
+    status: "pending",
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+  };
+
+  const confirm = (app: Hono<AppEnv>, approve: boolean) =>
+    app.request(
+      "/chat/confirm/paused-1",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approve }),
+      },
+      ENV as never,
+    );
+
+  it("is a 404 when there is nothing parked under that id", async () => {
+    const { app } = appWith({ question: "every monday" });
+    expect((await confirm(app, true)).status).toBe(404);
+  });
+
+  it("refuses somebody else's question, which the read policy deliberately shows them", async () => {
+    parked = { ...PARKED, user_id: "someone-else" };
+    const { app } = appWith({ question: "every monday" });
+    expect((await confirm(app, true)).status).toBe(403);
+  });
+
+  it("refuses a confirmation that has aged out rather than answering a stale prompt", async () => {
+    parked = { ...PARKED, expires_at: new Date(Date.now() - 1000).toISOString() };
+    const { app } = appWith({ question: "every monday" });
+    expect((await confirm(app, true)).status).toBe(410);
+  });
+
+  it("refuses the second click, so an approved action happens once", async () => {
+    parked = PARKED;
+    claimWins = false;
+    const { app } = appWith({ question: "every monday" });
+    expect((await confirm(app, true)).status).toBe(409);
+  });
+
+  it("tells the model the person declined, in the tool's own answer", async () => {
+    parked = PARKED;
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf("Understood — I won't."));
+
+    const res = await confirm(app, false);
+    expect(res.status).toBe(200);
+    await res.text();
+
+    expect(pausedResolved.mock.calls[0][0]).toMatchObject({ status: "declined" });
+    const sent = completionCreate.mock.calls.find((c) => c[0].stream)?.[0].messages;
+    const toolTurn = sent.find((m: { role: string }) => m.role === "tool");
+    expect(toolTurn.tool_call_id).toBe("call_1");
+    expect(String(toolTurn.content)).toContain("declined");
+  });
+
+  it("finishes the answer on the agent's own settings, not on bare defaults", async () => {
+    parked = PARKED;
+    const { app } = appWith({
+      question: "every monday",
+      agentTuning: { temperature: 0.2, reasoning_effort: "low" },
+    });
+    answersWith(streamOf("Done."));
+
+    await (await confirm(app, false)).text();
+
+    const body = completionCreate.mock.calls.find((c) => c[0].stream)?.[0];
+    expect(body.temperature).toBe(0.2);
+    // And on the model the turn started on, which must not move even if the
+    // agent's setting has.
+    expect(body.model).toBe("gpt-4.1");
+  });
+
+  it("carries the steps already taken, so approving again cannot buy a fresh budget", async () => {
+    parked = PARKED;
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf("Done."));
+
+    await (await confirm(app, false)).text();
+
+    // The pending step is written out resolved, under the index the person
+    // already saw.
+    expect(stepsWritten.mock.calls[0][0]).toEqual([
+      expect.objectContaining({ step_index: 0, tool: "schedule_job", status: "refused" }),
+    ]);
   });
 });

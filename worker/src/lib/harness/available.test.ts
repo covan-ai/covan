@@ -89,6 +89,43 @@ describe("capabilitiesFor", () => {
     expect(tools.map((t) => t.name)).toContain("schedule_job");
   });
 
+  /**
+   * Nobody is watching a scheduled run, so the two tools that need a person
+   * are not offered — and the read behind them is not made either, which on
+   * the cron Worker is a subrequest the tick keeps.
+   */
+  it("offers no sending tools, and reads no channels, for a run nobody is watching", async () => {
+    let channelsRead = false;
+    const db = {
+      from: (table: string) => {
+        if (table === "delivery_channels") {
+          channelsRead = true;
+          return { select: () => ({ eq: async () => ({ data: [CHANNEL], error: null }) }) };
+        }
+        return {
+          select: () => ({
+            eq: () => ({ order: async () => ({ data: [CONNECTION], error: null }) }),
+          }),
+        };
+      },
+    } as unknown as SupabaseClient;
+
+    const { tools, manifest } = await capabilitiesFor({
+      db,
+      env: FULL,
+      workspaceId: "ws-1",
+      userId: "user-1",
+      surface: "schedule",
+    });
+
+    expect(channelsRead).toBe(false);
+    expect(tools.map((t) => t.name)).not.toContain("send_email");
+    expect(tools.map((t) => t.name)).not.toContain("schedule_job");
+    // What it CAN do is still named, because that is what it is there for.
+    expect(tools.map((t) => t.name)).toContain("query_database");
+    expect(manifest).toContain("Covan Supabase");
+  });
+
   it("still answers when the connection lookup fails, rather than failing the turn", async () => {
     const broken = {
       from: (table: string) =>

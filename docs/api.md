@@ -283,6 +283,7 @@ and could not.
 | ----------------------------------------- | ---------------------------------------------------------- |
 | `GET /usage`                              | Your own totals and what is left of your allowance         |
 | `GET /usage/workspace`                    | Everyone's, by agent and by month. Admin. Never by person. |
+| `GET /coverage/workspace?days=30`         | How answers were grounded, by agent. Admin. Never by person, and never the question. |
 | `GET /api-keys`                           | Your own live keys. Never anyone else's.                   |
 | `POST /api-keys` · `DELETE /api-keys/:id` | Session only, as above                                     |
 

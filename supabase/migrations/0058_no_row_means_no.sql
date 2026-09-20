@@ -94,6 +94,13 @@ create policy "connection_capabilities_read"
 
 revoke all on public.connection_capabilities from anon, authenticated;
 grant select on public.connection_capabilities to authenticated;
+-- `service_role` is BYPASSRLS, not BYPASSGRANTS, and 0023 took the wide default
+-- privileges away from it too — so the engine reading this catalogue to find
+-- out whether a capability is destructive gets `42501` unless it is said here.
+-- Read only, on purpose: the whole point of the catalogue is that a capability
+-- arrives with the code that performs it, in a migration, and an engine that
+-- could add a row could describe an action nothing implements.
+grant select on public.connection_capabilities to service_role;
 
 -- ---- the grants -----------------------------------------------------------
 --
@@ -308,6 +315,12 @@ create policy "connection_grants_delete"
 
 revoke all on public.connection_grants from anon, authenticated;
 grant select, insert, update, delete on public.connection_grants to authenticated;
+-- Read only for the engine, and this one is worth saying out loud rather than
+-- being generous by habit. A grant is a person's decision; nothing unattended
+-- has any business creating one, and an engine that could would be the exact
+-- failure this whole file is written against. The reading it does do is real:
+-- which capabilities an agent may be offered is a question asked at 3am.
+grant select on public.connection_grants to service_role;
 
 -- ---- the calls ------------------------------------------------------------
 --
@@ -457,6 +470,19 @@ revoke all on public.capability_calls from anon, authenticated;
 grant select on public.capability_calls to authenticated;
 -- One column. The answer is the only thing a person writes here.
 grant update (status) on public.capability_calls to authenticated;
+
+-- The engine's half. INSERT is granted although rows arrive through
+-- `record_capability_call`, which is `security definer` and therefore writes as
+-- its owner rather than as the caller: the boundary on who may create a call is
+-- that function's revoke, not this line, and withholding a grant from a role
+-- that already bypasses row level security would be documentation pretending to
+-- be a control. UPDATE is what marks a call `performed` or `failed` once the
+-- third party has answered.
+--
+-- No DELETE, and that one is not documentation. These rows are the record that
+-- an agent tried something, including the times it was refused, and nothing
+-- unattended should be able to remove them. They leave with the workspace.
+grant select, insert, update on public.capability_calls to service_role;
 
 -- ---- the evaluator --------------------------------------------------------
 --

@@ -17,13 +17,22 @@ if (!("ResizeObserver" in globalThis)) {
 // and the absence is what throws. Without these, clicking a Select trigger
 // fails with "target.hasPointerCapture is not a function" — which reads like a
 // bug in the component rather than a gap in the environment.
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
-if (!Element.prototype.scrollIntoView) {
-  Element.prototype.scrollIntoView = () => {};
+//
+// Guarded on `Element` itself, the way the block above is guarded on
+// `ResizeObserver`, because this file is the setup for every test in the
+// project and one of them is not in a browser: `scripts/web-runtime-config.
+// test.mjs` opts into the node environment with a docblock, where `Element`
+// does not exist and an unguarded mention of it throws before a single test
+// runs.
+if (typeof Element !== "undefined") {
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false;
+    Element.prototype.setPointerCapture = () => {};
+    Element.prototype.releasePointerCapture = () => {};
+  }
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
 }
 
 // Node 26 ships its own `localStorage`/`sessionStorage` globals, left undefined

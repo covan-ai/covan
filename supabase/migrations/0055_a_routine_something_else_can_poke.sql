@@ -166,3 +166,19 @@ create policy "routine_triggers_delete_own"
 revoke all on public.routine_triggers from anon, authenticated;
 grant select (routine_id, created_at, last_used_at) on public.routine_triggers to authenticated;
 grant delete on public.routine_triggers to authenticated;
+
+-- And the half a client never sees, which is where this table is actually
+-- used. `service_role` is BYPASSRLS, not BYPASSGRANTS: 0023 took away the wide
+-- default privileges from every role including this one, so a table the engine
+-- writes and nobody grants to it answers `42501` in production and nothing at
+-- all anywhere else — both the compose stack and the Supabase CLI stack still
+-- ship the permissive default. That is 0043's mistake, which 0045 had to
+-- repair, and `src/lib/migration-grants.test.ts` exists because of it. It
+-- caught this file too.
+--
+-- All four, because all four happen: SELECT to find a routine by its token
+-- hash when a webhook arrives with no caller at all, INSERT to mint one
+-- (hashing is the server's job, which is why `authenticated` has no insert),
+-- UPDATE to stamp `last_used_at`, and DELETE because rotation replaces the row
+-- rather than editing it.
+grant select, insert, update, delete on public.routine_triggers to service_role;

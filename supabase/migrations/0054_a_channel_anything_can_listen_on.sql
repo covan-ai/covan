@@ -45,12 +45,21 @@
 -- one, and every webhook channel is then refused by a constraint nobody is
 -- looking at.
 --
--- The pattern is `%kind in (%` rather than 0047's looser `%kind%`. This table
--- has one check constraint today and a loose pattern would find it, but it
--- would also find any future constraint whose body merely mentions the word —
--- `check (kind <> 'email' or label ~ '@')`, say — and drop it on the way past,
--- silently, in a migration about something else. Matching the shape of the
--- constraint being replaced is what keeps this to the one it means.
+-- The pattern matches the constraint's SHAPE rather than its wording, because
+-- `pg_get_constraintdef` does not hand back the source that was typed. It
+-- renders the parsed constraint, and Postgres rewrites `kind in (a, b)` into
+-- `CHECK ((kind = ANY (ARRAY['a'::text, 'b'::text])))` on the way in. An
+-- earlier draft of this migration looked for `%kind in (%`, found nothing,
+-- dropped nothing, and then failed on `add constraint` because the name it was
+-- adding — the one Postgres generated in 0012 — was still taken. CI caught it
+-- on a database built from these files in order, which is the only place that
+-- could have.
+--
+-- `%kind = ANY%` is the rendered shape of a value list, which is what this
+-- replaces. It is still narrower than 0047's `%kind%`: a future constraint that
+-- merely mentions the column — `check (kind <> 'email' or label ~ '@')` — is
+-- left alone rather than dropped in passing by a migration about something
+-- else.
 do $$
 declare
   constraint_name text;
@@ -60,7 +69,7 @@ begin
     from pg_constraint con
     where con.conrelid = 'public.delivery_channels'::regclass
       and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) like '%kind in (%'
+      and pg_get_constraintdef(con.oid) like '%kind = ANY%'
   loop
     execute format('alter table public.delivery_channels drop constraint %I', constraint_name);
   end loop;

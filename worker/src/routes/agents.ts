@@ -8,13 +8,26 @@ import { REASONING_EFFORTS } from "../lib/models";
 
 const agents = new Hono<AppEnv>();
 
-// `routines(name)` is embedded through `documents.routine_id`, and it resolves
+// Two things are selected here that a reader would not predict, and they are
+// selected for the same reason: `mapAgent` flattens every attached bundle's
+// documents into one list, and once flattened a row has no way back to
+// anything it was nested under.
+//
+// `documents.bundle_id`, although `agent_bundles.bundle_id` is already here —
+// the Knowledge explorer needs it on every row it renders, because it is what
+// the bundle chip says and what a move knows it is moving away from.
+//
+// `routines(name)`, embedded through `documents.routine_id`, which resolves
 // through `routines`' own RLS rather than through the document's: a colleague's
 // private routine filing into a shared bundle comes back as a null name beside
-// a real id, which is exactly what the Knowledge tab should say about it. See
-// `DocumentDTO.routineName`.
+// a real id, and that is exactly what the Knowledge tab should say about it.
+// See `DocumentDTO.routineName`.
+//
+// One string literal, not a concatenation. postgrest-js infers the row type
+// from the literal, and `"a," + "b"` widens the argument to `string`, which
+// turns every field on the result into `GenericStringError`.
 const AGENT_SELECT =
-  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,routine_id,routines(name),document_chunks(count))))";
+  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count))))";
 
 /**
  * The two tuning settings, on both schemas.

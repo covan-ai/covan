@@ -294,3 +294,123 @@ describe("DELETE /documents/:id", () => {
     expect(deleted).toEqual([]);
   });
 });
+
+/** The one read the preview makes. */
+function fakePreviewDb(row: Record<string, unknown> | null, error = false) {
+  return {
+    from(table: string) {
+      if (table !== "documents") throw new Error(`fakePreviewDb: unexpected table "${table}"`);
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: row,
+              error: error ? { message: "boom" } : null,
+            }),
+          }),
+        }),
+      };
+    },
+  };
+}
+
+function previewApp(db: unknown) {
+  const app = new Hono<AppEnv>();
+  app.use("/*", async (c, next) => {
+    c.set("db", db as never);
+    await next();
+  });
+  app.route("/", documents);
+  return app;
+}
+
+describe("GET /documents/:id/preview", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: "d1",
+    name: "handbook.md",
+    size: 12000,
+    created_at: "2026-09-01T00:00:00.000Z",
+    bundle_id: "bundle-1",
+    connection_id: null,
+    external_url: null,
+    synced_at: null,
+    content: "Twenty days of leave a year.",
+    document_chunks: [{ count: 3 }],
+    ...over,
+  });
+
+  it("returns the stored text — what the fallback actually reads", async () => {
+    const res = await previewApp(fakePreviewDb(row())).request("/documents/d1/preview");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id: "d1",
+      name: "handbook.md",
+      chunkCount: 3,
+      indexed: true,
+      bundleId: "bundle-1",
+      excerpt: "Twenty days of leave a year.",
+      excerptLimit: 8000,
+      excerptTruncated: false,
+      syncedAt: null,
+    });
+  });
+
+  // A document whose embedding failed still has its text, and the preview is
+  // where somebody checks whether reindexing is worth it or the file is empty.
+  it("returns the text of a document with no passages", async () => {
+    const res = await previewApp(fakePreviewDb(row({ document_chunks: [{ count: 0 }] }))).request(
+      "/documents/d1/preview",
+    );
+
+    expect(await res.json()).toMatchObject({ chunkCount: 0, indexed: false });
+  });
+
+  it("flags an excerpt that reaches the limit, because the text was cut before it was stored", async () => {
+    const res = await previewApp(fakePreviewDb(row({ content: "x".repeat(8000) }))).request(
+      "/documents/d1/preview",
+    );
+
+    expect(await res.json()).toMatchObject({ excerptTruncated: true });
+  });
+
+  // Uploaded before the no-text refusal existed: the row is real, the text is
+  // not there, and an empty string is the honest answer rather than a 500.
+  it("answers with an empty excerpt for a document that has no stored text", async () => {
+    const res = await previewApp(fakePreviewDb(row({ content: null }))).request(
+      "/documents/d1/preview",
+    );
+
+    expect(await res.json()).toMatchObject({ excerpt: "", excerptTruncated: false });
+  });
+
+  it("carries the source link and sync time for a connected document", async () => {
+    const res = await previewApp(
+      fakePreviewDb(
+        row({
+          connection_id: "conn-1",
+          external_url: "https://notion.so/page-1",
+          synced_at: "2026-09-02T12:00:00.000Z",
+        }),
+      ),
+    ).request("/documents/d1/preview");
+
+    expect(await res.json()).toMatchObject({
+      connectionId: "conn-1",
+      externalUrl: "https://notion.so/page-1",
+      syncedAt: Date.parse("2026-09-02T12:00:00.000Z"),
+    });
+  });
+
+  it("404s for a document the caller cannot see", async () => {
+    const res = await previewApp(fakePreviewDb(null)).request("/documents/nope/preview");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("500s when the read fails", async () => {
+    const res = await previewApp(fakePreviewDb(null, true)).request("/documents/d1/preview");
+
+    expect(res.status).toBe(500);
+  });
+});

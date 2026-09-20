@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { chunkText, embedTexts } from "../lib/embeddings";
-import { extractDocumentText } from "../lib/extract";
+import { EXCERPT_LIMIT, extractDocumentText } from "../lib/extract";
 import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
@@ -57,11 +57,17 @@ documents.patch("/documents/:id", async (c) => {
 
   const { data: doc, error: docErr } = await db
     .from("documents")
-    .select("id,name,size,created_at,bundle_id,knowledge_bundles(workspace_id)")
+    .select(
+      "id,name,size,created_at,bundle_id,connection_id,external_url,document_chunks(count),knowledge_bundles(workspace_id)",
+    )
     .eq("id", id)
     .maybeSingle();
   if (docErr) return c.json({ error: "failed to load document" }, 500);
   if (!doc) return c.json({ error: "not found" }, 404);
+  // Already there: nothing to do, and the row goes back as it stands. The chunk
+  // count is selected above so that this answer carries the document's real
+  // indexing state — without it a move onto the bundle a document is already in
+  // replied "not indexed" about a document with fifty passages.
   if (doc.bundle_id === bundleId) return c.json(mapDocument(doc));
 
   const { data: target, error: bundleErr } = await db
@@ -114,7 +120,7 @@ documents.patch("/documents/:id", async (c) => {
     .from("documents")
     .update({ bundle_id: bundleId })
     .eq("id", id)
-    .select("id,name,size,created_at,document_chunks(count)")
+    .select("id,name,size,created_at,bundle_id,connection_id,external_url,document_chunks(count)")
     .single();
   if (upErr || !updated) {
     // Put the passages back where the document still is.
@@ -123,6 +129,48 @@ documents.patch("/documents/:id", async (c) => {
   }
 
   return c.json(mapDocument(updated));
+});
+
+// GET /documents/:id/preview — the stored text, which is not the same thing as
+// the file.
+//
+// `documents.content` is the extracted text cut at EXCERPT_LIMIT, and it is
+// exactly what the no-match fallback in `routes/chat.ts` puts in front of the
+// model. That makes it worth a screen of its own: the file can be downloaded
+// and read anywhere, but what the agent has of it can only be read here.
+//
+// No store read, so this is one row and cheap enough to open on a click. The
+// bytes are a separate request — `GET /documents/:id/download` — which the
+// interface makes when it wants to render the file itself rather than say what
+// was indexed.
+documents.get("/documents/:id/preview", async (c) => {
+  const db = c.get("db");
+
+  const { data: doc, error } = await db
+    .from("documents")
+    .select(
+      "id,name,size,created_at,bundle_id,connection_id,external_url,synced_at,content,document_chunks(count)",
+    )
+    .eq("id", c.req.param("id"))
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to load document" }, 500);
+  if (!doc) return c.json({ error: "not found" }, 404);
+
+  const excerpt = (doc as { content: string | null }).content ?? "";
+  const syncedAt = (doc as { synced_at: string | null }).synced_at;
+
+  return c.json({
+    ...mapDocument(doc),
+    excerpt,
+    excerptLimit: EXCERPT_LIMIT,
+    // What is knowable, stated as what is knowable. The text was sliced before
+    // it was stored, so a full-length excerpt is a cut one — but nothing here
+    // knows how much came after, and a document that happened to end exactly on
+    // the limit reads the same way. The interface says the excerpt stops at
+    // 8000 characters rather than claiming there is more.
+    excerptTruncated: excerpt.length >= EXCERPT_LIMIT,
+    syncedAt: syncedAt ? Date.parse(syncedAt) : null,
+  });
 });
 
 // GET /documents/:id/download — stream bytes through the worker (native binding, no presign).

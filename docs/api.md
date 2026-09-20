@@ -207,14 +207,29 @@ which leaves the report saved and unretrievable until `POST
 
 ### Knowledge
 
-|                                                  |                       |
-| ------------------------------------------------ | --------------------- |
-| `GET /bundles` · `POST /bundles`                 | Subjects              |
-| `PATCH /bundles/:id` · `DELETE /bundles/:id`     | Rename, delete        |
-| `POST /bundles/:id/documents/upload`             | Upload a document     |
-| `PATCH /documents/:id` · `DELETE /documents/:id` | Rename, move, delete  |
-| `GET /documents/:id/download`                    | The original file     |
-| `POST /documents/:id/reindex`                    | Re-chunk and re-embed |
+|                                                  |                           |
+| ------------------------------------------------ | ------------------------- |
+| `GET /bundles` · `POST /bundles`                 | Subjects                  |
+| `PATCH /bundles/:id` · `DELETE /bundles/:id`     | Rename, delete            |
+| `GET /bundles/:id/documents`                     | What is in one bundle     |
+| `POST /bundles/:id/documents/upload`             | Upload a document         |
+| `PATCH /documents/:id` · `DELETE /documents/:id` | Rename, move, delete      |
+| `GET /documents/:id/preview`                     | The text that was indexed |
+| `GET /documents/:id/download`                    | The original file         |
+| `POST /documents/:id/reindex`                    | Re-chunk and re-embed     |
+
+`GET /bundles/:id/documents` answers for any bundle in the workspace, attached to
+an agent or not — `GET /agents` only carries the documents of the bundles an
+agent has. `404` separates a bundle that is not yours from one that is empty.
+
+`GET /documents/:id/preview` is the document row plus `excerpt`: the extracted
+text as it was stored, which is what grounds a reply when no passage matched.
+`excerptTruncated` says the stored text reaches `excerptLimit` and therefore
+stops before the document does — nothing records how much came after, so it is
+where the excerpt ends rather than how much is missing. The passages are cut from
+the whole document either way, which is why a long file is searchable to its end
+and only its opening can answer "summarise this". The bytes are
+`GET /documents/:id/download`; this reads one row and never the document store.
 
 Deleting a bundle or a document marks it rather than destroying it: it stops
 being visible and stops grounding answers immediately, and `GET /trash` can

@@ -24,8 +24,8 @@ nothing else. So a bundle boundary is not filing — it is a decision about whic
 agent gets to read what. Group by subject, or by the audience an agent serves,
 rather than by who uploaded the file or when. A bundle nobody has attached is
 unreachable by every agent in the workspace, however much is in it; it is still
-listed on every member's Knowledge tab, because it is retrieval that cannot see
-it, not the workspace.
+listed on every member's Knowledge page, and every file in it can be opened and
+read there, because it is retrieval that cannot see it, not the workspace.
 
 Both roles can create, edit and delete bundles. There is no owner who has to
 approve it.
@@ -95,9 +95,45 @@ already phrased the way somebody will ask.
 
 There are two ways in, and they differ only in where the file lands.
 
-The order on the Knowledge tab is create a bundle, select it, drop files into it,
-then flip the switch that attaches it to this agent. Selecting a bundle is what
-turns the drop zone on, so the upload always knows where it is going.
+The first is the Knowledge explorer, which is one screen with two doors. The
+**Knowledge** page in the sidebar is the workspace's files: bundles down the
+left, what is in the open one in the middle. An agent's **Knowledge** tab is the
+same explorer handed that agent, which adds exactly two things — the bundles are
+split into the ones attached to it and the ones that are not, with the switch
+that moves a bundle between the two groups, and it opens on the one folder only
+an agent has: every document in every bundle attached to it.
+
+The order there is create a bundle, open it, drop files into it, then flip the
+switch. Opening a bundle is what turns the drop zone on, so the upload always
+knows where it is going — "everything this agent reads" is a view rather than a
+place, and the drop zone says which bundle is missing rather than guessing one.
+
+Clicking a file opens it, which is two answers rather than one. **File** draws
+the document as it is: markdown formatted, a CSV as a table, JSON indented, a
+PDF in the browser's own viewer. **What the agent reads** is the text that was
+stored for retrieval, with how many passages it was cut into and whether the
+stored text runs to its limit. The two come apart, and the section on
+[what happens when somebody asks a question](#what-happens-when-somebody-asks-a-question)
+is why: the passages are cut from the whole document, while the stored text stops
+at 8000 characters. Downloading is a separate control beside them.
+
+Each row's menu carries the rest — download, **Move to** another bundle,
+reindex, delete, and for a synced document a link to the page it came from.
+
+Moving one file is also a drag: take a row by its file icon and drop it on a
+bundle in the rail. The menu is not the slow version of that, it is the one that
+works without a pointer, and both do exactly the same thing. For more than one
+file there are the checkboxes: tick a few, shift-click to take everything
+between two rows, and a bar appears above the list with **Select all**, **Move
+to** and **Delete** for the whole set. A batch is done one file at a time and
+reports on all of them together — "Moved 3 of 5", naming the first file that
+refused and what it said — because a move can be refused and a batch that only
+said "some of these failed" would leave you to work out which.
+
+Two filters appear above the list when there is something for them to find, and
+only then: **Needs indexing** for files with no passages, which are the files no
+answer can be grounded in, and **Older than 90 days** for the ones nobody has
+revisited since. Above eight bundles the rail gets a search of its own.
 
 The other way is the conversation itself: the paperclip in the composer, a file
 dragged anywhere onto the chat pane, or one pasted from the clipboard. Nothing
@@ -120,6 +156,13 @@ move that left them behind would look correct until the chat bundle was detached
 and the passages quietly stopped being findable. It needs the update policy added
 in migration 0024; against a database without it the move is refused rather than
 half-done.
+
+The same is true of a document a connected source keeps current, and there it was
+not true for a while. Moving one works — it stays where you filed it and goes on
+being refreshed there — but a refresh used to write the new passages into the
+bundle the connection feeds while leaving the row where you put it, so the
+document was listed in one bundle and retrievable only through another. A sync
+now writes a document's passages into the bundle the document is in.
 
 The accepted extensions are `md`, `markdown`, `txt`, `csv`, `json` and `pdf`, up
 to 10 MB each, and the [Quickstart](quickstart.md#give-it-something-to-read) has
@@ -178,7 +221,7 @@ somewhere else and uploaded as text.
 
 ### Reindexing
 
-The refresh control beside a document re-extracts, re-chunks and re-embeds it,
+**Reindex**, in a document's row menu, re-extracts, re-chunks and re-embeds it,
 replacing its chunks. It exists for the document whose upload-time embedding
 failed — indexing is best-effort, and a failure there leaves a file that no
 passage can ever be matched in, reachable only through the fallback described
@@ -228,7 +271,7 @@ all, and an agent that has a report also has the documents the report was
 written from — one of which always matches. The report became the one file the
 agent could see in its list and never read a word of. If a report ever does show
 "Not indexed" now, its embedding failed rather than being skipped, and the
-refresh control beside it is the way back.
+**Reindex** in its row menu is the way back.
 
 A report is one model call, capped at roughly eight pages, and it takes up to a
 minute. It is charged to your monthly allowance like a reply, and costs about
@@ -243,10 +286,11 @@ embedded when it is written, retrieves in chat, downloads, moves, deletes and
 goes into the workspace export like anything you uploaded. One document per run,
 named after the routine and the day.
 
-In the list it carries one extra phrase on the line under its name:
+In the list it carries one extra line under its name:
 
 ```
-14 KB · Written by Competitor digest
+Q3 competitors — 14 March
+Written by Competitor digest
 ```
 
 That is the whole of the difference. Where a document came from is derived from
@@ -264,6 +308,14 @@ year of weekly — and removes the oldest past that. They do not appear in
 The switch beside each bundle attaches it to the agent whose tab you are on.
 Bundles and agents must belong to the same workspace for the attachment to be
 accepted — the database checks that, not the interface.
+
+The **Knowledge** page says which agents each bundle is attached to, in the rail
+and again under the name of the open one, and marks the bundle no agent reads at
+all. That is the state worth pointing at: files uploaded into a bundle nobody
+ever attached look filed away and can never ground an answer. It is a property
+of the bundle rather than of the files in it — every document in a bundle is
+reachable exactly when that bundle is — which is why it is said once per folder
+rather than once per row.
 
 Detaching removes the attachment and nothing else. The documents, the chunks and
 the bundle itself all survive, and re-attaching restores exactly what was there.
@@ -407,7 +459,7 @@ fallback, so an unindexed document still contributes its excerpt when nothing
 matches. Since uploads with no readable text are now refused, a document that
 reached the bundle has text in it, and an **Indexed** chip that never appeared
 means the embedding failed rather than that there was nothing to embed — which
-is what the refresh control is for. Documents uploaded before that refusal
+is what **Reindex** is for. Documents uploaded before that refusal
 existed are the exception, and they are the ones that contribute nothing but
 their name. Does the question share vocabulary
 with the document, since matching is on meaning as the embedding model represents

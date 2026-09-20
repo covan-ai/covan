@@ -15,6 +15,21 @@ const bundles = new Hono<AppEnv>();
 
 const BUNDLE_SELECT = "id,name,description,created_at,documents(count)";
 
+// Everything a row in the Knowledge explorer renders. `connection_id` and
+// `external_url` are here because a synced document is not freely movable —
+// the interface has to be able to say so before somebody drags one.
+// `routines(name)` is embedded through `documents.routine_id` and resolves
+// through `routines`' own RLS rather than through the document's: a colleague's
+// private routine filing into a shared bundle comes back as a null name beside
+// a real id, which is exactly what the explorer should say about it. See
+// `DocumentDTO.routineName`.
+//
+// One string literal, not a concatenation — postgrest-js infers the row type
+// from the literal, and `"a," + "b"` widens it to `string`.
+// prettier-ignore
+const DOCUMENT_SELECT =
+  "id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count)";
+
 const createSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
@@ -105,6 +120,40 @@ bundles.get("/bundles/citations", async (c) => {
 
   const since = (sinceResult.data as string | null) ?? null;
   return c.json({ since: since ? Date.parse(since) : null, counts });
+});
+
+// GET /bundles/:id/documents — what is actually in one bundle.
+//
+// The gap this closes: until now a bundle's contents could only be read through
+// the agent it was attached to (`AGENT_SELECT` embeds them), so a bundle nobody
+// had attached was a name and a count with no screen behind it — including every
+// bundle on the day it is created, which is the day somebody most wants to look
+// inside it.
+//
+// Two queries rather than one, and the first is not redundant. `documents` under
+// RLS answers a bundle in another workspace with an empty list, which is the
+// same reply as an empty bundle; reading the bundle first separates "not yours"
+// from "nothing in it". Same pattern as the upload route below.
+bundles.get("/bundles/:id/documents", async (c) => {
+  const db = c.get("db");
+  const bundleId = c.req.param("id");
+
+  const { data: bundle, error: bundleError } = await db
+    .from("knowledge_bundles")
+    .select("id")
+    .eq("id", bundleId)
+    .maybeSingle();
+  if (bundleError) return c.json({ error: "failed to load bundle" }, 500);
+  if (!bundle) return c.json({ error: "not found" }, 404);
+
+  const { data, error } = await db
+    .from("documents")
+    .select(DOCUMENT_SELECT)
+    .eq("bundle_id", bundleId)
+    .order("created_at", { ascending: false });
+  if (error) return c.json({ error: "failed to load documents" }, 500);
+
+  return c.json((data ?? []).map(mapDocument));
 });
 
 // POST /bundles
@@ -270,7 +319,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   const { data: doc, error } = await db
     .from("documents")
     .insert({ bundle_id: bundleId, name: file.name, size: file.size, r2_key: r2Key, content })
-    .select("id,name,size,created_at")
+    .select("id,name,size,created_at,bundle_id")
     .single();
   if (error || !doc) {
     try {

@@ -8,6 +8,17 @@ import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads
 import { reportBundleMarker, reportBundleName, findReportBundle } from "./reports";
 import { useHasSession } from "./session-presence";
 
+/**
+ * The cache key for one bundle's contents.
+ *
+ * Exported so the explorer and the writes that change a bundle agree on it. The
+ * writes invalidate the whole `["bundle-documents"]` prefix rather than one
+ * key: a move changes two bundles at once, and the one it came from is not
+ * always on screen to be named.
+ */
+export const bundleDocumentsKey = (bundleId: string) => ["bundle-documents", bundleId] as const;
+const BUNDLE_DOCUMENTS = ["bundle-documents"] as const;
+
 export type Agent = {
   id: string;
   name: string;
@@ -36,6 +47,24 @@ export type Agent = {
     createdAt: number;
     chunkCount: number;
     indexed: boolean;
+    /**
+     * Which bundle holds it. Optional, and absent rather than null when the
+     * response did not carry it: the three endpoints that answer with one
+     * document somebody just acted on already know where it went, while the two
+     * that answer with a list — a bundle's contents and this agent's documents —
+     * both say. The explorer needs it on every row it renders, which is what a
+     * bundle chip reads and what a move knows it is moving away from.
+     */
+    bundleId?: string;
+    /**
+     * The connected source that owns it, or null for a file somebody uploaded.
+     * Undefined means the response did not say, which is not the same answer.
+     * A synced document may be moved, but its name and its text are the
+     * source's, so the interface says so rather than offering a rename.
+     */
+    connectionId?: string | null;
+    /** The page or file at the source, for a synced document. */
+    externalUrl?: string | null;
     /**
      * The routine that wrote it, or null for an upload or a synced file.
      *
@@ -154,10 +183,11 @@ type Store = {
     >,
   ) => Promise<Agent>;
   updateAgent: (id: string, patch: Partial<Agent>) => void;
-  removeDocument: (agentId: string, docId: string) => Promise<void>;
+  removeDocument: (docId: string) => Promise<void>;
   reindexDocument: (docId: string) => Promise<Agent["documents"][number]>;
   moveDocument: (docId: string, bundleId: string) => Promise<void>;
   createBundle: (name: string, description?: string) => Promise<Bundle>;
+  updateBundle: (id: string, patch: { name?: string; description?: string }) => Promise<Bundle>;
   ensureChatBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
   ensureReportBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
   writeReport: (
@@ -269,13 +299,23 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           .catch(() => toast.error("Couldn't save the agent."));
       },
 
-      removeDocument: async (agentId, docId) => {
+      removeDocument: async (docId) => {
         await api.documents.remove(docId);
-        await queryClient.invalidateQueries({ queryKey: ["agents"] });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["agents"] }),
+          queryClient.invalidateQueries({ queryKey: ["bundles"] }),
+          queryClient.invalidateQueries({ queryKey: BUNDLE_DOCUMENTS }),
+        ]);
       },
 
       createBundle: async (name, description) => {
         const bundle = await api.bundles.create(name, description);
+        await queryClient.invalidateQueries({ queryKey: ["bundles"] });
+        return bundle;
+      },
+
+      updateBundle: async (id, patch) => {
+        const bundle = await api.bundles.update(id, patch);
         await queryClient.invalidateQueries({ queryKey: ["bundles"] });
         return bundle;
       },
@@ -314,17 +354,19 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["bundles"] }),
           queryClient.invalidateQueries({ queryKey: ["agents"] }),
+          queryClient.invalidateQueries({ queryKey: BUNDLE_DOCUMENTS }),
         ]);
         return doc;
       },
 
       uploadToBundle: async (bundleId, file, onProgress) => {
         const doc = await api.bundles.upload(bundleId, file, onProgress);
-        // Refresh bundles (doc counts) and agents (the document list + per-doc
-        // indexing status rendered on the Knowledge tab).
+        // Refresh bundles (doc counts), agents (the document list + per-doc
+        // indexing status) and the explorer's per-bundle listing.
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["bundles"] }),
           queryClient.invalidateQueries({ queryKey: ["agents"] }),
+          queryClient.invalidateQueries({ queryKey: BUNDLE_DOCUMENTS }),
         ]);
         return doc;
       },
@@ -334,12 +376,16 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ["bundles"] }),
           queryClient.invalidateQueries({ queryKey: ["agents"] }),
+          queryClient.invalidateQueries({ queryKey: BUNDLE_DOCUMENTS }),
         ]);
       },
 
       reindexDocument: async (docId) => {
         const doc = await api.documents.reindex(docId);
-        await queryClient.invalidateQueries({ queryKey: ["agents"] });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["agents"] }),
+          queryClient.invalidateQueries({ queryKey: BUNDLE_DOCUMENTS }),
+        ]);
         return doc;
       },
 
@@ -363,6 +409,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           .then(() => {
             void queryClient.invalidateQueries({ queryKey: ["bundles"] });
             void queryClient.invalidateQueries({ queryKey: ["agents"] });
+            void queryClient.invalidateQueries({ queryKey: BUNDLE_DOCUMENTS });
           })
           .catch(() => toast.error("Couldn't delete the knowledge bundle."));
       },

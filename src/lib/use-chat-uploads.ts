@@ -163,7 +163,7 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
       const receipt = receipts.find((r) => r.id === receiptId);
       if (receipt?.documentId) {
         try {
-          await removeDocument(agent.id, receipt.documentId);
+          await removeDocument(receipt.documentId);
         } catch (e) {
           toast.error(
             e instanceof Error && e.message
@@ -175,7 +175,7 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
       }
       setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
     },
-    [agent.id, receipts, removeDocument],
+    [receipts, removeDocument],
   );
 
   return { receipts, destinations, addFiles, moveTo, remove, dismiss };

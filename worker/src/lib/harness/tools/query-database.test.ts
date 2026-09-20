@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolContext, ToolEnv } from "../registry";
-import { looksReadOnly, queryDatabaseTool, rpcUrl } from "./query-database";
+import { looksReadOnly, queryDatabaseTool, readOnlyComplaint, rpcUrl } from "./query-database";
 
 /**
  * The tool that lets the agent write its own SQL.
@@ -91,6 +91,30 @@ describe("looksReadOnly", () => {
 
   it("refuses a writing CTE, which starts with the right word and is not a read", () => {
     expect(looksReadOnly("with d as (delete from users returning *) select * from d")).toBe(false);
+  });
+
+  /**
+   * The difference between a crude check and an obstructive one. "Which
+   * events were deletions" is an ordinary question, and a check that reads
+   * the word inside the quotes refuses it with an explanation that is not
+   * true.
+   */
+  it("does not read a keyword that is part of the data", () => {
+    expect(looksReadOnly("select * from events where action = 'delete'")).toBe(true);
+    expect(looksReadOnly("select * from t where note = 'it''s a drop'")).toBe(true);
+  });
+
+  it("says what tripped it, so the model can tell a refusal from a bug", () => {
+    // Caught by the opening word, and named as the opening word.
+    expect(readOnlyComplaint("update orders set total = 0")).toContain("not update");
+    // Caught further in, and named as the keyword.
+    expect(
+      readOnlyComplaint("with d as (delete from users returning *) select * from d"),
+    ).toContain("DELETE");
+    // Named specifically, because "send a SELECT" is unhelpful advice to
+    // somebody who sent a read.
+    expect(readOnlyComplaint("explain select 1")).toContain("EXPLAIN");
+    expect(readOnlyComplaint("select 1")).toBeNull();
   });
 });
 

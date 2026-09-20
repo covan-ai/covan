@@ -51,23 +51,43 @@ export const DEFAULT_RPC = "covan_query";
  * Comments are stripped first, because `/* x *\/ delete ...` starts with a
  * comment and not with `delete`.
  */
-export function looksReadOnly(sql: string): boolean {
+export function readOnlyComplaint(sql: string): string | null {
   const stripped = sql
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/--[^\n]*/g, " ")
+    // String literals go too, and this is the difference between a crude
+    // check and an obstructive one: `where action = 'delete'` is an ordinary
+    // question about an events table, and a check that reads the word inside
+    // the quotes refuses it with an explanation that is simply untrue.
+    // `''` is SQL's escape for a quote inside a literal, which is why the
+    // pattern allows it rather than stopping at the first one.
+    .replace(/'(?:[^']|'')*'/g, "''")
     .trim();
-  if (!stripped) return false;
+  if (!stripped) return "the query is empty";
   // `explain` is read-shaped and still refused: the carrier runs the query
   // inside `select * from (...)`, and EXPLAIN is not something you can select
   // from. Refusing it here gives the model a sentence instead of a syntax
   // error from the far end that it cannot act on.
-  if (!/^(select|with|table|values)\b/i.test(stripped)) return false;
+  if (!/^(select|with|table|values)\b/i.test(stripped)) {
+    const first = /^\s*(\w+)/.exec(stripped)?.[1] ?? "that";
+    return first.toLowerCase() === "explain"
+      ? "EXPLAIN cannot be run through this connection — it is not something the " +
+          "read-only wrapper can select from"
+      : `a query starts with select, with, table or values — not ${first}`;
+  }
   // A writing CTE is the interesting case and the only one worth naming:
   // `with x as (delete from t returning *) select * from x` passes the test
   // above and is not a read.
-  return !/\b(insert|update|delete|merge|truncate|drop|alter|create|grant|revoke|copy|vacuum|call|do)\b/i.test(
-    stripped,
-  );
+  const write =
+    /\b(insert|update|delete|merge|truncate|drop|alter|create|grant|revoke|copy|vacuum|call|do)\b/i.exec(
+      stripped,
+    );
+  return write ? `this query contains ${write[1].toUpperCase()}` : null;
+}
+
+/** The same question as a boolean, for the callers that only need one. */
+export function looksReadOnly(sql: string): boolean {
+  return readOnlyComplaint(sql) === null;
 }
 
 /** The rpc endpoint for a connection, on the PostgREST base it names. */
@@ -124,12 +144,15 @@ export const queryDatabaseTool: AgentTool = {
         message: "send one statement — semicolons separating statements are not accepted",
       };
     }
-    if (!looksReadOnly(sql)) {
+    const complaint = readOnlyComplaint(sql);
+    if (complaint) {
       return {
         kind: "error",
         message:
-          "this connection is read-only: send a SELECT. The database refuses writes at the " +
-          "transaction level, so retrying a write in different words will not work.",
+          `${complaint}. This connection is read-only: send a SELECT. The database refuses ` +
+          "writes at the transaction level, so retrying a write in different words will not " +
+          "work — but if the word was part of your data rather than the statement, put it in " +
+          "quotes and it will be accepted.",
       };
     }
     const limit =

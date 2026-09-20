@@ -59,11 +59,23 @@ beforeEach(() => {
 });
 
 describe("looksReadOnly", () => {
-  it("accepts the four shapes a read can take", () => {
+  it("accepts the four shapes the carrier can actually run", () => {
+    // Each of these composes inside `select * from (…) q limit N`, which is
+    // what the function on the target database wraps them in.
     expect(looksReadOnly("select 1")).toBe(true);
     expect(looksReadOnly("WITH x as (select 1) select * from x")).toBe(true);
     expect(looksReadOnly("table orders")).toBe(true);
-    expect(looksReadOnly("explain select 1")).toBe(true);
+    expect(looksReadOnly("values (1), (2)")).toBe(true);
+  });
+
+  /**
+   * Read-shaped and still refused. EXPLAIN is not something you can select
+   * from, so it cannot go through a carrier that wraps the query — and the
+   * model gets a sentence here rather than a syntax error from the far end
+   * that it has no way to act on.
+   */
+  it("refuses EXPLAIN, which the carrier cannot wrap", () => {
+    expect(looksReadOnly("explain select 1")).toBe(false);
   });
 
   it("refuses the obvious writes", () => {
@@ -133,6 +145,21 @@ describe("query_database", () => {
       ctxWith(),
     );
     expect((result as { message: string }).message).toContain("one statement");
+  });
+
+  /**
+   * The bug this pins, found against a real Postgres: the first version of
+   * the documented function appended `limit N` to the caller's SQL, and
+   * `select 1 limit 5 limit 200` is a syntax error. An agent writing its own
+   * SQL puts a LIMIT on it constantly.
+   */
+  it("passes a query that has its own LIMIT straight through", async () => {
+    const result = await queryDatabaseTool.run(
+      { connectionId: "conn-1", sql: "select * from orders limit 5" },
+      ctxWith(),
+    );
+    expect(result).toMatchObject({ kind: "ok" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).p_sql).toBe("select * from orders limit 5");
   });
 
   it("allows the trailing semicolon a person would type", async () => {

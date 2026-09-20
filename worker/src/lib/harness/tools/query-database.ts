@@ -57,7 +57,11 @@ export function looksReadOnly(sql: string): boolean {
     .replace(/--[^\n]*/g, " ")
     .trim();
   if (!stripped) return false;
-  if (!/^(select|with|table|values|explain)\b/i.test(stripped)) return false;
+  // `explain` is read-shaped and still refused: the carrier runs the query
+  // inside `select * from (...)`, and EXPLAIN is not something you can select
+  // from. Refusing it here gives the model a sentence instead of a syntax
+  // error from the far end that it cannot act on.
+  if (!/^(select|with|table|values)\b/i.test(stripped)) return false;
   // A writing CTE is the interesting case and the only one worth naming:
   // `with x as (delete from t returning *) select * from x` passes the test
   // above and is not a read.
@@ -80,8 +84,9 @@ export const queryDatabaseTool: AgentTool = {
   name: "query_database",
   description:
     "Run a read-only SQL query against a database this workspace has connected, and get " +
-    "the rows back as JSON. Write the SQL yourself. The connection is read-only and " +
-    "enforced as such by the database — do not attempt INSERT, UPDATE, DELETE or DDL. " +
+    "the rows back as JSON. Write the SQL yourself. One statement, and a LIMIT of your own " +
+    "is fine. The connection is read-only and enforced as such by the database — do not " +
+    "attempt INSERT, UPDATE, DELETE or DDL, and EXPLAIN is not supported either. " +
     "Call describe_connection first if you do not already know the tables and columns.",
   input: {
     type: "object",

@@ -453,8 +453,13 @@ begin
   -- at the transaction level.
   set local transaction read only;
   set local statement_timeout = '10s';
-  execute format('select coalesce(jsonb_agg(t), ''[]''::jsonb) from (%s limit %s) t',
-                 p_sql, p_limit)
+  -- The caller's SQL goes in a subquery of its own, and the cap is applied
+  -- outside it. Appending `limit N` straight onto the end would be a syntax
+  -- error the moment the query already has one — which an agent writing its
+  -- own SQL does constantly.
+  execute format(
+    'select coalesce(jsonb_agg(t), ''[]''::jsonb) from (select * from (%s) q limit %s) t',
+    p_sql, p_limit)
     into v_result;
   return v_result;
 end;
@@ -494,6 +499,13 @@ advance, because that list would need a new entry — which is to say a release 
 for every new question. So the sequence is: read the schema once
 (`describe_connection`, remembered afterwards), then write a query
 (`query_database`), then answer.
+
+One statement per call, and a `LIMIT` of its own is fine — the function above
+wraps the query rather than appending to it, so the row cap and the agent's
+own limit compose. `EXPLAIN` is the one read-shaped statement that cannot go
+through this carrier, because it is not something you can select from; Covan
+refuses it with a sentence rather than letting the database answer with a
+syntax error.
 
 Every call is written down. A reply that used a tool carries the steps under
 it in the transcript, with what the agent asked for and how it went, and those

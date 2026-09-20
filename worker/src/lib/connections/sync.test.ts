@@ -240,6 +240,40 @@ describe("syncing a connection", () => {
     expect(fake.callsTo("document_chunks").some((c) => c.op === "delete")).toBe(true);
   });
 
+  // A synced document can be moved out of the bundle the connection feeds, and
+  // the move takes its passages with it because retrieval reads scope from the
+  // chunks. Re-importing used to write them back to `connection.bundle_id`,
+  // which left the row in one bundle and everything searchable in it in
+  // another — a document that is listed where it cannot be retrieved and
+  // retrievable where it is not listed.
+  it("re-imports a moved document into the bundle it was moved to", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1", "v2")]);
+    fakeProvider.readFile.mockResolvedValue("Thirty days of leave a year.");
+    const fake = db({
+      documents: [
+        {
+          id: "doc-1",
+          external_id: "page-1",
+          external_version: "v1",
+          r2_key: "bundle-1/old",
+          bundle_id: "bundle-2",
+        },
+      ],
+    });
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome).toMatchObject({ status: "ok", updated: 1 });
+    // The row is left where somebody put it — the update payload never mentions
+    // the bundle — and the passages follow the row.
+    const updated = fake.callsTo("documents").find((c) => c.op === "update" && c.single);
+    expect(updated?.values).not.toHaveProperty("bundle_id");
+    const chunkRows = fake.callsTo("document_chunks").find((c) => c.op === "insert")
+      ?.values as unknown as Array<{ bundle_id?: string }>;
+    expect(chunkRows.length).toBeGreaterThan(0);
+    expect(chunkRows.every((row) => row.bundle_id === "bundle-2")).toBe(true);
+  });
+
   // The half a changes feed cannot do, and the reason this engine lists instead.
   it("hides a document whose source file is gone, rather than destroying it", async () => {
     fakeProvider.listFiles.mockResolvedValue([]);

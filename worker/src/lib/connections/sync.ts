@@ -116,6 +116,14 @@ type ExistingDocument = {
   external_id: string | null;
   external_version: string | null;
   r2_key: string | null;
+  /**
+   * Where the document actually is, which is not always where this connection
+   * put it: a synced document can be moved to another bundle like any other
+   * (`PATCH /documents/:id`). Read so that re-importing it writes its passages
+   * into the bundle the document is in rather than the one the connection feeds
+   * — see the note in `importOne`.
+   */
+  bundle_id: string | null;
   /** Set once 0040 has hidden it. Soft-deleted rows are still ours to reconcile. */
   deleted_at: string | null;
 };
@@ -251,7 +259,7 @@ export async function runConnection(
     // that comes back at the source has to come back here.
     const { data: existingRows, error: existingError } = await deps.db
       .from("documents")
-      .select("id,external_id,external_version,r2_key,deleted_at")
+      .select("id,external_id,external_version,r2_key,bundle_id,deleted_at")
       .eq("connection_id", connection.id);
     if (existingError) {
       throw new Error(`could not read this connection's documents: ${existingError.message}`);
@@ -491,6 +499,20 @@ async function importOne(
     documentId = data.id;
   }
 
+  // Which bundle the passages belong to, which is the document's own and only
+  // incidentally the connection's.
+  //
+  // A synced document can be moved like any other, and the move takes its
+  // chunks with it precisely because retrieval reads scope from
+  // `document_chunks.bundle_id` rather than from the document row. Writing
+  // `connection.bundle_id` here undid that on the next version change: the row
+  // stayed in the bundle somebody moved it to while its passages jumped back to
+  // the connection's, so the document was listed in one bundle and retrievable
+  // only through another — the exact split `PATCH /documents/:id` refuses to
+  // create. The insert path has no document yet, so there the connection's
+  // bundle is the answer.
+  const passageBundleId = existing?.bundle_id ?? connection.bundle_id;
+
   // Embed before touching the stored chunks, so a failure never leaves the
   // document worse off than it was — the same order `POST /documents/:id/reindex`
   // uses, and the reason a half-synced document still answers questions.
@@ -508,7 +530,7 @@ async function importOne(
     deps.db,
     chunks.map((content, index) => ({
       document_id: documentId,
-      bundle_id: connection.bundle_id,
+      bundle_id: passageBundleId,
       workspace_id: connection.workspace_id,
       chunk_index: index,
       content,

@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Chip, SectionCard } from "@/components/section-card";
-import { PanelEyebrow } from "@/components/page-container";
 import {
   Select,
   SelectContent,
@@ -135,7 +134,9 @@ export function ToolList({ tools }: { tools: ToolAvailability[] }) {
   if (tools.length === 0) return null;
   return (
     <SectionCard className="flex flex-col gap-3">
-      <PanelEyebrow>What an agent can do with these</PanelEyebrow>
+      <span className="font-dm text-title font-medium leading-tight">
+        What an agent can do with these
+      </span>
       <ul className="flex flex-col gap-2.5">
         {tools.map((tool) => (
           <li key={tool.name} className="flex items-start gap-2.5">

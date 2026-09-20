@@ -7,9 +7,13 @@ import { PageContainer, PageHeader, SectionHeading } from "@/components/page-con
 import { Chip, EmptyState, SectionCard } from "@/components/section-card";
 import { DocsLink } from "@/components/docs-link";
 import { ConnectionCard, ConnectSourceCard } from "@/components/integrations/connection-card";
+import {
+  AddToolConnectionCard,
+  ToolConnectionCard,
+} from "@/components/integrations/tool-connection-card";
 import { SlackCard } from "@/components/integrations/slack-card";
 import { SlackMark } from "@/components/integrations/brand-marks";
-import { useConnections, useSlack } from "@/hooks/use-connections";
+import { useConnections, useSlack, useToolConnections } from "@/hooks/use-connections";
 import { useAgentsStore } from "@/lib/agents-store";
 import { connectErrorMessage } from "@/lib/connections-api";
 
@@ -72,6 +76,7 @@ function IntegrationsPage() {
   useGrantOutcome();
 
   const connections = useConnections();
+  const tools = useToolConnections();
   const slack = useSlack();
   const { bundles, agents } = useAgentsStore();
 
@@ -129,6 +134,31 @@ function IntegrationsPage() {
               ))}
             </div>
           )}
+        </section>
+
+        {/* A different idea from the two sections above, which is why it is
+            its own and not another row in them. A source syncs documents into
+            a bundle and the agent never speaks to it. A service is something
+            the agent calls while it is answering — and the reason it is a
+            form rather than a release is that the worker has no per-service
+            code to go with it. */}
+        <section className="mt-16">
+          <SectionHeading title="Services an agent can call" />
+          <div className="mt-6 flex flex-col gap-2.5">
+            {tools.isPending ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : (tools.data?.connections.length ?? 0) > 0 ? (
+              tools.data?.connections.map((connection) => (
+                <ToolConnectionCard key={connection.id} connection={connection} />
+              ))
+            ) : (
+              <EmptyState
+                title="No service is connected."
+                description="An agent can search what you have uploaded. Connect a database or an API and it can go and look something up while it answers — and schedule itself to do it again."
+              />
+            )}
+            <AddToolConnectionCard />
+          </div>
         </section>
 
         <section className="mt-16">

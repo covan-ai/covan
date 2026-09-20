@@ -13,7 +13,7 @@ import type { SummariseInput } from "./executor";
  * message". The second framing makes a model hedge — it can always find a way
  * to be useful — and hedging is exactly the paragraph this exists to stop.
  */
-const DECISION_INSTRUCTION =
+export const DECISION_INSTRUCTION =
   "Return a JSON object with two fields. `relevant` is true only if the material below " +
   "contains something the instruction actually asked for, and false when it does not. " +
   "`summary` is your report, written as you normally would, and must be empty when " +
@@ -89,13 +89,25 @@ export function summariseWithModel(env: RoutineEnv) {
         //
         // What that buys, stated plainly rather than overstated: it is not a
         // defence against prompt injection, and nothing here is. A payload
-        // that talks the model into ignoring its instruction will succeed. The
-        // reason that is survivable is the blast radius rather than the
-        // prompt — this agent has no tools, reads nothing it was not already
-        // given, and can deliver only to a channel belonging to the routine's
-        // own owner. The worst outcome is a misleading summary in the owner's
-        // own inbox, which is the same thing a hostile RSS feed could already
-        // do. It should be read that way, not as a wall.
+        // that talks the model into ignoring its instruction will succeed.
+        //
+        // **What made that survivable has changed, and the sentence that used
+        // to be here is no longer true.** It read "this agent has no tools,
+        // reads nothing it was not already given" — and on THIS path it still
+        // holds, because this function passes no tools. It does not hold for
+        // the run beside it: `lib/routines/agent-run.ts` gives a scheduled run
+        // the same tools a chat turn has, so a hostile payload reaching that
+        // path is talking to something that can query a connected database and
+        // fetch from a connected API.
+        //
+        // What bounds it there is narrower and worth naming in full: every
+        // connection is origin-locked and method-limited by a person, nothing
+        // writes by default, `send_email` can only reach a channel belonging
+        // to the routine's own owner, and anything that changes the world asks
+        // first — which, on a schedule, means it is recorded and does not
+        // happen. The worst outcome is still a misleading message in the
+        // owner's own inbox, now possibly informed by data the agent was
+        // already allowed to read. It should be read that way, not as a wall.
         { role: "user", content: `${input.instruction}\n\n${body}` },
       ],
     });
@@ -121,7 +133,7 @@ export function summariseWithModel(env: RoutineEnv) {
  * `relevant: false` with a summary written anyway — all of them deliver.
  * `declined` is true only when the model said so plainly.
  */
-function readDecision(text: string): { text: string; declined: boolean } {
+export function readDecision(text: string): { text: string; declined: boolean } {
   let decision: Decision;
   try {
     decision = JSON.parse(text) as Decision;

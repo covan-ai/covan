@@ -4,6 +4,52 @@
 
 export type ProviderId = "notion" | "google_drive";
 
+/**
+ * A service an agent can CALL, as opposed to a source it reads documents from.
+ *
+ * The two are next to each other on one screen and are not the same thing, so
+ * it is worth saying which is which. A `Connection` above syncs files into a
+ * bundle and the agent never talks to it. A `ToolConnection` is a database or
+ * an API the agent reaches at question time, through the general tools in the
+ * worker's harness — and adding one is this form rather than a release, which
+ * is the whole design (worker/src/lib/harness/registry.ts).
+ *
+ * There is no credential on this type and there is none on the wire either:
+ * migration 0059 grants `secret_ciphertext` to no client role at all.
+ */
+export type ToolConnection = {
+  id: string;
+  label: string;
+  /** `sql` speaks to a Postgres through PostgREST; `http` to any REST API. */
+  transport: "http" | "sql";
+  baseUrl: string;
+  /**
+   * The HTTP methods a person allowed. Not advisory — the worker refuses
+   * anything not on this list before it builds a URL, and the default is GET
+   * alone.
+   */
+  allowedMethods: string[];
+  /** What the agent is told this service holds. Cached, and refreshable. */
+  summary: string | null;
+  /** The read-only function a `sql` connection speaks through. */
+  rpc: string | null;
+  createdAt: number;
+};
+
+/** One tool this build has, and whether this deployment can run it. */
+export type ToolAvailability = {
+  name: string;
+  description: string;
+  /** Whether it changes anything outside Covan. Shown, because it matters. */
+  destructive: boolean;
+  configured: boolean;
+};
+
+export type ToolConnectionsResponse = {
+  connections: ToolConnection[];
+  tools: ToolAvailability[];
+};
+
 /** A source this deployment can offer, and whether it has been given the keys. */
 export type ProviderAvailability = {
   id: ProviderId;

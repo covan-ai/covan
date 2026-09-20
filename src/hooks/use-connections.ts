@@ -26,6 +26,52 @@ export function useSlack() {
   return useQuery({ queryKey: slackKey, queryFn: () => api.slack.get() });
 }
 
+export const toolConnectionsKey = ["tool-connections"] as const;
+
+/**
+ * The services an agent can call, and what this build can do with them.
+ *
+ * A separate query from `useConnections` rather than a field on it, because
+ * the two answer different questions and one of them is about to be asked
+ * from a second screen: an agent's settings will want to say which services
+ * it can reach, and that page has no business fetching the document sources
+ * as well.
+ */
+export function useToolConnections() {
+  return useQuery({ queryKey: toolConnectionsKey, queryFn: () => api.toolConnections.list() });
+}
+
+export function useCreateToolConnection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.toolConnections.create>[0]) =>
+      api.toolConnections.create(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: toolConnectionsKey }),
+  });
+}
+
+export function useUpdateToolConnection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: Parameters<typeof api.toolConnections.update>[1];
+    }) => api.toolConnections.update(id, patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: toolConnectionsKey }),
+  });
+}
+
+export function useRemoveToolConnection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.toolConnections.remove(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: toolConnectionsKey }),
+  });
+}
+
 /**
  * Start a grant and hand the browser to the provider.
  *

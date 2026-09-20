@@ -321,13 +321,6 @@ chat.post("/chat/stream", async (c) => {
       // change that silently breaks the cache costs real money and shows up
       // nowhere.
       let cachedTokens: number | null = null;
-      // Why the model stopped. "length" means it ran into `maxTokensFor` and
-      // the answer is cut off mid-thought — which looks, on screen, exactly
-      // like an answer that finished. Carried out to the client so it can say
-      // so instead of leaving someone to work out that the last sentence has
-      // no end.
-      let finishReason: string | null = null;
-
       let persisted = false;
       let spendRecorded = false;
       // What the turn did, and whether it stopped to ask. Both are filled by
@@ -576,9 +569,12 @@ chat.post("/chat/stream", async (c) => {
         promptTokens = turn.usage.promptTokens;
         completionTokens = turn.usage.completionTokens;
         cachedTokens = turn.usage.cachedTokens;
-        // Already normalised to OpenAI's vocabulary by `lib/completion.ts`,
-        // so `"length"` means truncated on either provider.
-        finishReason = turn.finishReason;
+        // Why the model stopped, already normalised to OpenAI's vocabulary by
+        // `lib/completion.ts` — so `"length"` means truncated on either
+        // provider. Read off the turn rather than held in a variable: the
+        // abort and error paths below never look at it, and the two places
+        // that do are both inside this block.
+        const finishReason = turn.finishReason;
 
         if (signal.aborted) {
           deferred(

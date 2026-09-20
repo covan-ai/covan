@@ -125,6 +125,24 @@ export type SummariseInput = {
   mayDecline: boolean;
 };
 
+/**
+ * The same run, described for the path that has tools.
+ *
+ * `SummariseInput` plus the three ids a tool needs and cannot be given by the
+ * model — see `ToolContext` in `lib/harness/registry.ts` for why every id a
+ * tool sees is resolved rather than passed in. They are on a separate type
+ * because `summariseWithModel` has no use for them and taking them would
+ * imply it did.
+ */
+export type AgentRunInput = SummariseInput & {
+  agentId: string;
+  workspaceId: string;
+  userId: string;
+  routineRunId?: string;
+};
+
+export type AgentRunResult = { text: string; tokens: number; declined: boolean };
+
 export type RetrievalInput = { agentId: string; query: string };
 
 export type ExecutorDeps = {
@@ -150,6 +168,22 @@ export type ExecutorDeps = {
      */
     declined: boolean;
   }>;
+  /**
+   * The same run, with tools.
+   *
+   * Optional, and absent is the ordinary state rather than the degraded one:
+   * a deployment can be running with no tool configured at all, and the
+   * executor's own tests drive it without one. It returns `null` when this
+   * workspace has nothing for a tool to point at, which sends the run down
+   * `summarise` — the one-call path, which is strictly cheaper and is what
+   * every routine did before this existed.
+   *
+   * **This is the dependency that ties the routine engine to the harness**,
+   * and it is taken deliberately. Two execution paths would mean a job set up
+   * in a conversation behaving differently when it runs unattended, which is
+   * the difference nobody could debug.
+   */
+  runWithTools?: (input: AgentRunInput, env: RoutineEnv) => Promise<AgentRunResult | null>;
   /**
    * What the agent knows, for one run.
    *
@@ -555,29 +589,41 @@ export async function runRoutine(
       console.error("routine retrieval failed (continuing persona-only)", err);
     }
 
-    const summary = await deps.summarise(
-      {
-        persona: agent?.persona ?? null,
-        model: agent?.model ?? null,
-        temperature: agent?.temperature ?? null,
-        reasoningEffort: agent?.reasoning_effort ?? null,
-        instruction: routine.instruction,
-        items,
-        pageText,
-        payloadText: trigger?.payload,
-        ragBlock,
-        // A scheduled prompt has no source, so there is nothing for its output
-        // to be irrelevant to — and one `false` would silence it permanently.
-        // Everything that watches something may decline.
-        //
-        // A poked run may, even though its source_kind is `none`: it *does*
-        // have material to be irrelevant to — the payload that arrived — and
-        // the thing a webhook routine is most often asked to do is stay quiet
-        // unless what came in matters.
-        mayDecline: routine.source_kind !== "none" || trigger !== undefined,
-      },
-      runEnv,
-    );
+    const summariseInput = {
+      persona: agent?.persona ?? null,
+      model: agent?.model ?? null,
+      temperature: agent?.temperature ?? null,
+      reasoningEffort: agent?.reasoning_effort ?? null,
+      instruction: routine.instruction,
+      items,
+      pageText,
+      payloadText: trigger?.payload,
+      ragBlock,
+      // A scheduled prompt has no source, so there is nothing for its output
+      // to be irrelevant to — and one `false` would silence it permanently.
+      // Everything that watches something may decline.
+      //
+      // A poked run may, even though its source_kind is `none`: it *does*
+      // have material to be irrelevant to — the payload that arrived — and
+      // the thing a webhook routine is most often asked to do is stay quiet
+      // unless what came in matters.
+      mayDecline: routine.source_kind !== "none" || trigger !== undefined,
+    };
+
+    // The branch, and the whole of §D. A workspace with something for a tool
+    // to point at runs the agent loop; everything else runs the single call
+    // it always ran. `runWithTools` answers `null` for the second case, so
+    // the question is asked once rather than twice.
+    const summary =
+      (await deps.runWithTools?.(
+        {
+          ...summariseInput,
+          agentId: routine.agent_id,
+          workspaceId: routine.workspace_id,
+          userId: routine.user_id,
+        },
+        runEnv,
+      )) ?? (await deps.summarise(summariseInput, runEnv));
 
     // The model read what arrived and judged none of it to be what was asked
     // for. This is a working run, not a failure and not an empty source: the

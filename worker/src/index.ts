@@ -36,6 +36,7 @@ import { trash } from "./routes/trash";
 import { events } from "./routes/events";
 import { runPurge } from "./lib/purge";
 import { connections, connectionsPublic } from "./routes/connections";
+import { toolConnections } from "./routes/tool-connections";
 import { slack, slackPublic } from "./routes/slack";
 import { routineHooks } from "./routes/routine-hooks";
 
@@ -169,6 +170,7 @@ api.route("/", feedback);
 api.route("/", trash);
 api.route("/", events);
 api.route("/", connections);
+api.route("/", toolConnections);
 api.route("/", slack);
 
 // Outside the authenticated router, and the only route that is. A browser

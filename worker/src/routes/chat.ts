@@ -733,10 +733,26 @@ chat.post("/chat/confirm/:id", async (c) => {
   // or unshared is refused by the same policy that refuses it everywhere else.
   const { data: session } = await db
     .from("chat_sessions")
-    .select("id, agent_id, workspace_id")
+    .select("*")
     .eq("id", pause.sessionId)
     .maybeSingle();
   if (!session) return c.json({ error: "not found" }, 404);
+
+  // The agent's own tuning, read again rather than carried in the parked row.
+  //
+  // It matters more than it looks: the two halves of one answer are written
+  // into one message, and a second half produced at a different temperature —
+  // or in a different mode's length cap — is a paragraph that reads like
+  // somebody else finished the sentence. `model` IS carried, because that one
+  // must not move even if the agent's setting has; the rest is read fresh so
+  // a person who turned the dial between asking and approving gets what they
+  // set.
+  const { data: agent } = await db
+    .from("agents")
+    .select("mode, temperature, reasoning_effort, web_search")
+    .eq("id", pause.agentId)
+    .maybeSingle();
+  const mode: "normal" | "brainstorm" = effectiveMode(session, agent ?? {});
 
   // Claimed before anything runs, and the claim is what makes a double-click
   // safe: the second request finds nothing pending and is refused here rather
@@ -843,8 +859,11 @@ chat.post("/chat/confirm/:id", async (c) => {
           request: {
             model: pause.model ?? resolveModel(null, env),
             messages,
-            maxTokens: maxTokensFor("normal"),
+            maxTokens: maxTokensFor(mode),
+            temperature: temperatureFor(mode, agent?.temperature),
+            reasoningEffort: reasoningEffortFor(agent?.reasoning_effort),
             showThinking: true,
+            webSearch: agent?.web_search ?? false,
           },
           tools,
           // Not `ctx`: the approval covered one call, and a tool the model

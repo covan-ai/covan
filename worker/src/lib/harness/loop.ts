@@ -245,6 +245,16 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
 
     let passText = "";
     let calls: ToolCall[] = [];
+    /**
+     * Whether this pass could legitimately ask for anything.
+     *
+     * The final pass of an exhausted turn sends no tools, so a `tools` event
+     * coming back from it is the provider answering a question nobody asked.
+     * Honouring it would run the loop again with the budget already spent,
+     * and the budget would never stop it — an infinite turn, which is the one
+     * failure mode a budget exists to make impossible.
+     */
+    const mayAsk = Boolean(specs) && !budgetSpent;
     let opened = false;
     for await (const event of events) {
       if (event.type === "delta") {
@@ -260,7 +270,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       } else if (event.type === "thinking") {
         opts.onEvent?.({ type: "thinking", text: event.text });
       } else if (event.type === "tools") {
-        calls = event.calls;
+        if (mayAsk) calls = event.calls;
       } else {
         usage = addUsage(usage, event.usage);
         finishReason = event.finishReason;

@@ -208,9 +208,20 @@ export const httpRequestTool: AgentTool = {
       };
     }
 
-    const text = await readCapped(res, MAX_BYTES).catch((err: unknown) => {
-      throw err instanceof Error ? err : new Error(String(err));
-    });
+    // An endpoint that answers with more than the cap is a failed call, not
+    // a failed turn: the model is told the response was too large and can ask
+    // for less. `readCapped` cancels the stream at the ceiling rather than
+    // reading to the end and slicing, which on this runtime is the difference
+    // between a cap and no cap at all.
+    let text: string;
+    try {
+      text = await readCapped(res, MAX_BYTES);
+    } catch (err) {
+      return {
+        kind: "error",
+        message: err instanceof Error ? err.message : "could not read the response",
+      };
+    }
 
     if (!res.ok) {
       // The body is returned on a failure as well as a success, and that is

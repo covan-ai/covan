@@ -16,26 +16,37 @@ export type ToolConnection = {
   id: string;
   workspace_id: string;
   label: string;
-  transport: "http" | "sql";
+  transport: "http" | "sql" | "supabase";
   base_url: string;
   auth_kind: "static_header";
   allowed_methods: string[];
   config: Record<string, unknown>;
+  /**
+   * The Supabase account whose token this row borrows, for `supabase` rows
+   * and null for every other kind.
+   *
+   * A project connected through an account has no credential of its own — the
+   * token is the account's and one copy of it is the point (0061). This is
+   * what `authHeaders` follows to find it.
+   */
+  account_id: string | null;
 };
 
-const SELECT = "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config";
+const SELECT =
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id";
 
 function normalise(row: Record<string, unknown>): ToolConnection {
   return {
     id: String(row.id),
     workspace_id: String(row.workspace_id),
     label: String(row.label ?? ""),
-    transport: row.transport === "sql" ? "sql" : "http",
+    transport: row.transport === "sql" || row.transport === "supabase" ? row.transport : "http",
     base_url: String(row.base_url ?? ""),
     auth_kind: "static_header",
     allowed_methods: Array.isArray(row.allowed_methods) ? (row.allowed_methods as string[]) : [],
     config:
       row.config && typeof row.config === "object" ? (row.config as Record<string, unknown>) : {},
+    account_id: typeof row.account_id === "string" ? row.account_id : null,
   };
 }
 
@@ -84,7 +95,7 @@ export async function loadConnection(ctx: ToolContext, id: string): Promise<Tool
 export function connectionsManifest(connections: ToolConnection[]): string {
   if (connections.length === 0) return "";
   const lines = connections.map(
-    (c) => `- ${c.label} (id: ${c.id}, ${c.transport === "sql" ? "database" : "HTTP API"})`,
+    (c) => `- ${c.label} (id: ${c.id}, ${c.transport === "http" ? "HTTP API" : "database"})`,
   );
   return (
     "Connected services you can reach with your tools:\n" +

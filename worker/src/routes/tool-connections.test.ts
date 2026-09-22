@@ -45,7 +45,13 @@ const ROW = {
 /** What `serviceFrom` records about the insert it was given. */
 let inserted: Record<string, unknown> | null = null;
 
-function appWith(spec: { role?: string; connection?: Record<string, unknown> | null } = {}) {
+function appWith(
+  spec: {
+    role?: string;
+    connection?: Record<string, unknown> | null;
+    onSelect?: (columns?: string) => void;
+  } = {},
+) {
   const dbSpec: FakeDbSpec = {
     tables: {
       profiles: { select: () => ({ data: { active_workspace_id: "ws-1" }, error: null }) },
@@ -56,10 +62,13 @@ function appWith(spec: { role?: string; connection?: Record<string, unknown> | n
         }),
       },
       tool_connections: {
-        select: () => ({
-          data: spec.connection === undefined ? [ROW] : spec.connection,
-          error: null,
-        }),
+        select: (ctx) => {
+          spec.onSelect?.(ctx.columns);
+          return {
+            data: spec.connection === undefined ? [ROW] : spec.connection,
+            error: null,
+          };
+        },
         update: () => ({ data: { ...ROW, label: "Renamed" }, error: null }),
         delete: () => ({ data: null, error: null }),
       },
@@ -122,6 +131,27 @@ describe("GET /tool-connections", () => {
     // Every tool, configured or not — a self-hoster reading the docs for a
     // feature their build appears not to have is what that list prevents.
     expect(body.tools.map((t) => t.name)).toContain("query_database");
+  });
+
+  /**
+   * The integrations page groups connected Supabase projects under the account
+   * that opened them, and it does that by `accountId`. A listing that selected
+   * every other column would show an account with no projects under it and no
+   * error anywhere.
+   */
+  it("asks for the account a project borrows its token from", async () => {
+    // Asserted on the select rather than on the answer: PostgREST returns the
+    // columns it was asked for, and a fake that answers whatever the spec
+    // holds cannot tell a missing column from a present one. The select string
+    // IS the contract here.
+    let asked = "";
+    const app = appWith({
+      onSelect: (columns) => {
+        asked = columns ?? "";
+      },
+    });
+    await app.request("/tool-connections", {}, ENV as never);
+    expect(asked).toContain("account_id");
   });
 
   it("never names the credential column, which PostgREST would refuse whole", async () => {

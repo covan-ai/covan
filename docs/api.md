@@ -312,11 +312,16 @@ and could not.
 
 ### Services an agent can call
 
-|                                                                |                                        |
-| -------------------------------------------------------------- | -------------------------------------- |
-| `GET /tool-connections`                                        | The services, and this build's tools   |
-| `POST /tool-connections`                                       | Connect one. Not available to a viewer |
-| `PATCH /tool-connections/:id` · `DELETE /tool-connections/:id` | Rename, re-scope, remove               |
+|                                                                |                                               |
+| -------------------------------------------------------------- | --------------------------------------------- |
+| `GET /tool-connections`                                        | The services, and this build's tools          |
+| `POST /tool-connections`                                       | Connect one. Not available to a viewer        |
+| `PATCH /tool-connections/:id` · `DELETE /tool-connections/:id` | Rename, re-scope, remove                      |
+| `GET /supabase-account`                                        | The connected Supabase account, or null       |
+| `POST /supabase-account`                                       | Connect one, or replace its token. Admin only |
+| `GET /supabase-account/projects`                               | The projects that account can see             |
+| `POST /supabase-account/projects`                              | Connect projects. Not available to a viewer   |
+| `DELETE /supabase-account`                                     | Disconnect it, and the projects it opened     |
 
 `POST` takes `{ "label", "transport": "http" | "sql", "baseUrl", "headers" }`
 plus `allowedMethods` (HTTP only, defaults to `["GET"]`), `rpc` (SQL only,
@@ -328,6 +333,16 @@ means removing the connection and adding it again.
 loopback, RFC1918, link-local, cloud metadata and this deployment's own hosts
 are refused with a `400`. See [Integrations](integrations.md#services-an-agent-can-call)
 for what an agent can and cannot do with one.
+
+The Supabase endpoints are the other road to the same thing. `POST
+/supabase-account` takes `{ "token" }`, checks it against Supabase before
+storing anything, and answers with the account and the projects that token can
+see; it is refused with a `403` for anybody but an admin, **before** the token
+is sent anywhere. `POST /supabase-account/projects` takes `{ "refs": [...] }`
+and opens one connection per project, each with `transport: "supabase"` and no
+credential of its own — they borrow the account's. Neither the token nor its
+ciphertext is ever returned; the account carries four characters of it as
+`tokenHint`.
 
 ### Other
 

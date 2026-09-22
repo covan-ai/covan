@@ -72,6 +72,80 @@ export function useRemoveToolConnection() {
   });
 }
 
+export const supabaseAccountKey = ["supabase-account"] as const;
+
+/**
+ * The Supabase account this workspace has connected, if any.
+ *
+ * Its own query rather than a field on `useToolConnections`, for the same
+ * reason that one is separate: the projects it opened are ordinary tool
+ * connections and are already in that list, and a screen that wants only the
+ * services has no business asking whether an account exists.
+ */
+export function useSupabaseAccount() {
+  return useQuery({ queryKey: supabaseAccountKey, queryFn: () => api.supabaseAccount.get() });
+}
+
+/**
+ * Paste a token, or replace the one already stored.
+ *
+ * Both invalidations are needed and they are not the same one: replacing a
+ * token changes the account, and disconnecting it later will take the
+ * connected projects with it, so the list that shows them cannot be trusted
+ * to be current either.
+ */
+export function useConnectSupabaseAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.supabaseAccount.connect>[0]) =>
+      api.supabaseAccount.connect(input),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: supabaseAccountKey }),
+        queryClient.invalidateQueries({ queryKey: toolConnectionsKey }),
+      ]),
+  });
+}
+
+export const supabaseProjectsKey = ["supabase-projects"] as const;
+
+/**
+ * The projects the connected account can see, fetched only when somebody is
+ * looking at the picker.
+ *
+ * `enabled` rather than an unconditional query because this one costs a round
+ * trip to Supabase on every call, against a rate limit the workspace shares.
+ * Nothing on the page needs it until a person presses "add a project".
+ */
+export function useSupabaseProjects(enabled: boolean) {
+  return useQuery({
+    queryKey: supabaseProjectsKey,
+    queryFn: () => api.supabaseAccount.projects(),
+    enabled,
+  });
+}
+
+export function useAddSupabaseProjects() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.supabaseAccount.addProjects>[0]) =>
+      api.supabaseAccount.addProjects(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: toolConnectionsKey }),
+  });
+}
+
+export function useDisconnectSupabaseAccount() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.supabaseAccount.remove(),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: supabaseAccountKey }),
+        queryClient.invalidateQueries({ queryKey: toolConnectionsKey }),
+      ]),
+  });
+}
+
 /**
  * Start a grant and hand the browser to the provider.
  *

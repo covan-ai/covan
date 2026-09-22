@@ -37,7 +37,7 @@ const METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const;
 export function ToolConnectionCard({ connection }: { connection: ToolConnection }) {
   const remove = useRemoveToolConnection();
   const [confirming, setConfirming] = useState(false);
-  const Mark = connection.transport === "sql" ? Database : Globe;
+  const Mark = connection.transport === "http" ? Globe : Database;
   // Anything past GET and HEAD changes something at the other end, which is
   // the one fact about a connection worth putting on the row. Said in words
   // rather than in colour: a chip stays neutral-or-amber, and amber here
@@ -61,7 +61,7 @@ export function ToolConnectionCard({ connection }: { connection: ToolConnection 
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Chip tone="neutral">{connection.transport === "sql" ? "Database" : "HTTP API"}</Chip>
+          <Chip tone="neutral">{connection.transport === "http" ? "HTTP API" : "Database"}</Chip>
           {writes ? <Chip tone="neutral">Can write</Chip> : <Chip tone="neutral">Read only</Chip>}
         </div>
       </div>

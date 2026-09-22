@@ -123,13 +123,21 @@ export type SourceDTO = { id: string | null; name: string };
 export type ToolConnectionDTO = {
   id: string;
   label: string;
-  transport: "http" | "sql";
+  transport: "http" | "sql" | "supabase";
   baseUrl: string;
   allowedMethods: string[];
   /** What the agent is told this service holds, when anybody has recorded it. */
   summary: string | null;
   /** The read-only function a `sql` connection speaks through. */
   rpc: string | null;
+  /**
+   * The Supabase account this project borrows its token from, for `supabase`
+   * connections and null for the rest. The integrations page groups by it, so
+   * a person sees which projects would go if they disconnected the account.
+   */
+  accountId: string | null;
+  /** The Supabase project ref, for a `supabase` connection. */
+  projectRef: string | null;
   createdAt: number;
 };
 
@@ -140,6 +148,7 @@ export function mapToolConnection(row: {
   base_url: string;
   allowed_methods?: unknown;
   config?: unknown;
+  account_id?: unknown;
   created_at: string;
 }): ToolConnectionDTO {
   const config =
@@ -147,12 +156,42 @@ export function mapToolConnection(row: {
   return {
     id: row.id,
     label: row.label,
-    transport: row.transport === "sql" ? "sql" : "http",
+    transport:
+      row.transport === "sql" || row.transport === "supabase"
+        ? (row.transport as "sql" | "supabase")
+        : "http",
     baseUrl: row.base_url,
     allowedMethods: Array.isArray(row.allowed_methods) ? (row.allowed_methods as string[]) : [],
     summary: typeof config.summary === "string" ? config.summary : null,
     rpc: typeof config.rpc === "string" ? config.rpc : null,
+    accountId: typeof row.account_id === "string" ? row.account_id : null,
+    projectRef: typeof config.ref === "string" ? config.ref : null,
     createdAt: toEpochMs(row.created_at),
+  };
+}
+
+/**
+ * A connected Supabase account, as every screen sees it.
+ *
+ * `tokenHint` is four characters of a live credential and is here on purpose:
+ * it is how an admin tells two tokens apart, and it is the most that can be
+ * shown without showing the token. There is no field for the token itself and
+ * there is no code path that could add one — no client role may select the
+ * column (0061).
+ */
+export type SupabaseAccountDTO = {
+  id: string;
+  tokenHint: string;
+  connectedBy: string | null;
+  createdAt: number;
+};
+
+export function mapSupabaseAccount(row: Record<string, unknown>): SupabaseAccountDTO {
+  return {
+    id: String(row.id),
+    tokenHint: String(row.token_hint ?? ""),
+    connectedBy: typeof row.connected_by === "string" ? row.connected_by : null,
+    createdAt: toEpochMs(String(row.created_at ?? "")),
   };
 }
 

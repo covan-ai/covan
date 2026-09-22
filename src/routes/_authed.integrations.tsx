@@ -12,6 +12,7 @@ import {
   ToolConnectionCard,
   ToolList,
 } from "@/components/integrations/tool-connection-card";
+import { SupabaseAccountCard } from "@/components/integrations/supabase-account-card";
 import { SlackCard } from "@/components/integrations/slack-card";
 import { SlackMark } from "@/components/integrations/brand-marks";
 import { useConnections, useSlack, useToolConnections } from "@/hooks/use-connections";
@@ -86,6 +87,10 @@ function IntegrationsPage() {
   // feeds three bundles, and deciding for them which of those is "enough" is
   // not a judgement this page can make.
   const providers = connections.data?.providers ?? [];
+  // A connected Supabase project is an ordinary tool connection, and it is
+  // listed inside the account card that opened it rather than a second time
+  // here — one place to see it, one place to remove it.
+  const services = (tools.data?.connections ?? []).filter((c) => c.transport !== "supabase");
 
   return (
     <AppShell>
@@ -146,10 +151,15 @@ function IntegrationsPage() {
         <section className="mt-16">
           <SectionHeading title="Services an agent can call" />
           <div className="mt-6 flex flex-col gap-2.5">
+            {/* Above the list, because it is the shortest road to the thing
+                most of that list is: a database. The projects it connects are
+                ordinary rows underneath, and they are shown inside this card
+                rather than twice. */}
+            <SupabaseAccountCard connections={tools.data?.connections ?? []} />
             {tools.isPending ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : (tools.data?.connections.length ?? 0) > 0 ? (
-              tools.data?.connections.map((connection) => (
+            ) : services.length > 0 ? (
+              services.map((connection) => (
                 <ToolConnectionCard key={connection.id} connection={connection} />
               ))
             ) : (

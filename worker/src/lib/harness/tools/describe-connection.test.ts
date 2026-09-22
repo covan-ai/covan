@@ -96,6 +96,20 @@ describe("summariseSchema", () => {
   it("hands back whatever it was given when it cannot read it", () => {
     expect(summariseSchema("not json")).toBe("not json");
   });
+
+  // Supabase's read-only endpoint refuses a reference that names no schema, so
+  // a summary that drops `public.` would be teaching the model to write the
+  // one statement that connection cannot run.
+  it("keeps public on every table when the carrier insists on it", () => {
+    expect(
+      summariseSchema(
+        JSON.stringify([
+          { table_schema: "public", table_name: "orders", column_name: "id", data_type: "uuid" },
+        ]),
+        { qualify: true },
+      ),
+    ).toBe("public.orders(id uuid)");
+  });
 });
 
 describe("describe_connection", () => {
@@ -164,6 +178,45 @@ describe("describe_connection", () => {
     );
     expect((result as { content: string }).content).toContain("No description has been recorded");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // The one thing a schema listing cannot teach by example is what to do when
+  // the listing is already cached and the model is reading it cold.
+  it("tells the model that a Supabase project wants schema-qualified names", async () => {
+    const result = await describeConnectionTool.run(
+      { connectionId: "conn-2" },
+      ctxWith({
+        ...SQL_CONNECTION,
+        id: "conn-2",
+        transport: "supabase",
+        base_url: "https://api.supabase.com",
+        config: { ref: "abcdefghijklmnop", summary: "public.orders(id uuid)" },
+        account_id: "acct-1",
+      }),
+    );
+
+    expect((result as { content: string }).content).toContain("public.orders");
+    expect((result as { content: string }).content.toLowerCase()).toContain("schema");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reads a Supabase project's schema instead of calling it an undescribed API", async () => {
+    const result = await describeConnectionTool.run(
+      { connectionId: "conn-3" },
+      ctxWith({
+        ...SQL_CONNECTION,
+        id: "conn-3",
+        transport: "supabase",
+        base_url: "https://api.supabase.com",
+        config: { ref: "abcdefghijklmnop" },
+        account_id: "acct-1",
+      }),
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.supabase.com/v1/projects/abcdefghijklmnop/database/query/read-only",
+    );
+    expect((result as { content: string }).content).toContain("public.orders(id uuid");
   });
 
   it("refuses a connection this workspace cannot see", async () => {

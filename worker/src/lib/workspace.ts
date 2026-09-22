@@ -56,3 +56,30 @@ export async function getActiveWorkspaceId(
 
   return resolved;
 }
+
+/**
+ * The caller's role in a workspace, or null if they are not a member.
+ *
+ * Three routes were each asking this question with their own copy of the same
+ * four lines — `provider-keys.ts` to decide whether to show a key hint,
+ * `tool-connections.ts` to keep a viewer from connecting a service, and
+ * `supabase-account.ts` to keep anyone but an admin from pasting an
+ * account-wide token. One copy, so "what counts as a member" cannot drift
+ * between them.
+ *
+ * Through the caller's own client, so RLS answers it. Not a permission check
+ * in itself: it reports a fact, and each route decides what that fact means.
+ */
+export async function memberRole(
+  db: SupabaseClient,
+  workspaceId: string,
+  userId: string,
+): Promise<string | null> {
+  const { data } = await db
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return (data?.role as string | null) ?? null;
+}

@@ -10,6 +10,8 @@ import type {
   DriveFolder,
   ProviderId,
   SlackState,
+  SupabaseAccountResponse,
+  SupabaseProjectsResponse,
   SyncOutcome,
   ToolConnection,
   ToolConnectionsResponse,
@@ -646,6 +648,26 @@ export const api = {
       patch: { label?: string; allowedMethods?: string[]; rpc?: string; summary?: string },
     ): Promise<ToolConnection> => request("PATCH", `/tool-connections/${id}`, patch),
     remove: (id: string): Promise<void> => request("DELETE", `/tool-connections/${id}`),
+  },
+  /**
+   * The other road to a database: a Supabase account, and the projects it
+   * opens.
+   *
+   * `connect` answers with the project list as well as the account, so the
+   * picker can be shown without a second round trip — pasting a token and
+   * choosing what it may be used for is one action from where a person is
+   * standing, and it reads as one.
+   */
+  supabaseAccount: {
+    get: (): Promise<SupabaseAccountResponse> => request("GET", "/supabase-account"),
+    connect: (input: {
+      token: string;
+    }): Promise<SupabaseAccountResponse & SupabaseProjectsResponse> =>
+      request("POST", "/supabase-account", input),
+    projects: (): Promise<SupabaseProjectsResponse> => request("GET", "/supabase-account/projects"),
+    addProjects: (input: { refs: string[] }): Promise<{ connections: ToolConnection[] }> =>
+      request("POST", "/supabase-account/projects", input),
+    remove: (): Promise<void> => request("DELETE", "/supabase-account"),
   },
   slack: {
     get: (): Promise<SlackState> => request("GET", "/slack"),

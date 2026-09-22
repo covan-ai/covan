@@ -73,11 +73,16 @@ export const describeConnectionTool: AgentTool = {
     if (input.refresh !== true && typeof cached === "string" && cached.trim()) {
       return {
         kind: "ok",
-        content: `${connection.label} (${connection.transport}, ${connection.base_url})\n\n${cached}`,
+        content:
+          `${connection.label} (${connection.transport}, ${connection.base_url})\n\n` +
+          `${cached}${qualifiedNamesNote(connection.transport)}`,
       };
     }
 
-    if (connection.transport !== "sql") {
+    // Every carrier that can answer a schema query goes on: `sql` through
+    // PostgREST, `supabase` through the account's own token. Only an HTTP API
+    // has nothing to ask.
+    if (connection.transport === "http") {
       // Nothing to go and fetch. An OpenAPI document would be the obvious
       // thing to read, and is deliberately not read: the path it lives at is
       // a guess for every API that is not the one we tested against, and a
@@ -105,16 +110,35 @@ export const describeConnectionTool: AgentTool = {
     );
     if (result.kind !== "ok") return result;
 
-    const summary = summariseSchema(result.content);
+    const qualify = connection.transport === "supabase";
+    const summary = summariseSchema(result.content, { qualify });
     // Best-effort. A failed cache write costs a round trip next turn.
     await cacheConnectionSummary(ctx.env, connection, summary);
 
     return {
       kind: "ok",
-      content: `${connection.label} (database, ${connection.base_url})\n\n${summary}`,
+      content:
+        `${connection.label} (database, ${connection.base_url})\n\n` +
+        `${summary}${qualifiedNamesNote(connection.transport)}`,
     };
   },
 };
+
+/**
+ * The sentence a Supabase project needs and no other connection does.
+ *
+ * Its endpoint refuses a reference that names no schema. The summary above
+ * already shows every table as `public.orders`, which teaches by example — but
+ * a model reading a cached summary cold is one `select * from orders` away
+ * from a refusal it has to spend a turn understanding, and one line is cheaper
+ * than that turn.
+ */
+function qualifiedNamesNote(transport: string): string {
+  return transport === "supabase"
+    ? "\n\nName the schema on every table (public.orders, not orders) — this connection refuses " +
+        "a bare table name."
+    : "";
+}
 
 /**
  * One line per table, columns inline.
@@ -126,8 +150,12 @@ export const describeConnectionTool: AgentTool = {
  *
  * Falls back to the raw JSON if it cannot be read. The point is to be cheaper,
  * not to be the only way the answer can arrive.
+ *
+ * `qualify` keeps `public.` on every line. It is on for a connection whose
+ * carrier refuses a bare table name, which is what the summary is teaching the
+ * model to write.
  */
-export function summariseSchema(json: string): string {
+export function summariseSchema(json: string, opts?: { qualify?: boolean }): string {
   let rows: Array<Record<string, unknown>>;
   try {
     const parsed: unknown = JSON.parse(json);
@@ -141,7 +169,10 @@ export function summariseSchema(json: string): string {
     const schema = String(row.table_schema ?? "public");
     const table = String(row.table_name ?? "");
     if (!table) continue;
-    const key = schema === "public" ? table : `${schema}.${table}`;
+    // `public.` is dropped where it is noise and kept where it is required:
+    // Supabase's read-only endpoint refuses an unqualified reference, so a
+    // summary written for one has to name the schema every time.
+    const key = schema === "public" && !opts?.qualify ? table : `${schema}.${table}`;
     const column = `${String(row.column_name ?? "")} ${String(row.data_type ?? "")}`.trim();
     const list = tables.get(key);
     if (list) list.push(column);

@@ -20,8 +20,12 @@ export type ProviderId = "notion" | "google_drive";
 export type ToolConnection = {
   id: string;
   label: string;
-  /** `sql` speaks to a Postgres through PostgREST; `http` to any REST API. */
-  transport: "http" | "sql";
+  /**
+   * `sql` speaks to a Postgres through PostgREST; `http` to any REST API;
+   * `supabase` to one project of a connected Supabase account, through that
+   * account's own token and with nothing installed in the project.
+   */
+  transport: "http" | "sql" | "supabase";
   baseUrl: string;
   /**
    * The HTTP methods a person allowed. Not advisory — the worker refuses
@@ -33,8 +37,44 @@ export type ToolConnection = {
   summary: string | null;
   /** The read-only function a `sql` connection speaks through. */
   rpc: string | null;
+  /**
+   * The Supabase account this project borrows its token from, or null for
+   * every other kind. The page groups by it, so a person can see what
+   * disconnecting the account would take with it.
+   */
+  accountId: string | null;
+  /** The Supabase project ref, for a `supabase` connection. */
+  projectRef: string | null;
   createdAt: number;
 };
+
+/**
+ * A Supabase account connected to this workspace.
+ *
+ * There is no token on this type and none on the wire: migration 0061 grants
+ * the column to no client role. `tokenHint` is four characters and exists so
+ * an admin can tell two tokens apart without being shown either.
+ */
+export type SupabaseAccount = {
+  id: string;
+  tokenHint: string;
+  /** The user id of whoever pasted it, or null once they close their account. */
+  connectedBy: string | null;
+  createdAt: number;
+};
+
+/** One project the connected account can see, as the picker lists it. */
+export type SupabaseProject = {
+  ref: string;
+  name: string;
+  region: string;
+  /** Supabase's own word for it — a paused project is worth saying out loud. */
+  status: string;
+};
+
+export type SupabaseAccountResponse = { account: SupabaseAccount | null };
+
+export type SupabaseProjectsResponse = { projects: SupabaseProject[] };
 
 /** One tool this build has, and whether this deployment can run it. */
 export type ToolAvailability = {

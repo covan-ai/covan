@@ -8,7 +8,8 @@ import type { ToolEnv } from "./registry";
  * one reason it has to.
  *
  * Three secrets live in columns no client role may select — a tool
- * connection's credential (0059), a delivery channel's destination (0012) —
+ * connection's credential (0059), a Supabase account's token (0061), a
+ * delivery channel's destination (0012) —
  * because the worker encrypts them and a client that could read one back
  * could read everyone's. So the permission question cannot be answered by the
  * same read that fetches the secret.
@@ -31,6 +32,26 @@ import type { ToolEnv } from "./registry";
  * reminder.
  */
 export async function connectionSecret(env: ToolEnv, connection: ToolConnection): Promise<string> {
+  // A project connected through a Supabase account holds no ciphertext of its
+  // own — the token is the account's, and one copy of it is the whole point of
+  // 0061. The permission question has already been answered the same way for
+  // both: `loadConnection` read the row through the caller's client, and the
+  // account is reachable only from a row that read returned.
+  if (connection.transport === "supabase") {
+    if (!connection.account_id) {
+      throw new Error("this project names no Supabase account to take a token from");
+    }
+    const { data, error } = await serviceClient(env)
+      .from("supabase_accounts")
+      .select("token_ciphertext")
+      .eq("id", connection.account_id)
+      .maybeSingle();
+    if (error || !data) {
+      throw new Error("the Supabase account this project was connected with is gone");
+    }
+    return decryptSecret(String(data.token_ciphertext), env.ROUTINE_SECRET_KEY);
+  }
+
   const { data, error } = await serviceClient(env)
     .from("tool_connections")
     .select("secret_ciphertext")

@@ -9,7 +9,7 @@ import {
   readKeyHints,
   writeWorkspaceKey,
 } from "../lib/keys/store";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { getActiveWorkspaceId, memberRole } from "../lib/workspace";
 
 /**
  * A workspace's own provider keys.
@@ -38,16 +38,7 @@ async function activeRole(c: Context<AppEnv>) {
   const userId = c.get("user").id;
   const workspaceId = await getActiveWorkspaceId(c.get("db"), userId);
   if (!workspaceId) return { workspaceId: null, role: null, userId };
-
-  const { data } = await c
-    .get("db")
-    .from("workspace_members")
-    .select("role")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  return { workspaceId, role: (data?.role as string | null) ?? null, userId };
+  return { workspaceId, role: await memberRole(c.get("db"), workspaceId, userId), userId };
 }
 
 /**

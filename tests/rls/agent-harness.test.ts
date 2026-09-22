@@ -335,3 +335,143 @@ describe("tool_connections", () => {
     expect(error?.code).toBe("23514");
   });
 });
+
+/**
+ * A Supabase account, which is the other road to a database and the one that
+ * carries the heavier credential.
+ *
+ * Four claims, and the first two are the reason the table exists rather than a
+ * nullable column on `tool_connections`. A Management API token opens every
+ * project in somebody's Supabase account, so it is selectable by nobody and
+ * writable by nobody — the worker encrypts it and there is no policy for
+ * either verb. Disconnecting is an admin's. And the projects it opened go with
+ * it, which is a cascade rather than anything a client has to remember.
+ */
+describe("supabase_accounts", () => {
+  let accountId: string;
+  let projectId: string;
+
+  beforeAll(async () => {
+    const service = serviceClient();
+    const { data: account, error } = await service
+      .from("supabase_accounts")
+      .insert({
+        workspace_id: owner.workspaceId,
+        token_ciphertext: CIPHERTEXT,
+        token_hint: "sbp…ab12",
+        connected_by: owner.id,
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(`seeding account failed: ${error.message}`);
+    accountId = account.id as string;
+
+    const { data: project, error: projectError } = await service
+      .from("tool_connections")
+      .insert({
+        workspace_id: owner.workspaceId,
+        label: "covan-prod",
+        transport: "supabase",
+        base_url: "https://api.supabase.com",
+        auth_kind: "static_header",
+        config: { ref: "abcdefghijklmnop" },
+        secret_ciphertext: null,
+        account_id: accountId,
+        created_by: owner.id,
+      })
+      .select("id")
+      .single();
+    if (projectError) throw new Error(`seeding project failed: ${projectError.message}`);
+    projectId = project.id as string;
+  });
+
+  it("is visible to every member, as a hint and nothing more", async () => {
+    const { data, error } = await colleague.db
+      .from("supabase_accounts")
+      .select("id, token_hint")
+      .eq("id", accountId);
+    expect(error).toBeNull();
+    expect(data).toEqual([{ id: accountId, token_hint: "sbp…ab12" }]);
+  });
+
+  it("never hands the token to a client, even the one who connected it", async () => {
+    const { error } = await owner.db.from("supabase_accounts").select("token_ciphertext");
+    expect(error).not.toBeNull();
+  });
+
+  it("refuses a wildcard select rather than quietly dropping the token", async () => {
+    const { error } = await owner.db.from("supabase_accounts").select("*");
+    expect(error?.code).toBe("42501");
+  });
+
+  it("cannot be created by a client, because the worker holds the key", async () => {
+    const { error } = await owner.db.from("supabase_accounts").insert({
+      workspace_id: owner.workspaceId,
+      token_ciphertext: "plaintext-token",
+      token_hint: "sbp…0000",
+    });
+    expect(error).not.toBeNull();
+  });
+
+  it("cannot have its token replaced by a client either", async () => {
+    const { error } = await owner.db
+      .from("supabase_accounts")
+      .update({ token_hint: "sbp…9999" })
+      .eq("id", accountId);
+    expect(error).not.toBeNull();
+  });
+
+  it("is invisible across a workspace boundary", async () => {
+    const { data } = await outsider.db.from("supabase_accounts").select("id");
+    expect(data).toEqual([]);
+  });
+
+  /**
+   * A project has no credential of its own and an ordinary connection may not
+   * borrow one. The constraint says both halves at once, which is what keeps
+   * a row from being written that no carrier knows how to use.
+   */
+  it("refuses a supabase connection carrying its own credential", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "covan-staging",
+      transport: "supabase",
+      base_url: "https://api.supabase.com",
+      auth_kind: "static_header",
+      secret_ciphertext: CIPHERTEXT,
+      account_id: accountId,
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("refuses a supabase connection that borrows from no account", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "covan-orphan",
+      transport: "supabase",
+      base_url: "https://api.supabase.com",
+      auth_kind: "static_header",
+      secret_ciphertext: null,
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  /**
+   * Last, because it removes the fixtures the rest of this block reads.
+   * Disconnecting an account takes the projects it opened with it: without the
+   * token they cannot answer anything, and a row that looks like a connected
+   * service and is not is worse than no row.
+   */
+  it("takes its projects with it when an admin disconnects it", async () => {
+    const { error } = await owner.db.from("supabase_accounts").delete().eq("id", accountId);
+    expect(error).toBeNull();
+
+    const { data } = await serviceClient()
+      .from("tool_connections")
+      .select("id")
+      .eq("id", projectId);
+    expect(data).toEqual([]);
+  });
+});

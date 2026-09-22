@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { getActiveWorkspaceId, memberRole } from "../lib/workspace";
 import { encryptSecret } from "../lib/secret-box";
 import { mapToolConnection } from "../lib/dto";
 import { toolAvailability } from "../lib/harness/registry";
@@ -63,17 +63,12 @@ async function mayWrite(
   workspaceId: string,
   userId: string,
 ): Promise<boolean> {
-  const { data } = await db
-    .from("workspace_members")
-    .select("role")
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .maybeSingle();
+  const role = await memberRole(db, workspaceId, userId);
   // A viewer reads. `can_write_in_workspace` (0021) says the same thing in
   // SQL and is what the policies on this table use; this is the route saying
   // it in a sentence somebody can read, before it reaches for a client that
   // has no policies at all.
-  return Boolean(data) && data?.role !== "viewer";
+  return Boolean(role) && role !== "viewer";
 }
 
 toolConnections.get("/tool-connections", async (c) => {
@@ -81,7 +76,7 @@ toolConnections.get("/tool-connections", async (c) => {
   const { data, error } = await db
     .from("tool_connections")
     .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, created_by, created_at, updated_at",
+      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, created_by, created_at, updated_at",
     )
     .order("label", { ascending: true });
   if (error) return c.json({ error: "failed to load connections" }, 500);
@@ -192,7 +187,7 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
     })
     .eq("id", c.req.param("id"))
     .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, created_by, created_at, updated_at",
+      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, created_by, created_at, updated_at",
     )
     .maybeSingle();
   if (error) return c.json({ error: "failed to update connection" }, insertErrorStatus(error));

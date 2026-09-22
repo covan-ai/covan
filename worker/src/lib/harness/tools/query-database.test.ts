@@ -232,3 +232,58 @@ describe("query_database", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The second carrier: a project reached through the account's own token.
+ *
+ * Same tool, same read-only check, same guards — only the envelope changes.
+ * What is worth asserting here is the part the Management API does not do for
+ * us: it takes no row cap, so the cap has to be in the statement before it
+ * leaves.
+ */
+const SUPABASE_CONNECTION = {
+  id: "conn-2",
+  workspace_id: "ws-1",
+  label: "covan-prod",
+  transport: "supabase",
+  base_url: "https://api.supabase.com",
+  auth_kind: "static_header",
+  allowed_methods: ["GET"],
+  config: { ref: "abcdefghijklmnop", projectName: "covan-prod" },
+  account_id: "acct-1",
+};
+
+describe("a Supabase account connection", () => {
+  it("posts the statement to that project's read-only endpoint", async () => {
+    const result = await queryDatabaseTool.run(
+      { connectionId: "conn-2", sql: "select count(*) as n from public.orders" },
+      ctxWith(SUPABASE_CONNECTION),
+    );
+
+    expect(result).toEqual({ kind: "ok", content: '[{"n":4}]' });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.supabase.com/v1/projects/abcdefghijklmnop/database/query/read-only",
+    );
+  });
+
+  it("caps the rows in the statement, because the endpoint takes no limit", async () => {
+    await queryDatabaseTool.run(
+      { connectionId: "conn-2", sql: "select * from public.orders", limit: 5 },
+      ctxWith(SUPABASE_CONNECTION),
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.query).toBe("select * from ( select * from public.orders ) as covan_q limit 5");
+    expect(body.p_sql).toBeUndefined();
+  });
+
+  it("still refuses a write before it reaches the account's token", async () => {
+    const result = await queryDatabaseTool.run(
+      { connectionId: "conn-2", sql: "delete from public.orders" },
+      ctxWith(SUPABASE_CONNECTION),
+    );
+
+    expect((result as { message: string }).message).toContain("read-only");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

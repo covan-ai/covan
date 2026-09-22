@@ -71,6 +71,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "tool_connections has no INSERT grant, for the reason 0059 gives and 0043 gave before it: the row holds a credential this route encrypts before the database sees it, so a client that could insert could insert a plaintext token — and the column grant means it could never read back what it wrote to check. Creation is the only write here that goes this way; the caller's own client does the permission check in front of it, and every other verb in the file goes through that client and its policies",
   ],
   [
+    "routes/supabase-account.ts",
+    "supabase_accounts has no INSERT and no UPDATE policy, for the reason 0061 gives: the row holds a Management API token this route encrypts before the database sees it, and no client role may select the column back. So storing a token and replacing one both go this way, and so does reading it back to ask Supabase which projects the account can see — the caller's own client answers the permission question first, every time, and the row it returned is what names the account this then reaches for. Connecting the projects themselves is the same insert tool_connections has always needed a service client for. Reading the account, listing it, and disconnecting it all go through the caller's client and its policies",
+  ],
+  [
     "lib/keys/store.ts",
     "workspace_provider_keys has RLS on and no policy for authenticated at all — not even a workspace's own admin selects a row. Every caller of this module is responsible for having checked who is asking before it does: routes/provider-keys.ts checks the admin role, and readWorkspaceKeys is read mid-chat-request for whoever the request already resolved to a member of",
   ],

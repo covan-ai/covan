@@ -34,6 +34,17 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
  *   4. **The allowance is checked before the network**, because this is the one
  *      thing in Covan that spends the operator's money outside the model bill
  *      and cannot be covered by a workspace's own key. See `lib/harness/spend.ts`.
+ *
+ * WHY THE DESCRIPTION TALKS ABOUT TRIMMING. The first real use of this tool —
+ * "list my last five meetings" — spent five calls on one question, and four of
+ * them were the model narrowing: a wide window, then a smaller one, then fewer
+ * fields, each call discovering `MAX_TOOL_OUTPUT_CHARS` by hitting it. `cap()`
+ * does say a result was trimmed, but it says so afterwards, and by then the
+ * call is paid for twice — once at Composio, and again on every remaining pass
+ * of the turn, which is where the money actually goes. Saying it in the
+ * description instead costs about sixty tokens a turn and saves four steps, so
+ * it is written there rather than learned here. Keep the fact if you rewrite
+ * the wording.
  */
 
 /** Enough of Composio's own failure to act on, not enough to fill a turn. */
@@ -70,7 +81,10 @@ export const runToolTool: AgentTool = {
     "create the issue, update the record. You give the connection id, the operation slug " +
     "you found with find_tool, and the arguments that operation takes. Find the slug " +
     "first; a slug you have not seen in a find_tool result will be refused. The person " +
-    "is asked to approve the first action on each service.",
+    "is asked to approve the first action on each service. Ask narrowly on the first " +
+    "call: the answer is trimmed, so a wide request comes back cut off and costs you " +
+    "another call. Use the smallest time range and result count the operation accepts, " +
+    "and name only the fields you need.",
   input: {
     type: "object",
     properties: {
@@ -84,7 +98,10 @@ export const runToolTool: AgentTool = {
       },
       arguments: {
         type: "object",
-        description: "The operation's arguments, as its schema describes them.",
+        description:
+          "The operation's arguments, as its schema describes them. Set whatever limits it " +
+          "offers — time range, maximum results, list of fields — as small as the question " +
+          "allows.",
         additionalProperties: true,
       },
     },

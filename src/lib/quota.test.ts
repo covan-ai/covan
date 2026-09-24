@@ -35,6 +35,7 @@ function usage(over: {
       messageCount: over.messageCount ?? 0,
       promptTokens: 0,
       cachedTokens: 0,
+      cacheWriteTokens: 0,
       measuredPromptTokens: 0,
       completionTokens: 0,
       totalTokens: over.totalTokens ?? 0,

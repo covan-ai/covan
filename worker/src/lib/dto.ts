@@ -222,11 +222,14 @@ export type MessageDTO = {
   versions?: string[];
   /**
    * Token usage for assistant replies. Null on user messages and on replies
-   * written before 0006. cachedTokens is null on replies written before 0025.
+   * written before 0006. cachedTokens is null on replies written before 0025,
+   * cacheWriteTokens on replies written before 0062 — and on every reply from
+   * an OpenAI model, whose cache costs nothing to fill.
    */
   promptTokens?: number | null;
   completionTokens?: number | null;
   cachedTokens?: number | null;
+  cacheWriteTokens?: number | null;
   /**
    * What the reply did before it wrote, when it did anything.
    *
@@ -482,6 +485,7 @@ export function mapMessage(row: {
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
   cached_tokens?: number | null;
+  cache_write_tokens?: number | null;
   /** The embedded `message_steps` rows, when the caller asked for them. */
   message_steps?: unknown;
 }): MessageDTO {
@@ -499,6 +503,7 @@ export function mapMessage(row: {
     promptTokens: row.prompt_tokens ?? undefined,
     completionTokens: row.completion_tokens ?? undefined,
     cachedTokens: row.cached_tokens ?? undefined,
+    cacheWriteTokens: row.cache_write_tokens ?? undefined,
     ...(steps.length > 0 ? { steps } : {}),
   };
 }

@@ -114,7 +114,9 @@ export type Message = {
   versions?: string[];
   /**
    * Token usage for assistant replies. Null on user messages and on replies
-   * written before 0006. cachedTokens is null on replies written before 0025.
+   * written before 0006. cachedTokens is null on replies written before 0025,
+   * cacheWriteTokens on replies written before 0062 — and on every reply from
+   * an OpenAI model, whose cache costs nothing to fill.
    */
   /**
    * What the reply did before it wrote, when it did anything — one entry per
@@ -135,6 +137,7 @@ export type Message = {
   promptTokens?: number | null;
   completionTokens?: number | null;
   cachedTokens?: number | null;
+  cacheWriteTokens?: number | null;
 };
 
 export type ChatSession = {

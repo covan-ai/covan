@@ -44,6 +44,48 @@ export type AgentStep = {
   resultExcerpt: string;
   status: StepStatus;
   durationMs: number;
+  /**
+   * Which model call asked for this tool, counted from zero within the turn.
+   *
+   * The loop bills per pass, not per tool: a pass that asks for three tools is
+   * one request and one prompt charge, and the three results are then re-sent
+   * on every pass after it. Without this, a row in `message_steps` cannot be
+   * lined up with the request that paid for it.
+   *
+   * Optional because a turn parked before this existed round-trips its steps
+   * through `paused_turns.steps` as JSON, and those carry no pass.
+   */
+  pass?: number;
+  /**
+   * How many characters of this tool's answer the model was actually shown,
+   * after `MAX_TOOL_OUTPUT_CHARS`.
+   *
+   * Not the length of `resultExcerpt`, which is trimmed four times harder for
+   * the transcript view — that is the whole reason this exists. A step whose
+   * excerpt stops at 2,000 characters might have put 2,001 in front of the
+   * model or might have put 8,000, and the difference is what the rest of the
+   * turn re-sends on every pass. The number is recorded; the text is not.
+   */
+  resultChars?: number;
+};
+
+/**
+ * What one model call in the turn cost.
+ *
+ * A turn's totals hide the shape that matters here. Eight passes summing to
+ * 117,000 prompt tokens can be eight even passes or one enormous last one, and
+ * only the second is a caching problem — so the per-pass numbers are kept
+ * alongside the sum rather than derived from it, which cannot be done.
+ *
+ * `prompt` counts the same way `CompletionUsage.promptTokens` does: cached and
+ * cache-written tokens are inside it, not beside it.
+ */
+export type PassUsage = {
+  index: number;
+  prompt: number | null;
+  cached: number | null;
+  written: number | null;
+  completion: number | null;
 };
 
 /**
@@ -85,6 +127,8 @@ export type AgentTurn = {
   text: string;
   usage: CompletionUsage;
   steps: AgentStep[];
+  /** One entry per model call this turn made, in order. `usage` is their sum. */
+  passes: PassUsage[];
   finishReason: string | null;
   paused?: PausedTurn;
 };
@@ -132,6 +176,7 @@ function addUsage(a: CompletionUsage, b: CompletionUsage): CompletionUsage {
     promptTokens: add(a.promptTokens, b.promptTokens),
     completionTokens: add(a.completionTokens, b.completionTokens),
     cachedTokens: add(a.cachedTokens, b.cachedTokens),
+    cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
   };
 }
 
@@ -231,6 +276,19 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   let text = "";
   let finishReason: string | null = null;
   let budgetSpent = false;
+  const passes: PassUsage[] = [];
+  /**
+   * Where this run's pass numbering starts.
+   *
+   * A resumed turn is a fresh sequence of model calls against a transcript
+   * that already has steps in it, and numbering its first pass zero would put
+   * two different requests under the same index on one message. Continuing
+   * from the highest pass already spent keeps `message_steps.pass_index`
+   * meaning one thing across the whole reply. Steps parked before this field
+   * existed report no pass, and the -1 floor is what makes those fall through
+   * to zero.
+   */
+  let pass = steps.reduce((max, step) => Math.max(max, step.pass ?? -1), -1) + 1;
 
   for (;;) {
     const events = streamCompletion(
@@ -273,6 +331,16 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         if (mayAsk) calls = event.calls;
       } else {
         usage = addUsage(usage, event.usage);
+        // Recorded per pass as well as summed, so a turn that spent everything
+        // on its last request can be told apart from one that spread it. See
+        // `PassUsage`.
+        passes.push({
+          index: pass,
+          prompt: event.usage.promptTokens,
+          cached: event.usage.cachedTokens,
+          written: event.usage.cacheWriteTokens,
+          completion: event.usage.completionTokens,
+        });
         finishReason = event.finishReason;
       }
     }
@@ -283,6 +351,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         text,
         usage,
         steps,
+        passes,
         finishReason,
         ...(budgetSpent ? { paused: { reason: "budget" as const, messages } } : {}),
       };
@@ -298,17 +367,19 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // Budget gone mid-batch. Every remaining call still needs an answer or
         // the next request is a 400, so they are answered with the refusal
         // rather than dropped.
-        messages.push({
-          role: "tool",
-          toolCallId: call.id,
-          content: "refused: this turn has used every tool call it is allowed",
-        });
+        const refusal = "refused: this turn has used every tool call it is allowed";
+        messages.push({ role: "tool", toolCallId: call.id, content: refusal });
         const refused = parseArguments(call.arguments);
         steps.push({
           index: steps.length,
+          pass,
           tool: call.name,
           request: refused.ok ? refused.args : {},
           resultExcerpt: "refused: tool budget exhausted",
+          // What the model was shown, which is the refusal and not the
+          // excerpt above — the two differ here, and the point of recording
+          // this at all is that they can.
+          resultChars: refusal.length,
           status: "refused",
           durationMs: 0,
         });
@@ -347,9 +418,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // about something that has not happened.
         steps.push({
           index,
+          pass,
           tool: call.name,
           request: args,
           resultExcerpt: cap(result.summary, MAX_STEP_EXCERPT_CHARS),
+          // No `resultChars`, and not zero either: the call is deliberately
+          // left unanswered until somebody approves it, so nothing has been
+          // put in front of the model to measure. The resume writes the real
+          // figure over this row.
           status: "pending",
           durationMs,
         });
@@ -364,6 +440,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           text,
           usage,
           steps,
+          passes,
           finishReason,
           paused: {
             reason: "confirmation",
@@ -381,9 +458,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       const status: StepStatus = result.kind === "ok" ? "ok" : "failed";
       steps.push({
         index,
+        pass,
         tool: call.name,
         request: args,
         resultExcerpt: cap(content, MAX_STEP_EXCERPT_CHARS),
+        // After `maxOutputChars`, which is what the model sees, and before
+        // `MAX_STEP_EXCERPT_CHARS`, which is only what the transcript keeps.
+        // This is the number every remaining pass of the turn pays to re-send.
+        resultChars: content.length,
         status,
         durationMs,
       });
@@ -400,5 +482,6 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     if (budgetSpent) {
       messages.push({ role: "system", content: BUDGET_INSTRUCTION });
     }
+    pass += 1;
   }
 }

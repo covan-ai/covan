@@ -10,12 +10,16 @@ import type { ModelId } from "./models";
 // 4.1 models at a quarter, GPT-5 and Claude at a tenth — so it is a per-model
 // figure rather than one multiplier applied to `in`.
 //
-// One thing this deliberately does not model: Anthropic charges a *premium*
-// (1.25x input) for the tokens it writes into the cache, where OpenAI's
-// automatic caching is free to populate. Those show up here at the plain `in`
-// rate, so a Claude estimate runs slightly low on the first turn of a
-// conversation and is right for every turn after it. Naming it beats a fourth
-// rate on every row for an error that rounds to nothing over a month.
+// `cacheWriteTokens` is the premium Anthropic charges — 1.25x input — for the
+// tokens it stores, where OpenAI's automatic caching is free to populate. This
+// file used to leave it out on the argument that it rounds to nothing over a
+// month, and that argument held only while nothing was deliberately writing to
+// the cache. A change made to increase cache *hits* increases cache *writes*
+// first, and one priced at the plain `in` rate would report a saving of
+// exactly the size of the premium it was not counting — so the unmodelled
+// error would land precisely where somebody was looking for an effect.
+// Derived rather than stored per row: the multiplier is the provider's, not
+// the model's, so a fourth column would be the same 1.25 thirteen times.
 //
 // Keyed by `ModelId` rather than by `string`, for the same reason `SPECS` in
 // `lib/models.ts` is: adding an id to the catalogue without a price here is
@@ -23,6 +27,8 @@ import type { ModelId } from "./models";
 // rate. `pricing.test.ts` used to be the only thing standing between a new
 // model and a usage view that under-reported it by 2.5x, and a test can only
 // catch that after somebody runs it.
+const CACHE_WRITE_MULTIPLIER = 1.25;
+
 const PRICES: Record<ModelId, { in: number; cachedIn: number; out: number }> = {
   "gpt-4o": { in: 2.5, cachedIn: 1.25, out: 10 },
   "gpt-4o-mini": { in: 0.15, cachedIn: 0.075, out: 0.6 },
@@ -56,19 +62,29 @@ const DEFAULT_PRICE = PRICES["gpt-4.1"];
  * re-priced, never added — adding it would bill the same tokens twice.
  * Omitting it prices the whole prompt as fresh, which is what every caller
  * written before caching was measured means.
+ *
+ * `cacheWriteTokens` is a subset on the same terms, and disjoint from the
+ * first: a token is read from the cache or written into it, never both in one
+ * request. Always zero on OpenAI, where populating the cache is free. The two
+ * are clamped in order so that a row whose counts disagree with its own prompt
+ * total — an impossibility the database cannot enforce — prices as fresh input
+ * rather than going negative.
  */
 export function estimateCostUsd(
   model: string,
   promptTokens: number,
   completionTokens: number,
   cachedTokens = 0,
+  cacheWriteTokens = 0,
 ): number {
   const p = PRICES[model as ModelId] ?? DEFAULT_PRICE;
   const cached = Math.min(Math.max(cachedTokens, 0), promptTokens);
-  const fresh = promptTokens - cached;
+  const written = Math.min(Math.max(cacheWriteTokens, 0), promptTokens - cached);
+  const fresh = promptTokens - cached - written;
   return (
     (fresh / 1_000_000) * p.in +
     (cached / 1_000_000) * p.cachedIn +
+    (written / 1_000_000) * p.in * CACHE_WRITE_MULTIPLIER +
     (completionTokens / 1_000_000) * p.out
   );
 }

@@ -32,7 +32,7 @@ function pass(
   if (calls.length > 0) events.push({ type: "tools", calls });
   events.push({
     type: "end",
-    usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 2 },
+    usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 2, cacheWriteTokens: 3 },
     finishReason: calls.length > 0 ? "tool_calls" : "stop",
   });
   return events;
@@ -137,7 +137,49 @@ describe("a turn that asks for one thing", () => {
       ...base,
       tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
     });
-    expect(turn.usage).toEqual({ promptTokens: 20, completionTokens: 10, cachedTokens: 4 });
+    expect(turn.usage).toEqual({
+      promptTokens: 20,
+      completionTokens: 10,
+      cachedTokens: 4,
+      cacheWriteTokens: 6,
+    });
+  });
+
+  it("keeps each pass's usage as well as the sum, which cannot be recovered from it", async () => {
+    // Eight even passes and one enormous final pass sum identically. Only the
+    // second is a caching problem, so the per-pass numbers are recorded at the
+    // time rather than derived afterwards, which cannot be done.
+    scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+    });
+
+    expect(turn.passes).toEqual([
+      { index: 0, prompt: 10, cached: 2, written: 3, completion: 5 },
+      { index: 1, prompt: 10, cached: 2, written: 3, completion: 5 },
+    ]);
+    expect(turn.passes.reduce((n, p) => n + (p.prompt ?? 0), 0)).toBe(turn.usage.promptTokens);
+  });
+
+  it("says which pass asked for each tool, because a pass is what gets billed", async () => {
+    // One pass asking for three tools is one prompt charge, not three. Without
+    // the pass number a row in `message_steps` cannot be lined up with the
+    // request that paid for it.
+    scripted([
+      pass("", [
+        { id: "a", name: "search", arguments: "{}" },
+        { id: "b", name: "search", arguments: "{}" },
+      ]),
+      pass("", [{ id: "c", name: "search", arguments: "{}" }]),
+      pass("done"),
+    ]);
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+    });
+
+    expect(turn.steps.map((s) => s.pass)).toEqual([0, 0, 1]);
   });
 
   it("emits a step twice — once running, once settled", async () => {
@@ -271,6 +313,47 @@ describe("the budget", () => {
     expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(2);
   });
 
+  it("numbers a resumed turn's passes after the ones already spent", async () => {
+    // A resume is a fresh sequence of model calls against a transcript that
+    // already has steps in it. Starting again at zero would put two different
+    // requests under the same `pass_index` on one message.
+    scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+      stepsSoFar: [
+        {
+          index: 0,
+          pass: 2,
+          tool: "search",
+          request: {},
+          resultExcerpt: "",
+          status: "ok",
+          durationMs: 1,
+        },
+      ],
+    });
+
+    expect(turn.steps[1].pass).toBe(3);
+    expect(turn.passes.map((p) => p.index)).toEqual([3, 4]);
+  });
+
+  it("starts a resumed turn at zero when the parked steps predate pass numbering", async () => {
+    // `paused_turns.steps` is JSON written by an older build, so the field can
+    // simply be absent. The -1 floor is what makes that fall through to zero
+    // rather than to NaN.
+    scripted([pass("done")]);
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+      stepsSoFar: [
+        { index: 0, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+      ],
+    });
+
+    expect(turn.passes.map((p) => p.index)).toEqual([0]);
+  });
+
   it("gives up on a tool that hangs and tells the model why", async () => {
     scripted([pass("", [{ id: "c", name: "slow", arguments: "{}" }]), pass("gave up")]);
     const turn = await runAgentTurn({
@@ -280,6 +363,24 @@ describe("the budget", () => {
     });
     expect(turn.steps[0].status).toBe("failed");
     expect(turn.steps[0].resultExcerpt).toContain("timed out");
+  });
+
+  it("records how much of a trimmed result the model was actually shown", async () => {
+    // `resultExcerpt` stops at MAX_STEP_EXCERPT_CHARS and `resultChars` does
+    // not, which is the whole point of having both: without the length, every
+    // result past the excerpt ceiling looks the same size from the outside and
+    // the tool-output budget cannot be tuned against anything.
+    scripted([pass("", [{ id: "c", name: "big", arguments: "{}" }]), pass("ok")]);
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("big", async () => ({ kind: "ok", content: "x".repeat(500) }))],
+      budget: { maxOutputChars: 50 },
+    });
+    const sent = (streamCompletion.mock.calls[1][1].messages as CompletionMessage[])[2];
+    expect(turn.steps[0].resultChars).toBe(sent.content.length);
+    // Bigger than the 50 it was capped to, because `cap` appends the sentence
+    // saying it trimmed — and that sentence is in front of the model too.
+    expect(turn.steps[0].resultChars).toBeGreaterThan(50);
   });
 
   it("trims a result that would otherwise be paid for on every later pass", async () => {

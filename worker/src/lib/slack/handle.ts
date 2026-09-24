@@ -267,6 +267,9 @@ export async function handleSlackEvent(
   // subset of that count, not an addition. It is the only evidence that the
   // cacheable prefix assembled above is actually working.
   const cachedTokens = completion.usage.cachedTokens ?? 0;
+  // And how much of it was bought at Anthropic's 1.25x storage premium.
+  // Disjoint from `cachedTokens`, and null on OpenAI — see `CompletionUsage`.
+  const cacheWriteTokens = completion.usage.cacheWriteTokens;
 
   // One counter write per turn, whichever way the rest of this goes — but only
   // where the operator is the one being billed. Somebody else's key spent
@@ -297,6 +300,9 @@ export async function handleSlackEvent(
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     cached_tokens: cachedTokens,
+    cache_write_tokens: cacheWriteTokens,
+    // No `pass_usage`: this is one completion rather than a tool loop, so the
+    // per-pass array would be the row's own totals written a second time.
   });
   // Posted either way. A reply that reached Slack and not the database is a
   // worse outcome than one that reached both, but it is far better than an

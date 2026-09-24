@@ -58,6 +58,17 @@ export async function writeSteps(
       tool: step.tool,
       request: step.request ?? {},
       result_excerpt: cap(step.resultExcerpt ?? "", MAX_STEP_EXCERPT_CHARS),
+      // The two halves of the same fact: `result_excerpt` is what a person
+      // reads, trimmed to 2,000 characters, and `result_chars` is how much the
+      // model was actually given, up to 8,000. Recording only the first made
+      // every large result look identical from the outside, which is why the
+      // tool-output budget could not be tuned against anything.
+      //
+      // `?? null` rather than omitted: a pending step has no answer yet and a
+      // resumed turn upserts over this row, so the column has to be cleared
+      // rather than left holding a number from the wrong half of the turn.
+      result_chars: step.resultChars ?? null,
+      pass_index: step.pass ?? null,
       status: step.status,
       duration_ms: step.durationMs,
     })),

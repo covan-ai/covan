@@ -5,7 +5,7 @@ import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
 import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
 import { type CompletionMessage } from "../lib/completion";
-import { runAgentTurn, parseArguments, type AgentStep } from "../lib/harness/loop";
+import { runAgentTurn, parseArguments, type AgentStep, type PassUsage } from "../lib/harness/loop";
 import { capabilitiesFor } from "../lib/harness/available";
 import { toolByName } from "../lib/harness/registry";
 import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
@@ -32,7 +32,7 @@ const streamChatSchema = z.object({
    * Finish the reply already at the end of this conversation, rather than
    * answering a new question.
    *
-   * A chat reply is capped at `maxTokensFor("normal")` — 1536 tokens, which is
+   * A chat reply is capped at `maxTokensFor("normal")` — 4096 tokens, which is
    * a deliberate cost decision and not an accident. The consequence is that a
    * long answer stops mid-thought and otherwise looks finished, which is the
    * worst way for a reply to be wrong: nothing on screen says the end is
@@ -321,6 +321,17 @@ chat.post("/chat/stream", async (c) => {
       // change that silently breaks the cache costs real money and shows up
       // nowhere.
       let cachedTokens: number | null = null;
+      // And how much of it was bought at Anthropic's 1.25x storage premium.
+      // Disjoint from `cachedTokens`: a token is read from the cache or
+      // written into it, never both. Always null on OpenAI, whose cache fills
+      // itself for nothing. Without this the two halves of a caching change
+      // cannot be weighed against each other — more reads is only a saving if
+      // the writes that bought them cost less than the reads saved.
+      let cacheWriteTokens: number | null = null;
+      // What each model call in the turn cost, in order. A tool turn is
+      // several requests and the totals above are their sum, which hides the
+      // shape: eight even passes and one enormous last pass add up the same.
+      let passUsage: PassUsage[] = [];
       let persisted = false;
       let spendRecorded = false;
       // What the turn did, and whether it stopped to ask. Both are filled by
@@ -381,6 +392,8 @@ chat.post("/chat/stream", async (c) => {
           promptTokens: number | null;
           completionTokens: number | null;
           cachedTokens: number | null;
+          cacheWriteTokens: number | null;
+          passUsage: PassUsage[];
         },
       ) => {
         if (persisted || text.trim().length === 0) return null;
@@ -406,6 +419,8 @@ chat.post("/chat/stream", async (c) => {
           prompt_tokens: number | null;
           completion_tokens: number | null;
           cached_tokens: number | null;
+          cache_write_tokens: number | null;
+          pass_usage: unknown;
         };
         // A regeneration keeps the answer it replaces. Superseded here rather
         // than before the stream opened: a reply that errors out or comes back
@@ -433,6 +448,16 @@ chat.post("/chat/stream", async (c) => {
                 prompt_tokens: (before.prompt_tokens ?? 0) + (opts.promptTokens ?? 0),
                 completion_tokens: (before.completion_tokens ?? 0) + (opts.completionTokens ?? 0),
                 cached_tokens: (before.cached_tokens ?? 0) + (opts.cachedTokens ?? 0),
+                cache_write_tokens: (before.cache_write_tokens ?? 0) + (opts.cacheWriteTokens ?? 0),
+                // Concatenated for the same reason the counts add: the row is
+                // one reply and both halves were paid for. The second half's
+                // passes are numbered from zero again — they are a separate
+                // request sequence against a separate prompt — so the array is
+                // a record of two runs, not one continuous one.
+                pass_usage: [
+                  ...(Array.isArray(before.pass_usage) ? before.pass_usage : []),
+                  ...opts.passUsage,
+                ],
               })
               .eq("id", before.id)
               .select("*")
@@ -449,6 +474,8 @@ chat.post("/chat/stream", async (c) => {
                 prompt_tokens: opts.promptTokens,
                 completion_tokens: opts.completionTokens,
                 cached_tokens: opts.cachedTokens,
+                cache_write_tokens: opts.cacheWriteTokens,
+                pass_usage: opts.passUsage,
                 ...(regenerate
                   ? { original_message_id: before.original_message_id ?? before.id }
                   : {}),
@@ -569,6 +596,8 @@ chat.post("/chat/stream", async (c) => {
         promptTokens = turn.usage.promptTokens;
         completionTokens = turn.usage.completionTokens;
         cachedTokens = turn.usage.cachedTokens;
+        cacheWriteTokens = turn.usage.cacheWriteTokens;
+        passUsage = turn.passes;
         // Why the model stopped, already normalised to OpenAI's vocabulary by
         // `lib/completion.ts` — so `"length"` means truncated on either
         // provider. Read off the turn rather than held in a variable: the
@@ -581,7 +610,13 @@ chat.post("/chat/stream", async (c) => {
             c,
             (async () => {
               if (!persisted && full.trim().length > 0) {
-                await persistAssistant(full, { promptTokens, completionTokens, cachedTokens });
+                await persistAssistant(full, {
+                  promptTokens,
+                  completionTokens,
+                  cachedTokens,
+                  cacheWriteTokens,
+                  passUsage,
+                });
               }
               await recordSpend();
             })(),
@@ -595,6 +630,8 @@ chat.post("/chat/stream", async (c) => {
             promptTokens,
             completionTokens,
             cachedTokens,
+            cacheWriteTokens,
+            passUsage,
           });
           await recordSpend();
           if (!inserted) {
@@ -659,7 +696,13 @@ chat.post("/chat/stream", async (c) => {
             c,
             (async () => {
               if (!persisted && full.trim().length > 0) {
-                await persistAssistant(full, { promptTokens, completionTokens, cachedTokens });
+                await persistAssistant(full, {
+                  promptTokens,
+                  completionTokens,
+                  cachedTokens,
+                  cacheWriteTokens,
+                  passUsage,
+                });
               }
               await recordSpend();
             })(),
@@ -907,6 +950,13 @@ chat.post("/chat/confirm/:id", async (c) => {
                 prompt_tokens: turn.usage.promptTokens,
                 completion_tokens: turn.usage.completionTokens,
                 cached_tokens: turn.usage.cachedTokens,
+                cache_write_tokens: turn.usage.cacheWriteTokens,
+                // Replaced rather than concatenated, matching the three counts
+                // above it — this branch has always written what the resumed
+                // half cost rather than the whole reply, and a pass list that
+                // disagreed with the totals beside it would be worse than a
+                // short one.
+                pass_usage: turn.passes,
               })
               .eq("id", existing)
               .select("*")
@@ -921,6 +971,8 @@ chat.post("/chat/confirm/:id", async (c) => {
                 prompt_tokens: turn.usage.promptTokens,
                 completion_tokens: turn.usage.completionTokens,
                 cached_tokens: turn.usage.cachedTokens,
+                cache_write_tokens: turn.usage.cacheWriteTokens,
+                pass_usage: turn.passes,
               })
               .select("*")
               .single();

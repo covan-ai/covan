@@ -31,6 +31,7 @@ const TOTALS = {
   promptTokens: 30_000,
   completionTokens: 7_000,
   cachedTokens: 0,
+  cacheWriteTokens: 0,
   measuredPromptTokens: 0,
   totalTokens: 37_000,
   estCostUsd: 0.2,

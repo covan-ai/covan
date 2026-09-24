@@ -57,6 +57,34 @@ beforeEach(() => {
   });
 });
 
+/**
+ * A wire body with every trace of caching taken back out.
+ *
+ * Two undoings, because marking a message does two things: it adds a
+ * `cache_control` key, and — when the content was a plain string — it has to
+ * wrap that string in a text block first, because a string has nowhere to hang
+ * a key. The second is a change of shape rather than of content, so unwrapping
+ * a lone text block is part of undoing it and not a fudge.
+ */
+function stripCache(messages: unknown): unknown {
+  if (Array.isArray(messages)) return messages.map(stripCache);
+  if (messages === null || typeof messages !== "object") return messages;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(messages as Record<string, unknown>)) {
+    if (key === "cache_control") continue;
+    out[key] = stripCache(value);
+  }
+  const content = out.content;
+  if (
+    Array.isArray(content) &&
+    content.length === 1 &&
+    (content[0] as { type?: string })?.type === "text"
+  ) {
+    out.content = (content[0] as { text: string }).text;
+  }
+  return out;
+}
+
 describe("toAnthropicMessages", () => {
   it("lifts the leading system messages into the system field", () => {
     const { system, messages } = toAnthropicMessages([
@@ -186,7 +214,12 @@ describe("complete, on OpenAI", () => {
     });
 
     expect(text).toBe("an answer");
-    expect(usage).toEqual({ promptTokens: 100, completionTokens: 20, cachedTokens: null });
+    expect(usage).toEqual({
+      promptTokens: 100,
+      completionTokens: 20,
+      cachedTokens: null,
+      cacheWriteTokens: null,
+    });
     const call = openaiCreate.mock.calls[0][0];
     expect(call.messages).toHaveLength(2);
     expect(call.messages[0]).toEqual({ role: "system", content: "You are Ada." });
@@ -368,6 +401,104 @@ describe("complete, on Anthropic", () => {
     expect(call.messages[3]).toEqual({ role: "user", content: "And Wednesdays?" });
   });
 
+  it("asks the provider to move a third breakpoint along with the growing tail", async () => {
+    // The two markers above are fixed indexes, and a tool loop is a request
+    // that grows: `lib/harness/loop.ts` re-sends the whole accumulated
+    // transcript on every pass, so everything a tool returned piles up behind
+    // the last marker and is paid for in full, again, each pass. The top-level
+    // field is the provider's own answer to that — it puts the breakpoint on
+    // the last cacheable block and moves it forward for us. It also keeps the
+    // marker inside the twenty-block lookback, which eight tool calls in one
+    // turn would otherwise walk straight out of.
+    await complete(env, {
+      model: "claude-sonnet-4-6",
+      messages: [
+        { role: "system", content: "You are Ada." },
+        { role: "user", content: "What does the handbook say?" },
+        { role: "assistant", content: "Tuesdays." },
+        { role: "user", content: "And Wednesdays?" },
+      ],
+    });
+
+    expect(anthropicCreate.mock.calls[0][0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("marks the last block of a turn that carries tool calls, not nothing at all", async () => {
+    // The regression this pins, and it was silent. `withCacheBreakpoint` used
+    // to return a message untouched whenever its content was not a string —
+    // which reads as "nothing to do" and is the opposite of the truth. An
+    // assistant turn holding `tool_use` blocks has array content, and from the
+    // second pass of a tool loop onwards that is exactly what the breakpoint
+    // index lands on. The marker did not fail loudly; it evaporated.
+    //
+    // The LAST block, because a breakpoint caches everything up to and
+    // including where it sits — on the first of three, the other two would
+    // fall outside the entry.
+    await complete(env, {
+      model: "claude-sonnet-4-6",
+      messages: [
+        { role: "system", content: "You are Ada." },
+        { role: "user", content: "Find it" },
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            { id: "t1", name: "search", arguments: '{"q":"a"}' },
+            { id: "t2", name: "search", arguments: '{"q":"b"}' },
+          ],
+        },
+        { role: "tool", toolCallId: "t1", content: "found a" },
+        { role: "tool", toolCallId: "t2", content: "found b" },
+      ],
+    });
+
+    const marked = anthropicCreate.mock.calls[0][0].messages[1];
+    expect(marked.content).toEqual([
+      { type: "tool_use", id: "t1", name: "search", input: { q: "a" } },
+      {
+        type: "tool_use",
+        id: "t2",
+        name: "search",
+        input: { q: "b" },
+        cache_control: { type: "ephemeral" },
+      },
+    ]);
+  });
+
+  it("changes nothing the model reads — only what the provider is asked to cache", async () => {
+    // The whole safety argument for this file's caching, as a test rather than
+    // as a paragraph. `cache_control` is metadata, not content: strip every one
+    // of them out of the wire body, unwrap the single-text-block array that a
+    // marker forces a plain string into, and what is left must be exactly what
+    // `toAnthropicMessages` produces with nothing marked at all.
+    //
+    // Compared against the real function rather than a hand-copied literal, so
+    // it keeps meaning what it means when the rendering changes underneath it.
+    const conversation = [
+      { role: "system" as const, content: "You are Ada." },
+      { role: "user" as const, content: "Find it" },
+      {
+        role: "assistant" as const,
+        content: "Looking.",
+        toolCalls: [{ id: "t1", name: "search", arguments: '{"q":"a"}' }],
+      },
+      { role: "tool" as const, toolCallId: "t1", content: "found a" },
+      { role: "system" as const, content: "KNOWLEDGE: it is on page four." },
+      { role: "user" as const, content: "And the page after?" },
+    ];
+
+    await complete(env, { model: "claude-sonnet-4-6", messages: conversation });
+
+    const body = anthropicCreate.mock.calls[0][0];
+    const unmarked = toAnthropicMessages(conversation);
+    // Something really was marked, or this proves nothing.
+    expect(body.cache_control).toEqual({ type: "ephemeral" });
+    expect(JSON.stringify(body)).toContain("cache_control");
+
+    expect(stripCache(body.messages)).toEqual(unmarked.messages);
+    expect(body.system.map((b: { text: string }) => b.text).join("\n\n")).toBe(unmarked.system);
+  });
+
   it("marks nothing on a turn whose prefix will not be asked for again", async () => {
     // The first turn of a conversation, and the regression this pins. With no
     // prior turns the retrieved block folds into `system`, and the next turn's
@@ -401,7 +532,12 @@ describe("complete, on Anthropic", () => {
       json: true,
     });
 
-    expect(anthropicCreate.mock.calls[0][0].system[0]).not.toHaveProperty("cache_control");
+    const call = anthropicCreate.mock.calls[0][0];
+    expect(call.system[0]).not.toHaveProperty("cache_control");
+    // Including the rolling one. It is the cheapest of the three to send by
+    // accident and the most expensive to be wrong about: an entry written at
+    // 1.25x and never read is pure loss, and a one-shot caller never reads.
+    expect(call).not.toHaveProperty("cache_control");
   });
 
   it("honours a ceiling the caller did name", async () => {
@@ -473,8 +609,48 @@ describe("complete, on Anthropic", () => {
       messages: [{ role: "user", content: "Hi" }],
     });
 
-    expect(usage).toEqual({ promptTokens: 1000, completionTokens: 20, cachedTokens: 900 });
+    expect(usage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 20,
+      cachedTokens: 900,
+      cacheWriteTokens: 60,
+    });
     expect(totalTokens(usage)).toBe(1020);
+  });
+
+  it("reports the cache-written tokens separately as well as inside promptTokens", () => {
+    // Folded in AND reported, because the two facts answer different
+    // questions. The fold is what makes one prompt count mean the same thing
+    // on both providers; the separate figure is the only way to tell what the
+    // 1.25x storage premium cost — and a change that buys cache reads buys
+    // cache writes first, so a saving measured without it is not a saving.
+    //
+    // The three are disjoint by construction: input + read + written, each
+    // counted once. This asserts the arithmetic rather than restating it.
+    const usage = { promptTokens: 1000, cachedTokens: 900, cacheWriteTokens: 60 };
+    expect(usage.promptTokens - usage.cachedTokens - usage.cacheWriteTokens).toBe(40);
+  });
+
+  it("records no cache-write count on OpenAI, where filling the cache is free", async () => {
+    // Null rather than zero. OpenAI's prefix cache populates itself and reports
+    // no write count at all, so zero would be a measurement of something the
+    // API never said.
+    openaiCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "ok" } }],
+      usage: {
+        prompt_tokens: 1000,
+        completion_tokens: 20,
+        prompt_tokens_details: { cached_tokens: 900 },
+      },
+    });
+
+    const { usage } = await complete(env, {
+      model: "gpt-4.1",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(usage.cachedTokens).toBe(900);
+    expect(usage.cacheWriteTokens).toBeNull();
   });
 
   it("says which key is missing rather than letting Anthropic answer with a 401", async () => {
@@ -606,7 +782,7 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 9, completionTokens: 2, cachedTokens: null },
+        usage: { promptTokens: 9, completionTokens: 2, cachedTokens: null, cacheWriteTokens: null },
       },
     ]);
   });
@@ -646,7 +822,14 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 10, completionTokens: 2, cachedTokens: 1 },
+        usage: {
+          promptTokens: 10,
+          completionTokens: 2,
+          cachedTokens: 1,
+          // The mock sends no `cache_creation_input_tokens`, and null is what
+          // that means: nothing was written, or the provider did not say.
+          cacheWriteTokens: null,
+        },
       },
     ]);
   });
@@ -707,7 +890,7 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 5, completionTokens: 0, cachedTokens: null },
+        usage: { promptTokens: 5, completionTokens: 0, cachedTokens: null, cacheWriteTokens: null },
       },
     ]);
   });
@@ -1018,7 +1201,7 @@ describe("a streamed tool call", () => {
       },
       {
         type: "end",
-        usage: { promptTokens: 9, completionTokens: 3, cachedTokens: null },
+        usage: { promptTokens: 9, completionTokens: 3, cachedTokens: null, cacheWriteTokens: null },
         finishReason: "tool_calls",
       },
     ]);

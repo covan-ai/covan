@@ -50,6 +50,55 @@ describe("estimateCostUsd", () => {
     expect(estimateCostUsd("gpt-4o", 1_000_000, 0)).toBeCloseTo(2.5, 6);
   });
 
+  it("charges Anthropic's 1.25x premium on tokens written into the cache", () => {
+    // claude-sonnet-5: $3/M in, so a written token is $3.75/M. 1M prompt
+    // tokens, all of them freshly written.
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 0, 1_000_000)).toBeCloseTo(3.75, 6);
+    // Half written, half plain fresh input.
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 0, 500_000)).toBeCloseTo(
+      1.5 + 1.875,
+      6,
+    );
+  });
+
+  it("treats written tokens as a subset of the prompt too, and disjoint from cached ones", () => {
+    // A token is read from the cache or written into it, never both in one
+    // request. 1M prompt = 600k read + 300k written + 100k plain fresh.
+    // claude-sonnet-5: $3/M in, $0.30/M cached, $3.75/M written.
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 600_000, 300_000)).toBeCloseTo(
+      0.18 + 1.125 + 0.3,
+      6,
+    );
+  });
+
+  it("makes a cache write dearer than the fresh input it replaces, not cheaper", () => {
+    // The whole reason this is priced at all. A change that increases cache
+    // hits increases cache writes first, and pricing the write at the plain
+    // `in` rate would report a saving of exactly the size of the premium it
+    // was not counting.
+    const fresh = estimateCostUsd("claude-sonnet-5", 100_000, 0);
+    const written = estimateCostUsd("claude-sonnet-5", 100_000, 0, 0, 100_000);
+    expect(written).toBeGreaterThan(fresh);
+    expect(written / fresh).toBeCloseTo(1.25, 6);
+  });
+
+  it("clamps a written count that would take the fresh remainder negative", () => {
+    // Defensive, like the cached clamp above: `cached_tokens` and
+    // `cache_write_tokens` are written by two different providers' reports and
+    // nothing in the database enforces that they fit inside the prompt.
+    expect(estimateCostUsd("claude-sonnet-5", 1_000, 0, 800, 999_999)).toBeCloseTo(
+      estimateCostUsd("claude-sonnet-5", 1_000, 0, 800, 200),
+      6,
+    );
+  });
+
+  it("defaults to no cache writes, so every caller written before 0062 is unchanged", () => {
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 400_000)).toBeCloseTo(
+      estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 400_000, 0),
+      6,
+    );
+  });
+
   it("prices the Claude models, which bill in the same two dimensions", () => {
     // claude-haiku-4-5: $1/M in, $5/M out.
     expect(estimateCostUsd("claude-haiku-4-5", 1_000_000, 1_000_000)).toBeCloseTo(6, 6);

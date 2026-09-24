@@ -70,6 +70,15 @@ export type ComposioToolkit = {
   name: string;
   description: string;
   authSchemes: string[];
+  /**
+   * Whether Composio has an OAuth application of its own for this provider.
+   *
+   * False means somebody has to register a client with that provider and paste
+   * it into Composio first — a job, not a retry. The card says so instead of
+   * offering a Connect button whose only outcome is an error from a third
+   * party.
+   */
+  managedAuth: boolean;
 };
 
 export type ComposioToolkitsResponse = {

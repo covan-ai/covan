@@ -4,19 +4,25 @@ import {
   createLink,
   executeTool,
   getConnectedAccount,
+  listToolkits,
   searchTools,
   statusOf,
   type ComposioEnv,
 } from "./client";
 
 /**
- * The four JSON endpoints Covan uses, and the defensive reading around them.
+ * The endpoints Covan uses, and the defensive reading around them.
  *
- * Most of what is asserted here is tolerance of shape: Composio has spelled the
- * list wrapper `items` and `data` at different versions, and a toolkit as a
- * string, as `{slug}` and as `{name}`. A field name that is load-bearing across
- * a version bump is a thing to notice, not a thing to assume — `toolkit` in
- * particular decides whether `run_tool` will accept a slug at all.
+ * Much of what is asserted here is tolerance of shape: the list wrapper, the
+ * toolkit as a string or as `{slug}`, the description under `meta`. A field
+ * name that is load-bearing across a version bump is a thing to notice rather
+ * than assume — `toolkit` in particular decides whether `run_tool` will accept
+ * a slug at all.
+ *
+ * The rest was written against the live API rather than its documentation,
+ * after a read of the docs got `createLink`'s body wrong and a single probe
+ * settled it. Where a test names an exact field or an exact call order, that
+ * is what the API actually did.
  */
 const ENV: ComposioEnv = { COMPOSIO_API_KEY: "ck_test" };
 
@@ -127,30 +133,206 @@ describe("executeTool", () => {
   });
 });
 
+/**
+ * Connecting an application, which has a layer the first draft of this file
+ * did not have.
+ *
+ * A link is made against an AUTH CONFIG — Composio's word for the OAuth
+ * application for one provider — and not against a toolkit. Sending
+ * `{"toolkit": "GMAIL"}` comes back `400 payload.auth_config_id: Required`,
+ * which is what these tests exist to stop happening again. The earlier version
+ * of this block passed against a fake that answered every call identically and
+ * would have shipped the wrong body.
+ */
 describe("createLink", () => {
-  it("returns both halves, and refuses an answer missing either", async () => {
-    const ok = await createLink(
+  /** A fake that answers each URL differently and records the order. */
+  function sequenced(answers: Array<[RegExp, unknown]>) {
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const impl = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      const hit = answers.find(([re]) => re.test(url));
+      return new Response(JSON.stringify(hit ? hit[1] : {}), { status: hit ? 200 : 404 });
+    });
+    return { impl, calls };
+  }
+
+  const LINKED = { connected_account_id: "ca_1", redirect_url: "https://consent.test/x" };
+
+  it("reuses an auth config the provider already has", async () => {
+    const { impl, calls } = sequenced([
+      [/auth_configs\?/, { items: [{ id: "ac_existing", toolkit: { slug: "gmail" } }] }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    const out = await createLink(
       ENV,
       { toolkit: "gmail", userId: "cu_1" },
       {
-        fetchImpl: fetchReturning({ id: "ca_1", redirect_url: "https://consent.test/x" }) as never,
+        fetchImpl: impl as never,
       },
     );
-    expect(ok).toMatchObject({
+
+    expect(out).toMatchObject({
       kind: "ok",
       connectedAccountId: "ca_1",
       redirectUrl: "https://consent.test/x",
     });
+    // Two calls, not three: nothing was created.
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body).toEqual({
+      auth_config_id: "ac_existing",
+      user_id: "cu_1",
+    });
+  });
 
-    // A link with no account id would produce a row that cannot be polled and
-    // cannot be revoked — the exact shape `lib/composio/revoke.ts` exists to
-    // prevent.
-    const half = await createLink(
+  it("makes one on demand, because the alternative is 1500 dashboard visits", async () => {
+    const { impl, calls } = sequenced([
+      [/auth_configs\?/, { items: [] }],
+      [/auth_configs$/, { toolkit: { slug: "gmail" }, auth_config: { id: "ac_new" } }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    const out = await createLink(
       ENV,
       { toolkit: "gmail", userId: "cu_1" },
-      { fetchImpl: fetchReturning({ redirect_url: "https://consent.test/x" }) as never },
+      {
+        fetchImpl: impl as never,
+      },
     );
-    expect(half.kind).toBe("error");
+
+    expect(out.kind).toBe("ok");
+    expect(calls[1].body).toEqual({
+      toolkit: { slug: "GMAIL" },
+      auth_config: { type: "use_composio_managed_auth" },
+    });
+    expect(calls[2].body).toMatchObject({ auth_config_id: "ac_new" });
+  });
+
+  it("ignores an auth config for another provider, whatever the filter did", async () => {
+    // An API that ignores a filter it does not know returns everything, and the
+    // first row of everything is somebody else's OAuth application.
+    const { impl, calls } = sequenced([
+      [/auth_configs\?/, { items: [{ id: "ac_slack", toolkit: { slug: "slack" } }] }],
+      [/auth_configs$/, { auth_config: { id: "ac_gmail" } }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    await createLink(ENV, { toolkit: "gmail", userId: "cu_1" }, { fetchImpl: impl as never });
+    expect(calls[2].body).toMatchObject({ auth_config_id: "ac_gmail" });
+  });
+
+  it("says what has to be done by hand when there is no ready-made sign-in", async () => {
+    const impl = vi.fn(async (url: string) =>
+      /auth_configs\?/.test(url)
+        ? new Response(JSON.stringify({ items: [] }), { status: 200 })
+        : new Response("no managed auth for this toolkit", { status: 400 }),
+    );
+    const out = await createLink(
+      ENV,
+      { toolkit: "obscure", userId: "cu_1" },
+      {
+        fetchImpl: impl as never,
+      },
+    );
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("Composio's dashboard");
+  });
+
+  it("refuses a link answer missing either half", async () => {
+    // A link with no account id produces a row that cannot be polled and cannot
+    // be revoked — the exact shape `lib/composio/revoke.ts` exists to prevent.
+    const { impl } = sequenced([
+      [/auth_configs\?/, { items: [{ id: "ac_1", toolkit: { slug: "gmail" } }] }],
+      [/connected_accounts\/link/, { redirect_url: "https://consent.test/x" }],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "gmail", userId: "cu_1" },
+      {
+        fetchImpl: impl as never,
+      },
+    );
+    expect(out.kind).toBe("error");
+  });
+});
+
+/**
+ * The question the plan called Step 0 and could not answer without a key.
+ *
+ * Composio does carry read/write metadata, as MCP tool annotation hints in
+ * `tags`. Nothing in the permission model branches on it — a read at a third
+ * party pulls private content into a turn as surely as a write changes
+ * something — but it is a line on the approval card, and the earlier version
+ * of this parser matched none of these because it compared whole array
+ * elements against "destructive" rather than "destructiveHint".
+ */
+describe("read and write", () => {
+  async function toolWith(tags: string[]) {
+    const out = await searchTools(
+      ENV,
+      { search: "x" },
+      { fetchImpl: fetchReturning({ items: [{ slug: "GMAIL_X", tags }] }) as never },
+    );
+    return out.kind === "ok" ? out.tools[0].destructive : "error";
+  }
+
+  it("reads MCP's hint vocabulary", async () => {
+    expect(await toolWith(["important", "openWorldHint", "readOnlyHint"])).toBe(false);
+    expect(await toolWith(["destructiveHint", "important"])).toBe(true);
+    expect(await toolWith(["openWorldHint", "createHint"])).toBe(true);
+    expect(await toolWith(["batch", "labels", "updateHint"])).toBe(true);
+  });
+
+  it("says nothing when the operation carries none of them", async () => {
+    // A real answer rather than a failure: plenty of operations are annotated
+    // with neither, and guessing would put a wrong line on the approval card.
+    expect(await toolWith(["gmail", "batch"])).toBeNull();
+    expect(await toolWith([])).toBeNull();
+  });
+
+  it("believes the narrow claim when an operation carries both", async () => {
+    expect(await toolWith(["readOnlyHint", "updateHint"])).toBe(false);
+  });
+});
+
+describe("listToolkits", () => {
+  it("finds the description under meta, where it actually is", async () => {
+    // Read from the top level it is silently the empty string, and the card
+    // renders a row with a name and nothing under it.
+    const out = await listToolkits(
+      ENV,
+      {},
+      {
+        fetchImpl: fetchReturning({
+          items: [
+            {
+              slug: "gmail",
+              name: "Gmail",
+              auth_schemes: ["OAUTH2"],
+              composio_managed_auth_schemes: ["OAUTH2"],
+              meta: { description: "Google's email service." },
+            },
+          ],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.toolkits[0]).toMatchObject({
+      slug: "gmail",
+      description: "Google's email service.",
+      managedAuth: true,
+    });
+  });
+
+  it("marks an application Composio has no OAuth app of its own for", async () => {
+    // Offering Connect on one of these is offering a button whose only outcome
+    // is a 400 from a third party.
+    const out = await listToolkits(
+      ENV,
+      {},
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "obscure", name: "Obscure", auth_schemes: ["OAUTH2"], meta: {} }],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.toolkits[0].managedAuth).toBe(false);
   });
 });
 

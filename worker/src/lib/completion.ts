@@ -536,8 +536,8 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
  * price, and the thing this file did not send for as long as Claude has been
  * offered here.
  *
- * Two breakpoints, because the prompt has two stable regions and one volatile
- * one between them:
+ * Three breakpoints, because the prompt has two stable regions, one volatile
+ * one between them, and — inside a tool loop — a tail that grows on every pass:
  *
  * 1. **The system block.** `buildSystemPrefix` exists to be byte-identical turn
  *    over turn — that is why the retrieved knowledge is a separate message and
@@ -547,6 +547,27 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
  *    twelve re-sends the eleven turns before it verbatim. Marking the end of
  *    that run caches the system block *and* the conversation, leaving only the
  *    excerpts and the new question to pay full price.
+ * 3. **Whatever the last cacheable block happens to be**, via the top-level
+ *    `cache_control` field rather than a marker this file has to place. The
+ *    provider moves that breakpoint forward as the request grows, which is the
+ *    one thing a fixed index cannot do — and a tool loop is nothing but a
+ *    request that grows. `lib/harness/loop.ts` re-sends the whole accumulated
+ *    transcript on every pass, so without this the tool results pile up
+ *    entirely behind the last marker and every pass pays full price for all of
+ *    them. In production that was 45% of all input tokens arriving from 5.6%
+ *    of replies.
+ *
+ *    It also settles the twenty-block lookback on its own. Each breakpoint
+ *    looks back at most twenty positions for a matching entry, and a turn of
+ *    eight tool calls walks a fixed marker out of that window; a breakpoint
+ *    that moves with the tail is never more than one pass behind.
+ *
+ *    Generally available rather than beta, and compatible with the two markers
+ *    above — it simply takes a third of the four slots. The one platform it is
+ *    not on is the legacy Amazon Bedrock integration, which answers a top-level
+ *    `cache_control` with a 400; `ANTHROPIC_BASE_URL` is a direct Messages API
+ *    endpoint here and Bedrock speaks a different API entirely, so that is a
+ *    note rather than a branch.
  *
  * Both were already true before this marker existed, which is the point:
  * `lib/pricing.ts` has priced a 10x cache discount since Claude was added,
@@ -556,9 +577,10 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
  *
  * A prefix shorter than the model's minimum is not cached and the request is
  * not refused; a short chat simply pays what it pays today. The minimum is per
- * model and the spread is wider than it looks: 512 tokens on Opus 5, 1024 on
- * the Sonnets, and 4096 on Haiku 4.5 — so on the cheapest model, which is
- * exactly where a short prompt is most likely to run, a marker on anything
+ * model and the spread is wider than it looks. Across the ids in
+ * `lib/models.ts`: 512 tokens on Opus 5; 1,024 on Opus 4.8, Sonnet 5, Sonnet
+ * 4.6 and Sonnet 4.5; 4,096 on Haiku 4.5. So on the cheapest model — which is
+ * exactly where a short prompt is most likely to run — a marker on anything
  * under four thousand tokens buys nothing at all.
  *
  * **Both markers are set together or not at all**, which is `cacheIndex`'s
@@ -578,11 +600,46 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
  */
 const CACHE_CONTROL = { type: "ephemeral" as const };
 
+/**
+ * The same message with a breakpoint on its last content block.
+ *
+ * The array branch is not symmetry. This function used to return the message
+ * untouched whenever the content was not a string, which reads as "nothing to
+ * do" and is the opposite of the truth: an assistant turn carrying `tool_use`
+ * blocks has array content, and inside a tool loop that is exactly what
+ * `cacheIndex` lands on from the second pass onwards. The marker did not fail
+ * loudly, it evaporated — a breakpoint nobody sent, on the requests that
+ * needed one most.
+ *
+ * The *last* block rather than the first, because a breakpoint caches
+ * everything up to and including where it sits: on the first block of a turn
+ * with three tool results, the other two would be outside the entry.
+ *
+ * Copied rather than mutated. `out` is handed to the caller as well, and a
+ * `cache_control` written into a shared block would still be there the next
+ * time the same array was rendered.
+ */
 function withCacheBreakpoint(message: Anthropic.MessageParam): Anthropic.MessageParam {
-  if (typeof message.content !== "string") return message;
+  if (typeof message.content === "string") {
+    return {
+      role: message.role,
+      content: [{ type: "text", text: message.content, cache_control: CACHE_CONTROL }],
+    };
+  }
+  const blocks = message.content;
+  if (blocks.length === 0) return message;
+  const last = blocks[blocks.length - 1];
+  // Not every block shape carries `cache_control` — a thinking block does not,
+  // and marking one is a 400 rather than a wasted marker. This function only
+  // ever sees the three `toAnthropicMessages` builds, so the guard is a
+  // formality today and the kind that stops being one the first time a fourth
+  // block type is added above.
+  if (last.type !== "text" && last.type !== "tool_use" && last.type !== "tool_result") {
+    return message;
+  }
   return {
     role: message.role,
-    content: [{ type: "text", text: message.content, cache_control: CACHE_CONTROL }],
+    content: [...blocks.slice(0, -1), { ...last, cache_control: CACHE_CONTROL }],
   };
 }
 
@@ -705,6 +762,11 @@ function anthropicParams(
 
   return {
     model: req.model,
+    // The rolling breakpoint, on the same condition as the other two: mark
+    // nothing until there is repeated history to mark. A one-shot caller —
+    // titling, persona drafting, a routine's summary — would otherwise pay the
+    // 1.25x write premium on an entry nobody will ever read back.
+    ...(cacheIndex === null ? {} : { cache_control: CACHE_CONTROL }),
     messages:
       cacheIndex === null
         ? messages

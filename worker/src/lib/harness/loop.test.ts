@@ -262,7 +262,7 @@ describe("when a tool goes wrong", () => {
 });
 
 describe("the budget", () => {
-  it("stops after MAX_STEPS and asks for an answer with no tools attached", async () => {
+  it("stops after MAX_STEPS and tells the model in words that it is done", async () => {
     // A model that would ask forever.
     scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }])]);
     const turn = await runAgentTurn({
@@ -272,13 +272,67 @@ describe("the budget", () => {
     });
     expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(3);
     expect(turn.paused?.reason).toBe("budget");
-    // The last request is the one that has to produce words, so it must not
-    // offer the model another way out.
-    const last = streamCompletion.mock.calls.at(-1)?.[1];
-    expect(last).not.toHaveProperty("tools");
-    expect((last.messages as CompletionMessage[]).at(-1)?.content).toContain(
-      "used every tool call",
-    );
+    expect(
+      (streamCompletion.mock.calls.at(-1)?.[1].messages as CompletionMessage[]).at(-1)?.content,
+    ).toContain("used every tool call");
+  });
+
+  it("keeps the tool list on the budgeted pass, which is the dearest one to uncache", async () => {
+    // Withholding the definitions is the one change that invalidates a prompt
+    // cache from its first block — the provider renders tools before system
+    // before messages, so a request whose tool list differs shares no prefix
+    // with the one before it. Doing that on the budgeted pass meant paying full
+    // price on the largest transcript of the whole turn. The words do the work
+    // instead, and `mayAsk` throws away anything the model asks for anyway.
+    scripted([
+      pass("", [{ id: "c", name: "search", arguments: "{}" }]),
+      pass("here is what I found"),
+    ]);
+    await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+      budget: { maxSteps: 1 },
+    });
+
+    expect(streamCompletion.mock.calls).toHaveLength(2);
+    expect(streamCompletion.mock.calls[1][1]).toHaveProperty("tools");
+  });
+
+  it("asks once more without tools when the budgeted pass answered with nothing", async () => {
+    // Being shown the tools means it can still reach for one and say nothing
+    // else, and `mayAsk` can throw the call away but cannot supply the sentence
+    // that should have been there — the person would get a turn that stops
+    // dead. So the fallback is the old behaviour, kept for the case that needs
+    // it: one request at full price rather than no answer. Nothing reached the
+    // screen, so the second attempt is invisible rather than a repetition.
+    scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }])]);
+    await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+      budget: { maxSteps: 1 },
+    });
+
+    const calls = streamCompletion.mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(calls[1][1]).toHaveProperty("tools");
+    // And once only. A second empty pass with nothing to reach for is a model
+    // with nothing to say, not a model reaching for a tool.
+    expect(calls[2][1]).not.toHaveProperty("tools");
+  });
+
+  it("does not ask twice when the budgeted pass did produce an answer", async () => {
+    scripted([
+      pass("", [{ id: "c", name: "search", arguments: "{}" }]),
+      pass("done, though I ran out of steps"),
+    ]);
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+      budget: { maxSteps: 1 },
+    });
+
+    expect(streamCompletion.mock.calls).toHaveLength(2);
+    expect(turn.text).toBe("done, though I ran out of steps");
   });
 
   it("answers the calls it refused, so the next request is not a 400", async () => {

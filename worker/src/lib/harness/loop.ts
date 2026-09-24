@@ -276,6 +276,22 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   let text = "";
   let finishReason: string | null = null;
   let budgetSpent = false;
+  /**
+   * Whether to withhold the tool definitions from the next request.
+   *
+   * Only ever set by the fallback at the foot of the loop, and that is the
+   * whole of the reasoning here. Withholding them is the one change that
+   * invalidates a prompt cache from its very first block: the provider renders
+   * `tools` before `system` before `messages`, so a request whose tool list
+   * differs shares no prefix with the one before it at all. The pass that used
+   * to do that unconditionally was the budgeted final pass — the pass carrying
+   * the largest transcript of the turn, which is the worst possible one to pay
+   * full price for.
+   *
+   * So the final pass now sees the tools and is told in words not to use them,
+   * and `mayAsk` below ignores anything it asks for regardless.
+   */
+  let toolsWithheld = false;
   const passes: PassUsage[] = [];
   /**
    * Where this run's pass numbering starts.
@@ -296,7 +312,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       {
         ...opts.request,
         messages,
-        ...(specs && !budgetSpent ? { tools: specs } : {}),
+        ...(specs && !toolsWithheld ? { tools: specs } : {}),
       },
       { signal: opts.signal },
     );
@@ -347,6 +363,27 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     text += passText;
 
     if (calls.length === 0) {
+      /**
+       * The budgeted final pass answered with a tool call and no words.
+       *
+       * It can, now that it is shown the tools — `mayAsk` throws the call away
+       * but cannot conjure the sentence that should have been there instead,
+       * and the person would be left with a turn that stops dead. Asking once
+       * more with the tools withheld is exactly what this pass used to be, so
+       * the fallback is the old behaviour rather than a new one: full price on
+       * one request, in the case where the alternative is no answer.
+       *
+       * Nothing has reached the screen — `passText` is empty, so no delta was
+       * emitted — which is what makes a second attempt invisible rather than a
+       * repetition. Once only, and the flag is what guarantees that: a second
+       * empty pass with no tools on the request is a model with nothing to say,
+       * not a model reaching for a tool.
+       */
+      if (budgetSpent && !toolsWithheld && specs && passText.trim().length === 0) {
+        toolsWithheld = true;
+        pass += 1;
+        continue;
+      }
       return {
         text,
         usage,

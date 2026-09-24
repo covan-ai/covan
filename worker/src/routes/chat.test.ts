@@ -5,6 +5,7 @@ import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
 import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
+import { MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
 
 /**
  * What this file is for: the citations under an answer, and what it costs to
@@ -1326,6 +1327,28 @@ describe("POST /chat/confirm/:id", () => {
     // And on the model the turn started on, which must not move even if the
     // agent's setting has.
     expect(body.model).toBe("gpt-4.1");
+  });
+
+  it("records how much the resolved call actually put in front of the model", async () => {
+    parked = PARKED;
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf("Done."));
+
+    await (await confirm(app, false)).text();
+
+    const sent = completionCreate.mock.calls.find((c) => c[0].stream)?.[0].messages;
+    const toolTurn = sent.find((m: { role: string }) => m.role === "tool");
+    const row = stepsWritten.mock.calls[0][0][0];
+
+    // The two ends of the same fact: what the model was handed, and what the
+    // row says it was handed. They came from separate expressions before, and
+    // one of them was not written at all — a confirmed call recorded `null`,
+    // so every `run_tool` in production was invisible to the measurement that
+    // sizes the tool budget.
+    expect(row.result_chars).toBe(String(toolTurn.content).length);
+    // And the budget applies here too, which it did not: this path handed the
+    // model the tool's whole output while `loop.ts` capped every other one.
+    expect(row.result_chars).toBeLessThanOrEqual(MAX_TOOL_OUTPUT_CHARS);
   });
 
   it("carries the steps already taken, so approving again cannot buy a fresh budget", async () => {

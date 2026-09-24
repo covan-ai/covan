@@ -760,13 +760,37 @@ function anthropicParams(
     });
   }
 
+  /**
+   * Whether this request is worth marking for the cache at all.
+   *
+   * `cacheIndex` answers it for an ordinary turn: mark nothing until there is
+   * repeated history to mark, so a one-shot caller — titling, persona
+   * drafting, a routine's summary — does not pay the 1.25x write premium on an
+   * entry nobody will ever read back.
+   *
+   * Carrying tools is the second way to earn it, and it is the first pass of a
+   * tool loop that needs it. There, `cacheIndex` is null for a reason that has
+   * nothing to do with whether the prefix repeats: a fresh session has no
+   * history, so `stableThrough` lands at -1 and the whole request goes
+   * unmarked — and then the *second* pass has to write the same prefix it
+   * could have read. Production, 2026-09-24 16:19: pass 0 read 0 and wrote 0
+   * on 11,406 tokens, pass 1 read 0 and wrote 11,570, pass 2 read 11,570. That
+   * turn cost $0.082 where a marked first pass would have cost about $0.051.
+   *
+   * The one-shot premium does not apply here, because a request that carries
+   * tools is a request the loop may have to send again — `loop.ts` is the only
+   * caller that sets `req.tools`, and it is a loop. The write is repaid by the
+   * very next request or not at all, and "not at all" is the single-pass case,
+   * which is the cheap one anyway.
+   */
+  const worthCaching = cacheIndex !== null || tools.length > 0;
+
   return {
     model: req.model,
-    // The rolling breakpoint, on the same condition as the other two: mark
-    // nothing until there is repeated history to mark. A one-shot caller —
-    // titling, persona drafting, a routine's summary — would otherwise pay the
-    // 1.25x write premium on an entry nobody will ever read back.
-    ...(cacheIndex === null ? {} : { cache_control: CACHE_CONTROL }),
+    // Automatic caching: the provider moves this breakpoint to the last
+    // cacheable block as the request grows, which is what keeps the mark
+    // inside the 20-block lookback window on a long loop.
+    ...(worthCaching ? { cache_control: CACHE_CONTROL } : {}),
     messages:
       cacheIndex === null
         ? messages
@@ -783,7 +807,7 @@ function anthropicParams(
             {
               type: "text" as const,
               text: systemText,
-              ...(cacheIndex === null ? {} : { cache_control: CACHE_CONTROL }),
+              ...(worthCaching ? { cache_control: CACHE_CONTROL } : {}),
             },
           ],
         }

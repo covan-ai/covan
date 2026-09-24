@@ -408,7 +408,7 @@ a service is a row telling one of them where to go.
 | A hosted Supabase project                                           | An account token, and a tick beside the project                 |
 | A Postgres (self-hosted Supabase, your own PostgREST, any Postgres) | One row, plus the function below installed on it                |
 | HubSpot, Stripe, Linear, any REST API with a token                  | One row                                                         |
-| Gmail, Slack, Notion, HubSpot — about 1500 apps, by signing in      | A search and a consent screen. See **Connected apps** below     |
+| Gmail, Slack, Notion, HubSpot and the other common apps             | A search and a consent screen. See **Connected apps** below     |
 | A service that speaks MCP and has no HTTP API                       | A one-off addition to the code — not built, and deliberately so |
 
 ### What the form asks for
@@ -577,9 +577,9 @@ others want an OAuth consent screen, which needs a registered application at
 each provider — which is a release per service, and the thing this whole design
 exists to avoid.
 
-So Covan buys that half. **Composio** keeps a registered application for about
-1500 services and a machine-readable description of what each one can do, and
-Covan uses both. What it does not use is their dispatch: the call is still made
+So Covan buys that half. **Composio** describes about 1500 services in a
+machine-readable form, and keeps a registered application for the common ones,
+and Covan uses both. What it does not use is their dispatch: the call is still made
 here, under the same step budget, the same allowance and the same approval as
 everything else.
 
@@ -631,12 +631,19 @@ Composio before the row goes, so does closing the account.
 - **It adds a subprocessor.** Data passing through an operation passes through
   Composio. See [Security](security.md) and, on the hosted product, the
   subprocessor list in the DPA.
-- **Most apps need nothing set up, a few need one job.** Composio keeps an
-  OAuth application for the common providers and Covan registers itself against
-  it the first time somebody connects one, so Gmail or Linear is a search and a
-  click. For a provider Composio has no application for, the catalogue row says
-  _Needs setup in Composio_ and stays unclickable: somebody has to register a
-  client with that provider and paste it into Composio's dashboard first.
+- **The catalogue is much larger than the part you can connect by clicking.**
+  Counted against the live API on 2026-09-24: **1562 applications, of which 158
+  connect as they are** — 123 because Composio keeps an OAuth application for
+  them and Covan registers itself against it the first time somebody connects
+  one, and 35 because they need no sign-in at all. That is a tenth of the
+  catalogue, and the other nine tenths are not a click: the row says _Needs
+  setup in Composio_ and stays unclickable until somebody registers a client
+  with that provider and pastes it into Composio's dashboard.
+
+  The tenth is the useful tenth. Gmail, Slack, Notion, Linear, HubSpot, GitHub,
+  Google Calendar, Google Sheets, Jira, Salesforce, Stripe and Asana are all in
+  it. But "about 1500 applications" is what an agent can **search**, not what a
+  workspace can connect, and the two numbers are a factor of ten apart.
 - **The consent screen shows Composio's brand** unless the workspace supplies
   its own OAuth application for that service.
 - **Calls cost money** — Composio bills per tool call — so they are metered

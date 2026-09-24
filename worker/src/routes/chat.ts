@@ -27,6 +27,17 @@ import { embeddingCost } from "../lib/entitlements";
 
 const chat = new Hono<AppEnv>();
 
+/**
+ * The stand-in reply for a turn that died after doing work but before saying
+ * anything.
+ *
+ * A tool turn writes its answer last, so the usual shape of a mid-turn failure
+ * is several completed steps and no words at all. `message_steps.message_id`
+ * has nowhere to point without a row, so this is the row — deliberately one
+ * flat sentence that claims nothing about what the steps found.
+ */
+const CUT_SHORT = "This turn stopped before it could answer. What it had already done is below.";
+
 const streamChatSchema = z.object({
   sessionId: z.string().min(1),
   /**
@@ -339,6 +350,16 @@ chat.post("/chat/stream", async (c) => {
       // `runAgentTurn` below and read after the reply is persisted, because a
       // step belongs to a message and the message does not exist until then.
       let steps: AgentStep[] = [];
+      /**
+       * The same steps, collected as they settle rather than read off the
+       * return value.
+       *
+       * `steps` above is only filled once `runAgentTurn` returns, so a turn
+       * that throws leaves it empty and every tool call it had already made
+       * goes unrecorded. This is what the error path writes instead — see the
+       * `catch` at the foot of this stream, and `onStep` in `lib/harness/loop.ts`.
+       */
+      const settled: AgentStep[] = [];
       let paused: Awaited<ReturnType<typeof runAgentTurn>>["paused"] | null = null;
 
       // Collect the title started above and write it, returning what it cost so
@@ -590,6 +611,9 @@ chat.post("/chat/stream", async (c) => {
               });
             }
           },
+          // Kept as well as shown. See `settled` above: this is the only copy
+          // that survives `runAgentTurn` throwing.
+          onStep: (step) => settled.push(step),
         });
 
         steps = turn.steps;
@@ -728,6 +752,48 @@ chat.post("/chat/stream", async (c) => {
         }
         console.error("chat stream error", err);
         await recordSpend();
+        /**
+         * Keep what the turn managed to do, rather than only saying it failed.
+         *
+         * This branch used to persist nothing while the abort branch above
+         * persisted the partial, and the difference was not deliberate — it
+         * was written when a turn was one model call, where "it failed" and
+         * "nothing happened" were the same sentence. A tool turn is up to
+         * sixteen calls (`MAX_STEPS`), and one dropped connection on the
+         * twelfth threw away eleven tool calls that had really run: mail
+         * really sent, issues really filed, money really spent at Composio —
+         * with no record anywhere that they happened. Measured on the first
+         * one of these in production: an OpenAI `Connection error.` 114
+         * seconds into a turn, and the transcript kept nothing at all.
+         *
+         * So: whatever the model said, plus every step that settled. When the
+         * model had not said anything yet — the common case, because the
+         * answer is written last — the steps still need a row to hang off, so
+         * one sentence stands in for it. Saying what happened is the point;
+         * an empty transcript beside a toast is not a record.
+         */
+        // Wrapped in its own try because a failure while salvaging must still
+        // leave the stream terminated: an unsent `error` is a client spinning
+        // until its connection times out.
+        try {
+          const partial = full.trim().length > 0 ? full : settled.length > 0 ? CUT_SHORT : "";
+          if (partial) {
+            const inserted = await persistAssistant(partial, {
+              // Null rather than a guess. The turn threw before it reported
+              // its usage, and `recordSpend` above charges only what is known
+              // for the same reason — see `promptTokens` at the top of this
+              // stream.
+              promptTokens,
+              completionTokens,
+              cachedTokens,
+              cacheWriteTokens,
+              passUsage,
+            });
+            if (inserted) await writeSteps(service, inserted.id, settled);
+          }
+        } catch (saveErr) {
+          console.error("chat stream error: could not save the partial", saveErr);
+        }
         send({ type: "error", error: "The assistant hit an error. Please try again." });
         controller.close();
       }
@@ -848,6 +914,20 @@ chat.post("/chat/confirm/:id", async (c) => {
         await recordQuota(c, (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
       };
 
+      /**
+       * The steps this resume is answerable for, held where the `catch` can
+       * still reach them.
+       *
+       * `carried` is everything that happened before the approval, resolved;
+       * `settled` is everything the resumed turn adds. Both matter more here
+       * than on `/chat/stream`, because `resolvePausedTurn` above already
+       * marked the row approved — that is the double-click guard, and it means
+       * a second attempt would find nothing to resume. If this request drops
+       * the steps, nothing else will ever write them.
+       */
+      let carried: AgentStep[] = [];
+      const settled: AgentStep[] = [];
+
       try {
         const tool = approve ? toolByName(pause.toolCall.name) : null;
         const started = Date.now();
@@ -916,6 +996,7 @@ chat.post("/chat/confirm/:id", async (c) => {
               }
             : step,
         );
+        carried = steps;
         send({
           type: "step",
           index: steps[steps.length - 1]?.index ?? 0,
@@ -970,6 +1051,7 @@ chat.post("/chat/confirm/:id", async (c) => {
               });
             }
           },
+          onStep: (step) => settled.push(step),
         });
 
         await recordSpend(turn.usage);
@@ -1058,6 +1140,37 @@ chat.post("/chat/confirm/:id", async (c) => {
       } catch (err) {
         console.error("chat confirm error", err);
         await recordSpend({ promptTokens: null, completionTokens: null });
+        // The same recovery `/chat/stream` does, and for a stronger reason —
+        // see `carried` above. Wrapped in its own try because a failure while
+        // salvaging must still leave the stream terminated: an unsent `error`
+        // is a client spinning until its connection times out.
+        try {
+          const all = [...carried, ...settled];
+          if (all.length > 0 || full.trim().length > 0) {
+            const partial = full.trim().length > 0 ? full : CUT_SHORT;
+            const existing = pause.messageId;
+            const { data: row } = existing
+              ? await service
+                  .from("messages")
+                  .update({ content: await appendedContent(service, existing, partial) })
+                  .eq("id", existing)
+                  .select("*")
+                  .single()
+              : await service
+                  .from("messages")
+                  .insert({
+                    session_id: pause.sessionId,
+                    role: "assistant",
+                    content: partial,
+                    sender_id: null,
+                  })
+                  .select("*")
+                  .single();
+            if (row) await writeSteps(service, row.id, all);
+          }
+        } catch (saveErr) {
+          console.error("chat confirm error: could not save the partial", saveErr);
+        }
         send({ type: "error", error: "The assistant hit an error. Please try again." });
         controller.close();
       }

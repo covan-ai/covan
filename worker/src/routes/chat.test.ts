@@ -1365,3 +1365,99 @@ describe("POST /chat/confirm/:id", () => {
     ]);
   });
 });
+
+/**
+ * A turn that fails after it has already done something.
+ *
+ * The first one of these in production was an OpenAI `Connection error.` 114
+ * seconds into a tool turn, and the transcript kept nothing: no reply, no
+ * steps, no trace that anything had run. The abort path had always persisted
+ * its partial and this path had not, which was not a decision — it was written
+ * when a turn was a single model call, where "it failed" and "nothing
+ * happened" were the same sentence.
+ */
+describe("a turn that dies mid-flight", () => {
+  /** A tool call that lands, and then a model request that does not. */
+  function toolThenDrop(toolName: string, args: string) {
+    let asked = false;
+    return async (body: { stream?: boolean }) => {
+      if (!body.stream) return titleOf("A question");
+      if (asked) throw new Error("Connection error.");
+      asked = true;
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: "call_1", function: { name: toolName, arguments: args } },
+                  ],
+                },
+              },
+            ],
+          };
+          yield { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+          yield {
+            choices: [],
+            usage: { prompt_tokens: 40, completion_tokens: 8, prompt_tokens_details: {} },
+          };
+        },
+      };
+    };
+  }
+
+  it("still tells the person it failed", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(toolThenDrop("search_documents", '{"query":"vacation"}'));
+    const types = frames((await ask(app)).body).map((f) => f.type);
+    expect(types).toContain("error");
+  });
+
+  it("writes down the tool call that really ran", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(toolThenDrop("search_documents", '{"query":"vacation"}'));
+    await ask(app);
+
+    expect(stepsWritten).toHaveBeenCalledTimes(1);
+    expect(stepsWritten.mock.calls[0][0]).toEqual([
+      expect.objectContaining({
+        message_id: "assistant-1",
+        step_index: 0,
+        tool: "search_documents",
+        status: "ok",
+      }),
+    ]);
+  });
+
+  it("gives those steps a row to hang off, since the model never spoke", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(toolThenDrop("search_documents", '{"query":"vacation"}'));
+    await ask(app);
+
+    // A tool turn writes its answer last, so the usual shape of a mid-turn
+    // failure is completed steps and no words at all. `message_steps` has
+    // nowhere to point without a message, so one sentence stands in — and it
+    // claims nothing about what the steps found.
+    const row = serviceInsert.mock.calls.at(-1)?.[0] as { role: string; content: string };
+    expect(row.role).toBe("assistant");
+    expect(row.content).toContain("stopped before it could answer");
+  });
+
+  it("leaves the transcript alone when the turn died having done nothing", async () => {
+    const { app } = appWith({ question: "How many days?" });
+    completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+      if (!body.stream) return titleOf("A question");
+      throw new Error("Connection error.");
+    });
+    await ask(app);
+
+    // Nothing ran and nothing was said, so there is nothing to keep. A
+    // placeholder here would be a message about an event rather than a reply.
+    expect(stepsWritten).not.toHaveBeenCalled();
+    const assistant = serviceInsert.mock.calls.filter(
+      (call) => (call[0] as { role?: string }).role === "assistant",
+    );
+    expect(assistant).toHaveLength(0);
+  });
+});

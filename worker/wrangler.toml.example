@@ -100,3 +100,18 @@ bucket_name = "covan-docs"
 #
 # [triggers]
 # crons = ["*/5 * * * *"]
+
+# Keep `console.error` bodies, not only the request line.
+#
+# A Worker with an HTTP surface looks observable without this — the dashboard
+# shows every request, its status and its timings — and that is exactly what
+# makes the gap easy to miss. What it does NOT show is anything the code
+# logged, so a chat turn that fails sends the person a generic message, writes
+# the real exception with `console.error`, and the real exception goes nowhere.
+#
+# The first production failure of a tool turn had to be caught by running
+# `wrangler tail` and asking the person to trigger it a second time, which is
+# not a debugging story anybody should repeat. Logs are sampled and retained
+# for a few days, which is long enough to answer "what actually threw".
+[observability]
+enabled = true

@@ -800,6 +800,13 @@ function ChatTab() {
             setThinking(false);
             setReplyingIn(null);
             setContinuingId(null);
+            // A failed turn is no longer necessarily an empty one: the server
+            // now writes down whatever the turn managed to do before it died,
+            // tool steps included. Without this refetch that record sits in
+            // the database until something else happens to reload the
+            // transcript, and the person is told it failed while the proof
+            // that half of it worked stays invisible.
+            invalidateMessages(sessionId);
           }
         }
       }

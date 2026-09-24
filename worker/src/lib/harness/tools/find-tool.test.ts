@@ -166,3 +166,59 @@ describe("find_tool", () => {
     expect(out.kind === "error" && out.message).toContain("rate limited");
   });
 });
+
+/**
+ * A question asked in a full sentence.
+ *
+ * Composio's search matches operation names, not meaning, and it stops
+ * matching at around seven words — measured against the live catalogue, see
+ * `RETRY_WORDS`. That is invisible until it bites, and it bites unevenly:
+ * a GPT-5 agent writes the sentence and is told its connected calendar has
+ * nothing, where a Claude agent writes three words and finds the operation.
+ */
+describe("a query too long for the catalogue to match", () => {
+  const LONG = "list events from primary calendar between two dates ordered by start time";
+
+  /** Reads the `search` parameter out of a recorded fetch call. */
+  const searchOf = (call: number) =>
+    new URL(String(fetchMock.mock.calls[call][0])).searchParams.get("search");
+
+  it("asks again with the first few words rather than reporting nothing", async () => {
+    fetchMock.mockResolvedValueOnce(catalogue([])).mockResolvedValueOnce(catalogue([GMAIL_SEND]));
+
+    const out = await findToolTool.run({ query: LONG }, ctxWith());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(searchOf(0)).toBe(LONG);
+    expect(searchOf(1)).toBe("list events from");
+    expect(out.kind === "ok" && out.content).toContain("GMAIL_SEND_EMAIL");
+  });
+
+  it("still says nothing matched when the short query finds nothing either", async () => {
+    // A fresh Response per call: a body can only be read once, and this test
+    // is the only one here that reads two.
+    fetchMock.mockImplementation(async () => catalogue([]));
+    const out = await findToolTool.run({ query: LONG }, ctxWith());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The message names what the person asked for, not the trimmed version
+    // the retry used — that is an implementation detail of this file.
+    expect(out.kind === "ok" && out.content).toContain(LONG);
+  });
+
+  it("does not second-guess a search that worked", async () => {
+    fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
+    await findToolTool.run({ query: LONG }, ctxWith());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a query that is already short", async () => {
+    fetchMock.mockResolvedValue(catalogue([]));
+    await findToolTool.run({ query: "brew coffee" }, ctxWith());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the model up front, so the retry is the exception and not the route", () => {
+    const properties = findToolTool.input.properties as Record<string, { description: string }>;
+    expect(properties.query.description).toMatch(/two or three words/i);
+  });
+});

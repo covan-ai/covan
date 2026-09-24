@@ -8,6 +8,7 @@ import { type CompletionMessage } from "../lib/completion";
 import { runAgentTurn, parseArguments, type AgentStep, type PassUsage } from "../lib/harness/loop";
 import { capabilitiesFor } from "../lib/harness/available";
 import { toolByName } from "../lib/harness/registry";
+import { cap, MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
 import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
 import { retrieveForAgent } from "../lib/retrieval";
 import {
@@ -871,6 +872,27 @@ chat.post("/chat/confirm/:id", async (c) => {
           }
         })();
 
+        /**
+         * What the model is handed for the call it just approved.
+         *
+         * Capped, which this path did not do — `loop.ts` puts every other tool
+         * result through `MAX_TOOL_OUTPUT_CHARS` and this one went through
+         * whole. That was survivable while confirmation was rare; `run_tool`
+         * asks on every call, so the tool carrying most of today's traffic was
+         * the one tool with no output budget at all. An uncapped result is not
+         * paid for once either: it joins the transcript and is re-sent on every
+         * later pass of the turn, which with sixteen steps is the expensive
+         * end of a square.
+         *
+         * One string for all three uses below — what the model reads, what the
+         * transcript keeps, and the length that is measured — because they were
+         * three expressions of the same thing and only two of them agreed.
+         */
+        const resolved =
+          result.kind === "ok"
+            ? cap(result.content, MAX_TOOL_OUTPUT_CHARS)
+            : `error: ${result.message}`;
+
         // The pending step, resolved. Its index is kept so the numbering the
         // person already saw does not move under them.
         const steps = pause.steps.map((step, i) =>
@@ -883,7 +905,13 @@ chat.post("/chat/confirm/:id", async (c) => {
                     : approve
                       ? ("failed" as const)
                       : ("refused" as const),
-                resultExcerpt: result.kind === "ok" ? result.content : result.message,
+                resultExcerpt: resolved,
+                // The pause wrote this row with no `result_chars`, because at
+                // that point nothing had been put in front of the model. Now
+                // something has. Leaving it null made every confirmed call
+                // invisible to the only measurement that can size the tool
+                // budget — and confirmed calls are most of them.
+                resultChars: resolved.length,
                 durationMs: Date.now() - started,
               }
             : step,
@@ -898,11 +926,7 @@ chat.post("/chat/confirm/:id", async (c) => {
 
         const messages: CompletionMessage[] = [
           ...pause.messages,
-          {
-            role: "tool",
-            toolCallId: pause.toolCall.id,
-            content: result.kind === "ok" ? result.content : `error: ${result.message}`,
-          },
+          { role: "tool", toolCallId: pause.toolCall.id, content: resolved },
         ];
 
         const { tools } = await capabilitiesFor({

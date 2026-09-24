@@ -625,6 +625,12 @@ Composio before the row goes, so does closing the account.
 - **It adds a subprocessor.** Data passing through an operation passes through
   Composio. See [Security](security.md) and, on the hosted product, the
   subprocessor list in the DPA.
+- **Most apps need nothing set up, a few need one job.** Composio keeps an
+  OAuth application for the common providers and Covan registers itself against
+  it the first time somebody connects one, so Gmail or Linear is a search and a
+  click. For a provider Composio has no application for, the catalogue row says
+  _Needs setup in Composio_ and stays unclickable: somebody has to register a
+  client with that provider and paste it into Composio's dashboard first.
 - **The consent screen shows Composio's brand** unless the workspace supplies
   its own OAuth application for that service.
 - **Calls cost money** — Composio bills per tool call — so they are metered

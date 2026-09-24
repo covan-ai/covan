@@ -81,12 +81,12 @@ export type ComposioResult<T> = ({ kind: "ok" } & T) | ComposioError;
  * arguments and is null unless it was asked for — see `searchTools`, which
  * deliberately does not fetch it.
  *
- * `destructive` is `null` far more often than it is a boolean, and that is
- * honest rather than lazy: Composio's documentation neither promises nor denies
- * read/write metadata on a tool, and the spike that would settle it needs a
- * live key. Nothing branches on it. It is shown to the person reading an
- * approval card, where "this one sends something" is worth a line, and the
- * permission model is built to be correct without it.
+ * `destructive` comes from MCP's tool annotation hints, which Composio does
+ * carry — see `destructiveOf`. It is still `null` for operations annotated with
+ * none of them, and that is a real answer rather than a failure. Nothing in the
+ * permission model branches on it: it is shown to the person reading an
+ * approval card, where "this one deletes things" is worth a line, and the model
+ * is built to be correct without it.
  */
 export type ComposioTool = {
   slug: string;
@@ -105,8 +105,17 @@ export type ComposioToolkit = {
   slug: string;
   name: string;
   description: string;
-  /** Whether this deployment's Composio project can already authorise it. */
+  /** How the provider can be authorised at all: `OAUTH2`, `API_KEY`, … */
   authSchemes: string[];
+  /**
+   * Whether Composio has an OAuth application of its own for this provider.
+   *
+   * False means somebody has to register a client with that provider and paste
+   * it into Composio before anybody here can connect — a real job, not a
+   * retry. Surfaced so the card can say so, rather than offering a Connect
+   * button whose only outcome is a 400 from a third party.
+   */
+  managedAuth: boolean;
 };
 
 export type ConnectedAccountStatus = "pending" | "active" | "failed";
@@ -283,21 +292,34 @@ function toolkitOf(row: Record<string, unknown>, slug: string): string {
 /**
  * Whether Composio says this operation changes something at the provider.
  *
- * Returns `null` when it does not say, which is the common case and the honest
- * answer. See `ComposioTool.destructive`: nothing in the permission model
- * depends on this, and the day the catalogue does carry it reliably, this is
- * the one function that has to change.
+ * It does say, and the vocabulary is MCP's tool annotation hints carried in
+ * `tags`: `readOnlyHint`, `destructiveHint`, `createHint`, `updateHint`. Across
+ * Gmail's 62 operations, `GMAIL_FETCH_EMAILS` carries `readOnlyHint` and
+ * `GMAIL_DELETE_MESSAGE` carries `destructiveHint` — which is exactly the
+ * distinction worth drawing. `null` is still a real answer: plenty of
+ * operations carry none of the four.
+ *
+ * **Nothing in the permission model branches on this, deliberately.** A read at
+ * a third party can pull private content into a turn as easily as a write can
+ * change something, so "it only reads" is not a reason to skip asking. What
+ * this buys is a line on the approval card, where knowing an operation deletes
+ * things is worth having before you press the button.
  */
 function destructiveOf(row: Record<string, unknown>): boolean | null {
   if (typeof row.is_destructive === "boolean") return row.is_destructive;
   if (typeof row.destructive === "boolean") return row.destructive;
   const tags = row.tags;
   if (Array.isArray(tags)) {
-    const lower = tags
-      .filter((t): t is string => typeof t === "string")
-      .map((t) => t.toLowerCase());
-    if (lower.includes("readonly") || lower.includes("read-only")) return false;
-    if (lower.includes("write") || lower.includes("destructive")) return true;
+    const hints = new Set(
+      tags.filter((t): t is string => typeof t === "string").map((t) => t.toLowerCase()),
+    );
+    // `readOnlyHint` is checked first because it is the specific claim: an
+    // operation carrying both it and a writing hint is being described by two
+    // people, and the narrow statement is the one to believe.
+    if (hints.has("readonlyhint")) return false;
+    if (hints.has("destructivehint") || hints.has("createhint") || hints.has("updatehint")) {
+      return true;
+    }
   }
   return null;
 }
@@ -396,13 +418,19 @@ export async function listToolkits(
       const slug = text(row.slug);
       if (!slug) return null;
       const schemes = row.auth_schemes ?? row.authSchemes;
+      const managed = row.composio_managed_auth_schemes;
+      // The description lives under `meta`, not at the top level. Read from
+      // the wrong place it is silently the empty string and the card renders a
+      // row with nothing under the name.
+      const meta = isRecord(row.meta) ? row.meta : {};
       return {
         slug: slug.toLowerCase(),
         name: text(row.name) || slug,
-        description: text(row.description),
+        description: text(meta.description) || text(row.description),
         authSchemes: Array.isArray(schemes)
           ? schemes.filter((s): s is string => typeof s === "string")
           : [],
+        managedAuth: Array.isArray(managed) && managed.length > 0,
       };
     })
     .filter((t): t is ComposioToolkit => t !== null);
@@ -446,6 +474,88 @@ export async function executeTool(
 }
 
 /**
+ * The auth config a toolkit's consent flows hang off, made if there is not one.
+ *
+ * Composio's model has a layer the first draft of this file did not: an **auth
+ * config** is the OAuth application for one provider, and a connected account
+ * is somebody's grant against it. Nothing can be connected until one exists.
+ *
+ * It is created on demand rather than asked of the operator, and that is the
+ * difference between this feature working and not. The alternative is somebody
+ * opening Composio's dashboard and registering an application by hand for each
+ * of fifteen hundred providers before anyone here can press Connect — which is
+ * the per-service release this whole design exists to avoid, moved into
+ * somebody else's console.
+ *
+ * `use_composio_managed_auth` is what makes that possible: Composio supplies
+ * the OAuth client. The cost is the one `docs/integrations.md` names — the
+ * consent screen carries their brand — and a workspace that minds can register
+ * its own client in Composio's dashboard, which this will then find and use
+ * instead of making a second.
+ *
+ * Not cached. It is one extra request on the rarest action in the product, and
+ * a cache would be a second place for "which application is this" to be wrong.
+ */
+async function authConfigFor(
+  env: ComposioEnv,
+  toolkit: string,
+  opts?: ComposioOptions,
+): Promise<{ kind: "ok"; id: string } | ComposioError> {
+  const slug = toolkit.toLowerCase();
+  const listed = await request(
+    env,
+    `${CORE_API}/auth_configs?toolkit_slug=${encodeURIComponent(slug.toUpperCase())}&limit=20`,
+    { method: "GET" },
+    opts,
+  );
+  if (listed.kind === "error") return listed;
+
+  // Filtered again here rather than trusting the query parameter. An API that
+  // ignores a filter it does not know returns EVERYTHING, and the first row of
+  // everything is an OAuth application for some other provider entirely.
+  const existing = rows(parsed(listed.body)).find((row) => {
+    const rowToolkit = isRecord(row.toolkit) ? text(row.toolkit.slug) : text(row.toolkit);
+    return rowToolkit.toLowerCase() === slug && row.is_disabled !== true;
+  });
+  if (existing && text(existing.id)) return { kind: "ok", id: text(existing.id) };
+
+  const made = await request(
+    env,
+    `${CORE_API}/auth_configs`,
+    {
+      method: "POST",
+      body: {
+        toolkit: { slug: slug.toUpperCase() },
+        auth_config: { type: "use_composio_managed_auth" },
+      },
+    },
+    opts,
+  );
+  if (made.kind === "error") {
+    // The likely cause is a provider Composio has no OAuth application for, and
+    // that is a job rather than a retry: somebody has to register a client with
+    // the provider and paste it into Composio. Said in those words, because the
+    // raw message is about a config type nobody outside this file has heard of.
+    return {
+      kind: "error",
+      status: made.status,
+      message:
+        `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
+        `application for it in Composio's dashboard before it can be connected here. ` +
+        `(${made.message})`,
+    };
+  }
+
+  const body = parsed(made.body);
+  const inner = isRecord(body) && isRecord(body.auth_config) ? body.auth_config : body;
+  const id = isRecord(inner) ? text(inner.id) : "";
+  if (!id) {
+    return { kind: "error", status: 502, message: `Composio made no sign-in config for ${slug}` };
+  }
+  return { kind: "ok", id };
+}
+
+/**
  * Start a consent flow, and get back the address to send somebody to.
  *
  * Composio hosts the flow, so there is no `oauth-state.ts` here and no public
@@ -458,13 +568,19 @@ export async function createLink(
   link: { toolkit: string; userId: string; callbackUrl?: string },
   opts?: ComposioOptions,
 ): Promise<ComposioResult<{ redirectUrl: string; connectedAccountId: string }>> {
+  // A link is made against an AUTH CONFIG, not against a toolkit — which is
+  // the one thing a reading of the documentation got wrong and a single probe
+  // settled: `{"toolkit":…}` comes back 400 `payload.auth_config_id: Required`.
+  const config = await authConfigFor(env, link.toolkit, opts);
+  if (config.kind === "error") return config;
+
   const res = await request(
     env,
     `${CORE_API}/connected_accounts/link`,
     {
       method: "POST",
       body: {
-        toolkit: link.toolkit.toUpperCase(),
+        auth_config_id: config.id,
         user_id: link.userId,
         ...(link.callbackUrl ? { callback_url: link.callbackUrl } : {}),
       },
@@ -517,6 +633,9 @@ export function statusOf(raw: string): ConnectedAccountStatus {
   const value = raw.trim().toUpperCase();
   if (value === "ACTIVE" || value === "CONNECTED") return "active";
   if (value === "FAILED" || value === "EXPIRED" || value === "INACTIVE") return "failed";
+  // `INITIALIZING` is what a freshly made link actually reports, confirmed
+  // against the API. Named rather than left to the fallback below, so the one
+  // status this product sees most often is not arrived at by accident.
   return "pending";
 }
 

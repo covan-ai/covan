@@ -25,6 +25,17 @@ let grants: ToolConnectionGrant[] = [];
 
 let configured = true;
 let role = "admin";
+const DEFAULT_TOOLKITS = [
+  { slug: "gmail", name: "Gmail", description: "Mail", authSchemes: ["OAUTH2"], managedAuth: true },
+  {
+    slug: "linear",
+    name: "Linear",
+    description: "Issues",
+    authSchemes: ["OAUTH2"],
+    managedAuth: true,
+  },
+];
+let toolkits = DEFAULT_TOOLKITS;
 
 // Mocked whole rather than partially, for the reason connection-card.test.tsx
 // gives: the real module constructs a Supabase client at import time, which
@@ -52,16 +63,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 vi.mock("@/hooks/use-connections", () => ({
   useComposioGrants: () => ({ data: { grants } }),
   useRemoveComposioGrant: () => revokeGrant,
-  useComposioToolkits: () => ({
-    data: {
-      configured,
-      toolkits: [
-        { slug: "gmail", name: "Gmail", description: "Mail", authSchemes: ["OAUTH2"] },
-        { slug: "linear", name: "Linear", description: "Issues", authSchemes: ["OAUTH2"] },
-      ],
-    },
-    isLoading: false,
-  }),
+  useComposioToolkits: () => ({ data: { configured, toolkits }, isLoading: false }),
   useConnectComposio: () => connect,
   useComposioStatus: () => ({ data: undefined }),
   useRemoveToolConnection: () => removeConnection,
@@ -89,6 +91,7 @@ beforeEach(() => {
   configured = true;
   role = "admin";
   grants = [];
+  toolkits = DEFAULT_TOOLKITS;
   connect.mutate.mockClear();
   removeConnection.mutate.mockClear();
   revokeGrant.mutate.mockClear();
@@ -122,6 +125,30 @@ describe("ComposioCard", () => {
       { toolkit: "linear", label: "Linear" },
       expect.anything(),
     );
+  });
+
+  it("will not offer an app Composio has no sign-in for", async () => {
+    // Registering an OAuth client with that provider is a job somebody does in
+    // Composio's dashboard. A Connect button here would only produce a 400
+    // from a third party and leave nothing to act on.
+    toolkits = [
+      {
+        slug: "obscure",
+        name: "Obscure",
+        description: "",
+        authSchemes: ["OAUTH2"],
+        managedAuth: false,
+      },
+    ];
+    render(<ComposioCard connections={[]} agents={AGENTS} />);
+    await userEvent.click(screen.getByRole("button", { name: /connect an app/i }));
+
+    const row = screen.getByRole("button", { name: /Obscure/ });
+    expect(row).toBeDisabled();
+    expect(row).toHaveTextContent("Needs setup in Composio");
+
+    await userEvent.click(row);
+    expect(connect.mutate).not.toHaveBeenCalled();
   });
 
   it("says a half-finished connection is not finished", async () => {

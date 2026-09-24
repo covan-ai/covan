@@ -179,8 +179,12 @@ export function ComposioCard({
                 <li key={toolkit.slug}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-surface"
-                    disabled={connect.isPending}
+                    className="flex w-full items-center justify-between gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+                    // An application Composio has no OAuth app of its own for
+                    // cannot be connected from here at all, so the row says so
+                    // rather than offering a button that only produces an
+                    // error from a third party.
+                    disabled={connect.isPending || !toolkit.managedAuth}
                     onClick={() =>
                       connect.mutate(
                         { toolkit: toolkit.slug, label: toolkit.name },
@@ -198,7 +202,9 @@ export function ComposioCard({
                         </span>
                       ) : null}
                     </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">Connect</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {toolkit.managedAuth ? "Connect" : "Needs setup in Composio"}
+                    </span>
                   </button>
                 </li>
               ))}

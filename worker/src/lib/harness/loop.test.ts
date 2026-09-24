@@ -660,3 +660,80 @@ describe("parseArguments", () => {
     expect(parseArguments('{"a":')).toMatchObject({ ok: false });
   });
 });
+
+/**
+ * What survives a turn that throws.
+ *
+ * The loop reports its steps by returning them, so a turn that does not return
+ * reports nothing — and the caller's `steps` variable is still empty in its
+ * `catch`. That was survivable when a turn was one model call. It stopped
+ * being survivable when a turn became sixteen: a dropped connection on a late
+ * pass discards every tool call before it, and those calls really ran.
+ */
+describe("a turn that dies with work already behind it", () => {
+  it("hands each step to onStep as it settles", async () => {
+    scripted([
+      pass("Looking.", [{ id: "c1", name: "search", arguments: '{"q":"a"}' }]),
+      pass("Done."),
+    ]);
+    const seen: Array<{ tool: string; status: string }> = [];
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+      onStep: (step) => seen.push({ tool: step.tool, status: step.status }),
+    });
+    expect(seen).toEqual([{ tool: "search", status: "ok" }]);
+    // The same steps by both roads, so a caller can use either without
+    // wondering which one is authoritative.
+    expect(turn.steps.map((s) => s.tool)).toEqual(["search"]);
+  });
+
+  it("keeps the steps the caller collected when a later pass throws", async () => {
+    let call = 0;
+    streamCompletion.mockImplementation(async function* (
+      _env: unknown,
+      req: { tools?: unknown[] },
+    ) {
+      call += 1;
+      if (call === 1) {
+        for (const e of pass("Looking.", [{ id: "c1", name: "search", arguments: "{}" }])) {
+          if (e.type === "tools" && !req.tools) continue;
+          yield e;
+        }
+        return;
+      }
+      // The shape the first production failure had: the request to the model
+      // fails outright, after a tool has already run and been paid for.
+      throw new Error("Connection error.");
+    });
+
+    const collected: string[] = [];
+    await expect(
+      runAgentTurn({
+        ...base,
+        tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+        onStep: (step) => collected.push(step.tool),
+      }),
+    ).rejects.toThrow("Connection error.");
+
+    // The turn is gone; the record of what it did is not.
+    expect(collected).toEqual(["search"]);
+  });
+
+  it("reports a refused step too, so a spent budget is not silently lost", async () => {
+    scripted([
+      pass("Looking.", [
+        { id: "c1", name: "search", arguments: "{}" },
+        { id: "c2", name: "search", arguments: "{}" },
+      ]),
+    ]);
+    const statuses: string[] = [];
+    await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+      budget: { maxSteps: 1 },
+      onStep: (step) => statuses.push(step.status),
+    });
+    expect(statuses).toEqual(["ok", "refused"]);
+  });
+});

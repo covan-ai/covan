@@ -148,6 +148,22 @@ export type AgentTurnOptions = {
    * unbounded loop by approving the same tool over and over.
    */
   stepsSoFar?: AgentStep[];
+  /**
+   * Each step as it settles, for a caller that has to survive this function
+   * throwing.
+   *
+   * `onEvent`'s `step` is for showing a row; this is for keeping the record.
+   * They are separate because they answer to different readers — one is
+   * serialised to a browser and must stay small, the other carries the
+   * arguments and the result excerpt that `message_steps` is made of.
+   *
+   * The reason it exists at all: a turn returns its steps, so a turn that
+   * throws returns none, and the caller's `steps` variable is still empty at
+   * the `catch`. One dropped connection on the twelfth pass therefore threw
+   * away eleven tool calls that had already happened and already been paid
+   * for. A caller that collects these can write them down anyway.
+   */
+  onStep?: (step: AgentStep) => void;
 };
 
 /**
@@ -308,6 +324,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
 
   const specs = toolsUsable ? toolSpecs(opts.tools) : undefined;
   const steps: AgentStep[] = [...(opts.stepsSoFar ?? [])];
+  /**
+   * The one way a step enters the record, so `onStep` cannot be forgotten at
+   * one of the three places a step settles.
+   */
+  const record = (step: AgentStep) => {
+    steps.push(step);
+    opts.onStep?.(step);
+  };
   let usage = EMPTY_USAGE;
   let text = "";
   let finishReason: string | null = null;
@@ -443,7 +467,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         const refusal = "refused: this turn has used every tool call it is allowed";
         messages.push({ role: "tool", toolCallId: call.id, content: refusal });
         const refused = parseArguments(call.arguments);
-        steps.push({
+        record({
           index: steps.length,
           pass,
           tool: call.name,
@@ -498,7 +522,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // The turn stops here, with the call unanswered on purpose: resuming
         // is what answers it, and a `tool` turn written now would be a lie
         // about something that has not happened.
-        steps.push({
+        record({
           index,
           pass,
           tool: call.name,
@@ -538,7 +562,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         result.kind === "ok" ? cap(result.content, maxOutputChars) : `error: ${result.message}`;
       messages.push({ role: "tool", toolCallId: call.id, content });
       const status: StepStatus = result.kind === "ok" ? "ok" : "failed";
-      steps.push({
+      record({
         index,
         pass,
         tool: call.name,

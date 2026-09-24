@@ -43,6 +43,42 @@ const MAX_RESULTS = 5;
 /** A full argument schema is verbose. This is what one is allowed to cost. */
 const MAX_SCHEMA_CHARS = 4_000;
 
+/**
+ * How much of a failed query to keep when asking the catalogue a second time.
+ *
+ * Composio's tool search is far more brittle than a sentence suggests, and
+ * the number is measured rather than chosen. Taking the query that failed in
+ * production — "list events from primary calendar between two dates, ordered
+ * by start time descending, include max results", against `googlecalendar` —
+ * and sweeping its prefixes:
+ *
+ *   2-3 words  10 results, `GOOGLECALENDAR_EVENTS_LIST` among them
+ *   4-6 words   1 result
+ *   7+ words    NOTHING, all the way to the full sentence
+ *
+ * Four other long queries behave the same way: full sentence 0 or 1 result,
+ * first three words 1 to 8. So the catalogue does hold what was asked for and
+ * the question was simply too long to match.
+ *
+ * WHY THIS MATTERS MORE THAN IT LOOKS. Which models write short queries is not
+ * uniform. A GPT-5 agent asked for its calendar wrote the sentence above and
+ * was told the catalogue has nothing for `googlecalendar` — with the calendar
+ * connected and `GOOGLECALENDAR_EVENTS_LIST` sitting there. A Claude agent
+ * asked the same question in three words and found it first time. Without this
+ * retry, "connected apps work" quietly means "connected apps work on some
+ * models", which is not something a person could ever debug from the outside.
+ *
+ * Only ever a second attempt, and only when the first found nothing: a search
+ * that worked is never second-guessed.
+ */
+const RETRY_WORDS = 3;
+
+/** The first `n` words, or the whole thing if it is already shorter. */
+function firstWords(query: string, n: number): string {
+  const words = query.split(/\s+/).filter(Boolean);
+  return words.length <= n ? query : words.slice(0, n).join(" ");
+}
+
 /** One candidate, in the two or three lines a model needs to choose it. */
 function summarise(tool: ComposioTool, connection: ToolConnection | undefined): string {
   const lines = [`${tool.slug} — ${tool.description || tool.name}`];
@@ -80,7 +116,10 @@ export const findToolTool: AgentTool = {
       query: {
         type: "string",
         description:
-          "What you are trying to do, in a few words. 'send an email', 'create an issue'.",
+          "What you are trying to do, in TWO OR THREE WORDS: 'send email', 'list events', " +
+          "'create issue'. This is matched against operation names, not read as a sentence — " +
+          "a full sentence describing what you want matches nothing at all. Put the detail in " +
+          "run_tool's arguments instead, where it belongs.",
       },
       toolkit: {
         type: "string",
@@ -118,11 +157,28 @@ export const findToolTool: AgentTool = {
     const refused = await affordable(ctx);
     if (refused) return refused;
 
-    const found = await searchTools(
+    const query = input.query.trim();
+    let found = await searchTools(
       ctx.env,
-      { search: input.query.trim(), toolkit, limit: MAX_RESULTS * 2 },
+      { search: query, toolkit, limit: MAX_RESULTS * 2 },
       { signal: ctx.signal },
     );
+
+    // Nothing matched, and a sentence is the likeliest reason. Try again with
+    // the first few words before believing it. See `RETRY_WORDS`.
+    const shorter = firstWords(query, RETRY_WORDS);
+    if (found.kind === "ok" && found.tools.length === 0 && shorter !== query) {
+      found = await searchTools(
+        ctx.env,
+        { search: shorter, toolkit, limit: MAX_RESULTS * 2 },
+        { signal: ctx.signal },
+      );
+    }
+
+    // Charged once, however many requests that took. The second one exists
+    // because our own interface handed the catalogue something it cannot
+    // match, and billing somebody twice for that is billing them for our
+    // brittleness.
     if (found.kind === "ok" || wasBilled(found.status)) {
       await spend(ctx, COMPOSIO_SEARCH_TOKENS);
     }

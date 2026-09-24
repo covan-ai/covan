@@ -48,6 +48,8 @@ function connection(over: Partial<ToolConnection> = {}): ToolConnection {
     allowed_methods: ["GET"],
     config: { ref: "abcdefghijklmnop" },
     account_id: "acct-1",
+    toolkit_slug: null,
+    status: "active",
     ...over,
   };
 }
@@ -86,5 +88,25 @@ describe("authHeaders", () => {
   it("says so when a Supabase row names no account", async () => {
     await expect(authHeaders(ENV, connection({ account_id: null }))).rejects.toThrow(/account/i);
     expect(reads).toEqual([]);
+  });
+
+  it("authenticates a connected application from the environment, reading no row", async () => {
+    // Composio authenticates the DEPLOYMENT. There is no envelope to decrypt
+    // and no per-workspace credential to find — which is exactly why 0062 keeps
+    // the account reference out of every client role's reach, since on this
+    // arrangement that id is the only thing separating two tenants.
+    const headers = await authHeaders(
+      { ...ENV, COMPOSIO_API_KEY: "ck_test" } as ToolEnv,
+      connection({ transport: "composio", auth_kind: "composio", account_id: null }),
+    );
+
+    expect(headers).toEqual({ "x-api-key": "ck_test" });
+    expect(reads).toEqual([]);
+  });
+
+  it("refuses a connected application on a deployment with no key", async () => {
+    await expect(
+      authHeaders(ENV, connection({ transport: "composio", account_id: null })),
+    ).rejects.toThrow(/COMPOSIO_API_KEY/);
   });
 });

@@ -38,6 +38,7 @@ import { runPurge } from "./lib/purge";
 import { connections, connectionsPublic } from "./routes/connections";
 import { supabaseAccount } from "./routes/supabase-account";
 import { toolConnections } from "./routes/tool-connections";
+import { composio } from "./routes/composio";
 import { slack, slackPublic } from "./routes/slack";
 import { routineHooks } from "./routes/routine-hooks";
 
@@ -173,6 +174,7 @@ api.route("/", events);
 api.route("/", connections);
 api.route("/", supabaseAccount);
 api.route("/", toolConnections);
+api.route("/", composio);
 api.route("/", slack);
 
 // Outside the authenticated router, and the only route that is. A browser

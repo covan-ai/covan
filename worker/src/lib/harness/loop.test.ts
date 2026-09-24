@@ -356,6 +356,142 @@ describe("a model that cannot be given tools", () => {
   });
 });
 
+describe("an approval scoped to a connection for the rest of the turn", () => {
+  /** What the loop handed the tool, call by call. */
+  function recordingRunTool(seen: Array<string[] | undefined>): AgentTool {
+    return tool(
+      "run_tool",
+      async (_args, toolCtx) => {
+        seen.push(toolCtx.approvedConnections);
+        return { kind: "ok", content: "done" };
+      },
+      { destructive: true },
+    );
+  }
+
+  it("unlocks a connection for the next call once one has landed", async () => {
+    const seen: Array<string[] | undefined> = [];
+    scripted([
+      pass("", [{ id: "c1", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("done"),
+    ]);
+    await runAgentTurn({ ...base, tools: [recordingRunTool(seen)] });
+
+    // Nothing to go on for the first call — the tool is what asks. By the
+    // second, the first has landed as `ok`, which is the only status a
+    // `run_tool` step can reach without an approval behind it.
+    expect(seen[0]).toEqual([]);
+    expect(seen[1]).toEqual(["conn-1"]);
+  });
+
+  it("carries an approval across a resume, without a schema or a chat.ts change", async () => {
+    // What `routes/chat.ts` hands back after somebody approves: the resolved
+    // step, with `confirmed` deliberately reset to false.
+    const seen: Array<string[] | undefined> = [];
+    scripted([
+      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("done"),
+    ]);
+    await runAgentTurn({
+      ...base,
+      tools: [recordingRunTool(seen)],
+      stepsSoFar: [
+        {
+          index: 0,
+          tool: "run_tool",
+          request: { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL" },
+          resultExcerpt: "done",
+          status: "ok",
+          durationMs: 5,
+        },
+      ],
+    });
+    expect(seen[0]).toEqual(["conn-1"]);
+  });
+
+  it("does not read a refused or failed call as an approval", async () => {
+    // The conservative direction, and it is forced rather than chosen: a step
+    // that failed before reaching the gate and one that failed after passing it
+    // are indistinguishable from here.
+    const seen: Array<string[] | undefined> = [];
+    scripted([
+      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("done"),
+    ]);
+    await runAgentTurn({
+      ...base,
+      tools: [recordingRunTool(seen)],
+      stepsSoFar: [
+        {
+          index: 0,
+          tool: "run_tool",
+          request: { connectionId: "conn-1" },
+          resultExcerpt: "declined",
+          status: "refused",
+          durationMs: 1,
+        },
+        {
+          index: 1,
+          tool: "run_tool",
+          request: { connectionId: "conn-2" },
+          resultExcerpt: "500",
+          status: "failed",
+          durationMs: 1,
+        },
+      ],
+    });
+    expect(seen[0]).toEqual([]);
+  });
+
+  it("does not let another tool's step unlock anything", async () => {
+    const seen: Array<string[] | undefined> = [];
+    scripted([
+      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("done"),
+    ]);
+    await runAgentTurn({
+      ...base,
+      tools: [recordingRunTool(seen)],
+      stepsSoFar: [
+        {
+          index: 0,
+          tool: "http_request",
+          request: { connectionId: "conn-1", path: "/x" },
+          resultExcerpt: "{}",
+          status: "ok",
+          durationMs: 1,
+        },
+      ],
+    });
+    expect(seen[0]).toEqual([]);
+  });
+});
+
+describe("the label a person reads on a step", () => {
+  it("shows the operation rather than the connection's uuid", async () => {
+    const labels: string[] = [];
+    scripted([
+      pass("", [
+        {
+          id: "c1",
+          name: "run_tool",
+          arguments: '{"connectionId":"8f3a-1111","slug":"GMAIL_SEND_EMAIL"}',
+        },
+      ]),
+      pass("done"),
+    ]);
+    await runAgentTurn({
+      ...base,
+      tools: [tool("run_tool", async () => ({ kind: "ok", content: "sent" }))],
+      onEvent: (event) => {
+        if (event.type === "step") labels.push(event.label);
+      },
+    });
+    expect(labels[0]).toBe("run_tool · GMAIL_SEND_EMAIL");
+  });
+});
+
 describe("parseArguments", () => {
   it("accepts nothing at all, which is a legitimate call", () => {
     expect(parseArguments("")).toEqual({ ok: true, args: {} });

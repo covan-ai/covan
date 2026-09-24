@@ -1,0 +1,193 @@
+import { composioConfigured, getTool, searchTools, type ComposioTool } from "../../composio/client";
+import { COMPOSIO_SEARCH_TOKENS } from "../../entitlements";
+import { listConnections, type ToolConnection } from "../connections";
+import { affordable, spend, wasBilled } from "../spend";
+import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
+
+/**
+ * The catalogue, as something the agent searches rather than something it is
+ * handed.
+ *
+ * Composio describes roughly fifteen hundred applications. Their own toolset
+ * puts a service's operations into the model's tool array, which works at five
+ * and does not work at fifteen hundred — the array is sent on every pass of
+ * every turn, so the cost is paid per token per turn forever. Search is the
+ * shape that scales: the model says what it is trying to do, gets five
+ * candidates back, and the turn carries five lines instead of a catalogue.
+ *
+ * **Discovery is catalogue-wide; execution is not.** This tool searches every
+ * application Composio knows, connected or not, and it touches no customer data
+ * to do it — the question "is there an operation that archives a Linear issue"
+ * has no tenant in it. Actually running one needs a row in `tool_connections`,
+ * which needs somebody to have completed a consent screen. Keeping those two
+ * separate is what lets an agent answer "you would need to connect Linear
+ * first" instead of failing silently at a capability nobody knew was missing.
+ *
+ * WHY IT IS OFFERED TO A WORKSPACE WITH NOTHING CONNECTED. `needs` is
+ * deliberately undefined — `available.ts` falls through to `true` for an absent
+ * `needs` — because the whole value of a tool that can see the unconnected half
+ * of the catalogue is that it can be asked before anything is connected.
+ */
+
+/**
+ * How many candidates come back.
+ *
+ * Five, and the ceiling is not politeness. `loop.ts` caps every result at
+ * `MAX_TOOL_OUTPUT_CHARS` with a blind slice, and the result is re-sent to the
+ * model on every remaining pass of the turn — so a long answer is paid for
+ * repeatedly and then truncated mid-sentence. Five one-line summaries fit with
+ * room to spare.
+ */
+const MAX_RESULTS = 5;
+
+/** A full argument schema is verbose. This is what one is allowed to cost. */
+const MAX_SCHEMA_CHARS = 4_000;
+
+/** One candidate, in the two or three lines a model needs to choose it. */
+function summarise(tool: ComposioTool, connection: ToolConnection | undefined): string {
+  const lines = [`${tool.slug} — ${tool.description || tool.name}`];
+  if (connection) {
+    lines.push(`  app: ${tool.toolkit} · connectionId: ${connection.id} (${connection.label})`);
+  } else {
+    // Carrying the next action in words, because `connectionsManifest` ends
+    // with "never guess an id that is not on this list" and a model that finds
+    // a slug with no connection id beside it will otherwise invent a uuid.
+    lines.push(
+      `  app: ${tool.toolkit} — NOT CONNECTED. You cannot run this. Ask the person to ` +
+        `connect ${tool.toolkit} on the Integrations page.`,
+    );
+  }
+  if (tool.required.length > 0) lines.push(`  needs: ${tool.required.join(", ")}`);
+  // Said only when Composio said it. See `ComposioTool.destructive`: null is
+  // the common answer and nothing branches on it, but a person reading the
+  // approval card is better off knowing.
+  if (tool.destructive === true) lines.push("  changes something at the service");
+  return lines.join("\n");
+}
+
+export const findToolTool: AgentTool = {
+  name: "find_tool",
+  description:
+    "Search a catalogue of operations across about 1500 applications — Gmail, HubSpot, " +
+    "Linear, Notion and the rest — to find one that does what you need. Describe the " +
+    "action in your own words. You get back candidate operation slugs, and for each one " +
+    "either the connection id to run it with or a note that the app is not connected " +
+    "here. Call this before run_tool; you cannot guess a slug. Ask for detail once you " +
+    "know which operation you want and need its exact arguments.",
+  input: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description:
+          "What you are trying to do, in a few words. 'send an email', 'create an issue'.",
+      },
+      toolkit: {
+        type: "string",
+        description:
+          "Narrow to one application by its slug — gmail, hubspot, linear. Use the toolkit " +
+          "named beside a connection in the list of connected services.",
+      },
+      detail: {
+        type: "boolean",
+        description:
+          "Return the full argument schema for the single best match instead of a list. " +
+          "Use it when you know which operation you want and need to know what to send.",
+      },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  },
+  destructive: false,
+  // No `needs`: the point of a catalogue-wide search is that it answers before
+  // anything is connected. See the note at the top of this file.
+  isConfigured: (env: ToolEnv) => composioConfigured(env),
+  async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
+    const input = args as { query?: unknown; toolkit?: unknown; detail?: unknown };
+    if (typeof input.query !== "string" || !input.query.trim()) {
+      return { kind: "error", message: "query is required — say what you are trying to do" };
+    }
+    const toolkit =
+      typeof input.toolkit === "string" && input.toolkit.trim()
+        ? input.toolkit.trim().toLowerCase()
+        : undefined;
+
+    // Before the network, because a search is billable and an exhausted
+    // account must not be able to spend on one. See `lib/harness/spend.ts` for
+    // why this is asked here rather than by the route.
+    const refused = await affordable(ctx);
+    if (refused) return refused;
+
+    const found = await searchTools(
+      ctx.env,
+      { search: input.query.trim(), toolkit, limit: MAX_RESULTS * 2 },
+      { signal: ctx.signal },
+    );
+    if (found.kind === "ok" || wasBilled(found.status)) {
+      await spend(ctx, COMPOSIO_SEARCH_TOKENS);
+    }
+    if (found.kind === "error") {
+      return { kind: "error", message: `the catalogue could not be searched: ${found.message}` };
+    }
+    if (found.tools.length === 0) {
+      return {
+        kind: "ok",
+        content:
+          `No operation in the catalogue matches "${input.query.trim()}"` +
+          `${toolkit ? ` in ${toolkit}` : ""}. Try different words, or tell the person this ` +
+          "is not something you can do.",
+      };
+    }
+
+    // Which of these the workspace could actually run. Through the caller's own
+    // client, so a connection in another workspace was never in the list — and
+    // filtered to `active` by `listConnections`, so a half-finished consent
+    // screen is not offered as a connection id.
+    const connections = await listConnections(ctx.db, ctx.workspaceId).catch(() => []);
+    const byToolkit = new Map<string, ToolConnection>();
+    for (const c of connections) {
+      if (c.transport === "composio" && c.toolkit_slug && !byToolkit.has(c.toolkit_slug)) {
+        byToolkit.set(c.toolkit_slug, c);
+      }
+    }
+
+    // Connected applications first. Not a cosmetic sort: the model reads in
+    // order, and a list whose first entry is an operation nobody can run is a
+    // list that invites a call that cannot succeed.
+    const ranked = [...found.tools].sort((a, b) => {
+      const ac = byToolkit.has(a.toolkit) ? 0 : 1;
+      const bc = byToolkit.has(b.toolkit) ? 0 : 1;
+      return ac - bc;
+    });
+
+    if (input.detail === true) {
+      const best = ranked[0];
+      const full = await getTool(ctx.env, best.slug, { signal: ctx.signal });
+      if (full.kind === "ok" || wasBilled(full.status)) {
+        await spend(ctx, COMPOSIO_SEARCH_TOKENS);
+      }
+      if (full.kind === "error") {
+        return { kind: "error", message: `${best.slug} could not be described: ${full.message}` };
+      }
+      const schema = full.tool.inputSchema
+        ? JSON.stringify(full.tool.inputSchema, null, 2).slice(0, MAX_SCHEMA_CHARS)
+        : "(this operation publishes no argument schema)";
+      return {
+        kind: "ok",
+        content: `${summarise(full.tool, byToolkit.get(full.tool.toolkit))}\n\nArguments:\n${schema}`,
+      };
+    }
+
+    const listed = ranked
+      .slice(0, MAX_RESULTS)
+      .map((tool) => summarise(tool, byToolkit.get(tool.toolkit)))
+      .join("\n\n");
+
+    return {
+      kind: "ok",
+      content:
+        `${listed}\n\nRun one with run_tool, giving its connectionId and slug. Call this ` +
+        "again with detail: true if you need the exact arguments.",
+    };
+  },
+};

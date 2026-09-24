@@ -195,6 +195,14 @@ export async function runPokedRoutine(
  * Failure is answered `"none"` rather than raised: a tick that cannot read
  * this table should still run its routines the way it ran them before any of
  * this existed, which is exactly what an empty set produces.
+ *
+ * Filtered to `active`, the same filter `lib/harness/connections.ts` applies
+ * and for a sharper reason here. A connected application's row exists from the
+ * moment somebody is sent to a consent screen (0062), so a workspace can hold
+ * connections that are half made — and counting one would put that workspace on
+ * the expensive path, where every routine builds a tool loop, for a service
+ * `capabilitiesFor` will then decline to offer. The cost of that mistake is
+ * paid in subrequests against a ceiling of fifty.
  */
 async function workspacesWithConnections(
   db: SupabaseClient,
@@ -205,6 +213,7 @@ async function workspacesWithConnections(
   const { data, error } = await db
     .from("tool_connections")
     .select("workspace_id")
+    .eq("status", "active")
     .in("workspace_id", ids);
   if (error) {
     console.error("could not read tool connections for this tick", error);

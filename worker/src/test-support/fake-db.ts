@@ -268,6 +268,13 @@ export function fakeDb(spec: FakeDbSpec) {
       return {
         select: (columns?: string) => start(table, "select").select(columns),
         insert: (values: Record<string, unknown>) => start(table, "insert", values),
+        // An upsert IS an insert with a conflict target, which is what
+        // PostgREST sends and why it lands on the `insert` handler rather than
+        // on one of its own. The second argument — `{ onConflict }` — is
+        // deliberately dropped: a test double that let a handler branch on it
+        // would be inviting tests to assert on a detail the database decides.
+        upsert: (values: Record<string, unknown>, _options?: { onConflict?: string }) =>
+          start(table, "insert", values),
         update: (values: Record<string, unknown>) => start(table, "update", values),
         delete: () => start(table, "delete"),
       };

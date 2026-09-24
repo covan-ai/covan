@@ -75,6 +75,30 @@ export type RoutineEnv = {
    * field. `wrangler secret put PROVIDER_KEY_SECRET`.
    */
   PROVIDER_KEY_SECRET?: string;
+  /**
+   * Composio's API key, and the switch that makes the catalogue exist.
+   *
+   * On `RoutineEnv` rather than `Bindings` for `PROVIDER_KEY_SECRET`'s reason:
+   * a scheduled routine may call a connected service, and the cron Worker has
+   * no request to carry a key in on. It is a DEPLOYMENT secret — one Composio
+   * project serves every workspace on this deployment — which is why
+   * `tool_connections.connected_account_id` is withheld from every client role
+   * (0062): on this arrangement that id is the only thing separating two
+   * tenants.
+   *
+   * Optional, and its absence is a supported configuration rather than a
+   * misconfiguration: unset means `find_tool` and `run_tool` are not offered to
+   * any model, `POST /composio/connect` answers 501, and the Integrations page
+   * names the variable rather than hiding the feature. Structurally the same
+   * decision as `NOTION_CLIENT_ID`. On Cloudflare:
+   * `wrangler secret put COMPOSIO_API_KEY`.
+   */
+  COMPOSIO_API_KEY?: string;
+  /**
+   * Where Composio's API lives. Unset means backend.composio.dev. The sibling
+   * of `OPENAI_BASE_URL`, for a proxy or a self-hosted Composio in front of it.
+   */
+  COMPOSIO_BASE_URL?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   RESEND_API_KEY: string;

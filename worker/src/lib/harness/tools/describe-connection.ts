@@ -79,6 +79,33 @@ export const describeConnectionTool: AgentTool = {
       };
     }
 
+    // A connected application does not have a schema to describe; it has a
+    // catalogue to search, and the catalogue is not this connection's — it is
+    // fifteen hundred applications wide and lives behind `find_tool`.
+    // Answered here rather than falling into the `http` branch below, which
+    // would have reported allowed methods that mean nothing on this transport,
+    // or into the query below, which would have run `information_schema`
+    // against an API that has no database.
+    if (connection.transport === "composio") {
+      return {
+        kind: "ok",
+        content:
+          `${connection.label} is a connected ${connection.toolkit_slug ?? "application"}.\n\n` +
+          `Use find_tool with toolkit "${connection.toolkit_slug ?? ""}" to see what it can do, ` +
+          `then run_tool with this connection's id. There is nothing else to describe: the ` +
+          "list of operations is the catalogue's, not this connection's.",
+      };
+    }
+
+    if (connection.transport === "unknown") {
+      return {
+        kind: "error",
+        message:
+          `${connection.label} is a kind of connection this build does not know how to reach. ` +
+          "It was probably made by a newer version of Covan.",
+      };
+    }
+
     // Every carrier that can answer a schema query goes on: `sql` through
     // PostgREST, `supabase` through the account's own token. Only an HTTP API
     // has nothing to ask.

@@ -43,7 +43,7 @@ const projectsSchema = z.object({
 const ACCOUNT_COLUMNS = "id, workspace_id, token_hint, connected_by, created_at, updated_at";
 
 const CONNECTION_COLUMNS =
-  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, created_by, created_at, updated_at";
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, toolkit_slug, status, created_by, created_at, updated_at";
 
 /** The caller's workspace and their standing in it, in one read. */
 async function active(c: Context<AppEnv>) {

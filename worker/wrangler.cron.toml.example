@@ -22,6 +22,14 @@
 #                           every Slack webhook and email address undecryptable.
 #   RESEND_API_KEY
 #   RESEND_FROM
+#   COMPOSIO_API_KEY     <- only if the API Worker has it. A scheduled routine
+#                           can call a connected application exactly as a chat
+#                           turn can, and `lib/harness/available.ts` decides
+#                           which tools exist by asking the environment — so a
+#                           key here and not there, or there and not here, is an
+#                           agent that works when you ask it and not overnight.
+#                           That is the one difference nobody can debug, and it
+#                           is why the two lists have to match.
 #
 # Not set here, deliberately: SUPABASE_ANON_KEY. This Worker only ever uses the
 # service role, so a user-scoped key would be a credential with no caller.

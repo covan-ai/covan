@@ -31,7 +31,15 @@ const dbWith = (rpc: unknown, connected: string[] = []) => ({
   rpc,
   from: () => ({
     select: () => ({
-      in: async () => ({ data: connected.map((workspace_id) => ({ workspace_id })), error: null }),
+      // Filtered on status before the workspace list, because a connection is
+      // a row from the moment somebody is sent to a consent screen and a
+      // half-made one must not put a workspace on the expensive path (0062).
+      eq: () => ({
+        in: async () => ({
+          data: connected.map((workspace_id) => ({ workspace_id })),
+          error: null,
+        }),
+      }),
     }),
   }),
 });
@@ -78,7 +86,7 @@ describe("runDueRoutines", () => {
   it("asks once per tick which workspaces have a connected service", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [dueRow("r1"), dueRow("r2")], error: null });
     const inFilter = vi.fn(async () => ({ data: [], error: null }));
-    const db = { rpc, from: () => ({ select: () => ({ in: inFilter }) }) };
+    const db = { rpc, from: () => ({ select: () => ({ eq: () => ({ in: inFilter }) }) }) };
 
     const runRoutine = vi.fn().mockResolvedValue({ status: "ok", itemsNew: 0 });
     await runDueRoutines(env, { db: db as any, runRoutine });
@@ -91,7 +99,9 @@ describe("runDueRoutines", () => {
     const db = {
       rpc,
       from: () => ({
-        select: () => ({ in: async () => ({ data: null, error: { message: "gone" } }) }),
+        select: () => ({
+          eq: () => ({ in: async () => ({ data: null, error: { message: "gone" } }) }),
+        }),
       }),
     };
     const runRoutine = vi.fn().mockResolvedValue({ status: "ok", itemsNew: 1 });

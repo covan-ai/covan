@@ -400,7 +400,7 @@ one place in Covan where the agent goes and looks something up rather than
 being handed something in advance.
 
 Adding one is a form on the Integrations page. There is no per-service code
-behind it and there is not meant to be: the worker has six general tools, and
+behind it and there is not meant to be: the worker has eight general tools, and
 a service is a row telling one of them where to go.
 
 | What you want                                                       | What it takes                                                   |
@@ -408,7 +408,7 @@ a service is a row telling one of them where to go.
 | A hosted Supabase project                                           | An account token, and a tick beside the project                 |
 | A Postgres (self-hosted Supabase, your own PostgREST, any Postgres) | One row, plus the function below installed on it                |
 | HubSpot, Stripe, Linear, any REST API with a token                  | One row                                                         |
-| A service that needs OAuth rather than a token                      | A one-off addition to the code, then one row per account        |
+| Gmail, Slack, Notion, HubSpot — about 1500 apps, by signing in      | A search and a consent screen. See **Connected apps** below     |
 | A service that speaks MCP and has no HTTP API                       | A one-off addition to the code — not built, and deliberately so |
 
 ### What the form asks for
@@ -569,6 +569,69 @@ permission model**, and Covan has the schema for one and no rows in it — see
 Until then, treat a write-enabled connection as something the agent can do
 anything with inside the methods and origin you gave it.
 
+### Connected apps
+
+The three roads above all end at a token you can paste. Most of the software a
+team uses does not have one: Gmail, Slack, Notion, HubSpot and a few thousand
+others want an OAuth consent screen, which needs a registered application at
+each provider — which is a release per service, and the thing this whole design
+exists to avoid.
+
+So Covan buys that half. **Composio** keeps a registered application for about
+1500 services and a machine-readable description of what each one can do, and
+Covan uses both. What it does not use is their dispatch: the call is still made
+here, under the same step budget, the same allowance and the same approval as
+everything else.
+
+Set `COMPOSIO_API_KEY` and a **Connected apps** card appears under _Services an
+agent can call_. Search for the app, click it, sign in at the app itself, and
+you come back to a connected service. There is no form: what a connection needs
+is a consent screen, not a base URL.
+
+**What an agent does with one.** Two tools, and it uses them in order.
+`find_tool` searches the whole catalogue — every app, connected or not — for an
+operation matching what it is trying to do, and answers with the operation's
+name, the parameters it takes, and either the connection to run it with or a
+note that the app is not connected here. `run_tool` then runs one. It cannot
+guess: an operation it has not seen in a `find_tool` result is refused, and so
+is one belonging to an app other than the connection it named.
+
+**The asking.** The first time an agent acts on a connected app in a
+conversation, you are shown what it proposes to do — the operation and every
+argument, including the body of the message — and it does not happen unless you
+say yes. That yes covers **that app for the rest of the turn**: checking three
+threads and replying is one approval, not four. A different app asks again, and
+so does the next conversation. On a scheduled run there is nobody to ask, so the
+run records what it could not do and finishes.
+
+**Always-allow** is per agent, per app, per operation, and an admin sets it.
+That is the one thing that removes the asking, and it is deliberately narrow:
+"this agent may file Linear issues without asking" is a decision somebody makes
+once about one operation, not a switch over a whole account.
+
+An admin sets it from the approval card itself — a third, quiet option beside
+_Approve_ and _Not now_ — because that is the moment somebody knows what they
+are agreeing to. Everything already granted is listed under the app on the
+Integrations page, and **any writer can take one back**, not only an admin:
+removing a permission is never the unsafe direction.
+
+**What Covan stores, and what it does not.** Not the token. The OAuth grant
+lives at Composio; what this database holds is an opaque reference to it,
+readable by no client role. Removing the connection revokes the grant at
+Composio before the row goes, so does closing the account.
+
+**Three things to know before turning it on:**
+
+- **It adds a subprocessor.** Data passing through an operation passes through
+  Composio. See [Security](security.md) and, on the hosted product, the
+  subprocessor list in the DPA.
+- **The consent screen shows Composio's brand** unless the workspace supplies
+  its own OAuth application for that service.
+- **Calls cost money** — Composio bills per tool call — so they are metered
+  against the same allowance a chat turn spends, at roughly one turn per call.
+  A self-hosted deployment with no allowance configured is unmetered, as it is
+  for everything else.
+
 ### What an agent cannot do with a service
 
 - **It cannot reach anywhere you did not name.** Origin-locked, redirects
@@ -577,9 +640,13 @@ anything with inside the methods and origin you gave it.
   refused at call time, not only when you set the connection up.
 - **It cannot choose a method you did not allow**, and it is told not to try
   another one.
-- **It cannot send mail to an address.** `send_email` takes one of _your_
-  delivery channels, so the worst an instruction hidden in fetched data can
-  achieve is a message to your own inbox.
+- **It cannot send mail to an address** — through `send_email`, which takes one
+  of _your_ delivery channels, so the worst an instruction hidden in fetched
+  data can achieve there is a message to your own inbox. **A connected mail app
+  is the exception, and it is a real one:** `run_tool` on Gmail can name any
+  recipient, because naming the recipient is what the operation is for. What
+  stands in for the ceiling is the approval — you are shown the address and the
+  body before it goes. Connect a mailbox knowing that.
 - **It cannot create a routine on its own.** It proposes one and you approve
   it; what gets created is an ordinary routine on the Routines screen, which
   you can edit, pause or delete like any other.
@@ -601,6 +668,12 @@ Every token is encrypted with AES-GCM before it reaches Postgres, under
 holding it is not selectable by any client role, so a member cannot read their
 own connection's token back out through the Data API, and a database dump on its
 own is worthless.
+
+A connected app is the exception, and in the direction you would want: there is
+no token here at all. The OAuth grant is held by Composio and what this database
+holds is an opaque reference to it — also selectable by no client role, because
+one deployment-wide API key opens every workspace's connections, which makes
+that reference the boundary between two tenants.
 
 Tokens do not survive an export. A workspace restored from an archive has its
 connections listed and paused, with the reason on each one: an OAuth grant

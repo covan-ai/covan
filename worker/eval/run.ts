@@ -18,8 +18,11 @@
  * `ref/` is the reason a baseline run is a different thing from any other run.
  * A pairwise win rate only means something against a fixed opponent: regenerate
  * the reference and "60% wins" silently changes what it is 60% of. So the
- * baseline writes `ref/<id>.txt` once and every later variant is judged against
- * those files, never against a fresh baseline pass.
+ * baseline writes `ref/<id>.json` once and every later variant is judged
+ * against those files, never against a fresh baseline pass. Each holds the
+ * answer *and* the tools that turn ran, because the judge is shown both — half
+ * of every rubric here is about process, and a reference without its
+ * trajectory would put the candidate's process against nothing.
  */
 import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -182,18 +185,27 @@ async function one({ kase, rep }: { kase: EvalCase; rep: number }): Promise<void
     let judgeUsage: Verdict["usage"] | undefined;
 
     if (isBaseline) {
-      writeFileSync(join(refDir, `${kase.id}.txt`), turn.text);
+      writeFileSync(
+        join(refDir, `${kase.id}.json`),
+        JSON.stringify({ text: turn.text, trajectory: turn.steps.map((s) => s.tool) }, null, 2),
+      );
       // The reference cannot win against itself, and a missing primary metric
       // on the baseline rows breaks every comparison built on them. 0.5 is the
       // neutral value: it says "no comparison was made", not "it drew".
       grade = { win: 0.5, steps: turn.steps.length };
     } else if (shouldJudge) {
-      const refPath = join(refDir, `${kase.id}.txt`);
+      const refPath = join(refDir, `${kase.id}.json`);
       if (!existsSync(refPath)) throw new Error(`no frozen reference for ${kase.id}`);
+      const ref = JSON.parse(readFileSync(refPath, "utf8")) as {
+        text: string;
+        trajectory: string[];
+      };
       const verdict = await judgePair(env, {
         kase,
-        reference: readFileSync(refPath, "utf8"),
+        reference: ref.text,
+        referenceTrajectory: ref.trajectory,
         candidate: turn.text,
+        candidateTrajectory: turn.steps.map((s) => s.tool),
         judgeModel: JUDGE_MODEL,
         candidateIsA: Math.random() < 0.5,
       });

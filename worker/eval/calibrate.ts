@@ -35,6 +35,16 @@ import { loadEnv, requireAnthropicKey } from "./env";
 
 const MODEL = process.env.EVAL_MODEL ?? "claude-sonnet-5";
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? "claude-opus-5";
+/**
+ * The per-case ceiling, five minutes rather than three.
+ *
+ * Three was measured against nothing and an eight-step turn went past it: each
+ * pass re-sends a transcript that has grown by the last tool's output, so the
+ * last pass of a long turn is the slowest one, and the turns that take eight
+ * steps are exactly the turns this eval is for. A ceiling that fires on the
+ * cases that matter most is worse than no ceiling.
+ */
+const CASE_TIMEOUT_MS = Number(process.env.EVAL_TIMEOUT_MS ?? 300_000);
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -57,11 +67,27 @@ let spend = 0;
 let separated = 0;
 let tied = 0;
 
+let failed = 0;
+
 for (const kase of selected) {
+  try {
+    await one(kase);
+  } catch (err) {
+    // One case that times out or errors must not take the run with it. The
+    // cases already done cost real money and their verdicts are the output;
+    // losing them to the ninth case's wall clock is the expensive way to find
+    // out the ceiling was too low.
+    failed += 1;
+    console.log(`── ${kase.id}`);
+    console.log(`   FAILED  ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function one(kase: (typeof selected)[number]): Promise<void> {
   // Two samples from the same unchanged system. Sequential rather than
   // concurrent so the two are as alike as the provider will make them.
-  const first = await runCase(env, kase, MODEL, { timeoutMs: 180_000 });
-  const second = await runCase(env, kase, MODEL, { timeoutMs: 180_000 });
+  const first = await runCase(env, kase, MODEL, { timeoutMs: CASE_TIMEOUT_MS });
+  const second = await runCase(env, kase, MODEL, { timeoutMs: CASE_TIMEOUT_MS });
   for (const r of [first, second]) {
     spend += estimateCostUsd(
       MODEL,
@@ -72,17 +98,29 @@ for (const kase of selected) {
     );
   }
 
+  const firstSteps = first.turn.steps.map((s) => s.tool);
+  const secondSteps = second.turn.steps.map((s) => s.tool);
+
   const separation = await judgePair(env, {
     kase,
     reference: kase.spoiled!,
+    // The spoiled answer is handed the real turn's trajectory rather than an
+    // empty one. It is hand-written and never ran anything, and an answer
+    // shown with no tools beside one shown with five would tell the judge
+    // which is which before it read a word — the blind would be gone and the
+    // separation score would measure nothing.
+    referenceTrajectory: firstSteps,
     candidate: first.turn.text,
+    candidateTrajectory: firstSteps,
     judgeModel: JUDGE_MODEL,
     candidateIsA: Math.random() < 0.5,
   });
   const noise = await judgePair(env, {
     kase,
     reference: first.turn.text,
+    referenceTrajectory: firstSteps,
     candidate: second.turn.text,
+    candidateTrajectory: secondSteps,
     judgeModel: JUDGE_MODEL,
     candidateIsA: Math.random() < 0.5,
   });
@@ -110,10 +148,12 @@ for (const kase of selected) {
   );
 }
 
+const scored = selected.length - failed;
 console.log(
   [
-    `separation   ${separated}/${selected.length} — the real answer beat the spoiled one`,
-    `tie rate     ${tied}/${selected.length} — same system judged against itself`,
+    `separation   ${separated}/${scored} — the real answer beat the spoiled one`,
+    `tie rate     ${tied}/${scored} — same system judged against itself`,
+    ...(failed > 0 ? [`failed       ${failed} case(s) errored and are not in either count`] : []),
     `spend        $${spend.toFixed(3)}`,
   ].join("\n"),
 );

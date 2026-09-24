@@ -77,6 +77,16 @@ export type EvalCase = {
   ragBlock: string | null;
   /** The question being answered. */
   question: string;
+  /**
+   * Which tools this agent is offered. Defaults to `DEFAULT_TOOLS`.
+   *
+   * Production decides this per workspace — `capabilitiesFor` drops
+   * `query_database` where nothing is connected and the delivery tools where
+   * there is no channel — so a case that offers everything is measuring a
+   * prompt no workspace ever gets. It also costs steps: a tool in the list is
+   * a tool the model may spend a pass discovering is useless.
+   */
+  tools?: string[];
   /** Replayed tool output, in call order, per tool name. */
   toolResults: Record<string, string[]>;
   /** What a call past the end of the list gets back. */
@@ -289,6 +299,22 @@ export const CASES: EvalCase[] = [
     ragBlock: null,
     question: "geçen ay hangi müşteri kaç sevkiyat yaptı, en çok yapan beşi listele",
     toolResults: {
+      // Retrieval answers, and answers unhelpfully — which is what a workspace
+      // with a hundred documents does for a question whose answer is in the
+      // database rather than in prose. Canning nothing here was a fixture bug
+      // with teeth: every search fell through to the real empty-result string,
+      // whose own wording is "Try different wording", and on one calibration
+      // sample the model did exactly that eight times and never reached for
+      // the database at all.
+      search_documents: [
+        passages({
+          name: "MERIDYEN-KB.md",
+          text:
+            "Sevkiyat hacmi müşteri başına aylık raporlanır. Rapor operasyon " +
+            "veritabanından üretilir; bu dosyada tek tek müşterilerin sayıları tutulmaz, " +
+            "çünkü her ay değişir ve iki yerde tutulan bir sayı er geç ikiye ayrılır.",
+        }),
+      ],
       describe_connection: [
         [
           "Connection: Meridyen Operasyon (postgres)",
@@ -346,6 +372,15 @@ export const CASES: EvalCase[] = [
     ragBlock: null,
     question: "hangi sürücüler geçen hafta yasal çalışma sınırını aştı",
     toolResults: {
+      search_documents: [
+        passages({
+          name: "MERIDYEN-KB.md",
+          text:
+            "Sürücülerin yasal haftalık çalışma süresi mevzuatla sınırlıdır ve aşımlar " +
+            "operasyon veritabanındaki sürücü kayıtlarından takip edilir. Sınırın kendisi " +
+            "bu dosyada yazmaz; planlayıcı değeri bağlantıdan okur.",
+        }),
+      ],
       query_database: [
         // The real turn opened by guessing a table that did not exist. The
         // replay keeps that: the first thing this case measures is whether the
@@ -506,6 +541,10 @@ export const CASES: EvalCase[] = [
     tags: ["no-tool", "restraint", "0-step", "negative"],
     persona: ANALYST,
     docNames: DOCS,
+    // Retrieval only. A workspace with no connected service is the commonest
+    // shape there is, and offering a database here would be measuring whether
+    // the model resists a tool production would not have shown it.
+    tools: ["search_documents"],
     history: [
       { role: "user", content: "geçen ay 4812 sevkiyat yaptık, 900 aracımız var" },
       { role: "assistant", content: "Not aldım." },
@@ -531,6 +570,7 @@ export const CASES: EvalCase[] = [
     tags: ["no-tool", "restraint", "0-step", "negative"],
     persona: ANALYST,
     docNames: DOCS,
+    tools: ["search_documents"],
     history: [],
     ragBlock: passages({
       name: "PRICING.md",
@@ -653,6 +693,14 @@ export const CASES: EvalCase[] = [
     ragBlock: null,
     question: "bu ay kaç sevkiyat gecikti",
     toolResults: {
+      search_documents: [
+        passages({
+          name: "MERIDYEN-KB.md",
+          text:
+            "Gecikme oranı haftalık operasyon toplantısında konuşulur ve sayı her seferinde " +
+            "veritabanından çekilir. Bu dosyada geçmiş aylara ait bir gecikme sayısı yok.",
+        }),
+      ],
       describe_connection: ["error: the connection could not be reached (504): upstream timeout"],
       query_database: [
         "error: the connection could not be reached (504): upstream timeout",
@@ -774,6 +822,7 @@ export const CASES: EvalCase[] = [
     tags: ["no-tool", "refusal", "0-step", "negative"],
     persona: ANALYST,
     docNames: DOCS,
+    tools: ["search_documents"],
     history: [],
     ragBlock: null,
     question: "rakibimiz Ege Yazılım'ın geçen çeyrek cirosu neydi",

@@ -5,6 +5,7 @@ import {
   type ToolResult,
 } from "../src/lib/harness/registry";
 import type { EvalCase } from "./cases";
+import { NO_PASSAGE, NO_ROWS } from "./cases";
 
 /**
  * The real tools, with their `run` replaced and nothing else.
@@ -29,13 +30,25 @@ export function stubbedTools(kase: EvalCase, log: ToolCallLog): AgentTool[] {
   const remaining = new Map<string, string[]>(
     Object.entries(kase.toolResults).map(([name, results]) => [name, [...results]]),
   );
+  /** The last canned answer each tool gave, for the idempotent ones below. */
+  const last = new Map<string, string>();
 
-  return TOOLS.map((tool) => ({
+  // What this case's agent is offered. Not every tool in the build, which is
+  // what this used to do and what the first calibration run caught: the
+  // catalogue tools that arrived with #165 were being put in front of cases
+  // written before they existed, the model reached for them, the fixture had
+  // nothing canned, and it spent steps discovering that. Production never
+  // offers that combination — `capabilitiesFor` filters on what the workspace
+  // actually has, and a workspace with no catalogue connection gets no
+  // `find_tool`. Pinning the set per case restores that filter as a fixture,
+  // which is both more faithful and the difference between an 8-step run and
+  // a 3-step one on identical input.
+  const offered = new Set(kase.tools ?? DEFAULT_TOOLS);
+
+  return TOOLS.filter((tool) => offered.has(tool.name)).map((tool) => ({
     ...tool,
-    // Every tool is offered, whatever the deployment or workspace would say.
-    // `capabilitiesFor` filters on live state — connections and channels — and
-    // an eval has neither; pinning the list here is what makes two runs
-    // comparable rather than dependent on what happened to be connected.
+    // `isConfigured` and `needs` answer questions about a deployment and a
+    // workspace, and this eval is neither. The set above is the answer to both.
     isConfigured: () => true,
     needs: undefined,
     async run(args: unknown, _ctx: ToolContext): Promise<ToolResult> {
@@ -44,11 +57,13 @@ export function stubbedTools(kase: EvalCase, log: ToolCallLog): AgentTool[] {
       const content =
         next ??
         kase.exhausted?.[tool.name] ??
-        // No canned answer and no declared fallback: the honest reply is that
-        // the tool found nothing, which is also what the real tools say. A
-        // throw here would fail the case for a reason that is about the
-        // fixture rather than about the model.
-        "No result. The tool returned nothing for that call.";
+        (IDEMPOTENT.has(tool.name) ? last.get(tool.name) : undefined) ??
+        DEFAULT_EXHAUSTED[tool.name] ??
+        // Every tool in `DEFAULT_TOOLS` is covered above, so reaching this is a
+        // tool added to the build and not to the map. Said plainly rather than
+        // dressed as a tool result, because it is a gap in this file.
+        `No fixture for ${tool.name}. Add one to DEFAULT_EXHAUSTED in eval/stubs.ts.`;
+      if (next !== undefined) last.set(tool.name, next);
       log.push({ tool: tool.name, args, content, replayed: next !== undefined });
       // An `error:` prefix is how `loop.ts` renders a failed tool to the model,
       // so a fixture that starts with it is asking for that path rather than
@@ -59,6 +74,52 @@ export function stubbedTools(kase: EvalCase, log: ToolCallLog): AgentTool[] {
     },
   }));
 }
+
+/**
+ * The tools a case gets unless it says otherwise.
+ *
+ * The set a workspace with one connected service and a delivery channel has —
+ * which is what every case here was written against, and what production
+ * looked like when the turns they are rewrites of actually ran.
+ */
+export const DEFAULT_TOOLS = [
+  "search_documents",
+  "describe_connection",
+  "query_database",
+  "send_email",
+  "schedule_job",
+];
+
+/**
+ * What a tool says once a case has run out of canned answers for it.
+ *
+ * Every one of these is what the real tool says in that situation, and that is
+ * the whole point. The first version of this file had one generic fallback —
+ * "No result. The tool returned nothing for that call." — and calibration
+ * showed what it cost: a case whose real turn took four steps was canned with
+ * three, the fourth call got a sentence no real tool has ever produced, and
+ * the model spent the rest of its budget trying to make sense of it. Seven and
+ * eight steps on a turn that took four, twice, on identical input.
+ *
+ * A fixture that runs short should degrade into the ordinary "nothing found",
+ * which models handle, rather than into a novel string, which they do not.
+ */
+const DEFAULT_EXHAUSTED: Record<string, string> = {
+  search_documents: NO_PASSAGE,
+  query_database: NO_ROWS,
+  send_email: "Sent.",
+  schedule_job: "Scheduled.",
+};
+
+/**
+ * Tools whose repeat call returns what the first one did.
+ *
+ * `describe_connection` caches its summary (`connection.config.summary`) and
+ * production hands back the same text every time it is asked without
+ * `refresh`. So the faithful exhausted behaviour is not "nothing found", which
+ * would tell the model its connection had vanished — it is the summary again.
+ */
+const IDEMPOTENT = new Set(["describe_connection"]);
 
 export type ToolCallLog = Array<{
   tool: string;

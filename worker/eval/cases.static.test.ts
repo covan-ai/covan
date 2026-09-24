@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { CASES } from "./cases";
 import { TOOLS } from "../src/lib/harness/registry";
+import { DEFAULT_TOOLS } from "./stubs";
 import { buildMessages } from "./harness";
 import { MAX_STEPS } from "../src/lib/harness/budget";
 
@@ -34,9 +35,23 @@ describe("the eval case set", () => {
     const named = CASES.flatMap((c) => [
       ...Object.keys(c.toolResults),
       ...Object.keys(c.exhausted ?? {}),
+      ...(c.tools ?? []),
+      ...DEFAULT_TOOLS,
     ]);
     const unknown = [...new Set(named)].filter((n) => !toolNames.has(n));
     expect(unknown).toEqual([]);
+  });
+
+  it("never replays a tool the case does not offer", () => {
+    // A canned result for a tool that is not in the list is dead fixture, and
+    // it reads as though the case covers something it cannot: the model is
+    // never given that tool, so the entry can never be reached.
+    for (const c of CASES) {
+      const offered = new Set(c.tools ?? DEFAULT_TOOLS);
+      for (const name of Object.keys(c.toolResults)) {
+        expect(offered.has(name), `${c.id} cans ${name} but does not offer it`).toBe(true);
+      }
+    }
   });
 
   it("gives every case a rubric the judge can actually check", () => {

@@ -540,6 +540,41 @@ describe("complete, on Anthropic", () => {
     expect(call).not.toHaveProperty("cache_control");
   });
 
+  it("marks the first pass of a tool loop, which has no history but will repeat", async () => {
+    // The same cold first turn as the test two above — no prior turns, so
+    // `cacheIndex` is null — except that this one carries tools, and a request
+    // carrying tools is one the loop may have to send again. Production,
+    // 2026-09-24 16:19: unmarked, pass 0 paid full price for 11,406 tokens and
+    // wrote nothing, so pass 1 had to write the same prefix at 1.25x instead of
+    // reading it at a tenth. $0.082 for a three-pass turn against about $0.051.
+    await complete(env, {
+      model: "claude-sonnet-4-6",
+      messages: [
+        { role: "system", content: "You are Ada." },
+        { role: "user", content: "What does the handbook say?" },
+      ],
+      tools: [
+        {
+          name: "search_documents",
+          description: "Look something up.",
+          input: { type: "object", properties: { query: { type: "string" } } },
+        },
+      ],
+    });
+
+    const call = anthropicCreate.mock.calls[0][0];
+    expect(call.cache_control).toEqual({ type: "ephemeral" });
+    expect(call.system[0].cache_control).toEqual({ type: "ephemeral" });
+    // The per-message marker stays off: with one turn there is no stable
+    // prefix inside `messages` to point at, and the top-level breakpoint above
+    // is the one that moves itself to the last cacheable block as the loop
+    // grows the tail. Marking the question too would spend a second slot on
+    // the same bytes.
+    expect(call.messages.every((m: { content: unknown }) => typeof m.content === "string")).toBe(
+      true,
+    );
+  });
+
   it("honours a ceiling the caller did name", async () => {
     await complete(env, {
       model: "claude-haiku-4-5",

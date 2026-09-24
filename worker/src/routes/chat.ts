@@ -610,13 +610,21 @@ chat.post("/chat/stream", async (c) => {
             c,
             (async () => {
               if (!persisted && full.trim().length > 0) {
-                await persistAssistant(full, {
+                const row = await persistAssistant(full, {
                   promptTokens,
                   completionTokens,
                   cachedTokens,
                   cacheWriteTokens,
                   passUsage,
                 });
+                // The steps belong to an abandoned turn as much as to a
+                // finished one, and this branch used to drop them: the row was
+                // written with its usage and its `pass_usage`, and nothing was
+                // written to `message_steps`. Production, 2026-09-24 17:22 —
+                // seven passes, 99,405 prompt tokens, zero step rows, which
+                // made the single most expensive reply of the day read as a
+                // turn that used no tools at all.
+                if (row) await writeSteps(service, row.id, steps);
               }
               await recordSpend();
             })(),
@@ -704,6 +712,13 @@ chat.post("/chat/stream", async (c) => {
                   passUsage,
                 });
               }
+              // No `writeSteps` here, unlike the branch above, and the reason
+              // is that there would be nothing to write: `steps` is only
+              // assigned once `runAgentTurn` returns, and on this path it
+              // threw. The steps it had run are inside the loop's own frame
+              // and do not survive the throw. Recovering them would mean
+              // surfacing partial progress out of `runAgentTurn`, which is a
+              // change to the harness rather than to this branch.
               await recordSpend();
             })(),
           );

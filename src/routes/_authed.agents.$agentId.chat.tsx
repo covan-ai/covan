@@ -1488,6 +1488,7 @@ function ChatTab() {
                                     m.promptTokens,
                                     m.completionTokens,
                                     m.cachedTokens ?? 0,
+                                    m.cacheWriteTokens ?? 0,
                                   ),
                                 )}
                               </div>

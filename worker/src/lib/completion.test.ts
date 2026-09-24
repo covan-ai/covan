@@ -186,7 +186,12 @@ describe("complete, on OpenAI", () => {
     });
 
     expect(text).toBe("an answer");
-    expect(usage).toEqual({ promptTokens: 100, completionTokens: 20, cachedTokens: null });
+    expect(usage).toEqual({
+      promptTokens: 100,
+      completionTokens: 20,
+      cachedTokens: null,
+      cacheWriteTokens: null,
+    });
     const call = openaiCreate.mock.calls[0][0];
     expect(call.messages).toHaveLength(2);
     expect(call.messages[0]).toEqual({ role: "system", content: "You are Ada." });
@@ -473,8 +478,48 @@ describe("complete, on Anthropic", () => {
       messages: [{ role: "user", content: "Hi" }],
     });
 
-    expect(usage).toEqual({ promptTokens: 1000, completionTokens: 20, cachedTokens: 900 });
+    expect(usage).toEqual({
+      promptTokens: 1000,
+      completionTokens: 20,
+      cachedTokens: 900,
+      cacheWriteTokens: 60,
+    });
     expect(totalTokens(usage)).toBe(1020);
+  });
+
+  it("reports the cache-written tokens separately as well as inside promptTokens", () => {
+    // Folded in AND reported, because the two facts answer different
+    // questions. The fold is what makes one prompt count mean the same thing
+    // on both providers; the separate figure is the only way to tell what the
+    // 1.25x storage premium cost — and a change that buys cache reads buys
+    // cache writes first, so a saving measured without it is not a saving.
+    //
+    // The three are disjoint by construction: input + read + written, each
+    // counted once. This asserts the arithmetic rather than restating it.
+    const usage = { promptTokens: 1000, cachedTokens: 900, cacheWriteTokens: 60 };
+    expect(usage.promptTokens - usage.cachedTokens - usage.cacheWriteTokens).toBe(40);
+  });
+
+  it("records no cache-write count on OpenAI, where filling the cache is free", async () => {
+    // Null rather than zero. OpenAI's prefix cache populates itself and reports
+    // no write count at all, so zero would be a measurement of something the
+    // API never said.
+    openaiCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "ok" } }],
+      usage: {
+        prompt_tokens: 1000,
+        completion_tokens: 20,
+        prompt_tokens_details: { cached_tokens: 900 },
+      },
+    });
+
+    const { usage } = await complete(env, {
+      model: "gpt-4.1",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(usage.cachedTokens).toBe(900);
+    expect(usage.cacheWriteTokens).toBeNull();
   });
 
   it("says which key is missing rather than letting Anthropic answer with a 401", async () => {
@@ -606,7 +651,7 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 9, completionTokens: 2, cachedTokens: null },
+        usage: { promptTokens: 9, completionTokens: 2, cachedTokens: null, cacheWriteTokens: null },
       },
     ]);
   });
@@ -646,7 +691,14 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 10, completionTokens: 2, cachedTokens: 1 },
+        usage: {
+          promptTokens: 10,
+          completionTokens: 2,
+          cachedTokens: 1,
+          // The mock sends no `cache_creation_input_tokens`, and null is what
+          // that means: nothing was written, or the provider did not say.
+          cacheWriteTokens: null,
+        },
       },
     ]);
   });
@@ -707,7 +759,7 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 5, completionTokens: 0, cachedTokens: null },
+        usage: { promptTokens: 5, completionTokens: 0, cachedTokens: null, cacheWriteTokens: null },
       },
     ]);
   });
@@ -1018,7 +1070,7 @@ describe("a streamed tool call", () => {
       },
       {
         type: "end",
-        usage: { promptTokens: 9, completionTokens: 3, cachedTokens: null },
+        usage: { promptTokens: 9, completionTokens: 3, cachedTokens: null, cacheWriteTokens: null },
         finishReason: "tool_calls",
       },
     ]);

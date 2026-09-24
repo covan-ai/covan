@@ -82,6 +82,20 @@ export type CompletionUsage = {
    * cacheable-prefix assembly in `routes/chat.ts` is working at all.
    */
   cachedTokens: number | null;
+  /**
+   * How much of `promptTokens` the provider charged a *premium* to store — a
+   * subset of that count too, and disjoint from `cachedTokens`: a token is
+   * either read from the cache or written into it, never both in one request.
+   *
+   * Always null on OpenAI, and that is a fact about the provider rather than a
+   * gap here: its prefix cache populates itself and costs nothing to fill, so
+   * there is no count to report. Anthropic charges 1.25x input for the write
+   * (`usage.cache_creation_input_tokens`), which is why this is separated out
+   * at all — it was previously folded into `promptTokens` and priced as
+   * ordinary fresh input, so the one number that says whether a caching change
+   * paid for itself was the one number nothing recorded.
+   */
+  cacheWriteTokens: number | null;
 };
 
 export type CompletionEnv = {
@@ -233,6 +247,7 @@ export const EMPTY_USAGE: CompletionUsage = {
   promptTokens: null,
   completionTokens: null,
   cachedTokens: null,
+  cacheWriteTokens: null,
 };
 
 /** What a turn cost, for the quota counter. Cached prompt tokens are inside `promptTokens`. */
@@ -539,9 +554,12 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
  * number it read was always zero. Nothing about the prompt had to change to
  * earn it — only saying so on the wire.
  *
- * A prefix shorter than the model's minimum (1024 tokens, 2048 on Haiku) is not
- * cached and the request is not refused; a short chat simply pays what it pays
- * today.
+ * A prefix shorter than the model's minimum is not cached and the request is
+ * not refused; a short chat simply pays what it pays today. The minimum is per
+ * model and the spread is wider than it looks: 512 tokens on Opus 5, 1024 on
+ * the Sonnets, and 4096 on Haiku 4.5 — so on the cheapest model, which is
+ * exactly where a short prompt is most likely to run, a marker on anything
+ * under four thousand tokens buys nothing at all.
  *
  * **Both markers are set together or not at all**, which is `cacheIndex`'s
  * second job. A cache write is not free on this provider — Anthropic charges
@@ -732,6 +750,11 @@ function anthropicUsage(usage: Anthropic.Usage | null | undefined): CompletionUs
     promptTokens: (usage.input_tokens ?? 0) + cached + written,
     completionTokens: usage.output_tokens ?? null,
     cachedTokens: usage.cache_read_input_tokens ?? null,
+    // Reported separately as well as folded in, because the two facts answer
+    // different questions: the fold keeps one prompt count meaning the same
+    // thing on both providers, and this says how much of it was bought at the
+    // write premium. Summing the two would double-count.
+    cacheWriteTokens: usage.cache_creation_input_tokens ?? null,
   };
 }
 
@@ -799,6 +822,10 @@ export async function complete(
       promptTokens: completion.usage?.prompt_tokens ?? null,
       completionTokens: completion.usage?.completion_tokens ?? null,
       cachedTokens: completion.usage?.prompt_tokens_details?.cached_tokens ?? null,
+      // Null rather than zero: OpenAI's prefix cache is populated for free and
+      // reports no write count, so there is nothing to record. Zero would be a
+      // claim that nothing was written, which is not what the API said.
+      cacheWriteTokens: null,
     },
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
   };
@@ -967,6 +994,7 @@ export async function* streamCompletion(
         promptTokens: chunk.usage.prompt_tokens ?? null,
         completionTokens: chunk.usage.completion_tokens ?? null,
         cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? null,
+        cacheWriteTokens: null,
       };
     }
   }

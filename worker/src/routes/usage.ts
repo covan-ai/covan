@@ -15,6 +15,7 @@ type UsageRow = {
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
+  cache_write_tokens: number;
   measured_prompt_tokens: number;
 };
 
@@ -24,6 +25,7 @@ type MonthRow = {
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
+  cache_write_tokens: number;
 };
 
 const emptyTotals = {
@@ -31,6 +33,7 @@ const emptyTotals = {
   promptTokens: 0,
   completionTokens: 0,
   cachedTokens: 0,
+  cacheWriteTokens: 0,
   measuredPromptTokens: 0,
   totalTokens: 0,
   estCostUsd: 0,
@@ -48,6 +51,12 @@ function mapAgent(r: UsageRow) {
   // Replies from before 0025 report null here and sum as 0, which reads as
   // "no discount recorded" and leaves their historical figure unchanged.
   const cachedTokens = Number(r.cached_tokens) || 0;
+  // A subset on the same terms and disjoint from the one above: a token is
+  // read from the cache or written into it, never both. Priced at 1.25x input
+  // rather than at `in`, which is the difference between a caching change that
+  // looks like a saving and one that is. Zero on every OpenAI reply and on
+  // every reply written before 0062. See 0062.
+  const cacheWriteTokens = Number(r.cache_write_tokens) || 0;
   // Only the prompt tokens on replies that carry a cache measurement — the
   // honest denominator for a hit rate. See 0025.
   const measuredPromptTokens = Number(r.measured_prompt_tokens) || 0;
@@ -60,9 +69,16 @@ function mapAgent(r: UsageRow) {
     promptTokens,
     completionTokens,
     cachedTokens,
+    cacheWriteTokens,
     measuredPromptTokens,
     totalTokens: promptTokens + completionTokens,
-    estCostUsd: estimateCostUsd(model, promptTokens, completionTokens, cachedTokens),
+    estCostUsd: estimateCostUsd(
+      model,
+      promptTokens,
+      completionTokens,
+      cachedTokens,
+      cacheWriteTokens,
+    ),
   };
 }
 
@@ -73,6 +89,7 @@ function sumTotals(agents: ReturnType<typeof mapAgent>[]) {
       promptTokens: acc.promptTokens + a.promptTokens,
       completionTokens: acc.completionTokens + a.completionTokens,
       cachedTokens: acc.cachedTokens + a.cachedTokens,
+      cacheWriteTokens: acc.cacheWriteTokens + a.cacheWriteTokens,
       measuredPromptTokens: acc.measuredPromptTokens + a.measuredPromptTokens,
       totalTokens: acc.totalTokens + a.totalTokens,
       estCostUsd: acc.estCostUsd + a.estCostUsd,
@@ -177,6 +194,7 @@ usage.get("/usage/workspace", async (c) => {
       // figure at this grain; the per-agent rows above carry the money.
       totalTokens: promptTokens + completionTokens,
       cachedTokens: Number(m.cached_tokens) || 0,
+      cacheWriteTokens: Number(m.cache_write_tokens) || 0,
     };
   });
 

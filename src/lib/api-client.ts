@@ -883,6 +883,13 @@ export type AgentUsage = {
    */
   cachedTokens: number;
   /**
+   * How many of `promptTokens` Anthropic charged its 1.25x storage premium for
+   * — a subset on the same terms and disjoint from `cachedTokens`, so it too is
+   * in `estCostUsd` and not in `totalTokens`. Zero on every OpenAI reply, whose
+   * cache is free to fill, and on replies stored before migration 0062.
+   */
+  cacheWriteTokens: number;
+  /**
    * The prompt tokens on replies that actually carry a cache measurement — the
    * denominator for a hit rate. Dividing `cachedTokens` by `promptTokens`
    * instead would fold in every reply from before the count existed and report
@@ -909,6 +916,7 @@ export type UsageTotals = {
   messageCount: number;
   promptTokens: number;
   cachedTokens: number;
+  cacheWriteTokens: number;
   measuredPromptTokens: number;
   completionTokens: number;
   totalTokens: number;
@@ -932,6 +940,7 @@ export type UsageMonth = {
   messageCount: number;
   totalTokens: number;
   cachedTokens: number;
+  cacheWriteTokens: number;
 };
 
 /**

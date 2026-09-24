@@ -9,17 +9,43 @@
 /**
  * How many tools one turn may run in total, across every pass.
  *
- * Eight rather than three because a real question genuinely takes several:
- * describe the connection, query it, query it again having seen the schema,
- * then answer. Eight rather than twenty because the failure mode of a loop
- * that is too generous is not a slow answer, it is a bill — and a model that
- * has not finished in eight steps is usually repeating itself rather than
- * making progress.
+ * Eight was right when a turn meant describe, query, query again, answer.
+ * Connected applications made it wrong: finding an operation costs a step
+ * before running one costs another, so a question that touches two services
+ * spends four steps before it has learned anything. The first real one —
+ * "list my last five meetings" — used seven of eight, and the eighth would
+ * have been the budget notice rather than the answer.
+ *
+ * Sixteen rather than thirty-two, because the failure mode of a generous loop
+ * is not a slow answer, it is a bill. **And the bill is worse than it looks.**
+ * Each step's result joins the transcript and is re-sent on every later pass,
+ * so cost grows with roughly the SQUARE of this number, not with the number
+ * itself. Doubling it does not double the ceiling — it roughly quadruples the
+ * worst case. Read `MAX_TOOL_OUTPUT_CHARS` below as the other half of that
+ * multiplication before raising either.
  *
  * Counted in tool executions, not in round trips: a pass that asks for three
  * tools at once spends three.
  */
-export const MAX_STEPS = 8;
+export const MAX_STEPS = 16;
+
+/**
+ * The same budget for a run nobody is watching, and deliberately the old one.
+ *
+ * A scheduled run cannot be given the chat ceiling, for a reason that is not
+ * taste: on the cron Worker every database read and every outbound call is a
+ * subrequest, and Workers Free allows fifty per invocation.
+ * `lib/routines/dispatcher.ts` does that arithmetic against `BATCH_SIZE`, and
+ * a sixteen-step routine would break it three routines into a tick — failing
+ * the last ones at the ceiling, recording them as failures, and backing them
+ * off geometrically for a reason nothing in the run log would explain.
+ *
+ * It is also the cheaper half of the argument. Nobody is reading a scheduled
+ * run as it happens, so a run that stops short and says what it could not
+ * finish costs somebody a look in the morning; a run that spends four times
+ * the tokens costs money every night.
+ */
+export const SCHEDULED_MAX_STEPS = 8;
 
 /**
  * How long one tool may take before the turn gives up on it.

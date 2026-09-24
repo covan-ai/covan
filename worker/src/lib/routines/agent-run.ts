@@ -5,6 +5,7 @@ import { resolveModel } from "../models";
 import { temperatureFor, reasoningEffortFor } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
 import { runAgentTurn } from "../harness/loop";
+import { SCHEDULED_MAX_STEPS } from "../harness/budget";
 import type { ToolEnv } from "../harness/registry";
 import { DECISION_INSTRUCTION, readDecision } from "./summarise";
 import type { AgentRunInput, AgentRunResult } from "./executor";
@@ -115,6 +116,13 @@ export function runRoutineWithTools(
         // reader. See `showThinking` in `lib/completion.ts`.
       },
       tools,
+      // The one place the two surfaces are allowed to differ, and it is a
+      // number rather than a capability: a scheduled run gets the smaller step
+      // budget. `lib/harness/budget.ts` argues it — the cron Worker counts
+      // subrequests against a ceiling of fifty, and nobody is watching a run
+      // that spends four times the tokens to finish something it could have
+      // reported as unfinished.
+      budget: { maxSteps: SCHEDULED_MAX_STEPS },
       ctx: {
         db,
         env: toolEnv,

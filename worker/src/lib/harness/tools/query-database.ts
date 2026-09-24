@@ -190,10 +190,20 @@ export const queryDatabaseTool: AgentTool = {
 
     const connection = await loadConnection(ctx, input.connectionId);
     if (!connection) return { kind: "error", message: "no such connection in this workspace" };
-    if (connection.transport === "http") {
+    // Stated as an allowlist rather than as "not http", so a transport added to
+    // the schema without being taught to this file is refused rather than
+    // carried into the carrier split below and treated as PostgREST.
+    if (connection.transport !== "sql" && connection.transport !== "supabase") {
       return {
         kind: "error",
-        message: `${connection.label} is an HTTP API — use http_request for it`,
+        message:
+          connection.transport === "composio"
+            ? `${connection.label} is a connected application, not a database — use find_tool ` +
+              "and run_tool for it"
+            : connection.transport === "unknown"
+              ? `${connection.label} is a kind of connection this build does not know how to ` +
+                "reach. It was probably made by a newer version of Covan."
+              : `${connection.label} is an HTTP API — use http_request for it`,
       };
     }
 

@@ -146,6 +146,28 @@ describe("the expensive rate limit", () => {
     expect(readFileSync(join(SRC, "lib", "routines", "executor.ts"), "utf8")).toContain(
       "entitlements.check(routine.user_id)",
     );
+
+    // The third thing that spends where this file cannot see it, and the one
+    // that weakens the invariant most. A Composio call costs the operator money
+    // from inside a TOOL, which no route imports and no rate limit counts: the
+    // model decides to make it, several times per turn, after the request is
+    // already past every gate in index.ts. `MAX_STEPS` bounds how many a turn
+    // can make; the allowance is what bounds how many an account can.
+    //
+    // So both halves are pinned. `affordable` must be asked BEFORE the network
+    // in each tool, and it must be the thing that asks the allowance — and
+    // deliberately NOT through `guardQuota`, which lets an exhausted caller
+    // through on a workspace's own OpenAI key. That key pays for completions
+    // and does not pay for this, which is why the check is unconditional here
+    // and gated everywhere else.
+    const spend = readFileSync(join(SRC, "lib", "harness", "spend.ts"), "utf8");
+    expect(spend).toContain("entitlementsFor(ctx.env).check(ctx.userId)");
+    expect(spend).toContain("entitlementsFor(ctx.env).record(ctx.userId");
+    for (const tool of ["run-tool.ts", "find-tool.ts"]) {
+      const src = readFileSync(join(SRC, "lib", "harness", "tools", tool), "utf8");
+      expect(src, `${tool} must check the allowance before it spends`).toContain("affordable(ctx)");
+      expect(src, `${tool} must record what it spent`).toContain("spend(ctx,");
+    }
   });
 
   it("knows about every route file that spends, so a new one cannot arrive unnoticed", () => {

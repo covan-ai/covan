@@ -8,6 +8,7 @@ import { mapToolConnection } from "../lib/dto";
 import { toolAvailability } from "../lib/harness/registry";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
 import { insertErrorStatus } from "../lib/routines/insert-error";
+import { revokeConnectedAccounts } from "../lib/composio/revoke";
 
 /**
  * Connecting a service an agent can call.
@@ -40,6 +41,16 @@ const headersSchema = z.record(z.string().min(1).max(120), z.string().min(1).max
 
 const createSchema = z.object({
   label: z.string().min(1).max(120),
+  /**
+   * Two of the four transports, and the omissions are deliberate.
+   *
+   * `supabase` is created by `POST /supabase-account/projects`, which has a
+   * token to check first; `composio` by `POST /composio/connect`, which has a
+   * consent flow to start first. Both would arrive here with no credential and
+   * be refused by 0063's `tool_connections_credential_shape` anyway — this
+   * enum is what turns that into a readable 400 instead of a constraint
+   * violation.
+   */
   transport: z.enum(["http", "sql"]),
   baseUrl: z.string().url(),
   headers: headersSchema,
@@ -76,7 +87,7 @@ toolConnections.get("/tool-connections", async (c) => {
   const { data, error } = await db
     .from("tool_connections")
     .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, created_by, created_at, updated_at",
+      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, toolkit_slug, status, created_by, created_at, updated_at",
     )
     .order("label", { ascending: true });
   if (error) return c.json({ error: "failed to load connections" }, 500);
@@ -187,7 +198,7 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
     })
     .eq("id", c.req.param("id"))
     .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, created_by, created_at, updated_at",
+      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, toolkit_slug, status, created_by, created_at, updated_at",
     )
     .maybeSingle();
   if (error) return c.json({ error: "failed to update connection" }, insertErrorStatus(error));
@@ -195,8 +206,51 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
   return c.json(mapToolConnection(data));
 });
 
+/**
+ * Removing a connection — and, when it is a connected application, giving the
+ * grant back first.
+ *
+ * This stayed one endpoint rather than gaining a `DELETE /composio/...` beside
+ * it, and that is the point: a second road out would be a second place to
+ * forget the revocation, which is exactly the failure this code exists to stop.
+ * `lib/composio/revoke.ts` lists all three roads a row can leave by and what
+ * runs on each.
+ *
+ * Order: ask the database whether this caller may remove the row, revoke, then
+ * delete. Revoking first would let anyone who can name an id hand back somebody
+ * else's grant; deleting first would lose the account id that the revocation
+ * needs.
+ */
 toolConnections.delete("/tool-connections/:id", async (c) => {
-  const { error } = await c.get("db").from("tool_connections").delete().eq("id", c.req.param("id"));
+  const db = c.get("db");
+  const id = c.req.param("id");
+
+  // Through the caller's own client: `tool_connections_read` admits any member
+  // and `tool_connections_delete` the creator or an admin, so a row this read
+  // does not return is one the delete below would refuse anyway.
+  const { data: row } = await db
+    .from("tool_connections")
+    .select("id, workspace_id, transport")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (row?.transport === "composio") {
+    // The account id is granted to no client role (0063), so this is the
+    // service role filling in the column the database withheld — after the
+    // read above has already decided the caller may have the row.
+    const { data: secretRow } = await serviceClient(c.env)
+      .from("tool_connections")
+      .select("connected_account_id")
+      .eq("id", id)
+      .maybeSingle();
+    const accountId =
+      typeof secretRow?.connected_account_id === "string" ? secretRow.connected_account_id : "";
+    // Best effort, and the row goes either way — see `lib/composio/revoke.ts`
+    // for why a card that will not disappear is the worse failure.
+    if (accountId) await revokeConnectedAccounts(c.env, [accountId]);
+  }
+
+  const { error } = await db.from("tool_connections").delete().eq("id", id);
   if (error) return c.json({ error: "failed to remove connection" }, 500);
   return c.body(null, 204);
 });

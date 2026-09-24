@@ -26,8 +26,14 @@ function dbWith(connections: unknown[], channels: unknown[]): SupabaseClient {
     from: (table: string) =>
       table === "tool_connections"
         ? {
+            // Two `eq`s, because `listConnections` filters by workspace and by
+            // status: a connection that is still at a consent screen must not
+            // reach the model, which would name it, call it, and spend a step
+            // of the budget being told it is not finished.
             select: () => ({
-              eq: () => ({ order: async () => ({ data: connections, error: null }) }),
+              eq: () => ({
+                eq: () => ({ order: async () => ({ data: connections, error: null }) }),
+              }),
             }),
           }
         : { select: () => ({ eq: async () => ({ data: channels, error: null }) }) },
@@ -56,6 +62,15 @@ describe("capabilitiesFor", () => {
     // No manifest at all, so an agent with no connections and no channels
     // gets exactly the prompt it got before tools existed.
     expect(manifest).toBe("");
+  });
+
+  it("offers the catalogue search to an empty workspace, because that is what it is for", async () => {
+    // The one tool in the registry with no `needs`, and deliberately so: the
+    // answer "you would need to connect Linear first" is only available to
+    // something that can see the unconnected half of the catalogue. Still
+    // gated by `isConfigured`, which is why the case above is unaffected.
+    const { tools } = await ask(dbWith([], []), { ...FULL, COMPOSIO_API_KEY: "ck" } as ToolEnv);
+    expect(tools.map((t) => t.name)).toEqual(["search_documents", "find_tool"]);
   });
 
   it("adds the connection tools, and the ids they take, once there is one", async () => {
@@ -104,7 +119,9 @@ describe("capabilitiesFor", () => {
         }
         return {
           select: () => ({
-            eq: () => ({ order: async () => ({ data: [CONNECTION], error: null }) }),
+            eq: () => ({
+              eq: () => ({ order: async () => ({ data: [CONNECTION], error: null }) }),
+            }),
           }),
         };
       },

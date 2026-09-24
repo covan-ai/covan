@@ -28,6 +28,15 @@ const ENV = {
   WORKER_HOST: "api.example.com",
 };
 
+/**
+ * The same deployment with Composio turned on.
+ *
+ * Only the delete tests use it: adding the key to `ENV` would change what
+ * `toolAvailability` reports in the listing above, which is a different claim
+ * and not one this block is making.
+ */
+const COMPOSIO_ENV = { ...ENV, COMPOSIO_API_KEY: "ck_test" };
+
 const ROW = {
   id: "conn-1",
   workspace_id: "ws-1",
@@ -45,11 +54,15 @@ const ROW = {
 /** What `serviceFrom` records about the insert it was given. */
 let inserted: Record<string, unknown> | null = null;
 
+const fetchMock = vi.fn();
+vi.stubGlobal("fetch", (...args: unknown[]) => fetchMock(...args));
+
 function appWith(
   spec: {
     role?: string;
     connection?: Record<string, unknown> | null;
     onSelect?: (columns?: string) => void;
+    onDelete?: () => void;
   } = {},
 ) {
   const dbSpec: FakeDbSpec = {
@@ -70,7 +83,10 @@ function appWith(
           };
         },
         update: () => ({ data: { ...ROW, label: "Renamed" }, error: null }),
-        delete: () => ({ data: null, error: null }),
+        delete: () => {
+          spec.onDelete?.();
+          return { data: null, error: null };
+        },
       },
     },
   };
@@ -111,12 +127,21 @@ const VALID = {
 
 beforeEach(() => {
   inserted = null;
+  fetchMock.mockReset();
+  fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
   serviceFrom.mockReset();
   serviceFrom.mockImplementation(() => ({
     insert: (row: Record<string, unknown>) => {
       inserted = row;
       return { select: () => ({ single: async () => ({ data: ROW, error: null }) }) };
     },
+    // The one column no client role may select, read here after the caller's
+    // own client has already decided they may have the row (0063).
+    select: () => ({
+      eq: () => ({
+        maybeSingle: async () => ({ data: { connected_account_id: "ca_1" }, error: null }),
+      }),
+    }),
   }));
 });
 
@@ -278,5 +303,69 @@ describe("PATCH /tool-connections/:id", () => {
       ENV as never,
     );
     expect(res.status).toBe(404);
+  });
+});
+
+/**
+ * Removing a connection, and the thing that is only true of one kind of them.
+ *
+ * When Covan holds the credential, deleting the row deletes it. When Composio
+ * holds it, deleting the row deletes nothing: the OAuth grant stays live at the
+ * provider, attached to an account id no screen in this product can show any
+ * more. So this is the one deletion path in the codebase that has to make a
+ * request before it deletes — and it is deliberately the ONLY one, rather than
+ * a second endpoint beside it, because a second road out would be a second
+ * place to forget.
+ */
+describe("DELETE /tool-connections/:id", () => {
+  it("gives the grant back before the row goes, and in that order", async () => {
+    const order: string[] = [];
+    fetchMock.mockImplementation(async () => {
+      order.push("revoked");
+      return new Response(null, { status: 204 });
+    });
+
+    const app = appWith({
+      connection: { id: "conn-1", workspace_id: "ws-1", transport: "composio" },
+      onDelete: () => order.push("deleted"),
+    });
+    const res = await app.request(
+      "/tool-connections/conn-1",
+      { method: "DELETE" },
+      COMPOSIO_ENV as never,
+    );
+
+    expect(res.status).toBe(204);
+    // Revoking after the delete would be revoking an id nothing can look up
+    // any more; revoking before the permission check would let anybody who can
+    // name an id hand back somebody else's grant.
+    expect(order).toEqual(["revoked", "deleted"]);
+  });
+
+  it("removes the row anyway when Composio refuses the revocation", async () => {
+    // A row a person cannot remove is the worse failure: the alternative is an
+    // integrations page with a card that will not go away. The refusal is
+    // logged loudly instead — see `lib/composio/revoke.ts`.
+    fetchMock.mockResolvedValue(new Response("nope", { status: 500 }));
+    const app = appWith({
+      connection: { id: "conn-1", workspace_id: "ws-1", transport: "composio" },
+    });
+    const res = await app.request(
+      "/tool-connections/conn-1",
+      { method: "DELETE" },
+      COMPOSIO_ENV as never,
+    );
+    expect(res.status).toBe(204);
+  });
+
+  it("makes no request at all for a connection that keeps its own credential", async () => {
+    const app = appWith({ connection: ROW });
+    const res = await app.request(
+      "/tool-connections/conn-1",
+      { method: "DELETE" },
+      COMPOSIO_ENV as never,
+    );
+    expect(res.status).toBe(204);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,8 @@ import { queryDatabaseTool } from "./tools/query-database";
 import { httpRequestTool } from "./tools/http-request";
 import { sendEmailTool } from "./tools/send-email";
 import { scheduleJobTool } from "./tools/schedule-job";
+import { findToolTool } from "./tools/find-tool";
+import { runToolTool } from "./tools/run-tool";
 
 /**
  * Every tool an agent can be given, in one list.
@@ -24,6 +26,13 @@ import { scheduleJobTool } from "./tools/schedule-job";
  * `tool_connections` (0059), and `http_request` below is how every one of them
  * is reached. A tool of its own gets written the day the general road is
  * genuinely not enough, and then it is one entry in this list.
+ *
+ * `find_tool` and `run_tool` are that rule holding under pressure rather than
+ * an exception to it. Composio describes roughly fifteen hundred applications;
+ * putting their operations in this list, or in the model's tool array, is the
+ * design this file exists to refuse. So the catalogue is something the agent
+ * SEARCHES — two entries here, and never a third — and the list grows by a row
+ * in `tool_connections` exactly as it did before.
  */
 
 /**
@@ -77,6 +86,22 @@ export type ToolContext = {
    * paused turn, never from anything the model wrote.
    */
   confirmed?: boolean;
+  /**
+   * Connections a person has already approved an action on, in this turn.
+   *
+   * Computed by `lib/harness/loop.ts` from the steps it can already see, not
+   * stored and not sent by anything the model wrote. It exists because
+   * `confirmed` alone is a dialog box rather than a gate: `routes/chat.ts`
+   * resets it after each approval — correctly, for `send_email`, where the
+   * model names a fresh subject and body every time — and a connected app is
+   * called several times for one instruction. Three clicks to answer "check my
+   * last three threads and reply to Ana", each one re-streaming the transcript,
+   * trains people to approve without reading.
+   *
+   * So the unit is the connection and the scope is the turn. One yes covers
+   * that service until the turn ends; a different service asks again.
+   */
+  approvedConnections?: string[];
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };
@@ -142,6 +167,8 @@ export const TOOLS: AgentTool[] = [
   describeConnectionTool,
   queryDatabaseTool,
   httpRequestTool,
+  findToolTool,
+  runToolTool,
   sendEmailTool,
   scheduleJobTool,
 ];

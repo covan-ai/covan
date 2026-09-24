@@ -52,6 +52,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
+import { runToolProposal } from "@/lib/connections-api";
+import { isAdminRole } from "@/lib/roles";
 import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
@@ -166,6 +168,17 @@ function ChatTab() {
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const currentUserId = me?.user.id;
+  // Whether this person could turn an approval into a standing permission.
+  // The house pattern — `Me.workspace` carries no role. False until `me`
+  // arrives, so the button appears late rather than appearing and then
+  // vanishing under somebody's cursor.
+  // `members` is optional-chained, unlike the integrations cards that do the
+  // same lookup: this screen is the one that renders before anything else
+  // resolves, and a missing list here throws inside `ChatTab` rather than
+  // hiding a button. The answer when it is missing is the safe one anyway.
+  const canGrantStanding = me
+    ? isAdminRole(me.members?.find((m) => m.id === me.user.id)?.role)
+    : false;
   // What "try that again on something else" can offer: what this deployment
   // can actually serve, minus the model the agent is already on. Offering that
   // one back is not an offer.
@@ -996,6 +1009,37 @@ function ChatTab() {
     await streamReply(active.id, { confirm: { id, approve } });
   };
 
+  /**
+   * Approve this, and stop being asked about this operation.
+   *
+   * The grant is written FIRST and the approval only follows if it landed.
+   * Doing it the other way round would let the action happen while the
+   * permission silently failed — and the person would go on believing they had
+   * granted something they had not, which is the worse of the two failures.
+   *
+   * Only offered to an admin, because only an admin can write it: 0063's
+   * policy refuses `always` from anybody else. Offering the button and letting
+   * the policy say no would be a control that exists to produce an error.
+   */
+  const approveAlways = async () => {
+    if (!active || busy || !pendingConfirm) return;
+    const target = runToolProposal(pendingConfirm.proposal);
+    if (!target) return;
+    try {
+      await api.composio.setGrant({
+        agentId: agent.id,
+        connectionId: target.connectionId,
+        slug: target.slug,
+        mode: "always",
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save that permission");
+      return;
+    }
+    toast.success(`${agent.name} will run ${target.slug} without asking.`);
+    await answerConfirmation(true);
+  };
+
   // Answer the last question again, keeping the answer that is already there.
   //
   // This used to delete: `deleteAfter` dropped the reply, then the stream
@@ -1667,6 +1711,14 @@ function ChatTab() {
               pending={pendingConfirm}
               busy={busy}
               onAnswer={(approve) => void answerConfirmation(approve)}
+              standing={
+                // Offered only where it can actually be written: a connected
+                // app's operation, and an admin looking at it. The card knows
+                // neither of those things and should not — see its own note.
+                canGrantStanding && runToolProposal(pendingConfirm.proposal)
+                  ? { label: "Always allow this", onChoose: () => void approveAlways() }
+                  : undefined
+              }
             />
           )}
 

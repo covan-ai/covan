@@ -13,6 +13,7 @@ import {
   ToolList,
 } from "@/components/integrations/tool-connection-card";
 import { SupabaseAccountCard } from "@/components/integrations/supabase-account-card";
+import { ComposioCard } from "@/components/integrations/composio-card";
 import { SlackCard } from "@/components/integrations/slack-card";
 import { SlackMark } from "@/components/integrations/brand-marks";
 import { useConnections, useSlack, useToolConnections } from "@/hooks/use-connections";
@@ -89,8 +90,11 @@ function IntegrationsPage() {
   const providers = connections.data?.providers ?? [];
   // A connected Supabase project is an ordinary tool connection, and it is
   // listed inside the account card that opened it rather than a second time
-  // here — one place to see it, one place to remove it.
-  const services = (tools.data?.connections ?? []).filter((c) => c.transport !== "supabase");
+  // here — one place to see it, one place to remove it. A connected
+  // application is the same arrangement one card down.
+  const services = (tools.data?.connections ?? []).filter(
+    (c) => c.transport !== "supabase" && c.transport !== "composio",
+  );
 
   return (
     <AppShell>
@@ -156,6 +160,11 @@ function IntegrationsPage() {
                 ordinary rows underneath, and they are shown inside this card
                 rather than twice. */}
             <SupabaseAccountCard connections={tools.data?.connections ?? []} />
+            {/* Above the hand-made connections for the same reason the card
+                above it is: it is the shortest road to most of what a team
+                wants an agent to reach, and the applications it connects are
+                ordinary rows underneath, shown inside it rather than twice. */}
+            <ComposioCard connections={tools.data?.connections ?? []} agents={agents} />
             {tools.isPending ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : services.length > 0 ? (

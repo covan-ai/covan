@@ -112,7 +112,13 @@ export function SettledSteps({ steps }: { steps: AgentStepView[] }) {
  * `message_steps` alongside the structured `request` it was rendered from,
  * and the two would drift the first time the wording changed.
  */
-const LABEL_KEYS = ["query", "sql", "path", "instruction", "summary", "connectionId"];
+/**
+ * Kept byte-identical to `labelFor` in `worker/src/lib/harness/loop.ts`,
+ * including the order — `slug` ahead of `connectionId`, so a stored `run_tool`
+ * step reads `run_tool · GMAIL_SEND_EMAIL` rather than `run_tool · 8f3a…` and
+ * matches the live event a person watched appear.
+ */
+const LABEL_KEYS = ["query", "sql", "path", "instruction", "summary", "slug", "connectionId"];
 
 export function toStepViews(
   steps: Array<{
@@ -150,17 +156,34 @@ export type PendingConfirmation = {
   proposal: unknown;
 };
 
+/** Whether a value is something this card can open up rather than print. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 /**
  * One field of a proposal, rendered as a row.
  *
  * Deliberately generic. The card knows nothing about scheduling or email — a
  * tool returns a `proposal` and this prints it — because the next tool that
- * asks for confirmation must not need a second card, and 0058's approval
- * queue will want this one.
+ * asks for confirmation must not need a second card, and 0058's approval queue
+ * will want this one.
+ *
+ * NESTED OBJECTS ARE OPENED, not stringified, and that is not tidiness. Until
+ * `run_tool` every proposal was flat, so one-line `JSON.stringify` was an
+ * honest rendering of the worst case. A connected application's arguments are
+ * not flat: the body of an email arrives as `arguments.body`, and printed as
+ * `{"recipient_email":"…","body":"Hi Ana,\n\n…"}` on one line it is a blob
+ * nobody reads — on the single highest-stakes surface in the product, where
+ * somebody is being asked to approve sending it.
+ *
+ * One level deep, and no more. Two would invite an approval card that scrolls,
+ * and anything with real structure below that is better read as JSON than as a
+ * list of lists.
  */
-function ProposalRows({ proposal }: { proposal: unknown }): ReactNode {
-  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return null;
-  const rows = Object.entries(proposal as Record<string, unknown>).filter(
+function ProposalRows({ proposal, nested }: { proposal: unknown; nested?: boolean }): ReactNode {
+  if (!isPlainObject(proposal)) return null;
+  const rows = Object.entries(proposal).filter(
     // `kind` is how the worker tags the proposal for itself. The card already
     // names the tool above, so printing it again is a row that says nothing.
     ([key, value]) => key !== "kind" && value !== null && value !== undefined && value !== "",
@@ -171,10 +194,29 @@ function ProposalRows({ proposal }: { proposal: unknown }): ReactNode {
       {rows.map(([key, value]) => (
         <div key={key} className="grid gap-1 sm:grid-cols-[140px_minmax(0,1fr)]">
           <dt className="text-xs uppercase tracking-[0.06em] text-muted-foreground">
-            {key.replace(/([A-Z])/g, " $1").toLowerCase()}
+            {/* Both conventions, because both arrive here. Covan's own
+                proposals are camelCase (`firstRunAt`); a connected
+                application's arguments are whatever that application calls
+                them, which is usually snake_case (`recipient_email`). */}
+            {key
+              .replace(/[_-]+/g, " ")
+              .replace(/([A-Z])/g, " $1")
+              .toLowerCase()
+              .trim()}
           </dt>
           <dd className="min-w-0 whitespace-pre-wrap text-meta leading-[1.45] [overflow-wrap:anywhere]">
-            {typeof value === "object" ? JSON.stringify(value) : String(value)}
+            {isPlainObject(value) && !nested ? (
+              // The border is the only thing marking the nesting: an indent
+              // would fight the two-column grid at phone width, where the
+              // columns have already stacked.
+              <div className="border-l border-hairline pl-2.5">
+                <ProposalRows proposal={value} nested />
+              </div>
+            ) : typeof value === "object" ? (
+              JSON.stringify(value)
+            ) : (
+              String(value)
+            )}
           </dd>
         </div>
       ))}
@@ -194,15 +236,29 @@ function ProposalRows({ proposal }: { proposal: unknown }): ReactNode {
  * endpoint with `approve: false`, so the agent is told and can say something
  * about it, rather than the turn ending in silence with a card still on
  * screen.
+ *
+ * `standing` is the third, optional action: approve this AND stop being asked.
+ * It is a prop rather than something this card works out, because working it
+ * out would mean knowing which tools have a standing permission to grant —
+ * and this file's whole discipline is that it knows nothing about any tool.
+ * The caller decides whether there is one to offer and to whom; see
+ * `runToolProposal` in `lib/connections-api.ts`.
+ *
+ * It is deliberately the LAST and quietest of the three. The safe answer
+ * should be the easy one, and a button that reads "never ask me again" sitting
+ * where the eye lands first is how people end up with standing permissions
+ * they do not remember giving.
  */
 export function ConfirmCard({
   pending,
   busy,
   onAnswer,
+  standing,
 }: {
   pending: PendingConfirmation;
   busy: boolean;
   onAnswer: (approve: boolean) => void;
+  standing?: { label: string; onChoose: () => void };
 }) {
   return (
     <div className="mt-3 flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
@@ -220,14 +276,25 @@ export function ConfirmCard({
 
       <ProposalRows proposal={pending.proposal} />
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button disabled={busy} onClick={() => onAnswer(true)}>
           {busy ? "Working…" : "Approve"}
         </Button>
         <Button variant="outline" disabled={busy} onClick={() => onAnswer(false)}>
           Not now
         </Button>
+        {standing ? (
+          <Button variant="ghost" disabled={busy} onClick={standing.onChoose}>
+            {standing.label}
+          </Button>
+        ) : null}
       </div>
+      {standing ? (
+        <p className="text-xs leading-[1.45] text-muted-foreground">
+          Approving covers this service for the rest of this conversation. The third option applies
+          to this operation on this agent until somebody removes it, on the Integrations page.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -132,6 +132,14 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // optional, and refusing to start over a key nothing may ever use would turn
     // an unused feature into an outage.
     PROVIDER_KEY_SECRET: source.PROVIDER_KEY_SECRET,
+    // Composio's catalogue, on the same terms as the OAuth pairs below:
+    // optional, and absent means the feature is simply not offered. This list
+    // is an explicit allowlist rather than a spread of `source`, which is the
+    // thing to notice when adding a variable — omit it here and every Docker
+    // and Node self-host reports the feature unconfigured with no error
+    // anywhere, while the Cloudflare build works fine.
+    COMPOSIO_API_KEY: source.COMPOSIO_API_KEY,
+    COMPOSIO_BASE_URL: source.COMPOSIO_BASE_URL,
     // Where a message from the quota wall goes, defaulting in `routes/support.ts`
     // to efe@covan.app. Forwarded for a sharper reason than the one above: that
     // route is mounted unconditionally, so without this an operator's own users

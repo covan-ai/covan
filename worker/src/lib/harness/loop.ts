@@ -243,15 +243,51 @@ async function runWithTimeout(
   }
 }
 
-/** The one line a step shows on screen. Short, and never the whole result. */
+/**
+ * The one line a step shows on screen. Short, and never the whole result.
+ *
+ * Order matters, and `slug` sits deliberately in front of `connectionId`: a
+ * `run_tool` step carries both, and a row reading `run_tool · 8f3a…` tells a
+ * person nothing about what their agent is doing, where `run_tool ·
+ * GMAIL_SEND_EMAIL` tells them the part that matters at a glance.
+ */
 function labelFor(tool: string, args: unknown): string {
   const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-  const first = ["query", "sql", "path", "instruction", "summary", "connectionId"]
+  const first = ["query", "sql", "path", "instruction", "summary", "slug", "connectionId"]
     .map((key) => record[key])
     .find((v) => typeof v === "string" && v.trim().length > 0) as string | undefined;
   if (!first) return tool;
   const oneLine = first.replace(/\s+/g, " ").trim();
   return `${tool} · ${oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine}`;
+}
+
+/**
+ * The connections a person has already approved something on, this turn.
+ *
+ * Derived rather than stored, which is what keeps this out of the schema and
+ * out of `routes/chat.ts`: a resumed turn already arrives with `stepsSoFar`,
+ * and a step already records the tool, the parsed arguments and how it ended.
+ *
+ * **`ok` and nothing else.** A `run_tool` step can only reach `ok` by having
+ * actually executed, and it can only execute with an approval behind it — a
+ * person's yes, a standing `always` grant, or a connection already in this set.
+ * So `ok` implies authorised, and that implication is the whole mechanism.
+ *
+ * `failed` deliberately does not count, and the cost is known: a call somebody
+ * approved that then errored at the far end makes the model ask once more. That
+ * is forced rather than chosen — a step that failed before reaching the gate
+ * and one that failed after passing it look identical from here, and reading
+ * the first as an approval would let a refused call unlock the very connection
+ * it was refused on.
+ */
+function approvedConnectionsFrom(steps: AgentStep[]): string[] {
+  const out = new Set<string>();
+  for (const step of steps) {
+    if (step.tool !== "run_tool" || step.status !== "ok") continue;
+    const id = (step.request as { connectionId?: unknown } | null)?.connectionId;
+    if (typeof id === "string" && id) out.add(id);
+  }
+  return [...out];
 }
 
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
@@ -446,7 +482,16 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
                 .map((t) => t.name)
                 .join(", ")}`,
             }
-          : await runWithTimeout(tool, args, opts.ctx, toolTimeoutMs, opts.signal);
+          : await runWithTimeout(
+              tool,
+              args,
+              // Recomputed per call rather than once per turn: a call that
+              // lands mid-batch unlocks its connection for the next one, which
+              // is the whole point of scoping the approval to a connection.
+              { ...opts.ctx, approvedConnections: approvedConnectionsFrom(steps) },
+              toolTimeoutMs,
+              opts.signal,
+            );
       const durationMs = Date.now() - startedAt;
 
       if (result.kind === "needs_confirmation") {

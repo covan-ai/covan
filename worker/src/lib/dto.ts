@@ -123,7 +123,7 @@ export type SourceDTO = { id: string | null; name: string };
 export type ToolConnectionDTO = {
   id: string;
   label: string;
-  transport: "http" | "sql" | "supabase";
+  transport: "http" | "sql" | "supabase" | "composio";
   baseUrl: string;
   allowedMethods: string[];
   /** What the agent is told this service holds, when anybody has recorded it. */
@@ -138,8 +138,25 @@ export type ToolConnectionDTO = {
   accountId: string | null;
   /** The Supabase project ref, for a `supabase` connection. */
   projectRef: string | null;
+  /**
+   * The Composio application this row connects — `gmail`, `linear` — or null.
+   *
+   * Readable on the wire on purpose (0063): it is how the integrations page
+   * labels a card, and how a tool slug is matched to a connection id. The
+   * account reference beside it in the table is not here and cannot be — no
+   * client role may select it.
+   */
+  toolkitSlug: string | null;
+  /**
+   * Whether the connection has finished being made. `pending` while somebody
+   * is at a consent screen; every transport but `composio` is born `active`.
+   */
+  status: "pending" | "active" | "failed";
   createdAt: number;
 };
+
+/** The transports this build knows. An unlisted one is not silently an API. */
+const TRANSPORTS = ["http", "sql", "supabase", "composio"] as const;
 
 export function mapToolConnection(row: {
   id: string;
@@ -149,6 +166,8 @@ export function mapToolConnection(row: {
   allowed_methods?: unknown;
   config?: unknown;
   account_id?: unknown;
+  toolkit_slug?: unknown;
+  status?: unknown;
   created_at: string;
 }): ToolConnectionDTO {
   const config =
@@ -156,17 +175,50 @@ export function mapToolConnection(row: {
   return {
     id: row.id,
     label: row.label,
-    transport:
-      row.transport === "sql" || row.transport === "supabase"
-        ? (row.transport as "sql" | "supabase")
-        : "http",
+    // The fallback stays `http` here, unlike `lib/harness/connections.ts` where
+    // it became `unknown`. The two are answering different questions: a tool
+    // that mistakes a transport sends a credential to the wrong place, and a
+    // card that mistakes one draws the wrong icon.
+    transport: (TRANSPORTS as readonly string[]).includes(row.transport)
+      ? (row.transport as ToolConnectionDTO["transport"])
+      : "http",
     baseUrl: row.base_url,
     allowedMethods: Array.isArray(row.allowed_methods) ? (row.allowed_methods as string[]) : [],
     summary: typeof config.summary === "string" ? config.summary : null,
     rpc: typeof config.rpc === "string" ? config.rpc : null,
     accountId: typeof row.account_id === "string" ? row.account_id : null,
     projectRef: typeof config.ref === "string" ? config.ref : null,
+    toolkitSlug: typeof row.toolkit_slug === "string" ? row.toolkit_slug : null,
+    status: row.status === "pending" || row.status === "failed" ? row.status : "active",
     createdAt: toEpochMs(row.created_at),
+  };
+}
+
+/**
+ * What one agent may do at one connected service, as the screen sees it.
+ *
+ * There is no `never` on this type because there is no `never` in the table:
+ * the absence of a row is the default, and 0063 makes that default `ask`. So a
+ * card renders the operations it has rows for and says "asks first" about
+ * everything else — which is true without a row having to exist to say it.
+ */
+export type ToolConnectionGrantDTO = {
+  agentId: string;
+  connectionId: string;
+  slug: string;
+  mode: "ask" | "always";
+  grantedBy: string | null;
+  grantedAt: number;
+};
+
+export function mapToolConnectionGrant(row: Record<string, unknown>): ToolConnectionGrantDTO {
+  return {
+    agentId: String(row.agent_id ?? ""),
+    connectionId: String(row.tool_connection_id ?? ""),
+    slug: String(row.slug ?? ""),
+    mode: row.mode === "always" ? "always" : "ask",
+    grantedBy: typeof row.granted_by === "string" ? row.granted_by : null,
+    grantedAt: toEpochMs(String(row.granted_at ?? "")),
   };
 }
 
@@ -223,7 +275,7 @@ export type MessageDTO = {
   /**
    * Token usage for assistant replies. Null on user messages and on replies
    * written before 0006. cachedTokens is null on replies written before 0025,
-   * cacheWriteTokens on replies written before 0062 — and on every reply from
+   * cacheWriteTokens on replies written before 0063 — and on every reply from
    * an OpenAI model, whose cache costs nothing to fill.
    */
   promptTokens?: number | null;

@@ -72,6 +72,98 @@ export function useRemoveToolConnection() {
   });
 }
 
+export const composioToolkitsKey = (search: string) => ["composio-toolkits", search] as const;
+export const composioGrantsKey = ["composio-grants"] as const;
+
+/**
+ * The catalogue, fetched only while somebody is looking at it.
+ *
+ * `enabled` rather than an unconditional query, for the reason
+ * `useSupabaseProjects` is: every call is a round trip to a third party against
+ * a rate limit the deployment shares, and nothing on the page needs the
+ * catalogue until a person opens it.
+ */
+export function useComposioToolkits(search: string, enabled: boolean) {
+  return useQuery({
+    queryKey: composioToolkitsKey(search),
+    queryFn: () => api.composio.toolkits(search),
+    enabled,
+  });
+}
+
+/**
+ * Start a consent flow and hand the browser to Composio.
+ *
+ * A full page load rather than a popup, and `useStartConnection`'s reason
+ * applies unchanged: a popup has to be opened synchronously to survive Safari's
+ * blocker, which would mean opening it before the request that produces the
+ * URL — so it would flash a blank window on every failure, including "this
+ * deployment has no Composio key".
+ *
+ * The row is invalidated first, because it exists before the navigation: a
+ * person who comes back having abandoned the consent screen should find a
+ * connection that says it is unfinished rather than nothing at all.
+ */
+export function useConnectComposio() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { toolkit: string; label?: string }) => {
+      const { url } = await api.composio.connect(input);
+      await queryClient.invalidateQueries({ queryKey: toolConnectionsKey });
+      window.location.assign(url);
+    },
+  });
+}
+
+/**
+ * Ask whether a consent flow has finished.
+ *
+ * Polled by the card while a row is `pending`, and stopped the moment it is
+ * not: the worker settles the row on the first answer that is not pending, so
+ * asking again would be a request to a third party for something that cannot
+ * change.
+ */
+export function useComposioStatus(id: string | null, pending: boolean) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: ["composio-status", id],
+    queryFn: async () => {
+      const answer = await api.composio.status(id as string);
+      if (answer.status !== "pending") {
+        await queryClient.invalidateQueries({ queryKey: toolConnectionsKey });
+      }
+      return answer;
+    },
+    enabled: Boolean(id) && pending,
+    refetchInterval: pending ? 3_000 : false,
+  });
+}
+
+export function useComposioGrants(agentId?: string) {
+  return useQuery({
+    queryKey: [...composioGrantsKey, agentId ?? "all"],
+    queryFn: () => api.composio.grants(agentId),
+  });
+}
+
+export function useSetComposioGrant() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.composio.setGrant>[0]) =>
+      api.composio.setGrant(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: composioGrantsKey }),
+  });
+}
+
+export function useRemoveComposioGrant() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Parameters<typeof api.composio.removeGrant>[0]) =>
+      api.composio.removeGrant(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: composioGrantsKey }),
+  });
+}
+
 export const supabaseAccountKey = ["supabase-account"] as const;
 
 /**

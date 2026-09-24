@@ -475,3 +475,252 @@ describe("supabase_accounts", () => {
     expect(data).toEqual([]);
   });
 });
+
+/**
+ * A connected application, which is the third kind of credential this table
+ * knows about and the first that is not a credential at all.
+ *
+ * The token lives at Composio. What the row holds is an address —
+ * `connected_account_id` plus `composio_user_id` — and the whole of 0063's
+ * argument is that on a deployment where ONE API key opens every workspace's
+ * accounts, that address is the boundary. So the two columns are withheld from
+ * every client role exactly as `secret_ciphertext` is, and this block is what
+ * proves it stayed that way: putting either in `config` instead would have let
+ * any member PATCH their own row to another workspace's account and execute
+ * against somebody else's mailbox.
+ */
+describe("a composio connection", () => {
+  let appId: string;
+
+  beforeAll(async () => {
+    const { data, error } = await serviceClient()
+      .from("tool_connections")
+      .insert({
+        workspace_id: owner.workspaceId,
+        label: "Ana's Gmail",
+        transport: "composio",
+        base_url: "https://backend.composio.dev",
+        auth_kind: "composio",
+        secret_ciphertext: null,
+        account_id: null,
+        toolkit_slug: "gmail",
+        connected_account_id: "ca_test_1",
+        composio_user_id: "cu_test_1",
+        status: "active",
+        created_by: owner.id,
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(`seeding composio connection failed: ${error.message}`);
+    appId = data.id as string;
+  });
+
+  it("shows a member which application it is, and not which account", async () => {
+    const { data, error } = await colleague.db
+      .from("tool_connections")
+      .select("label, toolkit_slug, status")
+      .eq("id", appId)
+      .single();
+    expect(error).toBeNull();
+    expect(data).toEqual({ label: "Ana's Gmail", toolkit_slug: "gmail", status: "active" });
+  });
+
+  /**
+   * The claim this whole design turns on, and the one a reviewer should check
+   * first. If it ever passes, a member can read another workspace's account
+   * reference — and with one deployment-wide API key behind it, that is enough
+   * to act as them.
+   */
+  it("never hands the account reference to a client, not even its creator", async () => {
+    for (const column of ["connected_account_id", "composio_user_id"]) {
+      const { error } = await owner.db.from("tool_connections").select(column);
+      expect(error, column).not.toBeNull();
+    }
+  });
+
+  it("cannot be re-pointed at another account through an update", async () => {
+    // The column is not in the update grant either, so this is refused rather
+    // than matching no row — as far as a client is concerned it does not exist.
+    const { error } = await owner.db
+      .from("tool_connections")
+      .update({ connected_account_id: "ca_somebody_else" })
+      .eq("id", appId);
+    expect(error).not.toBeNull();
+  });
+
+  it("refuses a composio row carrying a credential of its own", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Smuggled Gmail",
+      transport: "composio",
+      base_url: "https://backend.composio.dev",
+      auth_kind: "composio",
+      secret_ciphertext: CIPHERTEXT,
+      toolkit_slug: "gmail",
+      connected_account_id: "ca_test_2",
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("refuses an active composio row that names no account", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Orphan Gmail",
+      transport: "composio",
+      base_url: "https://backend.composio.dev",
+      auth_kind: "composio",
+      secret_ciphertext: null,
+      toolkit_slug: "gmail",
+      status: "active",
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("allows a pending one, because nobody has finished the consent screen yet", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Half-made Linear",
+      transport: "composio",
+      base_url: "https://backend.composio.dev",
+      auth_kind: "composio",
+      secret_ciphertext: null,
+      toolkit_slug: "linear",
+      status: "pending",
+      created_by: owner.id,
+    });
+    expect(error).toBeNull();
+  });
+
+  /**
+   * The `else` branch of 0063's exhaustive credential check, which exists so a
+   * transport added to the CHECK without being added to the shape rule fails
+   * closed. An `http` row must not carry Composio's columns.
+   */
+  it("refuses an ordinary connection carrying a toolkit", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Confused API",
+      transport: "http",
+      base_url: "https://api.example.com",
+      auth_kind: "static_header",
+      secret_ciphertext: CIPHERTEXT,
+      toolkit_slug: "gmail",
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("refuses an auth kind this build has no code for", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "OAuth, one day",
+      transport: "http",
+      base_url: "https://api.example.com",
+      auth_kind: "oauth2",
+      secret_ciphertext: CIPHERTEXT,
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  /**
+   * 0058's model, on 0063's table. The two departures are the third key column
+   * — free text, because a catalogue of fifteen hundred applications cannot be
+   * a foreign key — and what an absent row means, which is `ask` here and
+   * `never` there. Neither changes who may write what, and that is what these
+   * check.
+   */
+  describe("tool_connection_grants", () => {
+    it("lets any writer say an operation should ask", async () => {
+      const { error } = await owner.db.from("tool_connection_grants").insert({
+        agent_id: seeded.agentId,
+        tool_connection_id: appId,
+        workspace_id: owner.workspaceId,
+        slug: "GMAIL_FETCH_EMAILS",
+        mode: "ask",
+      });
+      expect(error).toBeNull();
+    });
+
+    it("refuses a member who is not an admin the standing permission", async () => {
+      // Removing the asking forever is a decision about the workspace, not
+      // about one piece of work. 0058 exempts a capability its catalogue says
+      // is harmless; there is no catalogue here, so every `always` needs an
+      // admin — stricter, in the safe direction.
+      const { error } = await colleague.db.from("tool_connection_grants").insert({
+        agent_id: seeded.agentId,
+        tool_connection_id: appId,
+        workspace_id: owner.workspaceId,
+        slug: "GMAIL_SEND_EMAIL",
+        mode: "always",
+      });
+      expect(error).not.toBeNull();
+    });
+
+    it("stamps who granted it rather than believing the client", async () => {
+      const { data, error } = await owner.db
+        .from("tool_connection_grants")
+        .insert({
+          agent_id: seeded.agentId,
+          tool_connection_id: appId,
+          workspace_id: owner.workspaceId,
+          slug: "GMAIL_CREATE_DRAFT",
+          mode: "ask",
+          // A colleague's id, on a row recording who handed an agent a
+          // permission. The trigger overwrites it.
+          granted_by: colleague.id,
+        })
+        .select("granted_by")
+        .single();
+      expect(error).toBeNull();
+      expect(data?.granted_by).toBe(owner.id);
+    });
+
+    it("cannot join an agent to a connection in another workspace", async () => {
+      // Not merely disallowed — impossible, because the process that reads
+      // these rows at 3am is the service role, which bypasses RLS entirely. So
+      // it has to be a constraint rather than a policy, and this is the service
+      // role failing to write it: the agent belongs to the owner's workspace
+      // and the row claims the outsider's.
+      const { error } = await serviceClient().from("tool_connection_grants").insert({
+        agent_id: seeded.agentId,
+        tool_connection_id: appId,
+        workspace_id: outsider.workspaceId,
+        slug: "GMAIL_SEND_EMAIL",
+        mode: "always",
+      });
+      expect(error?.code).toBe("23503");
+    });
+
+    it("is invisible across a workspace boundary", async () => {
+      const { data } = await outsider.db.from("tool_connection_grants").select("slug");
+      expect(data).toEqual([]);
+    });
+
+    it("lets an ordinary writer take a permission away", async () => {
+      // The asymmetry 0058 argues for: a writer who cannot raise a grant to
+      // `always` must still be able to lower one from it, or the only people
+      // who could remove a dangerous standing permission would be the people
+      // who could give it.
+      const { error } = await colleague.db
+        .from("tool_connection_grants")
+        .delete()
+        .eq("tool_connection_id", appId)
+        .eq("slug", "GMAIL_FETCH_EMAILS");
+      expect(error).toBeNull();
+    });
+
+    it("goes when the connection does", async () => {
+      const { error } = await serviceClient().from("tool_connections").delete().eq("id", appId);
+      expect(error).toBeNull();
+
+      const { data } = await serviceClient()
+        .from("tool_connection_grants")
+        .select("slug")
+        .eq("tool_connection_id", appId);
+      expect(data).toEqual([]);
+    });
+  });
+});

@@ -101,6 +101,35 @@ export function transcriptionCost(audioTokens: number): number {
   return Math.ceil(audioTokens * AUDIO_TOKEN_WEIGHT);
 }
 
+/**
+ * What one Composio tool call costs, in chat tokens.
+ *
+ * Named so the difference from the two weights above is visible: those are
+ * MULTIPLIERS applied to a token count somebody else produced, and this is an
+ * ABSOLUTE price for one event. A tool call has no tokens of its own to scale.
+ *
+ * The arithmetic: Composio bills $4.00 per thousand tool calls on accounts
+ * created after 2026-08-15, so one call is $0.004. A mixed chat token runs
+ * around $4.00 per million, the same figure `EMBEDDING_TOKEN_WEIGHT` is derived
+ * from. $0.004 ÷ $0.000004 is a thousand chat tokens, which is roughly one
+ * ordinary turn — so "a connected app call costs about what a reply costs" is
+ * both the number and a sentence somebody can hold in their head.
+ */
+export const COMPOSIO_CALL_TOKENS = 1_000;
+
+/**
+ * What one catalogue search costs.
+ *
+ * A tenth of a call, because searching is cheaper for them and because the
+ * failure mode of charging it at par is the one thing this feature cannot
+ * afford: a model that has to find an operation before it can run one would pay
+ * twice for every action, and the allowance would be spent on looking rather
+ * than doing. Not free, because a turn that searches eight times still costs
+ * the operator something and a counter that says zero is a counter that cannot
+ * show it.
+ */
+export const COMPOSIO_SEARCH_TOKENS = 100;
+
 export const unlimitedEntitlements: Entitlements = {
   async check() {
     return { allowed: true };

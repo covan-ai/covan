@@ -116,11 +116,49 @@ pending approval and stops, or `always`, which means the approval was given in
 advance.
 
 So the grants table being empty is not a feature waiting to be switched on. It
-is an exact description of what Covan does today: agents read, and that is the
-whole list. The catalogue ships empty too, which is stronger — with nothing in
-it a grant cannot be created at all, because there is nothing for it to point
-at. A capability becomes grantable in the same change that ships the code
-performing it, never before.
+is an exact description of what Covan does with a connected _source_: agents
+read, and that is the whole list. The catalogue ships empty too, which is
+stronger — with nothing in it a grant cannot be created at all, because there is
+nothing for it to point at. A capability becomes grantable in the same change
+that ships the code performing it, never before.
+
+### The one place an agent does act, and what it costs
+
+A **connected app** — Gmail, Linear, HubSpot, about 1500 of them — is the
+exception, and it has its own grants table rather than borrowing the one above.
+The reason is the catalogue rule: no migration can enumerate fifteen hundred
+applications' operations, so a grant there names an operation with nothing to
+point at, which is precisely the thing the table above will not do.
+
+Everything else is carried across unchanged: the key is **(agent, connection,
+operation)**, the modes are `ask` and `always`, and only an admin may promote
+one to `always`. What is deliberately different is the default. Where an absent
+grant on a source means **never**, an absent grant on a connected app means
+**ask** — because that connection does not exist until somebody searched for the
+app and completed a consent screen at it, and the absence of a further grant on
+something somebody went to that trouble for should surface a question rather
+than a dead end.
+
+The asking is scoped to **one app for the rest of one turn**. That is a
+deliberate trade and worth stating: a confirmation per call would mean four
+clicks to answer "check my last three threads and reply to Ana", which trains
+people to approve without reading — and an approval flow nobody reads is worse
+than a coarser one they do. A different app asks again, and so does the next
+conversation.
+
+**What this widens.** `send_email` guarantees that the worst an injected
+instruction achieves is a message you receive yourself, because the model names
+one of your channels and never an address. A connected mailbox ends that
+property: naming the recipient is what the operation is for. The approval is
+what stands in its place — you are shown the address and the body before
+anything is sent — and on an unattended run nothing happens at all.
+
+**What is stored.** Not the token. The OAuth grant is held by Composio, which is
+a subprocessor on the hosted product; what this database holds is an opaque
+reference to it, readable by no client role. That last part is not decoration:
+one deployment-wide API key opens every workspace's connections, so the
+reference IS the boundary between two tenants, and it is withheld exactly as a
+credential is.
 
 Every human action in this is still an ordinary policy, because every one of
 them is a person changing a row: members see grants, anyone who can write may

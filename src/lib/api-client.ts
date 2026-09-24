@@ -5,6 +5,7 @@ import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
   Connection,
+  ComposioToolkitsResponse,
   ConnectionRun,
   ConnectionsResponse,
   DriveFolder,
@@ -14,6 +15,7 @@ import type {
   SupabaseProjectsResponse,
   SyncOutcome,
   ToolConnection,
+  ToolConnectionGrant,
   ToolConnectionsResponse,
 } from "./connections-api";
 import type {
@@ -650,6 +652,41 @@ export const api = {
     remove: (id: string): Promise<void> => request("DELETE", `/tool-connections/${id}`),
   },
   /**
+   * The catalogue, and what an agent may do with what it finds there.
+   *
+   * `toolkits` is a proxy rather than a direct call: `COMPOSIO_API_KEY` is a
+   * deployment secret, so the browser never sees it and the worker does the
+   * searching. `connect` answers with a URL rather than redirecting, for the
+   * reason `connections.start` does — a `fetch` cannot follow a cross-origin
+   * redirect to a consent screen, so a 302 there is a CORS error rather than a
+   * login page.
+   */
+  composio: {
+    toolkits: (search?: string): Promise<ComposioToolkitsResponse> =>
+      request("GET", `/composio/toolkits${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+    connect: (input: {
+      toolkit: string;
+      label?: string;
+    }): Promise<{ url: string; connection: ToolConnection }> =>
+      request("POST", "/composio/connect", input),
+    status: (id: string): Promise<{ status: "pending" | "active" | "failed" }> =>
+      request("GET", `/composio/connections/${id}/status`),
+    grants: (agentId?: string): Promise<{ grants: ToolConnectionGrant[] }> =>
+      request("GET", `/composio/grants${agentId ? `?agentId=${agentId}` : ""}`),
+    setGrant: (input: {
+      agentId: string;
+      connectionId: string;
+      slug: string;
+      mode: "ask" | "always";
+    }): Promise<ToolConnectionGrant> => request("PUT", "/composio/grants", input),
+    removeGrant: (input: { agentId: string; connectionId: string; slug: string }): Promise<void> =>
+      request(
+        "DELETE",
+        `/composio/grants?agentId=${input.agentId}&connectionId=${input.connectionId}` +
+          `&slug=${encodeURIComponent(input.slug)}`,
+      ),
+  },
+  /**
    * The other road to a database: a Supabase account, and the projects it
    * opens.
    *
@@ -886,7 +923,7 @@ export type AgentUsage = {
    * How many of `promptTokens` Anthropic charged its 1.25x storage premium for
    * — a subset on the same terms and disjoint from `cachedTokens`, so it too is
    * in `estCostUsd` and not in `totalTokens`. Zero on every OpenAI reply, whose
-   * cache is free to fill, and on replies stored before migration 0062.
+   * cache is free to fill, and on replies stored before migration 0063.
    */
   cacheWriteTokens: number;
   /**

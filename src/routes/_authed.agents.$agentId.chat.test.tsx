@@ -607,7 +607,12 @@ describe("a conversation longer than one page", () => {
     await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
 
     await waitFor(() => expect(listMessages).toHaveBeenCalledWith("session-1", { limit: 200 }));
-  });
+    // Fifteen seconds rather than the default five, and it is the work rather
+    // than a hang: this renders two hundred messages and then types a sentence
+    // into them, so every keystroke re-renders the list. It passed alone and
+    // lost the race whenever the suite was busy — which made it look like a
+    // flake in the product and was a timeout too tight for what it does.
+  }, 15_000);
 });
 
 describe("an answer that stopped at its length limit", () => {

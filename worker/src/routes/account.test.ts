@@ -17,13 +17,20 @@ vi.mock("../lib/supabase", () => ({
 vi.mock("../lib/docstore", () => ({ getDocStore: () => ({ delete: storeDelete }) }));
 
 /**
- * The service-role client, which this route uses for three different shapes:
- * two `select().in()` reads for the storage keys and one `delete().eq()` per
- * workspace. One builder answers all three, and records which ids were deleted.
+ * The service-role client, which this route uses for four different shapes:
+ * three `select().in()` reads — two for the storage keys, one for the Composio
+ * accounts to revoke — and one `delete().eq()` per workspace. One builder
+ * answers all four, and records which ids were deleted.
+ *
+ * `onDelete` fires only on a chain that actually called `delete()`. It used to
+ * fire on any `eq()`, which was indistinguishable until a read grew a filter of
+ * its own — and then reported a read as a deletion, in the one test whose whole
+ * subject is the order things are deleted in.
  */
 function serviceTables(spec: {
   bundles?: { id: string }[];
   documents?: { r2_key: string | null }[];
+  connections?: { connected_account_id: string | null }[];
   deleteError?: { message: string };
   onDelete?: (table: string, id: string) => void;
   readError?: boolean;
@@ -34,14 +41,20 @@ function serviceTables(spec: {
         ? { data: spec.bundles ?? [], error: spec.readError ? { message: "boom" } : null }
         : table === "documents"
           ? { data: spec.documents ?? [], error: spec.readError ? { message: "boom" } : null }
-          : { data: null, error: spec.deleteError ?? null };
+          : table === "tool_connections"
+            ? { data: spec.connections ?? [], error: null }
+            : { data: null, error: spec.deleteError ?? null };
 
+    let deleting = false;
     const link = {
       select: () => link,
       in: () => link,
-      delete: () => link,
+      delete: () => {
+        deleting = true;
+        return link;
+      },
       eq: (_column: string, value: string) => {
-        spec.onDelete?.(table, value);
+        if (deleting) spec.onDelete?.(table, value);
         return link;
       },
       then: (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve),

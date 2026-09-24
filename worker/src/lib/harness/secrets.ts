@@ -14,6 +14,15 @@ import type { ToolEnv } from "./registry";
  * could read everyone's. So the permission question cannot be answered by the
  * same read that fetches the secret.
  *
+ * A fourth column joined them in 0063 and it is not a secret, which is worth
+ * saying because the exception looks like a weakening and is not.
+ * `tool_connections.connected_account_id` is Composio's opaque reference to a
+ * grant; the token it stands for never reaches this database. It is withheld
+ * from every client role anyway, because one deployment-wide `COMPOSIO_API_KEY`
+ * opens every workspace's accounts — so on that arrangement the id IS the
+ * boundary, and a member who could read another row's would be able to execute
+ * against somebody else's mailbox. Same treatment, different reason.
+ *
  * **Every function here takes a row somebody has already been found to be
  * allowed to have.** That is the whole discipline, and it is `withSecret` in
  * `routes/connections.ts` under a different name: the caller asks the database
@@ -32,6 +41,16 @@ import type { ToolEnv } from "./registry";
  * reminder.
  */
 export async function connectionSecret(env: ToolEnv, connection: ToolConnection): Promise<string> {
+  // A Composio row holds no credential at all — neither its own nor a borrowed
+  // one. The token is at Composio and what reaches them is the deployment's API
+  // key, which is an environment variable rather than anything in this table.
+  // Refused loudly rather than falling through to the query below, where it
+  // would read a NULL ciphertext and fail with a sentence about a missing
+  // credential that is true of every row and explains nothing.
+  if (connection.transport === "composio") {
+    throw new Error("a connected app keeps its credential at Composio, not in this row");
+  }
+
   // A project connected through a Supabase account holds no ciphertext of its
   // own — the token is the account's, and one copy of it is the whole point of
   // 0061. The permission question has already been answered the same way for
@@ -80,6 +99,17 @@ export async function authHeaders(
   env: ToolEnv,
   connection: ToolConnection,
 ): Promise<Record<string, string>> {
+  // Composio authenticates the DEPLOYMENT, not the row. There is no envelope to
+  // decrypt and no per-workspace credential to find: one API key opens every
+  // connected account on this deployment, which is exactly why 0063 keeps the
+  // account reference out of every client role's reach.
+  if (connection.transport === "composio") {
+    if (!env.COMPOSIO_API_KEY) {
+      throw new Error("this deployment has no COMPOSIO_API_KEY set");
+    }
+    return { "x-api-key": env.COMPOSIO_API_KEY };
+  }
+
   const raw = await connectionSecret(env, connection);
   let parsed: unknown;
   try {
@@ -96,6 +126,36 @@ export async function authHeaders(
     if (typeof value === "string" && name.trim()) out[name.trim()] = value;
   }
   return out;
+}
+
+/**
+ * Which Composio account a connection executes against, and on whose behalf.
+ *
+ * The two columns 0063 withholds from every client role, for a connection the
+ * caller has already been found — through their own client, by
+ * `loadConnection` — to be allowed to have. Same order and same discipline as
+ * everything else in this file: ask, then fetch.
+ *
+ * Both halves are returned together and both are required, because a call with
+ * one of them missing is a call Composio would answer for the wrong account or
+ * not at all. The row type is the reminder that the permission question is
+ * already behind us.
+ */
+export async function composioAccount(
+  env: ToolEnv,
+  connection: ToolConnection,
+): Promise<{ connectedAccountId: string; composioUserId: string } | null> {
+  const { data, error } = await serviceClient(env)
+    .from("tool_connections")
+    .select("connected_account_id, composio_user_id")
+    .eq("id", connection.id)
+    .maybeSingle();
+  if (error || !data) return null;
+  const connectedAccountId =
+    typeof data.connected_account_id === "string" ? data.connected_account_id : "";
+  const composioUserId = typeof data.composio_user_id === "string" ? data.composio_user_id : "";
+  if (!connectedAccountId || !composioUserId) return null;
+  return { connectedAccountId, composioUserId };
 }
 
 /**

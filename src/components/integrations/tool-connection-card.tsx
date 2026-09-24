@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Database, Globe, Plus, Trash2 } from "lucide-react";
+import { Blocks, Database, Globe, Plus, Trash2 } from "lucide-react";
 import type { ToolAvailability, ToolConnection } from "@/lib/connections-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,17 @@ const METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const;
 export function ToolConnectionCard({ connection }: { connection: ToolConnection }) {
   const remove = useRemoveToolConnection();
   const [confirming, setConfirming] = useState(false);
-  const Mark = connection.transport === "http" ? Globe : Database;
+  // Three kinds now, and the third is defensive rather than reachable: a
+  // `composio` row is listed inside the card that connected it, the way a
+  // Supabase project is, so this list never holds one. Named anyway, because
+  // the alternative is a connected application silently drawn as a Database if
+  // that filtering ever changes.
+  const Mark =
+    connection.transport === "http"
+      ? Globe
+      : connection.transport === "composio"
+        ? Blocks
+        : Database;
   // Anything past GET and HEAD changes something at the other end, which is
   // the one fact about a connection worth putting on the row. Said in words
   // rather than in colour: a chip stays neutral-or-amber, and amber here
@@ -61,7 +71,13 @@ export function ToolConnectionCard({ connection }: { connection: ToolConnection 
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Chip tone="neutral">{connection.transport === "http" ? "HTTP API" : "Database"}</Chip>
+          <Chip tone="neutral">
+            {connection.transport === "http"
+              ? "HTTP API"
+              : connection.transport === "composio"
+                ? "Connected app"
+                : "Database"}
+          </Chip>
           {writes ? <Chip tone="neutral">Can write</Chip> : <Chip tone="neutral">Read only</Chip>}
         </div>
       </div>

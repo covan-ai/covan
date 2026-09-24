@@ -84,6 +84,8 @@ function project(over: Partial<ToolConnection> = {}): ToolConnection {
     rpc: null,
     accountId: "acct-1",
     projectRef: "abcdefghijklmnop",
+    toolkitSlug: null,
+    status: "active",
     createdAt: 1,
     ...over,
   };

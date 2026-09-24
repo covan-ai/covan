@@ -23,9 +23,11 @@ export type ToolConnection = {
   /**
    * `sql` speaks to a Postgres through PostgREST; `http` to any REST API;
    * `supabase` to one project of a connected Supabase account, through that
-   * account's own token and with nothing installed in the project.
+   * account's own token and with nothing installed in the project; `composio`
+   * to one of about fifteen hundred applications, through an OAuth grant that
+   * lives at Composio and never reaches Covan.
    */
-  transport: "http" | "sql" | "supabase";
+  transport: "http" | "sql" | "supabase" | "composio";
   baseUrl: string;
   /**
    * The HTTP methods a person allowed. Not advisory — the worker refuses
@@ -45,8 +47,89 @@ export type ToolConnection = {
   accountId: string | null;
   /** The Supabase project ref, for a `supabase` connection. */
   projectRef: string | null;
+  /**
+   * The application a `composio` connection connects — `gmail`, `linear`.
+   *
+   * There is no account reference on this type and none on the wire either:
+   * migration 0062 grants `connected_account_id` to no client role, for the
+   * same reason 0059 withholds a credential. One deployment-wide API key opens
+   * every workspace's accounts, so that id is the boundary.
+   */
+  toolkitSlug: string | null;
+  /**
+   * `pending` while somebody is away at a consent screen. Every transport but
+   * `composio` is born `active`, so this is only ever interesting on one card.
+   */
+  status: "pending" | "active" | "failed";
   createdAt: number;
 };
+
+/** One of the applications this deployment's catalogue can offer. */
+export type ComposioToolkit = {
+  slug: string;
+  name: string;
+  description: string;
+  authSchemes: string[];
+};
+
+export type ComposioToolkitsResponse = {
+  /**
+   * False when the operator has not set `COMPOSIO_API_KEY`. The section is
+   * still shown and names the variable, for the reason `ProviderAvailability`
+   * is shown unconfigured: a self-hoster reading the docs for a feature their
+   * own build appears not to have is the failure that pattern exists to avoid.
+   */
+  configured: boolean;
+  toolkits: ComposioToolkit[];
+};
+
+/**
+ * What one agent may do at one connected service, without being asked.
+ *
+ * There is no `never` here because there is none in the table: the absence of a
+ * row IS the default, and for a connected application that default is `ask`.
+ * So a card lists what it has rows for and says "asks first" about the rest,
+ * which is true whether or not a row exists to say it.
+ */
+export type ToolConnectionGrant = {
+  agentId: string;
+  connectionId: string;
+  slug: string;
+  mode: "ask" | "always";
+  grantedBy: string | null;
+  grantedAt: number;
+};
+
+/**
+ * The connection and operation a confirmation is about, when it is about one.
+ *
+ * Lives here rather than in `agent-steps.tsx` on purpose. That card's own
+ * comment says it knows nothing about scheduling or email and prints whatever
+ * a tool proposed, and a second exception for connected apps would be the
+ * start of a card that knows about every tool. So the card takes an optional
+ * standing-permission action and the CALLER decides whether there is one to
+ * offer; this is how the caller decides.
+ *
+ * `null` for every other tool's proposal, and for a malformed one — a standing
+ * permission written from a half-read object would name an operation nobody
+ * approved.
+ */
+export function runToolProposal(
+  proposal: unknown,
+): { connectionId: string; connectionLabel: string; slug: string } | null {
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return null;
+  const row = proposal as Record<string, unknown>;
+  if (row.kind !== "run_tool") return null;
+  const connection = row.connection as Record<string, unknown> | undefined;
+  const connectionId = typeof connection?.id === "string" ? connection.id : "";
+  const slug = typeof row.slug === "string" ? row.slug : "";
+  if (!connectionId || !slug) return null;
+  return {
+    connectionId,
+    connectionLabel: typeof connection?.label === "string" ? connection.label : "this service",
+    slug,
+  };
+}
 
 /**
  * A Supabase account connected to this workspace.

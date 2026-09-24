@@ -129,6 +129,77 @@ describe("the confirmation card", () => {
     expect(screen.getByRole("button", { name: "Not now" })).toBeDisabled();
   });
 
+  /**
+   * The highest-stakes surface in the product, and the one place a nested
+   * object actually appears. Until `run_tool` every proposal was flat, so
+   * one-line `JSON.stringify` was an honest rendering of the worst case — and
+   * the body of an email printed that way is a blob nobody reads on the screen
+   * where they are being asked to approve sending it.
+   */
+  it("opens up a nested object rather than printing it as JSON", () => {
+    render(
+      <ConfirmCard
+        pending={{
+          id: "p3",
+          tool: "run_tool",
+          summary: "Run GMAIL_SEND_EMAIL on Ana's Gmail?",
+          proposal: {
+            kind: "run_tool",
+            slug: "GMAIL_SEND_EMAIL",
+            arguments: {
+              recipient_email: "ana@example.com",
+              body: "Hi Ana,\n\nThe orders report is attached.",
+            },
+          },
+        }}
+        busy={false}
+        onAnswer={() => {}}
+      />,
+    );
+    expect(screen.getByText("ana@example.com")).toBeInTheDocument();
+    expect(screen.getByText(/The orders report is attached/)).toBeInTheDocument();
+    expect(screen.getByText("recipient email")).toBeInTheDocument();
+    // One level, and no more: two would invite an approval card that scrolls.
+    expect(screen.queryByText(/^\{"recipient_email"/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The third action, and where it sits.
+   *
+   * It is a prop rather than something the card works out, because working it
+   * out would mean knowing which tools have a standing permission to grant —
+   * and this card's whole discipline is that it knows about none of them.
+   */
+  it("offers no standing permission unless the caller says there is one", () => {
+    render(<ConfirmCard pending={pending} busy={false} onAnswer={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Always allow this" })).not.toBeInTheDocument();
+  });
+
+  it("puts the standing permission last, and reports it to the caller", async () => {
+    const onChoose = vi.fn();
+    render(
+      <ConfirmCard
+        pending={pending}
+        busy={false}
+        onAnswer={() => {}}
+        standing={{ label: "Always allow this", onChoose }}
+      />,
+    );
+    // Accessible names rather than `textContent`: the primary variant renders
+    // its label twice for the roller animation (`ui/button.tsx`), so the text
+    // of that one node is "ApproveApprove" and always has been.
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(3);
+    // Last and quietest of the three: the safe answer should be the easy one,
+    // and "never ask me again" where the eye lands first is how people end up
+    // with permissions they do not remember giving.
+    expect(buttons[0]).toHaveAccessibleName("Approve");
+    expect(buttons[2]).toHaveAccessibleName("Always allow this");
+
+    await userEvent.click(screen.getByRole("button", { name: "Always allow this" }));
+    expect(onChoose).toHaveBeenCalledTimes(1);
+  });
+
   it("still draws something when a tool proposed nothing structured", () => {
     render(
       <ConfirmCard

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import type { AgentRunInput } from "./executor";
+import { MAX_STEPS, SCHEDULED_MAX_STEPS } from "../harness/budget";
 
 /**
  * A scheduled run with tools, and the three things about it that are not the
@@ -115,6 +116,20 @@ describe("runRoutineWithTools", () => {
   it("does not pay for a readable account of reasoning nobody will read", async () => {
     await runRoutineWithTools(env, db)(input, env);
     expect(runAgentTurn.mock.calls[0][0].request.showThinking).toBeUndefined();
+  });
+
+  /**
+   * The one number the two surfaces are allowed to disagree about, and the
+   * only thing holding the cron Worker inside Workers Free's fifty
+   * subrequests. `dispatcher.ts` does that arithmetic against `BATCH_SIZE`;
+   * a routine taking chat's sixteen steps would break it three routines into
+   * a tick, and the symptom is the last ones failing at a ceiling with nothing
+   * in their run log to explain it.
+   */
+  it("keeps the smaller step budget, which chat no longer has", async () => {
+    await runRoutineWithTools(env, db)(input, env);
+    expect(runAgentTurn.mock.calls[0][0].budget).toEqual({ maxSteps: SCHEDULED_MAX_STEPS });
+    expect(SCHEDULED_MAX_STEPS).toBeLessThan(MAX_STEPS);
   });
 
   it("asks whether to send as a separate turn, never alongside the tools", async () => {

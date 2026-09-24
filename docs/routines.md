@@ -228,6 +228,13 @@ twelve per routine, so three routines comes to 38. An agent turn spends more
 than twelve on its own, because each tool call is at least one request and the
 model is called again after each.
 
+A scheduled run is capped at **eight tool calls**, half what a conversation
+gets. That is this limit, not a judgement about what a routine deserves: chat
+was raised to sixteen when connected apps arrived — finding an operation costs
+a step before running one costs another — and a routine taking sixteen would
+break the arithmetic above three routines into a tick. A run that reaches the
+cap says what it did not finish rather than stopping silently.
+
 So for routines that use tools, on Workers Free, either:
 
 - run the scheduler on the **Node/Docker** stack, where there is no subrequest

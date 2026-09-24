@@ -42,6 +42,13 @@ import { retrieveForAgent } from "../retrieval";
  * whose agent actually HAS tools spends far more than 12 and does not fit on
  * Free at all; `docs/routines.md` says so rather than leaving it to be
  * discovered.
+ *
+ * This is also why a scheduled run keeps the old eight-step budget while chat
+ * moved to sixteen (`SCHEDULED_MAX_STEPS` in `lib/harness/budget.ts`). The
+ * arithmetic above is already generous about a tool-using routine; letting one
+ * take twice as many steps would break it three routines into a tick, and the
+ * symptom would be the last routines of a busy tick failing at a ceiling with
+ * nothing in their run log to explain it.
  */
 const BATCH_SIZE = 3;
 

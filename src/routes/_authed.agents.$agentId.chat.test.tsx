@@ -148,6 +148,34 @@ function streamOf(events: Record<string, unknown>[]) {
   return { ok: true, status: 200, body, json: () => Promise.resolve(null) };
 }
 
+/**
+ * The same, but left open, so a test can look at the screen mid-turn.
+ *
+ * `streamOf` enqueues everything and closes, which is all a test of the final
+ * state needs. A tool turn's interesting moments are the gaps — the model
+ * reading a result, saying nothing — and those only exist while the stream is
+ * still running.
+ */
+function heldStreamOf(events: Record<string, unknown>[]) {
+  const encoder = new TextEncoder();
+  let push!: (event: Record<string, unknown>) => void;
+  let finish!: () => void;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: Record<string, unknown>) =>
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      for (const event of events) send(event);
+      push = send;
+      finish = () => controller.close();
+    },
+  });
+  return {
+    response: { ok: true, status: 200, body, json: () => Promise.resolve(null) },
+    push,
+    finish,
+  };
+}
+
 const answer = {
   id: "msg-2",
   role: "assistant" as const,
@@ -944,6 +972,75 @@ describe("a reply that used a tool", () => {
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await screen.findByText("Forty dollars a seat.");
+  });
+});
+
+/**
+ * Whether the screen looks alive between one tool call and the next.
+ *
+ * A tool turn goes quiet repeatedly: every pass after the first starts with
+ * the model reading a result, which takes seconds and produces nothing. The
+ * dots used to go out on the first step and never come back, which was barely
+ * noticeable at two steps and reads as a frozen page at sixteen.
+ */
+describe("the sign of life during a long turn", () => {
+  async function sendAnd(frames: Record<string, unknown>[]) {
+    const held = heldStreamOf(frames);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(held.response)),
+    );
+    await renderChat();
+    listMessages.mockReturnValue(new Promise(() => {}));
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "how many orders?");
+    await userEvent.click(screen.getByLabelText("Send message"));
+    return held;
+  }
+
+  const running = { type: "step", index: 0, tool: "run_tool", status: "running", label: "run" };
+  const settled = { type: "step", index: 0, tool: "run_tool", status: "ok", label: "run" };
+
+  it("goes quiet while a tool is running, because the row says what is happening", async () => {
+    const held = await sendAnd([running]);
+    await waitFor(() => expect(screen.queryByText("Thinking…")).not.toBeInTheDocument());
+    held.finish();
+  });
+
+  it("comes back once the tool has landed and the model is reading it", async () => {
+    const held = await sendAnd([running, settled]);
+    // The row now describes something that already finished. Nothing on
+    // screen explains the wait that follows, which is what the dots are for.
+    await screen.findByText("Thinking…");
+    held.finish();
+  });
+
+  it("goes out again the moment the model starts writing", async () => {
+    const held = await sendAnd([running, settled]);
+    await screen.findByText("Thinking…");
+    held.push({ type: "delta", text: "Forty." });
+    await waitFor(() => expect(screen.queryByText("Thinking…")).not.toBeInTheDocument());
+    held.finish();
+  });
+
+  it("keeps the words already written while it waits for the next pass", async () => {
+    // The regression this guards: the dots and the streamed text used to be
+    // two branches of one ternary, so bringing the dots back mid-turn would
+    // have taken the first pass's words off the screen.
+    const held = await sendAnd([{ type: "delta", text: "Let me look." }, running, settled]);
+    await screen.findByText("Thinking…");
+    expect(screen.getByText("Let me look.")).toBeInTheDocument();
+    held.finish();
+  });
+
+  it("stays out when the turn is waiting for a person rather than working", async () => {
+    // `pending` is the turn stopping to ask. Dots under a confirmation card
+    // would say the machine is busy when it is waiting on somebody.
+    const held = await sendAnd([
+      running,
+      { type: "step", index: 0, tool: "run_tool", status: "pending", label: "run" },
+    ]);
+    await waitFor(() => expect(screen.queryByText("Thinking…")).not.toBeInTheDocument());
+    held.finish();
   });
 });
 

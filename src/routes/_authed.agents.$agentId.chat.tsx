@@ -696,9 +696,6 @@ function ChatTab() {
             reasoning += event.text;
             setThinkingText(reasoning);
           } else if (event.type === "step" && typeof event.index === "number") {
-            // The dots mean "something is happening and we cannot say what".
-            // A step line says what, so they have nothing left to add.
-            setThinking(false);
             const step: AgentStepView = {
               index: event.index,
               tool: event.tool ?? "",
@@ -707,6 +704,30 @@ function ChatTab() {
                 : "running",
               label: event.label ?? event.tool ?? "",
             };
+            /**
+             * The dots mean "something is happening and we cannot say what".
+             *
+             * A step that is RUNNING says what, so they have nothing to add
+             * and go out. A step that has SETTLED says what already happened,
+             * which is not the same thing: the model is now reading that
+             * result, and until it says something there is again nothing on
+             * screen to explain the wait. So they come back.
+             *
+             * This was `setThinking(false)` for both, and it looked right
+             * while a turn had one or two steps — the dots went out near the
+             * end and the answer followed. At sixteen they went out on the
+             * first step and never returned, so the rest of the turn ran with
+             * a still list and no sign of life. Every other `setThinking(true)`
+             * in this file is the start of a turn; this is the only one that
+             * is the middle of one.
+             *
+             * `pending` is the exception among the settled statuses and has to
+             * be named: it is the turn stopping to ask somebody, so what
+             * happens next is a person pressing a button. Dots there would
+             * animate under a confirmation card until it was answered, saying
+             * the machine is busy when it is waiting.
+             */
+            setThinking(step.status !== "running" && step.status !== "pending");
             // Upsert by index: every step arrives twice, once running and
             // once settled, and the second is the same row changing rather
             // than a new one.
@@ -1649,29 +1670,23 @@ function ChatTab() {
                         went and read something — and it belongs above the
                         words that came back from it. */}
                       {liveSteps.length > 0 && <StepTrail steps={liveSteps} className="mb-3" />}
-                      {thinking ? (
-                        // `aria-hidden`, where this used to carry an `aria-label`
-                        // on a bare `<div>` — a label on an element with no role
-                        // is a string most screen readers have nowhere to put.
-                        // The words are in the status line at the foot of the
-                        // conversation instead, where they are announced rather
-                        // than merely present.
-                        <div
-                          className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                          aria-hidden="true"
-                        >
-                          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                          <span
-                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                            style={{ animationDelay: "0.15s" }}
-                          />
-                          <span
-                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                            style={{ animationDelay: "0.3s" }}
-                          />
-                          <span className="ml-1">Thinking…</span>
-                        </div>
-                      ) : (
+                      {/*
+                        The words so far, and the dots, as siblings rather than
+                        as two branches of a ternary.
+
+                        They used to be either/or, which was right while a turn
+                        wrote once: there was nothing to show until the model
+                        started, and once it started it never went quiet again.
+                        A tool turn goes quiet repeatedly — every pass after the
+                        first begins with the model reading a tool result,
+                        which can take many seconds and produces nothing. With
+                        the ternary, bringing the dots back for those gaps would
+                        have taken the already-written text off the screen.
+
+                        So: text if there is any, dots if something is
+                        happening, and frequently both.
+                      */}
+                      {streamText && (
                         // The same renderer the settled answer uses, so the
                         // reply arrives in the shape it will keep. It used to be
                         // plain `whitespace-pre-wrap`, which meant watching raw
@@ -1701,6 +1716,32 @@ function ChatTab() {
                             replyingIn === active?.id && "stream-live",
                           )}
                         />
+                      )}
+                      {thinking && (
+                        // `aria-hidden`, where this used to carry an `aria-label`
+                        // on a bare `<div>` — a label on an element with no role
+                        // is a string most screen readers have nowhere to put.
+                        // The words are in the status line at the foot of the
+                        // conversation instead, where they are announced rather
+                        // than merely present.
+                        <div
+                          className={cn(
+                            "flex items-center gap-1.5 text-xs text-muted-foreground",
+                            streamText && "mt-2",
+                          )}
+                          aria-hidden="true"
+                        >
+                          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground" />
+                          <span
+                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
+                            style={{ animationDelay: "0.15s" }}
+                          />
+                          <span
+                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
+                            style={{ animationDelay: "0.3s" }}
+                          />
+                          <span className="ml-1">Thinking…</span>
+                        </div>
                       )}
                     </div>
                   </div>

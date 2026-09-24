@@ -276,4 +276,16 @@ describe("run_tool", () => {
     expect(runToolTool.isConfigured({} as ToolEnv)).toBe(false);
     expect(runToolTool.isConfigured({ COMPOSIO_API_KEY: "ck" } as ToolEnv)).toBe(true);
   });
+
+  /**
+   * Prose, pinned, because here the prose is the whole mechanism. Nothing in
+   * this file breaks if somebody tidies the sentence away, and the cost of
+   * losing it was measured: five calls on one question, four of them the model
+   * discovering `MAX_TOOL_OUTPUT_CHARS` by hitting it. Reword freely; keep the
+   * fact that the answer is trimmed and that the first call should be narrow.
+   */
+  it("warns the model the answer is trimmed, rather than letting it find out", () => {
+    expect(runToolTool.description).toMatch(/trimmed/i);
+    expect(runToolTool.description).toMatch(/narrow/i);
+  });
 });

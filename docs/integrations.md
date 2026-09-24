@@ -596,6 +596,12 @@ note that the app is not connected here. `run_tool` then runs one. It cannot
 guess: an operation it has not seen in a `find_tool` result is refused, and so
 is one belonging to an app other than the connection it named.
 
+A long answer is trimmed before the agent sees it, and `run_tool` says as much
+in its own description — ask for a week rather than a year, ten results rather
+than the default, the fields you need rather than all of them. That sentence is
+there because the alternative was measured: without it an agent finds the limit
+by hitting it, and each attempt costs a step and is re-sent on every pass after.
+
 **The asking.** The first time an agent acts on a connected app in a
 conversation, you are shown what it proposes to do — the operation and every
 argument, including the body of the message — and it does not happen unless you

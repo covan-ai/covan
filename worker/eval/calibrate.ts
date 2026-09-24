@@ -67,7 +67,42 @@ let spend = 0;
 let separated = 0;
 let tied = 0;
 
+/**
+ * Whether an error is about the account rather than about the case.
+ *
+ * These do not come right on the next case, and walking the whole set to
+ * discover that is both slow and — on a key that is rate-limited rather than
+ * empty — a way to spend money on requests that were always going to fail.
+ * The first calibration run after the key was replaced hit "credit balance is
+ * too low" six times in a row and printed a summary reading `0/0`, which is
+ * the shape of a result without being one.
+ *
+ * Matched on the provider's own wording rather than on a status code, because
+ * a 400 covers both this and a malformed request, and only one of the two is
+ * worth abandoning the run over.
+ */
+function isAccountError(err: unknown): boolean {
+  const text = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    text.includes("credit balance is too low") ||
+    text.includes("authentication_error") ||
+    text.includes("permission_error") ||
+    text.includes("invalid x-api-key")
+  );
+}
+
 let failed = 0;
+let abandoned: string | null = null;
+/**
+ * Cases that produced two verdicts, counted rather than derived.
+ *
+ * It was `selected.length - failed`, which is right only when every case is
+ * attempted. Abandoning the run early breaks that: the cases after the break
+ * were neither scored nor failed, and the subtraction quietly counted them as
+ * scored — a run that stopped on its first case reported `0/5`, which reads as
+ * five judged pairs the real answer lost.
+ */
+let scored = 0;
 
 for (const kase of selected) {
   try {
@@ -80,6 +115,10 @@ for (const kase of selected) {
     failed += 1;
     console.log(`── ${kase.id}`);
     console.log(`   FAILED  ${err instanceof Error ? err.message : String(err)}\n`);
+    if (isAccountError(err)) {
+      abandoned = err instanceof Error ? err.message : String(err);
+      break;
+    }
   }
 }
 
@@ -128,6 +167,7 @@ async function one(kase: (typeof selected)[number]): Promise<void> {
     spend += estimateCostUsd(v.model, v.usage.input_tokens, v.usage.output_tokens);
   }
 
+  scored += 1;
   if (separation.choice === "candidate") separated += 1;
   if (noise.choice === "tie" || noise.choice === "both_bad") tied += 1;
 
@@ -148,12 +188,31 @@ async function one(kase: (typeof selected)[number]): Promise<void> {
   );
 }
 
-const scored = selected.length - failed;
+const skipped = selected.length - scored - failed;
+
+if (scored === 0) {
+  // No verdicts, so there is nothing to report and nothing to interpret.
+  // Printing `separation 0/0` under the usual heading would put a number where
+  // a measurement was supposed to be, and `0/0` reads like a failing score
+  // rather than like an empty one.
+  console.log(
+    [
+      `no verdicts — ${failed} case(s) errored and none was scored`,
+      ...(skipped > 0 ? [`             ${skipped} case(s) were never attempted`] : []),
+      `spend        $${spend.toFixed(3)}`,
+      ...(abandoned ? ["", `Abandoned after an account error: ${abandoned}`] : []),
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
 console.log(
   [
     `separation   ${separated}/${scored} — the real answer beat the spoiled one`,
     `tie rate     ${tied}/${scored} — same system judged against itself`,
     ...(failed > 0 ? [`failed       ${failed} case(s) errored and are not in either count`] : []),
+    ...(skipped > 0 ? [`skipped      ${skipped} case(s) were never attempted`] : []),
+    ...(abandoned ? [`abandoned    the run stopped early: ${abandoned}`] : []),
     `spend        $${spend.toFixed(3)}`,
   ].join("\n"),
 );
@@ -162,3 +221,4 @@ console.log(
     "answer bad. A low tie rate means the judge is inventing preferences, and every\n" +
     "later win rate carries that as noise — read it before reading any result.",
 );
+if (abandoned) process.exit(1);

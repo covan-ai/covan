@@ -50,9 +50,19 @@ Worth reading before trusting a number out of it.
 
 ## Running it
 
+The key comes from the environment or from `worker/.dev.vars`, which is where
+this repository already keeps local secrets and is gitignored. Add a line to it
+once and every command below works:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
 ```sh
 cd worker
-export ANTHROPIC_API_KEY=...
+
+# Check the judge before trusting it. ~$0.40.
+bun eval/calibrate.ts
 
 # Freeze today's answers. Do this once, before the change you want to judge.
 bun eval/run.ts --variant baseline

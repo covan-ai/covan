@@ -10,6 +10,13 @@ SUPABASE_ANON_KEY=replace-with-anon-key
 SUPABASE_SERVICE_ROLE_KEY=replace-with-service-role-key
 OPENAI_API_KEY=replace-with-openai-api-key
 
+# Optional, and needed for the Claude models in the catalogue. Without it an
+# agent set to a `claude-*` model answers with an error naming this variable
+# rather than a 401 from Anthropic — `lib/completion.ts` checks first on
+# purpose. Also what `worker/eval/` reads: every case in that eval is a Claude
+# model, and it looks here before it looks anywhere else.
+# ANTHROPIC_API_KEY=
+
 # Optional. Sends completions to an OpenAI-compatible endpoint instead of
 # OpenAI. Set OPENAI_MODEL alongside it — the shipped model list is OpenAI's,
 # so on its own every agent would ask your endpoint for `gpt-4o`. Transcription

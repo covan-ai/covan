@@ -31,6 +31,7 @@ import { CASES } from "./cases";
 import { runCase } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
+import { loadEnv, requireAnthropicKey } from "./env";
 
 const MODEL = process.env.EVAL_MODEL ?? "claude-sonnet-5";
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? "claude-opus-5";
@@ -47,14 +48,8 @@ const only = arg("only")
 
 const selected = CASES.filter((c) => c.spoiled && (!only || only.some((p) => c.id.startsWith(p))));
 
-const env = {
-  OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "",
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
-};
-if (!env.ANTHROPIC_API_KEY) {
-  console.error("ANTHROPIC_API_KEY is not set.");
-  process.exit(1);
-}
+const env = loadEnv();
+requireAnthropicKey(env);
 
 console.log(`${selected.length} case(s), model ${MODEL}, judge ${JUDGE_MODEL}\n`);
 

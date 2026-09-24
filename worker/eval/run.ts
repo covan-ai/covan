@@ -29,6 +29,7 @@ import { runCase, toTrace } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
 import { totalTokens } from "../src/lib/completion";
+import { loadEnv, requireAnthropicKey } from "./env";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", ".claude", "hillclimb", "agent-turn");
@@ -86,14 +87,8 @@ if (existsSync(resultsPath)) {
   }
 }
 
-const env = {
-  OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "",
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
-};
-if (!env.ANTHROPIC_API_KEY) {
-  console.error("ANTHROPIC_API_KEY is not set — every case in this eval is a Claude model.");
-  process.exit(1);
-}
+const env = loadEnv();
+requireAnthropicKey(env);
 
 const todo: Array<{ kase: EvalCase; rep: number }> = [];
 for (const kase of selected) {

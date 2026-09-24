@@ -923,7 +923,7 @@ export type AgentUsage = {
    * How many of `promptTokens` Anthropic charged its 1.25x storage premium for
    * — a subset on the same terms and disjoint from `cachedTokens`, so it too is
    * in `estCostUsd` and not in `totalTokens`. Zero on every OpenAI reply, whose
-   * cache is free to fill, and on replies stored before migration 0062.
+   * cache is free to fill, and on replies stored before migration 0063.
    */
   cacheWriteTokens: number;
   /**

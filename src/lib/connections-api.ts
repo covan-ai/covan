@@ -51,7 +51,7 @@ export type ToolConnection = {
    * The application a `composio` connection connects — `gmail`, `linear`.
    *
    * There is no account reference on this type and none on the wire either:
-   * migration 0062 grants `connected_account_id` to no client role, for the
+   * migration 0063 grants `connected_account_id` to no client role, for the
    * same reason 0059 withholds a credential. One deployment-wide API key opens
    * every workspace's accounts, so that id is the boundary.
    */

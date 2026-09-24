@@ -141,7 +141,7 @@ export const httpRequestTool: AgentTool = {
     if (connection.transport !== "http") {
       // Named per transport rather than lumped together as "not an HTTP API",
       // because each one has a different next move. This is also where the
-      // `normalise()` lie used to be paid for: until 0062 an unrecognised
+      // `normalise()` lie used to be paid for: until 0063 an unrecognised
       // transport was reported as `http`, so a row written by a newer build
       // would have had a path resolved against its base URL and its credential
       // sent there. `unknown` is now a value and it stops here.

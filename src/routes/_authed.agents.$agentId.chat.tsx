@@ -1017,7 +1017,7 @@ function ChatTab() {
    * permission silently failed — and the person would go on believing they had
    * granted something they had not, which is the worse of the two failures.
    *
-   * Only offered to an admin, because only an admin can write it: 0062's
+   * Only offered to an admin, because only an admin can write it: 0063's
    * policy refuses `always` from anybody else. Offering the button and letting
    * the policy say no would be a control that exists to produce an error.
    */

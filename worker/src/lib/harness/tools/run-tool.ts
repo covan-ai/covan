@@ -30,7 +30,7 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
  *      the building — not by Composio's 400, which would have been a request
  *      made on somebody's behalf.
  *   3. **A person said yes.** Once per connection per turn, or in advance
- *      through a `tool_connection_grants` row set to `always` (0062).
+ *      through a `tool_connection_grants` row set to `always` (0063).
  *   4. **The allowance is checked before the network**, because this is the one
  *      thing in Covan that spends the operator's money outside the model bill
  *      and cannot be covered by a workspace's own key. See `lib/harness/spend.ts`.
@@ -46,7 +46,7 @@ async function alwaysAllowed(
   slug: string,
 ): Promise<boolean> {
   // Through the caller's own client on the chat path and the engine's on the
-  // scheduled one; both are covered — 0062 grants `select` to `authenticated`
+  // scheduled one; both are covered — 0063 grants `select` to `authenticated`
   // and to `service_role`, and the composite foreign keys are what make a
   // cross-tenant grant impossible rather than merely disallowed, which matters
   // precisely because the scheduled read has no caller for RLS to resolve.
@@ -192,7 +192,7 @@ export const runToolTool: AgentTool = {
 
     // The two identifiers the model never sees, read with the service role
     // after the caller's own client has already said they may have this row.
-    // 0062 grants neither column to any client role, for the reason that
+    // 0063 grants neither column to any client role, for the reason that
     // migration's banner gives at length.
     const account = await composioAccount(ctx.env, connection);
     if (!account) {

@@ -33,7 +33,7 @@ const dbWith = (rpc: unknown, connected: string[] = []) => ({
     select: () => ({
       // Filtered on status before the workspace list, because a connection is
       // a row from the moment somebody is sent to a consent screen and a
-      // half-made one must not put a workspace on the expensive path (0062).
+      // half-made one must not put a workspace on the expensive path (0063).
       eq: () => ({
         in: async () => ({
           data: connected.map((workspace_id) => ({ workspace_id })),

@@ -39,7 +39,7 @@ export async function connectedAccountsIn(
 ): Promise<string[]> {
   if (workspaceIds.length === 0) return [];
   // The service role, because `connected_account_id` is granted to no client
-  // role (0062) — and the caller of this has already decided the workspace is
+  // role (0063) — and the caller of this has already decided the workspace is
   // theirs to delete.
   const { data, error } = await admin
     .from("tool_connections")

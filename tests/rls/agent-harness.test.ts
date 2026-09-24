@@ -481,7 +481,7 @@ describe("supabase_accounts", () => {
  * knows about and the first that is not a credential at all.
  *
  * The token lives at Composio. What the row holds is an address —
- * `connected_account_id` plus `composio_user_id` — and the whole of 0062's
+ * `connected_account_id` plus `composio_user_id` — and the whole of 0063's
  * argument is that on a deployment where ONE API key opens every workspace's
  * accounts, that address is the boundary. So the two columns are withheld from
  * every client role exactly as `secret_ciphertext` is, and this block is what
@@ -594,7 +594,7 @@ describe("a composio connection", () => {
   });
 
   /**
-   * The `else` branch of 0062's exhaustive credential check, which exists so a
+   * The `else` branch of 0063's exhaustive credential check, which exists so a
    * transport added to the CHECK without being added to the shape rule fails
    * closed. An `http` row must not carry Composio's columns.
    */
@@ -626,7 +626,7 @@ describe("a composio connection", () => {
   });
 
   /**
-   * 0058's model, on 0062's table. The two departures are the third key column
+   * 0058's model, on 0063's table. The two departures are the third key column
    * — free text, because a catalogue of fifteen hundred applications cannot be
    * a foreign key — and what an absent row means, which is `ask` here and
    * `never` there. Neither changes who may write what, and that is what these

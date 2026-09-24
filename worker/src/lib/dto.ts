@@ -141,7 +141,7 @@ export type ToolConnectionDTO = {
   /**
    * The Composio application this row connects — `gmail`, `linear` — or null.
    *
-   * Readable on the wire on purpose (0062): it is how the integrations page
+   * Readable on the wire on purpose (0063): it is how the integrations page
    * labels a card, and how a tool slug is matched to a connection id. The
    * account reference beside it in the table is not here and cannot be — no
    * client role may select it.
@@ -198,7 +198,7 @@ export function mapToolConnection(row: {
  * What one agent may do at one connected service, as the screen sees it.
  *
  * There is no `never` on this type because there is no `never` in the table:
- * the absence of a row is the default, and 0062 makes that default `ask`. So a
+ * the absence of a row is the default, and 0063 makes that default `ask`. So a
  * card renders the operations it has rows for and says "asks first" about
  * everything else — which is true without a row having to exist to say it.
  */
@@ -275,7 +275,7 @@ export type MessageDTO = {
   /**
    * Token usage for assistant replies. Null on user messages and on replies
    * written before 0006. cachedTokens is null on replies written before 0025,
-   * cacheWriteTokens on replies written before 0062 — and on every reply from
+   * cacheWriteTokens on replies written before 0063 — and on every reply from
    * an OpenAI model, whose cache costs nothing to fill.
    */
   promptTokens?: number | null;

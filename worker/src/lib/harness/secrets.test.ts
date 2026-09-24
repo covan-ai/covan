@@ -92,7 +92,7 @@ describe("authHeaders", () => {
 
   it("authenticates a connected application from the environment, reading no row", async () => {
     // Composio authenticates the DEPLOYMENT. There is no envelope to decrypt
-    // and no per-workspace credential to find — which is exactly why 0062 keeps
+    // and no per-workspace credential to find — which is exactly why 0063 keeps
     // the account reference out of every client role's reach, since on this
     // arrangement that id is the only thing separating two tenants.
     const headers = await authHeaders(

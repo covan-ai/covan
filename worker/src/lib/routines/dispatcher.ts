@@ -198,7 +198,7 @@ export async function runPokedRoutine(
  *
  * Filtered to `active`, the same filter `lib/harness/connections.ts` applies
  * and for a sharper reason here. A connected application's row exists from the
- * moment somebody is sent to a consent screen (0062), so a workspace can hold
+ * moment somebody is sent to a consent screen (0063), so a workspace can hold
  * connections that are half made — and counting one would put that workspace on
  * the expensive path, where every routine builds a tool loop, for a service
  * `capabilitiesFor` will then decline to offer. The cost of that mistake is

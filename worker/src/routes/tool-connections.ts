@@ -47,7 +47,7 @@ const createSchema = z.object({
    * `supabase` is created by `POST /supabase-account/projects`, which has a
    * token to check first; `composio` by `POST /composio/connect`, which has a
    * consent flow to start first. Both would arrive here with no credential and
-   * be refused by 0062's `tool_connections_credential_shape` anyway — this
+   * be refused by 0063's `tool_connections_credential_shape` anyway — this
    * enum is what turns that into a readable 400 instead of a constraint
    * violation.
    */
@@ -235,7 +235,7 @@ toolConnections.delete("/tool-connections/:id", async (c) => {
     .maybeSingle();
 
   if (row?.transport === "composio") {
-    // The account id is granted to no client role (0062), so this is the
+    // The account id is granted to no client role (0063), so this is the
     // service role filling in the column the database withheld — after the
     // read above has already decided the caller may have the row.
     const { data: secretRow } = await serviceClient(c.env)

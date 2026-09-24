@@ -136,7 +136,7 @@ beforeEach(() => {
       return { select: () => ({ single: async () => ({ data: ROW, error: null }) }) };
     },
     // The one column no client role may select, read here after the caller's
-    // own client has already decided they may have the row (0062).
+    // own client has already decided they may have the row (0063).
     select: () => ({
       eq: () => ({
         maybeSingle: async () => ({ data: { connected_account_id: "ca_1" }, error: null }),

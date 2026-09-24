@@ -295,7 +295,7 @@ function ConnectedApp({
 
       {/* Only the standing permissions are listed, because only they are a
           thing somebody granted. Everything else on this app asks, and there
-          is no row saying so — the absence of one IS the asking (0062). A list
+          is no row saying so — the absence of one IS the asking (0063). A list
           that printed "asks first" for every operation in a 1500-app catalogue
           would be a list of everything. */}
       {grants.length > 0 ? (

@@ -7,7 +7,7 @@ import type { ToolContext } from "./registry";
  * `routes/connections.ts` uses for OAuth tokens: **ask the database whether
  * this caller may have the row, and only then reach past the database for the
  * column it withheld.** `secret_ciphertext` is granted to no client role
- * (0059) and `connected_account_id` is granted to none either (0062), so the
+ * (0059) and `connected_account_id` is granted to none either (0063), so the
  * permission question cannot be answered by the same read that fetches them —
  * and answering it second would mean they had already been fetched by the time
  * anybody asked.
@@ -17,7 +17,7 @@ import type { ToolContext } from "./registry";
  * How Covan speaks to a connection.
  *
  * `unknown` is not a value any row holds; it is what this file returns for a
- * `transport` it does not recognise. Until 0062 an unrecognised value fell back
+ * `transport` it does not recognise. Until 0063 an unrecognised value fell back
  * to `"http"`, which was a lie with teeth: a row written by a newer build would
  * have been handed to `http_request`, which would have resolved a path against
  * its base URL and sent the connection's credential there. Every tool refuses
@@ -53,7 +53,7 @@ export type ToolConnection = {
   toolkit_slug: string | null;
   /**
    * Whether the connection has finished being made. Only `composio` rows are
-   * ever anything but `active` — every other transport is born finished (0062).
+   * ever anything but `active` — every other transport is born finished (0063).
    */
   status: "pending" | "active" | "failed";
 };
@@ -62,7 +62,7 @@ export type ToolConnection = {
  * The columns a CLIENT may select.
  *
  * `connected_account_id` and `composio_user_id` are deliberately absent and
- * adding them here would not work: 0062 grants neither to `authenticated`, so
+ * adding them here would not work: 0063 grants neither to `authenticated`, so
  * PostgREST answers the whole request with a permission error rather than
  * quietly omitting the column. They are read by `lib/harness/secrets.ts`, with
  * the service role, after this read has already decided the caller may have the
@@ -85,7 +85,7 @@ function normalise(row: Record<string, unknown>): ToolConnection {
     label: String(row.label ?? ""),
     transport,
     base_url: String(row.base_url ?? ""),
-    // Read from the row rather than asserted, which it was until 0062 added a
+    // Read from the row rather than asserted, which it was until 0063 added a
     // second value. A hardcoded `static_header` on a Composio row would have
     // sent `authHeaders` looking for an envelope that does not exist.
     auth_kind:

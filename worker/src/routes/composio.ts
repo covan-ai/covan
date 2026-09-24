@@ -31,11 +31,11 @@ import {
  *
  * Reads go through the caller's own client, so RLS decides. The one write that
  * does not is the connection insert, for the reason 0059 gives and 0043 gave
- * before it — and one 0062 sharpens: the row carries `connected_account_id`,
+ * before it — and one 0063 sharpens: the row carries `connected_account_id`,
  * which no client role may select, so a client that could insert could write
  * another workspace's account id and never read back what it wrote to check.
  * Grants are ordinary writes through the caller's client, where the policies in
- * 0062 decide who may promote one to `always`.
+ * 0063 decide who may promote one to `always`.
  */
 const composio = new Hono<AppEnv>();
 
@@ -76,7 +76,7 @@ async function mayWrite(
   // account somebody else may own, where this is one person completing a
   // consent screen with their own credentials for one application. The second
   // gate is what carries the rest: no agent acts on it without a grant or an
-  // approval (0062).
+  // approval (0063).
   return Boolean(role) && role !== "viewer";
 }
 
@@ -138,7 +138,7 @@ composio.post("/composio/connect", async (c) => {
       workspace_id: workspaceId,
       label: parsed.data.label ?? toolkit,
       transport: "composio",
-      // No per-row address on this transport, and the column is NOT NULL. 0062's
+      // No per-row address on this transport, and the column is NOT NULL. 0063's
       // banner argues the duplication rather than widening the check.
       base_url: (c.env.COMPOSIO_BASE_URL || COMPOSIO_BASE).replace(/\/+$/, ""),
       auth_kind: "composio",
@@ -198,7 +198,7 @@ composio.get("/composio/connections/:id/status", async (c) => {
     return c.json({ error: "this deployment has no COMPOSIO_API_KEY set" }, 501);
   }
 
-  // The account id is readable by no client role (0062), so this is the service
+  // The account id is readable by no client role (0063), so this is the service
   // role filling in the column the database withheld — after the read above has
   // already decided the caller may have the row. `lib/harness/secrets.ts`'s
   // order, in a route.
@@ -231,7 +231,7 @@ composio.get("/composio/connections/:id/status", async (c) => {
  * What one agent may do at one connected service.
  *
  * Every read and write below goes through the caller's own client, and that is
- * the whole access control: 0062's policies admit a member to read, a writer to
+ * the whole access control: 0063's policies admit a member to read, a writer to
  * create an `ask` or to remove anything, and an admin alone to promote to
  * `always`. Nothing here re-asks that question, which is the rule this
  * repository holds itself to.
@@ -258,7 +258,7 @@ composio.put("/composio/grants", async (c) => {
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
   // `workspace_id` is denormalised and constrained to agree with both parents
-  // (0062), so a value that does not match the agent's or the connection's is
+  // (0063), so a value that does not match the agent's or the connection's is
   // refused by the foreign keys rather than by anything here. Sent because the
   // column is NOT NULL, not because it is trusted.
   const { data, error } = await db
@@ -302,7 +302,7 @@ composio.delete("/composio/grants", async (c) => {
     return c.json({ error: "agentId, connectionId and slug are required" }, 400);
   }
   // Revoking is a writer's, and it is deliberately not an admin's: taking a
-  // standing permission away can never be the unsafe direction (0062).
+  // standing permission away can never be the unsafe direction (0063).
   const { error } = await c
     .get("db")
     .from("tool_connection_grants")

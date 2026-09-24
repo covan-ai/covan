@@ -14,7 +14,7 @@ import type { ToolEnv } from "./registry";
  * could read everyone's. So the permission question cannot be answered by the
  * same read that fetches the secret.
  *
- * A fourth column joined them in 0062 and it is not a secret, which is worth
+ * A fourth column joined them in 0063 and it is not a secret, which is worth
  * saying because the exception looks like a weakening and is not.
  * `tool_connections.connected_account_id` is Composio's opaque reference to a
  * grant; the token it stands for never reaches this database. It is withheld
@@ -101,7 +101,7 @@ export async function authHeaders(
 ): Promise<Record<string, string>> {
   // Composio authenticates the DEPLOYMENT, not the row. There is no envelope to
   // decrypt and no per-workspace credential to find: one API key opens every
-  // connected account on this deployment, which is exactly why 0062 keeps the
+  // connected account on this deployment, which is exactly why 0063 keeps the
   // account reference out of every client role's reach.
   if (connection.transport === "composio") {
     if (!env.COMPOSIO_API_KEY) {
@@ -131,7 +131,7 @@ export async function authHeaders(
 /**
  * Which Composio account a connection executes against, and on whose behalf.
  *
- * The two columns 0062 withholds from every client role, for a connection the
+ * The two columns 0063 withholds from every client role, for a connection the
  * caller has already been found — through their own client, by
  * `loadConnection` — to be allowed to have. Same order and same discipline as
  * everything else in this file: ask, then fetch.

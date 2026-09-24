@@ -46,7 +46,7 @@ const ROW = {
   account_id: null,
   toolkit_slug: "gmail",
   status: "pending",
-  // Never selectable by a client (0062). It is here because the service-role
+  // Never selectable by a client (0063). It is here because the service-role
   // read in the status route is what fills it in, and a fixture without it
   // would make that route look like it had lost the account.
   connected_account_id: "ca_1",
@@ -292,7 +292,7 @@ describe("grants", () => {
     });
     expect(status).toBe(200);
     expect(body.mode).toBe("ask");
-    // Nothing on this path touches the service role: 0062's WITH CHECK is what
+    // Nothing on this path touches the service role: 0063's WITH CHECK is what
     // refuses an `always` from somebody who is not an admin, and re-asking that
     // question here would be a second permission system.
     expect(serviceFrom).not.toHaveBeenCalled();

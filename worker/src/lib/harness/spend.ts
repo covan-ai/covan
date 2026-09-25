@@ -1,4 +1,5 @@
 import { entitlementsFor } from "../entitlements";
+import { isRuntimeLimit } from "../runtime-limit";
 import type { ToolContext, ToolResult } from "./registry";
 
 /**
@@ -52,6 +53,28 @@ export async function affordable(ctx: ToolContext): Promise<ToolResult | null> {
         `${verdict.resetsAt}. Say so plainly rather than retrying.`,
     };
   } catch (err) {
+    // The one failure that must NOT be forgiven, and the reason is not
+    // billing. If the check failed because this invocation is out of
+    // subrequests, the call it was guarding cannot go out either — a
+    // connected-app call is a `fetch` like any other — so allowing it buys a
+    // certain failure one step later, with a worse message. Refusing here
+    // spends the last of the turn saying something true.
+    //
+    // Everything else keeps the forgiving path, which is `guardQuota`'s own
+    // rule: the counter lives in the database everything else lives in, so a
+    // read failure means the app is already in trouble, and refusing every
+    // action on top of that turns a billing inconvenience into an outage.
+    if (isRuntimeLimit(err)) {
+      if (ctx.runtimeLimit) ctx.runtimeLimit.hit = true;
+      console.error("connected-service call refused: invocation out of subrequests", err);
+      return {
+        kind: "error",
+        message:
+          "this turn has used up the requests it is allowed to make, so nothing further " +
+          "can be looked up or called. Answer with what you already have and say plainly " +
+          "that you could not finish.",
+      };
+    }
     console.error("composio quota check failed (allowing the call)", err);
     return null;
   }
@@ -66,6 +89,11 @@ export async function spend(ctx: ToolContext, tokens: number): Promise<void> {
   try {
     await entitlementsFor(ctx.env).record(ctx.userId, tokens);
   } catch (err) {
+    // Still never throws. It does raise the flag, because a write that could
+    // not be made for this reason is the same fact as a read that could not
+    // be made, and the route explaining the turn should hear about it from
+    // whichever of them happened to be the one that noticed.
+    if (isRuntimeLimit(err) && ctx.runtimeLimit) ctx.runtimeLimit.hit = true;
     console.error("failed to record a connected-service call", err);
   }
 }

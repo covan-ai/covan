@@ -1414,6 +1414,30 @@ describe("a turn that dies mid-flight", () => {
     expect(types).toContain("error");
   });
 
+  /**
+   * "Please try again" is right for a far end that failed and will probably
+   * work next time. It is wrong for a turn that used up the requests one
+   * invocation may make: the same question runs into the same ceiling, and
+   * what helps is asking for less. Two failures, two sentences.
+   */
+  it("says try again when the far end simply failed", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(toolThenDrop("search_documents", '{"query":"vacation"}'));
+    const error = frames((await ask(app)).body).find((f) => f.type === "error");
+    expect(String(error?.error)).toContain("Please try again");
+  });
+
+  it("says ask for less when the invocation ran out of requests", async () => {
+    const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+      if (!body.stream) return titleOf("A question");
+      throw new Error("Too many subrequests by single Worker invocation.");
+    });
+    const error = frames((await ask(app)).body).find((f) => f.type === "error");
+    expect(String(error?.error)).toContain("ran out of the requests");
+    expect(String(error?.error)).not.toContain("Please try again");
+  });
+
   it("writes down the tool call that really ran", async () => {
     const { app } = appWith({ question: "How many days?", documents: [HANDBOOK] });
     completionCreate.mockImplementation(toolThenDrop("search_documents", '{"query":"vacation"}'));

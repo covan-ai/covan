@@ -2,8 +2,8 @@
 
 Written by `eval/run.ts --variant baseline`. Do not edit by hand.
 
-- **Date** 2026-09-25T10:31:45.914Z
-- **Commit** `ca184189a9e73d90b19377fbde1063fd1435ba04` — **with uncommitted changes in the tree**, so this sha does not fully identify the code that ran
+- **Date** 2026-09-25T10:35:42.918Z
+- **Commit** `3cd1827292315867bed7eba353b0f085bdef4d7e`
 - **Model** `claude-sonnet-5`
 - **Reps** 1
 - **Cases** 18 of 18

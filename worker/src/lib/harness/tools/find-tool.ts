@@ -130,8 +130,17 @@ export const findToolTool: AgentTool = {
       detail: {
         type: "boolean",
         description:
-          "Return the full argument schema for the single best match instead of a list. " +
-          "Use it when you know which operation you want and need to know what to send.",
+          "Return the full argument schema instead of a list. Use it when you know which " +
+          "operation you want and need to know what to send. The other matches still come " +
+          "back as one-liners underneath, so you never have to search again to change your " +
+          "mind.",
+      },
+      slug: {
+        type: "string",
+        description:
+          "With detail: the exact operation to describe, copied from an earlier result — " +
+          "GOOGLECALENDAR_EVENTS_LIST. Name it rather than hoping the search ranks it first. " +
+          "Without this, detail describes the top match.",
       },
     },
     required: ["query"],
@@ -142,7 +151,12 @@ export const findToolTool: AgentTool = {
   // anything is connected. See the note at the top of this file.
   isConfigured: (env: ToolEnv) => composioConfigured(env),
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const input = args as { query?: unknown; toolkit?: unknown; detail?: unknown };
+    const input = args as {
+      query?: unknown;
+      toolkit?: unknown;
+      detail?: unknown;
+      slug?: unknown;
+    };
     if (typeof input.query !== "string" || !input.query.trim()) {
       return { kind: "error", message: "query is required — say what you are trying to do" };
     }
@@ -217,20 +231,50 @@ export const findToolTool: AgentTool = {
     });
 
     if (input.detail === true) {
-      const best = ranked[0];
-      const full = await getTool(ctx.env, best.slug, { signal: ctx.signal });
+      // Which operation to describe, and why the model gets to say.
+      //
+      // This used to be `ranked[0]` and nothing else, which is the shape that
+      // sent a production turn round in circles: asked for "list events" in a
+      // calendar, the catalogue ranks GOOGLECALENDAR_EVENTS_GET above
+      // GOOGLECALENDAR_EVENTS_LIST, so `detail` answered with the schema of an
+      // operation whose own description says it does NOT list events. With the
+      // other candidates gone from the answer there was nothing to pivot to,
+      // so the model searched again in different words — four times in one
+      // turn, spending the budget without ever calling anything.
+      //
+      // A slug the model has already seen therefore beats the ranking, because
+      // the ranking is what went wrong.
+      const named = typeof input.slug === "string" ? input.slug.trim().toUpperCase() : "";
+      const chosen = named || ranked[0].slug;
+
+      const full = await getTool(ctx.env, chosen, { signal: ctx.signal });
       if (full.kind === "ok" || wasBilled(full.status)) {
         await spend(ctx, COMPOSIO_SEARCH_TOKENS);
       }
       if (full.kind === "error") {
-        return { kind: "error", message: `${best.slug} could not be described: ${full.message}` };
+        return { kind: "error", message: `${chosen} could not be described: ${full.message}` };
       }
       const schema = full.tool.inputSchema
         ? JSON.stringify(full.tool.inputSchema, null, 2).slice(0, MAX_SCHEMA_CHARS)
         : "(this operation publishes no argument schema)";
+
+      // And the rest of the shortlist, in one line each. Cheap — they were
+      // already fetched — and it is the half that was missing: a model handed
+      // the wrong operation can now take the right one instead of searching
+      // again for it.
+      const others = ranked.filter((t) => t.slug !== full.tool.slug).slice(0, MAX_RESULTS - 1);
+      const alternatives =
+        others.length > 0
+          ? `\n\nIf that is not the one you want, these also matched — ask for detail on a ` +
+            `slug by name rather than searching again:\n` +
+            others.map((t) => `  ${t.slug} — ${t.description || t.name}`).join("\n")
+          : "";
+
       return {
         kind: "ok",
-        content: `${summarise(full.tool, byToolkit.get(full.tool.toolkit))}\n\nArguments:\n${schema}`,
+        content:
+          `${summarise(full.tool, byToolkit.get(full.tool.toolkit))}\n\n` +
+          `Arguments:\n${schema}${alternatives}`,
       };
     }
 

@@ -222,3 +222,82 @@ describe("a query too long for the catalogue to match", () => {
     expect(properties.query.description).toMatch(/two or three words/i);
   });
 });
+
+/**
+ * Asking for a schema, and the loop that used to cause.
+ *
+ * `detail` answered with the top match and nothing else. Measured in
+ * production on 2026-09-25: asked for "list events" against a connected
+ * calendar, the catalogue ranks `GOOGLECALENDAR_EVENTS_GET` — whose own
+ * description says it does NOT list events — above
+ * `GOOGLECALENDAR_EVENTS_LIST`. The model got the wrong schema, had no other
+ * candidate left in the answer, and searched again in different words. Four
+ * times in one turn, spending the budget without ever calling anything.
+ */
+describe("asking for the arguments of one operation", () => {
+  const EVENTS_GET = {
+    slug: "GOOGLECALENDAR_EVENTS_GET",
+    name: "Get event",
+    description: "Retrieves a SINGLE event. Does NOT list events.",
+    toolkit: { slug: "GOOGLECALENDAR" },
+    input_parameters: { required: ["event_id"] },
+  };
+  const EVENTS_LIST = {
+    slug: "GOOGLECALENDAR_EVENTS_LIST",
+    name: "List events",
+    description: "Lists events from one calendar.",
+    toolkit: { slug: "GOOGLECALENDAR" },
+    input_parameters: { required: [] },
+  };
+
+  /** The search, then the one schema fetch `detail` makes. */
+  function catalogueThen(schemaFor: Record<string, unknown>) {
+    fetchMock
+      .mockResolvedValueOnce(catalogue([EVENTS_GET, EVENTS_LIST]))
+      .mockResolvedValueOnce(new Response(JSON.stringify(schemaFor), { status: 200 }));
+  }
+
+  it("describes the top match when no slug is named, as it always did", async () => {
+    catalogueThen(EVENTS_GET);
+    const out = await findToolTool.run({ query: "list events", detail: true }, ctxWith());
+    expect(new URL(String(fetchMock.mock.calls[1][0])).pathname).toContain(
+      "GOOGLECALENDAR_EVENTS_GET",
+    );
+    expect(out.kind === "ok" && out.content).toContain("Arguments:");
+  });
+
+  it("describes the operation the model names, over whatever ranked first", async () => {
+    catalogueThen(EVENTS_LIST);
+    await findToolTool.run(
+      { query: "list events", detail: true, slug: "GOOGLECALENDAR_EVENTS_LIST" },
+      ctxWith(),
+    );
+    // The ranking put EVENTS_GET first; the model asked for the other one and
+    // got the other one. That is the whole fix.
+    expect(new URL(String(fetchMock.mock.calls[1][0])).pathname).toContain(
+      "GOOGLECALENDAR_EVENTS_LIST",
+    );
+  });
+
+  it("takes a slug in any case, since a model retypes rather than copies", async () => {
+    catalogueThen(EVENTS_LIST);
+    await findToolTool.run(
+      { query: "list events", detail: true, slug: "googlecalendar_events_list" },
+      ctxWith(),
+    );
+    expect(new URL(String(fetchMock.mock.calls[1][0])).pathname).toContain(
+      "GOOGLECALENDAR_EVENTS_LIST",
+    );
+  });
+
+  it("keeps the other matches beside the schema, so a wrong pick costs nothing", async () => {
+    catalogueThen(EVENTS_GET);
+    const out = await findToolTool.run({ query: "list events", detail: true }, ctxWith());
+    const content = out.kind === "ok" ? out.content : "";
+
+    expect(content).toContain("GOOGLECALENDAR_EVENTS_LIST");
+    expect(content).toContain("ask for detail on a slug by name rather than searching again");
+    // And the one being described is not repeated in its own alternatives.
+    expect(content.split("GOOGLECALENDAR_EVENTS_GET").length - 1).toBe(1);
+  });
+});

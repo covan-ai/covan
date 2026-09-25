@@ -134,6 +134,7 @@ export function runRoutineWithTools(
         // repeat a search the same way. On the cron Worker the saving is a
         // subrequest, which is the budget that actually binds there.
         searchMemo: new Map<string, string>(),
+        offeredSlugs: new Set<string>(),
       },
     });
 

@@ -41,7 +41,10 @@ const GMAIL_CONNECTION = {
   status: "active",
 };
 
-function ctxWith(connections: Record<string, unknown>[] = []): ToolContext {
+function ctxWith(
+  connections: Record<string, unknown>[] = [],
+  offeredSlugs?: Set<string>,
+): ToolContext {
   return {
     db: {
       from: () => ({
@@ -56,6 +59,7 @@ function ctxWith(connections: Record<string, unknown>[] = []): ToolContext {
     workspaceId: "ws-1",
     agentId: "agent-1",
     userId: "user-1",
+    offeredSlugs,
   };
 }
 
@@ -120,6 +124,19 @@ describe("find_tool", () => {
     expect(content.indexOf("GMAIL_SEND_EMAIL")).toBeLessThan(
       content.indexOf("LINEAR_CREATE_ISSUE"),
     );
+  });
+
+  it("writes down which slugs it put in front of the model", async () => {
+    // The other half of `run_tool`'s guard, and the half with a precedent for
+    // going missing: `message_steps.tokens` was added in 0060 and is NULL on
+    // every row ever written because nothing filled it. A set nobody writes to
+    // is a guard that never fires, and it fails silently in the safe
+    // direction — everything keeps working, and the invented slug keeps
+    // costing a 404.
+    const offered = new Set<string>();
+    fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
+    await findToolTool.run({ query: "send" }, ctxWith([GMAIL_CONNECTION], offered));
+    expect([...offered]).toEqual(["GMAIL_SEND_EMAIL"]);
   });
 
   it("names the required parameters without fetching a schema", async () => {

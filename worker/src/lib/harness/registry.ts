@@ -131,6 +131,28 @@ export type ToolContext = {
    * instead of quietly looking identical.
    */
   searchMemo?: Map<string, string>;
+  /**
+   * Every slug `find_tool` has put in front of the model this turn.
+   *
+   * `run_tool`'s own description already promises this — "a slug you have not
+   * seen in a find_tool result will be refused" — and until now nothing
+   * enforced it, which made the sentence a claim the code did not keep.
+   *
+   * It is enforced because the model does invent slugs, and the invented ones
+   * look right. Production, 19:04:38 and again identically at 19:05:39:
+   * `find_tool` returned `GOOGLECALENDAR_EVENTS_LIST` and the next step ran
+   * `GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS`, which does not exist. Composio
+   * answered `404 Tool_ToolNotFound` — a round trip and a step to learn
+   * something the turn already knew.
+   *
+   * Written only by `find_tool`, and only with slugs it actually rendered: a
+   * candidate dropped from the shortlist was not offered, so refusing it later
+   * is right. Empty means `find_tool` has not answered this turn, and then
+   * nothing is refused — a slug can legitimately come from an earlier turn's
+   * transcript or a standing grant, and refusing those would break working
+   * behaviour to prevent a mistake that has not happened.
+   */
+  offeredSlugs?: Set<string>;
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };

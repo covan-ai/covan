@@ -31,7 +31,7 @@ import { CASES } from "./cases";
 import { runCase } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
-import { loadEnv, requireAnthropicKey } from "./env";
+import { loadEnv, requireAnthropicKey, isAccountError } from "./env";
 
 const MODEL = process.env.EVAL_MODEL ?? "claude-sonnet-5";
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? "claude-opus-5";
@@ -67,8 +67,11 @@ let spend = 0;
 let separated = 0;
 let tied = 0;
 
-/**
- * Whether an error is about the account rather than about the case.
+/*
+ * `isAccountError` used to live here. It moved to `env.ts` when `run.ts` needed
+ * the same test — see the comment there, which is this one.
+ *
+ * The original note, kept because it is the reason the function exists:
  *
  * These do not come right on the next case, and walking the whole set to
  * discover that is both slow and — on a key that is rate-limited rather than
@@ -81,15 +84,6 @@ let tied = 0;
  * a 400 covers both this and a malformed request, and only one of the two is
  * worth abandoning the run over.
  */
-function isAccountError(err: unknown): boolean {
-  const text = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return (
-    text.includes("credit balance is too low") ||
-    text.includes("authentication_error") ||
-    text.includes("permission_error") ||
-    text.includes("invalid x-api-key")
-  );
-}
 
 let failed = 0;
 let abandoned: string | null = null;

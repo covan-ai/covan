@@ -605,6 +605,9 @@ chat.post("/chat/stream", async (c) => {
             // One per turn, so the same catalogue search asked twice is
             // answered from the first one. See `searchMemo` in `registry.ts`.
             searchMemo: new Map<string, string>(),
+            // And what those searches offered, which is what `run_tool` will
+            // run. See `offeredSlugs` in `registry.ts`.
+            offeredSlugs: new Set<string>(),
           },
           signal,
           onEvent: (event) => {
@@ -944,6 +947,10 @@ chat.post("/chat/confirm/:id", async (c) => {
     // Fresh for the resumed half. The parked half's searches are in the
     // transcript the model can already read, so there is nothing to carry.
     searchMemo: new Map<string, string>(),
+    // Empty, and `confirmed: true` above means it is never consulted anyway —
+    // the slug was checked against this when the call was proposed, and asking
+    // again after a person approved it would be a second opinion nobody wanted.
+    offeredSlugs: new Set<string>(),
   };
 
   const stream = new ReadableStream({

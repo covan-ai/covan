@@ -44,6 +44,29 @@ export function loadEnv(): CompletionEnv {
   };
 }
 
+/**
+ * Whether an error is about the account rather than about the case.
+ *
+ * A credit balance, a revoked key, a permission: none of them gets better on
+ * the next case, so a run that meets one should stop rather than walk the same
+ * wall once per case. `calibrate.ts` learnt this on a credit balance and
+ * `run.ts` learnt it again on a rotated key — ten cases, ten identical 401s,
+ * and a variant directory half-populated with failures.
+ *
+ * Matched on the provider's own wording rather than on a status code, because
+ * a 400 covers both this and a malformed request, and only one of the two is
+ * worth abandoning the run over.
+ */
+export function isAccountError(err: unknown): boolean {
+  const text = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    text.includes("credit balance is too low") ||
+    text.includes("authentication_error") ||
+    text.includes("permission_error") ||
+    text.includes("invalid x-api-key")
+  );
+}
+
 /** Stop before spending anything if the one key every case needs is absent. */
 export function requireAnthropicKey(env: CompletionEnv): void {
   if (env.ANTHROPIC_API_KEY) return;

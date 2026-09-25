@@ -27,16 +27,25 @@
  */
 
 /** The framing `lib/rag.ts` puts around retrieved passages, verbatim. */
+import { NO_PASSAGE_MATCHED } from "../src/lib/harness/tools/search-documents";
+
 const RAG_HEADER =
   "The team has shared the following knowledge. Use it to ground your answers. " +
   "Answer naturally in your own words — do not cite, quote, or mention the document " +
   "names, filenames, or that these documents were provided; the interface shows " +
   "sources separately:\n\n";
 
-/** What `search_documents` says when retrieval comes back empty, verbatim. */
-export const NO_PASSAGE =
-  "No passage matched that. Try different wording, or say that the documents do not " +
-  "cover it rather than answering from memory.";
+/**
+ * What `search_documents` says when retrieval comes back empty.
+ *
+ * Imported rather than copied. It used to be a literal with a comment calling
+ * it verbatim, and nothing held the two together — so the day somebody changed
+ * the tool's wording, every case here would have gone on replaying the old
+ * sentence and the eval would have reported no effect from a change it simply
+ * never ran. That is the one failure this file cannot have: its whole job is
+ * to measure what the model reads.
+ */
+export const NO_PASSAGE = NO_PASSAGE_MATCHED;
 
 /** What `query_database` says for an empty result set, verbatim. */
 export const NO_ROWS = "The query ran and matched no rows.";

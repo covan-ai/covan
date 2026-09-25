@@ -69,6 +69,7 @@ function ctxWith(
     approved?: string[];
     confirmed?: boolean;
     routineRunId?: string;
+    offeredSlugs?: Set<string>;
   } = {},
 ): ToolContext {
   const row = over.row === undefined ? CONNECTION : over.row;
@@ -95,6 +96,7 @@ function ctxWith(
               }),
             },
     } as unknown as ToolContext["db"],
+    offeredSlugs: over.offeredSlugs,
     env: {
       ALLOWED_ORIGIN: "https://app.covan.test",
       ROUTINE_SECRET_KEY: "k",
@@ -155,6 +157,58 @@ describe("run_tool", () => {
     // parameter by that name and stripping keys the model sent is a different
     // and worse kind of surprise. What it does not do is decide anything.
     expect(body.arguments.connected_account_id).toBe("ca_somebody_else");
+  });
+
+  it("refuses a slug find_tool never returned, instead of paying for the 404", async () => {
+    // Production, 19:04:38 and identically again at 19:05:39: find_tool
+    // returned GOOGLECALENDAR_EVENTS_LIST and the next step ran
+    // GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS, which does not exist. The
+    // invented slug is plausible — it even guessed a naming convention — so
+    // nothing but the list the turn was actually given can tell them apart.
+    const out = await runToolTool.run(
+      { ...CALL, slug: "GMAIL_SEND_EMAIL_TO_MANY" },
+      ctxWith({
+        approved: ["conn-1"],
+        offeredSlugs: new Set(["GMAIL_SEND_EMAIL", "GMAIL_CREATE_DRAFT"]),
+      }),
+    );
+    expect(out.kind).toBe("error");
+    // The list is the point. An error that only says no sends the model back
+    // to find_tool for something it has already been told.
+    expect(out.kind === "error" && out.message).toContain("GMAIL_SEND_EMAIL, GMAIL_CREATE_DRAFT");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("runs a slug that find_tool did return", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ approved: ["conn-1"], offeredSlugs: new Set(["GMAIL_SEND_EMAIL"]) }),
+    );
+    expect(out.kind).toBe("ok");
+  });
+
+  it("refuses nothing when find_tool has not answered this turn", async () => {
+    // An empty set is not "nothing was offered", it is "nobody searched". The
+    // slug can have come from an earlier turn still in the transcript or from
+    // a standing grant, and refusing those would break working behaviour to
+    // prevent a mistake that has not happened.
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ approved: ["conn-1"], offeredSlugs: new Set() }),
+    );
+    expect(out.kind).toBe("ok");
+  });
+
+  it("does not second-guess a slug a person has already approved", async () => {
+    // The resumed half of a confirmed call carries a fresh, empty set and a
+    // slug that went through this guard when it was proposed. Checking it
+    // again against whatever the second half happened to search for would
+    // refuse an action somebody said yes to.
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ confirmed: true, offeredSlugs: new Set(["GMAIL_CREATE_DRAFT"]) }),
+    );
+    expect(out.kind).toBe("ok");
   });
 
   it("refuses a slug from another toolkit locally, not by way of a 400", async () => {

@@ -173,6 +173,26 @@ export type AgentTurnOptions = {
    * for. A caller that collects these can write them down anyway.
    */
   onStep?: (step: AgentStep) => void;
+  /**
+   * Each model call's usage as it lands, for a caller that has to survive this
+   * function throwing.
+   *
+   * `onStep`'s argument, applied to the other half of what a turn produces.
+   * The turn's totals live in `usage`, which only exists once this function
+   * RETURNS — so a turn that throws on its twelfth pass reports nothing for
+   * the eleven model calls that already happened and were already paid for.
+   *
+   * That is not a cosmetic loss. The route's salvage writes an assistant row
+   * with every token column null, and `recordQuota` is handed a zero and
+   * early-returns, so the passes are neither recorded against the message nor
+   * billed. Production, 2026-09-25: four turns saved with all token columns
+   * NULL and nothing charged. This is the only copy of those numbers that
+   * survives the throw.
+   *
+   * Emitted once per model call, in order, with the same entries `passes`
+   * ends up holding — neither is authoritative over the other.
+   */
+  onPass?: (usage: PassUsage) => void;
 };
 
 /**
@@ -420,7 +440,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // Recorded per pass as well as summed, so a turn that spent everything
         // on its last request can be told apart from one that spread it. See
         // `PassUsage`.
-        passes.push({
+        const spent: PassUsage = {
           index: pass,
           prompt: event.usage.promptTokens,
           cached: event.usage.cachedTokens,
@@ -431,7 +451,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           // seven grows with the step budget. Both sum to the same row total
           // and argue for different fixes.
           reasoning: event.usage.reasoningTokens,
-        });
+        };
+        passes.push(spent);
+        // Handed out here rather than at the foot of the turn, for the reason
+        // `onPass` gives: what the caller cannot reach is what a throw takes
+        // with it, and everything after this line can throw.
+        opts.onPass?.(spent);
         finishReason = event.finishReason;
       }
     }

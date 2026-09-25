@@ -150,7 +150,19 @@ export type AgentTurnOptions = {
   ctx: ToolContext;
   onEvent?: (event: HarnessEvent) => void;
   signal?: AbortSignal;
-  budget?: { maxSteps?: number; toolTimeoutMs?: number; maxOutputChars?: number };
+  budget?: {
+    /** The steps the model is budgeted. Crossing it starts a leg, not a stop. */
+    maxSteps?: number;
+    /**
+     * How many extra legs a turn may take past `maxSteps`, and how long each
+     * is. `extraLegs: 0` — the default — means the soft ceiling IS the hard
+     * one, which is what every caller that passes a bare `maxSteps` relies on.
+     */
+    extraLegs?: number;
+    legSteps?: number;
+    toolTimeoutMs?: number;
+    maxOutputChars?: number;
+  };
   /**
    * Steps already spent before this call — a resumed turn continues the
    * budget rather than starting a fresh one, or a person could buy an
@@ -207,6 +219,34 @@ const BUDGET_INSTRUCTION =
   "You have used every tool call allowed for this turn. Answer now with what you " +
   "already have. Say plainly, in one sentence, what you were not able to finish and " +
   "what you would need to do next — do not pretend the work is complete.";
+
+/**
+ * What the model is told when it crosses the soft ceiling with a leg in hand.
+ *
+ * **This is the opposite instruction to `BUDGET_INSTRUCTION`, and the
+ * difference is the whole feature.** One says stop and confess; this says keep
+ * going and narrow. Getting the wrong one is not a small error: a turn that
+ * wraps up early looks finished, so the person cannot tell it happened and
+ * cannot correct it.
+ *
+ * It has to forbid stopping in words, because a model told anything at all
+ * about a budget reliably starts wrapping up — naming the number left is not
+ * enough on its own, and may even invite it. It also forbids narrating the
+ * limit, because a paragraph explaining the agent's internal allowance is not
+ * an answer to the question that was asked.
+ *
+ * Appended as a `system` turn at the tail, where `BUDGET_INSTRUCTION` goes, so
+ * it lands after the cacheable prefix and invalidates nothing.
+ */
+function paceNotice(left: number): string {
+  return (
+    `You have used the tool calls normally allowed for one turn, and you have been given ` +
+    `${left} more so you can finish. Do not stop here, do not wrap up, do not summarise what ` +
+    `you have so far, and do not mention this limit to the person — none of those is what was ` +
+    `asked of you. Carry on with the original request, and spend what is left on the narrowest ` +
+    `steps that will actually complete it.`
+  );
+}
 
 /** What the model is told when its own model cannot be given tools at all. */
 export const NO_TOOLS_NOTICE =
@@ -341,7 +381,24 @@ function approvedConnectionsFrom(steps: AgentStep[]): string[] {
 }
 
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
-  const maxSteps = opts.budget?.maxSteps ?? MAX_STEPS;
+  /**
+   * The three numbers a ceiling is made of now, instead of one.
+   *
+   * `softSteps` is what the model is budgeted; `hardSteps` is where the turn
+   * genuinely stops. Between them are `extraLegs` legs of `legSteps` each — a
+   * turn that has used its allowance and is still working is told to carry on,
+   * once, rather than told to apologise.
+   *
+   * **`extraLegs` defaults to 0, and that default is load-bearing.** Every
+   * existing caller passes a bare `maxSteps` — `SCHEDULED_MAX_STEPS` from
+   * `lib/routines/agent-run.ts`, and every budget case in the tests — and all
+   * of them have to keep meaning exactly what they meant: hard equals soft, no
+   * legs, one sentence when it runs out.
+   */
+  const softSteps = opts.budget?.maxSteps ?? MAX_STEPS;
+  const legSteps = opts.budget?.legSteps ?? softSteps;
+  const extraLegs = opts.budget?.extraLegs ?? 0;
+  const hardSteps = softSteps + extraLegs * legSteps;
   const toolTimeoutMs = opts.budget?.toolTimeoutMs ?? TOOL_TIMEOUT_MS;
   const maxOutputChars = opts.budget?.maxOutputChars ?? MAX_TOOL_OUTPUT_CHARS;
 
@@ -399,6 +456,23 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * to zero.
    */
   let pass = steps.reduce((max, step) => Math.max(max, step.pass ?? -1), -1) + 1;
+  /**
+   * Which leg `n` steps puts the turn in — 0 while it is still inside its
+   * budget, 1 once it has crossed into the first extra leg, and so on.
+   *
+   * A pure function of `steps.length`, which is what lets a turn pause for an
+   * approval at step 27, resume with 27 entries in `stepsSoFar`, and work out
+   * where it is again from nothing but those. No column, no migration.
+   */
+  const legOf = (n: number) => (n < softSteps ? 0 : Math.floor((n - softSteps) / legSteps) + 1);
+  /**
+   * The last boundary this run has already spoken about.
+   *
+   * Seeded from the steps carried in rather than at zero, so a resumed turn
+   * that was already inside a leg does not announce the boundary a second
+   * time — the notice it was given is in the transcript it resumes with.
+   */
+  let noticedLeg = legOf(steps.length);
 
   for (;;) {
     const events = streamCompletion(
@@ -504,7 +578,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     messages.push({ role: "assistant", content: passText, toolCalls: calls });
 
     for (const call of calls) {
-      if (steps.length >= maxSteps) {
+      if (steps.length >= hardSteps) {
         // Budget gone mid-batch. Every remaining call still needs an answer or
         // the next request is a 400, so they are answered with the refusal
         // rather than dropped.
@@ -628,9 +702,20 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       });
     }
 
-    if (steps.length >= maxSteps && !budgetSpent) budgetSpent = true;
+    if (steps.length >= hardSteps && !budgetSpent) budgetSpent = true;
     if (budgetSpent) {
       messages.push({ role: "system", content: BUDGET_INSTRUCTION });
+    } else {
+      // Past the soft ceiling with a leg still in hand. Said once per boundary
+      // rather than once per pass — the transcript is re-sent whole, so a
+      // notice pushed every pass would stack up inside one request — and
+      // deliberately without setting `budgetSpent` or touching `toolsWithheld`:
+      // the model keeps its tools and keeps working.
+      const leg = legOf(steps.length);
+      if (leg > noticedLeg) {
+        noticedLeg = leg;
+        messages.push({ role: "system", content: paceNotice(hardSteps - steps.length) });
+      }
     }
     pass += 1;
   }

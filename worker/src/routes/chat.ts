@@ -1006,8 +1006,9 @@ chat.post("/chat/confirm/:id", async (c) => {
          * asks on every call, so the tool carrying most of today's traffic was
          * the one tool with no output budget at all. An uncapped result is not
          * paid for once either: it joins the transcript and is re-sent on every
-         * later pass of the turn, which with sixteen steps is the expensive
-         * end of a square.
+         * later pass of the turn, which at a hard ceiling of thirty-two is the
+         * expensive end of a square. (This said "sixteen" — a number that was
+         * reverted the day after it shipped and never ran. See `MAX_STEPS`.)
          *
          * One string for all three uses below — what the model reads, what the
          * transcript keeps, and the length that is measured — because they were

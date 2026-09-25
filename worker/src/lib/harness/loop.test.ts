@@ -45,6 +45,17 @@ function pass(
 }
 
 /**
+ * The transcript as each request actually saw it.
+ *
+ * `runAgentTurn` builds one `messages` array and mutates it for the whole
+ * turn, so every entry in `streamCompletion.mock.calls` holds the SAME array —
+ * read after the turn, they all show the final state. An assertion about what
+ * the fourth request carried therefore has to be made against a copy taken
+ * when that request was made, which is what this is.
+ */
+const sentTranscripts: CompletionMessage[][] = [];
+
+/**
  * Replay the scripted passes, repeating the last one forever.
  *
  * Repeating is what makes the budget testable: a model that would ask again
@@ -55,7 +66,11 @@ function pass(
  */
 function scripted(passes: CompletionEvent[][]) {
   let i = 0;
-  streamCompletion.mockImplementation(async function* (_env: unknown, req: { tools?: unknown[] }) {
+  streamCompletion.mockImplementation(async function* (
+    _env: unknown,
+    req: { tools?: unknown[]; messages?: CompletionMessage[] },
+  ) {
+    sentTranscripts.push([...(req.messages ?? [])]);
     const events = passes[Math.min(i, passes.length - 1)];
     i += 1;
     for (const e of events) {
@@ -91,6 +106,7 @@ const base = {
 
 beforeEach(() => {
   streamCompletion.mockReset();
+  sentTranscripts.length = 0;
 });
 
 describe("a turn that asks for nothing", () => {
@@ -361,6 +377,116 @@ describe("the budget", () => {
     expect(turn.steps.map((s) => s.status)).toEqual(["ok", "refused"]);
     const second = streamCompletion.mock.calls[1][1].messages as CompletionMessage[];
     expect(second.filter((m) => m.role === "tool")).toHaveLength(2);
+  });
+
+  /**
+   * The soft ceiling, and what happens instead of a confession.
+   *
+   * A turn that stops at its budget and says so is correct and useless: the
+   * person asked a question, the agent used its allowance looking, and what
+   * arrives is an apology. A leg is the allowance to carry on — and the whole
+   * feature is that the model is told to carry on rather than told it is done,
+   * because those are opposite instructions and the wrong one is invisible to
+   * the person receiving it.
+   */
+  describe("legs past the soft ceiling", () => {
+    /** A model that would ask forever, one call at a time. */
+    const forever = () => scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }])]);
+    const searching = () => [tool("search", async () => ({ kind: "ok", content: "x" }))];
+
+    it("carries on past the soft ceiling without saying it ran out", async () => {
+      forever();
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        // Soft 2, one leg of 2, so the real ceiling is 4.
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+      });
+
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(4);
+
+      // The request made on the far side of the boundary: told to keep going,
+      // and NOT told it is finished. Sending both would be sending a model two
+      // opposite instructions and hoping for the second.
+      const afterBoundary = sentTranscripts[2];
+      expect(afterBoundary.at(-1)?.content).toContain("Do not stop");
+      expect(afterBoundary.at(-1)?.content).not.toContain("used every tool call");
+
+      // And it still has the tools. Withholding them is what invalidates a
+      // prompt cache from its first block — see `toolsWithheld`.
+      expect(streamCompletion.mock.calls[2][1]).toHaveProperty("tools");
+    });
+
+    it("says it once per leg, not once per pass", async () => {
+      forever();
+      await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 4 },
+      });
+
+      // Every request past the boundary carries it, because the transcript is
+      // re-sent whole. What must not happen is one transcript carrying it
+      // twice, which is what a notice pushed per pass rather than per boundary
+      // would produce.
+      const perRequest = sentTranscripts.map(
+        (messages) =>
+          messages.filter((m) => m.role === "system" && String(m.content).includes("Do not stop"))
+            .length,
+      );
+      expect(Math.max(...perRequest)).toBe(1);
+    });
+
+    it("still says it ran out once every leg is gone", async () => {
+      forever();
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+      });
+
+      expect(turn.paused?.reason).toBe("budget");
+      expect(
+        (streamCompletion.mock.calls.at(-1)?.[1].messages as CompletionMessage[]).at(-1)?.content,
+      ).toContain("used every tool call");
+    });
+
+    it("works out which leg a resumed turn is in from the steps alone", async () => {
+      // The ceiling has to stay a pure function of `steps.length`: a turn can
+      // pause for an approval at step 3 and come back with 3 in `stepsSoFar`,
+      // and nothing is persisted about which leg it had reached. It also must
+      // not re-announce a boundary the carried transcript already crossed.
+      scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+        stepsSoFar: [
+          { index: 0, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+          { index: 1, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+          { index: 2, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+        ],
+      });
+
+      // Already inside the leg, so it gets the fourth step and stops there —
+      // not a fresh budget, and not a second notice about a boundary that was
+      // crossed before the pause.
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(4);
+      const announced = sentTranscripts.flatMap((messages) =>
+        messages.filter((m) => String(m.content).includes("Do not stop")),
+      );
+      expect(announced).toEqual([]);
+    });
+
+    it("has no legs unless a caller asks for them", async () => {
+      // The default is load-bearing: `SCHEDULED_MAX_STEPS` and every existing
+      // budget case pass a bare `maxSteps`, and all of them have to keep
+      // meaning exactly what they meant.
+      forever();
+      const turn = await runAgentTurn({ ...base, tools: searching(), budget: { maxSteps: 2 } });
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(2);
+      expect(turn.paused?.reason).toBe("budget");
+    });
   });
 
   it("continues a resumed turn's budget rather than starting a fresh one", async () => {

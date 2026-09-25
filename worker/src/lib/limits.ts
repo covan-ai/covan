@@ -36,13 +36,34 @@ export type WorkerPlan = "free" | "paid";
 /** What one chat turn may spend, on this plan. */
 export type ChatLimits = {
   /**
-   * How many tools one turn may run in total, across every pass.
+   * How many tools one turn is budgeted, across every pass.
    *
+   * A soft ceiling: crossing it starts a leg rather than stopping the turn.
    * The argument for the number itself lives in `lib/harness/budget.ts`, which
    * is also where the Free value's history is kept. This is only where the two
    * plans disagree about it.
    */
   maxSteps: number;
+  /**
+   * How many extra legs a turn may take past `maxSteps`, and how long each is.
+   *
+   * `extraLegs: 0` means the soft ceiling is the only ceiling — today's
+   * behaviour, and what Free keeps.
+   *
+   * **On Paid this is 1, not 2, and the reason is the context window rather
+   * than the subrequest cap.** Once the plan is Paid, subrequests stop being
+   * what binds: 24 steps is roughly 250 of 10,000. What binds instead is the
+   * transcript. A step's result is re-sent on every later pass, so at 24 steps
+   * `MAX_TOOL_OUTPUT_CHARS` alone is ~72,000 tokens of tool results, before
+   * the persona, the manifest, `HISTORY_CHAR_BUDGET`, the retrieval block and
+   * two dozen assistant turns. A turn that overflows gets a provider 400 —
+   * and it arrives wearing the same disguise the subrequest cap does.
+   *
+   * So 1 leg (hard ceiling 32) ships first. 2 (hard ceiling 40) waits for
+   * transcript trimming at the leg boundary, which is what pays for it.
+   */
+  extraLegs: number;
+  legSteps: number;
 };
 
 export type PlanLimits = {
@@ -67,7 +88,7 @@ export type PlanLimits = {
  */
 const FREE: PlanLimits = Object.freeze({
   subrequests: 50,
-  chat: Object.freeze({ maxSteps: 8 }),
+  chat: Object.freeze({ maxSteps: 8, extraLegs: 0, legSteps: 8 }),
 });
 
 /**
@@ -79,7 +100,7 @@ const FREE: PlanLimits = Object.freeze({
  */
 const PAID: PlanLimits = Object.freeze({
   subrequests: 10_000,
-  chat: Object.freeze({ maxSteps: 8 }),
+  chat: Object.freeze({ maxSteps: 24, extraLegs: 1, legSteps: 8 }),
 });
 
 /** Which plan this environment says it is on. Anything but `"paid"` is Free. */

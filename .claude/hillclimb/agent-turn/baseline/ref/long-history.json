@@ -1,0 +1,6 @@
+{
+  "text": "Vehicle utilization (araç kullanımı) için veritabanına bakmam gerekiyor. Önce bağlantıyı kontrol edeyim.\n\nVeritabanı bağlantısına şu an erişemedim — bağlantı bilgisi dönmedi (teknik bir sorun olabilir). Araç kullanımı verisini çekmek için tekrar denemem gerekecek; hazır olduğunda haber ver, tekrar sorgulayayım. Bu arada elimde olan iptal/hacim verileriyle ilgili başka bir kırılım (bölge, tarih aralığı vb.) ister misin?",
+  "trajectory": [
+    "describe_connection"
+  ]
+}

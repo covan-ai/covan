@@ -1,0 +1,4 @@
+{
+  "text": "300 araçlık bir müşteri 250 araç eşiğini geçtiği için yüzde on indirim kademesine girer.\n\nHesap:\n- Liste fiyatı: 300 × 180 TL = 54.000 TL\n- %10 indirim: 5.400 TL\n- **Aylık ödenecek tutar: 48.600 TL**\n\nBir not: bu kademe sözleşme başlangıcındaki araç sayısına göre sabitlenir. Yani filo yıl içinde 300'den 500'ün üzerine çıksa bile o sözleşme dönemi boyunca yüzde on kademesinde kalır; yüzde on beşlik kademeye geçiş ancak sözleşme yenilenirken yeniden hesaplanır.",
+  "trajectory": []
+}

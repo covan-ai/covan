@@ -1,0 +1,13 @@
+{
+  "text": "Bu isteği tamamlayamadım: elimde bağlı bir veritabanı bilgisi (connection ID) yok ve dokümanlarda da (MERIDYEN-KB.md, ONBOARDING.md, COMPETITION.md, PRICING.md) böyle bir bağlantıya işaret eden bir kayıt bulamadım — devam edebilmem için hangi veritabanı bağlantısının kullanılacağını (connectionId) ve müşteri kullanım verisinin hangi tabloda/kolonlarda tutulduğunu belirtmeniz gerekiyor.",
+  "trajectory": [
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents"
+  ]
+}

@@ -1,0 +1,60 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { CompletionEnv } from "../src/lib/completion";
+
+/**
+ * The keys, from the environment or from `.dev.vars`.
+ *
+ * `.dev.vars` is where this repository already keeps local secrets — it is
+ * gitignored, `.dev.vars.example` documents it, and it is what `wrangler dev`
+ * reads. Reading it here means the eval is set up the same way running the
+ * Worker locally is, rather than needing a second arrangement that exists only
+ * for this script and that somebody has to be told about.
+ *
+ * The environment still wins, so a one-off run against a different key is
+ * `ANTHROPIC_API_KEY=… bun eval/run.ts` with nothing to undo afterwards.
+ */
+export function loadEnv(): CompletionEnv {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const file = join(here, "..", ".dev.vars");
+  const fromFile: Record<string, string> = {};
+
+  if (existsSync(file)) {
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq <= 0) continue;
+      // Values are taken raw apart from surrounding quotes. `.dev.vars` is not
+      // a shell script and wrangler does not expand anything in it, so neither
+      // does this — a key containing a `$` must survive.
+      const key = trimmed.slice(0, eq).trim();
+      const value = trimmed
+        .slice(eq + 1)
+        .trim()
+        .replace(/^["']|["']$/g, "");
+      if (value) fromFile[key] = value;
+    }
+  }
+
+  return {
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? fromFile.OPENAI_API_KEY ?? "",
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? fromFile.ANTHROPIC_API_KEY ?? "",
+  };
+}
+
+/** Stop before spending anything if the one key every case needs is absent. */
+export function requireAnthropicKey(env: CompletionEnv): void {
+  if (env.ANTHROPIC_API_KEY) return;
+  console.error(
+    [
+      "ANTHROPIC_API_KEY is not set, and every case in this eval is a Claude model.",
+      "",
+      "Either export it, or add a line to worker/.dev.vars (gitignored):",
+      "",
+      "    ANTHROPIC_API_KEY=sk-ant-...",
+    ].join("\n"),
+  );
+  process.exit(1);
+}

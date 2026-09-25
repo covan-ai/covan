@@ -22,5 +22,10 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["src"]
+  // `eval` as well as `src`, so the eval harness is held to the same compiler
+  // as the code it measures. It is not deployed and `vitest` does not collect
+  // it (`include: ["src/**/*.test.ts"]`), which is exactly why it would rot
+  // unnoticed otherwise — an eval that stopped compiling three refactors ago
+  // is discovered on the day somebody needs a number.
+  "include": ["src", "eval"]
 }

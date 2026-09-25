@@ -1,0 +1,7 @@
+{
+  "text": "Kaynağa göre iki farklı rakam var, ikisi de doğru ama farklı şeyleri ölçüyor:\n\n- **41 müşteri** — şirketin genel bilgi dokümanına göre şu anki toplam müşteri sayısı.\n- **47 aktif sözleşme** (2026 Q1 itibarıyla) — bunların **6'sı pilot aşamasında** ve henüz faturalandırılmıyor.\n\nYani faturalanan/tam müşteri sayısı 41 civarında, pilot dahil toplam sözleşme sayısı ise 47. Bağlı bir veritabanı üzerinden canlı müşteri sayısını çekmek isterseniz, şu an bağlantı bilgisi elimde yok — hangi bağlantıyı kullanmam gerektiğini belirtirseniz oradan da teyit edebilirim.",
+  "trajectory": [
+    "describe_connection",
+    "search_documents"
+  ]
+}

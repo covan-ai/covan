@@ -1,0 +1,14 @@
+{
+  "text": "Bağlı bir veritabanı bulamadım — dokümanlarda (\"MERIDYEN-KB.md\", \"ONBOARDING.md\", \"COMPETITION.md\", \"PRICING.md\") arama yaptığımda \"sevkiyat\" tablosuyla veya herhangi bir veritabanı bağlantısıyla ilgili bir eşleşme çıkmadı, dolayısıyla bir sonraki adımda önce hangi veritabanı bağlantısının (connectionId) kullanılabilir olduğunu bulup `describe_connection` ile şemasını kontrol etmem ve ardından \"sevkiyat\" tablosuna karşılık gelen gerçek tablo adını bulup `query_database` ile örnek satır çekmem gerekiyor.",
+  "trajectory": [
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents"
+  ]
+}

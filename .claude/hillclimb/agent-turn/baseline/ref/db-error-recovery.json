@@ -1,0 +1,13 @@
+{
+  "text": "Bunu bilgi tabanından teyit ettim ama tamamlayamadım: dokümana göre yasal haftalık çalışma sınırı bu dosyada yazmıyor, aşımlar operasyon veritabanındaki sürücü kayıtlarından takip ediliyor — yani bu soruyu cevaplamak için önce bağlı operasyon veritabanının bağlantısını (`describe_connection`) inceleyip, ardından geçen haftaya ait sürücü çalışma saatlerini sorgulamam gerekiyor, ki bu adımı bu turda yapamadım.",
+  "trajectory": [
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents"
+  ]
+}

@@ -118,7 +118,23 @@ export async function judgePair(
   const client = createAnthropic(env);
   const message = await client.messages.create({
     model: input.judgeModel,
-    max_tokens: 1024,
+    // 4096, not 1024, and the number is the whole of a bug.
+    //
+    // A schema was chosen over "reply with JSON only" because free-text JSON
+    // breaks on an unescaped quote, and the comment below still stands. What
+    // it did not cover is that a schema does not make a reply short: run out
+    // of tokens mid-object and what comes back is valid-looking JSON with no
+    // closing brace, which `JSON.parse` reports as `Unexpected EOF` or
+    // `Unterminated string` — a message that names neither the cause nor the
+    // cure.
+    //
+    // Measured: three of ten cases failed this way, and they were the three
+    // with the longest trajectories to describe. The rubric asks the judge to
+    // name the points that decided it, so the cases with the most to say are
+    // exactly the ones that cannot finish saying it — a grader that drops the
+    // hardest cases and keeps the easy ones does not report a smaller sample,
+    // it reports a biased one.
+    max_tokens: 4096,
     system: SYSTEM,
     messages: [{ role: "user", content: prompt }],
     // A schema rather than "reply with JSON only". Free-text JSON fails on an
@@ -131,6 +147,15 @@ export async function judgePair(
     .map((b2) => (b2.type === "text" ? b2.text : ""))
     .join("")
     .trim();
+  // Said plainly, before `JSON.parse` turns it into a puzzle. The two are not
+  // the same failure and they do not have the same fix: a truncated verdict
+  // needs a bigger ceiling, a malformed one needs a better prompt.
+  if (message.stop_reason === "max_tokens") {
+    throw new Error(
+      `the judge ran out of tokens before finishing its verdict (max_tokens ${4096}), ` +
+        `so there is no answer to read. Raise the ceiling rather than parsing what arrived.`,
+    );
+  }
   const parsed = JSON.parse(text) as { choice: string; reasoning: string };
 
   const choice: Verdict["choice"] =

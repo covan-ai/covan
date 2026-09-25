@@ -721,6 +721,87 @@ describe("an answer that stopped at its length limit", () => {
   });
 });
 
+describe("an answer that stopped at a ceiling", () => {
+  const partial = { ...answer, content: "I checked three of the repositories." };
+
+  /** A turn that answered, but stopped because it ran out of something. */
+  const stoppedBy = (reason: "budget" | "tokens") =>
+    streamOf([
+      { type: "delta", text: partial.content },
+      { type: "paused", reason },
+      { type: "done", message: partial },
+    ]);
+
+  const ask = async () =>
+    userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+
+  it("says so under the answer, and keeps saying it", async () => {
+    // This was a four-second toast over a reply that looked finished — gone
+    // before the person had read the answer it was about, and with nothing to
+    // press. The same argument the length-limit row above was written from.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(stoppedBy("budget"))),
+    );
+    await renderChat();
+    listMessages.mockResolvedValue([question, partial]);
+    await ask();
+
+    expect(
+      await screen.findByText("This turn used every tool call it is allowed."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep going" })).toBeInTheDocument();
+  });
+
+  it("names the ceiling it actually hit", async () => {
+    // Running out of tool calls and running out of tokens ask the person to
+    // narrow different things — fewer things at once, or less material.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(stoppedBy("tokens"))),
+    );
+    await renderChat();
+    listMessages.mockResolvedValue([question, partial]);
+    await ask();
+
+    expect(
+      await screen.findByText("This turn reached the most one answer is allowed to spend."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("This turn used every tool call it is allowed."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("asks again as a new turn, not as a hidden continuation", async () => {
+    // The turn is over and its budget is spent, so carrying on is a person
+    // deciding to spend more: a fresh ceiling, the transcript read again, and a
+    // visible record that somebody asked. `continue: true` would be none of
+    // those — it appends to the same row under a length-cap instruction that
+    // is not what happened.
+    const fetchMock = vi.fn(() => Promise.resolve(stoppedBy("budget")));
+    vi.stubGlobal("fetch", fetchMock);
+    await renderChat();
+    listMessages.mockResolvedValue([question, partial]);
+    await ask();
+    await screen.findByRole("button", { name: "Keep going" });
+
+    fetchMock.mockClear();
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(streamOf([{ type: "delta", text: "and the rest." }, { type: "done" }])),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Keep going" }));
+
+    // The message goes through the ordinary send path, so the first call is
+    // the user turn being written rather than a stream request carrying a flag.
+    const streamCall = fetchMock.mock.calls.find((call) =>
+      String((call as unknown as [string])[0]).includes("/chat/stream"),
+    ) as unknown as [string, RequestInit] | undefined;
+    const body = JSON.parse((streamCall?.[1].body as string) ?? "{}");
+    expect(body.continue).toBeUndefined();
+    expect(body.sessionId).toBe("session-1");
+  });
+});
+
 describe("the pause before an answer", () => {
   it("shows what the model is working through, folded away", async () => {
     // On a reasoning model at a real effort there is a long silence before the

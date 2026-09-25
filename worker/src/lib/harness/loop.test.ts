@@ -32,7 +32,13 @@ function pass(
   if (calls.length > 0) events.push({ type: "tools", calls });
   events.push({
     type: "end",
-    usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 2, cacheWriteTokens: 3 },
+    usage: {
+      promptTokens: 10,
+      completionTokens: 5,
+      cachedTokens: 2,
+      cacheWriteTokens: 3,
+      reasoningTokens: 4,
+    },
     finishReason: calls.length > 0 ? "tool_calls" : "stop",
   });
   return events;
@@ -142,6 +148,10 @@ describe("a turn that asks for one thing", () => {
       completionTokens: 10,
       cachedTokens: 4,
       cacheWriteTokens: 6,
+      // Summed like the rest. A loop that deliberates on every pass and one
+      // that deliberates once are the same row total, which is why the split
+      // below is kept as well.
+      reasoningTokens: 8,
     });
   });
 
@@ -156,8 +166,8 @@ describe("a turn that asks for one thing", () => {
     });
 
     expect(turn.passes).toEqual([
-      { index: 0, prompt: 10, cached: 2, written: 3, completion: 5 },
-      { index: 1, prompt: 10, cached: 2, written: 3, completion: 5 },
+      { index: 0, prompt: 10, cached: 2, written: 3, completion: 5, reasoning: 4 },
+      { index: 1, prompt: 10, cached: 2, written: 3, completion: 5, reasoning: 4 },
     ]);
     expect(turn.passes.reduce((n, p) => n + (p.prompt ?? 0), 0)).toBe(turn.usage.promptTokens);
   });

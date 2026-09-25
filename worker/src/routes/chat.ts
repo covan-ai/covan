@@ -341,6 +341,12 @@ chat.post("/chat/stream", async (c) => {
       // cannot be weighed against each other — more reads is only a saving if
       // the writes that bought them cost less than the reads saved.
       let cacheWriteTokens: number | null = null;
+      // How much of `completionTokens` went on deliberation rather than on the
+      // answer. A subset of it, so pricing is unaffected and this is purely
+      // diagnostic — but output is 86% of what a GPT-5 tool turn costs, and
+      // without this the bill's largest line cannot be read. Null on
+      // Anthropic, which reports no separate count.
+      let reasoningTokens: number | null = null;
       // What each model call in the turn cost, in order. A tool turn is
       // several requests and the totals above are their sum, which hides the
       // shape: eight even passes and one enormous last pass add up the same.
@@ -422,6 +428,7 @@ chat.post("/chat/stream", async (c) => {
           completionTokens: number | null;
           cachedTokens: number | null;
           cacheWriteTokens: number | null;
+          reasoningTokens: number | null;
           passUsage: PassUsage[];
         },
       ) => {
@@ -449,6 +456,7 @@ chat.post("/chat/stream", async (c) => {
           completion_tokens: number | null;
           cached_tokens: number | null;
           cache_write_tokens: number | null;
+          reasoning_tokens: number | null;
           pass_usage: unknown;
         };
         // A regeneration keeps the answer it replaces. Superseded here rather
@@ -478,6 +486,7 @@ chat.post("/chat/stream", async (c) => {
                 completion_tokens: (before.completion_tokens ?? 0) + (opts.completionTokens ?? 0),
                 cached_tokens: (before.cached_tokens ?? 0) + (opts.cachedTokens ?? 0),
                 cache_write_tokens: (before.cache_write_tokens ?? 0) + (opts.cacheWriteTokens ?? 0),
+                reasoning_tokens: (before.reasoning_tokens ?? 0) + (opts.reasoningTokens ?? 0),
                 // Concatenated for the same reason the counts add: the row is
                 // one reply and both halves were paid for. The second half's
                 // passes are numbered from zero again — they are a separate
@@ -504,6 +513,7 @@ chat.post("/chat/stream", async (c) => {
                 completion_tokens: opts.completionTokens,
                 cached_tokens: opts.cachedTokens,
                 cache_write_tokens: opts.cacheWriteTokens,
+                reasoning_tokens: opts.reasoningTokens,
                 pass_usage: opts.passUsage,
                 ...(regenerate
                   ? { original_message_id: before.original_message_id ?? before.id }
@@ -630,6 +640,7 @@ chat.post("/chat/stream", async (c) => {
         completionTokens = turn.usage.completionTokens;
         cachedTokens = turn.usage.cachedTokens;
         cacheWriteTokens = turn.usage.cacheWriteTokens;
+        reasoningTokens = turn.usage.reasoningTokens;
         passUsage = turn.passes;
         // Why the model stopped, already normalised to OpenAI's vocabulary by
         // `lib/completion.ts` — so `"length"` means truncated on either
@@ -648,6 +659,7 @@ chat.post("/chat/stream", async (c) => {
                   completionTokens,
                   cachedTokens,
                   cacheWriteTokens,
+                  reasoningTokens,
                   passUsage,
                 });
                 // The steps belong to an abandoned turn as much as to a
@@ -672,6 +684,7 @@ chat.post("/chat/stream", async (c) => {
             completionTokens,
             cachedTokens,
             cacheWriteTokens,
+            reasoningTokens,
             passUsage,
           });
           await recordSpend();
@@ -742,6 +755,7 @@ chat.post("/chat/stream", async (c) => {
                   completionTokens,
                   cachedTokens,
                   cacheWriteTokens,
+                  reasoningTokens,
                   passUsage,
                 });
               }
@@ -795,6 +809,7 @@ chat.post("/chat/stream", async (c) => {
               completionTokens,
               cachedTokens,
               cacheWriteTokens,
+              reasoningTokens,
               passUsage,
             });
             if (inserted) await writeSteps(service, inserted.id, settled);
@@ -1101,6 +1116,7 @@ chat.post("/chat/confirm/:id", async (c) => {
                 completion_tokens: turn.usage.completionTokens,
                 cached_tokens: turn.usage.cachedTokens,
                 cache_write_tokens: turn.usage.cacheWriteTokens,
+                reasoning_tokens: turn.usage.reasoningTokens,
                 // Replaced rather than concatenated, matching the three counts
                 // above it — this branch has always written what the resumed
                 // half cost rather than the whole reply, and a pass list that
@@ -1122,6 +1138,7 @@ chat.post("/chat/confirm/:id", async (c) => {
                 completion_tokens: turn.usage.completionTokens,
                 cached_tokens: turn.usage.cachedTokens,
                 cache_write_tokens: turn.usage.cacheWriteTokens,
+                reasoning_tokens: turn.usage.reasoningTokens,
                 pass_usage: turn.passes,
               })
               .select("*")

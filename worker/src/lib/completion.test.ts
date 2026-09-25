@@ -219,6 +219,7 @@ describe("complete, on OpenAI", () => {
       completionTokens: 20,
       cachedTokens: null,
       cacheWriteTokens: null,
+      reasoningTokens: null,
     });
     const call = openaiCreate.mock.calls[0][0];
     expect(call.messages).toHaveLength(2);
@@ -649,6 +650,7 @@ describe("complete, on Anthropic", () => {
       completionTokens: 20,
       cachedTokens: 900,
       cacheWriteTokens: 60,
+      reasoningTokens: null,
     });
     expect(totalTokens(usage)).toBe(1020);
   });
@@ -686,6 +688,51 @@ describe("complete, on Anthropic", () => {
 
     expect(usage.cachedTokens).toBe(900);
     expect(usage.cacheWriteTokens).toBeNull();
+  });
+
+  it("separates the thinking out of a reasoning model's answer", async () => {
+    // The number the rest of the cost work now turns on. Measured on the live
+    // project, output is 86% of what a GPT-5 tool turn costs and its average
+    // reply is 5,901 completion tokens against a Claude turn's 672 — but a
+    // long answer and a short answer after a long think are the same
+    // `completion_tokens`, and they call for opposite fixes.
+    openaiCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "ok" } }],
+      usage: {
+        prompt_tokens: 1000,
+        completion_tokens: 5901,
+        completion_tokens_details: { reasoning_tokens: 5500 },
+      },
+    });
+
+    const { usage } = await complete(env, {
+      model: "gpt-5",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(usage.reasoningTokens).toBe(5500);
+    // A subset, not an addition: 401 tokens of answer after 5,500 of thinking.
+    // Pricing already counts them inside `completionTokens`, so adding the two
+    // would bill the deliberation twice.
+    expect(usage.completionTokens).toBe(5901);
+  });
+
+  it("records no reasoning count for a model that does not report one", async () => {
+    // Null rather than zero, on the same terms as the cache-write count above.
+    // A non-reasoning model sends no `completion_tokens_details`, and zero
+    // there would assert it thought about nothing — which is a claim, where
+    // null is the absence of one.
+    openaiCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "ok" } }],
+      usage: { prompt_tokens: 100, completion_tokens: 20 },
+    });
+
+    const { usage } = await complete(env, {
+      model: "gpt-4.1",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(usage.reasoningTokens).toBeNull();
   });
 
   it("says which key is missing rather than letting Anthropic answer with a 401", async () => {
@@ -817,9 +864,44 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 9, completionTokens: 2, cachedTokens: null, cacheWriteTokens: null },
+        usage: {
+          promptTokens: 9,
+          completionTokens: 2,
+          cachedTokens: null,
+          cacheWriteTokens: null,
+          reasoningTokens: null,
+        },
       },
     ]);
+  });
+
+  it("carries the reasoning count off the streamed usage chunk too", async () => {
+    // The streaming path is the one chat actually uses, so a capture that
+    // worked only on `complete` would record nothing for every turn a person
+    // sees. Two code paths, two tests.
+    openaiCreate.mockResolvedValueOnce(
+      replay([
+        { choices: [{ delta: { content: "ok" } }] },
+        {
+          choices: [],
+          usage: {
+            prompt_tokens: 9,
+            completion_tokens: 900,
+            completion_tokens_details: { reasoning_tokens: 850 },
+          },
+        },
+      ]),
+    );
+
+    const events = await collect(
+      streamCompletion(openaiOnly, {
+        model: "gpt-5",
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    );
+
+    const end = events.at(-1) as { type: "end"; usage: { reasoningTokens: number | null } };
+    expect(end.usage.reasoningTokens).toBe(850);
   });
 
   it("reads Anthropic's two-part usage and emits one event at the end", async () => {
@@ -864,6 +946,7 @@ describe("streamCompletion", () => {
           // The mock sends no `cache_creation_input_tokens`, and null is what
           // that means: nothing was written, or the provider did not say.
           cacheWriteTokens: null,
+          reasoningTokens: null,
         },
       },
     ]);
@@ -925,7 +1008,13 @@ describe("streamCompletion", () => {
       {
         type: "end",
         finishReason: null,
-        usage: { promptTokens: 5, completionTokens: 0, cachedTokens: null, cacheWriteTokens: null },
+        usage: {
+          promptTokens: 5,
+          completionTokens: 0,
+          cachedTokens: null,
+          cacheWriteTokens: null,
+          reasoningTokens: null,
+        },
       },
     ]);
   });
@@ -1236,7 +1325,13 @@ describe("a streamed tool call", () => {
       },
       {
         type: "end",
-        usage: { promptTokens: 9, completionTokens: 3, cachedTokens: null, cacheWriteTokens: null },
+        usage: {
+          promptTokens: 9,
+          completionTokens: 3,
+          cachedTokens: null,
+          cacheWriteTokens: null,
+          reasoningTokens: null,
+        },
         finishReason: "tool_calls",
       },
     ]);

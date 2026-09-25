@@ -164,14 +164,24 @@ vi.mock("../lib/supabase", () => ({
 }));
 
 /** A streamed completion of one delta plus the usage-only final chunk. */
-function streamOf(text: string, finishReason = "stop") {
+function streamOf(
+  text: string,
+  finishReason = "stop",
+  // Extra fields on the usage chunk, for the counts only some models report.
+  usageExtra: Record<string, unknown> = {},
+) {
   return {
     async *[Symbol.asyncIterator]() {
       yield { choices: [{ delta: { content: text } }] };
       yield { choices: [{ delta: {}, finish_reason: finishReason }] };
       yield {
         choices: [],
-        usage: { prompt_tokens: 100, completion_tokens: 20, prompt_tokens_details: {} },
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          prompt_tokens_details: {},
+          ...usageExtra,
+        },
       };
     },
   };
@@ -447,6 +457,23 @@ describe("citations", () => {
     });
     await ask(app);
     expect(citedNames()).toEqual(["handbook.md"]);
+  });
+
+  it("writes down how much of the answer was thinking", async () => {
+    // `completion.ts` reading the count is half of it. The other half is this,
+    // and it is the half with a precedent: `message_steps.tokens` was added in
+    // 0060 and has been NULL on every row ever written, because nothing ever
+    // wrote to it. A column nobody fills measures nothing.
+    answersWith(
+      streamOf("Twenty days.", "stop", {
+        completion_tokens_details: { reasoning_tokens: 850 },
+      }),
+    );
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    await ask(app);
+
+    expect(serviceInsert.mock.calls[0][0].reasoning_tokens).toBe(850);
   });
 
   it("cites nothing when nothing grounded the answer", async () => {

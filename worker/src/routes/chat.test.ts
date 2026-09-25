@@ -64,10 +64,33 @@ vi.mock("../lib/anthropic", () => ({
   createAnthropic: () => ({ messages: { create: anthropicCreate } }),
 }));
 
+/** Every `recordQuota` call's token count. This file is not about quota — but
+ * a turn that fails after several real model passes still has to bill them, and
+ * `recordQuota` refuses a zero, so "what number reached it" is the only way to
+ * tell billing nothing from billing something. */
+const quotaRecorded = vi.fn();
 vi.mock("../lib/entitlements/guard", () => ({
   guardQuota: async () => null,
-  recordQuota: async () => {},
+  recordQuota: async (_c: unknown, tokens: number) => {
+    quotaRecorded(tokens);
+  },
 }));
+
+/**
+ * The tool `POST /chat/confirm/:id` resolves for the call a person approved.
+ *
+ * Null — the default — leaves the real registry in place, which is what every
+ * test but one wants. The exception needs to watch what the route hands the
+ * tool, and no real tool will say.
+ */
+let approvedTool: unknown = null;
+vi.mock("../lib/harness/registry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/harness/registry")>();
+  return {
+    ...actual,
+    toolByName: (name: string) => approvedTool ?? actual.toolByName(name),
+  };
+});
 
 vi.mock("../lib/supabase", () => ({
   serviceClient: () => ({
@@ -407,6 +430,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   parked = null;
   claimWins = true;
+  approvedTool = null;
   createOpenAIKeys.length = 0;
   embedTexts.mockResolvedValue({ vectors: [[0.1, 0.2]], tokens: 8 });
   answersWith(streamOf("Twenty days."));
@@ -1390,6 +1414,159 @@ describe("POST /chat/confirm/:id", () => {
     expect(stepsWritten.mock.calls[0][0]).toEqual([
       expect.objectContaining({ step_index: 0, tool: "schedule_job", status: "refused" }),
     ]);
+  });
+
+  /**
+   * The resume path, dying the way the start path already has tests for.
+   *
+   * Every case here is a twin of one in "a turn that dies mid-flight" below,
+   * and each was a real difference rather than an untested one: this route was
+   * written after that one and never got the branches it grew. Four turns in
+   * production on 2026-09-25 died here — saved as "This turn stopped before it
+   * could answer", with every token column NULL, and billed nothing.
+   */
+  describe("when the resumed half dies", () => {
+    /** A tool call that lands, and then a model request that does not. */
+    function toolThenDrop(reason: string) {
+      let asked = false;
+      return async (body: { stream?: boolean }) => {
+        if (!body.stream) return titleOf("A question");
+        if (asked) throw new Error(reason);
+        asked = true;
+        return {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              choices: [
+                {
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call_2",
+                        function: {
+                          name: "search_documents",
+                          arguments: '{"query":"vacation"}',
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            };
+            yield { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+            yield {
+              choices: [],
+              usage: { prompt_tokens: 40, completion_tokens: 8, prompt_tokens_details: {} },
+            };
+          },
+        };
+      };
+    }
+
+    it("says ask for less when the invocation ran out of requests", async () => {
+      // The whole of what a missing `runtimeLimit` cost: this route had none,
+      // so a platform ceiling reached the person as "the assistant hit an
+      // error, please try again" — advice that is wrong in the one way that
+      // matters, because trying again meets the same ceiling.
+      parked = PARKED;
+      const { app } = appWith({ question: "every monday" });
+      completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+        if (!body.stream) return titleOf("A question");
+        throw new Error("Too many subrequests by single Worker invocation.");
+      });
+
+      const error = frames(await (await confirm(app, false)).text()).find(
+        (f) => f.type === "error",
+      );
+      expect(String(error?.error)).toContain("ran out of the requests");
+      expect(String(error?.error)).not.toContain("Please try again");
+    });
+
+    it("writes what the dead turn cost, and bills it", async () => {
+      // `turn.usage` only exists once the loop returns, so this row went in
+      // with five NULL columns and `recordQuota` — handed a zero, which it
+      // refuses — charged nothing for model passes that really happened.
+      parked = PARKED;
+      const { app } = appWith({ question: "every monday", documents: [HANDBOOK] });
+      completionCreate.mockImplementation(toolThenDrop("Connection error."));
+
+      await (await confirm(app, true)).text();
+
+      const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row.role).toBe("assistant");
+      expect(row.prompt_tokens).toBe(40);
+      expect(row.completion_tokens).toBe(8);
+      expect(quotaRecorded).toHaveBeenCalledWith(48);
+    });
+
+    it("keeps the step it carried in, which nothing else will ever write", async () => {
+      // `resolvePausedTurn` has already claimed the row, so a second attempt
+      // finds nothing to resume. Whatever this request drops is gone.
+      parked = PARKED;
+      const { app } = appWith({ question: "every monday", documents: [HANDBOOK] });
+      completionCreate.mockImplementation(toolThenDrop("Connection error."));
+
+      await (await confirm(app, true)).text();
+
+      expect(stepsWritten.mock.calls[0][0]).toEqual([
+        expect.objectContaining({ step_index: 0, tool: "schedule_job" }),
+        expect.objectContaining({ step_index: 1, tool: "search_documents", status: "ok" }),
+      ]);
+    });
+
+    it("says nothing when the person simply closed the tab", async () => {
+      // An abandoned turn is not a failed one, and this route had no branch
+      // for it at all — every abort was reported as an error.
+      parked = PARKED;
+      const { app } = appWith({ question: "every monday" });
+      completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+        if (!body.stream) return titleOf("A question");
+        const aborted = new Error("The user aborted a request.");
+        aborted.name = "AbortError";
+        throw aborted;
+      });
+
+      const types = frames(await (await confirm(app, false)).text()).map((f) => f.type);
+      expect(types).not.toContain("error");
+    });
+  });
+
+  it("time-boxes the call the person approved, like every other tool call", async () => {
+    // It ran `tool.run(args, ctx)` directly, outside the harness, so the one
+    // call in the product a person had explicitly waited for was the one with
+    // no ceiling on it. The signal is what `runWithTimeout` adds and what a
+    // direct call cannot have.
+    parked = PARKED;
+    let handed: { signal?: AbortSignal } | undefined;
+    approvedTool = {
+      name: "schedule_job",
+      description: "schedule_job",
+      input: { type: "object", properties: {} },
+      destructive: true,
+      isConfigured: () => true,
+      run: async (_args: unknown, ctx: { signal?: AbortSignal }) => {
+        handed = ctx;
+        return { kind: "ok", content: "scheduled" };
+      },
+    };
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf("Scheduled."));
+
+    await (await confirm(app, true)).text();
+
+    expect(handed?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("says the resumed half was cut off, so it gets its Continue button too", async () => {
+    // The same 4096-token cap applies to the second half of a reply, and
+    // without this event it stops mid-thought with nothing saying so.
+    parked = PARKED;
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf("It is scheduled for every Mon", "length"));
+
+    const types = frames(await (await confirm(app, false)).text()).map((f) => f.type);
+    expect(types).toContain("truncated");
+    expect(types.indexOf("truncated")).toBeLessThan(types.indexOf("done"));
   });
 });
 

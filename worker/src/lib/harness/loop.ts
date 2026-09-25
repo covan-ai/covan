@@ -261,8 +261,12 @@ export function parseArguments(
  * because every tool that reaches outside passes the signal to `fetch` — a
  * race alone would leave the request running with nothing to receive it. The
  * race is still there as the backstop for a tool that ignores the signal.
+ *
+ * Exported because the resume path runs one tool of its own — the call a person
+ * has just approved — outside this loop, and ran it with no ceiling at all.
+ * Every other tool call in the product is time-boxed; that one was not.
  */
-async function runWithTimeout(
+export async function runWithTimeout(
   tool: AgentTool,
   args: unknown,
   ctx: ToolContext,

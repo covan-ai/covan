@@ -122,10 +122,13 @@ crons = ["*/5 * * * *"]
 # `fetch` stops working, and the OpenAI SDK calls that `Connection error.`, so
 # the log says the network broke when what broke was the plan.
 #
-# Set it to "paid" only once the Cloudflare account actually is, and set it on
-# BOTH Workers or a scheduled run and a chat turn will disagree about what they
-# can afford. What it buys today is chat: 24 tool calls per answer instead of 8,
-# and up to two further rounds when a turn is still working at the end of them.
+# What it buys today is CHAT: 24 tool calls per answer instead of 8, and up to
+# two further rounds when a turn is still working at the end of them. This
+# Worker runs no chat, so setting it here changes nothing yet — it is here so
+# the two configurations say the same thing, and so that whenever the scheduled
+# side does start reading it, this file is not the one that was forgotten. A
+# scheduled run keeps its eight either way: a tick runs a whole batch of them
+# inside one invocation, which is a different sum. See docs/routines.md.
 #
 # WORKER_PLAN = "paid"
 

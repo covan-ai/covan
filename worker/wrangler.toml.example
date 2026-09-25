@@ -111,10 +111,11 @@ bucket_name = "covan-docs"
 # `fetch` stops working, and the OpenAI SDK calls that `Connection error.`, so
 # the log says the network broke when what broke was the plan.
 #
-# Set it to "paid" only once the Cloudflare account actually is, and set it on
-# BOTH Workers or a scheduled run and a chat turn will disagree about what they
-# can afford. What it buys today is chat: 24 tool calls per answer instead of 8,
-# and up to two further rounds when a turn is still working at the end of them.
+# Set it to "paid" only once the Cloudflare account actually is. What it buys is
+# chat: 24 tool calls per answer instead of 8, and up to two further rounds when
+# a turn is still working at the end of them. A scheduled run is unaffected — a
+# tick runs a whole batch of them inside one invocation, which is a different
+# sum, and docs/routines.md does it.
 #
 # WORKER_PLAN = "paid"
 

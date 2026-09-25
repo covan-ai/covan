@@ -14,6 +14,7 @@ import {
   MAX_TOOL_OUTPUT_CHARS,
   TOOL_TIMEOUT_MS,
   cap,
+  wasCapped,
 } from "./budget";
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
 
@@ -293,30 +294,31 @@ const TOKEN_INSTRUCTION =
  * was cut — a silent truncation is one the model would read as the whole
  * answer and act on.
  *
- * `done` is what stops a result being cut twice. `cap` appends its own notice,
- * so a second pass over an already-trimmed message would nest one inside the
- * other; indices are stable because `messages` only ever grows at the end.
+ * `wasCapped` is what stops a result being cut twice, and it reads the text
+ * rather than remembering an index — because the thing that has to know is on
+ * the far side of a pause. A parked turn stores its whole transcript and
+ * resumes in a fresh call, where any set of "already done" indices is empty
+ * again while the capped text is still sitting there. Cutting twice rewrites
+ * `cap`'s own notice with the cut size in place of the original, which tells
+ * the model a large result was small.
  */
-function trimSpentResults(
-  messages: CompletionMessage[],
-  done: Set<number>,
-  keepLast: number,
-): void {
+function trimSpentResults(messages: CompletionMessage[], keepLast: number): void {
   const results: number[] = [];
   for (let i = 0; i < messages.length; i += 1) {
     if (messages[i].role === "tool") results.push(i);
   }
   for (const i of results.slice(0, Math.max(0, results.length - keepLast))) {
     const message = messages[i];
-    if (done.has(i) || message.content.length <= MAX_STEP_EXCERPT_CHARS) continue;
-    done.add(i);
+    if (message.content.length <= MAX_STEP_EXCERPT_CHARS || wasCapped(message.content)) continue;
     messages[i] = { ...message, content: cap(message.content, MAX_STEP_EXCERPT_CHARS) };
   }
 }
 
+const PACE_NOTICE_OPENING = "You have used the tool calls normally allowed for one turn";
+
 function paceNotice(left: number): string {
   return (
-    `You have used the tool calls normally allowed for one turn, and you have been given ` +
+    `${PACE_NOTICE_OPENING}, and you have been given ` +
     `${left} more so you can finish. Do not stop here, do not wrap up, do not summarise what ` +
     `you have so far, and do not mention this limit to the person — none of those is what was ` +
     `asked of you. Carry on with the original request, and spend what is left on the narrowest ` +
@@ -559,21 +561,25 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    */
   const legOf = (n: number) => (n < softSteps ? 0 : Math.floor((n - softSteps) / legSteps) + 1);
   /**
-   * The last boundary this run has already spoken about.
+   * The last boundary this turn has already spoken about.
    *
-   * Seeded from the steps carried in rather than at zero, so a resumed turn
-   * that was already inside a leg does not announce the boundary a second
-   * time — the notice it was given is in the transcript it resumes with.
-   */
-  let noticedLeg = legOf(steps.length);
-  /**
-   * Tool results already cut down at an earlier boundary, by index.
+   * Counted out of the transcript rather than derived from `steps.length`, and
+   * the difference is a real case rather than a nicety. A pass whose last call
+   * needs confirmation returns from the MIDDLE of the batch, before the
+   * boundary code at the foot of the loop runs — so a turn whose twenty-fourth
+   * step is the one that stops to ask crosses the ceiling with no notice sent.
+   * Seeding from the step count would then have the resumed half conclude the
+   * notice had already been given, and it would never be sent at all: legs
+   * switched off for precisely the turns they exist for, the long ones that
+   * reach for a connected app.
    *
-   * Only meaningful with more than one leg, and it is what keeps `cap` from
-   * nesting its own "[trimmed: …]" notice inside a message that already
-   * carries one.
+   * The transcript cannot be wrong about it. One notice per boundary, crossed
+   * in order, so however many are in there is the last leg announced — and a
+   * resumed turn reads them back because `paused_turns.messages` carries them.
    */
-  const trimmed = new Set<number>();
+  let noticedLeg = messages.filter(
+    (m) => m.role === "system" && m.content.startsWith(PACE_NOTICE_OPENING),
+  ).length;
 
   for (;;) {
     const events = streamCompletion(
@@ -836,7 +842,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // Before the notice, so the notice stays at the tail where it lands
         // after the cacheable prefix. The results kept whole are one leg's
         // worth — what the turn is currently working through.
-        trimSpentResults(messages, trimmed, legSteps);
+        trimSpentResults(messages, legSteps);
         messages.push({ role: "system", content: paceNotice(hardSteps - steps.length) });
       }
     }

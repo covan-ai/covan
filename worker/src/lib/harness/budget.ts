@@ -172,3 +172,25 @@ export function cap(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n\n[trimmed: ${text.length} characters, showing the first ${max}]`;
 }
+
+/**
+ * Whether `cap` has already been applied to this text.
+ *
+ * Read off the text itself rather than remembered, because the thing that has
+ * to know is on the other side of a pause: a turn parks its whole transcript in
+ * `paused_turns.messages` and resumes in a fresh call with fresh variables, so
+ * any set of "already done" indices is empty again while the capped text is
+ * still there. Capping twice does not lose anything a reader can see, but it
+ * rewrites the notice — `cap` puts the ORIGINAL length in it, so a second pass
+ * reports the cut size as the original and tells the model a large result was
+ * small.
+ *
+ * Anchored at the end and matched on the exact shape `cap` writes. A tool whose
+ * own output happened to end this way would be left uncut, which costs some
+ * transcript and breaks nothing.
+ */
+const CAPPED = /\n\n\[trimmed: \d+ characters, showing the first \d+\]$/;
+
+export function wasCapped(text: string): boolean {
+  return CAPPED.test(text);
+}

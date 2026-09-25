@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CompletionEvent, CompletionMessage } from "../completion";
 import type { AgentTool, ToolContext, ToolResult } from "./registry";
 import { runAgentTurn, parseArguments, NO_TOOLS_NOTICE, type PassUsage } from "./loop";
+import { cap, MAX_STEP_EXCERPT_CHARS } from "./budget";
 
 /**
  * The loop, driven by a scripted model.
@@ -634,6 +635,105 @@ describe("the budget", () => {
         expect(turn.paused).toBeUndefined();
         expect(turn.text).toBe("done");
       });
+    });
+
+    /**
+     * The boundary that is crossed while the turn is stopping to ask.
+     *
+     * A confirmation returns from the middle of the batch, before the once-per-
+     * pass boundary code runs — so a pass whose last call crosses the soft
+     * ceiling AND needs approval ends with no notice sent. What then decides
+     * whether the resumed half ever gets one is how it works out where it is,
+     * and counting steps is the wrong way: the boundary was crossed, so the
+     * step count says "already announced" about a notice nobody sent.
+     *
+     * This is the population legs exist for — long turns that reach for a
+     * connected app — so getting it wrong turns the feature off exactly where
+     * it was meant to work.
+     */
+    describe("a boundary crossed by the call that stops to ask", () => {
+      const asking = () => [
+        tool("search", async () => ({ kind: "ok", content: "x" })),
+        tool("send", async () => ({
+          kind: "needs_confirmation",
+          summary: "Send it?",
+          proposal: null,
+        })),
+      ];
+
+      it("tells the resumed half to keep going, not to wrap up", async () => {
+        // Two steps, the second of which pauses — so the soft ceiling of 2 is
+        // reached by the very call that parks the turn.
+        scripted([
+          pass("", [
+            { id: "a", name: "search", arguments: "{}" },
+            { id: "b", name: "send", arguments: "{}" },
+          ]),
+        ]);
+        const parked = await runAgentTurn({
+          ...base,
+          tools: asking(),
+          budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+        });
+        expect(parked.paused?.reason).toBe("confirmation");
+        expect(parked.steps).toHaveLength(2);
+
+        // The resume, the way `/chat/confirm/:id` does it: the parked messages
+        // with the approved call answered, and the steps already spent.
+        sentTranscripts.length = 0;
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        await runAgentTurn({
+          ...base,
+          request: {
+            ...base.request,
+            messages: [
+              ...(parked.paused?.messages ?? []),
+              { role: "tool" as const, toolCallId: "b", content: "sent" },
+            ],
+          },
+          tools: asking(),
+          budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+          stepsSoFar: parked.steps.map((s) => ({ ...s, status: "ok" as const })),
+        });
+
+        const told = sentTranscripts.flatMap((messages) =>
+          messages.filter((m) => String(m.content).includes("Do not stop")),
+        );
+        expect(told.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("does not cut a result twice across a pause, which would understate its size", async () => {
+      // `cap` writes the original length into the text it appends. Cutting an
+      // already-cut result reports the cut size as the original, so the model is
+      // told a large result was small — and the guard that prevents it cannot be
+      // a set of indices, because a resume is a fresh call with a fresh set and
+      // the same messages.
+      const already = cap("y".repeat(5_000), MAX_STEP_EXCERPT_CHARS);
+      scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+      await runAgentTurn({
+        ...base,
+        request: {
+          ...base.request,
+          messages: [
+            ...base.request.messages,
+            { role: "assistant" as const, content: "", toolCalls: [] },
+            { role: "tool" as const, toolCallId: "old", content: already },
+          ],
+        },
+        tools: [tool("search", async () => ({ kind: "ok", content: "z".repeat(5_000) }))],
+        // Soft 1 with two legs of 1, and one step already spent, so this turn
+        // crosses a boundary it did not itself announce — which is the shape a
+        // resume arrives in.
+        budget: { maxSteps: 1, extraLegs: 2, legSteps: 1, maxOutputChars: 5_000 },
+        stepsSoFar: [
+          { index: 0, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+        ],
+      });
+
+      const carried = (sentTranscripts.at(-1) ?? []).find((m) => m.content.startsWith("yyy"));
+      expect(carried?.content).toBe(already);
+      expect((carried?.content ?? "").split("[trimmed:").length - 1).toBe(1);
     });
 
     it("has no legs unless a caller asks for them", async () => {

@@ -121,15 +121,21 @@ describe("runRoutineWithTools", () => {
   /**
    * The one number the two surfaces are allowed to disagree about, and the
    * only thing holding the cron Worker inside Workers Free's fifty
-   * subrequests. `dispatcher.ts` does that arithmetic against `BATCH_SIZE`;
-   * a routine taking chat's sixteen steps would break it three routines into
-   * a tick, and the symptom is the last ones failing at a ceiling with nothing
-   * in their run log to explain it.
+   * subrequests. `dispatcher.ts` does that arithmetic against `BATCH_SIZE`,
+   * and a routine taking more steps than that allows breaks the tick three
+   * routines in — the symptom being the last ones failing at a ceiling with
+   * nothing in their run log to explain it.
+   *
+   * `toBeLessThanOrEqual`, not `toBeLessThan`: the two are equal again now
+   * that chat is back at eight. What must never happen is this one being the
+   * LARGER of the pair, which is the direction that breaks a tick — so the
+   * assertion is on the ordering rather than on either number, and it holds
+   * whether or not chat moves again.
    */
-  it("keeps the smaller step budget, which chat no longer has", async () => {
+  it("never takes more steps than chat, whatever chat is set to", async () => {
     await runRoutineWithTools(env, db)(input, env);
     expect(runAgentTurn.mock.calls[0][0].budget).toEqual({ maxSteps: SCHEDULED_MAX_STEPS });
-    expect(SCHEDULED_MAX_STEPS).toBeLessThan(MAX_STEPS);
+    expect(SCHEDULED_MAX_STEPS).toBeLessThanOrEqual(MAX_STEPS);
   });
 
   it("asks whether to send as a separate turn, never alongside the tools", async () => {

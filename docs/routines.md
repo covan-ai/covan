@@ -228,12 +228,18 @@ twelve per routine, so three routines comes to 38. An agent turn spends more
 than twelve on its own, because each tool call is at least one request and the
 model is called again after each.
 
-A scheduled run is capped at **eight tool calls**, half what a conversation
-gets. That is this limit, not a judgement about what a routine deserves: chat
-was raised to sixteen when connected apps arrived — finding an operation costs
-a step before running one costs another — and a routine taking sixteen would
-break the arithmetic above three routines into a tick. A run that reaches the
-cap says what it did not finish rather than stopping silently.
+A scheduled run is capped at **eight tool calls**, the same as a conversation
+today. That is this limit talking, not a judgement about what a routine
+deserves — and the two numbers agree by coincidence rather than by design.
+Chat was raised to sixteen when connected apps arrived, because finding an
+operation costs a step before running one costs another, and put back the same
+day: the API Worker has the same fifty-subrequest cap as the tick, and sixteen
+steps does not fit under it either. A run that reaches the cap says what it did
+not finish rather than stopping silently.
+
+If chat is ever raised again, this stays at eight until the arithmetic above is
+redone — a routine shares its fifty with the rest of the batch, and chat does
+not.
 
 So for routines that use tools, on Workers Free, either:
 

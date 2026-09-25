@@ -9,41 +9,59 @@
 /**
  * How many tools one turn may run in total, across every pass.
  *
- * Eight was right when a turn meant describe, query, query again, answer.
- * Connected applications made it wrong: finding an operation costs a step
- * before running one costs another, so a question that touches two services
- * spends four steps before it has learned anything. The first real one —
- * "list my last five meetings" — used seven of eight, and the eighth would
- * have been the budget notice rather than the answer.
+ * Eight was right when a turn meant describe, query, query again, answer, and
+ * connected applications strained it: finding an operation costs a step before
+ * running one costs another, so the first real question — "list my last five
+ * meetings" — used seven of eight.
  *
- * Sixteen rather than thirty-two, because the failure mode of a generous loop
- * is not a slow answer, it is a bill. **And the bill is worse than it looks.**
- * Each step's result joins the transcript and is re-sent on every later pass,
- * so cost grows with roughly the SQUARE of this number, not with the number
- * itself. Doubling it does not double the ceiling — it roughly quadruples the
- * worst case. Read `MAX_TOOL_OUTPUT_CHARS` below as the other half of that
- * multiplication before raising either.
+ * **It was raised to sixteen on 2026-09-24 and put back the same evening,
+ * because sixteen does not fit on this runtime.** That is the number worth
+ * keeping, so the next person does not repeat it.
+ *
+ * WHY IT DOES NOT FIT. Workers Free allows **fifty subrequests per
+ * invocation**, and on this Worker a database read, a model call and a
+ * connected-app call are each one. A chat turn spends roughly ten before the
+ * loop starts (session, agent, history, retrieval, quota, the tool list), one
+ * per pass, several per tool call, and a handful persisting the reply. At
+ * eight steps that lands under the cap; at sixteen it does not, and what the
+ * person sees is "The assistant hit an error."
+ *
+ * The failure is also disguised, which is why this comment is long. Once the
+ * cap is hit every `fetch` fails, and the OpenAI SDK reports any failed fetch
+ * as `Connection error.` — so the log says the network broke when what broke
+ * was the budget. `lib/routines/dispatcher.ts` does this arithmetic for the
+ * cron Worker and always has; nothing was doing it for this one.
+ *
+ * The other half of the argument, unchanged and still true: each step's result
+ * joins the transcript and is re-sent on every later pass, so cost grows with
+ * roughly the SQUARE of this number. Read `MAX_TOOL_OUTPUT_CHARS` below before
+ * raising either.
+ *
+ * TO RAISE IT, one of two things has to happen first — not a guess, which is
+ * how it went wrong: Workers Paid (the cap becomes 1000), or the Worker
+ * counting its own subrequests so the loop can stop honestly instead of
+ * failing at a ceiling nothing reports.
  *
  * Counted in tool executions, not in round trips: a pass that asks for three
  * tools at once spends three.
  */
-export const MAX_STEPS = 16;
+export const MAX_STEPS = 8;
 
 /**
- * The same budget for a run nobody is watching, and deliberately the old one.
+ * The same budget for a run nobody is watching, and its own reason for it.
  *
- * A scheduled run cannot be given the chat ceiling, for a reason that is not
- * taste: on the cron Worker every database read and every outbound call is a
- * subrequest, and Workers Free allows fifty per invocation.
- * `lib/routines/dispatcher.ts` does that arithmetic against `BATCH_SIZE`, and
- * a sixteen-step routine would break it three routines into a tick — failing
- * the last ones at the ceiling, recording them as failures, and backing them
- * off geometrically for a reason nothing in the run log would explain.
+ * It equals `MAX_STEPS` again now that chat is back at eight, and it is still
+ * a separate constant on purpose: the two arrived at the same number by
+ * different routes, and only one of them can ever move. A scheduled run
+ * shares its fifty subrequests with the whole batch — `dispatcher.ts` sizes
+ * `BATCH_SIZE` on exactly that, at 2 + 3 x 12 = 38 — so even on Workers Paid,
+ * where chat could take far more, this one still cannot follow it up without
+ * that arithmetic being redone.
  *
  * It is also the cheaper half of the argument. Nobody is reading a scheduled
  * run as it happens, so a run that stops short and says what it could not
- * finish costs somebody a look in the morning; a run that spends four times
- * the tokens costs money every night.
+ * finish costs somebody a look in the morning; a run that spends several
+ * times the tokens costs money every night.
  */
 export const SCHEDULED_MAX_STEPS = 8;
 

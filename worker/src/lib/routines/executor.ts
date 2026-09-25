@@ -10,6 +10,7 @@ import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./de
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
 import { embeddingCost, type Entitlements } from "../entitlements";
+import { WARN_AT, sameInstant } from "../entitlements/warn";
 import {
   billsTheOperator,
   keysForUser,
@@ -957,6 +958,7 @@ async function finish(
       // moved. `outcome.keys` being required on exactly the branches that can
       // spend is what makes this reachable only where there is one.
       await deps.entitlements.record(routine.user_id, outcome.weightedTokens);
+      await warnOwnerIfLow(routine, deps);
     } catch (err) {
       console.error("failed to record routine token usage", err);
     }
@@ -1036,6 +1038,78 @@ async function announcePause(
  * thousands of times before the month turned over. `lastRunWasQuotaSkip` below
  * is what makes it once.
  */
+/**
+ * Say something before the allowance is gone, for somebody whose spend is all
+ * scheduled.
+ *
+ * `lib/entitlements/warn.ts` does this on a request, and it is reached from
+ * `recordQuota` — which a routine never calls, because a scheduled run has no
+ * request to hang one off. So an account whose routines quietly spend a month's
+ * allowance got no warning at all, and the first news of the limit was a run
+ * skipped for being out of it. That is the failure `warnIfLow` was written to
+ * remove, left open on the one path where nobody is watching.
+ *
+ * It shares the column rather than adding one, and that is deliberate:
+ * `quota_warned_for` means "this period has been warned about", not "chat has
+ * warned about it". Whichever side notices first sends the one message, and the
+ * other stays quiet.
+ *
+ * `quota_exhausted` is the preference it asks, for the same reason — it is the
+ * owner's switch for hearing about their allowance, and inventing a second one
+ * would mean a migration to split a question nobody asked to have split.
+ *
+ * Best-effort throughout, like every notice from this engine: the run is
+ * finished and delivered, and a message that cannot be sent must not turn a
+ * successful run into a failed one.
+ */
+async function warnOwnerIfLow(routine: RoutineRow, deps: ExecutorDeps): Promise<void> {
+  try {
+    const { used, limit, resetsAt } = await deps.entitlements.snapshot(routine.user_id);
+    // `limit: null` is the open build answering "unmetered" — a self-hosted
+    // Covan brings its own key and has no allowance to run low on.
+    if (limit === null || limit <= 0 || !resetsAt) return;
+    if (used / limit < WARN_AT) return;
+
+    const { data: prefs } = await deps.db
+      .from("notification_preferences")
+      .select("quota_warned_for")
+      .eq("user_id", routine.user_id)
+      .maybeSingle();
+    if (sameInstant(prefs?.quota_warned_for as string | null | undefined, resetsAt)) return;
+
+    // Stamped before the send, not after. The two orders fail differently: this
+    // way a dead delivery channel costs one missed warning, the other way round
+    // it costs a message per run for the rest of the period.
+    const { error } = await deps.db.from("notification_preferences").upsert(
+      {
+        user_id: routine.user_id,
+        quota_warned_for: resetsAt,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+    if (error) return;
+
+    const when = new Date(resetsAt);
+    const readable = Number.isNaN(when.getTime())
+      ? "when your allowance resets"
+      : when.toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+
+    await notifyOwner(routine, deps, "quota_exhausted", {
+      subject: "Your monthly allowance is running low",
+      body:
+        `Your routines have used ${Math.round((used / limit) * 100)}% of this month's token ` +
+        `allowance, and "${routine.name}" is one of them.\n\n` +
+        `Nothing has stopped. This is early notice rather than a problem: once the ` +
+        `allowance is gone, routines wait instead of running, and they start again by ` +
+        `themselves on ${readable}.\n\n` +
+        `You will not get this message again this month.`,
+    });
+  } catch {
+    // Nothing left to do. The spend is already recorded and the run is done.
+  }
+}
+
 async function announceQuotaSkip(
   routine: RoutineRow,
   deps: ExecutorDeps,

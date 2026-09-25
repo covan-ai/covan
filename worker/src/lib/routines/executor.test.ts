@@ -311,6 +311,69 @@ describe("runRoutine", () => {
     expect(recorded).toEqual([{ userId: "u1", tokens: 45 }]);
   });
 
+  /**
+   * The warning an account whose spend is all scheduled never used to get.
+   *
+   * `warnIfLow` is reached from `recordQuota`, which a routine never calls —
+   * there is no request to hang one off. So the first news of the limit was a
+   * run skipped for being past it, which is the failure the warning exists to
+   * remove, left open on the one path where nobody is watching.
+   */
+  describe("telling the owner the allowance is running low", () => {
+    const lowSnapshot = () => ({ used: 800, limit: 1000, resetsAt: "2026-09-01T00:00:00.000Z" });
+    const withItems = { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null };
+
+    it("says so once the allowance is three quarters gone", async () => {
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+      const { db } = makeDb();
+      const deps = makeDeps(db) as any;
+      deps.entitlements.snapshot = vi.fn(async () => lowSnapshot());
+
+      await runRoutine(routine({ cursor: withItems }), deps);
+
+      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
+      expect(bodies.some((b: string) => /running low/.test(b))).toBe(true);
+      // And it still delivered what it was for. The notice sits beside the
+      // run's own result, never instead of it.
+      expect(bodies.length).toBeGreaterThan(1);
+    });
+
+    it("stays quiet on a self-hosted install, which has no allowance at all", async () => {
+      // `limit: null` is `unlimitedEntitlements` answering. Warning there would
+      // be a message about a number that does not exist.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+      const { db } = makeDb();
+      const deps = makeDeps(db) as any;
+
+      await runRoutine(routine({ cursor: withItems }), deps);
+
+      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
+      expect(bodies.some((b: string) => /running low/.test(b))).toBe(false);
+    });
+
+    it("says it once a period, not once a run", async () => {
+      // Being past the threshold stays true for every run afterwards, so a
+      // message per run is what the naive version does — and a routine on a
+      // five-minute schedule would mail its owner all month.
+      //
+      // The stored stamp is the same moment spelled the way PostgREST returns
+      // it, not the way `toISOString` writes it. Comparing the text would make
+      // the two differ and fire the warning on every run for the rest of the
+      // month, which is exactly what the column was added to prevent.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+      const { db } = makeDb({
+        rows: { notification_preferences: { quota_warned_for: "2026-09-01T00:00:00+00:00" } },
+      });
+      const deps = makeDeps(db) as any;
+      deps.entitlements.snapshot = vi.fn(async () => lowSnapshot());
+
+      await runRoutine(routine({ cursor: withItems }), deps);
+
+      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
+      expect(bodies.some((b: string) => /running low/.test(b))).toBe(false);
+    });
+  });
+
   it("skips without spending or claiming anything when the owner is out of quota", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     const { db, claimed, inserts } = makeDb();

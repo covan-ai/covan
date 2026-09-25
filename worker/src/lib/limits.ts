@@ -50,17 +50,21 @@ export type ChatLimits = {
    * `extraLegs: 0` means the soft ceiling is the only ceiling — today's
    * behaviour, and what Free keeps.
    *
-   * **On Paid this is 1, not 2, and the reason is the context window rather
-   * than the subrequest cap.** Once the plan is Paid, subrequests stop being
-   * what binds: 24 steps is roughly 250 of 10,000. What binds instead is the
-   * transcript. A step's result is re-sent on every later pass, so at 24 steps
-   * `MAX_TOOL_OUTPUT_CHARS` alone is ~72,000 tokens of tool results, before
-   * the persona, the manifest, `HISTORY_CHAR_BUDGET`, the retrieval block and
-   * two dozen assistant turns. A turn that overflows gets a provider 400 —
-   * and it arrives wearing the same disguise the subrequest cap does.
+   * **On Paid the binding constraint is the context window, not the subrequest
+   * cap.** Once the plan is Paid, subrequests stop being what binds: 24 steps
+   * is roughly 250 of 10,000. What binds instead is the transcript. A step's
+   * result is re-sent on every later pass, so at 24 steps
+   * `MAX_TOOL_OUTPUT_CHARS` alone would be ~72,000 tokens of tool results,
+   * before the persona, the manifest, `HISTORY_CHAR_BUDGET`, the retrieval
+   * block and two dozen assistant turns — and a turn that overflows gets a
+   * provider 400 wearing the same disguise the subrequest cap does.
    *
-   * So 1 leg (hard ceiling 32) ships first. 2 (hard ceiling 40) waits for
-   * transcript trimming at the leg boundary, which is what pays for it.
+   * That is why 2 was not allowed to ship first. It is allowed now because
+   * `trimSpentResults` in `lib/harness/loop.ts` cuts the results the turn has
+   * finished with at each boundary, so the transcript a 40-step turn carries
+   * is closer to one leg at full size plus the rest at `MAX_STEP_EXCERPT_CHARS`
+   * than to forty at full size. Raising this without that is the one ordering
+   * mistake this whole file exists to prevent.
    */
   extraLegs: number;
   legSteps: number;
@@ -100,7 +104,7 @@ const FREE: PlanLimits = Object.freeze({
  */
 const PAID: PlanLimits = Object.freeze({
   subrequests: 10_000,
-  chat: Object.freeze({ maxSteps: 24, extraLegs: 1, legSteps: 8 }),
+  chat: Object.freeze({ maxSteps: 24, extraLegs: 2, legSteps: 8 }),
 });
 
 /** Which plan this environment says it is on. Anything but `"paid"` is Free. */

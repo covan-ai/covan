@@ -61,19 +61,20 @@ describe("what a deployment is allowed to spend", () => {
       expect(planLimits(paid).subrequests).toBe(10_000);
     });
 
-    it("budgets more steps than Free, and one leg past them", () => {
+    it("budgets more steps than Free, and two legs past them", () => {
       expect(chatBudget(paid).maxSteps).toBe(24);
-      expect(chatBudget(paid).extraLegs).toBe(1);
+      expect(chatBudget(paid).extraLegs).toBe(2);
       expect(chatBudget(paid).legSteps).toBe(8);
     });
 
-    it("stops at thirty-two, not forty — one leg until transcript trimming ships", () => {
-      // The hard ceiling is soft + legs × legSteps, and the reason it is 32
-      // rather than 40 is the context window, not subrequests: a turn that
-      // overflows gets a provider 400 wearing the same disguise. Two legs wait
-      // for trimming at the leg boundary to pay for them.
+    it("stops at forty, which only trimming pays for", () => {
+      // The hard ceiling is soft + legs × legSteps. What licenses 40 rather
+      // than 32 is not subrequests — it is `trimSpentResults` cutting the
+      // results the turn has finished with at each boundary. A turn that
+      // overflows its context gets a provider 400 wearing the same disguise the
+      // subrequest cap does, so the ordering matters more than the number.
       const chat = chatBudget(paid);
-      expect(chat.maxSteps + chat.extraLegs * chat.legSteps).toBe(32);
+      expect(chat.maxSteps + chat.extraLegs * chat.legSteps).toBe(40);
     });
   });
 

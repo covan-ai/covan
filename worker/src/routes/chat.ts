@@ -4,11 +4,16 @@ import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
 import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
-import { type CompletionMessage } from "../lib/completion";
-import { runAgentTurn, parseArguments, type AgentStep, type PassUsage } from "../lib/harness/loop";
+import { type CompletionMessage, type CompletionUsage } from "../lib/completion";
+import {
+  parseArguments,
+  runWithTimeout,
+  type AgentStep,
+  type PassUsage,
+} from "../lib/harness/loop";
 import { capabilitiesFor } from "../lib/harness/available";
 import { toolByName } from "../lib/harness/registry";
-import { cap, MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
+import { cap, MAX_TOOL_OUTPUT_CHARS, TOOL_TIMEOUT_MS } from "../lib/harness/budget";
 import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
 import { retrieveForAgent } from "../lib/retrieval";
 import {
@@ -369,7 +374,7 @@ chat.post("/chat/stream", async (c) => {
        * that explains nothing with one that does. See `lib/runtime-limit.ts`.
        */
       const runtimeLimit = runtimeLimitFlag();
-      let paused: Awaited<ReturnType<typeof runAgentTurn>>["paused"] | null = null;
+      let paused: Awaited<ReturnType<typeof runChatTurn>>["paused"] | null = null;
 
       // Collect the title started above and write it, returning what it cost so
       // the caller can charge it with the rest of the turn. Written with the
@@ -838,22 +843,29 @@ chat.post("/chat/confirm/:id", async (c) => {
   if (!claimed) return c.json({ error: "this was already answered" }, 409);
 
   const signal = c.req.raw.signal;
-  const ctx = {
+  /**
+   * Raised if anything in this turn discovers the invocation is out of
+   * platform budget, so the catch can say so instead of "an error".
+   *
+   * The resume path never had one. Every ceiling it met therefore reached the
+   * person as *"The assistant hit an error. Please try again."* — advice that
+   * is wrong in the one way that matters, because trying again runs into the
+   * same ceiling. See `lib/runtime-limit.ts`.
+   */
+  const runtimeLimit = runtimeLimitFlag();
+  // `confirmed` for the one call a person has just approved, and only for it —
+  // the loop below is handed the same context with it off again, because one
+  // yes is one call rather than a standing permission.
+  const ctx = buildToolContext({
     db,
     env,
     workspaceId: pause.workspaceId,
     agentId: pause.agentId,
     userId: pause.userId,
     sessionId: pause.sessionId,
+    runtimeLimit,
     confirmed: true,
-    // Fresh for the resumed half. The parked half's searches are in the
-    // transcript the model can already read, so there is nothing to carry.
-    searchMemo: new Map<string, string>(),
-    // Empty, and `confirmed: true` above means it is never consulted anyway —
-    // the slug was checked against this when the call was proposed, and asking
-    // again after a person approved it would be a second opinion nobody wanted.
-    offeredSlugs: new Set<string>(),
-  };
+  });
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -862,30 +874,95 @@ chat.post("/chat/confirm/:id", async (c) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
 
-      let full = "";
+      /**
+       * What the resumed turn has produced so far, filled as it runs.
+       *
+       * The same record `/chat/stream` keeps, and it matters more here: the
+       * claim above already marked the row approved — that is the double-click
+       * guard — so a second attempt would find nothing to resume. If this
+       * request drops what it did, nothing else will ever write it.
+       */
+      const spend = turnSpend();
       let spendRecorded = false;
-      const recordSpend = async (usage: {
-        promptTokens: number | null;
-        completionTokens: number | null;
-      }) => {
+      let persisted = false;
+      /**
+       * One counter write per turn, on every way this stream can end.
+       *
+       * Read off the passes rather than off the returned turn, which is the
+       * whole of what was wrong here: the catch used to charge
+       * `{promptTokens: null, completionTokens: null}`, `recordQuota` refuses a
+       * zero, and so a resume that failed after several real model calls billed
+       * nothing at all for them.
+       */
+      const recordSpend = async () => {
         if (spendRecorded) return;
         spendRecorded = true;
+        const usage = spentUsage(spend);
         await recordQuota(c, (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
       };
 
       /**
-       * The steps this resume is answerable for, held where the `catch` can
-       * still reach them.
+       * Everything that happened before the approval, resolved.
        *
-       * `carried` is everything that happened before the approval, resolved;
-       * `settled` is everything the resumed turn adds. Both matter more here
-       * than on `/chat/stream`, because `resolvePausedTurn` above already
-       * marked the row approved — that is the double-click guard, and it means
-       * a second attempt would find nothing to resume. If this request drops
-       * the steps, nothing else will ever write them.
+       * Separate from `spend.steps`, which is what the resumed turn adds: the
+       * loop is given these as `stepsSoFar` and re-reports none of them, so the
+       * two are disjoint and the salvage writes both.
        */
       let carried: AgentStep[] = [];
-      const settled: AgentStep[] = [];
+
+      /**
+       * Where the second half of the answer goes, for the success path and the
+       * salvage alike.
+       *
+       * An assistant row already exists when the model said something before it
+       * asked, and the two halves are one reply — written as two rows they
+       * would be re-sent to the model next turn as two turns, which is not what
+       * it said. This is the same rule, and the same join, that `continue` uses
+       * on `/chat/stream`.
+       *
+       * The token columns are the half that used to be missing from the salvage
+       * and present here, which is how production collected assistant rows with
+       * every count NULL. One function now, so they cannot disagree again.
+       */
+      const persistAssistant = async (
+        text: string,
+        usage: CompletionUsage & { passUsage: PassUsage[] },
+      ) => {
+        if (persisted) return null;
+        persisted = true;
+        const existing = pause.messageId;
+        const columns = {
+          prompt_tokens: usage.promptTokens,
+          completion_tokens: usage.completionTokens,
+          cached_tokens: usage.cachedTokens,
+          cache_write_tokens: usage.cacheWriteTokens,
+          reasoning_tokens: usage.reasoningTokens,
+          // Replaced rather than concatenated, matching the counts above it —
+          // this branch has always written what the resumed half cost rather
+          // than the whole reply, and a pass list that disagreed with the
+          // totals beside it would be worse than a short one.
+          pass_usage: usage.passUsage,
+        };
+        const { data } = existing
+          ? await service
+              .from("messages")
+              .update({ content: await appendedContent(service, existing, text), ...columns })
+              .eq("id", existing)
+              .select("*")
+              .single()
+          : await service
+              .from("messages")
+              .insert({
+                session_id: pause.sessionId,
+                role: "assistant",
+                content: text || "(no reply)",
+                sender_id: null,
+                ...columns,
+              })
+              .select("*")
+              .single();
+        return data ?? null;
+      };
 
       try {
         const tool = approve ? toolByName(pause.toolCall.name) : null;
@@ -896,19 +973,29 @@ chat.post("/chat/confirm/:id", async (c) => {
         > => {
           if (!approve) return { kind: "error", message: DECLINED_RESULT };
           if (!tool) return { kind: "error", message: `no tool named ${pause.toolCall.name}` };
-          try {
-            const ran = await tool.run(parsedArgs.ok ? parsedArgs.args : {}, ctx);
-            // A tool that asks again having been told yes is a tool that has
-            // not read `ctx.confirmed`, which is a bug in the tool rather
-            // than a second question for the person. Reported as an error so
-            // it is visible instead of parking the turn a second time.
-            if (ran.kind === "needs_confirmation") {
-              return { kind: "error", message: "this tool asked for confirmation twice" };
-            }
-            return ran;
-          } catch (err) {
-            return { kind: "error", message: err instanceof Error ? err.message : String(err) };
+          // Through the harness's own runner rather than called directly, which
+          // is what this path was doing. Every other tool call in the product
+          // is time-boxed; the one a person had just approved was not, so a
+          // connected app that hung held the stream open until the client gave
+          // up. `runWithTimeout` also delivers the ceiling as a signal, so the
+          // tool's own `fetch` is cancelled rather than left running with
+          // nobody to receive it — and it answers with an error rather than
+          // throwing, which is why the try that used to wrap this is gone.
+          const ran = await runWithTimeout(
+            tool,
+            parsedArgs.ok ? parsedArgs.args : {},
+            ctx,
+            TOOL_TIMEOUT_MS,
+            signal,
+          );
+          // A tool that asks again having been told yes is a tool that has not
+          // read `ctx.confirmed`, which is a bug in the tool rather than a
+          // second question for the person. Reported as an error so it is
+          // visible instead of parking the turn a second time.
+          if (ran.kind === "needs_confirmation") {
+            return { kind: "error", message: "this tool asked for confirmation twice" };
           }
+          return ran;
         })();
 
         /**
@@ -976,7 +1063,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           userId: pause.userId,
         });
 
-        const turn = await runAgentTurn({
+        const turn = await runChatTurn({
           env,
           request: {
             model: pause.model ?? resolveModel(null, env),
@@ -994,70 +1081,16 @@ chat.post("/chat/confirm/:id", async (c) => {
           ctx: { ...ctx, confirmed: false },
           stepsSoFar: steps,
           signal,
-          onEvent: (event) => {
-            if (event.type === "delta") {
-              full += event.text;
-              send({ type: "delta", text: event.text });
-            } else if (event.type === "thinking") {
-              send({ type: "thinking", text: event.text });
-            } else {
-              send({
-                type: "step",
-                index: event.index,
-                tool: event.tool,
-                status: event.status,
-                label: event.label,
-              });
-            }
-          },
-          onStep: (step) => settled.push(step),
+          send,
+          spend,
         });
 
-        await recordSpend(turn.usage);
+        await recordSpend();
 
-        // Where the second half of the answer goes. An assistant row already
-        // exists when the model said something before it asked, and the two
-        // halves are one reply — written as two rows they would be re-sent to
-        // the model next turn as two turns, which is not what it said. This
-        // is the same rule, and the same join with nothing between the
-        // halves, that `continue` uses above.
-        const existing = pause.messageId;
-        const { data: inserted } = existing
-          ? await service
-              .from("messages")
-              .update({
-                content: await appendedContent(service, existing, turn.text),
-                prompt_tokens: turn.usage.promptTokens,
-                completion_tokens: turn.usage.completionTokens,
-                cached_tokens: turn.usage.cachedTokens,
-                cache_write_tokens: turn.usage.cacheWriteTokens,
-                reasoning_tokens: turn.usage.reasoningTokens,
-                // Replaced rather than concatenated, matching the three counts
-                // above it — this branch has always written what the resumed
-                // half cost rather than the whole reply, and a pass list that
-                // disagreed with the totals beside it would be worse than a
-                // short one.
-                pass_usage: turn.passes,
-              })
-              .eq("id", existing)
-              .select("*")
-              .single()
-          : await service
-              .from("messages")
-              .insert({
-                session_id: pause.sessionId,
-                role: "assistant",
-                content: turn.text || "(no reply)",
-                sender_id: null,
-                prompt_tokens: turn.usage.promptTokens,
-                completion_tokens: turn.usage.completionTokens,
-                cached_tokens: turn.usage.cachedTokens,
-                cache_write_tokens: turn.usage.cacheWriteTokens,
-                reasoning_tokens: turn.usage.reasoningTokens,
-                pass_usage: turn.passes,
-              })
-              .select("*")
-              .single();
+        const inserted = await persistAssistant(turn.text, {
+          ...spentUsage(spend),
+          passUsage: turn.passes,
+        });
 
         if (!inserted) {
           send({ type: "error", error: "failed to persist assistant message" });
@@ -1096,43 +1129,43 @@ chat.post("/chat/confirm/:id", async (c) => {
           send({ type: "paused", reason: "budget" });
         }
 
+        // Before `done`, exactly as `/chat/stream` does it. A resumed answer
+        // can hit the same 4096-token cap the first half can, and without this
+        // the second half stops mid-thought with nothing on screen saying so —
+        // and no Continue button, because that button is what this event
+        // raises.
+        if (turn.finishReason === "length") send({ type: "truncated" });
+
         send({ type: "done", message: mapMessage(inserted) });
         controller.close();
       } catch (err) {
-        console.error("chat confirm error", err);
-        await recordSpend({ promptTokens: null, completionTokens: null });
-        // The same recovery `/chat/stream` does, and for a stronger reason —
-        // see `carried` above. Wrapped in its own try because a failure while
-        // salvaging must still leave the stream terminated: an unsent `error`
-        // is a client spinning until its connection times out.
-        try {
-          const all = [...carried, ...settled];
-          if (all.length > 0 || full.trim().length > 0) {
-            const partial = full.trim().length > 0 ? full : CUT_SHORT;
-            const existing = pause.messageId;
-            const { data: row } = existing
-              ? await service
-                  .from("messages")
-                  .update({ content: await appendedContent(service, existing, partial) })
-                  .eq("id", existing)
-                  .select("*")
-                  .single()
-              : await service
-                  .from("messages")
-                  .insert({
-                    session_id: pause.sessionId,
-                    role: "assistant",
-                    content: partial,
-                    sender_id: null,
-                  })
-                  .select("*")
-                  .single();
-            if (row) await writeSteps(service, row.id, all);
-          }
-        } catch (saveErr) {
-          console.error("chat confirm error: could not save the partial", saveErr);
+        // The person closed the tab. Not a failure, and reporting it as one
+        // was this path's own invention: `/chat/stream` has always had this
+        // branch. An error frame written into a stream nobody is reading is
+        // harmless; the assistant row claiming the turn broke is not.
+        if (isAbort(err, signal)) {
+          deferred(
+            c,
+            (async () => {
+              await salvagePartial({
+                service,
+                spend,
+                carried,
+                persisted,
+                persist: persistAssistant,
+              });
+              await recordSpend();
+            })(),
+          );
+          controller.close();
+          return;
         }
-        send({ type: "error", error: "The assistant hit an error. Please try again." });
+        console.error("chat confirm error", err);
+        await recordSpend();
+        // The same recovery `/chat/stream` does, and for a stronger reason —
+        // see `carried` above.
+        await salvagePartial({ service, spend, carried, persisted, persist: persistAssistant });
+        send({ type: "error", error: explainTurnFailure(err, runtimeLimit) });
         controller.close();
       }
     },

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CompletionEvent, CompletionMessage } from "../completion";
 import type { AgentTool, ToolContext, ToolResult } from "./registry";
-import { runAgentTurn, parseArguments, NO_TOOLS_NOTICE } from "./loop";
+import { runAgentTurn, parseArguments, NO_TOOLS_NOTICE, type PassUsage } from "./loop";
 
 /**
  * The loop, driven by a scripted model.
@@ -728,6 +728,54 @@ describe("a turn that dies with work already behind it", () => {
 
     // The turn is gone; the record of what it did is not.
     expect(collected).toEqual(["search"]);
+  });
+
+  /**
+   * The same argument as `onStep`, about the other half of what a turn
+   * produces. `turn.usage` only exists once this function returns, so a turn
+   * that throws reports no tokens at all — and the route's salvage then writes
+   * an assistant row with every token column null and bills nothing for model
+   * calls that really happened. This is the only copy that survives the throw.
+   */
+  it("hands each pass's usage to onPass as it lands, so a throw still has numbers", async () => {
+    let call = 0;
+    streamCompletion.mockImplementation(async function* (
+      _env: unknown,
+      req: { tools?: unknown[] },
+    ) {
+      call += 1;
+      if (call === 1) {
+        for (const e of pass("Looking.", [{ id: "c1", name: "search", arguments: "{}" }])) {
+          if (e.type === "tools" && !req.tools) continue;
+          yield e;
+        }
+        return;
+      }
+      throw new Error("Connection error.");
+    });
+
+    const billed: Array<{ index: number; prompt: number | null }> = [];
+    await expect(
+      runAgentTurn({
+        ...base,
+        tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+        onPass: (usage) => billed.push({ index: usage.index, prompt: usage.prompt }),
+      }),
+    ).rejects.toThrow("Connection error.");
+
+    expect(billed).toEqual([{ index: 0, prompt: 10 }]);
+  });
+
+  it("gives onPass the same entries the turn returns, so neither is authoritative", async () => {
+    scripted([pass("Looking.", [{ id: "c1", name: "search", arguments: "{}" }]), pass("Done.")]);
+    const billed: PassUsage[] = [];
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+      onPass: (usage) => billed.push(usage),
+    });
+    expect(billed).toEqual(turn.passes);
+    expect(billed.map((p) => p.index)).toEqual([0, 1]);
   });
 
   it("reports a refused step too, so a spent budget is not silently lost", async () => {

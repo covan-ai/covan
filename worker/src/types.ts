@@ -4,6 +4,9 @@ import type { Entitlements } from "./lib/entitlements";
 // Type-only, and therefore erased: `lib/keys/resolve` imports `RoutineEnv` back
 // out of this file, and a value import either way would be a real cycle.
 import type { ProviderKeys } from "./lib/keys/resolve";
+// Type-only for the same reason: `lib/subrequests.ts` imports `RoutineEnv` back.
+import type { SubrequestMeter } from "./lib/subrequests";
+import type { RuntimeLimitFlag } from "./lib/runtime-limit";
 
 /**
  * Exactly what the routine engine needs to run a tick.
@@ -127,6 +130,20 @@ export type RoutineEnv = {
    * connection. Only `"paid"` is read; anything else is Free.
    */
   WORKER_PLAN?: "free" | "paid";
+  /**
+   * How many subrequests this REQUEST has spent so far.
+   *
+   * Not configuration, unlike everything else here, and it is on this type for
+   * the reason `lib/subrequests.ts` gives: `env` is the one thing every client
+   * factory already receives, and threading a parameter instead would mean
+   * touching thirty-nine places that build a service-role client, to carry
+   * something none of them care about.
+   *
+   * Always absent on the bindings themselves. It is added to an OVERLAY, per
+   * request, the way `withProviderKeys` adds a key — the bindings object is
+   * shared between the requests an isolate serves and must never be written to.
+   */
+  SUBREQUESTS?: SubrequestMeter;
 };
 
 /**
@@ -354,6 +371,24 @@ export type Variables = {
    * chiefly creating another key, which would make revocation meaningless.
    */
   apiKeyId?: string;
+  /**
+   * Raised when anything in this request discovers the invocation is out of
+   * platform budget, so a route can say so instead of "an error".
+   *
+   * On the context rather than made per turn because the counter below shares
+   * it and starts counting in the auth middleware, before any route runs. See
+   * `lib/runtime-limit.ts` for why one shared flag beats an error that
+   * propagates — by the time anything propagates, the real message is gone.
+   */
+  runtimeLimit: RuntimeLimitFlag;
+  /**
+   * What this request has spent of its platform allowance.
+   *
+   * Set by the auth middleware, which is where the caller's own Supabase client
+   * is built and therefore the first thing that can spend one. See
+   * `lib/subrequests.ts`.
+   */
+  subrequests: SubrequestMeter;
 };
 
 export type AppEnv = {

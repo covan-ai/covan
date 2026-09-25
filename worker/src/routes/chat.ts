@@ -29,7 +29,7 @@ import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
-import { runtimeLimitFlag } from "../lib/runtime-limit";
+import { subrequestReport, withMeter } from "../lib/subrequests";
 import {
   buildToolContext,
   explainTurnFailure,
@@ -110,7 +110,14 @@ chat.post("/chat/stream", async (c) => {
   // Whose key answers. `guardQuota` sets this only when the caller is past
   // their allowance and the workspace is carrying it from here; undefined is
   // the normal case and means the operator's.
-  const env = c.get("providerEnv") ?? c.env;
+  //
+  // Wrapped so every outbound call this turn makes is counted against what the
+  // platform allows one invocation — the model calls, the tools, the
+  // persistence. The auth middleware started the count with the caller's own
+  // client; this is what carries it the rest of the way. See
+  // `lib/subrequests.ts`.
+  const meter = c.get("subrequests");
+  const env = withMeter(c.get("providerEnv") ?? c.env, meter);
 
   const parsed = streamChatSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -284,7 +291,8 @@ chat.post("/chat/stream", async (c) => {
     model !== picked;
 
   const signal = c.req.raw.signal;
-  const service = serviceClient(c.env);
+  // On the metered overlay, so the reply's own writes are counted too.
+  const service = serviceClient(env);
 
   // Name the conversation from the message that opened it, the way every other
   // chat product does — an untitled sidebar of "New chat, New chat, New chat"
@@ -368,11 +376,12 @@ chat.post("/chat/stream", async (c) => {
       // step belongs to a message and the message does not exist until then.
       let steps: AgentStep[] = [];
       /**
-       * Raised if anything in this turn discovers the invocation is out of
-       * platform budget. Read only by the `catch` below, to replace a message
-       * that explains nothing with one that does. See `lib/runtime-limit.ts`.
+       * Raised if anything in this request discovers the invocation is out of
+       * platform budget — by a tool that met the ceiling, or by the subrequest
+       * counter reaching 90% of it. Read by the `catch` below, to replace a
+       * message that explains nothing with one that does.
        */
-      const runtimeLimit = runtimeLimitFlag();
+      const runtimeLimit = c.get("runtimeLimit");
       let paused: Awaited<ReturnType<typeof runChatTurn>>["paused"] | null = null;
 
       // Collect the title started above and write it, returning what it cost so
@@ -720,6 +729,11 @@ chat.post("/chat/stream", async (c) => {
           });
         }
 
+        // What the turn actually cost the platform, for the only reader there
+        // is: `wrangler tail`. Not a gate — the measured worst case is a few
+        // hundred of ten thousand — but the number nobody had, and the one the
+        // step budget was guessed against for a year.
+        console.log("chat turn", subrequestReport(meter));
         controller.close();
       } catch (err: unknown) {
         // What the turn spent before it threw. `runAgentTurn` reports its
@@ -794,9 +808,10 @@ chat.post("/chat/confirm/:id", async (c) => {
   const denied = await guardQuota(c);
   if (denied) return denied;
 
-  const env = c.get("providerEnv") ?? c.env;
+  const meter = c.get("subrequests");
+  const env = withMeter(c.get("providerEnv") ?? c.env, meter);
   const db = c.get("db");
-  const service = serviceClient(c.env);
+  const service = serviceClient(env);
 
   const parsed = confirmSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -847,15 +862,15 @@ chat.post("/chat/confirm/:id", async (c) => {
 
   const signal = c.req.raw.signal;
   /**
-   * Raised if anything in this turn discovers the invocation is out of
+   * Raised if anything in this request discovers the invocation is out of
    * platform budget, so the catch can say so instead of "an error".
    *
-   * The resume path never had one. Every ceiling it met therefore reached the
-   * person as *"The assistant hit an error. Please try again."* — advice that
-   * is wrong in the one way that matters, because trying again runs into the
-   * same ceiling. See `lib/runtime-limit.ts`.
+   * The resume path never had one at all. Every ceiling it met therefore
+   * reached the person as *"The assistant hit an error. Please try again."* —
+   * advice that is wrong in the one way that matters, because trying again runs
+   * into the same ceiling. See `lib/runtime-limit.ts`.
    */
-  const runtimeLimit = runtimeLimitFlag();
+  const runtimeLimit = c.get("runtimeLimit");
   // `confirmed` for the one call a person has just approved, and only for it —
   // the loop below is handed the same context with it off again, because one
   // yes is one call rather than a standing permission.
@@ -1141,6 +1156,7 @@ chat.post("/chat/confirm/:id", async (c) => {
         if (turn.finishReason === "length") send({ type: "truncated" });
 
         send({ type: "done", message: mapMessage(inserted) });
+        console.log("chat resume", subrequestReport(meter));
         controller.close();
       } catch (err) {
         // The person closed the tab. Not a failure, and reporting it as one

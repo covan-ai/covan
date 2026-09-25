@@ -1,3 +1,4 @@
+import { meteredFetch } from "./subrequests";
 import { createClient } from "@supabase/supabase-js";
 import type { Bindings, RoutineEnv } from "../types";
 
@@ -18,8 +19,14 @@ export function authClient(env: Bindings) {
  * access. Construct a fresh instance per request — never share across requests.
  */
 export function userClient(env: Bindings, token: string) {
+  const counting = meteredFetch(env);
   return createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
+    global: {
+      headers: { Authorization: `Bearer ${token}` },
+      // Every read a tool makes through this client is a subrequest, and on
+      // Free they are most of what a turn spends. See `lib/subrequests.ts`.
+      ...(counting ? { fetch: counting } : {}),
+    },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -33,7 +40,9 @@ export function userClient(env: Bindings, token: string) {
  * no anon key and no R2 binding — can construct one.
  */
 export function serviceClient(env: RoutineEnv) {
+  const counting = meteredFetch(env);
   return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    ...(counting ? { global: { fetch: counting } } : {}),
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

@@ -6,6 +6,8 @@ import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake
 import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
 import { MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
+import { runtimeLimitFlag } from "../lib/runtime-limit";
+import { subrequestMeter } from "../lib/subrequests";
 
 /**
  * What this file is for: the citations under an answer, and what it costs to
@@ -358,6 +360,15 @@ function appWith(spec: {
   app.use("/*", async (c, next) => {
     c.set("user", USER as never);
     c.set("db", db as never);
+    // What `middleware/auth.ts` sets, because this stands in for it. The
+    // subrequest meter starts there rather than in a route: the caller's own
+    // client is the first thing a request builds that spends one, and the
+    // routes read the count off the context. See `lib/subrequests.ts`.
+    const runtimeLimit = runtimeLimitFlag();
+    c.set("runtimeLimit", runtimeLimit as never);
+    // `{}` rather than ENV: the only thing the meter reads is WORKER_PLAN, and
+    // absent means Free — which is the deployment these tests describe.
+    c.set("subrequests", subrequestMeter({}, runtimeLimit) as never);
     if (spec.providerEnv) c.set("providerEnv", spec.providerEnv as never);
     await next();
   });

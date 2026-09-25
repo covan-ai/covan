@@ -1,3 +1,4 @@
+import { meteredFetch, type SubrequestMeter } from "../subrequests";
 /**
  * Composio's API, as much of it as Covan needs and no more.
  *
@@ -64,6 +65,8 @@ const MAX_BYTES = 256 * 1024;
 export type ComposioEnv = {
   COMPOSIO_API_KEY?: string;
   COMPOSIO_BASE_URL?: string;
+  /** Request-scoped, and absent everywhere but a chat turn. See `lib/subrequests.ts`. */
+  SUBREQUESTS?: SubrequestMeter;
 };
 
 export type ComposioOptions = {
@@ -155,7 +158,11 @@ async function request(
   if (!env.COMPOSIO_API_KEY) {
     return { kind: "error", status: 501, message: "this deployment has no COMPOSIO_API_KEY set" };
   }
-  const doFetch = opts?.fetchImpl ?? fetch;
+  // A test's stub wins, then the counting wrapper, then the platform's own.
+  // Composio is the most expensive call a turn makes and the one most likely to
+  // be repeated, so leaving it out of the count would understate the half that
+  // matters most. See `lib/subrequests.ts`.
+  const doFetch = opts?.fetchImpl ?? meteredFetch(env) ?? fetch;
 
   let res: Response;
   try {

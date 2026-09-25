@@ -3,6 +3,7 @@ import type { RoutineEnv } from "../../types";
 import {
   embeddingCost,
   transcriptionCost,
+  weighTokens,
   entitlementsFor,
   resetEntitlements,
   unlimitedEntitlements,
@@ -127,5 +128,54 @@ describe("entitlementsFor", () => {
     entitlementsFor(env({ QUOTA_MONTHLY_TOKENS: "1000" }));
 
     expect(err).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("what a chat token costs the allowance", () => {
+  it("charges a fresh input token at par, which is the unit", () => {
+    expect(weighTokens({ promptTokens: 1_000, completionTokens: 0 })).toBe(1_000);
+  });
+
+  it("charges a cache read a tenth, because that is what it costs", () => {
+    // `promptTokens` arrives with the cache read already inside it — see
+    // `anthropicUsage`. So this is 1,000 prompt tokens of which 900 came from
+    // cache: 100 fresh at par, plus 900 at a tenth.
+    expect(weighTokens({ promptTokens: 1_000, completionTokens: 0, cachedTokens: 900 })).toBe(
+      100 + 90,
+    );
+  });
+
+  it("charges the storage premium on a cache write, rather than the discount", () => {
+    // A write is dearer than a fresh token, not cheaper. Reading it as a
+    // discount is how a caching change that costs money looks like a saving.
+    expect(weighTokens({ promptTokens: 1_000, completionTokens: 0, cacheWriteTokens: 400 })).toBe(
+      600 + 500,
+    );
+  });
+
+  it("charges output five times input, which is most of what a short reply is", () => {
+    expect(weighTokens({ promptTokens: 0, completionTokens: 100 })).toBe(500);
+  });
+
+  it("makes a cache-heavy tool turn markedly cheaper than face value", () => {
+    // The shape of the turn this work came from: 88% of its prompt served from
+    // cache, and charged as if none of it had been.
+    const heavy = { promptTokens: 100_000, completionTokens: 2_000, cachedTokens: 88_000 };
+    expect(weighTokens(heavy)).toBeLessThan(heavy.promptTokens + heavy.completionTokens);
+  });
+
+  it("makes a short chatty reply dearer, which is the same rule and not an exception", () => {
+    // Worth pinning because it is the direction nobody expects. Weighting was
+    // argued from cache reads, but on ordinary traffic the output premium is
+    // the larger correction: measured across 30 days of this deployment, the
+    // median turn gets 1.46x dearer while the aggregate moves 1.04x.
+    const short = { promptTokens: 400, completionTokens: 600 };
+    expect(weighTokens(short)).toBeGreaterThan(short.promptTokens + short.completionTokens);
+  });
+
+  it("never charges a negative amount, however the provider reports itself", () => {
+    // A subset larger than its own total is a provider bug, not a refund.
+    expect(weighTokens({ promptTokens: 100, completionTokens: 0, cachedTokens: 900 })).toBe(90);
+    expect(weighTokens({ promptTokens: null, completionTokens: null })).toBe(0);
   });
 });

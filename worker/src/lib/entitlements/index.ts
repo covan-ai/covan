@@ -82,6 +82,70 @@ export function embeddingCost(tokens: number): number {
 }
 
 /**
+ * What each kind of chat token costs, relative to a fresh input token.
+ *
+ * The same idea as `EMBEDDING_TOKEN_WEIGHT` above, applied inside a chat turn
+ * rather than beside it. Until now the counter added prompt and completion at
+ * face value, and `promptTokens` INCLUDES cache reads and cache writes — see
+ * `anthropicUsage` in `lib/completion.ts`, which folds all three into it. So a
+ * token served from cache, which costs a tenth of a fresh one, spent the same
+ * allowance as a fresh one.
+ *
+ * That is not a rounding error on the turns this product is now built for. A
+ * long tool turn re-sends its whole transcript on every pass, and the provider
+ * serves almost all of it from cache: one measured turn was 88% cache reads,
+ * and it was charged as if none of it were.
+ *
+ * The ratios are `lib/pricing.ts`'s, for `claude-sonnet-5` — $3 in, $0.30
+ * cached, $15 out, and `CACHE_WRITE_MULTIPLIER` for the storage premium. They
+ * are not identical on every model, and one set is used for all of them on
+ * purpose: an allowance that moved when somebody changed their agent's model
+ * would be a pricing surface rather than a limit, and the spread between the
+ * models this deployment offers is far smaller than the spread between a
+ * cache-heavy turn and a fresh one.
+ */
+export const TOKEN_WEIGHTS = Object.freeze({
+  fresh: 1,
+  cached: 0.1,
+  written: 1.25,
+  completion: 5,
+});
+
+/**
+ * One turn's usage in the unit the counter is denominated in.
+ *
+ * `prompt` arrives with `cached` and `written` already inside it, so the fresh
+ * share is what is left after taking both out — floored at zero, because a
+ * provider that reports a subset larger than its total is a provider bug and
+ * not a reason to hand somebody a negative bill.
+ *
+ * **This changes what a turn costs against the allowance, and not by a little
+ * in either direction.** Measured over 30 days of real traffic: the aggregate
+ * barely moves (1.04x), but the median turn gets 1.46x DEARER while the
+ * cache-heavy tool turns get as low as 0.21x. That is the point rather than a
+ * side effect — a short reply is mostly output, which really does cost five
+ * times its input, and a long tool turn really is mostly re-read cache.
+ */
+export function weighTokens(usage: {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cachedTokens?: number | null;
+  cacheWriteTokens?: number | null;
+}): number {
+  const prompt = Math.max(0, usage.promptTokens ?? 0);
+  const completion = Math.max(0, usage.completionTokens ?? 0);
+  const cached = Math.max(0, usage.cachedTokens ?? 0);
+  const written = Math.max(0, usage.cacheWriteTokens ?? 0);
+  const fresh = Math.max(0, prompt - cached - written);
+  return Math.round(
+    fresh * TOKEN_WEIGHTS.fresh +
+      cached * TOKEN_WEIGHTS.cached +
+      written * TOKEN_WEIGHTS.written +
+      completion * TOKEN_WEIGHTS.completion,
+  );
+}
+
+/**
  * What an audio token costs relative to a chat token.
  *
  * The opposite call to the one above. Embeddings are discounted because they

@@ -141,7 +141,14 @@ export type AgentRunInput = SummariseInput & {
   routineRunId?: string;
 };
 
-export type AgentRunResult = { text: string; tokens: number; declined: boolean };
+export type AgentRunResult = {
+  text: string;
+  /** How many tokens moved. The durable record, and what the run history shows. */
+  tokens: number;
+  /** What they cost, in the unit the allowance counts in. See `weighTokens`. */
+  weightedTokens: number;
+  declined: boolean;
+};
 
 export type RetrievalInput = { agentId: string; query: string };
 
@@ -161,6 +168,8 @@ export type ExecutorDeps = {
   ) => Promise<{
     text: string;
     tokens: number;
+    /** What they cost, in the unit the allowance counts in. See `weighTokens`. */
+    weightedTokens: number;
     /**
      * The model read the material and judged none of it to be what the
      * instruction asked for, so this run delivers nothing. Only ever true when
@@ -642,6 +651,9 @@ export async function runRoutine(
         itemsNew: items.length,
         itemsOverflow: overflow,
         tokens: summary.tokens + embeddingCost(embeddingTokens),
+        // Embedding cost is already in the counter's unit — see
+        // `EMBEDDING_TOKEN_WEIGHT` — so it is added to both without reweighing.
+        weightedTokens: summary.weightedTokens + embeddingCost(embeddingTokens),
         cursor: nextCursor,
         error: NOTHING_RELEVANT_REASON,
         keys,
@@ -703,6 +715,7 @@ export async function runRoutine(
       // against a chat token. Filing is opt-in because of what it means, not
       // because of what it costs.
       tokens: summary.tokens + embeddingCost(embeddingTokens + filing.indexTokens),
+      weightedTokens: summary.weightedTokens + embeddingCost(embeddingTokens + filing.indexTokens),
       cursor: nextCursor,
       summary: summary.text,
       keys,
@@ -858,6 +871,12 @@ type RunOutcome = {
   | {
       status: "ok";
       tokens: number;
+      /**
+       * The same spend in the unit the allowance counts in, which is what the
+       * counter is charged. `tokens` stays the record of how many moved, and
+       * the run history shows that one. See `weighTokens`.
+       */
+      weightedTokens: number;
       /** Whose key paid for `tokens`. Required, and that is the point. */
       keys: ProviderKeys;
     }
@@ -873,9 +892,10 @@ type RunOutcome = {
        */
       status: "skipped";
       tokens: number;
+      weightedTokens: number;
       keys: ProviderKeys;
     }
-  | { status: "skipped" | "failed"; tokens: 0; keys?: undefined }
+  | { status: "skipped" | "failed"; tokens: 0; weightedTokens?: 0; keys?: undefined }
 );
 
 async function finish(
@@ -921,9 +941,22 @@ async function finish(
   // Not keyed on `status === "ok"` any more. A run that paid for a model call
   // and then declined to send is a skipped run that spent real money, and
   // billing it as if it were free would make a filtered routine free to run.
-  if (outcome.tokens > 0 && outcome.keys && billsTheOperator(outcome.keys)) {
+  // Guarded on the number that is actually recorded, not on the one beside it.
+  // `record` is called directly here rather than through `recordQuota`, so it
+  // has none of that function's own `Number.isFinite` check — and `> 0` is
+  // false for both `undefined` and `NaN`, which is the whole of what is needed.
+  if (
+    outcome.weightedTokens &&
+    outcome.weightedTokens > 0 &&
+    outcome.keys &&
+    billsTheOperator(outcome.keys)
+  ) {
     try {
-      await deps.entitlements.record(routine.user_id, outcome.tokens);
+      // The weighted figure, not the raw one — the counter is denominated in
+      // what tokens cost, and `routine_runs.tokens` above already keeps what
+      // moved. `outcome.keys` being required on exactly the branches that can
+      // spend is what makes this reachable only where there is one.
+      await deps.entitlements.record(routine.user_id, outcome.weightedTokens);
     } catch (err) {
       console.error("failed to record routine token usage", err);
     }

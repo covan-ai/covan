@@ -93,7 +93,16 @@ describe("runRoutineWithTools", () => {
 
   it("runs the loop and reports what the whole turn cost", async () => {
     const out = await runRoutineWithTools(env, db)(input, env);
-    expect(out).toEqual({ text: "Forty orders.", tokens: 140, declined: false });
+    // Two figures, and they differ on purpose. `tokens` is how many moved —
+    // 100 prompt + 40 completion. `weightedTokens` is what they cost the
+    // allowance: the prompt was all fresh, and output is charged five times
+    // input, so 100 + 40x5. See `weighTokens`.
+    expect(out).toEqual({
+      text: "Forty orders.",
+      tokens: 140,
+      weightedTokens: 300,
+      declined: false,
+    });
   });
 
   it("tells the agent nobody is watching, and names what it can reach", async () => {
@@ -145,7 +154,9 @@ describe("runRoutineWithTools", () => {
     });
     const out = await runRoutineWithTools(env, db)({ ...input, mayDecline: true }, env);
 
-    expect(out).toMatchObject({ declined: true, tokens: 165 });
+    // 140 from the turn plus 25 from the decision call; weighted, 300 plus
+    // (20 + 5x5).
+    expect(out).toMatchObject({ declined: true, tokens: 165, weightedTokens: 345 });
     // The turn that did the work was never asked for JSON, and the turn that
     // decided was never offered a tool.
     expect(runAgentTurn.mock.calls[0][0].request.json).toBeUndefined();

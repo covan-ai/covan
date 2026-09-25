@@ -2,6 +2,7 @@
 import type { RoutineEnv } from "../../types";
 import { resolveModel } from "../models";
 import { complete, totalTokens } from "../completion";
+import { weighTokens } from "../entitlements";
 import { temperatureFor, reasoningEffortFor } from "../prompt";
 import type { SummariseInput } from "./executor";
 
@@ -45,7 +46,7 @@ type Decision = { relevant?: unknown; summary?: unknown };
 export function summariseWithModel(env: RoutineEnv) {
   return async (
     input: SummariseInput,
-  ): Promise<{ text: string; tokens: number; declined: boolean }> => {
+  ): Promise<{ text: string; tokens: number; weightedTokens: number; declined: boolean }> => {
     const body = input.payloadText
       ? `Incoming webhook payload:\n\n${input.payloadText.slice(0, 20_000)}`
       : input.pageText
@@ -113,9 +114,11 @@ export function summariseWithModel(env: RoutineEnv) {
     });
 
     const tokens = totalTokens(usage);
-    if (!input.mayDecline) return { text, tokens, declined: false };
+    // What the allowance is charged, as against what moved. See `weighTokens`.
+    const weightedTokens = weighTokens(usage);
+    if (!input.mayDecline) return { text, tokens, weightedTokens, declined: false };
 
-    return { ...readDecision(text), tokens };
+    return { ...readDecision(text), tokens, weightedTokens };
   };
 }
 

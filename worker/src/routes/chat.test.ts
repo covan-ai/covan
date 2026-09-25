@@ -1507,7 +1507,10 @@ describe("POST /chat/confirm/:id", () => {
       expect(row.role).toBe("assistant");
       expect(row.prompt_tokens).toBe(40);
       expect(row.completion_tokens).toBe(8);
-      expect(quotaRecorded).toHaveBeenCalledWith(48);
+      // 80, not the 48 those two numbers add up to: the allowance is charged
+      // what they cost, and output is five times input. 40 prompt, all fresh,
+      // plus 8 completion at 5x. See `weighTokens`.
+      expect(quotaRecorded).toHaveBeenCalledWith(80);
     });
 
     it("keeps the step it carried in, which nothing else will ever write", async () => {

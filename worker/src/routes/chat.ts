@@ -24,20 +24,19 @@ import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
-import { isRuntimeLimit, runtimeLimitFlag } from "../lib/runtime-limit";
+import { runtimeLimitFlag } from "../lib/runtime-limit";
+import {
+  CUT_SHORT,
+  buildToolContext,
+  explainTurnFailure,
+  isAbort,
+  runChatTurn,
+  salvagePartial,
+  spentUsage,
+  turnSpend,
+} from "./chat-turn";
 
 const chat = new Hono<AppEnv>();
-
-/**
- * The stand-in reply for a turn that died after doing work but before saying
- * anything.
- *
- * A tool turn writes its answer last, so the usual shape of a mid-turn failure
- * is several completed steps and no words at all. `message_steps.message_id`
- * has nowhere to point without a row, so this is the row — deliberately one
- * flat sentence that claims nothing about what the steps found.
- */
-const CUT_SHORT = "This turn stopped before it could answer. What it had already done is below.";
 
 const streamChatSchema = z.object({
   sessionId: z.string().min(1),
@@ -322,7 +321,14 @@ chat.post("/chat/stream", async (c) => {
         });
       }
 
-      let full = "";
+      /**
+       * What the turn has produced so far, filled as it runs.
+       *
+       * The words on screen, every step that settled, and every pass's usage —
+       * all three held where the `catch` can still reach them, because
+       * `runAgentTurn` returns none of them when it throws. See `TurnSpend`.
+       */
+      const spend = turnSpend();
       // Token usage arrives once, after the last delta, whichever provider
       // answered — `lib/completion.ts` normalises the two shapes into one
       // event. Captured for the usage dashboard.
@@ -357,16 +363,6 @@ chat.post("/chat/stream", async (c) => {
       // `runAgentTurn` below and read after the reply is persisted, because a
       // step belongs to a message and the message does not exist until then.
       let steps: AgentStep[] = [];
-      /**
-       * The same steps, collected as they settle rather than read off the
-       * return value.
-       *
-       * `steps` above is only filled once `runAgentTurn` returns, so a turn
-       * that throws leaves it empty and every tool call it had already made
-       * goes unrecorded. This is what the error path writes instead — see the
-       * `catch` at the foot of this stream, and `onStep` in `lib/harness/loop.ts`.
-       */
-      const settled: AgentStep[] = [];
       /**
        * Raised if anything in this turn discovers the invocation is out of
        * platform budget. Read only by the `catch` below, to replace a message
@@ -579,7 +575,7 @@ chat.post("/chat/stream", async (c) => {
         // `lib/harness/loop.ts`. A turn with no tools available, or a model
         // that asks for none, goes through exactly one pass and behaves as it
         // always did.
-        const turn = await runAgentTurn({
+        const turn = await runChatTurn({
           env,
           request: {
             model,
@@ -594,7 +590,7 @@ chat.post("/chat/stream", async (c) => {
             webSearch: agent.web_search ?? false,
           },
           tools,
-          ctx: {
+          ctx: buildToolContext({
             db,
             env,
             workspaceId: session.workspace_id as string,
@@ -602,42 +598,10 @@ chat.post("/chat/stream", async (c) => {
             userId: c.get("user").id,
             sessionId,
             runtimeLimit,
-            // One per turn, so the same catalogue search asked twice is
-            // answered from the first one. See `searchMemo` in `registry.ts`.
-            searchMemo: new Map<string, string>(),
-            // And what those searches offered, which is what `run_tool` will
-            // run. See `offeredSlugs` in `registry.ts`.
-            offeredSlugs: new Set<string>(),
-          },
+          }),
           signal,
-          onEvent: (event) => {
-            if (event.type === "delta") {
-              full += event.text;
-              send({ type: "delta", text: event.text });
-            } else if (event.type === "thinking") {
-              // Forwarded and not kept. The reasoning is context for the
-              // answer while somebody is watching it appear, not part of the
-              // answer: it is not written to the row, so it is not in the
-              // transcript and not re-sent as history on the next turn.
-              // Adding it to `full` would put an account of the model's
-              // deliberation into the reply itself.
-              send({ type: "thinking", text: event.text });
-            } else {
-              // An event type the client may not know. The dispatch chain in
-              // the chat screen ignores what it cannot name, so an older
-              // build keeps working and simply shows no steps.
-              send({
-                type: "step",
-                index: event.index,
-                tool: event.tool,
-                status: event.status,
-                label: event.label,
-              });
-            }
-          },
-          // Kept as well as shown. See `settled` above: this is the only copy
-          // that survives `runAgentTurn` throwing.
-          onStep: (step) => settled.push(step),
+          send,
+          spend,
         });
 
         steps = turn.steps;
@@ -659,8 +623,8 @@ chat.post("/chat/stream", async (c) => {
           deferred(
             c,
             (async () => {
-              if (!persisted && full.trim().length > 0) {
-                const row = await persistAssistant(full, {
+              if (!persisted && spend.text.trim().length > 0) {
+                const row = await persistAssistant(spend.text, {
                   promptTokens,
                   completionTokens,
                   cachedTokens,
@@ -684,8 +648,8 @@ chat.post("/chat/stream", async (c) => {
           return;
         }
 
-        if (full.trim().length > 0) {
-          const inserted = await persistAssistant(full, {
+        if (spend.text.trim().length > 0) {
+          const inserted = await persistAssistant(spend.text, {
             promptTokens,
             completionTokens,
             cachedTokens,
@@ -722,7 +686,7 @@ chat.post("/chat/stream", async (c) => {
                 env,
                 titleModelFor(model, env),
                 question,
-                full.slice(0, 800),
+                spend.text.slice(0, 800),
               );
               if (questions.length > 0) {
                 send({ type: "suggestions", questions });
@@ -750,28 +714,29 @@ chat.post("/chat/stream", async (c) => {
 
         controller.close();
       } catch (err: unknown) {
-        const isAbort = (err as { name?: string } | null)?.name === "AbortError" || signal.aborted;
-        if (isAbort) {
+        // What the turn spent before it threw. `runAgentTurn` reports its
+        // totals only by returning, so on this path the counters above are
+        // still null and every one of them is a real number that was really
+        // billed — see `onPass` in `lib/harness/loop.ts`. Read here, before
+        // `recordSpend`, because a zero is a number `recordQuota` refuses.
+        const spent = spentUsage(spend);
+        promptTokens = spent.promptTokens;
+        completionTokens = spent.completionTokens;
+        cachedTokens = spent.cachedTokens;
+        cacheWriteTokens = spent.cacheWriteTokens;
+        reasoningTokens = spent.reasoningTokens;
+        passUsage = spend.passes;
+
+        if (isAbort(err, signal)) {
           deferred(
             c,
             (async () => {
-              if (!persisted && full.trim().length > 0) {
-                await persistAssistant(full, {
-                  promptTokens,
-                  completionTokens,
-                  cachedTokens,
-                  cacheWriteTokens,
-                  reasoningTokens,
-                  passUsage,
-                });
-              }
-              // No `writeSteps` here, unlike the branch above, and the reason
-              // is that there would be nothing to write: `steps` is only
-              // assigned once `runAgentTurn` returns, and on this path it
-              // threw. The steps it had run are inside the loop's own frame
-              // and do not survive the throw. Recovering them would mean
-              // surfacing partial progress out of `runAgentTurn`, which is a
-              // change to the harness rather than to this branch.
+              await salvagePartial({
+                service,
+                spend,
+                persisted,
+                persist: persistAssistant,
+              });
               await recordSpend();
             })(),
           );
@@ -780,71 +745,8 @@ chat.post("/chat/stream", async (c) => {
         }
         console.error("chat stream error", err);
         await recordSpend();
-        /**
-         * Keep what the turn managed to do, rather than only saying it failed.
-         *
-         * This branch used to persist nothing while the abort branch above
-         * persisted the partial, and the difference was not deliberate — it
-         * was written when a turn was one model call, where "it failed" and
-         * "nothing happened" were the same sentence. A tool turn is up to
-         * sixteen calls (`MAX_STEPS`), and one dropped connection on the
-         * twelfth threw away eleven tool calls that had really run: mail
-         * really sent, issues really filed, money really spent at Composio —
-         * with no record anywhere that they happened. Measured on the first
-         * one of these in production: an OpenAI `Connection error.` 114
-         * seconds into a turn, and the transcript kept nothing at all.
-         *
-         * So: whatever the model said, plus every step that settled. When the
-         * model had not said anything yet — the common case, because the
-         * answer is written last — the steps still need a row to hang off, so
-         * one sentence stands in for it. Saying what happened is the point;
-         * an empty transcript beside a toast is not a record.
-         */
-        // Wrapped in its own try because a failure while salvaging must still
-        // leave the stream terminated: an unsent `error` is a client spinning
-        // until its connection times out.
-        try {
-          const partial = full.trim().length > 0 ? full : settled.length > 0 ? CUT_SHORT : "";
-          if (partial) {
-            const inserted = await persistAssistant(partial, {
-              // Null rather than a guess. The turn threw before it reported
-              // its usage, and `recordSpend` above charges only what is known
-              // for the same reason — see `promptTokens` at the top of this
-              // stream.
-              promptTokens,
-              completionTokens,
-              cachedTokens,
-              cacheWriteTokens,
-              reasoningTokens,
-              passUsage,
-            });
-            if (inserted) await writeSteps(service, inserted.id, settled);
-          }
-        } catch (saveErr) {
-          console.error("chat stream error: could not save the partial", saveErr);
-        }
-        /**
-         * Two sentences, because they ask for different things.
-         *
-         * "Please try again" is right for a far end that failed and will
-         * probably work next time. It is wrong for a turn that ran out of the
-         * requests one invocation may make: trying the same question again
-         * runs into the same ceiling, and the thing that helps is asking for
-         * less. Saying so is the difference between a person retrying four
-         * times and a person narrowing the question.
-         *
-         * `runtimeLimit` rather than inspecting `err`, because by the time an
-         * error reaches here it has been through an SDK and says
-         * `Connection error.` — see `lib/runtime-limit.ts`.
-         */
-        send({
-          type: "error",
-          error:
-            runtimeLimit.hit || isRuntimeLimit(err)
-              ? "This turn ran out of the requests it is allowed to make. Ask for something " +
-                "narrower, or break the question into two."
-              : "The assistant hit an error. Please try again.",
-        });
+        await salvagePartial({ service, spend, persisted, persist: persistAssistant });
+        send({ type: "error", error: explainTurnFailure(err, runtimeLimit) });
         controller.close();
       }
     },

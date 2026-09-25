@@ -1,3 +1,6 @@
+import type { RoutineEnv } from "../../types";
+import { planLimits } from "../limits";
+
 /**
  * What one agent turn is allowed to spend, and why each number is the number.
  *
@@ -46,6 +49,25 @@
  * tools at once spends three.
  */
 export const MAX_STEPS = 8;
+
+/**
+ * The same budget, asked of the deployment rather than read off the constant.
+ *
+ * `MAX_STEPS` above is the Free number and stays the Free number — see
+ * `lib/limits.ts` for why raising it flat would break every self-hosted deploy
+ * silently. This is what a chat route passes so that a deployment with the
+ * headroom can be given more of it without the open build moving at all.
+ *
+ * Both chat routes go through it, and that is the point of it existing rather
+ * than each route reading a constant: **neither route passes a budget today**,
+ * so both fall through to the same default and agree by accident. The moment
+ * one of them passes one they diverge in silence, and the one that would
+ * diverge is the resume — a turn that paused at step seven and came back with
+ * the bare default.
+ */
+export function chatBudget(env: Pick<RoutineEnv, "WORKER_PLAN">): { maxSteps: number } {
+  return { maxSteps: planLimits(env).chat.maxSteps };
+}
 
 /**
  * The same budget for a run nobody is watching, and its own reason for it.

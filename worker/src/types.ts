@@ -116,6 +116,17 @@ export type RoutineEnv = {
    * deploy that forgot to register one.
    */
   QUOTA_MONTHLY_TOKENS?: string;
+  /**
+   * Which Cloudflare plan this deployment runs on, which decides how much one
+   * invocation is allowed to spend. See `lib/limits.ts` for what moves with it.
+   *
+   * Unset means `"free"` — the convention every optional var here follows, and
+   * the safe direction: a Paid deployment that forgets this runs conservatively
+   * and finishes fewer turns, where a Free deployment that had to opt *out*
+   * would instead fail at a platform ceiling that reports itself as a dropped
+   * connection. Only `"paid"` is read; anything else is Free.
+   */
+  WORKER_PLAN?: "free" | "paid";
 };
 
 /**

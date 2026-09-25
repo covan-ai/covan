@@ -86,6 +86,15 @@ export type PassUsage = {
   cached: number | null;
   written: number | null;
   completion: number | null;
+  /**
+   * How much of `completion` went on deliberation rather than on the answer.
+   *
+   * A subset of it, and the number that says whether a long reply is long
+   * because the model wrote a lot or because it thought a lot. Null on
+   * Anthropic, which reports no separate count, and absent from entries
+   * written before 0064 — absent is not zero.
+   */
+  reasoning?: number | null;
 };
 
 /**
@@ -193,6 +202,7 @@ function addUsage(a: CompletionUsage, b: CompletionUsage): CompletionUsage {
     completionTokens: add(a.completionTokens, b.completionTokens),
     cachedTokens: add(a.cachedTokens, b.cachedTokens),
     cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
+    reasoningTokens: add(a.reasoningTokens, b.reasoningTokens),
   };
 }
 
@@ -416,6 +426,11 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           cached: event.usage.cachedTokens,
           written: event.usage.cacheWriteTokens,
           completion: event.usage.completionTokens,
+          // The per-pass split is the whole question for a loop. Reasoning on
+          // the first pass only is a fixed cost per turn; reasoning on all
+          // seven grows with the step budget. Both sum to the same row total
+          // and argue for different fixes.
+          reasoning: event.usage.reasoningTokens,
         });
         finishReason = event.finishReason;
       }

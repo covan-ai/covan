@@ -270,6 +270,11 @@ export async function handleSlackEvent(
   // And how much of it was bought at Anthropic's 1.25x storage premium.
   // Disjoint from `cachedTokens`, and null on OpenAI — see `CompletionUsage`.
   const cacheWriteTokens = completion.usage.cacheWriteTokens;
+  // And how much of the answer was deliberation rather than answer. A subset
+  // of `completionTokens`, so it changes no total here; recorded because a
+  // Slack turn is billed the same way a chat turn is and leaving it out would
+  // make the column mean "chat only" without saying so anywhere.
+  const reasoningTokens = completion.usage.reasoningTokens;
 
   // One counter write per turn, whichever way the rest of this goes — but only
   // where the operator is the one being billed. Somebody else's key spent
@@ -301,6 +306,7 @@ export async function handleSlackEvent(
     completion_tokens: completionTokens,
     cached_tokens: cachedTokens,
     cache_write_tokens: cacheWriteTokens,
+    reasoning_tokens: reasoningTokens,
     // No `pass_usage`: this is one completion rather than a tool loop, so the
     // per-pass array would be the row's own totals written a second time.
   });

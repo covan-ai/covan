@@ -96,6 +96,24 @@ export type CompletionUsage = {
    * paid for itself was the one number nothing recorded.
    */
   cacheWriteTokens: number | null;
+  /**
+   * How much of `completionTokens` the model spent deliberating before it
+   * wrote anything — a subset of that count, not an addition, so pricing
+   * needs nothing from it.
+   *
+   * It is here to divide a number that cannot be divided afterwards. Measured
+   * on the live project after the 2026-09-24 deploy, a GPT-5 tool turn spent
+   * 86% of its bill on output and averaged 5,901 completion tokens against a
+   * Claude turn's 672. A long answer and a short answer preceded by five
+   * thousand tokens of thinking are the same row, and they call for opposite
+   * fixes — lowering `reasoningEffort` costs quality for nothing on the first
+   * and is the largest saving available on the second.
+   *
+   * Null on Anthropic, permanently and not as a gap: with thinking off there
+   * is nothing to report, and with it on the thinking is billed inside
+   * `output_tokens` with no separate count in the response.
+   */
+  reasoningTokens: number | null;
 };
 
 export type CompletionEnv = {
@@ -248,6 +266,7 @@ export const EMPTY_USAGE: CompletionUsage = {
   completionTokens: null,
   cachedTokens: null,
   cacheWriteTokens: null,
+  reasoningTokens: null,
 };
 
 /** What a turn cost, for the quota counter. Cached prompt tokens are inside `promptTokens`. */
@@ -841,6 +860,10 @@ function anthropicUsage(usage: Anthropic.Usage | null | undefined): CompletionUs
     // thing on both providers, and this says how much of it was bought at the
     // write premium. Summing the two would double-count.
     cacheWriteTokens: usage.cache_creation_input_tokens ?? null,
+    // Null on this provider for good, not pending. Anthropic bills thinking
+    // inside `output_tokens` and reports no separate count, so a zero here
+    // would be a claim the API never made.
+    reasoningTokens: null,
   };
 }
 
@@ -912,6 +935,7 @@ export async function complete(
       // reports no write count, so there is nothing to record. Zero would be a
       // claim that nothing was written, which is not what the API said.
       cacheWriteTokens: null,
+      reasoningTokens: completion.usage?.completion_tokens_details?.reasoning_tokens ?? null,
     },
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
   };
@@ -1081,6 +1105,7 @@ export async function* streamCompletion(
         completionTokens: chunk.usage.completion_tokens ?? null,
         cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? null,
         cacheWriteTokens: null,
+        reasoningTokens: chunk.usage.completion_tokens_details?.reasoning_tokens ?? null,
       };
     }
   }

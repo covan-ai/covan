@@ -478,6 +478,85 @@ describe("the budget", () => {
       expect(announced).toEqual([]);
     });
 
+    /**
+     * What a leg costs, and the one place it is worth paying.
+     *
+     * Past the soft ceiling, subrequests stop being what binds and the context
+     * window starts. A step's result is re-sent on every later pass, so a turn
+     * running into its legs is carrying the most transcript it will ever carry
+     * at exactly the point it can least afford to. Trimming the results it has
+     * finished with buys the room.
+     *
+     * At the boundary, once — not continuously. Rewriting an earlier message
+     * invalidates the prompt cache from that point, so doing it per pass would
+     * pay that on every pass; doing it here means one leg pays once, and a turn
+     * that never crosses the boundary never pays at all.
+     */
+    describe("making room for the leg", () => {
+      /**
+       * A tool whose answers are far too big to keep re-sending.
+       *
+       * Comfortably over `MAX_STEP_EXCERPT_CHARS` (2,000), which is the floor
+       * trimming cuts to — a result already smaller than that has nothing to
+       * give back and is left alone.
+       */
+      const verbose = () => [
+        tool("search", async () => ({ kind: "ok", content: "x".repeat(5_000) })),
+      ];
+
+      it("trims the results it has finished with, and says it did", async () => {
+        forever();
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        // The transcript as the first request past the boundary saw it.
+        const afterBoundary = sentTranscripts[4];
+        const results = afterBoundary.filter((m) => m.role === "tool");
+        // Four results by then: the two oldest cut to the 2,000-character
+        // floor, the two it is working through left whole at 5,000.
+        expect(results.map((m) => m.content.length > 3_000)).toEqual([false, false, true, true]);
+        // And cut with `cap`, so the model is told rather than quietly handed
+        // a truncation it would mistake for the whole answer.
+        expect(results[0].content).toContain("[trimmed:");
+      });
+
+      it("leaves an ordinary turn's transcript alone", async () => {
+        // The turn that never reaches its budget is the common one, and it must
+        // not pay a cache invalidation for a ceiling it never met.
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const everyResult = sentTranscripts.flatMap((messages) =>
+          messages.filter((m) => m.role === "tool"),
+        );
+        expect(everyResult.every((m) => !m.content.includes("[trimmed:"))).toBe(true);
+      });
+
+      it("trims each result once, however many boundaries the turn crosses", async () => {
+        // Two legs means two boundaries, and a result cut at the first must not
+        // be cut again at the second — `cap` would nest its own notice inside
+        // the text it already added.
+        forever();
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 2, extraLegs: 2, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const last = sentTranscripts.at(-1) ?? [];
+        for (const result of last.filter((m) => m.role === "tool")) {
+          expect(result.content.split("[trimmed:").length - 1).toBeLessThanOrEqual(1);
+        }
+      });
+    });
+
     it("has no legs unless a caller asks for them", async () => {
       // The default is load-bearing: `SCHEDULED_MAX_STEPS` and every existing
       // budget case pass a bare `maxSteps`, and all of them have to keep

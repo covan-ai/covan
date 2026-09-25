@@ -238,6 +238,49 @@ const BUDGET_INSTRUCTION =
  * Appended as a `system` turn at the tail, where `BUDGET_INSTRUCTION` goes, so
  * it lands after the cacheable prefix and invalidates nothing.
  */
+/**
+ * Cut the tool results the turn has finished with, to make room for the leg.
+ *
+ * WHY IT IS NEEDED AT ALL. Once a deployment is on Workers Paid, subrequests
+ * stop being what bounds a turn and the context window starts. A result
+ * produced at step k is re-sent on every pass after it, so the transcript is
+ * largest exactly when the turn crosses into its legs — which is the moment it
+ * can least afford to overflow, because a provider 400 arrives wearing the same
+ * disguise the subrequest cap does (`lib/runtime-limit.ts`).
+ *
+ * WHY AT THE BOUNDARY AND NOT CONTINUOUSLY. Rewriting a message already in the
+ * transcript invalidates the prompt cache from that point. Trimming on every
+ * pass would pay that every pass; trimming here means exactly one leg pays
+ * exactly once, and an ordinary turn that never reaches its budget never pays
+ * at all.
+ *
+ * `keepLast` results are left whole because they are what the model is actually
+ * working through; everything older is cut to `MAX_STEP_EXCERPT_CHARS`, the
+ * same size the transcript view keeps. Through `cap`, so the model is TOLD it
+ * was cut — a silent truncation is one the model would read as the whole
+ * answer and act on.
+ *
+ * `done` is what stops a result being cut twice. `cap` appends its own notice,
+ * so a second pass over an already-trimmed message would nest one inside the
+ * other; indices are stable because `messages` only ever grows at the end.
+ */
+function trimSpentResults(
+  messages: CompletionMessage[],
+  done: Set<number>,
+  keepLast: number,
+): void {
+  const results: number[] = [];
+  for (let i = 0; i < messages.length; i += 1) {
+    if (messages[i].role === "tool") results.push(i);
+  }
+  for (const i of results.slice(0, Math.max(0, results.length - keepLast))) {
+    const message = messages[i];
+    if (done.has(i) || message.content.length <= MAX_STEP_EXCERPT_CHARS) continue;
+    done.add(i);
+    messages[i] = { ...message, content: cap(message.content, MAX_STEP_EXCERPT_CHARS) };
+  }
+}
+
 function paceNotice(left: number): string {
   return (
     `You have used the tool calls normally allowed for one turn, and you have been given ` +
@@ -473,6 +516,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * time — the notice it was given is in the transcript it resumes with.
    */
   let noticedLeg = legOf(steps.length);
+  /**
+   * Tool results already cut down at an earlier boundary, by index.
+   *
+   * Only meaningful with more than one leg, and it is what keeps `cap` from
+   * nesting its own "[trimmed: …]" notice inside a message that already
+   * carries one.
+   */
+  const trimmed = new Set<number>();
 
   for (;;) {
     const events = streamCompletion(
@@ -714,6 +765,10 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       const leg = legOf(steps.length);
       if (leg > noticedLeg) {
         noticedLeg = leg;
+        // Before the notice, so the notice stays at the tail where it lands
+        // after the cacheable prefix. The results kept whole are one leg's
+        // worth — what the turn is currently working through.
+        trimSpentResults(messages, trimmed, legSteps);
         messages.push({ role: "system", content: paceNotice(hardSteps - steps.length) });
       }
     }

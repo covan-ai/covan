@@ -131,6 +131,54 @@ describe("executeTool", () => {
       arguments: { subject: "hi" },
     });
   });
+
+  const call = {
+    slug: "GOOGLECALENDAR_EVENTS_LIST",
+    connectedAccountId: "ca_1",
+    userId: "cu_1",
+    arguments: {},
+  };
+
+  it("passes a call the far end actually performed straight through", async () => {
+    const fetchImpl = fetchReturning({ successful: true, data: { items: [] } });
+    const out = await executeTool(ENV, call, { fetchImpl: fetchImpl as never });
+    expect(out.kind).toBe("ok");
+  });
+
+  /**
+   * Composio answers HTTP 200 for a call the far end refused, with the refusal
+   * in the body. Both of these are real, from one production turn: two of its
+   * eight steps were Google 400s and both were written into `message_steps`
+   * as successes, which is a transcript claiming an agent did something it did
+   * not do.
+   */
+  it("reads a 200 that says it failed as a failure", async () => {
+    const fetchImpl = fetchReturning({
+      successful: false,
+      error: "Invalid request data provided\n- Following fields are missing: {'calendarId'}",
+      data: { status_code: 400 },
+    });
+    const out = await executeTool(ENV, call, { fetchImpl: fetchImpl as never });
+
+    expect(out.kind).toBe("error");
+    // The far end's own words, so the model can fix its next call.
+    expect(out.kind === "error" && out.message).toContain("calendarId");
+  });
+
+  it("still counts that attempt as billed, because it reached them", async () => {
+    // `wasBilled` excludes only 501 and 502 — the failures that never left the
+    // building. This one left, and Composio charges for it.
+    const fetchImpl = fetchReturning({ successful: false, error: "nope" });
+    const out = await executeTool(ENV, call, { fetchImpl: fetchImpl as never });
+    expect(out.kind === "error" && out.status).toBe(200);
+  });
+
+  it("falls back to the whole body when the failure names no reason", async () => {
+    const fetchImpl = fetchReturning({ successful: false });
+    const out = await executeTool(ENV, call, { fetchImpl: fetchImpl as never });
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("successful");
+  });
 });
 
 /**

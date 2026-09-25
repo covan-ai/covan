@@ -458,7 +458,7 @@ export async function executeTool(
   },
   opts?: ComposioOptions,
 ): Promise<ComposioResult<{ body: string }>> {
-  return request(
+  const res = await request(
     env,
     `${CORE_API}/tools/execute/${encodeURIComponent(call.slug)}`,
     {
@@ -471,6 +471,32 @@ export async function executeTool(
     },
     opts,
   );
+  if (res.kind === "error") return res;
+
+  /**
+   * A 200 that says it failed.
+   *
+   * Composio answers HTTP 200 for a call the far end refused and puts the
+   * refusal in the body as `successful: false` — so the transport succeeded
+   * and the operation did not. Taking the status at face value recorded those
+   * steps as `ok` in `message_steps`, which is a transcript that says an agent
+   * did something it did not do. Measured on one turn: two of its eight steps
+   * were Google 400s ("Following fields are missing: {'calendarId'}", "The
+   * requested ordering is not available for the particular query") and both
+   * were written down as successes.
+   *
+   * Reported as 200, which is what it was. `wasBilled` reads this number and
+   * excludes only 501 and 502 — the two failures that never left the building
+   * — and this one did leave: the far end was reached and Composio charges for
+   * the attempt. Inventing a 4xx here would quietly stop counting calls that
+   * cost money.
+   */
+  const body = parsed(res.body) as { successful?: unknown; error?: unknown } | null;
+  if (body && typeof body === "object" && body.successful === false) {
+    const why = typeof body.error === "string" && body.error.trim() ? body.error : res.body;
+    return { kind: "error", status: 200, message: why };
+  }
+  return res;
 }
 
 /**

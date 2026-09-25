@@ -131,6 +131,28 @@ export const runToolTool: AgentTool = {
         ? (input.arguments as Record<string, unknown>)
         : {};
 
+    // Guard 0, and it is first because it is the only one that costs nothing.
+    // The description tells the model this rule; this is what makes it true.
+    //
+    // Only when `find_tool` has answered this turn. An empty set means the slug
+    // came from somewhere this tool cannot see — an earlier turn still in the
+    // transcript, a standing grant, a person's own instruction — and refusing
+    // those would break working behaviour to prevent a mistake that has not
+    // happened. A confirmed call skips it too: the slug went through here when
+    // it was proposed, and refusing it after somebody said yes would be a
+    // second opinion nobody asked for.
+    const offered = ctx.offeredSlugs;
+    if (ctx.confirmed !== true && offered && offered.size > 0 && !offered.has(slug)) {
+      return {
+        kind: "error",
+        message:
+          `${slug} is not an operation find_tool returned. You have been given: ` +
+          `${[...offered].join(", ")}. Run one of those, or search again if what you ` +
+          "want is not among them — do not vary a slug by hand, the catalogue does not " +
+          "follow a naming pattern you can guess.",
+      };
+    }
+
     const connection = await loadConnection(ctx, input.connectionId);
     if (!connection) return { kind: "error", message: "no such connection in this workspace" };
     if (connection.transport !== "composio") {

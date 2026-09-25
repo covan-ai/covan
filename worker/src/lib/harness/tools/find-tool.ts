@@ -222,8 +222,10 @@ export const findToolTool: AgentTool = {
         kind: "ok",
         content:
           `No operation in the catalogue matches "${input.query.trim()}"` +
-          `${toolkit ? ` in ${toolkit}` : ""}. Try different words, or tell the person this ` +
-          "is not something you can do.",
+          `${toolkit ? ` in ${toolkit}` : ""}. The short retry above has already been tried, ` +
+          "so the catalogue most likely does not have it. Tell the person this is not " +
+          "something you can do, or name a different application. Search again only for a " +
+          "genuinely different operation, not for the same one in other words.",
       };
     }
 
@@ -291,11 +293,17 @@ export const findToolTool: AgentTool = {
         `${summarise(full.tool, byToolkit.get(full.tool.toolkit))}\n\n` +
         `Arguments:\n${schema}${alternatives}`;
       ctx.searchMemo?.set(memoKey, detailed);
+      // What the model was actually shown, which is what `run_tool` is allowed
+      // to run. The alternatives count: they are in the answer by name, so a
+      // model that takes one of them is following this tool's own advice.
+      ctx.offeredSlugs?.add(full.tool.slug);
+      for (const t of others) ctx.offeredSlugs?.add(t.slug);
       return { kind: "ok", content: detailed };
     }
 
-    const listed = ranked
-      .slice(0, MAX_RESULTS)
+    const shortlist = ranked.slice(0, MAX_RESULTS);
+    for (const tool of shortlist) ctx.offeredSlugs?.add(tool.slug);
+    const listed = shortlist
       .map((tool) => summarise(tool, byToolkit.get(tool.toolkit)))
       .join("\n\n");
 

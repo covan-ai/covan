@@ -14,6 +14,35 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
  * in its own words when the first answer was thin — which is the single
  * commonest reason a grounded answer is worse than it should be.
  */
+/**
+ * What an empty search says, and why it no longer ends by inviting another one.
+ *
+ * It used to close with "Try different wording", and models do exactly that.
+ * The most expensive turn on record before the caching work was eight
+ * `search_documents` calls, five of them empty; calibrating the eval produced a
+ * sample that ran eight searches and never reached the database it needed,
+ * with the judge naming the looping as what lost it. `find_tool` had the same
+ * sentence and the same behaviour beside it, so this was a pattern across two
+ * tools rather than one tool's phrasing.
+ *
+ * The replacement still leaves the door open — sometimes a second search with
+ * genuinely different words is right — but it says what the first attempt
+ * settled, and it names the alternatives rather than only the retry. A model
+ * that has looked twice needs to hear that looking a third time is the
+ * unlikely option, not the default one.
+ *
+ * Exported because `eval/cases.ts` replays this string as a fixture and its
+ * comment called it verbatim while nothing checked that it was. A copy the
+ * compiler does not hold is a copy that goes stale exactly when it matters:
+ * on the change whose effect the eval was built to see.
+ */
+export const NO_PASSAGE_MATCHED =
+  "No passage matched that. The documents reached by this search do not appear to cover " +
+  "it. Prefer another source if the question allows one, or tell the person the documents " +
+  "do not cover it rather than answering from memory. Search again only with genuinely " +
+  "different words, and not more than once — repeating a search that found nothing is the " +
+  "single most expensive thing you can do here.";
+
 export const searchDocumentsTool: AgentTool = {
   name: "search_documents",
   description:
@@ -55,12 +84,7 @@ export const searchDocumentsTool: AgentTool = {
     );
 
     if (!ragBlock.trim()) {
-      return {
-        kind: "ok",
-        content:
-          "No passage matched that. Try different wording, or say that the documents do not " +
-          "cover it rather than answering from memory.",
-      };
+      return { kind: "ok", content: NO_PASSAGE_MATCHED };
     }
 
     const cited = sources.map((s) => s.name).filter(Boolean);

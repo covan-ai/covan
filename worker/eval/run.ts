@@ -40,7 +40,7 @@ import { runCase, toTrace } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
 import { totalTokens } from "../src/lib/completion";
-import { loadEnv, requireAnthropicKey } from "./env";
+import { loadEnv, requireAnthropicKey, isAccountError } from "./env";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", ".claude", "hillclimb", "agent-turn");
@@ -175,8 +175,21 @@ type Row = {
 
 let ran = 0;
 let spend = 0;
+/**
+ * Cases this invocation started, counted rather than derived.
+ *
+ * `ran` counts the ones that produced a row, so `todo.length - ran` calls a
+ * case that was attempted and failed "never attempted". That subtraction is
+ * the exact mistake `calibrate.ts` made with `scored` — a measuring tool
+ * reporting a number it made up — and it reappeared here the first time this
+ * file had to report a short run.
+ */
+let attempted = 0;
+/** Why the run stopped early, if it did. */
+let abandoned: string | null = null;
 
 async function one({ kase, rep }: { kase: EvalCase; rep: number }): Promise<void> {
+  attempted += 1;
   const key = `${kase.id}_rep${rep}`;
   try {
     const run = await runCase(env, kase, MODEL, { timeoutMs: CASE_TIMEOUT_MS });
@@ -308,6 +321,10 @@ async function one({ kase, rep }: { kase: EvalCase; rep: number }): Promise<void
       }) + "\n",
     );
     process.stdout.write(`  ${key.padEnd(28)} FAILED  ${String(err)}\n`);
+    // An account error is not this case's problem and the next case will not
+    // fix it. Set once; the workers below check it before pulling more work,
+    // so the four in flight finish and nothing new starts.
+    if (isAccountError(err)) abandoned ??= err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -316,6 +333,7 @@ const queue = [...todo];
 await Promise.all(
   Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
     for (;;) {
+      if (abandoned) return;
       const next = queue.shift();
       if (!next) return;
       await one(next);
@@ -324,6 +342,15 @@ await Promise.all(
 );
 
 console.log(`\n${ran}/${todo.length} completed.  Estimated spend this run: $${spend.toFixed(3)}`);
+if (abandoned) {
+  // Loud, and before the paths. A run that stopped at case two of eighteen
+  // otherwise reads as a run of two cases, and the next thing somebody does is
+  // compare a win rate over the wrong denominator.
+  console.log(`\nAbandoned after an account error: ${abandoned}`);
+  console.log(
+    `${attempted - ran} attempted and failed, ${todo.length - attempted} never attempted.`,
+  );
+}
 console.log(`Results: ${resultsPath}`);
 if (isBaseline) {
   writeProvenance();

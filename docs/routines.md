@@ -228,14 +228,21 @@ twelve per routine, so three routines comes to 38. An agent turn spends more
 than twelve on its own, because each tool call is at least one request and the
 model is called again after each.
 
-A scheduled run is capped at **eight tool calls**, the same as a conversation
-today. That is this limit talking, not a judgement about what a routine
-deserves — and the two numbers agree by coincidence rather than by design.
-Chat was raised to sixteen when connected apps arrived, because finding an
-operation costs a step before running one costs another, and put back the same
-day: the API Worker has the same fifty-subrequest cap as the tick, and sixteen
-steps does not fit under it either. A run that reaches the cap says what it did
-not finish rather than stopping silently.
+A scheduled run is capped at **eight tool calls**. That is this limit talking,
+not a judgement about what a routine deserves. Chat was raised to sixteen when
+connected apps arrived, because finding an operation costs a step before running
+one costs another, and put back the same day: the API Worker had the same
+fifty-subrequest cap as the tick, and sixteen steps does not fit under it
+either. A run that reaches the cap says what it did not finish rather than
+stopping silently.
+
+The two numbers used to agree by coincidence and no longer do. A conversation on
+a deployment that has set `WORKER_PLAN=paid` is budgeted 24 tool calls and may
+take up to two further rounds past that, because Workers Paid allows one
+invocation ten thousand subrequests rather than fifty. **A scheduled run does
+not follow it**, and the reason is the arithmetic on this page: a chat turn is
+one invocation, where a tick multiplies by the batch size. Raising this one
+means redoing the sum above first.
 
 If chat is ever raised again, this stays at eight until the arithmetic above is
 redone — a routine shares its fifty with the rest of the batch, and chat does

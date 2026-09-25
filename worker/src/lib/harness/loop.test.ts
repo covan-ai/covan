@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CompletionEvent, CompletionMessage } from "../completion";
 import type { AgentTool, ToolContext, ToolResult } from "./registry";
-import { runAgentTurn, parseArguments, NO_TOOLS_NOTICE } from "./loop";
+import { runAgentTurn, parseArguments, NO_TOOLS_NOTICE, type PassUsage } from "./loop";
+import { cap, MAX_STEP_EXCERPT_CHARS } from "./budget";
 
 /**
  * The loop, driven by a scripted model.
@@ -45,6 +46,17 @@ function pass(
 }
 
 /**
+ * The transcript as each request actually saw it.
+ *
+ * `runAgentTurn` builds one `messages` array and mutates it for the whole
+ * turn, so every entry in `streamCompletion.mock.calls` holds the SAME array —
+ * read after the turn, they all show the final state. An assertion about what
+ * the fourth request carried therefore has to be made against a copy taken
+ * when that request was made, which is what this is.
+ */
+const sentTranscripts: CompletionMessage[][] = [];
+
+/**
  * Replay the scripted passes, repeating the last one forever.
  *
  * Repeating is what makes the budget testable: a model that would ask again
@@ -55,7 +67,11 @@ function pass(
  */
 function scripted(passes: CompletionEvent[][]) {
   let i = 0;
-  streamCompletion.mockImplementation(async function* (_env: unknown, req: { tools?: unknown[] }) {
+  streamCompletion.mockImplementation(async function* (
+    _env: unknown,
+    req: { tools?: unknown[]; messages?: CompletionMessage[] },
+  ) {
+    sentTranscripts.push([...(req.messages ?? [])]);
     const events = passes[Math.min(i, passes.length - 1)];
     i += 1;
     for (const e of events) {
@@ -91,6 +107,7 @@ const base = {
 
 beforeEach(() => {
   streamCompletion.mockReset();
+  sentTranscripts.length = 0;
 });
 
 describe("a turn that asks for nothing", () => {
@@ -361,6 +378,373 @@ describe("the budget", () => {
     expect(turn.steps.map((s) => s.status)).toEqual(["ok", "refused"]);
     const second = streamCompletion.mock.calls[1][1].messages as CompletionMessage[];
     expect(second.filter((m) => m.role === "tool")).toHaveLength(2);
+  });
+
+  /**
+   * The soft ceiling, and what happens instead of a confession.
+   *
+   * A turn that stops at its budget and says so is correct and useless: the
+   * person asked a question, the agent used its allowance looking, and what
+   * arrives is an apology. A leg is the allowance to carry on — and the whole
+   * feature is that the model is told to carry on rather than told it is done,
+   * because those are opposite instructions and the wrong one is invisible to
+   * the person receiving it.
+   */
+  describe("legs past the soft ceiling", () => {
+    /** A model that would ask forever, one call at a time. */
+    const forever = () => scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }])]);
+    const searching = () => [tool("search", async () => ({ kind: "ok", content: "x" }))];
+
+    it("carries on past the soft ceiling without saying it ran out", async () => {
+      forever();
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        // Soft 2, one leg of 2, so the real ceiling is 4.
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+      });
+
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(4);
+
+      // The request made on the far side of the boundary: told to keep going,
+      // and NOT told it is finished. Sending both would be sending a model two
+      // opposite instructions and hoping for the second.
+      const afterBoundary = sentTranscripts[2];
+      expect(afterBoundary.at(-1)?.content).toContain("Do not stop");
+      expect(afterBoundary.at(-1)?.content).not.toContain("used every tool call");
+
+      // And it still has the tools. Withholding them is what invalidates a
+      // prompt cache from its first block — see `toolsWithheld`.
+      expect(streamCompletion.mock.calls[2][1]).toHaveProperty("tools");
+    });
+
+    it("says it once per leg, not once per pass", async () => {
+      forever();
+      await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 4 },
+      });
+
+      // Every request past the boundary carries it, because the transcript is
+      // re-sent whole. What must not happen is one transcript carrying it
+      // twice, which is what a notice pushed per pass rather than per boundary
+      // would produce.
+      const perRequest = sentTranscripts.map(
+        (messages) =>
+          messages.filter((m) => m.role === "system" && String(m.content).includes("Do not stop"))
+            .length,
+      );
+      expect(Math.max(...perRequest)).toBe(1);
+    });
+
+    it("still says it ran out once every leg is gone", async () => {
+      forever();
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+      });
+
+      expect(turn.paused?.reason).toBe("budget");
+      expect(
+        (streamCompletion.mock.calls.at(-1)?.[1].messages as CompletionMessage[]).at(-1)?.content,
+      ).toContain("used every tool call");
+    });
+
+    it("works out which leg a resumed turn is in from the steps alone", async () => {
+      // The ceiling has to stay a pure function of `steps.length`: a turn can
+      // pause for an approval at step 3 and come back with 3 in `stepsSoFar`,
+      // and nothing is persisted about which leg it had reached. It also must
+      // not re-announce a boundary the carried transcript already crossed.
+      scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+        stepsSoFar: [
+          { index: 0, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+          { index: 1, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+          { index: 2, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+        ],
+      });
+
+      // Already inside the leg, so it gets the fourth step and stops there —
+      // not a fresh budget, and not a second notice about a boundary that was
+      // crossed before the pause.
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(4);
+      const announced = sentTranscripts.flatMap((messages) =>
+        messages.filter((m) => String(m.content).includes("Do not stop")),
+      );
+      expect(announced).toEqual([]);
+    });
+
+    /**
+     * What a leg costs, and the one place it is worth paying.
+     *
+     * Past the soft ceiling, subrequests stop being what binds and the context
+     * window starts. A step's result is re-sent on every later pass, so a turn
+     * running into its legs is carrying the most transcript it will ever carry
+     * at exactly the point it can least afford to. Trimming the results it has
+     * finished with buys the room.
+     *
+     * At the boundary, once — not continuously. Rewriting an earlier message
+     * invalidates the prompt cache from that point, so doing it per pass would
+     * pay that on every pass; doing it here means one leg pays once, and a turn
+     * that never crosses the boundary never pays at all.
+     */
+    describe("making room for the leg", () => {
+      /**
+       * A tool whose answers are far too big to keep re-sending.
+       *
+       * Comfortably over `MAX_STEP_EXCERPT_CHARS` (2,000), which is the floor
+       * trimming cuts to — a result already smaller than that has nothing to
+       * give back and is left alone.
+       */
+      const verbose = () => [
+        tool("search", async () => ({ kind: "ok", content: "x".repeat(5_000) })),
+      ];
+
+      it("trims the results it has finished with, and says it did", async () => {
+        forever();
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        // The transcript as the first request past the boundary saw it.
+        const afterBoundary = sentTranscripts[4];
+        const results = afterBoundary.filter((m) => m.role === "tool");
+        // Four results by then: the two oldest cut to the 2,000-character
+        // floor, the two it is working through left whole at 5,000.
+        expect(results.map((m) => m.content.length > 3_000)).toEqual([false, false, true, true]);
+        // And cut with `cap`, so the model is told rather than quietly handed
+        // a truncation it would mistake for the whole answer.
+        expect(results[0].content).toContain("[trimmed:");
+      });
+
+      it("leaves an ordinary turn's transcript alone", async () => {
+        // The turn that never reaches its budget is the common one, and it must
+        // not pay a cache invalidation for a ceiling it never met.
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const everyResult = sentTranscripts.flatMap((messages) =>
+          messages.filter((m) => m.role === "tool"),
+        );
+        expect(everyResult.every((m) => !m.content.includes("[trimmed:"))).toBe(true);
+      });
+
+      it("trims each result once, however many boundaries the turn crosses", async () => {
+        // Two legs means two boundaries, and a result cut at the first must not
+        // be cut again at the second — `cap` would nest its own notice inside
+        // the text it already added.
+        forever();
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 2, extraLegs: 2, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const last = sentTranscripts.at(-1) ?? [];
+        for (const result of last.filter((m) => m.role === "tool")) {
+          expect(result.content.split("[trimmed:").length - 1).toBeLessThanOrEqual(1);
+        }
+      });
+    });
+
+    /**
+     * The other ceiling, and why steps alone are not enough.
+     *
+     * A step budget bounds how many times a turn reaches outside. It does not
+     * bound what those calls cost: one tool that returns a large result, re-sent
+     * on every later pass, can spend a month's allowance inside a budget it
+     * never exceeds. Measured on the incident this work came from — an 8-step
+     * turn charging 131,868 prompt tokens, 88% of them cache reads.
+     *
+     * Enforced here rather than in the route for the same reason `maxSteps` is:
+     * this is the only place that sees the running total while the turn is
+     * still running.
+     */
+    describe("the token ceiling", () => {
+      it("stops the turn, and says which ceiling it was", async () => {
+        forever();
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          // A pass costs 15 (10 prompt + 5 completion), so the third crosses.
+          budget: { maxSteps: 50, maxTurnTokens: 40 },
+        });
+
+        expect(turn.paused?.reason).toBe("tokens");
+        // Not the step sentence. The two ceilings are different facts, and a
+        // turn that stopped on cost telling the person it ran out of tool calls
+        // sends them to narrow the wrong thing.
+        const told = (sentTranscripts.at(-1) ?? []).filter((m) => m.role === "system");
+        expect(String(told.at(-1)?.content)).toContain("token");
+        expect(String(told.at(-1)?.content)).not.toContain("every tool call allowed");
+      });
+
+      it("bills what it spent, because a ceiling is not a way to avoid the bill", async () => {
+        forever();
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 40 },
+        });
+
+        expect(turn.usage.promptTokens).toBeGreaterThan(0);
+        expect(turn.passes.length).toBeGreaterThan(0);
+        expect((turn.usage.promptTokens ?? 0) + (turn.usage.completionTokens ?? 0)).toBeGreaterThan(
+          40,
+        );
+      });
+
+      it("answers the calls it refuses, so the next request is not a 400", async () => {
+        // The same rule the step ceiling follows: a tool call left unanswered
+        // in the transcript is a 400 from the provider, not a smaller turn.
+        scripted([
+          pass("", [
+            { id: "a", name: "search", arguments: "{}" },
+            { id: "b", name: "search", arguments: "{}" },
+          ]),
+        ]);
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 1 },
+        });
+
+        expect(turn.steps.every((s) => s.status === "refused")).toBe(true);
+        const answered = (sentTranscripts.at(-1) ?? []).filter((m) => m.role === "tool");
+        expect(answered).toHaveLength(2);
+      });
+
+      it("leaves a turn under the ceiling completely alone", async () => {
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 1_000_000 },
+        });
+        expect(turn.paused).toBeUndefined();
+        expect(turn.text).toBe("done");
+      });
+    });
+
+    /**
+     * The boundary that is crossed while the turn is stopping to ask.
+     *
+     * A confirmation returns from the middle of the batch, before the once-per-
+     * pass boundary code runs — so a pass whose last call crosses the soft
+     * ceiling AND needs approval ends with no notice sent. What then decides
+     * whether the resumed half ever gets one is how it works out where it is,
+     * and counting steps is the wrong way: the boundary was crossed, so the
+     * step count says "already announced" about a notice nobody sent.
+     *
+     * This is the population legs exist for — long turns that reach for a
+     * connected app — so getting it wrong turns the feature off exactly where
+     * it was meant to work.
+     */
+    describe("a boundary crossed by the call that stops to ask", () => {
+      const asking = () => [
+        tool("search", async () => ({ kind: "ok", content: "x" })),
+        tool("send", async () => ({
+          kind: "needs_confirmation",
+          summary: "Send it?",
+          proposal: null,
+        })),
+      ];
+
+      it("tells the resumed half to keep going, not to wrap up", async () => {
+        // Two steps, the second of which pauses — so the soft ceiling of 2 is
+        // reached by the very call that parks the turn.
+        scripted([
+          pass("", [
+            { id: "a", name: "search", arguments: "{}" },
+            { id: "b", name: "send", arguments: "{}" },
+          ]),
+        ]);
+        const parked = await runAgentTurn({
+          ...base,
+          tools: asking(),
+          budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+        });
+        expect(parked.paused?.reason).toBe("confirmation");
+        expect(parked.steps).toHaveLength(2);
+
+        // The resume, the way `/chat/confirm/:id` does it: the parked messages
+        // with the approved call answered, and the steps already spent.
+        sentTranscripts.length = 0;
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        await runAgentTurn({
+          ...base,
+          request: {
+            ...base.request,
+            messages: [
+              ...(parked.paused?.messages ?? []),
+              { role: "tool" as const, toolCallId: "b", content: "sent" },
+            ],
+          },
+          tools: asking(),
+          budget: { maxSteps: 2, extraLegs: 1, legSteps: 2 },
+          stepsSoFar: parked.steps.map((s) => ({ ...s, status: "ok" as const })),
+        });
+
+        const told = sentTranscripts.flatMap((messages) =>
+          messages.filter((m) => String(m.content).includes("Do not stop")),
+        );
+        expect(told.length).toBeGreaterThan(0);
+      });
+    });
+
+    it("does not cut a result twice across a pause, which would understate its size", async () => {
+      // `cap` writes the original length into the text it appends. Cutting an
+      // already-cut result reports the cut size as the original, so the model is
+      // told a large result was small — and the guard that prevents it cannot be
+      // a set of indices, because a resume is a fresh call with a fresh set and
+      // the same messages.
+      const already = cap("y".repeat(5_000), MAX_STEP_EXCERPT_CHARS);
+      scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+      await runAgentTurn({
+        ...base,
+        request: {
+          ...base.request,
+          messages: [
+            ...base.request.messages,
+            { role: "assistant" as const, content: "", toolCalls: [] },
+            { role: "tool" as const, toolCallId: "old", content: already },
+          ],
+        },
+        tools: [tool("search", async () => ({ kind: "ok", content: "z".repeat(5_000) }))],
+        // Soft 1 with two legs of 1, and one step already spent, so this turn
+        // crosses a boundary it did not itself announce — which is the shape a
+        // resume arrives in.
+        budget: { maxSteps: 1, extraLegs: 2, legSteps: 1, maxOutputChars: 5_000 },
+        stepsSoFar: [
+          { index: 0, tool: "search", request: {}, resultExcerpt: "", status: "ok", durationMs: 1 },
+        ],
+      });
+
+      const carried = (sentTranscripts.at(-1) ?? []).find((m) => m.content.startsWith("yyy"));
+      expect(carried?.content).toBe(already);
+      expect((carried?.content ?? "").split("[trimmed:").length - 1).toBe(1);
+    });
+
+    it("has no legs unless a caller asks for them", async () => {
+      // The default is load-bearing: `SCHEDULED_MAX_STEPS` and every existing
+      // budget case pass a bare `maxSteps`, and all of them have to keep
+      // meaning exactly what they meant.
+      forever();
+      const turn = await runAgentTurn({ ...base, tools: searching(), budget: { maxSteps: 2 } });
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(2);
+      expect(turn.paused?.reason).toBe("budget");
+    });
   });
 
   it("continues a resumed turn's budget rather than starting a fresh one", async () => {
@@ -728,6 +1112,54 @@ describe("a turn that dies with work already behind it", () => {
 
     // The turn is gone; the record of what it did is not.
     expect(collected).toEqual(["search"]);
+  });
+
+  /**
+   * The same argument as `onStep`, about the other half of what a turn
+   * produces. `turn.usage` only exists once this function returns, so a turn
+   * that throws reports no tokens at all — and the route's salvage then writes
+   * an assistant row with every token column null and bills nothing for model
+   * calls that really happened. This is the only copy that survives the throw.
+   */
+  it("hands each pass's usage to onPass as it lands, so a throw still has numbers", async () => {
+    let call = 0;
+    streamCompletion.mockImplementation(async function* (
+      _env: unknown,
+      req: { tools?: unknown[] },
+    ) {
+      call += 1;
+      if (call === 1) {
+        for (const e of pass("Looking.", [{ id: "c1", name: "search", arguments: "{}" }])) {
+          if (e.type === "tools" && !req.tools) continue;
+          yield e;
+        }
+        return;
+      }
+      throw new Error("Connection error.");
+    });
+
+    const billed: Array<{ index: number; prompt: number | null }> = [];
+    await expect(
+      runAgentTurn({
+        ...base,
+        tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+        onPass: (usage) => billed.push({ index: usage.index, prompt: usage.prompt }),
+      }),
+    ).rejects.toThrow("Connection error.");
+
+    expect(billed).toEqual([{ index: 0, prompt: 10 }]);
+  });
+
+  it("gives onPass the same entries the turn returns, so neither is authoritative", async () => {
+    scripted([pass("Looking.", [{ id: "c1", name: "search", arguments: "{}" }]), pass("Done.")]);
+    const billed: PassUsage[] = [];
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "found" }))],
+      onPass: (usage) => billed.push(usage),
+    });
+    expect(billed).toEqual(turn.passes);
+    expect(billed.map((p) => p.index)).toEqual([0, 1]);
   });
 
   it("reports a refused step too, so a spent budget is not silently lost", async () => {

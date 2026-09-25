@@ -4,6 +4,8 @@ import { authClient, userClient } from "../lib/supabase";
 import { looksLikeApiKey, mintUserToken, resolveApiKey, touchApiKey } from "../lib/api-keys";
 import { deferred } from "../lib/defer";
 import { base64url, verifyAccessToken, type TokenUser } from "../lib/jwt";
+import { runtimeLimitFlag } from "../lib/runtime-limit";
+import { subrequestMeter, withMeter } from "../lib/subrequests";
 
 /**
  * Validates the `Authorization: Bearer <token>` header, then attaches:
@@ -48,6 +50,14 @@ export const authMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
     return c.json({ error: "unauthorized" }, 401);
   }
 
+  // Before either branch builds a client, because the caller's own client is
+  // the first thing in a request that spends a subrequest and counting it from
+  // the route would miss every read the route makes to find out who is asking.
+  // See `lib/subrequests.ts`.
+  const runtimeLimit = runtimeLimitFlag();
+  c.set("runtimeLimit", runtimeLimit);
+  c.set("subrequests", subrequestMeter(c.env, runtimeLimit));
+
   if (looksLikeApiKey(token)) {
     return authenticateWithApiKey(c, token, next);
   }
@@ -65,7 +75,7 @@ export const authMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
   }
 
   c.set("user", user);
-  c.set("db", userClient(c.env, token));
+  c.set("db", userClient(withMeter(c.env, c.get("subrequests")), token));
 
   await next();
 };
@@ -150,7 +160,10 @@ async function authenticateWithApiKey(c: Context<AppEnv>, token: string, next: N
   }
 
   c.set("user", { id: resolved.user.id, email: resolved.user.email ?? "" });
-  c.set("db", userClient(c.env, await mintUserToken(secret, resolved.user)));
+  c.set(
+    "db",
+    userClient(withMeter(c.env, c.get("subrequests")), await mintUserToken(secret, resolved.user)),
+  );
   c.set("apiKeyId", resolved.keyId);
 
   await next();

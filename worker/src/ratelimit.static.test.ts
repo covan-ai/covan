@@ -106,6 +106,25 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   "routine-hooks.ts": "runPokedRoutine",
 };
 
+/**
+ * Files beside the routes that reach the model but register no endpoint.
+ *
+ * `chat-turn.ts` is the shared half of the two chat routes — the loop, the
+ * salvage, the sentence a failure gets — extracted because the resume path had
+ * drifted into a second, worse copy of it. It lives here rather than under
+ * `lib/harness/` because it needs a request, and the harness is deliberately
+ * runtime-agnostic so the cron Worker can import it.
+ *
+ * It spends nothing on its own account: the only things that drive it are
+ * `/chat/stream` and `/chat/confirm/:id`, both in the map below and both behind
+ * the expensive tier. The value is what proves it — a marker that only exists
+ * in a file that is driven rather than mounted. The assertion below checks the
+ * other half, that it has not quietly grown an endpoint of its own since.
+ */
+const DRIVERS_WITHOUT_ENDPOINTS: Record<string, string> = {
+  "chat-turn.ts": "export async function runChatTurn",
+};
+
 const PAID_ENDPOINTS: Record<string, string[]> = {
   "chat.ts": ["/chat/stream", "/chat/confirm/:id"],
   "transcribe.ts": ["/transcribe"],
@@ -174,7 +193,23 @@ describe("the expensive rate limit", () => {
     // This is the tripwire. If a route file starts importing the completion
     // seam, this fails and whoever added it has to decide — deliberately —
     // whether its endpoints belong behind the limit.
-    expect(paidRouteFiles().sort()).toEqual(Object.keys(PAID_ENDPOINTS).sort());
+    expect(paidRouteFiles().sort()).toEqual(
+      [...Object.keys(PAID_ENDPOINTS), ...Object.keys(DRIVERS_WITHOUT_ENDPOINTS)].sort(),
+    );
+  });
+
+  it("keeps a driver a driver, so nothing mounts an endpoint the map never sees", () => {
+    // The exemption above is only true while these files register nothing. A
+    // `.post()` appearing in one would be an endpoint that spends and that the
+    // map — and therefore the limit — knows nothing about, which is the exact
+    // hole the tripwire exists to close.
+    for (const [file, marker] of Object.entries(DRIVERS_WITHOUT_ENDPOINTS)) {
+      const src = readFileSync(join(ROUTES, file), "utf8");
+      expect(src, `${file} should still be the driver it was exempted as`).toContain(marker);
+      expect(src, `${file} must not register endpoints`).not.toMatch(
+        /\.(get|post|put|patch|delete|on)\(\s*["'`]/,
+      );
+    }
   });
 
   it("mounts each of those paths on a route that exists", () => {

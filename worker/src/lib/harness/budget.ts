@@ -1,3 +1,6 @@
+import type { RoutineEnv } from "../../types";
+import { planLimits, type ChatLimits } from "../limits";
+
 /**
  * What one agent turn is allowed to spend, and why each number is the number.
  *
@@ -37,15 +40,59 @@
  * roughly the SQUARE of this number. Read `MAX_TOOL_OUTPUT_CHARS` below before
  * raising either.
  *
- * TO RAISE IT, one of two things has to happen first — not a guess, which is
- * how it went wrong: Workers Paid (the cap becomes 1000), or the Worker
- * counting its own subrequests so the loop can stop honestly instead of
- * failing at a ceiling nothing reports.
+ * **WHAT CHANGED, 2026-09-25.** The first of those two things happened: the
+ * hosted deployment is on Workers Paid, where one invocation may make
+ * **10,000** subrequests rather than fifty. (An earlier draft of this comment
+ * said the Paid cap was 1,000. It is not, and the number mattered — 1,000
+ * would have made a 24-step turn look like a quarter of the budget instead of
+ * a fortieth.) A 24-step chat turn plans out at roughly 250 subrequests, so on
+ * Paid this constant is simply no longer what the platform is asking about.
+ * Paid also lifts the wall clock for as long as the client stays connected,
+ * which is the other half of the licence: a long turn is now slow, not fatal.
+ *
+ * **It still does not move here.** Eight is the Workers FREE number and stays
+ * it, because this file ships to self-hosters and `lib/background.ts` promises
+ * their first deploy works without a plan upgrade. What the plan buys is spent
+ * through `chatBudget` below, which asks the deployment which plan it is on.
+ * Raising this line instead would keep covan.app working and break every
+ * self-hosted deploy silently — in exactly the disguised way described above.
+ *
+ * The second thing on that list — the Worker counting its own subrequests — is
+ * still worth building, and is now observability rather than a gate: at ~250
+ * of 10,000, a second budget could only ever refuse turns that would have
+ * finished.
+ *
+ * WHAT BINDS INSTEAD, on Paid: the context window. See `ChatLimits.extraLegs`
+ * in `lib/limits.ts`, and read `MAX_TOOL_OUTPUT_CHARS` below before raising
+ * anything — it matters more now, not less.
  *
  * Counted in tool executions, not in round trips: a pass that asks for three
  * tools at once spends three.
  */
 export const MAX_STEPS = 8;
+
+/**
+ * The same budget, asked of the deployment rather than read off the constant.
+ *
+ * `MAX_STEPS` above is the Free number and stays the Free number — see
+ * `lib/limits.ts` for why raising it flat would break every self-hosted deploy
+ * silently. This is what a chat route passes so that a deployment with the
+ * headroom can be given more of it without the open build moving at all.
+ *
+ * Both chat routes go through it, and that is the point of it existing rather
+ * than each route reading a constant: **neither route used to pass a budget at
+ * all**, so both fell through to the same default and agreed by accident. The
+ * moment one of them passes one they diverge in silence, and the one that
+ * would diverge is the resume — a turn that paused at step seven and came back
+ * with a fresh, bare ceiling.
+ *
+ * `SCHEDULED_MAX_STEPS` deliberately does NOT come through here. A scheduled
+ * run gets no legs: `lib/routines/agent-run.ts` passes an explicit budget, and
+ * `extraLegs` defaults to 0.
+ */
+export function chatBudget(env: Pick<RoutineEnv, "WORKER_PLAN">): ChatLimits {
+  return planLimits(env).chat;
+}
 
 /**
  * The same budget for a run nobody is watching, and its own reason for it.
@@ -124,4 +171,26 @@ export const MAX_STEP_EXCERPT_CHARS = 2_000;
 export function cap(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n\n[trimmed: ${text.length} characters, showing the first ${max}]`;
+}
+
+/**
+ * Whether `cap` has already been applied to this text.
+ *
+ * Read off the text itself rather than remembered, because the thing that has
+ * to know is on the other side of a pause: a turn parks its whole transcript in
+ * `paused_turns.messages` and resumes in a fresh call with fresh variables, so
+ * any set of "already done" indices is empty again while the capped text is
+ * still there. Capping twice does not lose anything a reader can see, but it
+ * rewrites the notice — `cap` puts the ORIGINAL length in it, so a second pass
+ * reports the cut size as the original and tells the model a large result was
+ * small.
+ *
+ * Anchored at the end and matched on the exact shape `cap` writes. A tool whose
+ * own output happened to end this way would be left uncut, which costs some
+ * transcript and breaks nothing.
+ */
+const CAPPED = /\n\n\[trimmed: \d+ characters, showing the first \d+\]$/;
+
+export function wasCapped(text: string): boolean {
+  return CAPPED.test(text);
 }

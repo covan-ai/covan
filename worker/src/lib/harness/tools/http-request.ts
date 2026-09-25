@@ -1,3 +1,4 @@
+import { meteredFetch } from "../../subrequests";
 import { assertFetchableUrl, ownHostsFrom } from "../../routines/url-guard";
 import { readCapped, resolvesPublicly } from "../../routines/source";
 import { loadConnection } from "../connections";
@@ -199,7 +200,11 @@ export const httpRequestTool: AgentTool = {
     const sendsBody = method !== "GET" && method !== "HEAD" && typeof input.body === "string";
     if (sendsBody) headers["Content-Type"] = "application/json";
 
-    const res = await fetch(target.toString(), {
+    // Counted like every other outbound call a turn makes — this one reaches a
+    // third party the model chose, so it is exactly the kind that runs a turn
+    // out of subrequests. See `lib/subrequests.ts`.
+    const send = meteredFetch(ctx.env) ?? fetch;
+    const res = await send(target.toString(), {
       method,
       headers,
       ...(sendsBody ? { body: input.body as string } : {}),

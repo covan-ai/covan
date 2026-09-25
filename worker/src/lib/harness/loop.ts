@@ -14,6 +14,7 @@ import {
   MAX_TOOL_OUTPUT_CHARS,
   TOOL_TIMEOUT_MS,
   cap,
+  wasCapped,
 } from "./budget";
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
 
@@ -125,7 +126,16 @@ export type HarnessEvent =
  * record and nothing to resume, because there is nothing to wait for.
  */
 export type PausedTurn = {
-  reason: "confirmation" | "budget";
+  /**
+   * `tokens` is the cost ceiling rather than the step one, and it is a separate
+   * fact on purpose: a turn that stopped because it was expensive, reported as
+   * one that ran out of tool calls, sends the person to narrow the wrong thing.
+   *
+   * Widening this needed no migration — `lib/harness/turn.ts` persists a paused
+   * turn only for `confirmation`, because that is the only reason there is
+   * anything to come back to.
+   */
+  reason: "confirmation" | "budget" | "tokens";
   messages: CompletionMessage[];
   call?: ToolCall;
   summary?: string;
@@ -150,7 +160,28 @@ export type AgentTurnOptions = {
   ctx: ToolContext;
   onEvent?: (event: HarnessEvent) => void;
   signal?: AbortSignal;
-  budget?: { maxSteps?: number; toolTimeoutMs?: number; maxOutputChars?: number };
+  budget?: {
+    /** The steps the model is budgeted. Crossing it starts a leg, not a stop. */
+    maxSteps?: number;
+    /**
+     * How many extra legs a turn may take past `maxSteps`, and how long each
+     * is. `extraLegs: 0` — the default — means the soft ceiling IS the hard
+     * one, which is what every caller that passes a bare `maxSteps` relies on.
+     */
+    extraLegs?: number;
+    legSteps?: number;
+    /**
+     * What one turn may spend, prompt plus completion, across every pass.
+     *
+     * The ceiling `maxSteps` cannot express: a step budget bounds how many
+     * times a turn reaches outside, not what those calls cost. One large result
+     * re-sent on every later pass can spend a month's allowance inside a step
+     * budget it never exceeds.
+     */
+    maxTurnTokens?: number;
+    toolTimeoutMs?: number;
+    maxOutputChars?: number;
+  };
   /**
    * Steps already spent before this call — a resumed turn continues the
    * budget rather than starting a fresh one, or a person could buy an
@@ -173,6 +204,26 @@ export type AgentTurnOptions = {
    * for. A caller that collects these can write them down anyway.
    */
   onStep?: (step: AgentStep) => void;
+  /**
+   * Each model call's usage as it lands, for a caller that has to survive this
+   * function throwing.
+   *
+   * `onStep`'s argument, applied to the other half of what a turn produces.
+   * The turn's totals live in `usage`, which only exists once this function
+   * RETURNS — so a turn that throws on its twelfth pass reports nothing for
+   * the eleven model calls that already happened and were already paid for.
+   *
+   * That is not a cosmetic loss. The route's salvage writes an assistant row
+   * with every token column null, and `recordQuota` is handed a zero and
+   * early-returns, so the passes are neither recorded against the message nor
+   * billed. Production, 2026-09-25: four turns saved with all token columns
+   * NULL and nothing charged. This is the only copy of those numbers that
+   * survives the throw.
+   *
+   * Emitted once per model call, in order, with the same entries `passes`
+   * ends up holding — neither is authoritative over the other.
+   */
+  onPass?: (usage: PassUsage) => void;
 };
 
 /**
@@ -187,6 +238,93 @@ const BUDGET_INSTRUCTION =
   "You have used every tool call allowed for this turn. Answer now with what you " +
   "already have. Say plainly, in one sentence, what you were not able to finish and " +
   "what you would need to do next — do not pretend the work is complete.";
+
+/**
+ * What the model is told when the turn has spent its token allowance.
+ *
+ * Beside `BUDGET_INSTRUCTION` rather than folded into it, because they are
+ * different facts and lead to different advice. "You ran out of tool calls"
+ * tells a person to ask for fewer things; "this turn got too expensive" tells
+ * them to ask for less material. Saying the first when the second is true is
+ * how somebody retries four times.
+ */
+const TOKEN_INSTRUCTION =
+  "This turn has used the whole token allowance one turn is given. Answer now with what " +
+  "you already have. Say plainly, in one sentence, what you were not able to finish — and " +
+  "if the material you were working through was large, say so, because that is the thing " +
+  "to narrow next time.";
+
+/**
+ * What the model is told when it crosses the soft ceiling with a leg in hand.
+ *
+ * **This is the opposite instruction to `BUDGET_INSTRUCTION`, and the
+ * difference is the whole feature.** One says stop and confess; this says keep
+ * going and narrow. Getting the wrong one is not a small error: a turn that
+ * wraps up early looks finished, so the person cannot tell it happened and
+ * cannot correct it.
+ *
+ * It has to forbid stopping in words, because a model told anything at all
+ * about a budget reliably starts wrapping up — naming the number left is not
+ * enough on its own, and may even invite it. It also forbids narrating the
+ * limit, because a paragraph explaining the agent's internal allowance is not
+ * an answer to the question that was asked.
+ *
+ * Appended as a `system` turn at the tail, where `BUDGET_INSTRUCTION` goes, so
+ * it lands after the cacheable prefix and invalidates nothing.
+ */
+/**
+ * Cut the tool results the turn has finished with, to make room for the leg.
+ *
+ * WHY IT IS NEEDED AT ALL. Once a deployment is on Workers Paid, subrequests
+ * stop being what bounds a turn and the context window starts. A result
+ * produced at step k is re-sent on every pass after it, so the transcript is
+ * largest exactly when the turn crosses into its legs — which is the moment it
+ * can least afford to overflow, because a provider 400 arrives wearing the same
+ * disguise the subrequest cap does (`lib/runtime-limit.ts`).
+ *
+ * WHY AT THE BOUNDARY AND NOT CONTINUOUSLY. Rewriting a message already in the
+ * transcript invalidates the prompt cache from that point. Trimming on every
+ * pass would pay that every pass; trimming here means exactly one leg pays
+ * exactly once, and an ordinary turn that never reaches its budget never pays
+ * at all.
+ *
+ * `keepLast` results are left whole because they are what the model is actually
+ * working through; everything older is cut to `MAX_STEP_EXCERPT_CHARS`, the
+ * same size the transcript view keeps. Through `cap`, so the model is TOLD it
+ * was cut — a silent truncation is one the model would read as the whole
+ * answer and act on.
+ *
+ * `wasCapped` is what stops a result being cut twice, and it reads the text
+ * rather than remembering an index — because the thing that has to know is on
+ * the far side of a pause. A parked turn stores its whole transcript and
+ * resumes in a fresh call, where any set of "already done" indices is empty
+ * again while the capped text is still sitting there. Cutting twice rewrites
+ * `cap`'s own notice with the cut size in place of the original, which tells
+ * the model a large result was small.
+ */
+function trimSpentResults(messages: CompletionMessage[], keepLast: number): void {
+  const results: number[] = [];
+  for (let i = 0; i < messages.length; i += 1) {
+    if (messages[i].role === "tool") results.push(i);
+  }
+  for (const i of results.slice(0, Math.max(0, results.length - keepLast))) {
+    const message = messages[i];
+    if (message.content.length <= MAX_STEP_EXCERPT_CHARS || wasCapped(message.content)) continue;
+    messages[i] = { ...message, content: cap(message.content, MAX_STEP_EXCERPT_CHARS) };
+  }
+}
+
+const PACE_NOTICE_OPENING = "You have used the tool calls normally allowed for one turn";
+
+function paceNotice(left: number): string {
+  return (
+    `${PACE_NOTICE_OPENING}, and you have been given ` +
+    `${left} more so you can finish. Do not stop here, do not wrap up, do not summarise what ` +
+    `you have so far, and do not mention this limit to the person — none of those is what was ` +
+    `asked of you. Carry on with the original request, and spend what is left on the narrowest ` +
+    `steps that will actually complete it.`
+  );
+}
 
 /** What the model is told when its own model cannot be given tools at all. */
 export const NO_TOOLS_NOTICE =
@@ -241,8 +379,12 @@ export function parseArguments(
  * because every tool that reaches outside passes the signal to `fetch` — a
  * race alone would leave the request running with nothing to receive it. The
  * race is still there as the backstop for a tool that ignores the signal.
+ *
+ * Exported because the resume path runs one tool of its own — the call a person
+ * has just approved — outside this loop, and ran it with no ceiling at all.
+ * Every other tool call in the product is time-boxed; that one was not.
  */
-async function runWithTimeout(
+export async function runWithTimeout(
   tool: AgentTool,
   args: unknown,
   ctx: ToolContext,
@@ -317,7 +459,26 @@ function approvedConnectionsFrom(steps: AgentStep[]): string[] {
 }
 
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
-  const maxSteps = opts.budget?.maxSteps ?? MAX_STEPS;
+  /**
+   * The three numbers a ceiling is made of now, instead of one.
+   *
+   * `softSteps` is what the model is budgeted; `hardSteps` is where the turn
+   * genuinely stops. Between them are `extraLegs` legs of `legSteps` each — a
+   * turn that has used its allowance and is still working is told to carry on,
+   * once, rather than told to apologise.
+   *
+   * **`extraLegs` defaults to 0, and that default is load-bearing.** Every
+   * existing caller passes a bare `maxSteps` — `SCHEDULED_MAX_STEPS` from
+   * `lib/routines/agent-run.ts`, and every budget case in the tests — and all
+   * of them have to keep meaning exactly what they meant: hard equals soft, no
+   * legs, one sentence when it runs out.
+   */
+  const softSteps = opts.budget?.maxSteps ?? MAX_STEPS;
+  const legSteps = opts.budget?.legSteps ?? softSteps;
+  const extraLegs = opts.budget?.extraLegs ?? 0;
+  const hardSteps = softSteps + extraLegs * legSteps;
+  /** Absent means no cost ceiling, which is what every caller had until now. */
+  const maxTurnTokens = opts.budget?.maxTurnTokens;
   const toolTimeoutMs = opts.budget?.toolTimeoutMs ?? TOOL_TIMEOUT_MS;
   const maxOutputChars = opts.budget?.maxOutputChars ?? MAX_TOOL_OUTPUT_CHARS;
 
@@ -345,7 +506,22 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   let usage = EMPTY_USAGE;
   let text = "";
   let finishReason: string | null = null;
-  let budgetSpent = false;
+  /**
+   * Which ceiling ended this turn, if one did.
+   *
+   * One variable rather than a flag per ceiling, so everything downstream —
+   * whether the model may still ask for a tool, what it is told, what
+   * `paused.reason` says — is decided in one place and cannot disagree with
+   * itself. Null while the turn is still allowed to work.
+   */
+  let stopped: "budget" | "tokens" | null = null;
+  /**
+   * What the turn has spent so far, prompt plus completion.
+   *
+   * Counted the way `recordQuota` counts it, so the number the ceiling is
+   * compared against is the number the person is billed.
+   */
+  let tokensSpent = 0;
   /**
    * Whether to withhold the tool definitions from the next request.
    *
@@ -375,6 +551,35 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * to zero.
    */
   let pass = steps.reduce((max, step) => Math.max(max, step.pass ?? -1), -1) + 1;
+  /**
+   * Which leg `n` steps puts the turn in — 0 while it is still inside its
+   * budget, 1 once it has crossed into the first extra leg, and so on.
+   *
+   * A pure function of `steps.length`, which is what lets a turn pause for an
+   * approval at step 27, resume with 27 entries in `stepsSoFar`, and work out
+   * where it is again from nothing but those. No column, no migration.
+   */
+  const legOf = (n: number) => (n < softSteps ? 0 : Math.floor((n - softSteps) / legSteps) + 1);
+  /**
+   * The last boundary this turn has already spoken about.
+   *
+   * Counted out of the transcript rather than derived from `steps.length`, and
+   * the difference is a real case rather than a nicety. A pass whose last call
+   * needs confirmation returns from the MIDDLE of the batch, before the
+   * boundary code at the foot of the loop runs — so a turn whose twenty-fourth
+   * step is the one that stops to ask crosses the ceiling with no notice sent.
+   * Seeding from the step count would then have the resumed half conclude the
+   * notice had already been given, and it would never be sent at all: legs
+   * switched off for precisely the turns they exist for, the long ones that
+   * reach for a connected app.
+   *
+   * The transcript cannot be wrong about it. One notice per boundary, crossed
+   * in order, so however many are in there is the last leg announced — and a
+   * resumed turn reads them back because `paused_turns.messages` carries them.
+   */
+  let noticedLeg = messages.filter(
+    (m) => m.role === "system" && m.content.startsWith(PACE_NOTICE_OPENING),
+  ).length;
 
   for (;;) {
     const events = streamCompletion(
@@ -398,7 +603,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
      * and the budget would never stop it — an infinite turn, which is the one
      * failure mode a budget exists to make impossible.
      */
-    const mayAsk = Boolean(specs) && !budgetSpent;
+    const mayAsk = Boolean(specs) && !stopped;
     let opened = false;
     for await (const event of events) {
       if (event.type === "delta") {
@@ -420,7 +625,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // Recorded per pass as well as summed, so a turn that spent everything
         // on its last request can be told apart from one that spread it. See
         // `PassUsage`.
-        passes.push({
+        const spent: PassUsage = {
           index: pass,
           prompt: event.usage.promptTokens,
           cached: event.usage.cachedTokens,
@@ -431,7 +636,19 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           // seven grows with the step budget. Both sum to the same row total
           // and argue for different fixes.
           reasoning: event.usage.reasoningTokens,
-        });
+        };
+        passes.push(spent);
+        // Handed out here rather than at the foot of the turn, for the reason
+        // `onPass` gives: what the caller cannot reach is what a throw takes
+        // with it, and everything after this line can throw.
+        opts.onPass?.(spent);
+        // And the running total the cost ceiling is measured against, counted
+        // the way `recordQuota` counts it so the number that stops the turn is
+        // the number the person is billed. Checked here rather than before the
+        // next request because this is where it changes — a pass that has
+        // already been paid for is not un-spent by noticing late.
+        tokensSpent += (event.usage.promptTokens ?? 0) + (event.usage.completionTokens ?? 0);
+        if (maxTurnTokens && tokensSpent >= maxTurnTokens && !stopped) stopped = "tokens";
         finishReason = event.finishReason;
       }
     }
@@ -454,7 +671,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
        * empty pass with no tools on the request is a model with nothing to say,
        * not a model reaching for a tool.
        */
-      if (budgetSpent && !toolsWithheld && specs && passText.trim().length === 0) {
+      if (stopped && !toolsWithheld && specs && passText.trim().length === 0) {
         toolsWithheld = true;
         pass += 1;
         continue;
@@ -465,7 +682,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         steps,
         passes,
         finishReason,
-        ...(budgetSpent ? { paused: { reason: "budget" as const, messages } } : {}),
+        ...(stopped ? { paused: { reason: stopped, messages } } : {}),
       };
     }
 
@@ -475,11 +692,18 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     messages.push({ role: "assistant", content: passText, toolCalls: calls });
 
     for (const call of calls) {
-      if (steps.length >= maxSteps) {
-        // Budget gone mid-batch. Every remaining call still needs an answer or
-        // the next request is a 400, so they are answered with the refusal
-        // rather than dropped.
-        const refusal = "refused: this turn has used every tool call it is allowed";
+      // Either ceiling, met mid-batch. `stopped` is already set when the token
+      // ceiling was crossed on the pass that produced these calls — `mayAsk`
+      // cannot un-ask for them, so they are refused here instead.
+      const out: "budget" | "tokens" | null =
+        stopped ?? (steps.length >= hardSteps ? "budget" : null);
+      if (out) {
+        // Every remaining call still needs an answer or the next request is a
+        // 400, so they are answered with the refusal rather than dropped.
+        const refusal =
+          out === "tokens"
+            ? "refused: this turn has used the whole token allowance one turn is given"
+            : "refused: this turn has used every tool call it is allowed";
         messages.push({ role: "tool", toolCallId: call.id, content: refusal });
         const refused = parseArguments(call.arguments);
         record({
@@ -487,7 +711,8 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           pass,
           tool: call.name,
           request: refused.ok ? refused.args : {},
-          resultExcerpt: "refused: tool budget exhausted",
+          resultExcerpt:
+            out === "tokens" ? "refused: token ceiling" : "refused: tool budget exhausted",
           // What the model was shown, which is the refusal and not the
           // excerpt above — the two differ here, and the point of recording
           // this at all is that they can.
@@ -495,7 +720,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           status: "refused",
           durationMs: 0,
         });
-        budgetSpent = true;
+        stopped = out;
         continue;
       }
 
@@ -599,9 +824,27 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       });
     }
 
-    if (steps.length >= maxSteps && !budgetSpent) budgetSpent = true;
-    if (budgetSpent) {
-      messages.push({ role: "system", content: BUDGET_INSTRUCTION });
+    if (steps.length >= hardSteps && !stopped) stopped = "budget";
+    if (stopped) {
+      messages.push({
+        role: "system",
+        content: stopped === "tokens" ? TOKEN_INSTRUCTION : BUDGET_INSTRUCTION,
+      });
+    } else {
+      // Past the soft ceiling with a leg still in hand. Said once per boundary
+      // rather than once per pass — the transcript is re-sent whole, so a
+      // notice pushed every pass would stack up inside one request — and
+      // deliberately without setting `stopped` or touching `toolsWithheld`:
+      // the model keeps its tools and keeps working.
+      const leg = legOf(steps.length);
+      if (leg > noticedLeg) {
+        noticedLeg = leg;
+        // Before the notice, so the notice stays at the tail where it lands
+        // after the cacheable prefix. The results kept whole are one leg's
+        // worth — what the turn is currently working through.
+        trimSpentResults(messages, legSteps);
+        messages.push({ role: "system", content: paceNotice(hardSteps - steps.length) });
+      }
     }
     pass += 1;
   }

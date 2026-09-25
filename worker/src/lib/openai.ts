@@ -1,3 +1,4 @@
+import { meteredFetch, type SubrequestMeter } from "./subrequests";
 import OpenAI from "openai";
 
 /**
@@ -23,12 +24,21 @@ import OpenAI from "openai";
  * on the Node runtime and never on Workers. Passing it explicitly is what makes
  * the two runtimes behave the same way, which is the whole point of the seam.
  */
-export function createOpenAI(env: { OPENAI_API_KEY: string; OPENAI_BASE_URL?: string }): OpenAI {
+export function createOpenAI(env: {
+  OPENAI_API_KEY: string;
+  OPENAI_BASE_URL?: string;
+  SUBREQUESTS?: SubrequestMeter;
+}): OpenAI {
+  const counting = meteredFetch(env);
   return new OpenAI({
     apiKey: env.OPENAI_API_KEY,
     // `|| undefined`, not `??`: an unset variable arrives as "" from a .env
     // file, and "" as a baseURL resolves against the Worker's own origin.
     baseURL: env.OPENAI_BASE_URL || undefined,
+    // Spread rather than passed as `undefined`, because omitting the option and
+    // setting it to undefined are not the same thing to every SDK. Absent when
+    // nothing is counting, which is every caller outside a chat turn.
+    ...(counting ? { fetch: counting } : {}),
   });
 }
 

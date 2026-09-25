@@ -99,6 +99,19 @@ beforeEach(() => {
   resetAuthCache();
 });
 
+/**
+ * The environment the caller's client is built from.
+ *
+ * An overlay of the bindings, not the bindings themselves: the auth middleware
+ * adds this request's subrequest meter before it builds a client, because that
+ * client is the first thing in a request that spends one. See
+ * `lib/subrequests.ts`. What these assertions are about is the TOKEN — that the
+ * data client carries the caller's own and not the anon key — so the env is
+ * matched on the bindings it still has to carry.
+ */
+const metered = (env: Record<string, unknown>) =>
+  expect.objectContaining({ ...env, SUBREQUESTS: expect.objectContaining({ count: 0 }) });
+
 describe("authMiddleware", () => {
   it("refuses a request with no Authorization header", async () => {
     const { server, seen } = app();
@@ -186,7 +199,7 @@ describe("authMiddleware", () => {
 
     await get(server, { Authorization: `Bearer ${token}` });
 
-    expect(userClient).toHaveBeenCalledWith(ENV, token);
+    expect(userClient).toHaveBeenCalledWith(metered(ENV), token);
     expect(seen.db).toEqual({ marker: "user-client", token });
   });
 
@@ -198,7 +211,7 @@ describe("authMiddleware", () => {
     await get(server, { Authorization: `Bearer   ${token}  ` });
 
     expect(authGetUser).toHaveBeenCalledWith(token);
-    expect(userClient).toHaveBeenCalledWith(ENV, token);
+    expect(userClient).toHaveBeenCalledWith(metered(ENV), token);
   });
 
   it("asks Supabase once for a burst of requests carrying the same token", async () => {
@@ -257,7 +270,7 @@ describe("authMiddleware, verifying the token itself", () => {
 
     await verify(server, token);
 
-    expect(userClient).toHaveBeenCalledWith(KEYED_ENV, token);
+    expect(userClient).toHaveBeenCalledWith(metered(KEYED_ENV), token);
     expect(seen.db).toEqual({ marker: "user-client", token });
   });
 
@@ -325,7 +338,7 @@ describe("authMiddleware, with an API key", () => {
     await withKey(server);
 
     expect(mintUserToken).toHaveBeenCalledWith("a-signing-secret", USER);
-    expect(userClient).toHaveBeenCalledWith(KEYED_ENV, "minted-jwt");
+    expect(userClient).toHaveBeenCalledWith(metered(KEYED_ENV), "minted-jwt");
     expect(seen.db).toEqual({ marker: "user-client", token: "minted-jwt" });
     // The key is a credential, not a token any database would accept.
     expect(userClient).not.toHaveBeenCalledWith(expect.anything(), KEY);

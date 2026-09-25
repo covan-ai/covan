@@ -1,3 +1,4 @@
+import { meteredFetch, type SubrequestMeter } from "./subrequests";
 import Anthropic from "@anthropic-ai/sdk";
 
 /**
@@ -18,6 +19,7 @@ import Anthropic from "@anthropic-ai/sdk";
 export function createAnthropic(env: {
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_BASE_URL?: string;
+  SUBREQUESTS?: SubrequestMeter;
 }): Anthropic {
   if (!env.ANTHROPIC_API_KEY) {
     // Reached only by a bug: `resolveModel` will not return a Claude id unless
@@ -29,10 +31,13 @@ export function createAnthropic(env: {
         "This request should never have been routed to Anthropic — see lib/models.ts.",
     );
   }
+  const counting = meteredFetch(env);
   return new Anthropic({
     apiKey: env.ANTHROPIC_API_KEY,
     // `|| undefined`, not `??`: an unset variable arrives as "" from a .env
     // file, and "" as a baseURL resolves against the Worker's own origin.
     baseURL: env.ANTHROPIC_BASE_URL || undefined,
+    // See `createOpenAI` for why this is spread rather than passed undefined.
+    ...(counting ? { fetch: counting } : {}),
   });
 }

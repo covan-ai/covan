@@ -414,6 +414,23 @@ function ChatTab() {
    * and not in the database. Somebody who reloads can still ask in words.
    */
   const [truncated, setTruncated] = useState<{ sessionId: string; messageId: string } | null>(null);
+  /**
+   * A reply that stopped at a ceiling rather than because it was finished.
+   *
+   * The sibling of `truncated`, and it exists for the same reason: an answer
+   * that stopped early looks exactly like one that finished. This used to be a
+   * four-second toast over a reply that looked whole — gone before the person
+   * finished reading the answer it was about, and leaving nothing to act on.
+   *
+   * `reason` is kept because the two ceilings ask the person to narrow
+   * different things: out of tool calls means fewer things at once, out of
+   * tokens means less material.
+   */
+  const [stoppedShort, setStoppedShort] = useState<{
+    sessionId: string;
+    messageId: string;
+    reason: "budget" | "tokens";
+  } | null>(null);
   // The reply a continuation is being written into, so the text arriving can
   // be drawn on the end of it rather than under it as a second answer.
   const [continuingId, setContinuingId] = useState<string | null>(null);
@@ -564,6 +581,7 @@ function ChatTab() {
     setSettlingIn(null);
     // Whatever was cut off is being dealt with now, one way or the other.
     setTruncated(null);
+    setStoppedShort(null);
     setContinuingId(opts.continuing ?? null);
     // Nothing is "thinking" on a continuation: the answer is already on
     // screen and the next words land on the end of it.
@@ -576,6 +594,9 @@ function ChatTab() {
     // Whether the model ran into the cap again on the way. Local to this
     // stream — the id it belongs to is not known until `done` carries it.
     let ranLong = false;
+    // And which ceiling stopped it, if one did. Same reason it is local: the
+    // reply it belongs to does not have an id until `done`.
+    let ranOut: "budget" | "tokens" | null = null;
 
     const controller = new AbortController();
     streamAbort.current = controller;
@@ -747,12 +768,16 @@ function ChatTab() {
               proposal: event.proposal ?? null,
             });
           } else if (event.type === "paused") {
-            // Said out loud only when there is nothing to press. A pause for
-            // confirmation already has a card under the reply; a pause
-            // because the budget ran out has nothing, and an answer that
-            // stops early with no explanation is the thing this avoids.
-            if (event.reason === "budget") {
-              toast.message("The agent used every tool call it is allowed for one turn.");
+            // A pause for confirmation already has a card under the reply and
+            // needs nothing here. The two ceilings have nothing, and an answer
+            // that stops early with no explanation is the thing this avoids.
+            //
+            // Recorded rather than announced, for the reason `truncated` below
+            // gives at length: a toast is gone in four seconds and leaves the
+            // half-finished answer sitting there looking whole. What it becomes
+            // instead is a line and a button under the reply.
+            if (event.reason === "budget" || event.reason === "tokens") {
+              ranOut = event.reason;
             }
           } else if (event.type === "truncated") {
             // The model ran into its output cap. The answer stops mid-thought
@@ -798,6 +823,7 @@ function ChatTab() {
                 settleMessage(old ?? [], settled),
               );
               if (ranLong) setTruncated({ sessionId, messageId: settled.id });
+              if (ranOut) setStoppedShort({ sessionId, messageId: settled.id, reason: ranOut });
             }
             setStreamText("");
             setThinkingText("");
@@ -1017,6 +1043,26 @@ function ChatTab() {
   const carryOn = (messageId: string) => {
     if (!active || busy) return;
     void streamReply(active.id, { continuing: messageId });
+  };
+
+  /**
+   * Ask an agent that stopped at a ceiling to carry on.
+   *
+   * **A new user turn, not a hidden resume**, and the difference is the whole
+   * design. `carryOn` above is the right shape for a length cap: the model was
+   * mid-sentence, the rest belongs in the same row, and nobody asked for it.
+   * A ceiling is not that. The turn is over, its budget is spent, and what
+   * happens next is a person deciding to spend more — so it gets a fresh
+   * ceiling, the transcript is read again, and the conversation records that
+   * somebody asked, which is what actually happened.
+   *
+   * It also means there is nothing new on the server: this is the ordinary
+   * send path, and the next turn is an ordinary turn.
+   */
+  const keepGoing = () => {
+    if (!active || busy) return;
+    setStoppedShort(null);
+    void submit("Keep going — pick up where you stopped.");
   };
 
   /**
@@ -1542,6 +1588,31 @@ function ChatTab() {
                               </button>
                             </div>
                           )}
+
+                          {/* The same argument as the row above, about the
+                            other way a reply stops early. This was a toast:
+                            four seconds, over an answer that looked finished,
+                            with nothing to press. The sentence differs by
+                            ceiling because they ask the person to narrow
+                            different things. */}
+                          {stoppedShort?.messageId === m.id &&
+                            stoppedShort.sessionId === active?.id && (
+                              <div className="mt-3 flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">
+                                  {stoppedShort.reason === "tokens"
+                                    ? "This turn reached the most one answer is allowed to spend."
+                                    : "This turn used every tool call it is allowed."}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={keepGoing}
+                                  disabled={busy}
+                                  className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
+                                >
+                                  Keep going
+                                </button>
+                              </div>
+                            )}
 
                           {/* Token usage badge - hover only, assistant messages only */}
                           {m.role === "assistant" &&

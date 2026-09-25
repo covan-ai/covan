@@ -19,8 +19,14 @@ export const WARN_AT = 0.75;
  * An unparseable or missing value answers false — "we have not warned yet" — so
  * a corrupt stamp costs one extra message rather than silencing the warning for
  * good.
+ *
+ * Exported because the routine engine has to ask the same question and must not
+ * ask it a second way: the column is a `timestamptz`, written from
+ * `toISOString()` and read back by PostgREST in a different spelling of the
+ * same moment, so `===` on the text is always false. A second copy of this that
+ * got it wrong would warn on every run for the rest of the period.
  */
-function sameInstant(a: string | null | undefined, b: string): boolean {
+export function sameInstant(a: string | null | undefined, b: string): boolean {
   if (!a) return false;
   const left = Date.parse(a);
   const right = Date.parse(b);

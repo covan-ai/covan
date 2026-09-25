@@ -28,7 +28,7 @@ import { generateSessionTitle } from "../lib/session-title";
 import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
-import { embeddingCost } from "../lib/entitlements";
+import { embeddingCost, weighTokens } from "../lib/entitlements";
 import { subrequestReport, withMeter } from "../lib/subrequests";
 import {
   buildToolContext,
@@ -422,8 +422,13 @@ chat.post("/chat/stream", async (c) => {
         await recordQuota(
           c,
           embeddingCost(embeddingTokens) +
-            (promptTokens ?? 0) +
-            (completionTokens ?? 0) +
+            // Weighted, not summed. `promptTokens` has the cache reads inside
+            // it and a cache read costs a tenth of a fresh token, so face value
+            // charged a long tool turn — which is mostly re-read transcript —
+            // as if every pass were new. See `weighTokens`.
+            weighTokens({ promptTokens, completionTokens, cachedTokens, cacheWriteTokens }) +
+            // Unweighted: the titler is one short unstreamed call on the cheap
+            // model and reports no cache split to weigh.
             titleTokens,
         );
       };
@@ -915,8 +920,7 @@ chat.post("/chat/confirm/:id", async (c) => {
       const recordSpend = async () => {
         if (spendRecorded) return;
         spendRecorded = true;
-        const usage = spentUsage(spend);
-        await recordQuota(c, (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
+        await recordQuota(c, weighTokens(spentUsage(spend)));
       };
 
       /**

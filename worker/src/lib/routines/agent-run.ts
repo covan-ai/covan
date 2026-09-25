@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { complete, totalTokens, type CompletionMessage } from "../completion";
+import { weighTokens } from "../entitlements";
 import { resolveModel } from "../models";
 import { temperatureFor, reasoningEffortFor } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
@@ -139,6 +140,11 @@ export function runRoutineWithTools(
     });
 
     let tokens = totalTokens(turn.usage);
+    // The same spend in the unit the allowance is denominated in. Kept beside
+    // the raw figure rather than replacing it: `routine_runs.tokens` is the
+    // durable record of how many tokens moved, which is what the run history
+    // shows, and only the counter cares what they cost. See `weighTokens`.
+    let weightedTokens = weighTokens(turn.usage);
     let text = turn.text;
     let declined = false;
 
@@ -165,6 +171,7 @@ export function runRoutineWithTools(
         ],
       });
       tokens += totalTokens(decision.usage);
+      weightedTokens += weighTokens(decision.usage);
       const read = readDecision(decision.text);
       text = read.text;
       declined = read.declined;
@@ -179,6 +186,6 @@ export function runRoutineWithTools(
         `because it needs somebody to approve it, and a scheduled run has nobody to ask._`;
     }
 
-    return { text, tokens, declined };
+    return { text, tokens, weightedTokens, declined };
   };
 }

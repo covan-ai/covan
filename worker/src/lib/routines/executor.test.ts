@@ -221,7 +221,15 @@ function makeDeps(db: any) {
 }
 
 beforeEach(() => {
-  summarise = vi.fn(async () => ({ text: "summary", tokens: 120, declined: false }));
+  summarise = vi.fn(async () => ({
+    text: "summary",
+    tokens: 120,
+    // Deliberately not 120. Every assertion on `recorded` below is then a
+    // statement about WHICH of the two numbers the allowance is charged —
+    // equal ones would pass whichever it read. See `weighTokens`.
+    weightedTokens: 45,
+    declined: false,
+  }));
   // Ungrounded by default, so the assertions below are about what the executor
   // does with a block rather than about whether one was produced. The tests
   // that care override this.
@@ -300,7 +308,70 @@ describe("runRoutine", () => {
     await runRoutine(r, deps);
 
     // The owner, not whoever triggered it — a scheduled run has no caller.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 120 }]);
+    expect(recorded).toEqual([{ userId: "u1", tokens: 45 }]);
+  });
+
+  /**
+   * The warning an account whose spend is all scheduled never used to get.
+   *
+   * `warnIfLow` is reached from `recordQuota`, which a routine never calls —
+   * there is no request to hang one off. So the first news of the limit was a
+   * run skipped for being past it, which is the failure the warning exists to
+   * remove, left open on the one path where nobody is watching.
+   */
+  describe("telling the owner the allowance is running low", () => {
+    const lowSnapshot = () => ({ used: 800, limit: 1000, resetsAt: "2026-09-01T00:00:00.000Z" });
+    const withItems = { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null };
+
+    it("says so once the allowance is three quarters gone", async () => {
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+      const { db } = makeDb();
+      const deps = makeDeps(db) as any;
+      deps.entitlements.snapshot = vi.fn(async () => lowSnapshot());
+
+      await runRoutine(routine({ cursor: withItems }), deps);
+
+      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
+      expect(bodies.some((b: string) => /running low/.test(b))).toBe(true);
+      // And it still delivered what it was for. The notice sits beside the
+      // run's own result, never instead of it.
+      expect(bodies.length).toBeGreaterThan(1);
+    });
+
+    it("stays quiet on a self-hosted install, which has no allowance at all", async () => {
+      // `limit: null` is `unlimitedEntitlements` answering. Warning there would
+      // be a message about a number that does not exist.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+      const { db } = makeDb();
+      const deps = makeDeps(db) as any;
+
+      await runRoutine(routine({ cursor: withItems }), deps);
+
+      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
+      expect(bodies.some((b: string) => /running low/.test(b))).toBe(false);
+    });
+
+    it("says it once a period, not once a run", async () => {
+      // Being past the threshold stays true for every run afterwards, so a
+      // message per run is what the naive version does — and a routine on a
+      // five-minute schedule would mail its owner all month.
+      //
+      // The stored stamp is the same moment spelled the way PostgREST returns
+      // it, not the way `toISOString` writes it. Comparing the text would make
+      // the two differ and fire the warning on every run for the rest of the
+      // month, which is exactly what the column was added to prevent.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+      const { db } = makeDb({
+        rows: { notification_preferences: { quota_warned_for: "2026-09-01T00:00:00+00:00" } },
+      });
+      const deps = makeDeps(db) as any;
+      deps.entitlements.snapshot = vi.fn(async () => lowSnapshot());
+
+      await runRoutine(routine({ cursor: withItems }), deps);
+
+      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
+      expect(bodies.some((b: string) => /running low/.test(b))).toBe(false);
+    });
   });
 
   it("skips without spending or claiming anything when the owner is out of quota", async () => {
@@ -1185,7 +1256,7 @@ describe("runRoutine", () => {
     await runRoutine(r, makeDeps(db) as any);
 
     // 120 from the completion, plus 900 embedding tokens at EMBEDDING_TOKEN_WEIGHT.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 129 }]);
+    expect(recorded).toEqual([{ userId: "u1", tokens: 45 + 9 }]);
   });
 
   it("still delivers, ungrounded, when retrieval throws", async () => {
@@ -1345,7 +1416,7 @@ describe("runRoutine", () => {
   // read, which is the failure that does not show up anywhere.
 
   const declines = () => {
-    summarise = vi.fn(async () => ({ text: "", tokens: 120, declined: true }));
+    summarise = vi.fn(async () => ({ text: "", tokens: 120, weightedTokens: 45, declined: true }));
   };
 
   it("sends nothing when the model found nothing worth sending", async () => {
@@ -1409,7 +1480,7 @@ describe("runRoutine", () => {
 
     // Silence is cheaper in noise, not in tokens: the model call that decided
     // this is the model call that cost money.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 120 }]);
+    expect(recorded).toEqual([{ userId: "u1", tokens: 45 }]);
   });
 
   it("does not count as a failure", async () => {
@@ -1531,7 +1602,7 @@ describe("runRoutine filing", () => {
     // weighting: filing a 3,000-character summary costs single figures against
     // a chat turn, so filing is opt-in because of what it means rather than
     // because of what it costs.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 120 + 8 }]);
+    expect(recorded).toEqual([{ userId: "u1", tokens: 45 + 8 }]);
   });
 
   it("keeps delivering and stops filing when the owner is only a viewer", async () => {
@@ -1603,7 +1674,7 @@ describe("runRoutine filing", () => {
   it("files nothing when the model declined to send anything", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     const { db } = makeDb();
-    summarise = vi.fn(async () => ({ text: "", tokens: 90, declined: true }));
+    summarise = vi.fn(async () => ({ text: "", tokens: 90, weightedTokens: 30, declined: true }));
     const file = vi.fn();
 
     await runRoutine(filed(), depsWithFile(db, file) as any);
@@ -1684,7 +1755,12 @@ describe("a run that can use tools", () => {
   it("still lets a run decide it has nothing worth sending", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
     const { db } = makeDb();
-    const runWithTools = vi.fn(async () => ({ text: "", tokens: 90, declined: true }));
+    const runWithTools = vi.fn(async () => ({
+      text: "",
+      tokens: 90,
+      weightedTokens: 30,
+      declined: true,
+    }));
 
     const out = await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
       ...(makeDeps(db) as Record<string, unknown>),
@@ -1695,19 +1771,24 @@ describe("a run that can use tools", () => {
     expect(deliverCalls).toHaveLength(0);
     // Charged anyway. A run that read its material and decided against
     // sending has spent what it spent.
-    expect(recorded[0]).toMatchObject({ tokens: 90 });
+    expect(recorded[0]).toMatchObject({ tokens: 30 });
   });
 
   it("charges what the whole loop cost, not what one call did", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
     const { db } = makeDb();
-    const runWithTools = vi.fn(async () => ({ text: "done", tokens: 940, declined: false }));
+    const runWithTools = vi.fn(async () => ({
+      text: "done",
+      tokens: 940,
+      weightedTokens: 310,
+      declined: false,
+    }));
 
     await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
       ...(makeDeps(db) as Record<string, unknown>),
       runWithTools,
     } as never);
 
-    expect(recorded[0]).toMatchObject({ userId: "u1", tokens: 940 });
+    expect(recorded[0]).toMatchObject({ userId: "u1", tokens: 310 });
   });
 });

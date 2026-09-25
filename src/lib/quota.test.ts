@@ -22,10 +22,18 @@ import type { UsageResponse } from "./api-client";
 
 const LIMIT = 300_000;
 
+/**
+ * The knob is `weightedTokens`, and `totalTokens` is a decoy on purpose.
+ *
+ * `quota.used` is counted in weighted tokens, so the estimate has to divide by
+ * an average in the same unit. Setting both to the same figure would let this
+ * file keep passing if the estimate went back to reading the raw one; a decoy
+ * an order of magnitude away makes that a failure instead.
+ */
 function usage(over: {
   used?: number;
   messageCount?: number;
-  totalTokens?: number;
+  weightedTokens?: number;
   resetsAt?: string | null;
 }): UsageResponse {
   return {
@@ -38,7 +46,8 @@ function usage(over: {
       cacheWriteTokens: 0,
       measuredPromptTokens: 0,
       completionTokens: 0,
-      totalTokens: over.totalTokens ?? 0,
+      totalTokens: (over.weightedTokens ?? 0) * 17,
+      weightedTokens: over.weightedTokens ?? 0,
       estCostUsd: 0,
     },
   };
@@ -51,9 +60,10 @@ describe("the estimate before and after the first reply", () => {
     // will ever send, so a sample of one is drawn from the bottom of a range
     // that spans more than an order of magnitude.
     const before = quotaFrom(usage({}))!;
-    const after = quotaFrom(usage({ used: 370, messageCount: 1, totalTokens: 370 }))!;
+    const after = quotaFrom(usage({ used: 370, messageCount: 1, weightedTokens: 370 }))!;
 
-    expect(before.repliesLeft).toBe(81);
+    // 300,000 of allowance at the 5,900-weighted-token assumption.
+    expect(before.repliesLeft).toBe(50);
     // It may move — the estimate getting better is the point — but not by the
     // 10x that made it read as a correction rather than a refinement.
     expect(after.repliesLeft).toBeLessThan(before.repliesLeft * 2);
@@ -63,7 +73,7 @@ describe("the estimate before and after the first reply", () => {
     // The prior is outvoted, not permanent. Same cheap 370-token replies, more
     // of them, and the figure climbs steadily rather than in one jump.
     const at = (n: number) =>
-      quotaFrom(usage({ used: 370 * n, messageCount: n, totalTokens: 370 * n }))!.repliesLeft;
+      quotaFrom(usage({ used: 370 * n, messageCount: n, weightedTokens: 370 * n }))!.repliesLeft;
 
     expect(at(1)).toBeLessThan(at(10));
     expect(at(10)).toBeLessThan(at(50));
@@ -71,17 +81,27 @@ describe("the estimate before and after the first reply", () => {
   });
 
   it("ends up essentially the caller's own average once there is a real sample", () => {
-    // 200 replies at 370 tokens: the five-reply prior is 2.4% of the weight, so
-    // the estimate is theirs. Anything much wider than this would mean the
-    // prior never really lets go.
-    const q = quotaFrom(usage({ used: 74_000, messageCount: 200, totalTokens: 74_000 }))!;
-    expect(q.perReply).toBeGreaterThan(370);
-    expect(q.perReply).toBeLessThan(370 * 1.3);
+    // Two samples, because one number hides which way this is going.
+    //
+    // The prior is five replies BY COUNT, but it is priced at the median reply
+    // — 5,900 weighted tokens — so against a caller whose replies cost 370 it
+    // is still a quarter of the average at 200 replies. That is the prior
+    // letting go slowly, not failing to: by a thousand it is all but gone.
+    // Worth pinning both, because re-basing the assumption moved the first
+    // number and left the second where it was.
+    const at200 = quotaFrom(usage({ used: 74_000, messageCount: 200, weightedTokens: 74_000 }))!;
+    expect(at200.perReply).toBeGreaterThan(370);
+    expect(at200.perReply).toBeLessThan(370 * 1.4);
+
+    const at1000 = quotaFrom(
+      usage({ used: 370_000, messageCount: 1_000, weightedTokens: 370_000 }),
+    )!;
+    expect(at1000.perReply).toBeLessThan(370 * 1.1);
   });
 
   it("uses the assumption alone before anything has been sent", () => {
     const q = quotaFrom(usage({}))!;
-    expect(q.perReply).toBe(3700);
+    expect(q.perReply).toBe(5900);
     expect(q.repliesSeen).toBe(0);
   });
 
@@ -89,8 +109,8 @@ describe("the estimate before and after the first reply", () => {
     // Replies stored before token accounting existed report a count and no
     // total. Dividing by them would drag the average towards zero and promise
     // an allowance nobody has.
-    const q = quotaFrom(usage({ messageCount: 40, totalTokens: 0 }))!;
-    expect(q.perReply).toBe(3700);
+    const q = quotaFrom(usage({ messageCount: 40, weightedTokens: 0 }))!;
+    expect(q.perReply).toBe(5900);
     expect(q.repliesSeen).toBe(0);
   });
 });
@@ -109,7 +129,7 @@ describe("how precisely the number is stated", () => {
   });
 
   it("never rounds the low-band sentence, which is the one people act on", () => {
-    const q = quotaFrom(usage({ used: LIMIT - 8_000, messageCount: 60, totalTokens: 222_000 }))!;
+    const q = quotaFrom(usage({ used: LIMIT - 8_000, messageCount: 60, weightedTokens: 222_000 }))!;
     expect(q.level).toBe("low");
     expect(quotaSentence(q)).toContain(`About ${q.repliesLeft} `);
   });

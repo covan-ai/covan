@@ -592,6 +592,9 @@ chat.post("/chat/stream", async (c) => {
             userId: c.get("user").id,
             sessionId,
             runtimeLimit,
+            // One per turn, so the same catalogue search asked twice is
+            // answered from the first one. See `searchMemo` in `registry.ts`.
+            searchMemo: new Map<string, string>(),
           },
           signal,
           onEvent: (event) => {
@@ -923,6 +926,9 @@ chat.post("/chat/confirm/:id", async (c) => {
     userId: pause.userId,
     sessionId: pause.sessionId,
     confirmed: true,
+    // Fresh for the resumed half. The parked half's searches are in the
+    // transcript the model can already read, so there is nothing to carry.
+    searchMemo: new Map<string, string>(),
   };
 
   const stream = new ReadableStream({

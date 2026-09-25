@@ -172,14 +172,35 @@ export function connectionsManifest(connections: ToolConnection[]): string {
   if (connections.length === 0) return "";
   const lines = connections.map((c) => `- ${c.label} (id: ${c.id}, ${describe(c)})`);
   const hasComposio = connections.some((c) => c.transport === "composio");
-  return (
-    "Connected services you can reach with your tools:\n" +
-    `${lines.join("\n")}\n` +
-    "Use describe_connection first when you do not already know what one holds. " +
-    (hasComposio
-      ? "For a connected app, use find_tool to find the operation you need and then " +
-        "run_tool with that app's connection id. "
-      : "") +
-    "Never guess an id that is not on this list."
-  );
+  const hasOther = connections.some((c) => c.transport !== "composio");
+
+  /**
+   * Who `describe_connection` is for, said precisely.
+   *
+   * This used to read "use describe_connection first when you do not already
+   * know what one holds", with no exception — and the model obeyed it. Three
+   * production turns in a row opened with a `describe_connection` on a
+   * connected app, which can only ever answer "there is nothing here to
+   * describe, use find_tool", because a connected app's operations belong to
+   * the catalogue rather than to the row. One step of eight, spent following
+   * our own instruction to a dead end.
+   *
+   * So the sentence is now scoped to the transports it is true of, and the
+   * connected-app path says outright that the step is not needed. Cheaper than
+   * making `describe_connection` do something useful here, and more honest:
+   * the tool was right, the instruction was wrong.
+   */
+  const guidance = [
+    hasOther
+      ? "Use describe_connection on a database or an API when you do not already know what " +
+        "it holds."
+      : "",
+    hasComposio
+      ? "A connected app needs no describing — go straight to find_tool for the operation " +
+        "you need, then run_tool with that app's connection id."
+      : "",
+    "Never guess an id that is not on this list.",
+  ].filter(Boolean);
+
+  return `Connected services you can reach with your tools:\n${lines.join("\n")}\n${guidance.join(" ")}`;
 }

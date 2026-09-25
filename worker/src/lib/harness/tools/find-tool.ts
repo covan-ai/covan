@@ -165,13 +165,31 @@ export const findToolTool: AgentTool = {
         ? input.toolkit.trim().toLowerCase()
         : undefined;
 
+    const query = input.query.trim();
+    const named = typeof input.slug === "string" ? input.slug.trim().toUpperCase() : "";
+
+    // The same search, asked twice in one turn. Answered from what it said the
+    // first time, and said so — see `searchMemo` in `registry.ts` for the
+    // production turn that made this worth having. Before `affordable`,
+    // because nothing is about to be bought.
+    const memoKey = `${toolkit ?? ""}|${input.detail === true ? "detail" : "list"}|${named}|${query.toLowerCase()}`;
+    const remembered = ctx.searchMemo?.get(memoKey);
+    if (remembered !== undefined) {
+      return {
+        kind: "ok",
+        content:
+          "You already ran this exact search earlier in this turn. Here is what it said — " +
+          "choose an operation from it and call run_tool, or ask for detail on a slug by " +
+          `name. Searching again will keep giving you this.\n\n${remembered}`,
+      };
+    }
+
     // Before the network, because a search is billable and an exhausted
     // account must not be able to spend on one. See `lib/harness/spend.ts` for
     // why this is asked here rather than by the route.
     const refused = await affordable(ctx);
     if (refused) return refused;
 
-    const query = input.query.trim();
     let found = await searchTools(
       ctx.env,
       { search: query, toolkit, limit: MAX_RESULTS * 2 },
@@ -244,7 +262,6 @@ export const findToolTool: AgentTool = {
       //
       // A slug the model has already seen therefore beats the ranking, because
       // the ranking is what went wrong.
-      const named = typeof input.slug === "string" ? input.slug.trim().toUpperCase() : "";
       const chosen = named || ranked[0].slug;
 
       const full = await getTool(ctx.env, chosen, { signal: ctx.signal });
@@ -270,12 +287,11 @@ export const findToolTool: AgentTool = {
             others.map((t) => `  ${t.slug} — ${t.description || t.name}`).join("\n")
           : "";
 
-      return {
-        kind: "ok",
-        content:
-          `${summarise(full.tool, byToolkit.get(full.tool.toolkit))}\n\n` +
-          `Arguments:\n${schema}${alternatives}`,
-      };
+      const detailed =
+        `${summarise(full.tool, byToolkit.get(full.tool.toolkit))}\n\n` +
+        `Arguments:\n${schema}${alternatives}`;
+      ctx.searchMemo?.set(memoKey, detailed);
+      return { kind: "ok", content: detailed };
     }
 
     const listed = ranked
@@ -283,11 +299,13 @@ export const findToolTool: AgentTool = {
       .map((tool) => summarise(tool, byToolkit.get(tool.toolkit)))
       .join("\n\n");
 
-    return {
-      kind: "ok",
-      content:
-        `${listed}\n\nRun one with run_tool, giving its connectionId and slug. Call this ` +
-        "again with detail: true if you need the exact arguments.",
-    };
+    const answer =
+      `${listed}\n\nRun one with run_tool, giving its connectionId and slug. Ask for ` +
+      "detail on a slug by name if you need its exact arguments.";
+    // Remembered only when it found something. A turn that searched and got
+    // nothing should be free to try again with different words — that is the
+    // useful kind of repeat, and the retry above already depends on it.
+    ctx.searchMemo?.set(memoKey, answer);
+    return { kind: "ok", content: answer };
   },
 };

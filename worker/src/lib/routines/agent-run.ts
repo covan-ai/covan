@@ -130,6 +130,10 @@ export function runRoutineWithTools(
         agentId: input.agentId,
         userId: input.userId,
         routineRunId: input.routineRunId,
+        // A scheduled run loops the same way a conversation does, so it can
+        // repeat a search the same way. On the cron Worker the saving is a
+        // subrequest, which is the budget that actually binds there.
+        searchMemo: new Map<string, string>(),
       },
     });
 

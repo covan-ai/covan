@@ -34,6 +34,7 @@ const TOTALS = {
   cacheWriteTokens: 0,
   measuredPromptTokens: 0,
   totalTokens: 37_000,
+  weightedTokens: 65_000,
   estCostUsd: 0.2,
 };
 

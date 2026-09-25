@@ -935,6 +935,16 @@ export type AgentUsage = {
   measuredPromptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * What those tokens cost the allowance, as against how many of them moved.
+   *
+   * `totalTokens` is the honest count of traffic and is what the usage figures
+   * are built from. This is the same traffic priced the way the quota counter
+   * prices it — cache reads at a tenth, output at five times input — and it is
+   * the only one of the two that can be divided into a remaining allowance to
+   * get an answer in replies. See `weighTokens` in the worker.
+   */
+  weightedTokens: number;
   estCostUsd: number;
 };
 
@@ -957,6 +967,16 @@ export type UsageTotals = {
   measuredPromptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * What those tokens cost the allowance, as against how many of them moved.
+   *
+   * `totalTokens` is the honest count of traffic and is what the usage figures
+   * are built from. This is the same traffic priced the way the quota counter
+   * prices it — cache reads at a tenth, output at five times input — and it is
+   * the only one of the two that can be divided into a remaining allowance to
+   * get an answer in replies. See `weighTokens` in the worker.
+   */
+  weightedTokens: number;
   estCostUsd: number;
 };
 

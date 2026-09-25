@@ -30,7 +30,17 @@ export type QuotaView = {
  * chosen here is a guess; this one is the middle of what real conversations
  * have cost.
  */
-const ASSUMED_TOKENS_PER_REPLY = 3700;
+const ASSUMED_TOKENS_PER_REPLY = 5900;
+
+/*
+ * Re-based when the counter was weighted, and the unit is the reason.
+ *
+ * It was 3,700, which sat near the middle of what a reply cost in RAW tokens.
+ * The allowance is no longer counted in those: a cache read spends a tenth of a
+ * fresh token and an output token spends five, so dividing a weighted allowance
+ * by a raw average answers in neither unit. Re-measured across every reply this
+ * deployment has stored, the median weighted reply is 5,872.
+ */
 
 /**
  * How many replies the assumption above is worth, weighed against real ones.
@@ -85,13 +95,19 @@ export function quotaFrom(usage: UsageResponse | undefined): QuotaView | null {
   //
   // Weighed against the assumption rather than replacing it — see PRIOR_REPLIES
   // for why, and for the 81-to-801 jump that made it necessary.
+  //
+  // `weightedTokens` and not `totalTokens`, which is the whole of what keeps
+  // this honest: `quota.used` is charged in weighted tokens, so an average in
+  // raw ones would answer a division between two different units — and be
+  // wrong by however cache-heavy this particular caller's replies happen to
+  // be, which is a factor spanning 0.21 to 4.71 across measured turns.
   const seen = usage?.totals;
-  const repliesSeen = seen && seen.totalTokens > 0 ? Math.max(0, seen.messageCount) : 0;
+  const seenTokens = seen?.weightedTokens ?? 0;
+  const repliesSeen = seenTokens > 0 ? Math.max(0, seen?.messageCount ?? 0) : 0;
   const perReply = Math.max(
     1,
     Math.round(
-      (ASSUMED_TOKENS_PER_REPLY * PRIOR_REPLIES + (seen?.totalTokens ?? 0)) /
-        (PRIOR_REPLIES + repliesSeen),
+      (ASSUMED_TOKENS_PER_REPLY * PRIOR_REPLIES + seenTokens) / (PRIOR_REPLIES + repliesSeen),
     ),
   );
 

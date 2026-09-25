@@ -3,6 +3,7 @@ import type { AppEnv } from "../types";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { resolveModel } from "../lib/models";
 import { estimateCostUsd } from "../lib/pricing";
+import { weighTokens } from "../lib/entitlements";
 
 const usage = new Hono<AppEnv>();
 
@@ -36,6 +37,7 @@ const emptyTotals = {
   cacheWriteTokens: 0,
   measuredPromptTokens: 0,
   totalTokens: 0,
+  weightedTokens: 0,
   estCostUsd: 0,
 };
 
@@ -72,6 +74,17 @@ function mapAgent(r: UsageRow) {
     cacheWriteTokens,
     measuredPromptTokens,
     totalTokens: promptTokens + completionTokens,
+    // What those tokens cost the allowance, as against how many of them moved.
+    // Sent rather than left for the client to work out, so the screen that
+    // turns an allowance into "replies left" divides by the same number the
+    // counter is charged — see `weighTokens`, and `src/lib/quota.ts` for what
+    // the two disagreeing looked like.
+    weightedTokens: weighTokens({
+      promptTokens,
+      completionTokens,
+      cachedTokens,
+      cacheWriteTokens,
+    }),
     estCostUsd: estimateCostUsd(
       model,
       promptTokens,
@@ -92,6 +105,7 @@ function sumTotals(agents: ReturnType<typeof mapAgent>[]) {
       cacheWriteTokens: acc.cacheWriteTokens + a.cacheWriteTokens,
       measuredPromptTokens: acc.measuredPromptTokens + a.measuredPromptTokens,
       totalTokens: acc.totalTokens + a.totalTokens,
+      weightedTokens: acc.weightedTokens + a.weightedTokens,
       estCostUsd: acc.estCostUsd + a.estCostUsd,
     }),
     { ...emptyTotals },

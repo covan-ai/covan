@@ -111,7 +111,13 @@ export type RoutineEnv = {
   /** This worker's own domain, once a custom domain fronts it (unset on workers.dev). */
   WORKER_HOST?: string;
   /**
-   * Monthly token allowance per user. Unset means unmetered, which is what a
+   * Monthly token allowance per user, **in weighted tokens** — see
+   * `weighTokens` in `lib/entitlements`. Not the raw count the provider
+   * reports: a cache read spends a tenth of this and an output token spends
+   * five, because that is what they cost. A number chosen against raw counts
+   * will not mean what its author thought.
+   *
+   * Unset means unmetered, which is what a
    * self-hosted Covan is: the operator brings their own OPENAI_API_KEY and
    * decides what to spend on it. A hosted deployment sets this and registers a
    * metering implementation — see `lib/entitlements`. Declared here, in the

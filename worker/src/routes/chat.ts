@@ -31,7 +31,6 @@ import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import {
-  CUT_SHORT,
   buildToolContext,
   explainTurnFailure,
   isAbort,

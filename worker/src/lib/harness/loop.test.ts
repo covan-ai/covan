@@ -557,6 +557,85 @@ describe("the budget", () => {
       });
     });
 
+    /**
+     * The other ceiling, and why steps alone are not enough.
+     *
+     * A step budget bounds how many times a turn reaches outside. It does not
+     * bound what those calls cost: one tool that returns a large result, re-sent
+     * on every later pass, can spend a month's allowance inside a budget it
+     * never exceeds. Measured on the incident this work came from — an 8-step
+     * turn charging 131,868 prompt tokens, 88% of them cache reads.
+     *
+     * Enforced here rather than in the route for the same reason `maxSteps` is:
+     * this is the only place that sees the running total while the turn is
+     * still running.
+     */
+    describe("the token ceiling", () => {
+      it("stops the turn, and says which ceiling it was", async () => {
+        forever();
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          // A pass costs 15 (10 prompt + 5 completion), so the third crosses.
+          budget: { maxSteps: 50, maxTurnTokens: 40 },
+        });
+
+        expect(turn.paused?.reason).toBe("tokens");
+        // Not the step sentence. The two ceilings are different facts, and a
+        // turn that stopped on cost telling the person it ran out of tool calls
+        // sends them to narrow the wrong thing.
+        const told = (sentTranscripts.at(-1) ?? []).filter((m) => m.role === "system");
+        expect(String(told.at(-1)?.content)).toContain("token");
+        expect(String(told.at(-1)?.content)).not.toContain("every tool call allowed");
+      });
+
+      it("bills what it spent, because a ceiling is not a way to avoid the bill", async () => {
+        forever();
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 40 },
+        });
+
+        expect(turn.usage.promptTokens).toBeGreaterThan(0);
+        expect(turn.passes.length).toBeGreaterThan(0);
+        expect((turn.usage.promptTokens ?? 0) + (turn.usage.completionTokens ?? 0)).toBeGreaterThan(
+          40,
+        );
+      });
+
+      it("answers the calls it refuses, so the next request is not a 400", async () => {
+        // The same rule the step ceiling follows: a tool call left unanswered
+        // in the transcript is a 400 from the provider, not a smaller turn.
+        scripted([
+          pass("", [
+            { id: "a", name: "search", arguments: "{}" },
+            { id: "b", name: "search", arguments: "{}" },
+          ]),
+        ]);
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 1 },
+        });
+
+        expect(turn.steps.every((s) => s.status === "refused")).toBe(true);
+        const answered = (sentTranscripts.at(-1) ?? []).filter((m) => m.role === "tool");
+        expect(answered).toHaveLength(2);
+      });
+
+      it("leaves a turn under the ceiling completely alone", async () => {
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 1_000_000 },
+        });
+        expect(turn.paused).toBeUndefined();
+        expect(turn.text).toBe("done");
+      });
+    });
+
     it("has no legs unless a caller asks for them", async () => {
       // The default is load-bearing: `SCHEDULED_MAX_STEPS` and every existing
       // budget case pass a bare `maxSteps`, and all of them have to keep

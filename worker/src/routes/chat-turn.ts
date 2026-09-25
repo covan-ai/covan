@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompletionRequest, CompletionUsage } from "../lib/completion";
-import { runAgentTurn, type AgentStep, type AgentTurn, type PassUsage } from "../lib/harness/loop";
+import {
+  runAgentTurn,
+  type AgentStep,
+  type AgentTurn,
+  type AgentTurnOptions,
+  type PassUsage,
+} from "../lib/harness/loop";
 import { chatBudget } from "../lib/harness/budget";
 import { writeSteps } from "../lib/harness/turn";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
@@ -159,7 +165,9 @@ export async function runChatTurn(opts: {
   /** Steps spent before this call, so a resume continues its budget. */
   stepsSoFar?: AgentStep[];
   signal?: AbortSignal;
-  budget?: { maxSteps?: number; toolTimeoutMs?: number; maxOutputChars?: number };
+  /** Taken from `AgentTurnOptions` rather than restated, so a knob added to the
+   * harness's budget cannot become one this seam silently refuses to pass. */
+  budget?: AgentTurnOptions["budget"];
   send: (event: Record<string, unknown>) => void;
   /** Filled as the turn runs. The caller's `catch` reads it. */
   spend: TurnSpend;

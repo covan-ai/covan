@@ -544,8 +544,12 @@ chat.post("/chat/stream", async (c) => {
        */
       const announcePause = async (messageId: string | null) => {
         if (!paused) return;
-        if (paused.reason === "budget") {
-          send({ type: "paused", reason: "budget" });
+        // Every reason but `confirmation` has nothing to come back to — there
+        // is no question for a person to answer, so there is nothing to park.
+        // The client is told which ceiling it was, because the two ask the
+        // person to narrow different things.
+        if (paused.reason !== "confirmation") {
+          send({ type: "paused", reason: paused.reason });
           return;
         }
         const id = await savePausedTurn(service, {
@@ -1125,8 +1129,8 @@ chat.post("/chat/confirm/:id", async (c) => {
             });
             send({ type: "paused", reason: "confirmation" });
           }
-        } else if (turn.paused?.reason === "budget") {
-          send({ type: "paused", reason: "budget" });
+        } else if (turn.paused) {
+          send({ type: "paused", reason: turn.paused.reason });
         }
 
         // Before `done`, exactly as `/chat/stream` does it. A resumed answer

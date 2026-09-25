@@ -68,6 +68,25 @@ export type ChatLimits = {
    */
   extraLegs: number;
   legSteps: number;
+  /**
+   * What one turn may spend, prompt plus completion, whatever the plan.
+   *
+   * **The same on both, and deliberately so: this is a runaway-loop guard, not
+   * a billing one.** Billing is the monthly allowance, which already knows who
+   * is paying and already lets a workspace carry its own key past it. This is
+   * the stop for the turn that goes wrong — and a turn going wrong costs a
+   * self-hoster their own OpenAI bill exactly as it costs the operator theirs.
+   *
+   * Why it is needed beside a step budget at all: steps bound how many times a
+   * turn reaches outside, not what those calls cost. The incident this work
+   * came from charged 131,868 prompt tokens inside an 8-step budget it never
+   * exceeded, 88% of it cache reads of a transcript re-sent on every pass.
+   *
+   * 500,000 rather than the 250,000 an earlier pass argued from a measured
+   * 42,486-token tool turn. Worth revisiting after a week of real numbers, not
+   * before.
+   */
+  maxTurnTokens: number;
 };
 
 export type PlanLimits = {
@@ -92,7 +111,7 @@ export type PlanLimits = {
  */
 const FREE: PlanLimits = Object.freeze({
   subrequests: 50,
-  chat: Object.freeze({ maxSteps: 8, extraLegs: 0, legSteps: 8 }),
+  chat: Object.freeze({ maxSteps: 8, extraLegs: 0, legSteps: 8, maxTurnTokens: 500_000 }),
 });
 
 /**
@@ -104,7 +123,7 @@ const FREE: PlanLimits = Object.freeze({
  */
 const PAID: PlanLimits = Object.freeze({
   subrequests: 10_000,
-  chat: Object.freeze({ maxSteps: 24, extraLegs: 2, legSteps: 8 }),
+  chat: Object.freeze({ maxSteps: 24, extraLegs: 2, legSteps: 8, maxTurnTokens: 500_000 }),
 });
 
 /** Which plan this environment says it is on. Anything but `"paid"` is Free. */

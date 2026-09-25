@@ -112,6 +112,23 @@ ALLOWED_ORIGIN = "https://your-app.example.com"
 [triggers]
 crons = ["*/5 * * * *"]
 
+# Whether this account is on Workers Paid, which decides how much one answer
+# may spend.
+#
+# Unset means Free, and that is the safe default rather than a conservative
+# one: every ceiling in this codebase was chosen against the **50 subrequests**
+# a Free invocation gets, and a database read, a model call and a connected-app
+# call are each one. Going over does not fail cleanly — past the cap every
+# `fetch` stops working, and the OpenAI SDK calls that `Connection error.`, so
+# the log says the network broke when what broke was the plan.
+#
+# Set it to "paid" only once the Cloudflare account actually is, and set it on
+# BOTH Workers or a scheduled run and a chat turn will disagree about what they
+# can afford. What it buys today is chat: 24 tool calls per answer instead of 8,
+# and up to two further rounds when a turn is still working at the end of them.
+#
+# WORKER_PLAN = "paid"
+
 # A Worker with no HTTP surface is invisible without this: it puts each tick's
 # console output in the dashboard's Workers Logs.
 [observability]

@@ -191,11 +191,11 @@ The stream may carry three frames beyond `delta`, `thinking`, `truncated`,
 `suggestions`, `done` and `error`, and a client that does not know them should
 ignore them rather than fail:
 
-| Frame                                                 | What it means                                                                                   |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `{"type":"step","index","tool","status","label"}`     | The reply ran a tool. Sent twice per step: `running`, then `ok`, `failed` or `refused`.         |
-| `{"type":"confirm","id","tool","summary","proposal"}` | The agent wants to do something and has stopped. Answer with `POST /chat/confirm/:id`.          |
-| `{"type":"paused","reason"}`                          | The turn stopped early: `confirmation`, or `budget` when it used every tool call it is allowed. |
+| Frame                                                 | What it means                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{"type":"step","index","tool","status","label"}`     | The reply ran a tool. Sent twice per step: `running`, then `ok`, `failed` or `refused`.                                                                                                                                                                                                   |
+| `{"type":"confirm","id","tool","summary","proposal"}` | The agent wants to do something and has stopped. Answer with `POST /chat/confirm/:id`.                                                                                                                                                                                                    |
+| `{"type":"paused","reason"}`                          | The turn stopped early: `confirmation`; `budget` when it used every tool call it is allowed; `tokens` when it reached the most one answer may spend. The last two have nothing to answer — there is no `POST` for them — and the client's move is to offer the person a way to ask again. |
 
 `POST /chat/confirm/:id` takes `{ "approve": true | false }` and answers with
 the same kind of SSE stream, picking the turn up where it stopped. **Both

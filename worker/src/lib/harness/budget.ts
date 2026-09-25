@@ -84,8 +84,31 @@ export const TOOL_TIMEOUT_MS = 20_000;
  * the turn — the transcript grows with each step, so an unbounded result is
  * paid for again and again. The tool says it was trimmed, so the model can ask
  * a narrower question rather than assume it saw everything.
+ *
+ * **Raised from 8,000 on 2026-09-25, and this time with both arguments.**
+ * (`MAX_STEPS` above was moved that week on a cost argument alone, with no
+ * runtime argument beside it, and had to be put straight back.)
+ *
+ * WHAT IT COSTS. A result produced at step k is re-sent on every later pass,
+ * so the worst case is a full-size result at step 0 carried through all eight
+ * — 12,000 characters is roughly 3,000 tokens, so about 24,000 tokens of
+ * re-sent transcript. Measured against a real turn: "list my last five
+ * meetings" charged 42,486 tokens in total, against a monthly allowance of a
+ * million. The headroom is there.
+ *
+ * WHAT IT RISKS AT RUNTIME. Nothing new. It is the same single `fetch`, so it
+ * spends no extra subrequest — which is the ceiling that actually binds this
+ * Worker. Eight steps at this size is ~24,000 tokens of tool results inside a
+ * context window of 128,000, so it cannot crowd the transcript out either.
+ *
+ * WHY IT WAS WORTH MOVING. Measured, not guessed: the same turn asked for a
+ * week of calendar events with a `fields` list already narrowing the response
+ * — following `run_tool`'s own advice — and still came back at 8,053
+ * characters, trimmed. The agent then told the person it could not be sure it
+ * had seen everything. A cap that truncates a correctly-narrowed request is
+ * costing correctness rather than saving money.
  */
-export const MAX_TOOL_OUTPUT_CHARS = 8_000;
+export const MAX_TOOL_OUTPUT_CHARS = 12_000;
 
 /**
  * How much of it is kept in `message_steps.result_excerpt`.

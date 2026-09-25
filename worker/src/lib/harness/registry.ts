@@ -113,6 +113,24 @@ export type ToolContext = {
    * propagates — by the time anything propagates, the real message is gone.
    */
   runtimeLimit?: RuntimeLimitFlag;
+  /**
+   * Catalogue searches already answered this turn, keyed by what was asked.
+   *
+   * Only `find_tool` writes to it, and only `find_tool` should: searching a
+   * catalogue is the one thing here that is genuinely idempotent within a
+   * turn. `run_tool` must never be memoised — it changes things at a third
+   * party, and asking twice is two different events.
+   *
+   * It exists because a model that has just had a tool call fail goes back to
+   * the search rather than to the list it already has. Measured: one
+   * production turn repeated `find_tool {query: "list events", toolkit:
+   * "googlecalendar"}` byte for byte, three steps after the first one, and got
+   * the same 3,631 characters back. The repeat still costs a step — the model
+   * chose to spend it and the budget has to mean something — but it need not
+   * also cost a network call, and the answer can say "you already have this"
+   * instead of quietly looking identical.
+   */
+  searchMemo?: Map<string, string>;
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };

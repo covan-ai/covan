@@ -290,6 +290,21 @@ describe("asking for the arguments of one operation", () => {
     );
   });
 
+  it("remembers a detail answer under its own key, not the list's", async () => {
+    const ctx = ctxWith();
+    ctx.searchMemo = new Map();
+    catalogueThen(EVENTS_LIST);
+    await findToolTool.run(
+      { query: "list events", detail: true, slug: "GOOGLECALENDAR_EVENTS_LIST" },
+      ctx,
+    );
+    // Two different questions about the same words. Collapsing them would
+    // answer a request for a schema with a list of one-liners.
+    fetchMock.mockResolvedValueOnce(catalogue([EVENTS_GET, EVENTS_LIST]));
+    const list = await findToolTool.run({ query: "list events" }, ctx);
+    expect(list.kind === "ok" && list.content).not.toContain("You already ran this exact search");
+  });
+
   it("keeps the other matches beside the schema, so a wrong pick costs nothing", async () => {
     catalogueThen(EVENTS_GET);
     const out = await findToolTool.run({ query: "list events", detail: true }, ctxWith());
@@ -299,5 +314,69 @@ describe("asking for the arguments of one operation", () => {
     expect(content).toContain("ask for detail on a slug by name rather than searching again");
     // And the one being described is not repeated in its own alternatives.
     expect(content.split("GOOGLECALENDAR_EVENTS_GET").length - 1).toBe(1);
+  });
+});
+
+/**
+ * The same search, asked twice in one turn.
+ *
+ * Measured: a production turn ran `find_tool {query: "list events", toolkit:
+ * "googlecalendar"}`, spent three steps on other things, then ran it again
+ * byte for byte and got the same 3,631 characters. A model that has just had a
+ * tool call fail goes back to the search rather than to the list it already
+ * has. The repeat still costs a step — the model chose to spend it — but it
+ * need not cost a network call, and the answer can say so.
+ */
+describe("a search this turn has already answered", () => {
+  it("answers from what it said the first time, without asking again", async () => {
+    const ctx = ctxWith([GMAIL_CONNECTION]);
+    ctx.searchMemo = new Map();
+
+    fetchMock.mockResolvedValueOnce(catalogue([GMAIL_SEND]));
+    const first = await findToolTool.run({ query: "send email" }, ctx);
+    const second = await findToolTool.run({ query: "send email" }, ctx);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The same operations, so the model loses nothing by being told.
+    expect(second.kind === "ok" && second.content).toContain("GMAIL_SEND_EMAIL");
+    expect(second.kind === "ok" && second.content).toContain("You already ran this exact search");
+    expect(first.kind === "ok" && first.content).not.toContain("You already ran");
+  });
+
+  it("does not care how the model capitalised its own question", async () => {
+    const ctx = ctxWith();
+    ctx.searchMemo = new Map();
+    fetchMock.mockResolvedValueOnce(catalogue([GMAIL_SEND]));
+    await findToolTool.run({ query: "send email" }, ctx);
+    const again = await findToolTool.run({ query: "Send Email" }, ctx);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(again.kind === "ok" && again.content).toContain("You already ran");
+  });
+
+  it("treats a different toolkit as a different question", async () => {
+    const ctx = ctxWith();
+    ctx.searchMemo = new Map();
+    // A fresh Response per call: a body can only be read once.
+    fetchMock.mockImplementation(async () => catalogue([GMAIL_SEND]));
+    await findToolTool.run({ query: "send email", toolkit: "gmail" }, ctx);
+    await findToolTool.run({ query: "send email", toolkit: "slack" }, ctx);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a fruitless search be tried again, which is the useful kind of repeat", async () => {
+    const ctx = ctxWith();
+    ctx.searchMemo = new Map();
+    // Two calls per attempt: the query, then the shortened retry.
+    fetchMock.mockImplementation(async () => catalogue([]));
+    await findToolTool.run({ query: "brew a cup of coffee please" }, ctx);
+    const calls = fetchMock.mock.calls.length;
+    await findToolTool.run({ query: "brew a cup of coffee please" }, ctx);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it("works for a turn that carries no memo at all", async () => {
+    fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
+    const out = await findToolTool.run({ query: "send email" }, ctxWith());
+    expect(out.kind).toBe("ok");
   });
 });

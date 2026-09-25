@@ -1,0 +1,13 @@
+{
+  "text": "Bu isteği tamamlayamadım: elimde \"geciken sevkiyat\" verisini tutan bir veritabanı bağlantısı veya bu bilgiye referans veren bir doküman içeriği bulamadım — devam edebilmem için önce hangi veritabanı bağlantısının (varsa) sevkiyat/teslimat verilerini içerdiğini öğrenmem (describe_connection ile) ve hangi e-posta kanalına gönderileceğini teyit etmem gerekiyor.",
+  "trajectory": [
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents"
+  ]
+}

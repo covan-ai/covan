@@ -1,0 +1,13 @@
+{
+  "text": "Bu isteği tamamlayamadım: Paylaşılan dokümanlarda (MERIDYEN-KB.md, ONBOARDING.md, COMPETITION.md, PRICING.md) \"sürücü devir hızı\" ya da benzeri bir metrikle ilgili hiçbir içerik bulamadım ve bağlı veritabanına erişim bu oturumda başarısız oldu (bağlantı açıklaması alınamadı); devam edebilmek için ya bu konuyu ele alan doğru dokümanın adını/içeriğini öğrenmem ya da operasyonel veritabanı bağlantısının çalışır hâlde olduğu bir sorguyla ham veriye ulaşmam gerekiyor.",
+  "trajectory": [
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "describe_connection"
+  ]
+}

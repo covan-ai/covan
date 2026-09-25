@@ -1,0 +1,8 @@
+{
+  "text": "Geçen ay en çok sevkiyat yapan 5 müşteri:\n\n| Sıra | Müşteri | Sevkiyat Sayısı |\n|---|---|---|\n| 1 | Anadolu Lojistik | 4.812 |\n| 2 | Ege Nakliyat | 3.140 |\n| 3 | Karadeniz Kargo | 2.755 |\n| 4 | Marmara Dağıtım | 1.988 |\n| 5 | Toros Taşımacılık | 1.402 |\n\nAnadolu Lojistik açık ara birinci, ikinciye göre %53 daha fazla sevkiyat yapmış.",
+  "trajectory": [
+    "describe_connection",
+    "query_database",
+    "query_database"
+  ]
+}

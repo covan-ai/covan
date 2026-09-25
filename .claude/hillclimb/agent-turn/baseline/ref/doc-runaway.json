@@ -1,0 +1,11 @@
+{
+  "text": "Dokümandaki analiz iki farklı itirazı ayrı ayrı ele alıyor — ikisine aynı cevabı vermek hatalı, çünkü kökleri farklı.\n\n**\"Zaten kendi içimizde yaptık\" — bu genelde yarım doğru**\n\nBuradaki gizli nokta şu: müşteri kapasite ve pencere planlamasını (vardiya, rota, doluluk) muhtemelen çözmüş — Excel'le de olsa iş görüyor. Ama çözülmeyen kısım **sürücü çalışma süresi / yasal limit takibi**. Bunu ortaya çıkaracak tek soru:\n\n> \"Geçen ay kaç sürücünüz yasal çalışma sınırını aştı, ve bunu kim fark etti?\"\n\nBu soru işe yarıyor çünkü cevap genelde ya \"bilmiyoruz\" ya da \"fark ettiğimizde iş işten geçmiş oluyor\" oluyor. Yani itiraz \"biz bunu yaptık\" değil, \"biz bunun bir parçasını yaptık, diğer parçası kör nokta\" haline geliyor. Bu soruyu outreach script'ine standart adım olarak sokmak lazım — şu an sadece saha ekibinin aklında, satış konuşmasının rutin parçası değil.\n\n**\"Zaten Excel/script yığınıyla yapıyoruz\" (kendi içinde inşa edilen çözüm)**\n\nBu bedava görünüyor çünkü maliyeti birinin mesaisine gizlenmiş — kimse \"bu bize ayda X saat + Y kişi maliyetine mal oluyor\" demiyor. Buradaki savunma hattı: o gizli mesaiyi ölçülebilir hale getirmek. Saha ekibinde bunu hesaplayan bir tablo zaten var, ama bu şu an satış konuşmasının standart bir parçası değil — yani outreach'te kullanılmıyor.\n\n**Somut aksiyon önerisi:**\n\n1. Saha ekibindeki mesai-maliyet tablosunu al, outreach/discovery call'un standart bir adımı yap (ör. \"önce şunu birlikte hesaplayalım\" formatında).\n2. \"Kaç sürücü yasal sınırı aştı, kim fark etti\" sorusunu ilk 2-3 soru arasına sabitle — bu, \"biz zaten yaptık\" cevabının altını oyan asıl soru.\n3. Kurumsal yazılım satıcılarına karşı savunma hattı ayrı olmalı (fiyat/hız/kurulum süresi üzerinden) — doküman bu ikinci rakip tipi için henüz somut bir karşı-argüman içermiyor, o kısmı ayrıca netleştirmek gerekir.\n\nKurumsal rakiplere karşı kullanılacak somut savunma hattı (fiyat, kurulum süresi karşılaştırması gibi) dokümanlarda detaylandırılmamış — onu PRICING.md üzerinden mi kurgulamak istersin, yoksa saha ekibinden mi toplamak gerekiyor?",
+  "trajectory": [
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents"
+  ]
+}

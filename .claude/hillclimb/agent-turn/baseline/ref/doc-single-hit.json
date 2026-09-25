@@ -1,0 +1,6 @@
+{
+  "text": "İndirim kademeleri şöyle:\n\n- **250 araca kadar:** İndirim yok, araç başına 180 TL/ay\n- **250 aracın üzerinde:** %10 indirim\n- **500 aracın üzerinde:** %15 indirim\n\nÖnemli detay: bu kademe, sözleşme başlangıcındaki araç sayısına göre sabitlenir — yani sonradan filo büyüse de küçülse de başlangıçta belirlenen kademe geçerli kalır.",
+  "trajectory": [
+    "search_documents"
+  ]
+}

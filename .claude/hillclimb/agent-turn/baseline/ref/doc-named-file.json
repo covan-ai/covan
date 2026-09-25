@@ -1,0 +1,6 @@
+{
+  "text": "## First week focus: data, not the product\n\nThe document is explicit that week one is deliberately *not* about the product itself. Here's the structure:\n\n- **Days 1–5:** The customer exports their last **90 days of delivery history** and hands it over. Nothing gets configured until that file arrives.\n  - The rationale: the planner's route quality only means something when it's judged against the customer's *own* historical routes. If a customer hasn't seen that before/after comparison, they won't trust the numbers later on.\n\n- **Day 6:** The only synchronous session in the whole week — a **two-hour** call where the customer's dispatcher and someone from the team plan one real day together, side by side.\n\nSo the emphasis is on building trust through data comparison before anyone touches configuration or live planning.",
+  "trajectory": [
+    "search_documents"
+  ]
+}

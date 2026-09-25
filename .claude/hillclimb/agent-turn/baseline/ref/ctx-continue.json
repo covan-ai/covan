@@ -1,0 +1,13 @@
+{
+  "text": "Dokümanlarda hangi veritabanı bağlantısının (connection ID) kullanılacağına dair bir bilgi bulamadım, bu yüzden `describe_connection` ile şemayı çekip araç başına sevkiyat verimliliği analizini henüz tamamlayamadım — devam etmek için bana kullanmam gereken bağlantının adını/ID'sini söylemen gerekiyor.",
+  "trajectory": [
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents",
+    "search_documents"
+  ]
+}

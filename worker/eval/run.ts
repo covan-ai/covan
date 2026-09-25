@@ -24,7 +24,15 @@
  * of every rubric here is about process, and a reference without its
  * trajectory would put the candidate's process against nothing.
  */
-import { mkdirSync, writeFileSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+} from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CASES, type EvalCase } from "./cases";
@@ -41,7 +49,21 @@ const MODEL = process.env.EVAL_MODEL ?? "claude-sonnet-5";
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? "claude-opus-5";
 const CONCURRENCY = Number(process.env.EVAL_CONCURRENCY ?? 4);
 const REPS = Number(process.env.EVAL_REPS ?? 1);
-const CASE_TIMEOUT_MS = Number(process.env.EVAL_TIMEOUT_MS ?? 180_000);
+/**
+ * Five minutes rather than three, matching `calibrate.ts`.
+ *
+ * Three was measured against nothing, and calibration has now shown the turns
+ * that go past it are real: `budget-exhausted` took eight steps on one sample
+ * and nine on the next, and every pass of such a turn re-sends a transcript
+ * the last tool's output has grown, so its slowest pass is its last one.
+ *
+ * The ceiling matters more here than in calibration. A timeout there costs one
+ * verdict; a timeout in the baseline run leaves that case with no `ref/` file,
+ * and a case absent from the frozen reference is absent from every comparison
+ * made against it afterwards — silently, because a win rate over the cases
+ * that survived looks exactly like a win rate over all of them.
+ */
+const CASE_TIMEOUT_MS = Number(process.env.EVAL_TIMEOUT_MS ?? 300_000);
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -112,6 +134,10 @@ console.log(
 );
 
 if (todo.length === 0) {
+  // Still write the record. The fixture is on disk either way, and the run
+  // that first produced it may predate this file — refusing to describe a
+  // reference because nothing new was generated leaves it undescribed forever.
+  if (isBaseline) writeProvenance();
   console.log("\nNothing to run.");
   process.exit(0);
 }
@@ -299,6 +325,75 @@ await Promise.all(
 
 console.log(`\n${ran}/${todo.length} completed.  Estimated spend this run: $${spend.toFixed(3)}`);
 console.log(`Results: ${resultsPath}`);
-if (isBaseline) console.log(`Frozen reference: ${refDir}`);
+if (isBaseline) {
+  writeProvenance();
+  console.log(`Frozen reference: ${refDir}`);
+}
+
+/**
+ * What produced the fixture, written beside it.
+ *
+ * `ref/` is committed and `results.jsonl` is not, so without this the one part
+ * of a run that survives into the repository is the one part that says nothing
+ * about where it came from. The question it answers is not hypothetical: these
+ * answers were frozen while the branch sat behind `main`, and settling whether
+ * that mattered meant diffing four files by hand to find out which tools the
+ * model had been offered. A reviewer a month from now would have to repeat
+ * that, with less to go on.
+ *
+ * It records the commit rather than the diff, and says plainly when the tree
+ * was dirty: a sha plus uncommitted edits does not identify the code that ran,
+ * and claiming it does would be worse than admitting it does not.
+ *
+ * No spend figure, on purpose. A run is resumable, so the counter in memory is
+ * this invocation's cost and not the freeze's — a reference assembled over two
+ * invocations would record the second one's bill, and a reference re-emitted
+ * after a complete run would record $0.000. Cost belongs in `results.jsonl`,
+ * which holds every row; provenance is what produced the answers, not what
+ * they cost.
+ */
+function writeProvenance(): void {
+  const sh = (args: string[]): string => {
+    try {
+      return execFileSync(args[0], args.slice(1), { cwd: HERE, encoding: "utf-8" }).trim();
+    } catch {
+      return "";
+    }
+  };
+  const sha = sh(["git", "rev-parse", "HEAD"]) || "unknown";
+  const dirty = sh(["git", "status", "--porcelain"]) !== "";
+  // From disk rather than from `todo`, because provenance describes the
+  // fixture and not the invocation: a resumed run's queue is short, and a
+  // re-emit after a complete run has an empty one. Either would report a
+  // reference far smaller than the one sitting next to the file.
+  const frozen = readdirSync(refDir)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => f.slice(0, -".json".length))
+    .sort();
+  const partial = frozen.length < CASES.length;
+  writeFileSync(
+    join(refDir, "PROVENANCE.md"),
+    [
+      "# What generated this reference",
+      "",
+      "Written by `eval/run.ts --variant baseline`. Do not edit by hand.",
+      "",
+      `- **Date** ${new Date().toISOString()}`,
+      `- **Commit** \`${sha}\`` +
+        (dirty
+          ? " — **with uncommitted changes in the tree**, so this sha does not fully identify the code that ran"
+          : ""),
+      `- **Model** \`${MODEL}\``,
+      `- **Reps** ${REPS}`,
+      `- **Cases** ${frozen.length} of ${CASES.length}` +
+        (partial ? " — a partial freeze; every case not listed below has no reference at all" : ""),
+      "",
+      "Frozen:",
+      "",
+      ...frozen.map((id) => `- \`${id}\``),
+      "",
+    ].join("\n"),
+  );
+}
 
 type Verdict = Awaited<ReturnType<typeof judgePair>>;

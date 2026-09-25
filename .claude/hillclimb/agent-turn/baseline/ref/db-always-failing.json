@@ -1,0 +1,6 @@
+{
+  "text": "Bu bilginin dokümanlarda geçmiş sayısı tutulmuyor — gecikme oranı her seferinde veritabanından çekiliyor. Veritabanı bağlantısı bende şu an tanımlı değil, dolayısıyla canlı sorgu çekemiyorum.\n\nEğer bir operasyonel veritabanı bağlantısı paylaşırsanız (örn. sevkiyat/shipment tablosu olan), hemen bu ay için gecikmiş sevkiyat sayısını sorgulayabilirim.",
+  "trajectory": [
+    "search_documents"
+  ]
+}

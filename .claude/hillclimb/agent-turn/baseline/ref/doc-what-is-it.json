@@ -1,0 +1,7 @@
+{
+  "text": "Meridyen, orta ölçekli nakliye şirketlerine sevkiyat planlama yazılımı satan bir şirket. 2023'te kuruldu, şu an 41 müşteriye hizmet veriyor.\n\nÜrün üç parçadan oluşuyor:\n\n- **Saha uygulaması** – sürücü ve araç takibi yapıyor\n- **Planlayıcı** – sipariş havuzunu rotalara bölüyor; bunu yaparken araç kapasitesi, sürücünün yasal çalışma süresi ve müşteriye verilen teslim penceresi kısıtlarının üçünü birlikte çözüyor. Rakiplerin çoğu bu üçünü değil, sadece kapasite ve teslim penceresini çözüp çalışma süresini sürücüye bırakıyor — Meridyen'in teknik farkı burada.\n- **Entegrasyon katmanı** – müşterinin kendi ERP sistemine bağlanıyor\n\nGelir modeli araç başına aylık abonelik şeklinde; ortalama sözleşme 120 araçlık büyüklükte ve yıllık peşin ödeniyor. En büyük müşteri 900 araçla toplam gelirin yaklaşık %11'ini oluşturuyor, bu yoğunlaşma yönetim kurulunda her çeyrek ayrıca takip ediliyor.",
+  "trajectory": [
+    "search_documents",
+    "search_documents"
+  ]
+}

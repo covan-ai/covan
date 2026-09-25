@@ -46,7 +46,50 @@ Worth reading before trusting a number out of it.
   roughly ±24 points (`1/sqrt(n·reps)`); at three reps, about ±14. A change
   that loses half the cases will be obvious. A two-point regression will not
   be visible at any rep count this set can afford — if that is what you need to
-  see, the answer is more cases, not more reps.
+  see, the answer is more cases, not more reps. Calibration has since measured
+  this rather than estimating it; see below.
+
+## What calibration measured (2026-09-25)
+
+`calibrate.ts`, six cases, `claude-sonnet-5` under an `claude-opus-5` judge,
+$0.469.
+
+**Separation 6/6.** Every hand-spoiled answer lost to the real one, and the
+reasoning named the defect rather than gesturing at quality: the arithmetic
+(54,000 where the tier discount makes it 48,600), the invented figure (`214
+shipments, 1.4%` with no database reached), the leaked source filename. The
+judge can tell a bad answer from a good one, which was the question it existed
+to answer.
+
+**Tie rate 2/6.** Two samples of the *same unchanged system* were judged
+different four times out of six. Read the four and none of them is the judge
+inventing a preference — each rests on something checkable:
+
+| case | what actually differed |
+|---|---|
+| `doc-absent-capability` | one sample offered Slack as a notification channel; there is no such tool |
+| `db-usage-by-customer` | one sample wrote "nearly 1.7x" where 4,812/3,140 is 1.53 |
+| `budget-exhausted` | one claimed no database was reachable without ever calling `describe_connection` |
+| `db-always-failing` | **2 steps against 8** — one sample repeated the same search eight times |
+
+So the noise is in the system under test, not in the judge. The same question,
+at the same settings, can take two steps or eight.
+
+**The splits went 2–2 between the two sides.** That matters more than the rate
+does. A judge that invents preferences with a bias cannot be rescued by
+repetition; one whose noise is symmetric can, because symmetric noise averages
+out. This one is symmetric.
+
+**What follows.** Per comparison the outcome is +1/0/−1 at roughly a third
+each, so the standard error over eighteen comparisons is about 19 points —
+close to the ±24 the arithmetic above predicted, which turns that estimate into
+a measurement. This set is therefore a **regression tripwire, not a quality
+meter**: it reliably catches an invented number, a wrong calculation, or a
+retry loop that eats the budget, and it cannot see a small change at all.
+That is the right instrument for what remains — the risk in cutting a budget
+or swapping a model is a turn that stops half-done or starts fabricating, not
+an answer three points worse. Claiming more of it than that would be reporting
+a measurement nobody took.
 
 ## Running it
 

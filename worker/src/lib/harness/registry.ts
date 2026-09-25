@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import type { RetrievalConfig } from "../retrieval";
 import type { ToolSpec } from "../completion";
+import type { RuntimeLimitFlag } from "../runtime-limit";
 import { searchDocumentsTool } from "./tools/search-documents";
 import { describeConnectionTool } from "./tools/describe-connection";
 import { queryDatabaseTool } from "./tools/query-database";
@@ -102,6 +103,16 @@ export type ToolContext = {
    * that service until the turn ends; a different service asks again.
    */
   approvedConnections?: string[];
+  /**
+   * Raised by whatever first notices this invocation is out of platform
+   * budget, so the route can say so instead of "an error".
+   *
+   * Optional because only the chat route sets it: a scheduled run reports
+   * through its own run record and has no stream to explain itself on. See
+   * `lib/runtime-limit.ts` for why one shared flag beats an error that
+   * propagates — by the time anything propagates, the real message is gone.
+   */
+  runtimeLimit?: RuntimeLimitFlag;
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };

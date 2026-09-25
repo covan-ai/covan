@@ -24,6 +24,7 @@ import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
+import { isRuntimeLimit, runtimeLimitFlag } from "../lib/runtime-limit";
 
 const chat = new Hono<AppEnv>();
 
@@ -360,6 +361,12 @@ chat.post("/chat/stream", async (c) => {
        * `catch` at the foot of this stream, and `onStep` in `lib/harness/loop.ts`.
        */
       const settled: AgentStep[] = [];
+      /**
+       * Raised if anything in this turn discovers the invocation is out of
+       * platform budget. Read only by the `catch` below, to replace a message
+       * that explains nothing with one that does. See `lib/runtime-limit.ts`.
+       */
+      const runtimeLimit = runtimeLimitFlag();
       let paused: Awaited<ReturnType<typeof runAgentTurn>>["paused"] | null = null;
 
       // Collect the title started above and write it, returning what it cost so
@@ -584,6 +591,7 @@ chat.post("/chat/stream", async (c) => {
             agentId: session.agent_id as string,
             userId: c.get("user").id,
             sessionId,
+            runtimeLimit,
           },
           signal,
           onEvent: (event) => {
@@ -794,7 +802,28 @@ chat.post("/chat/stream", async (c) => {
         } catch (saveErr) {
           console.error("chat stream error: could not save the partial", saveErr);
         }
-        send({ type: "error", error: "The assistant hit an error. Please try again." });
+        /**
+         * Two sentences, because they ask for different things.
+         *
+         * "Please try again" is right for a far end that failed and will
+         * probably work next time. It is wrong for a turn that ran out of the
+         * requests one invocation may make: trying the same question again
+         * runs into the same ceiling, and the thing that helps is asking for
+         * less. Saying so is the difference between a person retrying four
+         * times and a person narrowing the question.
+         *
+         * `runtimeLimit` rather than inspecting `err`, because by the time an
+         * error reaches here it has been through an SDK and says
+         * `Connection error.` — see `lib/runtime-limit.ts`.
+         */
+        send({
+          type: "error",
+          error:
+            runtimeLimit.hit || isRuntimeLimit(err)
+              ? "This turn ran out of the requests it is allowed to make. Ask for something " +
+                "narrower, or break the question into two."
+              : "The assistant hit an error. Please try again.",
+        });
         controller.close();
       }
     },

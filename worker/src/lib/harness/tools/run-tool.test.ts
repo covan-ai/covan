@@ -70,6 +70,7 @@ function ctxWith(
     confirmed?: boolean;
     routineRunId?: string;
     offeredSlugs?: Set<string>;
+    offeredSchemas?: Map<string, Record<string, unknown>>;
   } = {},
 ): ToolContext {
   const row = over.row === undefined ? CONNECTION : over.row;
@@ -97,6 +98,7 @@ function ctxWith(
             },
     } as unknown as ToolContext["db"],
     offeredSlugs: over.offeredSlugs,
+    offeredSchemas: over.offeredSchemas,
     env: {
       ALLOWED_ORIGIN: "https://app.covan.test",
       ROUTINE_SECRET_KEY: "k",
@@ -341,5 +343,115 @@ describe("run_tool", () => {
   it("warns the model the answer is trimmed, rather than letting it find out", () => {
     expect(runToolTool.description).toMatch(/trimmed/i);
     expect(runToolTool.description).toMatch(/narrow/i);
+  });
+});
+
+/**
+ * Checking the arguments before spending a call on them.
+ *
+ * Four guards stood between a model and somebody else's mailbox and none of them
+ * read the arguments, so a malformed call was discovered by Composio and billed.
+ * `wasBilled` returns true for everything but 501 and 502, so a
+ * `400 Invalid request data provided` costs a full `COMPOSIO_CALL_TOKENS` — the
+ * same as a call that worked.
+ *
+ * Measured on 2026-09-26: ten billed rejections across three sessions putting one
+ * recurring meeting on a calendar, about fifteen times the correct cost, and the
+ * result was still wrong. Every one of those 400s named the offending field and
+ * the type it wanted, and every one was checkable here against the schema
+ * `find_tool` had already fetched. #195.
+ */
+describe("checking the arguments against the schema", () => {
+  const CREATE_EVENT_SCHEMA = {
+    type: "object",
+    required: ["start_datetime"],
+    properties: {
+      start_datetime: { type: "string" },
+      timezone: { type: "string" },
+      attendees: { type: "array", items: { type: "string" } },
+      send_updates: { type: "boolean" },
+    },
+  };
+
+  const schemas = () =>
+    new Map<string, Record<string, unknown>>([["GMAIL_SEND_EMAIL", CREATE_EVENT_SCHEMA]]);
+
+  it("refuses an argument of the wrong type before spending a call", async () => {
+    // The real one: Composio's `send_updates` is a boolean, and both the
+    // published docs and the raw Google API call it a string enum — so it is
+    // what a model sends.
+    const out = await runToolTool.run(
+      {
+        connectionId: "conn-1",
+        slug: "GMAIL_SEND_EMAIL",
+        arguments: { start_datetime: "2026-09-28T22:00:00", send_updates: "all" },
+      },
+      ctxWith({ approved: ["conn-1"], offeredSchemas: schemas() }),
+    );
+
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("send_updates");
+    expect(out.kind === "error" && out.message).toContain("boolean");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an array whose items are the wrong shape", async () => {
+    // The one that cost five separate 400s. Composio wants plain email strings;
+    // the published docs and the raw Google API both take objects with an
+    // `email` field, so objects are what a model sends.
+    const out = await runToolTool.run(
+      {
+        connectionId: "conn-1",
+        slug: "GMAIL_SEND_EMAIL",
+        arguments: {
+          start_datetime: "2026-09-28T22:00:00",
+          attendees: [{ email: "emre@covan.app" }, "mirac@covan.app"],
+        },
+      },
+      ctxWith({ approved: ["conn-1"], offeredSchemas: schemas() }),
+    );
+
+    expect(out.kind).toBe("error");
+    // Named by index, because one bad entry in a list of three is otherwise a
+    // hunt — and the second entry here is fine.
+    expect(out.kind === "error" && out.message).toContain("attendees[0]");
+    expect(out.kind === "error" && out.message).not.toContain("attendees[1]");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a required argument that was not sent", async () => {
+    const out = await runToolTool.run(
+      {
+        connectionId: "conn-1",
+        slug: "GMAIL_SEND_EMAIL",
+        arguments: { timezone: "Europe/Istanbul" },
+      },
+      ctxWith({ approved: ["conn-1"], offeredSchemas: schemas() }),
+    );
+
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("start_datetime");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A regression guard rather than a behaviour this drove out: the check is
+   * skipped when there is no schema, and it has to stay skipped. A slug can
+   * arrive from an earlier turn or a standing grant with no `find_tool` result
+   * behind it, and refusing what cannot be verified would break working calls to
+   * prevent a mistake that has not happened.
+   */
+  it("runs the call untouched when no schema was offered for it", async () => {
+    const out = await runToolTool.run(
+      {
+        connectionId: "conn-1",
+        slug: "GMAIL_SEND_EMAIL",
+        arguments: { send_updates: "all", attendees: [{ email: "a@b.c" }] },
+      },
+      ctxWith({ approved: ["conn-1"] }),
+    );
+
+    expect(out.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalled();
   });
 });

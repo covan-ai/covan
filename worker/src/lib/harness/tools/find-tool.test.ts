@@ -44,6 +44,7 @@ const GMAIL_CONNECTION = {
 function ctxWith(
   connections: Record<string, unknown>[] = [],
   offeredSlugs?: Set<string>,
+  offeredSchemas?: Map<string, Record<string, unknown>>,
 ): ToolContext {
   return {
     db: {
@@ -60,6 +61,7 @@ function ctxWith(
     agentId: "agent-1",
     userId: "user-1",
     offeredSlugs,
+    offeredSchemas,
   };
 }
 
@@ -459,5 +461,93 @@ describe("the alternatives beside a schema", () => {
     // the name uses it; one that is not sends an offset and lands in UTC.
     expect(alternatives).toContain("timezone");
     expect(alternatives).toContain("start_datetime (required)");
+  });
+});
+
+/**
+ * Searching when the workspace has something connected.
+ *
+ * Composio's `/tools?search=…` answers alphabetically, and ten results never
+ * reach the g's. Measured in production on 2026-09-26, with Google Calendar
+ * connected and active throughout: four separate turns searched without a
+ * `toolkit`, got `_2chat`, `acculynx`, `active_campaign`, `alpha_vantage` and
+ * `blackboard` — every one of them marked NOT CONNECTED — and told the person
+ * the agent had no calendar. Twice in those words.
+ *
+ * The connected-first sort cannot reach this: it reorders the rows that came
+ * back, and the connected application was never among them. #193.
+ */
+describe("searching with a connected app in the workspace", () => {
+  const TWO_CHAT = {
+    slug: "_2CHAT_LIST_WEBHOOKS",
+    name: "List webhooks",
+    description: "List webhook subscriptions for WhatsApp.",
+    toolkit: { slug: "_2CHAT" },
+    input_parameters: { required: [] },
+  };
+  const CALENDAR_CREATE = {
+    slug: "GOOGLECALENDAR_CREATE_EVENT",
+    name: "Create event",
+    description: "Create an event on a calendar.",
+    toolkit: { slug: "GOOGLECALENDAR" },
+    input_parameters: { required: ["start_datetime"] },
+  };
+  const CALENDAR_CONNECTION = {
+    ...GMAIL_CONNECTION,
+    id: "conn-cal",
+    label: "Google Calendar",
+    toolkit_slug: "googlecalendar",
+  };
+
+  /** The catalogue as it actually behaves: alphabetical, and the g's never fit. */
+  function alphabeticalCatalogue() {
+    fetchMock.mockImplementation((url: unknown) => {
+      const toolkit = new URL(String(url)).searchParams.get("toolkit_slug");
+      return Promise.resolve(
+        catalogue(toolkit === "GOOGLECALENDAR" ? [CALENDAR_CREATE] : [TWO_CHAT]),
+      );
+    });
+  }
+
+  it("finds a connected app's operation that the catalogue-wide search missed", async () => {
+    alphabeticalCatalogue();
+    const out = await findToolTool.run({ query: "create event" }, ctxWith([CALENDAR_CONNECTION]));
+    const content = out.kind === "ok" ? out.content : "";
+
+    expect(content).toContain("GOOGLECALENDAR_CREATE_EVENT");
+    // With the id beside it, which is the whole difference between "you could
+    // connect a calendar" and an operation the agent can actually run.
+    expect(content).toContain("connectionId: conn-cal");
+  });
+});
+
+/**
+ * Handing the schema on to `run_tool`.
+ *
+ * `offeredSlugs` has a precedent this must not repeat: `message_steps.tokens` was
+ * added in 0060 and is NULL on every row ever written, because nothing filled it.
+ * A map nobody writes to is a guard that never fires, and it fails silently in
+ * the direction where everything looks fine. #195.
+ */
+describe("what run_tool is allowed to check against", () => {
+  const SEND = {
+    slug: "GMAIL_SEND_EMAIL",
+    name: "Send email",
+    description: "Send an email.",
+    toolkit: { slug: "GMAIL" },
+    input_parameters: {
+      required: ["recipient_email"],
+      properties: { recipient_email: { type: "string" } },
+    },
+  };
+
+  it("records the schema of every candidate it listed", async () => {
+    const schemas = new Map<string, Record<string, unknown>>();
+    fetchMock.mockResolvedValue(catalogue([SEND]));
+    await findToolTool.run({ query: "send" }, ctxWith([], undefined, schemas));
+
+    // The schemas arrive with the search, so this is the one already in hand —
+    // not a second request.
+    expect(schemas.get("GMAIL_SEND_EMAIL")).toMatchObject({ required: ["recipient_email"] });
   });
 });

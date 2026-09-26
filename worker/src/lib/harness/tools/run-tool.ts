@@ -50,6 +50,98 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 /** Enough of Composio's own failure to act on, not enough to fill a turn. */
 const MAX_ERROR_CHARS = 2_000;
 
+/** How many complaints one refusal carries. Enough to fix in one go, not a wall. */
+const MAX_COMPLAINTS = 6;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** What JSON Schema calls a type, as a question about a value. */
+function matchesType(value: unknown, type: string): boolean {
+  switch (type) {
+    case "string":
+      return typeof value === "string";
+    case "boolean":
+      return typeof value === "boolean";
+    case "number":
+      return typeof value === "number";
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return isRecord(value);
+    case "null":
+      return value === null;
+    default:
+      // A type this does not know is not a type it may refuse on. Composio's
+      // schemas also describe fields with `anyOf` and no `type` at all.
+      return true;
+  }
+}
+
+/** What was sent, named the way an error message can use. */
+function shapeOf(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  if (isRecord(value)) return "an object";
+  return `a ${typeof value}`;
+}
+
+/**
+ * Where the arguments disagree with the schema, in the model's own terms.
+ *
+ * Deliberately narrow, because a validator that is wrong blocks calls that would
+ * have worked. It refuses only on what is unambiguous — a required field absent,
+ * a declared scalar type contradicted, an array whose declared item type is
+ * contradicted — and stays silent on everything else: a property the schema does
+ * not mention, a field described by `anyOf` rather than `type`, a type name it
+ * does not recognise.
+ *
+ * The three shapes it catches are the three that were actually sent in
+ * production on 2026-09-26: `attendees` as objects where Composio wants strings,
+ * `send_updates` as the string the docs promise where Composio wants a boolean,
+ * and `start_datetime` missing because the datetime went in a nested `start`
+ * instead. See #192 and #195.
+ */
+function complaints(args: Record<string, unknown>, schema: Record<string, unknown>): string[] {
+  const properties = isRecord(schema.properties) ? schema.properties : null;
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const out: string[] = [];
+
+  for (const name of required) {
+    if (typeof name === "string" && args[name] === undefined) {
+      out.push(`\`${name}\` is required and was not sent`);
+    }
+  }
+
+  if (properties) {
+    for (const [name, value] of Object.entries(args)) {
+      const spec = properties[name];
+      if (!isRecord(spec)) continue;
+      const type = typeof spec.type === "string" ? spec.type : null;
+      if (!type) continue;
+      if (!matchesType(value, type)) {
+        out.push(
+          `\`${name}\` should be ${type === "array" ? "an array" : `a ${type}`}, not ${shapeOf(value)}`,
+        );
+        continue;
+      }
+      if (type !== "array" || !Array.isArray(value) || !isRecord(spec.items)) continue;
+      const itemType = typeof spec.items.type === "string" ? spec.items.type : null;
+      if (!itemType) continue;
+      value.forEach((item, i) => {
+        if (!matchesType(item, itemType)) {
+          out.push(`\`${name}[${i}]\` should be a ${itemType}, not ${shapeOf(item)}`);
+        }
+      });
+    }
+  }
+
+  return out.slice(0, MAX_COMPLAINTS);
+}
+
 /** Whether a standing grant says this operation never needs asking. */
 async function alwaysAllowed(
   ctx: ToolContext,
@@ -151,6 +243,29 @@ export const runToolTool: AgentTool = {
           "want is not among them — do not vary a slug by hand, the catalogue does not " +
           "follow a naming pattern you can guess.",
       };
+    }
+
+    // Guard 1, and it is here rather than beside the network because it costs
+    // nothing and because a person should not be asked to approve a call that
+    // is going to be refused anyway.
+    //
+    // Only for an operation `find_tool` described this turn — see
+    // `offeredSchemas`. A confirmed call is checked too: the arguments are the
+    // ones that were proposed, so if they are wrong, spending the call to be
+    // told so is the one outcome nobody wanted.
+    const schema = ctx.offeredSchemas?.get(slug);
+    if (schema) {
+      const wrong = complaints(callArgs, schema);
+      if (wrong.length > 0) {
+        return {
+          kind: "error",
+          message:
+            `${slug} was not sent what its schema asks for, so it was not run:\n` +
+            `${wrong.map((w) => `- ${w}`).join("\n")}\n` +
+            "Fix the arguments and call again. This operation's schema is the one that " +
+            "decides, not the service's own API documentation — they differ.",
+        };
+      }
     }
 
     const connection = await loadConnection(ctx, input.connectionId);

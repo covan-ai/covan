@@ -88,6 +88,17 @@ function firstWords(query: string, n: number): string {
 const MAX_PARAM_NAMES = 24;
 
 /**
+ * How many connected applications get asked the question in their own right.
+ *
+ * A ceiling on requests per search, not a judgement about how many connections a
+ * workspace should have. Four covers every workspace on the install today with
+ * room over; past that the catalogue-wide search is still doing its job and the
+ * `toolkit` argument is the honest answer for a model that knows which
+ * application it wants.
+ */
+const MAX_CONNECTED_SEARCHES = 4;
+
+/**
  * An operation's parameter names, for the candidates that get no schema.
  *
  * `summarise` prints `needs:`, which is the required ones, and that is not the
@@ -116,6 +127,15 @@ function parameterNames(tool: ComposioTool): string[] {
   return names
     .slice(0, MAX_PARAM_NAMES)
     .map((name) => (required.has(name) ? `${name} (required)` : name));
+}
+
+/**
+ * Hand a candidate's schema to `run_tool`, so a malformed call is refused here
+ * rather than bought from Composio. See `ToolContext.offeredSchemas` — same
+ * provenance rule as `offeredSlugs`, written in the same places.
+ */
+function remember(ctx: ToolContext, tool: ComposioTool): void {
+  if (tool.inputSchema) ctx.offeredSchemas?.set(tool.slug, tool.inputSchema);
 }
 
 /** One candidate, in the two or three lines a model needs to choose it. */
@@ -229,6 +249,21 @@ export const findToolTool: AgentTool = {
     const refused = await affordable(ctx);
     if (refused) return refused;
 
+    // Which of these the workspace could actually run. Through the caller's own
+    // client, so a connection in another workspace was never in the list — and
+    // filtered to `active` by `listConnections`, so a half-finished consent
+    // screen is not offered as a connection id.
+    //
+    // Read before the search rather than after it, because on a catalogue-wide
+    // query it decides what gets searched. See `connectedSearches` below.
+    const connections = await listConnections(ctx.db, ctx.workspaceId).catch(() => []);
+    const byToolkit = new Map<string, ToolConnection>();
+    for (const c of connections) {
+      if (c.transport === "composio" && c.toolkit_slug && !byToolkit.has(c.toolkit_slug)) {
+        byToolkit.set(c.toolkit_slug, c);
+      }
+    }
+
     let found = await searchTools(
       ctx.env,
       { search: query, toolkit, limit: MAX_RESULTS * 2 },
@@ -246,6 +281,46 @@ export const findToolTool: AgentTool = {
       );
     }
 
+    // The same question, asked of each connected application by name.
+    //
+    // Composio's catalogue answers alphabetically, so a catalogue-wide search
+    // holding ten results never reaches the g's — four production turns on
+    // 2026-09-26 searched "create event" against a workspace with Google
+    // Calendar connected, got `_2chat` and `active_campaign`, and told the
+    // person there was no calendar. The connected-first sort below cannot reach
+    // that: it reorders the rows that came back, and the connected application
+    // was never among them.
+    //
+    // Only when the model named no toolkit — having named one it has already
+    // done what this compensates for — and only when the broad search surfaced
+    // nothing the workspace can run. A search that already found a connected
+    // operation is not the failure this exists for, and re-asking it would spend
+    // requests on every search to fix the ones that come back empty-handed.
+    //
+    // In parallel, because these are independent reads and a search has been
+    // measured at three seconds. Charged once for all of it, like the short
+    // retry above and for the same reason: the extra requests exist because our
+    // own search cannot see what the workspace connected, and charging for that
+    // is charging somebody for our shape.
+    const broadTools = found.kind === "ok" ? found.tools : [];
+    const foundSomethingRunnable = broadTools.some((t) => byToolkit.has(t.toolkit));
+    const connectedSearches: ComposioTool[] = [];
+    if (!toolkit && byToolkit.size > 0 && !foundSomethingRunnable) {
+      const slugs = [...byToolkit.keys()].slice(0, MAX_CONNECTED_SEARCHES);
+      const answers = await Promise.all(
+        slugs.map((slug) =>
+          searchTools(
+            ctx.env,
+            { search: query, toolkit: slug, limit: MAX_RESULTS },
+            { signal: ctx.signal },
+          ),
+        ),
+      );
+      for (const answer of answers) {
+        if (answer.kind === "ok") connectedSearches.push(...answer.tools);
+      }
+    }
+
     // Charged once, however many requests that took. The second one exists
     // because our own interface handed the catalogue something it cannot
     // match, and billing somebody twice for that is billing them for our
@@ -253,10 +328,22 @@ export const findToolTool: AgentTool = {
     if (found.kind === "ok" || wasBilled(found.status)) {
       await spend(ctx, COMPOSIO_SEARCH_TOKENS);
     }
-    if (found.kind === "error") {
+
+    // What the workspace can run, then the rest of the catalogue, deduplicated.
+    const seen = new Set<string>();
+    const candidates: ComposioTool[] = [];
+    for (const tool of [...connectedSearches, ...broadTools]) {
+      if (seen.has(tool.slug)) continue;
+      seen.add(tool.slug);
+      candidates.push(tool);
+    }
+
+    // The catalogue-wide search failing is only fatal if nothing else answered.
+    // A connected application that did is a better answer than its error.
+    if (candidates.length === 0 && found.kind === "error") {
       return { kind: "error", message: `the catalogue could not be searched: ${found.message}` };
     }
-    if (found.tools.length === 0) {
+    if (candidates.length === 0) {
       return {
         kind: "ok",
         content:
@@ -268,22 +355,10 @@ export const findToolTool: AgentTool = {
       };
     }
 
-    // Which of these the workspace could actually run. Through the caller's own
-    // client, so a connection in another workspace was never in the list — and
-    // filtered to `active` by `listConnections`, so a half-finished consent
-    // screen is not offered as a connection id.
-    const connections = await listConnections(ctx.db, ctx.workspaceId).catch(() => []);
-    const byToolkit = new Map<string, ToolConnection>();
-    for (const c of connections) {
-      if (c.transport === "composio" && c.toolkit_slug && !byToolkit.has(c.toolkit_slug)) {
-        byToolkit.set(c.toolkit_slug, c);
-      }
-    }
-
     // Connected applications first. Not a cosmetic sort: the model reads in
     // order, and a list whose first entry is an operation nobody can run is a
     // list that invites a call that cannot succeed.
-    const ranked = [...found.tools].sort((a, b) => {
+    const ranked = [...candidates].sort((a, b) => {
       const ac = byToolkit.has(a.toolkit) ? 0 : 1;
       const bc = byToolkit.has(b.toolkit) ? 0 : 1;
       return ac - bc;
@@ -342,12 +417,19 @@ export const findToolTool: AgentTool = {
       // to run. The alternatives count: they are in the answer by name, so a
       // model that takes one of them is following this tool's own advice.
       ctx.offeredSlugs?.add(full.tool.slug);
-      for (const t of others) ctx.offeredSlugs?.add(t.slug);
+      remember(ctx, full.tool);
+      for (const t of others) {
+        ctx.offeredSlugs?.add(t.slug);
+        remember(ctx, t);
+      }
       return { kind: "ok", content: detailed };
     }
 
     const shortlist = ranked.slice(0, MAX_RESULTS);
-    for (const tool of shortlist) ctx.offeredSlugs?.add(tool.slug);
+    for (const tool of shortlist) {
+      ctx.offeredSlugs?.add(tool.slug);
+      remember(ctx, tool);
+    }
     const listed = shortlist
       .map((tool) => summarise(tool, byToolkit.get(tool.toolkit)))
       .join("\n\n");

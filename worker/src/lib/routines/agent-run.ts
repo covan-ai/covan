@@ -136,6 +136,7 @@ export function runRoutineWithTools(
         // subrequest, which is the budget that actually binds there.
         searchMemo: new Map<string, string>(),
         offeredSlugs: new Set<string>(),
+        offeredSchemas: new Map<string, Record<string, unknown>>(),
       },
     });
 

@@ -31,7 +31,7 @@ import { CASES } from "./cases";
 import { runCase } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
-import { loadEnv, requireAnthropicKey, isAccountError } from "./env";
+import { loadEnv, requireKeysFor, isAccountError } from "./env";
 
 const MODEL = process.env.EVAL_MODEL ?? "claude-sonnet-5";
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? "claude-opus-5";
@@ -59,7 +59,7 @@ const only = arg("only")
 const selected = CASES.filter((c) => c.spoiled && (!only || only.some((p) => c.id.startsWith(p))));
 
 const env = loadEnv();
-requireAnthropicKey(env);
+requireKeysFor(env, [MODEL, JUDGE_MODEL]);
 
 console.log(`${selected.length} case(s), model ${MODEL}, judge ${JUDGE_MODEL}\n`);
 

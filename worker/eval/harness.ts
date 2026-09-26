@@ -6,6 +6,7 @@ import {
   temperatureFor,
   reasoningEffortFor,
 } from "../src/lib/prompt";
+import type { ReasoningEffort } from "../src/lib/models";
 import { stubbedTools, NO_CONTEXT, type ToolCallLog } from "./stubs";
 import type { EvalCase } from "./cases";
 
@@ -58,7 +59,7 @@ export async function runCase(
   env: CompletionEnv,
   kase: EvalCase,
   model: string,
-  opts: { timeoutMs: number },
+  opts: { timeoutMs: number; reasoningEffort?: ReasoningEffort | null },
 ): Promise<CaseRun> {
   const toolCalls: ToolCallLog = [];
   const messages = buildMessages(kase);
@@ -78,7 +79,11 @@ export async function runCase(
       messages,
       maxTokens: maxTokensFor("normal"),
       temperature: temperatureFor("normal", null),
-      reasoningEffort: reasoningEffortFor(null),
+      // `null` is the default and is not the same request as `"medium"`: it
+      // sends no effort at all, which is what all nine production gpt-5 agents
+      // send. A variant that wants to measure an effort passes one; the
+      // reference it is measured against passes nothing, like production.
+      reasoningEffort: reasoningEffortFor(opts.reasoningEffort ?? null),
       // `showThinking` is off: chat turns it on so a person watching sees the
       // model deliberate, and it costs output tokens for a paragraph no eval
       // reads. The thinking still happens; only the summary is not asked for.

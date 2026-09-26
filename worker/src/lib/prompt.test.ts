@@ -191,3 +191,58 @@ describe("report mode", () => {
     expect(temperatureFor("report", 0)).toBe(0);
   });
 });
+
+/**
+ * Telling the agent when and where it is.
+ *
+ * Nothing on the chat path used to say either. Measured in production on
+ * 2026-09-26: asked in Turkish for "every Monday until the end of October at
+ * 22:00", the agent had to work out which Mondays those were — which needs
+ * today's date — and what 22:00 meant — which needs a zone. It inferred both
+ * from the language of the request and got them right by luck. An earlier
+ * request the same evening carried no date at all, and there was nothing in the
+ * prompt from which the right Mondays could be derived. #196.
+ *
+ * The date and not the time, deliberately: the prefix is byte-identical turn
+ * over turn so that it rides the prompt cache, and a clock in it would miss the
+ * cache on every turn. A date costs one miss a day.
+ */
+describe("the date and zone in the prefix", () => {
+  const now = new Date("2026-09-26T19:30:00Z");
+
+  it("names today's date and the zone times are meant in", () => {
+    const out = buildSystemPrefix({
+      persona: null,
+      mode: "normal",
+      docNames: [],
+      now,
+      timezone: "Europe/Istanbul",
+    });
+    expect(out).toContain("26 September 2026");
+    expect(out).toContain("Europe/Istanbul");
+  });
+
+  it("says UTC when no zone is known, rather than the server's own", () => {
+    const out = buildSystemPrefix({ persona: null, mode: "normal", docNames: [], now });
+    expect(out).toContain("Times mean UTC");
+  });
+
+  it("degrades to UTC on a zone Intl does not recognise", () => {
+    // The zone is a per-request guess and can arrive as anything. A RangeError
+    // out of `toLocaleDateString` here would take the whole turn with it.
+    const out = buildSystemPrefix({
+      persona: null,
+      mode: "normal",
+      docNames: [],
+      now,
+      timezone: "Mars/Olympus_Mons",
+    });
+    expect(out).toContain("Times mean UTC");
+    expect(out).toContain("26 September 2026");
+  });
+
+  it("says nothing about the date when it was not given a clock", () => {
+    const out = buildSystemPrefix({ persona: null, mode: "normal", docNames: [] });
+    expect(out).not.toContain("Today is");
+  });
+});

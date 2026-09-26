@@ -222,12 +222,30 @@ chat.post("/chat/stream", async (c) => {
     userId: c.get("user").id,
   });
 
+  /**
+   * Where the agent's sense of "here" comes from, and how good it is.
+   *
+   * Cloudflare resolves the visitor's timezone from their address and hands it
+   * over on the request, so this costs nothing and needs no schema change and no
+   * frontend change. It is a guess: behind a VPN it names the exit node's zone,
+   * and locally there is no `cf` at all, which is why `buildSystemPrefix`
+   * degrades to UTC rather than trusting it.
+   *
+   * A zone stored per workspace, or sent by the browser from
+   * `Intl.DateTimeFormat().resolvedOptions().timeZone`, is the better answer and
+   * a bigger change. This is the version that stops the agent guessing from the
+   * language of the question, which is what it was doing. See #196.
+   */
+  const visitorZone = (c.req.raw as { cf?: { timezone?: string } }).cf?.timezone;
+
   const systemPrefix =
     buildSystemPrefix({
       persona: agent.persona,
       mode,
       docNames,
       webSearchEnabled: agent.web_search ?? false,
+      now: new Date(),
+      timezone: visitorZone,
     }) + (manifest ? `\n\n${manifest}` : "");
 
   // Budget the history down to the most recent turns that fit, so long chats

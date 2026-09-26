@@ -397,3 +397,67 @@ describe("a search this turn has already answered", () => {
     expect(out.kind).toBe("ok");
   });
 });
+
+/**
+ * The alternatives beside a schema, and the parameter nobody was shown.
+ *
+ * Measured in production on 2026-09-26. Asked for "create event" against a
+ * connected calendar, the catalogue ranks `GOOGLECALENDAR_BATCH_EVENTS` first,
+ * so `detail` spent the whole of `MAX_SCHEMA_CHARS` on it and returned
+ * `GOOGLECALENDAR_CREATE_EVENT` — the one the model went on to run — as a
+ * description with no arguments at all.
+ *
+ * So the model used the shape it already knew, the raw Google Calendar REST
+ * API, which is not the shape Composio accepts. Ten billed rejections followed.
+ * Worse than the cost: it never learned that `timezone` exists, sent a `+03:00`
+ * offset instead, and Composio defaults to UTC when that parameter is absent —
+ * so five events were written to a real calendar three hours from where they
+ * were asked for. #192.
+ *
+ * A one-line description is not enough to call an operation. The parameter names
+ * are already in hand — `searchTools` returns them, which is how `needs:` is
+ * printed — so this costs no extra request.
+ */
+describe("the alternatives beside a schema", () => {
+  const BATCH_EVENTS = {
+    slug: "GOOGLECALENDAR_BATCH_EVENTS",
+    name: "Batch events",
+    description: "Execute up to 1000 event mutations in one request.",
+    toolkit: { slug: "GOOGLECALENDAR" },
+    input_parameters: {
+      required: ["operations"],
+      properties: { operations: {}, fail_fast: {} },
+    },
+  };
+  const CREATE_EVENT = {
+    slug: "GOOGLECALENDAR_CREATE_EVENT",
+    name: "Create event",
+    description: "Create an event on a calendar.",
+    toolkit: { slug: "GOOGLECALENDAR" },
+    input_parameters: {
+      required: ["start_datetime"],
+      properties: {
+        start_datetime: {},
+        end_datetime: {},
+        timezone: {},
+        attendees: {},
+        calendar_id: {},
+      },
+    },
+  };
+
+  it("names an alternative's parameters, so the model can run it without asking again", async () => {
+    fetchMock
+      .mockResolvedValueOnce(catalogue([BATCH_EVENTS, CREATE_EVENT]))
+      .mockResolvedValueOnce(new Response(JSON.stringify(BATCH_EVENTS), { status: 200 }));
+
+    const out = await findToolTool.run({ query: "create event", detail: true }, ctxWith());
+    const content = out.kind === "ok" ? out.content : "";
+    const alternatives = content.slice(content.indexOf("If that is not the one you want"));
+
+    // The parameter whose absence cost five wrong events. A model that is shown
+    // the name uses it; one that is not sends an offset and lands in UTC.
+    expect(alternatives).toContain("timezone");
+    expect(alternatives).toContain("start_datetime (required)");
+  });
+});

@@ -124,11 +124,60 @@ const CAPABILITIES = [
   "You have access to the team's full conversation history in this workspace.",
 ].join(" ");
 
+/** Whether `Intl` recognises a zone, so an unknown one degrades instead of throwing. */
+function validZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * When and where the agent is, in one line.
+ *
+ * Nothing on the chat path said either until #196. A request like "every Monday
+ * until the end of October at 22:00" cannot be answered without both: which
+ * Mondays needs the date, and what 22:00 means needs the zone. Production on
+ * 2026-09-26 got them right by inferring them from the language of the request,
+ * which is luck — an earlier request the same evening carried no date at all.
+ *
+ * The date and not the clock, deliberately. This prefix is byte-identical turn
+ * over turn so that it rides the prompt cache; a time in it would miss on every
+ * turn, where a date misses once a day.
+ *
+ * The zone is stated as the one times are *meant* in rather than as a fact about
+ * the person, because that is the thing the agent has to act on — and because it
+ * is a per-request guess, not a stored setting.
+ */
+function whenAndWhere(now: Date, timezone: string | null | undefined): string {
+  const asked = timezone?.trim() ? timezone.trim() : "UTC";
+  const zone = validZone(asked) ? asked : "UTC";
+  const today = now.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: zone,
+  });
+  return (
+    `Today is ${today}. Times mean ${zone} unless somebody says otherwise — read ` +
+    `and write them in that zone, and say which zone you used when a time could be ` +
+    `read two ways. When a tool takes a zone as its own argument, pass ${zone} ` +
+    `rather than putting an offset in the timestamp.`
+  );
+}
+
 export function buildSystemPrefix(input: {
   persona: string | null;
   mode: PromptMode;
   docNames: string[];
   webSearchEnabled?: boolean;
+  /** Omitted rather than defaulted to `new Date()`: a prefix built without a
+   * clock should say nothing about the date, not quietly guess UTC. */
+  now?: Date;
+  timezone?: string | null;
 }): string {
   const persona =
     input.persona && input.persona.trim().length > 0 ? input.persona : DEFAULT_PERSONA;
@@ -138,6 +187,10 @@ export function buildSystemPrefix(input: {
   // Add capabilities (web search only if enabled)
   if (input.webSearchEnabled) {
     prefix += `\n\n${CAPABILITIES}`;
+  }
+
+  if (input.now) {
+    prefix += `\n\n${whenAndWhere(input.now, input.timezone)}`;
   }
 
   if (input.mode === "brainstorm") {

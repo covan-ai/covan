@@ -130,12 +130,13 @@ function parameterNames(tool: ComposioTool): string[] {
 }
 
 /**
- * Hand a candidate's schema to `run_tool`, so a malformed call is refused here
- * rather than bought from Composio. See `ToolContext.offeredSchemas` — same
- * provenance rule as `offeredSlugs`, written in the same places.
+ * Hand a candidate to `run_tool` whole, so a malformed call is refused here
+ * rather than bought from Composio and the approval card can say what the
+ * operation does. See `ToolContext.offeredOperations` — same provenance rule as
+ * `offeredSlugs`, written in the same places.
  */
 function remember(ctx: ToolContext, tool: ComposioTool): void {
-  if (tool.inputSchema) ctx.offeredSchemas?.set(tool.slug, tool.inputSchema);
+  ctx.offeredOperations?.set(tool.slug, tool);
 }
 
 /** One candidate, in the two or three lines a model needs to choose it. */

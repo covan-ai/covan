@@ -44,7 +44,7 @@ const GMAIL_CONNECTION = {
 function ctxWith(
   connections: Record<string, unknown>[] = [],
   offeredSlugs?: Set<string>,
-  offeredSchemas?: Map<string, Record<string, unknown>>,
+  offeredOperations?: Map<string, import("../../composio/client").ComposioTool>,
 ): ToolContext {
   return {
     db: {
@@ -61,7 +61,7 @@ function ctxWith(
     agentId: "agent-1",
     userId: "user-1",
     offeredSlugs,
-    offeredSchemas,
+    offeredOperations,
   };
 }
 
@@ -542,12 +542,18 @@ describe("what run_tool is allowed to check against", () => {
   };
 
   it("records the schema of every candidate it listed", async () => {
-    const schemas = new Map<string, Record<string, unknown>>();
+    const schemas = new Map<string, import("../../composio/client").ComposioTool>();
     fetchMock.mockResolvedValue(catalogue([SEND]));
     await findToolTool.run({ query: "send" }, ctxWith([], undefined, schemas));
 
     // The schemas arrive with the search, so this is the one already in hand —
     // not a second request.
-    expect(schemas.get("GMAIL_SEND_EMAIL")).toMatchObject({ required: ["recipient_email"] });
+    expect(schemas.get("GMAIL_SEND_EMAIL")).toMatchObject({
+      slug: "GMAIL_SEND_EMAIL",
+      // The schema, for the argument check...
+      inputSchema: { required: ["recipient_email"] },
+      // ...and the two fields the approval card needs. #201.
+      description: "Send an email.",
+    });
   });
 });

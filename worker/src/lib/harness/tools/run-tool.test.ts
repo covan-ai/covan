@@ -67,10 +67,11 @@ function ctxWith(
     row?: Record<string, unknown> | null;
     grant?: { mode: string } | null;
     approved?: string[];
+    approvedSlugs?: string[];
     confirmed?: boolean;
     routineRunId?: string;
     offeredSlugs?: Set<string>;
-    offeredSchemas?: Map<string, Record<string, unknown>>;
+    offeredOperations?: Map<string, import("../../composio/client").ComposioTool>;
   } = {},
 ): ToolContext {
   const row = over.row === undefined ? CONNECTION : over.row;
@@ -98,7 +99,7 @@ function ctxWith(
             },
     } as unknown as ToolContext["db"],
     offeredSlugs: over.offeredSlugs,
-    offeredSchemas: over.offeredSchemas,
+    offeredOperations: over.offeredOperations,
     env: {
       ALLOWED_ORIGIN: "https://app.covan.test",
       ROUTINE_SECRET_KEY: "k",
@@ -108,6 +109,7 @@ function ctxWith(
     agentId: "agent-1",
     userId: "user-1",
     ...(over.approved ? { approvedConnections: over.approved } : {}),
+    ...(over.approvedSlugs ? { approvedSlugs: over.approvedSlugs } : {}),
     ...(over.confirmed ? { confirmed: true } : {}),
     ...(over.routineRunId ? { routineRunId: over.routineRunId } : {}),
   };
@@ -374,7 +376,20 @@ describe("checking the arguments against the schema", () => {
   };
 
   const schemas = () =>
-    new Map<string, Record<string, unknown>>([["GMAIL_SEND_EMAIL", CREATE_EVENT_SCHEMA]]);
+    new Map<string, import("../../composio/client").ComposioTool>([
+      [
+        "GMAIL_SEND_EMAIL",
+        {
+          slug: "GMAIL_SEND_EMAIL",
+          name: "Send email",
+          description: "Send an email.",
+          toolkit: "gmail",
+          required: ["start_datetime"],
+          inputSchema: CREATE_EVENT_SCHEMA,
+          destructive: null,
+        },
+      ],
+    ]);
 
   it("refuses an argument of the wrong type before spending a call", async () => {
     // The real one: Composio's `send_updates` is a boolean, and both the
@@ -386,7 +401,7 @@ describe("checking the arguments against the schema", () => {
         slug: "GMAIL_SEND_EMAIL",
         arguments: { start_datetime: "2026-09-28T22:00:00", send_updates: "all" },
       },
-      ctxWith({ approved: ["conn-1"], offeredSchemas: schemas() }),
+      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
     );
 
     expect(out.kind).toBe("error");
@@ -408,7 +423,7 @@ describe("checking the arguments against the schema", () => {
           attendees: [{ email: "emre@covan.app" }, "mirac@covan.app"],
         },
       },
-      ctxWith({ approved: ["conn-1"], offeredSchemas: schemas() }),
+      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
     );
 
     expect(out.kind).toBe("error");
@@ -426,7 +441,7 @@ describe("checking the arguments against the schema", () => {
         slug: "GMAIL_SEND_EMAIL",
         arguments: { timezone: "Europe/Istanbul" },
       },
-      ctxWith({ approved: ["conn-1"], offeredSchemas: schemas() }),
+      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
     );
 
     expect(out.kind).toBe("error");
@@ -496,5 +511,143 @@ describe("an operation the service does not have", () => {
     // And the pivot is named, because the alternative is the model searching
     // again for what it already has.
     expect(out.kind === "error" && out.message).toContain("GMAIL_FETCH_EMAILS");
+  });
+});
+
+/**
+ * What the person is actually asked, on the one surface where it decides
+ * everything.
+ *
+ * Production, 2026-09-26 21:46 UTC. Somebody asked the agent to delete a few
+ * recurring events — "vazgeçtim sil dailyleleri". It chose
+ * `GOOGLECALENDAR_CLEAR_CALENDAR`, whose own description reads "Clears a primary
+ * calendar by deleting all events from it", and the card it put in front of them
+ * said, in full:
+ *
+ *     Run GOOGLECALENDAR_CLEAR_CALENDAR on Google Calendar?
+ *
+ * Approved in 2.7 seconds, which is the right reading time for "yes, delete the
+ * dailies". Their entire primary calendar went.
+ *
+ * The guard worked. The sentence was the defect: a slug nobody has read, a
+ * connection label, and no statement of what was about to happen or that it could
+ * not be undone — while `destructive` and the description saying "deleting all
+ * events" were both in hand. #201.
+ */
+describe("what a confirmation actually says", () => {
+  const CALENDAR = {
+    ...CONNECTION,
+    id: "conn-cal",
+    label: "Google Calendar",
+    toolkit_slug: "googlecalendar",
+  };
+  const CLEAR = {
+    slug: "GOOGLECALENDAR_CLEAR_CALENDAR",
+    name: "Clear calendar",
+    description:
+      "Clears a primary calendar by deleting all events from it. The calendar itself is " +
+      "preserved; only its events are removed.",
+    toolkit: "googlecalendar",
+    required: ["calendar_id"],
+    inputSchema: null,
+    destructive: true,
+  };
+
+  it("names the act and warns it cannot be undone, not just the slug", async () => {
+    const out = await runToolTool.run(
+      {
+        connectionId: "conn-cal",
+        slug: "GOOGLECALENDAR_CLEAR_CALENDAR",
+        arguments: { calendar_id: "primary" },
+      },
+      ctxWith({ row: CALENDAR, offeredOperations: new Map([[CLEAR.slug, CLEAR]]) }),
+    );
+
+    expect(out.kind).toBe("needs_confirmation");
+    const summary = out.kind === "needs_confirmation" ? out.summary : "";
+    // The sentence that would have stopped the click.
+    expect(summary).toContain("deleting all events");
+    expect(summary).toMatch(/cannot be undone/i);
+  });
+});
+
+/**
+ * How far one yes reaches, when the next call is destructive.
+ *
+ * `approvedConnections` scopes an approval to the connection for the rest of the
+ * turn, and the reason is good: three clicks to answer "check my last three
+ * threads and reply to Ana" trains people to approve without reading. But it
+ * means any call after the first runs unasked — including one that empties the
+ * account. A turn that creates an event and then clears the calendar asks once,
+ * about the create.
+ *
+ * So the reach is narrowed at exactly one point: an operation Composio marks
+ * `destructive` asks again unless that same operation has already been approved
+ * this turn. Repeating the one that was approved stays free, which is what the
+ * original reasoning was protecting. #201.
+ */
+describe("how far one approval reaches", () => {
+  const CALENDAR = {
+    ...CONNECTION,
+    id: "conn-cal",
+    label: "Google Calendar",
+    toolkit_slug: "googlecalendar",
+  };
+  const op = (slug: string, destructive: boolean | null) => ({
+    slug,
+    name: slug,
+    description: "Does a thing.",
+    toolkit: "googlecalendar",
+    required: [],
+    inputSchema: null,
+    destructive,
+  });
+  const known = new Map([
+    ["GOOGLECALENDAR_CLEAR_CALENDAR", op("GOOGLECALENDAR_CLEAR_CALENDAR", true)],
+    ["GOOGLECALENDAR_EVENTS_LIST", op("GOOGLECALENDAR_EVENTS_LIST", false)],
+  ]);
+
+  it("asks again for a destructive operation the turn has not already approved", async () => {
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
+      ctxWith({
+        row: CALENDAR,
+        // A create earlier in this turn already unlocked the connection.
+        approved: ["conn-cal"],
+        approvedSlugs: ["GOOGLECALENDAR_CREATE_EVENT"],
+        offeredOperations: known,
+      }),
+    );
+
+    expect(out.kind).toBe("needs_confirmation");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still lets a harmless operation through on the connection's approval", async () => {
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },
+      ctxWith({
+        row: CALENDAR,
+        approved: ["conn-cal"],
+        approvedSlugs: ["GOOGLECALENDAR_CREATE_EVENT"],
+        offeredOperations: known,
+      }),
+    );
+
+    expect(out.kind).toBe("ok");
+  });
+
+  it("does not re-ask for the destructive operation it already approved", async () => {
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
+      ctxWith({
+        row: CALENDAR,
+        approved: ["conn-cal"],
+        approvedSlugs: ["GOOGLECALENDAR_CLEAR_CALENDAR"],
+        offeredOperations: known,
+      }),
+    );
+
+    expect(out.kind).toBe("ok");
   });
 });

@@ -29,7 +29,8 @@ describe("buildToolContext", () => {
     expect(built.searchMemo).toBeInstanceOf(Map);
     expect(built.offeredSlugs).toBeInstanceOf(Set);
     // Read by `run_tool` to refuse a malformed call before Composio bills for
-    // it. Undefined here means that check never runs. #195.
-    expect(built.offeredSchemas).toBeInstanceOf(Map);
+    // it (#195), and to tell the approval card what the operation does (#201).
+    // Undefined here means neither happens.
+    expect(built.offeredOperations).toBeInstanceOf(Map);
   });
 });

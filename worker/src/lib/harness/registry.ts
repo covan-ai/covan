@@ -3,6 +3,7 @@ import type { RoutineEnv } from "../../types";
 import type { RetrievalConfig } from "../retrieval";
 import type { ToolSpec } from "../completion";
 import type { RuntimeLimitFlag } from "../runtime-limit";
+import type { ComposioTool } from "../composio/client";
 import { searchDocumentsTool } from "./tools/search-documents";
 import { describeConnectionTool } from "./tools/describe-connection";
 import { queryDatabaseTool } from "./tools/query-database";
@@ -104,6 +105,21 @@ export type ToolContext = {
    */
   approvedConnections?: string[];
   /**
+   * The operations already approved on those connections, this turn.
+   *
+   * The connection-wide approval above is right for the case it was written for
+   * — three clicks to answer one instruction trains people to approve without
+   * reading — and wrong for the call that empties the account. On 2026-09-26 a
+   * calendar was cleared by an operation the person had never approved; it asked
+   * only because it happened to be the turn's first call. One create beforehand
+   * and it would not have asked at all.
+   *
+   * So a `destructive` operation is covered by the connection's approval only if
+   * it is the operation that was approved. Repeating an approved destructive call
+   * stays free, which is what the original reasoning protects. #201.
+   */
+  approvedSlugs?: string[];
+  /**
    * Raised by whatever first notices this invocation is out of platform
    * budget, so the route can say so instead of "an error".
    *
@@ -154,7 +170,7 @@ export type ToolContext = {
    */
   offeredSlugs?: Set<string>;
   /**
-   * The argument schema of every operation `find_tool` has described this turn.
+   * Every operation `find_tool` has put in front of the model this turn, whole.
    *
    * The same provenance rule as `offeredSlugs`, and for the same reason: written
    * only by `find_tool`, only for operations it actually rendered, and read by
@@ -170,8 +186,15 @@ export type ToolContext = {
    * slug can legitimately arrive from an earlier turn or a standing grant, and
    * refusing what cannot be verified would break working behaviour to prevent a
    * mistake that has not happened.
+   *
+   * It carries the whole `ComposioTool` rather than the schema alone because the
+   * approval card needs the other two fields. On 2026-09-26 somebody asked for a
+   * few events to be deleted and was shown "Run GOOGLECALENDAR_CLEAR_CALENDAR on
+   * Google Calendar?" — a slug and a label. They approved in 2.7 seconds and the
+   * calendar was emptied. `description` said "deleting all events from it" and
+   * `destructive` was true, and neither reached the person being asked. #201.
    */
-  offeredSchemas?: Map<string, Record<string, unknown>>;
+  offeredOperations?: Map<string, ComposioTool>;
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };

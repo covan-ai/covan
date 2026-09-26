@@ -24,6 +24,9 @@ vi.mock("@/lib/legal", () => ({
 const readSession = vi.fn<() => Promise<SessionAnswer>>(async () => ({ kind: "none" }));
 vi.mock("@/lib/supabase/session", () => ({ readSession }));
 
+const setRemember = vi.fn();
+vi.mock("@/lib/supabase/auth-storage", () => ({ setRemember }));
+
 async function renderSignUp() {
   const { Route } = await import("./sign-up");
   const Component = (Route as unknown as { component: () => React.ReactElement }).component;
@@ -123,5 +126,25 @@ describe("signing up", () => {
     await fillAndSubmit(user);
 
     expect(navigate).toHaveBeenCalledWith({ to: "/app" });
+  });
+
+  /**
+   * Sign-up has no "Remember me" box, so it inherited whichever answer the
+   * machine last gave — and that answer is sticky. Somebody who once cleared
+   * the box on the sign-in page leaves `covan.auth.remember` reading "false"
+   * forever; a brand new account made in that browser then lands in
+   * sessionStorage and is gone the moment the tab closes, without anyone
+   * having been asked. A new account is a new answer, and the answer is yes.
+   */
+  it("settles where the session will live before creating the account", async () => {
+    const user = userEvent.setup();
+    await renderSignUp();
+
+    await fillAndSubmit(user);
+
+    expect(setRemember).toHaveBeenCalledWith(true);
+    expect(setRemember.mock.invocationCallOrder[0]).toBeLessThan(
+      signUp.mock.invocationCallOrder[0],
+    );
   });
 });

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/lib/supabase/client";
+import { setRemember } from "@/lib/supabase/auth-storage";
 import { readSession } from "@/lib/supabase/session";
 import { privacyLink, termsLink } from "@/lib/legal";
 import { LegalAnchor } from "@/components/legal-anchor";
@@ -62,6 +63,12 @@ function SignUp() {
 
     setError(null);
     setSubmitting(true);
+    // This page has no "Remember me" box, so without this it inherits whatever
+    // the last sign-in on this machine answered — and a cleared box is sticky.
+    // A new account would then be confined to the tab that made it. Before the
+    // call, like sign-in: a deployment that confirms nothing hands back a
+    // session as this returns, and the store has to be settled by then.
+    setRemember(true);
     const { data, error } = await supabase.auth.signUp({
       email,
       password: String(password ?? ""),

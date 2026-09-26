@@ -1703,3 +1703,24 @@ describe("a turn that dies mid-flight", () => {
     expect(assistant).toHaveLength(0);
   });
 });
+
+/**
+ * Telling the agent when it is.
+ *
+ * The prefix builder learned this in #196; this is the half that makes it reach
+ * production. Measured on 2026-09-26: asked for "every Monday until the end of
+ * October", the agent had no date to count Mondays from and inferred one from
+ * the wording of the request.
+ */
+describe("the date the agent is given", () => {
+  it("names today's date in the system prefix, so a dated request has an anchor", async () => {
+    const { app } = appWith({ question: "Put a meeting on the last Monday of October" });
+    await ask(app);
+    const body = completionCreate.mock.calls.find((c) => c[0].stream)?.[0];
+    const system = body.messages.find(
+      (m: { role: string; content: string }) =>
+        m.role === "system" && m.content.includes("Today is"),
+    );
+    expect(system).toBeDefined();
+  });
+});

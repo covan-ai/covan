@@ -79,6 +79,45 @@ function firstWords(query: string, n: number): string {
   return words.length <= n ? query : words.slice(0, n).join(" ");
 }
 
+/**
+ * How many parameter names an alternative is allowed to list.
+ *
+ * Names are short and a wide operation is rare; this is a ceiling against the
+ * one with ninety, not a budget anybody is expected to reach.
+ */
+const MAX_PARAM_NAMES = 24;
+
+/**
+ * An operation's parameter names, for the candidates that get no schema.
+ *
+ * `summarise` prints `needs:`, which is the required ones, and that is not the
+ * same question. Measured in production on 2026-09-26:
+ * `GOOGLECALENDAR_CREATE_EVENT` requires only `start_datetime`, so `needs:`
+ * alone still would not have named `timezone` — and Composio defaults that
+ * parameter to UTC when it is absent, which put five events on a real calendar
+ * three hours from where they were asked for (#192).
+ *
+ * Names only, never types or descriptions. A full schema for every candidate is
+ * exactly what `MAX_SCHEMA_CHARS` exists to prevent, and a name is enough both
+ * to call the operation and to know it is the wrong one. Free, too: the schemas
+ * arrive with the search, which is how `required` is populated at all.
+ */
+function parameterNames(tool: ComposioTool): string[] {
+  const properties = tool.inputSchema?.properties;
+  if (typeof properties !== "object" || properties === null) return [];
+  const required = new Set(tool.required);
+  // Required first, because a model reading a truncated list should meet the
+  // parameters it cannot omit.
+  const names = Object.keys(properties).sort((a, b) => {
+    const ar = required.has(a) ? 0 : 1;
+    const br = required.has(b) ? 0 : 1;
+    return ar - br;
+  });
+  return names
+    .slice(0, MAX_PARAM_NAMES)
+    .map((name) => (required.has(name) ? `${name} (required)` : name));
+}
+
 /** One candidate, in the two or three lines a model needs to choose it. */
 function summarise(tool: ComposioTool, connection: ToolConnection | undefined): string {
   const lines = [`${tool.slug} — ${tool.description || tool.name}`];
@@ -286,7 +325,13 @@ export const findToolTool: AgentTool = {
         others.length > 0
           ? `\n\nIf that is not the one you want, these also matched — ask for detail on a ` +
             `slug by name rather than searching again:\n` +
-            others.map((t) => `  ${t.slug} — ${t.description || t.name}`).join("\n")
+            others
+              .map((t) => {
+                const params = parameterNames(t);
+                const takes = params.length > 0 ? `\n    takes: ${params.join(", ")}` : "";
+                return `  ${t.slug} — ${t.description || t.name}${takes}`;
+              })
+              .join("\n")
           : "";
 
       const detailed =

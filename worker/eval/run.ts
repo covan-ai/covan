@@ -5,6 +5,15 @@
  *   bun eval/run.ts --variant v1 --judge          # score v1 against baseline
  *   bun eval/run.ts --variant v1 --only db-,doc-  # a subset, by id prefix
  *
+ * A change that is not to the code but to what is asked of the model — a
+ * different model, a different reasoning effort — needs a reference of its
+ * own, because the frozen one answers a different question. `--freeze` writes
+ * one and `--against` names which one to score against:
+ *
+ *   EVAL_MODEL=gpt-5 bun eval/run.ts --variant gpt5-default --freeze
+ *   EVAL_MODEL=gpt-5 bun eval/run.ts --variant gpt5-minimal --effort minimal \
+ *       --judge --against gpt5-default
+ *
  * Every invocation spends real money. The script prints what it is about to
  * run and what the last run cost before it starts, and `--dry` stops there.
  *
@@ -40,7 +49,8 @@ import { runCase, toTrace } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
 import { totalTokens } from "../src/lib/completion";
-import { loadEnv, requireAnthropicKey, isAccountError } from "./env";
+import { loadEnv, requireKeysFor, isAccountError } from "./env";
+import { resolvePlan, describeConfig, refsAtRisk, EvalConfigError } from "./config";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..", ".claude", "hillclimb", "agent-turn");
@@ -71,9 +81,26 @@ function arg(name: string): string | undefined {
 }
 const has = (name: string) => process.argv.includes(`--${name}`);
 
-const variant = arg("variant") ?? "baseline";
-const isBaseline = variant === "baseline";
-const shouldJudge = has("judge") && !isBaseline;
+const plan = (() => {
+  try {
+    return resolvePlan({
+      variant: arg("variant") ?? "baseline",
+      model: MODEL,
+      effort: arg("effort") ?? process.env.EVAL_EFFORT ?? null,
+      against: arg("against") ?? null,
+      freeze: has("freeze"),
+      refreeze: has("refreeze"),
+      judge: has("judge"),
+    });
+  } catch (err) {
+    if (!(err instanceof EvalConfigError)) throw err;
+    console.error(err.message);
+    process.exit(1);
+  }
+})();
+
+const variant = plan.variant;
+const shouldJudge = plan.judge;
 const only = arg("only")
   ?.split(",")
   .map((s) => s.trim())
@@ -83,9 +110,12 @@ const selected = only ? CASES.filter((c) => only.some((p) => c.id.startsWith(p))
 
 const dir = join(ROOT, variant);
 const tracesDir = join(dir, "traces");
-const refDir = join(ROOT, "baseline", "ref");
+/** Where a freeze writes: its own variant directory, not a fixed `baseline`. */
+const freezeDir = join(dir, "ref");
+/** Where a judged run reads: the variant named by `--against`. */
+const refDir = join(ROOT, plan.against, "ref");
 mkdirSync(tracesDir, { recursive: true });
-if (isBaseline) mkdirSync(refDir, { recursive: true });
+if (plan.freeze) mkdirSync(freezeDir, { recursive: true });
 
 const resultsPath = join(dir, "results.jsonl");
 const errorsPath = join(dir, "errors.jsonl");
@@ -113,7 +143,7 @@ if (existsSync(resultsPath)) {
 }
 
 const env = loadEnv();
-requireAnthropicKey(env);
+requireKeysFor(env, plan.judge ? [MODEL, JUDGE_MODEL] : [MODEL]);
 
 const todo: Array<{ kase: EvalCase; rep: number }> = [];
 for (const kase of selected) {
@@ -122,40 +152,110 @@ for (const kase of selected) {
   }
 }
 
+/**
+ * What the reference was produced with, from beside the reference itself.
+ *
+ * A comparison between two configurations is meaningless unless both are on
+ * screen, and the flag that sets one of them (`--against`) is the flag most
+ * easily left off: forget it on a gpt-5 run and every case is scored against
+ * Claude's answers, which reports "gpt-5 is unlike Claude" in the shape of a
+ * quality regression. Written since this file could freeze more than one
+ * reference, so an older one honestly reports that it did not say.
+ */
+function referenceConfig(): string {
+  const path = join(refDir, "CONFIG.json");
+  if (!existsSync(path)) return "not recorded (frozen before this was written)";
+  try {
+    const c = JSON.parse(readFileSync(path, "utf8")) as { model?: string; effort?: string | null };
+    return describeConfig(c.model ?? "unknown", c.effort ?? null);
+  } catch {
+    return "unreadable";
+  }
+}
+
 console.log(
   [
-    `variant   ${variant}${isBaseline ? "  (writes the frozen reference)" : ""}`,
-    `model     ${MODEL}`,
+    `variant   ${variant}${plan.freeze ? "  (writes the frozen reference)" : ""}`,
+    `candidate ${describeConfig(MODEL, plan.effort)}`,
+    shouldJudge ? `reference ${plan.against}  (${referenceConfig()})` : "reference  —",
     shouldJudge ? `judge     ${JUDGE_MODEL}` : "judge     off",
     `cases     ${selected.length} × ${REPS} rep(s) = ${selected.length * REPS}`,
     `to run    ${todo.length}${done.size > 0 ? `  (${done.size} already on disk)` : ""}`,
     `output    ${dir}`,
   ].join("\n"),
 );
+for (const warning of plan.warnings) console.log(`\n!! ${warning}`);
 
 if (todo.length === 0) {
-  // Still write the record. The fixture is on disk either way, and the run
-  // that first produced it may predate this file — refusing to describe a
-  // reference because nothing new was generated leaves it undescribed forever.
-  if (isBaseline) writeProvenance();
+  // And writes nothing. This branch used to re-emit the provenance record on
+  // the theory that a reference produced before that file existed should get
+  // one — which is true once and wrong every time after, because the date and
+  // commit it writes are this invocation's and the answers are not. It was
+  // caught doing exactly that: `--variant baseline --dry`, on a complete
+  // reference, restamped the committed fixture with a later commit and a
+  // dirty-tree warning. A flag documented as "stops before spending anything"
+  // had edited the repository. A reference that genuinely lacks a record gets
+  // a hand-written one, which is reviewable; a generated one that quietly
+  // contradicts the answers beside it is not.
   console.log("\nNothing to run.");
+  // A finished variant's tally, without buying it again. Reading a result back
+  // is the one thing a complete run should still be able to do.
+  if (shouldJudge) summarise();
   process.exit(0);
 }
+if (shouldJudge && !existsSync(refDir)) {
+  console.error(
+    `\nNo frozen reference at ${refDir} — run \`--variant ${plan.against} --freeze\` first.`,
+  );
+  process.exit(1);
+}
+
+/**
+ * Refuse to overwrite a reference that already exists.
+ *
+ * `ref/` is committed and `results.jsonl` is not, so in a fresh clone the
+ * resume set is empty while the fixture is fully present — and the first
+ * `--variant baseline` would rewrite every answer every published number was
+ * measured against, with no error and no diff anybody reads. A resumed freeze
+ * is unaffected: the cases it already bought are not in its queue.
+ */
+if (plan.freeze && !plan.refreeze && existsSync(freezeDir)) {
+  const frozen = readdirSync(freezeDir)
+    .filter((f) => f.endsWith(".json") && f !== "CONFIG.json")
+    .map((f) => f.slice(0, -".json".length));
+  const risk = refsAtRisk(
+    todo.map((t) => t.kase.id),
+    frozen,
+  );
+  if (risk.length > 0) {
+    console.error(
+      [
+        ``,
+        `${risk.length} case(s) already have a frozen reference in ${freezeDir}:`,
+        ``,
+        ...risk.map((id) => `  ${id}`),
+        ``,
+        `A reference is a fixed opponent; replacing it silently changes what every`,
+        `win rate measured against it was a rate of. Freeze a new variant instead,`,
+        `or pass --refreeze if replacing this one is genuinely what you mean.`,
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+}
+
 if (has("dry")) {
   console.log("\n--dry: stopping before spending anything.");
   process.exit(0);
 }
-if (shouldJudge && !existsSync(refDir)) {
-  console.error(`\nNo frozen reference at ${refDir} — run --variant baseline first.`);
-  process.exit(1);
-}
-
 type Row = {
   prompt_id: string;
   rep: number;
   prompt: string;
   tags: string[];
   model: string;
+  /** `null` is "no effort was sent", which is a different row from "medium". */
+  effort: string | null;
   status: "ok" | "truncated";
   stop_reason: string | null;
   grade: Record<string, number>;
@@ -192,7 +292,10 @@ async function one({ kase, rep }: { kase: EvalCase; rep: number }): Promise<void
   attempted += 1;
   const key = `${kase.id}_rep${rep}`;
   try {
-    const run = await runCase(env, kase, MODEL, { timeoutMs: CASE_TIMEOUT_MS });
+    const run = await runCase(env, kase, MODEL, {
+      timeoutMs: CASE_TIMEOUT_MS,
+      reasoningEffort: plan.effort,
+    });
     const { turn } = run;
 
     if (!turn.text.trim()) {
@@ -223,9 +326,9 @@ async function one({ kase, rep }: { kase: EvalCase; rep: number }): Promise<void
     let judgeModel: string | undefined;
     let judgeUsage: Verdict["usage"] | undefined;
 
-    if (isBaseline) {
+    if (plan.freeze) {
       writeFileSync(
-        join(refDir, `${kase.id}.json`),
+        join(freezeDir, `${kase.id}.json`),
         JSON.stringify({ text: turn.text, trajectory: turn.steps.map((s) => s.tool) }, null, 2),
       );
       // The reference cannot win against itself, and a missing primary metric
@@ -262,6 +365,7 @@ async function one({ kase, rep }: { kase: EvalCase; rep: number }): Promise<void
       prompt: kase.question,
       tags: kase.tags,
       model: MODEL,
+      effort: plan.effort,
       status: turn.finishReason === "length" ? "truncated" : "ok",
       stop_reason: turn.finishReason,
       grade,
@@ -351,10 +455,86 @@ if (abandoned) {
     `${attempted - ran} attempted and failed, ${todo.length - attempted} never attempted.`,
   );
 }
+if (shouldJudge) summarise();
 console.log(`Results: ${resultsPath}`);
-if (isBaseline) {
+// `ran > 0` for the same reason: a freeze where every case failed has
+// produced no answers, and stamping a record over the previous run's would
+// describe a reference that is not there.
+if (plan.freeze && ran > 0) {
   writeProvenance();
-  console.log(`Frozen reference: ${refDir}`);
+  console.log(`Frozen reference: ${freezeDir}`);
+}
+
+/**
+ * The four numbers a judged run is read for, so nobody has to derive them.
+ *
+ * Derived by hand the first time this eval scored a change, and the counts
+ * that mattered most were the ones the judge does not produce: steps against
+ * the reference's, and the failures that are not a matter of opinion. An
+ * answer that came back empty or stopped at the token ceiling is a regression
+ * whatever a grader thinks of its prose, and a run whose win rate looks fine
+ * while two cases returned nothing has not passed.
+ *
+ * Read back from `results.jsonl` rather than accumulated in memory, because a
+ * run is resumable and the totals belong to the variant, not to the last
+ * invocation of it.
+ */
+function summarise(): void {
+  if (!existsSync(resultsPath)) return;
+  const rows: Row[] = [];
+  for (const line of readFileSync(resultsPath, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line) as Row);
+    } catch {
+      // Same torn-last-line case the resume set tolerates.
+    }
+  }
+  if (rows.length === 0) return;
+
+  let win = 0;
+  let loss = 0;
+  let tie = 0;
+  let steps = 0;
+  let refSteps = 0;
+  let missingRef = 0;
+  const empty: string[] = [];
+  const truncated: string[] = [];
+
+  for (const row of rows) {
+    const w = row.grade.win;
+    if (w === 1) win += 1;
+    else if (w === 0) loss += 1;
+    else tie += 1;
+    steps += row.tool_calls;
+    const refPath = join(refDir, `${row.prompt_id}.json`);
+    if (existsSync(refPath)) {
+      const ref = JSON.parse(readFileSync(refPath, "utf8")) as { trajectory: string[] };
+      refSteps += ref.trajectory.length;
+    } else {
+      missingRef += 1;
+    }
+    if (row.meta.answer_chars === 0) empty.push(row.prompt_id);
+    if (row.status === "truncated") truncated.push(row.prompt_id);
+  }
+
+  const delta = refSteps === 0 ? 0 : Math.round(((steps - refSteps) / refSteps) * 100);
+  console.log(
+    [
+      "",
+      `${win} win / ${tie} tie / ${loss} loss   over ${rows.length} judged case(s)`,
+      `steps ${refSteps} -> ${steps}  (${delta >= 0 ? "+" : ""}${delta}%)` +
+        (missingRef > 0 ? `  — ${missingRef} case(s) had no reference to compare against` : ""),
+      // Not a matter of opinion, and the judge is not asked about them.
+      `empty answers ${empty.length}${empty.length ? `: ${empty.join(", ")}` : ""}`,
+      `hit the token ceiling ${truncated.length}${truncated.length ? `: ${truncated.join(", ")}` : ""}`,
+      "",
+      // The set resolves a gross regression and nothing finer. Printed with the
+      // result rather than left in the README, where it is read once.
+      "Calibrated as a tripwire: ~19-point standard error over eighteen cases,",
+      "so read this for broken turns, not for a few points either way.",
+    ].join("\n"),
+  );
 }
 
 /**
@@ -393,24 +573,37 @@ function writeProvenance(): void {
   // fixture and not the invocation: a resumed run's queue is short, and a
   // re-emit after a complete run has an empty one. Either would report a
   // reference far smaller than the one sitting next to the file.
-  const frozen = readdirSync(refDir)
-    .filter((f) => f.endsWith(".json"))
+  const frozen = readdirSync(freezeDir)
+    .filter((f) => f.endsWith(".json") && f !== "CONFIG.json")
     .map((f) => f.slice(0, -".json".length))
     .sort();
   const partial = frozen.length < CASES.length;
+  // The same two facts a judged run has to print, in a form it can read. A
+  // reference that cannot say what produced it can be compared against
+  // anything, and the mistake looks exactly like a result.
   writeFileSync(
-    join(refDir, "PROVENANCE.md"),
+    join(freezeDir, "CONFIG.json"),
+    JSON.stringify({ model: MODEL, effort: plan.effort }, null, 2) + "\n",
+  );
+  writeFileSync(
+    join(freezeDir, "PROVENANCE.md"),
     [
       "# What generated this reference",
       "",
       "Written by `eval/run.ts --variant baseline`. Do not edit by hand.",
       "",
-      `- **Date** ${new Date().toISOString()}`,
+      `- **Date** ${new Date().toISOString()}` +
+        " — when this record was written; a reference assembled over more than one" +
+        " invocation records the last one to add to it",
       `- **Commit** \`${sha}\`` +
         (dirty
           ? " — **with uncommitted changes in the tree**, so this sha does not fully identify the code that ran"
           : ""),
       `- **Model** \`${MODEL}\``,
+      `- **Reasoning effort** ` +
+        (plan.effort === null
+          ? "none sent — the provider's own default, which is what production sends"
+          : `\`${plan.effort}\``),
       `- **Reps** ${REPS}`,
       `- **Cases** ${frozen.length} of ${CASES.length}` +
         (partial ? " — a partial freeze; every case not listed below has no reference at all" : ""),

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CompletionEnv } from "../src/lib/completion";
+import { providerFor } from "../src/lib/models";
 
 /**
  * The keys, from the environment or from `.dev.vars`.
@@ -67,17 +68,40 @@ export function isAccountError(err: unknown): boolean {
   );
 }
 
-/** Stop before spending anything if the one key every case needs is absent. */
-export function requireAnthropicKey(env: CompletionEnv): void {
-  if (env.ANTHROPIC_API_KEY) return;
-  console.error(
-    [
-      "ANTHROPIC_API_KEY is not set, and every case in this eval is a Claude model.",
-      "",
-      "Either export it, or add a line to worker/.dev.vars (gitignored):",
-      "",
-      "    ANTHROPIC_API_KEY=sk-ant-...",
-    ].join("\n"),
+/**
+ * Stop before spending anything if a key some model in this run needs is absent.
+ *
+ * Not "the Anthropic key", which is what this checked when every case was a
+ * Claude case and the judge was the only other model. A run now names its own
+ * model — `EVAL_MODEL=gpt-5` is the whole point of an effort variant — so the
+ * keys a run needs are a property of the run, and checking the wrong one both
+ * refuses work that would have succeeded and lets a run start that cannot.
+ *
+ * Every model is asked for at once so a missing pair is one message rather
+ * than two runs.
+ */
+export function requireKeysFor(env: CompletionEnv, models: readonly string[]): void {
+  const needed = new Map<string, string[]>();
+  for (const model of models) {
+    const provider = providerFor(model);
+    const key = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+    if (env[key as keyof CompletionEnv]) continue;
+    const already = needed.get(key) ?? [];
+    if (!already.includes(model)) already.push(model);
+    needed.set(key, already);
+  }
+  if (needed.size === 0) return;
+
+  const lines = ["Missing API keys for the models this run uses:", ""];
+  for (const [key, users] of needed) lines.push(`  ${key}   needed by ${users.join(", ")}`);
+  lines.push(
+    "",
+    "Either export them, or add a line each to worker/.dev.vars (gitignored):",
+    "",
+    ...[...needed.keys()].map(
+      (k) => `    ${k}=${k === "ANTHROPIC_API_KEY" ? "sk-ant-..." : "sk-..."}`,
+    ),
   );
+  console.error(lines.join("\n"));
   process.exit(1);
 }

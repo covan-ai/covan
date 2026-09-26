@@ -53,7 +53,7 @@ export function WorkspaceActivitySection({ isAdmin }: { isAdmin: boolean }) {
       <SectionHeading
         title="What happened."
         turn="And who."
-        description="Deletions, restores, roles and invitations. Written by the database rather than by the app, so nothing that skips the app can skip this."
+        description="Deletions, restores, roles and invitations — written by the database, so nothing that skips the app can skip this."
       />
 
       <div className="mt-6">

@@ -70,8 +70,8 @@ export function ToolConnectionCard({ connection }: { connection: ToolConnection 
         {connection.transport === "sql" ? (
           <>
             Reached through{" "}
-            <span className="font-mono text-xs">{connection.rpc ?? "covan_query"}</span>. Whether it
-            can write is decided by that function, not by this page.
+            <span className="font-mono text-xs">{connection.rpc ?? "covan_query"}</span>, which is
+            also what decides whether it can write.
           </>
         ) : (
           <>Allowed methods: {connection.allowedMethods.join(", ") || "none"}.</>

@@ -68,8 +68,8 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
                 long it takes are both easier to accept as a description than as
                 a surprise. */}
             <p className="text-xs text-muted-foreground">
-              Lands as a document in this agent&rsquo;s reports bundle, grounded in the conversation
-              and its knowledge, and searchable in chat from then on. Takes up to a minute.
+              Lands as a document in this agent&rsquo;s reports bundle, searchable in chat from then
+              on. Takes up to a minute.
             </p>
           </div>
           <div className="flex justify-end gap-2">

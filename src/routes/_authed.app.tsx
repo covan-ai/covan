@@ -428,8 +428,8 @@ function AgentGallery({
           description={
             agents.length === 0
               ? canCreate
-                ? "Agents are shared with everyone in the workspace — create the first one and the whole team can use it."
-                : "Agents are shared with everyone in the workspace. Nobody has made one yet, and adding them is a member's job — ask an admin or a member to start one."
+                ? "Agents are shared with everyone in the workspace."
+                : "Agents are shared with everyone in the workspace. Ask an admin or a member to start one."
               : tab === "favorites"
                 ? "Star an agent to keep it at the top of this list."
                 : undefined

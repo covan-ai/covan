@@ -165,7 +165,7 @@ function IntegrationsPage() {
             ) : (
               <EmptyState
                 title="No service is connected."
-                description="An agent can search what you have uploaded. Connect a database or an API and it can go and look something up while it answers — and schedule itself to do it again."
+                description="Connect a database or an API and an agent can go and look something up while it answers — and schedule itself to do it again."
               />
             )}
             <AddToolConnectionCard />

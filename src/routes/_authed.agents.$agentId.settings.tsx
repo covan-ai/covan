@@ -187,7 +187,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
               </Select>
               <p className="text-xs text-muted-foreground">
                 Brainstorm mode makes this agent generate and pressure-test ideas instead of
-                answering directly — good for finding new directions.
+                answering directly.
               </p>
             </div>
             <div className="space-y-3">
@@ -203,7 +203,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
               </div>
               <p className="text-xs text-muted-foreground">
                 Allow this agent to search the internet when your team's documents don't contain the
-                answer. Useful for current events or public information.
+                answer.
               </p>
             </div>
             <TemperatureField
@@ -398,7 +398,7 @@ function TemperatureField({
         {!accepted ? (
           <>
             <span className="font-mono">{model}</span> decides this for itself and rejects any other
-            value, so the agent runs on its own setting.
+            value.
           </>
         ) : value === null ? (
           "Left to the mode: steady in Normal, wide-ranging in Brainstorm."

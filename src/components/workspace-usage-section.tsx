@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type UsageMonth } from "@/lib/api-client";
 import { SectionHeading } from "@/components/page-container";
-import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
+import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
 
 const compact = (n: number) =>
@@ -87,11 +87,18 @@ export function WorkspaceUsageSection() {
       </SectionCard>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        Everything anybody in this workspace has ever asked, at list prices. The model shown is the
-        agent's current one, and it prices every reply that agent has ever sent — changing an
-        agent's model re-prices its history, because a reply does not record which model wrote it.
-        Nothing here is broken down by person, and there is no view that does.
+        Everything anybody in this workspace has ever asked, at list prices. Nothing here is broken
+        down by person, and there is no view that does.
       </p>
+
+      {/* The methodology folds; the two claims above it do not. One says what
+          the figures cover and the other is a promise about what they never
+          will. */}
+      <Disclosure className="mt-3" label="How a reply is priced">
+        The model shown is the agent's current one, and it prices every reply that agent has ever
+        sent — changing an agent's model re-prices its history, because a reply does not record
+        which model wrote it.
+      </Disclosure>
     </section>
   );
 }

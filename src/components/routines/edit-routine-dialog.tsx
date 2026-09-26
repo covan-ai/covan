@@ -104,8 +104,8 @@ export function EditRoutineDialog({
                     : routine.sourceUrl}
               </p>
               <p className="text-xs text-muted-foreground">
-                A routine remembers how far it has read this source, so the source itself is fixed.
-                To watch something else, delete it and make a new one.
+                A routine remembers how far it has read, so the source is fixed. To watch something
+                else, delete it and make a new one.
               </p>
             </div>
 

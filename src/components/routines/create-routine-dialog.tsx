@@ -264,8 +264,8 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                   </Select>
                   {triggerKind !== "schedule" && (
                     <p className="text-xs text-muted-foreground">
-                      You will get a URL to paste into whatever should start it. Whatever it POSTs
-                      is what the agent reads.
+                      You will get a URL to paste into whatever should start it, and whatever it
+                      POSTs is what the agent reads.
                     </p>
                   )}
                 </div>

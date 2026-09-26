@@ -4,6 +4,7 @@ import { api } from "@/lib/api-client";
 import { keyHint } from "@/lib/provider-keys";
 import { isAdminRole } from "@/lib/roles";
 import { ProviderKeyForm } from "@/components/provider-key-form";
+import { Disclosure } from "@/components/section-card";
 
 /**
  * Door one, on its own, because it is the only part of the wall an admin needs
@@ -56,8 +57,13 @@ export function WorkspaceProviderKeys() {
           was the one who had run out. */}
       <p className="text-xs text-muted-foreground">
         Set the workspace's own key and Covan carries on with it whenever somebody here runs out.
-        Each person spends their monthly allowance first; only what runs past it is billed to you.
       </p>
+      {/* Folded rather than cut: who pays for what is the first question an
+          admin asks about this field, and the last thing they want between them
+          and it on the way back to change a key. */}
+      <Disclosure label="Who pays for what">
+        Each person spends their monthly allowance first; only what runs past it is billed to you.
+      </Disclosure>
       <ProviderKeyForm
         provider="openai"
         label="OpenAI key"

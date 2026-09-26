@@ -161,7 +161,7 @@ export function DeliveryChannelsCard() {
           <p className="px-5 py-4 text-sm text-muted-foreground">Loading…</p>
         ) : channels.length === 0 ? (
           <p className="px-5 py-4 text-sm text-muted-foreground">
-            No delivery channels yet. Add one to send routine updates to Slack, to an inbox, or to
+            No delivery channels yet. Add one to send routine updates to Slack, an inbox, or
             anything that can take a webhook.
           </p>
         ) : (
@@ -274,8 +274,7 @@ export function DeliveryChannelsCard() {
                 </Select>
                 {kind === "webhook" && (
                   <p className="text-xs text-muted-foreground">
-                    A signed POST to any endpoint you run. Covan mints a signing secret and shows it
-                    once, on the next screen.
+                    A signed POST to any endpoint you run.
                   </p>
                 )}
               </div>

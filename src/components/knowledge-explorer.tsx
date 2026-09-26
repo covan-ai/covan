@@ -1151,7 +1151,7 @@ function PaneHeader({
       {readers ? (
         <p className="mt-2 text-meta text-muted-foreground">
           {readers.length === 0
-            ? "No agent reads this bundle yet — attach it from an agent's Knowledge tab and everything in it becomes retrievable."
+            ? "No agent reads this bundle yet — attach it from an agent's Knowledge tab."
             : `Read by ${listOf(readers)}.`}
         </p>
       ) : null}

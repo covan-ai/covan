@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { SectionHeading } from "@/components/page-container";
-import { SectionCard } from "@/components/section-card";
+import { Disclosure, SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
 import { api, ApiError } from "@/lib/api-client";
 import { toast } from "sonner";
@@ -59,21 +59,25 @@ export function ExportWorkspaceSection({
         description="Everything this workspace holds, in one archive, with the SQL to put it back into a Covan you run yourself."
       />
       <SectionCard className="mt-6 space-y-5">
+        {/* These two stay on the screen. The first is the scope of the file
+            and the second is a consequence somebody meets days later, on a
+            machine that is not this one — "should have been told here" is the
+            whole reason it is written down at all. The inventory folds. */}
         <p className="text-sm text-muted-foreground">
+          It holds what <span className="text-foreground">you</span> can see — somebody else&rsquo;s
+          private chats are not in your copy. Delivery channels come back without their secrets, so
+          a restore brings every routine back <span className="text-foreground">paused</span>,
+          waiting for its credential rather than failing on a schedule.
+        </p>
+        <Disclosure label="What the file contains">
           Agents and their personas, knowledge bundles, every document and its original file, chats
           and their messages, brainstorm boards, and routines with their schedules. Retrieval chunks
           are left out — they are rebuilt from the documents after a restore, and they would be the
-          largest thing in the file by far.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          It holds what <span className="text-foreground">you</span> can see. Somebody else&rsquo;s
-          private chats are not in your copy. Delivery channels come back without their secrets —
-          those are encrypted with a key belonging to this install — so a restore brings every
-          routine back <span className="text-foreground">paused</span>, waiting for its credential
-          rather than failing on a schedule. The archive&rsquo;s{" "}
+          largest thing in the file by far. Delivery secrets are encrypted with a key belonging to
+          this install, so they cannot travel; the archive&rsquo;s{" "}
           <code className="text-xs">manifest.json</code> repeats all of this, so the file explains
           itself later, when nobody remembers this page.
-        </p>
+        </Disclosure>
         <div className="flex items-center gap-3">
           <Button onClick={download} disabled={busy || !workspaceId} variant="outline">
             {busy ? "Building the archive…" : "Download the archive"}

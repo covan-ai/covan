@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type CoverageAgent, type CoverageTotals } from "@/lib/api-client";
 import { SectionHeading } from "@/components/page-container";
-import { SectionCard, DataRow, Chip, EmptyState } from "@/components/section-card";
+import { SectionCard, DataRow, Chip, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
 import { Button } from "@/components/ui/button";
 
@@ -72,7 +72,7 @@ export function WorkspaceCoverageSection() {
     <section className="mt-16">
       <SectionHeading
         title="What nothing was close to."
-        description="Every reply records whether a passage your team wrote actually matched the question. This is that, by agent — never by person, and never the question itself."
+        description="By agent — never by person, and never the question itself."
         action={<WindowPicker days={days} onChange={setDays} />}
       />
 
@@ -102,15 +102,24 @@ export function WorkspaceCoverageSection() {
         </p>
       )}
 
-      <p className="mt-3 text-xs text-muted-foreground">
-        A reply that fell back to whole documents is usually still a good answer — it means no
-        passage in your knowledge was a close match for what was asked, which is the gap worth
-        writing something for. A reply with nothing to stand on is a different problem: that agent
-        has no usable documents attached.
-        {totals.unrecorded > 0
-          ? ` ${totals.unrecorded} ${totals.unrecorded === 1 ? "reply" : "replies"} in this window predate the recording and are left out of every figure above.`
-          : ""}
-      </p>
+      {/* Not folded with the rest: this one qualifies the percentage above it.
+          A figure whose denominator is a sample rather than a census has to say
+          so on the same screen as the figure — DESIGN.md's first failure mode is
+          about exactly the claim this sentence backs. */}
+      {totals.unrecorded > 0 && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {totals.unrecorded} {totals.unrecorded === 1 ? "reply" : "replies"} in this window predate
+          the recording and are left out of every figure above.
+        </p>
+      )}
+
+      <Disclosure className="mt-3" label="How this is measured">
+        Every reply records whether a passage your team wrote actually matched the question. A reply
+        that fell back to whole documents is usually still a good answer — it means no passage in
+        your knowledge was a close match for what was asked, which is the gap worth writing
+        something for. A reply with nothing to stand on is a different problem: that agent has no
+        usable documents attached.
+      </Disclosure>
     </section>
   );
 }

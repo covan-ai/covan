@@ -458,6 +458,24 @@ function approvedConnectionsFrom(steps: AgentStep[]): string[] {
   return [...out];
 }
 
+/**
+ * The operations those approvals were actually about.
+ *
+ * Read the same way and from the same steps, so the two cannot disagree: a call
+ * that succeeded is one somebody let through. `run_tool` uses it to decide that a
+ * destructive operation nobody has approved is not covered by the connection's
+ * approval. See `ToolContext.approvedSlugs`.
+ */
+function approvedSlugsFrom(steps: AgentStep[]): string[] {
+  const out = new Set<string>();
+  for (const step of steps) {
+    if (step.tool !== "run_tool" || step.status !== "ok") continue;
+    const slug = (step.request as { slug?: unknown } | null)?.slug;
+    if (typeof slug === "string" && slug) out.add(slug);
+  }
+  return [...out];
+}
+
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   /**
    * The three numbers a ceiling is made of now, instead of one.
@@ -752,7 +770,11 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
               // Recomputed per call rather than once per turn: a call that
               // lands mid-batch unlocks its connection for the next one, which
               // is the whole point of scoping the approval to a connection.
-              { ...opts.ctx, approvedConnections: approvedConnectionsFrom(steps) },
+              {
+                ...opts.ctx,
+                approvedConnections: approvedConnectionsFrom(steps),
+                approvedSlugs: approvedSlugsFrom(steps),
+              },
               toolTimeoutMs,
               opts.signal,
             );

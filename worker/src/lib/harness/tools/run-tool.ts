@@ -1,4 +1,4 @@
-import { composioConfigured, executeTool } from "../../composio/client";
+import { composioConfigured, executeTool, type ComposioTool } from "../../composio/client";
 import { COMPOSIO_CALL_TOKENS } from "../../entitlements";
 import { loadConnection, type ToolConnection } from "../connections";
 import { composioAccount } from "../secrets";
@@ -49,6 +49,51 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 
 /** Enough of Composio's own failure to act on, not enough to fill a turn. */
 const MAX_ERROR_CHARS = 2_000;
+
+/**
+ * The first sentence of a description — the part that is the act itself.
+ *
+ * Composio's descriptions run to three or four sentences of caveat. The first one
+ * says what the operation does, and that is what belongs in a heading somebody
+ * reads in two seconds. The rest reaches them as a `does` row on the same card.
+ */
+function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  const stop = trimmed.search(/\.(\s|$)/);
+  return (stop === -1 ? trimmed : trimmed.slice(0, stop)).trim();
+}
+
+/**
+ * What the person is asked, in words about the act rather than its name.
+ *
+ * This used to be `Run ${slug} on ${label}?` and nothing else. On 2026-09-26 that
+ * sentence was the whole of what somebody saw before their Google Calendar was
+ * emptied: they had asked for a few recurring events to be deleted, the agent
+ * chose `GOOGLECALENDAR_CLEAR_CALENDAR`, and a slug nobody has read is
+ * indistinguishable from the targeted delete they asked for. Approved in 2.7
+ * seconds, which is the correct reading time for the request they had made. #201.
+ *
+ * The description and `destructive` were both in hand at that moment and neither
+ * reached the card. The slug has not gone anywhere — it is a `proposal` row, and
+ * the card prints those underneath — so this loses no precision and gains the
+ * sentence that would have stopped the click.
+ *
+ * Falls back to the old wording when the operation is not known, which is the same
+ * case that skips argument checking: a slug from an earlier turn or a standing
+ * grant. Saying less is right there; inventing a description would be worse.
+ */
+function confirmationSummary(
+  operation: ComposioTool | undefined,
+  slug: string,
+  label: string,
+): string {
+  const described = operation?.description?.trim();
+  if (!described) return `Run ${slug} on ${label}?`;
+  const act = firstSentence(described);
+  return operation?.destructive === true
+    ? `${label}: ${act}. This changes data there and cannot be undone from here.`
+    : `${label}: ${act}.`;
+}
 
 /** How many complaints one refusal carries. Enough to fix in one go, not a wall. */
 const MAX_COMPLAINTS = 6;
@@ -250,10 +295,11 @@ export const runToolTool: AgentTool = {
     // is going to be refused anyway.
     //
     // Only for an operation `find_tool` described this turn — see
-    // `offeredSchemas`. A confirmed call is checked too: the arguments are the
+    // `offeredOperations`. A confirmed call is checked too: the arguments are the
     // ones that were proposed, so if they are wrong, spending the call to be
     // told so is the one outcome nobody wanted.
-    const schema = ctx.offeredSchemas?.get(slug);
+    const operation = ctx.offeredOperations?.get(slug);
+    const schema = operation?.inputSchema;
     if (schema) {
       const wrong = complaints(callArgs, schema);
       if (wrong.length > 0) {
@@ -304,10 +350,16 @@ export const runToolTool: AgentTool = {
     }
 
     // Guard 3. Three ways to be allowed, in the order that costs least.
+    // How far the connection's own approval reaches. Everywhere, except onto a
+    // destructive operation nobody has approved yet — see `approvedSlugs`. A
+    // standing grant still wins, because that is per-slug consent given
+    // deliberately on the Integrations page.
+    const coveredByConnection =
+      (ctx.approvedConnections ?? []).includes(connection.id) &&
+      (operation?.destructive !== true || (ctx.approvedSlugs ?? []).includes(slug));
+
     const approved =
-      ctx.confirmed === true ||
-      (ctx.approvedConnections ?? []).includes(connection.id) ||
-      (await alwaysAllowed(ctx, connection, slug));
+      ctx.confirmed === true || coveredByConnection || (await alwaysAllowed(ctx, connection, slug));
 
     if (!approved) {
       // Nobody is watching a scheduled run, so an unanswerable question is
@@ -329,12 +381,16 @@ export const runToolTool: AgentTool = {
       }
       return {
         kind: "needs_confirmation",
-        summary: `Run ${slug} on ${connection.label}?`,
+        summary: confirmationSummary(operation, slug, connection.label),
         proposal: {
           kind: "run_tool",
           connection: { id: connection.id, label: connection.label },
           toolkit: connection.toolkit_slug,
           slug,
+          // The whole description, under the heading's first sentence. The card
+          // prints proposal fields as rows, so the caveats Composio puts in
+          // sentences two and three reach the person too.
+          does: operation?.description?.trim() || undefined,
           arguments: callArgs,
         },
       };
@@ -394,7 +450,7 @@ export const runToolTool: AgentTool = {
        */
       if (result.status === 404 && result.message.includes("Tool_ToolNotFound")) {
         ctx.offeredSlugs?.delete(slug);
-        ctx.offeredSchemas?.delete(slug);
+        ctx.offeredOperations?.delete(slug);
         const left = [...(ctx.offeredSlugs ?? [])];
         return {
           kind: "error",

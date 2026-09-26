@@ -97,10 +97,10 @@ export function buildToolContext(input: {
     // opinion nobody wanted — and the loop that follows repopulates it from
     // its own `find_tool` results. See `offeredSlugs` in `registry.ts`.
     offeredSlugs: new Set<string>(),
-    // And the schemas behind those slugs, so `run_tool` can refuse a call whose
-    // arguments contradict one instead of paying Composio to say so. Same
-    // lifetime and same provenance as the set above.
-    offeredSchemas: new Map<string, Record<string, unknown>>(),
+    // And the operations behind those slugs, so `run_tool` can refuse a call
+    // whose arguments contradict one, and so the approval card can say what the
+    // operation does. Same lifetime and same provenance as the set above.
+    offeredOperations: new Map(),
   };
 }
 

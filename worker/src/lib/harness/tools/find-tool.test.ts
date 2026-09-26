@@ -461,3 +461,60 @@ describe("the alternatives beside a schema", () => {
     expect(alternatives).toContain("start_datetime (required)");
   });
 });
+
+/**
+ * Searching when the workspace has something connected.
+ *
+ * Composio's `/tools?search=…` answers alphabetically, and ten results never
+ * reach the g's. Measured in production on 2026-09-26, with Google Calendar
+ * connected and active throughout: four separate turns searched without a
+ * `toolkit`, got `_2chat`, `acculynx`, `active_campaign`, `alpha_vantage` and
+ * `blackboard` — every one of them marked NOT CONNECTED — and told the person
+ * the agent had no calendar. Twice in those words.
+ *
+ * The connected-first sort cannot reach this: it reorders the rows that came
+ * back, and the connected application was never among them. #193.
+ */
+describe("searching with a connected app in the workspace", () => {
+  const TWO_CHAT = {
+    slug: "_2CHAT_LIST_WEBHOOKS",
+    name: "List webhooks",
+    description: "List webhook subscriptions for WhatsApp.",
+    toolkit: { slug: "_2CHAT" },
+    input_parameters: { required: [] },
+  };
+  const CALENDAR_CREATE = {
+    slug: "GOOGLECALENDAR_CREATE_EVENT",
+    name: "Create event",
+    description: "Create an event on a calendar.",
+    toolkit: { slug: "GOOGLECALENDAR" },
+    input_parameters: { required: ["start_datetime"] },
+  };
+  const CALENDAR_CONNECTION = {
+    ...GMAIL_CONNECTION,
+    id: "conn-cal",
+    label: "Google Calendar",
+    toolkit_slug: "googlecalendar",
+  };
+
+  /** The catalogue as it actually behaves: alphabetical, and the g's never fit. */
+  function alphabeticalCatalogue() {
+    fetchMock.mockImplementation((url: unknown) => {
+      const toolkit = new URL(String(url)).searchParams.get("toolkit_slug");
+      return Promise.resolve(
+        catalogue(toolkit === "GOOGLECALENDAR" ? [CALENDAR_CREATE] : [TWO_CHAT]),
+      );
+    });
+  }
+
+  it("finds a connected app's operation that the catalogue-wide search missed", async () => {
+    alphabeticalCatalogue();
+    const out = await findToolTool.run({ query: "create event" }, ctxWith([CALENDAR_CONNECTION]));
+    const content = out.kind === "ok" ? out.content : "";
+
+    expect(content).toContain("GOOGLECALENDAR_CREATE_EVENT");
+    // With the id beside it, which is the whole difference between "you could
+    // connect a calendar" and an operation the agent can actually run.
+    expect(content).toContain("connectionId: conn-cal");
+  });
+});

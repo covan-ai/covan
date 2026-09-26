@@ -33,7 +33,7 @@ export function LegalLayout({
         <div className={`mx-auto flex h-16 items-center justify-between px-5 lg:px-8 ${header}`}>
           <Link to="/" className="flex items-center gap-2.5">
             <BrandMark />
-            <span className="font-dm text-lg font-semibold leading-none tracking-[-0.02em]">
+            <span className="font-dm text-xl font-semibold leading-none tracking-[-0.02em]">
               Covan
             </span>
           </Link>

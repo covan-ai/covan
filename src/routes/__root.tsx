@@ -6,6 +6,7 @@ import {
   useRouter,
   HeadContent,
   Scripts,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
@@ -38,7 +39,19 @@ function NotFoundComponent() {
   );
 }
 
-function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+/*
+ * `ErrorComponentProps` rather than a hand-written `{ error: Error }`.
+ *
+ * The router widened `error` to `unknown` in 1.170.38, which is the honest
+ * type: what reaches an error boundary is whatever was thrown, and `throw 3`
+ * is legal. The old annotation compiled only because it was narrower than the
+ * truth, and this component never needed the narrowing — `error` goes to
+ * `console.error`, which takes anything.
+ *
+ * Taking the type from the router rather than restating it means the next
+ * widening is not a second version of this fix.
+ */
+function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
 

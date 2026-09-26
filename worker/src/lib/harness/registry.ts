@@ -153,6 +153,25 @@ export type ToolContext = {
    * behaviour to prevent a mistake that has not happened.
    */
   offeredSlugs?: Set<string>;
+  /**
+   * The argument schema of every operation `find_tool` has described this turn.
+   *
+   * The same provenance rule as `offeredSlugs`, and for the same reason: written
+   * only by `find_tool`, only for operations it actually rendered, and read by
+   * `run_tool` so a malformed call can be refused here instead of at Composio.
+   *
+   * It exists because `wasBilled` returns true for everything but 501 and 502, so
+   * a `400 Invalid request data provided` costs exactly what a call that worked
+   * costs. Ten of them on one task on 2026-09-26, each one naming a field and the
+   * type it wanted — all of it checkable against a schema this turn already had
+   * in hand and then dropped on the floor.
+   *
+   * Absent means no check, which is the same shape as an empty `offeredSlugs`: a
+   * slug can legitimately arrive from an earlier turn or a standing grant, and
+   * refusing what cannot be verified would break working behaviour to prevent a
+   * mistake that has not happened.
+   */
+  offeredSchemas?: Map<string, Record<string, unknown>>;
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };

@@ -129,6 +129,15 @@ function parameterNames(tool: ComposioTool): string[] {
     .map((name) => (required.has(name) ? `${name} (required)` : name));
 }
 
+/**
+ * Hand a candidate's schema to `run_tool`, so a malformed call is refused here
+ * rather than bought from Composio. See `ToolContext.offeredSchemas` — same
+ * provenance rule as `offeredSlugs`, written in the same places.
+ */
+function remember(ctx: ToolContext, tool: ComposioTool): void {
+  if (tool.inputSchema) ctx.offeredSchemas?.set(tool.slug, tool.inputSchema);
+}
+
 /** One candidate, in the two or three lines a model needs to choose it. */
 function summarise(tool: ComposioTool, connection: ToolConnection | undefined): string {
   const lines = [`${tool.slug} — ${tool.description || tool.name}`];
@@ -408,12 +417,19 @@ export const findToolTool: AgentTool = {
       // to run. The alternatives count: they are in the answer by name, so a
       // model that takes one of them is following this tool's own advice.
       ctx.offeredSlugs?.add(full.tool.slug);
-      for (const t of others) ctx.offeredSlugs?.add(t.slug);
+      remember(ctx, full.tool);
+      for (const t of others) {
+        ctx.offeredSlugs?.add(t.slug);
+        remember(ctx, t);
+      }
       return { kind: "ok", content: detailed };
     }
 
     const shortlist = ranked.slice(0, MAX_RESULTS);
-    for (const tool of shortlist) ctx.offeredSlugs?.add(tool.slug);
+    for (const tool of shortlist) {
+      ctx.offeredSlugs?.add(tool.slug);
+      remember(ctx, tool);
+    }
     const listed = shortlist
       .map((tool) => summarise(tool, byToolkit.get(tool.toolkit)))
       .join("\n\n");

@@ -44,6 +44,7 @@ const GMAIL_CONNECTION = {
 function ctxWith(
   connections: Record<string, unknown>[] = [],
   offeredSlugs?: Set<string>,
+  offeredSchemas?: Map<string, Record<string, unknown>>,
 ): ToolContext {
   return {
     db: {
@@ -60,6 +61,7 @@ function ctxWith(
     agentId: "agent-1",
     userId: "user-1",
     offeredSlugs,
+    offeredSchemas,
   };
 }
 
@@ -516,5 +518,36 @@ describe("searching with a connected app in the workspace", () => {
     // With the id beside it, which is the whole difference between "you could
     // connect a calendar" and an operation the agent can actually run.
     expect(content).toContain("connectionId: conn-cal");
+  });
+});
+
+/**
+ * Handing the schema on to `run_tool`.
+ *
+ * `offeredSlugs` has a precedent this must not repeat: `message_steps.tokens` was
+ * added in 0060 and is NULL on every row ever written, because nothing filled it.
+ * A map nobody writes to is a guard that never fires, and it fails silently in
+ * the direction where everything looks fine. #195.
+ */
+describe("what run_tool is allowed to check against", () => {
+  const SEND = {
+    slug: "GMAIL_SEND_EMAIL",
+    name: "Send email",
+    description: "Send an email.",
+    toolkit: { slug: "GMAIL" },
+    input_parameters: {
+      required: ["recipient_email"],
+      properties: { recipient_email: { type: "string" } },
+    },
+  };
+
+  it("records the schema of every candidate it listed", async () => {
+    const schemas = new Map<string, Record<string, unknown>>();
+    fetchMock.mockResolvedValue(catalogue([SEND]));
+    await findToolTool.run({ query: "send" }, ctxWith([], undefined, schemas));
+
+    // The schemas arrive with the search, so this is the one already in hand —
+    // not a second request.
+    expect(schemas.get("GMAIL_SEND_EMAIL")).toMatchObject({ required: ["recipient_email"] });
   });
 });

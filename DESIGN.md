@@ -58,9 +58,13 @@ tokens live in `src/styles.css` and the `text-*` utilities come from them.
 | 28/32 | literal         | DM Sans | section headlines                                       |
 | 38/44 | literal         | DM Sans | page titles                                             |
 
-The one place a literal size is still right is a monogram inside an avatar
-tile, which is sized by its tile rather than by its role: `text-[10px]` at 24
-and 28px, `text-xs` at 36px and up.
+The one place an off-ladder size is still right is a glyph sized by the box it
+sits in rather than by a role — a monogram inside an avatar tile, an emoji in a
+tile or a picker. A monogram takes `text-[10px]` at 24 and 28px and `text-xs` at
+36px and up; an emoji takes `text-lg` in a 36-40px tile or picker row and
+`text-3xl` in the 64px one the empty chat screen opens with. Neither is a type
+role, so neither has a step on the ladder; if you find yourself sizing *words*
+this way, the role is one of the ten above.
 
 What this replaced: the same role written three ways in three files — 17px and
 18px card titles side by side, a 15px that was a row title in one file and a
@@ -78,6 +82,7 @@ necessary, the role is probably one of the ten above.
 | `Panel`                                 | `components/section-card.tsx`   | a panel that genuinely floats: white, 20px radius, window-chrome bar              |
 | `DataRow` / `Chip`                      | `components/section-card.tsx`   | the §7.8 workhorses; chip colour carries meaning                                  |
 | `EmptyState`                            | `components/section-card.tsx`   | "nothing here yet", everywhere it happens                                         |
+| `Disclosure`                            | `components/section-card.tsx`   | the sentence somebody needs once: a native `<details>`, closed, inside a card      |
 | `UserAvatar` / `AgentAvatar`            | `components/avatars.tsx`        | people (neutral tile) and agents (neutral in lists, amber for the one you are in) |
 
 ## The five failure modes

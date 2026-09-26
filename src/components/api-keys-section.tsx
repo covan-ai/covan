@@ -85,8 +85,7 @@ export function ApiKeysSection() {
       <div className="mt-4 flex items-end justify-between gap-4">
         <div className="space-y-1.5">
           <p className="text-xs text-muted-foreground">
-            Keys are yours, not the workspace's — leave this workspace and they stop working the
-            same moment your own access does.
+            Keys are yours, not the workspace's — they stop working the moment your own access does.
           </p>
           <DocsLink page="api">What the API accepts</DocsLink>
         </div>
@@ -220,10 +219,7 @@ function CreateKeyDialog({
                   if (e.key === "Enter") submit();
                 }}
               />
-              <p className="text-xs text-muted-foreground">
-                Only for you to recognise it later — a key you cannot place is a key nobody dares
-                revoke.
-              </p>
+              <p className="text-xs text-muted-foreground">Only for you to recognise it later.</p>
             </div>
 
             <div className="mt-4 flex justify-end">

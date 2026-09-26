@@ -46,8 +46,8 @@ export function SlackCard({ state, agents }: { state: SlackState; agents: Agent[
       <SectionCard className="flex flex-col gap-4">
         <SlackHeading chip={<Chip tone="neutral">Not installed</Chip>} />
         <p className="text-meta leading-[1.45] text-muted-foreground">
-          Ask the agent from a channel by mentioning it, or send it a direct message. Whoever asks
-          is answered as themselves — their Slack email has to match a member of this workspace.
+          Mention the agent in a channel, or send it a direct message. Whoever asks is answered as
+          themselves — their Slack email has to match a member here.
         </p>
         <div>
           <Button

@@ -152,7 +152,7 @@ export function SupabaseAccountCard({ connections }: { connections: ToolConnecti
           />
           <p className="text-xs text-muted-foreground">
             From Supabase, under Account settings → Access tokens. It reaches every project in that
-            account, so agents here can read any project you tick below — and nothing you do not.
+            account; agents here read only the ones you tick.
           </p>
         </div>
 

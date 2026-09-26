@@ -42,9 +42,7 @@ export function FirstUploads({ className }: { className?: string }) {
     <SectionCard className={className}>
       <p className="font-dm text-title leading-tight">Start with four files</p>
       <p className="mt-2 max-w-prose text-sm leading-[1.45] text-muted-foreground">
-        A bundle is a group of documents any agent can read. It is worth more than the sum of the
-        files in it once it covers the questions people actually ask, so start with the ones they
-        already do.
+        A bundle is a group of documents any agent can read.
       </p>
       <ul className="mt-5 space-y-3.5">
         {FIRST_UPLOADS.map((item) => (

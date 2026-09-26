@@ -37,7 +37,7 @@ function KnowledgeTab() {
         badge="Knowledge"
         title="Upload once."
         turn="Every agent can read it."
-        subtitle="A bundle is a group of documents that belongs to the workspace. Switch one on here and this agent can read it; the same bundle can back every other agent too."
+        subtitle="Switch a bundle on here and this agent can read it — the same bundle can back every other agent too."
       >
         <DocsLink page="knowledge">How retrieval picks a passage</DocsLink>
       </PageHeader>

@@ -112,7 +112,7 @@ export function RoutineOutputCard({
 
         {selected === null ? (
           <p className="text-sm text-muted-foreground">
-            Each run is delivered and then forgotten. The run history keeps the text it sent, and
+            Each run is delivered and then forgotten — the run history keeps the text it sent, and
             nothing else does.
           </p>
         ) : (
@@ -150,9 +150,8 @@ export function RoutineOutputCard({
                 </span>
               ) : (
                 <span>
-                  You are a viewer in this workspace, so nothing is filed: adding to the workspace's
-                  knowledge is a write. Runs deliver as usual, and each one says so in the history.
-                  The setting is kept, and starts working if your role changes.
+                  You are a viewer, so nothing is filed — runs deliver as usual, and the setting
+                  starts working if your role changes.
                 </span>
               )}
             </p>
@@ -160,8 +159,7 @@ export function RoutineOutputCard({
             {readsItsOwnOutput && (
               <p className="text-xs text-muted-foreground">
                 This bundle is also attached to this routine's agent, so later runs will read what
-                earlier ones wrote. That is often the point — a digest that knows what it said last
-                week — but it is worth knowing it is happening.
+                earlier ones wrote.
               </p>
             )}
           </>

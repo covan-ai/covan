@@ -106,10 +106,13 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
               has no price, and a scale sitting at nothing would read as a claim
               that the default is free. */}
           {defaultModel && <ModelCostScale cost={costFor(me?.modelCosts, defaultModel)} />}
+          {/* No fold here, and no sentence about price: ModelCostScale is
+              directly above and it states the money better than a sentence
+              can. A second <details> in this card would also stack two
+              bordered boxes a line apart, which reads busier than the three
+              sentences this replaced. */}
           <p className="text-xs text-muted-foreground">
-            Where the picker starts when anyone here creates an agent; each agent can still be
-            changed afterwards. Applies to the whole workspace, and only admins can set it. The
-            smaller models cost a fraction of the larger ones and are enough for most questions.
+            Where the picker starts when anyone here creates an agent, and only admins can set it.
           </p>
         </div>
 
@@ -180,8 +183,7 @@ function NotificationToggles() {
         </div>
       ))}
       <p className="text-xs text-muted-foreground">
-        Sent through the delivery channel the routine already uses. These are messages about a
-        routine — the routine's own output is what it exists to send.
+        Sent through the delivery channel the routine already uses.
       </p>
     </div>
   );

@@ -97,7 +97,9 @@ describe("ApiKeysSection", () => {
     // screen rather than only in the migration.
     renderWith({ available: true, keys: [KEY] });
 
-    expect(screen.getByText(/leave this workspace and they stop working/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/they stop working the moment your own access does/i),
+    ).toBeInTheDocument();
   });
 
   it("shows the key once when it is created, and says so", async () => {

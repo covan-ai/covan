@@ -163,10 +163,7 @@ function ProfileForm({ user }: { user: Me["user"] | undefined }) {
           onChange={(e) => setProfileName(e.target.value)}
           maxLength={80}
         />
-        <p className="text-xs text-muted-foreground">
-          What the rest of the workspace sees — on shared sessions, in the member list, next to
-          anything you send.
-        </p>
+        <p className="text-xs text-muted-foreground">What the rest of the workspace sees.</p>
       </div>
 
       <div className="flex items-center justify-end gap-2 border-t border-hairline pt-4">
@@ -188,8 +185,7 @@ function ProfileForm({ user }: { user: Me["user"] | undefined }) {
       </div>
 
       <p className="border-t border-hairline pt-4 text-xs text-muted-foreground">
-        Your photo still comes from the account you signed in with. Sign out from the menu at the
-        bottom of the sidebar.
+        Your photo still comes from the account you signed in with.
       </p>
     </SectionCard>
   );
@@ -215,11 +211,7 @@ function SettingsPage() {
         <section className="mt-14">
           <SectionHeading
             title="Workspace"
-            description={
-              isAdmin
-                ? undefined
-                : "The name and slug are an admin's to change. They are here so you can see them."
-            }
+            description={isAdmin ? undefined : "The name and slug are an admin's to change."}
           />
           {/* Read-only for everybody but an admin. `workspaces_update_admin` has
               always refused this write, and PATCH /workspace answers 403 — but

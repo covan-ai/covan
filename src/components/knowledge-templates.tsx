@@ -34,10 +34,8 @@ export function KnowledgeTemplates({ openByDefault }: { openByDefault: boolean }
     <section className="mt-10">
       <SectionHeading title="Nothing to upload yet?" />
       <p className="mt-2 text-sm text-muted-foreground">
-        If the files above do not exist yet — nothing written down, everything still in people's
-        heads — these six are the ones that make an agent useful fastest. Download one, fill in the
-        prompts, and drop it back in: a filled-in page of your own words is worth more than a
-        polished document about somebody else's product.
+        If nothing is written down yet, these six are the ones that make an agent useful fastest.
+        Download one, fill in the prompts, and drop it back in.
       </p>
 
       {open ? (

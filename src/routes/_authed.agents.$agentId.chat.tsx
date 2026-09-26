@@ -58,6 +58,7 @@ import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { SourceChip } from "@/components/source-chip";
+import { Disclosure } from "@/components/section-card";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 import {
   ConfirmCard,
@@ -1716,24 +1717,16 @@ function ChatTab() {
                     <div className="min-w-0" data-turn="answer">
                       {/*
                       What the model is working through, while it works
-                      through it. A `<details>` rather than a state flag and a
-                      chevron: it opens and closes on its own, it is in the tab
-                      order, and a screen reader already knows what it is.
-
-                      Closed by default. This is context for a pause, not the
-                      answer — somebody who wants to know why an answer came out
-                      the way it did can open it, and everybody else should not
-                      have to scroll past it to read the reply.
+                      through it. Folded, and closed by default: this is
+                      context for a pause, not the answer — somebody who wants
+                      to know why an answer came out the way it did can open
+                      it, and everybody else should not have to scroll past it
+                      to read the reply.
                     */}
                       {thinkingText && (
-                        <details className="mb-3 rounded-lg border border-border bg-muted/40">
-                          <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-muted-foreground marker:text-muted-foreground hover:text-foreground">
-                            Thinking
-                          </summary>
-                          <div className="border-t border-border px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-                            <Markdown content={thinkingText} className="text-xs" />
-                          </div>
-                        </details>
+                        <Disclosure label="Thinking" className="mb-3">
+                          <Markdown content={thinkingText} className="text-xs" />
+                        </Disclosure>
                       )}
                       {/* Between the reasoning and the answer, which is
                         where they happen. A step line is the one thing on

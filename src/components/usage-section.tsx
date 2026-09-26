@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { quotaFrom, approximateReplies } from "@/lib/quota";
 import { SectionHeading } from "@/components/page-container";
-import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
+import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
 import { QuotaWall } from "@/components/quota-wall";
 import { WorkspaceProviderKeys } from "@/components/workspace-provider-keys";
@@ -141,15 +141,20 @@ export function UsageSection() {
               us, and self-hosting still, nearest first. See `quota-wall.tsx`. */}
           {quota.level === "spent" && <QuotaWall />}
 
+          {/* The conversion stays on the screen — it is what makes the reply
+              count above mean anything. Where the number came from and why it
+              drifts is the part somebody reads once. */}
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
             Counted in tokens, the unit the model is billed in, and converted to replies at about{" "}
-            {compact(quota.perReply)} tokens each.{" "}
+            {compact(quota.perReply)} tokens each.
+          </p>
+          <Disclosure className="mt-2" label="Where that number comes from">
             {quota.repliesSeen === 0
-              ? "That is a starting assumption until you have sent something; it shifts towards what your own replies actually cost as you go."
-              : "That is mostly what your own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
+              ? "It is a starting assumption until you have sent something, and shifts towards what your own replies actually cost as you go."
+              : "It is mostly what your own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
             A long conversation with documents attached costs more than a short question, so the
             estimate moves.
-          </p>
+          </Disclosure>
         </SectionCard>
       )}
 
@@ -183,18 +188,22 @@ export function UsageSection() {
           </ul>
         )}
       </SectionCard>
+      {/* Both sentences stay: the first is why these figures do not reconcile
+          with the allowance above, which is the whole reason the two windows
+          are labelled apart, and the second is what backs the money. */}
       <p className="mt-3 text-xs text-muted-foreground">
         Per-agent figures cover every conversation you have had, not just this month, so they will
         not add up to the allowance above. Costs are estimates from list prices.
-        {cacheRate !== null && (
-          <>
-            {" "}
-            About {Math.round(cacheRate * 100)}% of your input was already in the model's cache and
-            billed at a reduced rate — carrying on an existing conversation caches well, while a new
-            one always starts cold.
-          </>
-        )}
       </p>
+      {cacheRate !== null && (
+        <Disclosure
+          className="mt-2"
+          label={`${Math.round(cacheRate * 100)}% of your input was cached`}
+        >
+          Cached input is billed at a reduced rate. Carrying on an existing conversation caches
+          well, while a new one always starts cold.
+        </Disclosure>
+      )}
     </section>
   );
 }

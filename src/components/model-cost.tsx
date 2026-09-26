@@ -1,4 +1,5 @@
 import { COST_BANDS, costBandIndex, formatReplyCost } from "@/lib/agent-meta";
+import { Disclosure } from "@/components/section-card";
 
 /**
  * The price beside a model's name in a picker.
@@ -75,11 +76,21 @@ export function ModelCostScale({ cost }: { cost: number | null }) {
         ))}
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        {cost === null
-          ? "No price for this model — a custom endpoint serves whatever the operator configured, and its rates are theirs."
-          : "Estimated from the average reply measured on this deployment: a 2,248-token prompt and a 921-token answer, priced as a fresh prompt. Longer conversations and larger documents cost more."}
-      </p>
+      {cost === null ? (
+        <p className="text-xs text-muted-foreground">
+          No price for this model — a custom endpoint&rsquo;s rates are the operator&rsquo;s.
+        </p>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">
+            Estimated from the average reply measured on this deployment.
+          </p>
+          <Disclosure label="What that assumes">
+            A 2,248-token prompt and a 921-token answer, priced as a fresh prompt. Longer
+            conversations and larger documents cost more.
+          </Disclosure>
+        </>
+      )}
     </div>
   );
 }

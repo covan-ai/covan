@@ -99,7 +99,7 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
               {trigger.lastUsedAt === null
                 ? "Nothing has used it yet."
                 : `Last used ${formatWhen(trigger.lastUsedAt)}.`}{" "}
-              The URL itself is not shown again — make a new one if it has been lost.
+              The URL itself is not shown again.
             </p>
           </div>
         ) : (

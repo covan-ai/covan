@@ -377,6 +377,36 @@ export const runToolTool: AgentTool = {
     }
 
     if (result.kind === "error") {
+      /**
+       * An operation the catalogue advertised and the service does not have.
+       *
+       * `find_tool` returned `GOOGLECALENDAR_BATCH_EVENTS` with a full argument
+       * schema on 2026-09-26 and Composio's execute endpoint answered
+       * `404 Tool_ToolNotFound`. The guard above had passed it correctly — it
+       * was offered — and nothing in the turn learned otherwise, so a retry
+       * would have bought a second 404.
+       *
+       * So the slug is withdrawn, and the answer names what is left. Keyed on
+       * Composio's own error slug rather than on the status alone, because a 404
+       * can also mean the connected account is gone, and that one is worth
+       * retrying. If they reword it, this degrades to the plain forwarded error
+       * below, which is today's behaviour.
+       */
+      if (result.status === 404 && result.message.includes("Tool_ToolNotFound")) {
+        ctx.offeredSlugs?.delete(slug);
+        ctx.offeredSchemas?.delete(slug);
+        const left = [...(ctx.offeredSlugs ?? [])];
+        return {
+          kind: "error",
+          message:
+            `${slug} is in the catalogue but ${connection.label} does not have it, so it ` +
+            "cannot be run here and will not be offered again this turn. " +
+            (left.length > 0
+              ? `Use one of these instead: ${left.join(", ")}.`
+              : "Search for a different operation, or tell the person this is not something " +
+                "you can do."),
+        };
+      }
       // The far end's own sentence, forwarded rather than flattened, for the
       // reason `http_request` forwards a 400 body: "unknown field `recipient`"
       // is what lets the model fix its next call.

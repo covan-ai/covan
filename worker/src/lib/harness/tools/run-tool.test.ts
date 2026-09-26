@@ -455,3 +455,46 @@ describe("checking the arguments against the schema", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 });
+
+/**
+ * A slug the catalogue advertises and the service does not have.
+ *
+ * Production, 2026-09-26: `find_tool` returned `GOOGLECALENDAR_BATCH_EVENTS` as
+ * the top match, with a full four-thousand-character argument schema, so
+ * `run_tool`'s offered-slugs guard passed it — correctly, it was offered.
+ * Composio's execute endpoint then answered
+ * `404 {"code":2401,"slug":"Tool_ToolNotFound"}`. `wasBilled` returns true for
+ * everything but 501 and 502, so we paid for it.
+ *
+ * Nothing in the turn learned from that. The slug stayed in the offered set, so
+ * the guard would have waved a retry through to another 404. See #172.
+ */
+describe("an operation the service does not have", () => {
+  const NOT_FOUND = () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          message: "Tool GMAIL_SEND_EMAIL not found",
+          code: 2401,
+          slug: "Tool_ToolNotFound",
+          status: 404,
+        },
+      }),
+      { status: 404 },
+    );
+
+  it("stops offering a slug the service says does not exist", async () => {
+    const offeredSlugs = new Set(["GMAIL_SEND_EMAIL", "GMAIL_FETCH_EMAILS"]);
+    fetchMock.mockResolvedValue(NOT_FOUND());
+
+    const out = await runToolTool.run(CALL, ctxWith({ approved: ["conn-1"], offeredSlugs }));
+
+    expect(out.kind).toBe("error");
+    // Withdrawn, so the guard refuses the retry for free instead of buying a
+    // second 404.
+    expect(offeredSlugs.has("GMAIL_SEND_EMAIL")).toBe(false);
+    // And the pivot is named, because the alternative is the model searching
+    // again for what it already has.
+    expect(out.kind === "error" && out.message).toContain("GMAIL_FETCH_EMAILS");
+  });
+});

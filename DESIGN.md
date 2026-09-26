@@ -78,6 +78,7 @@ necessary, the role is probably one of the ten above.
 | `Panel`                                 | `components/section-card.tsx`   | a panel that genuinely floats: white, 20px radius, window-chrome bar              |
 | `DataRow` / `Chip`                      | `components/section-card.tsx`   | the §7.8 workhorses; chip colour carries meaning                                  |
 | `EmptyState`                            | `components/section-card.tsx`   | "nothing here yet", everywhere it happens                                         |
+| `Disclosure`                            | `components/section-card.tsx`   | the sentence somebody needs once: a native `<details>`, closed, inside a card      |
 | `UserAvatar` / `AgentAvatar`            | `components/avatars.tsx`        | people (neutral tile) and agents (neutral in lists, amber for the one you are in) |
 
 ## The five failure modes

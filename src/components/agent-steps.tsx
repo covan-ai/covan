@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Check, Loader2, Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Disclosure } from "@/components/section-card";
 import { cn } from "@/lib/utils";
 
 /**
@@ -78,28 +79,24 @@ export function StepTrail({ steps, className }: { steps: AgentStepView[]; classN
 /**
  * The same trail, under a reply that has already landed.
  *
- * A `<details>` rather than the open list: the live version answers "what is
- * it doing"; this one answers "what did it do", which is a question somebody
- * asks occasionally and should not have to scroll past the rest of the time.
- * The same shape the Thinking block uses two components over, for the same
- * reason — it opens and closes on its own and is already in the tab order.
+ * Folded rather than the open list: the live version answers "what is it
+ * doing"; this one answers "what did it do", which is a question somebody asks
+ * occasionally and should not have to scroll past the rest of the time. The
+ * `Disclosure` primitive is the same one the Thinking block uses two components
+ * over — they are two foldable notes about one reply, and two vocabularies for
+ * that would be a deviation rather than a choice.
  */
 export function SettledSteps({ steps }: { steps: AgentStepView[] }) {
   if (steps.length === 0) return null;
   const failed = steps.filter((s) => s.status === "failed" || s.status === "refused").length;
-  // The same shape and the same classes as the Thinking block in the chat
-  // screen, deliberately: they are two foldable notes about one reply, and
-  // two vocabularies for that would be a deviation rather than a choice.
+  const count = steps.length === 1 ? "1 step" : `${steps.length} steps`;
   return (
-    <details className="mt-3 rounded-lg border border-border bg-muted/40">
-      <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-muted-foreground marker:text-muted-foreground hover:text-foreground">
-        {steps.length === 1 ? "1 step" : `${steps.length} steps`}
-        {failed > 0 ? ` · ${failed} did not complete` : ""}
-      </summary>
-      <div className="border-t border-border px-3 py-2">
-        <StepTrail steps={steps} />
-      </div>
-    </details>
+    <Disclosure
+      className="mt-3"
+      label={failed > 0 ? `${count} · ${failed} did not complete` : count}
+    >
+      <StepTrail steps={steps} />
+    </Disclosure>
   );
 }
 

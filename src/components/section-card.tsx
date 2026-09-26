@@ -164,3 +164,41 @@ export function EmptyState({
     </div>
   );
 }
+
+/**
+ * A foldable note: a short label somebody can open, and the detail under it.
+ *
+ * Native `<details>` rather than a state flag and a chevron — it opens and
+ * closes on its own, it is in the tab order, and a screen reader already knows
+ * what it is. That is also what keeps it clear of the fifth failure mode: a
+ * tooltip would put the same words behind a hover with no keyboard or
+ * small-screen equivalent.
+ *
+ * Closed by default, always. This is for the sentence somebody needs once — a
+ * methodology, a billing consequence, what a setting reaches — never for the
+ * sentence that says what the thing is. That one stays on the screen.
+ *
+ * A bordered muted box, so it belongs inside a card or a panel. Under a page
+ * headline it reads as a second surface competing with the one below it.
+ */
+export function Disclosure({
+  label,
+  className,
+  children,
+}: {
+  /** The closed state, in one short phrase. */
+  label: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className={cn("rounded-lg border border-border bg-muted/40", className)}>
+      <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-muted-foreground marker:text-muted-foreground hover:text-foreground">
+        {label}
+      </summary>
+      <div className="border-t border-border px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+        {children}
+      </div>
+    </details>
+  );
+}

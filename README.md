@@ -220,30 +220,40 @@ agreement. Report vulnerabilities privately: [`SECURITY.md`](SECURITY.md), not a
 public issue. Behaviour expectations are in
 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-## What stays open
+## What is never gated
 
-The product is the open part, and it stays that way. Agents, retrieval over your
-own documents, routines, chat, workspaces and sharing are all here, with no
-feature flags, no plan tiers and no licence keys — a self-hosted Covan is the
-whole thing, not a trial of it. Nothing that works today will move behind a
-paywall later.
+Every feature is in this repository. Agents, retrieval over your own documents,
+routines, chat, workspaces, sharing, roles, the audit log and the full data
+export are all here, with no feature flags, no plan tiers and no licence keys —
+a self-hosted Covan is the whole thing, not a trial of it. Nothing that works
+today will move behind a paywall later.
 
 There is a hosted Covan, and what it sells is not features: it is somebody else
 running the database, the backups and the upgrades. If paid capabilities do
-appear, they will be additions aimed at large organisations — single sign-on,
-audit logs, fine-grained permissions, compliance exports — plus the operational
-things a service can offer and a repository cannot: hosting, support, an SLA.
+appear, the one genuinely missing from this tree is SAML single sign-on, and
+alongside it the operational things a service can offer and a repository cannot:
+hosting, support, an SLA, a signed data-processing agreement.
 
 ## License
 
-Copyright (C) 2026 Mahmut Efe Dara.
+Copyright 2026 Mahmut Efe Dara.
 
-[AGPL-3.0](LICENSE). You can run, modify and self-host Covan freely, including
-inside your company. If you offer a modified Covan to others as a network
-service, you must publish your changes under the same license.
+[FSL-1.1-ALv2](LICENSE) — the Functional Source License, with Apache 2.0 as the
+future license. In plain terms:
 
-Covan is free software: you can redistribute it and/or modify it under the terms
-of version 3 of the GNU Affero General Public License as published by the Free
-Software Foundation. It is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-FITNESS FOR A PARTICULAR PURPOSE. See the [license](LICENSE) for details.
+- **You may** run Covan for your own team, free, commercially, for as many people
+  as you like; read it, change it, keep your changes; build on it; and provide
+  paid professional services to another Covan licensee.
+- **You may not** offer Covan to others as a commercial product or service that
+  substitutes for Covan — that is, resell it as hosting.
+- **After two years** each version is additionally available to you under the
+  Apache License 2.0, and that grant is irrevocable.
+
+The [LICENSE](LICENSE) file is the authority and it is the FSL template verbatim,
+with only the copyright notice filled in. This summary loses to it wherever the
+two differ. The software is provided as is, without warranty of any kind.
+
+This is a source-available licence rather than an open-source one: the OSI has
+not approved the FSL, so calling Covan open source would be inaccurate. Want to
+host Covan for other people? That is what a commercial licence is for — write to
+efe@covan.app.

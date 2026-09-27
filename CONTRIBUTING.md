@@ -110,23 +110,34 @@ deciding.
 
 ## Contributor License Agreement
 
-Covan is licensed under AGPL-3.0. By submitting a contribution you confirm that
-you have the right to submit it, and you grant the project maintainer:
+Covan is licensed under FSL-1.1-ALv2. By submitting a contribution you confirm
+that you have the right to submit it, and you grant the project maintainer:
 
-- a perpetual, worldwide, non-exclusive, royalty-free, irrevocable **copyright**
+- a perpetual, worldwide, **exclusive**, royalty-free, irrevocable **copyright**
   license to use, reproduce, modify, publish, sublicense and distribute your
-  contribution as part of Covan, under AGPL-3.0 or under any other license; and
+  contribution as part of Covan, under FSL-1.1-ALv2 or under any other license;
+  and
 - a perpetual, worldwide, non-exclusive, royalty-free, irrevocable **patent**
   license, under any patent claims you own or control that your contribution
   necessarily infringes, to make, use, sell, offer to sell, import and otherwise
   transfer Covan.
 
+You keep the copyright in what you wrote, and the copyright license above is
+granted back to you non-exclusively, so you may keep using your own contribution
+anywhere, for anything, with no restriction from us.
+
+The copyright license is exclusive for one reason: a non-exclusive licensee has
+no standing to sue over an infringement, so without it a contributed file is code
+the project cannot defend on its own. It is not there to take your work away from
+you, which is what the grant-back above is for.
+
 These rights are transferable, so they survive the project moving to a company
 or other legal entity.
 
-This lets the project change its license later — for example to something more
-permissive — without tracking down every past contributor. If you cannot agree
-to this, say so in the pull request and we will discuss it.
+This lets the project change its license later — in either direction, toward
+something more permissive or more restrictive — without tracking down every past
+contributor. It is how Covan moved from AGPL-3.0 to FSL-1.1-ALv2. If you cannot
+agree to this, say so in the pull request and we will discuss it.
 
 ## Security
 

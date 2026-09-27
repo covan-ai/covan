@@ -331,8 +331,8 @@ embedding call instead, which is why step 1 is an upload rather than a restart.
 
 The sign-up form asks people to agree to Terms and a Privacy Policy, so both
 have to lead somewhere. Unset, they lead to `/terms` and `/privacy` in the app:
-the AGPL and its warranty disclaimer, and a factual account of what the software
-stores and every outside service it calls. For a Covan you run for your own
+the licence and its warranty disclaimer, and a factual account of what the
+software stores and every outside service it calls. For a Covan you run for your own
 team, that is accurate and sufficient — the licence really is the agreement, and
 you are the one holding the database.
 

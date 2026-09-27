@@ -28,7 +28,7 @@ function TermsPage() {
   return (
     <LegalLayout title="Terms" updated="August 2026">
       <p className="text-base text-muted-foreground">
-        Covan is open-source software rather than a service, and these are the terms of the
+        Covan is software under a licence rather than a service, and these are the terms of the
         software. If you are using an install someone else operates — a hosted Covan, or your
         employer's — that operator may have their own agreement with you, and it governs your
         relationship with them.
@@ -38,24 +38,27 @@ function TermsPage() {
         <p>
           Covan is licensed under the{" "}
           <a
-            href="https://www.gnu.org/licenses/agpl-3.0.html"
+            href="https://fsl.software"
             target="_blank"
             rel="noreferrer"
             className="text-foreground underline underline-offset-4"
           >
-            GNU Affero General Public License, version 3
-          </a>
-          . In practice:
+            Functional Source License, version 1.1, with Apache 2.0 as the future licence
+          </a>{" "}
+          (<code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-meta">FSL-1.1-ALv2</code>
+          ). In practice:
         </p>
         <LegalList>
           <LegalItem>
-            You may run it, read it, change it and self-host it, including commercially and
-            including inside your company, without asking anyone.
+            You may run it, read it, change it and self-host it for your own team, including
+            commercially, including inside your company, for as many people as you like, without
+            asking anyone and without publishing anything.
           </LegalItem>
           <LegalItem>
-            If you offer a modified Covan to other people over a network, you must publish your
-            changes under the same licence. Running an unmodified copy for your own team triggers
-            nothing.
+            You may not offer Covan to other people as a commercial product or service that
+            substitutes for Covan — reselling it as hosting. That is the only restriction. Two years
+            after each version is published, it is additionally available to you under the Apache
+            License 2.0, irrevocably.
           </LegalItem>
           <LegalItem>
             The full text ships in the repository as{" "}
@@ -74,7 +77,7 @@ function TermsPage() {
       <LegalSection title="No warranty">
         <p>
           The software is provided as is, without warranty of any kind, and the authors are not
-          liable for what happens when you run it. That is section 15 of the licence and it is not a
+          liable for what happens when you run it. That is the licence's Disclaimer and it is not a
           formality: Covan sends your documents to a language model and shows you what comes back,
           and a language model can be confidently wrong. Answers are a starting point, not a
           decision.
@@ -108,8 +111,14 @@ function TermsPage() {
 
       <LegalSection title="Changes">
         <p>
-          The licence is the licence and does not change. This page can, and the repository's
-          history is the record of when it did.
+          This page can change, and the repository's history is the record of when it did. The
+          licence itself changed once: versions up to v0.2.0 were released under AGPL-3.0 and stay
+          AGPL-3.0 irrevocably, and v0.3.0 onward is FSL-1.1-ALv2. What that did and did not alter
+          is set out on the{" "}
+          <Link to="/license" className="text-foreground underline underline-offset-4">
+            licence page
+          </Link>
+          .
         </p>
         <p>
           <Link to="/privacy" className="text-foreground underline underline-offset-4">

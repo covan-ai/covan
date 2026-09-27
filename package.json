@@ -4,8 +4,8 @@
   "description": "A shared AI agent for your team. Everyone trains it together; everyone talks to it privately.",
   "//private": "Covan is deployed, not published. This keeps `npm publish` from ever succeeding by accident; it says nothing about the licence, which is the line below.",
   "private": true,
-  "//license": "AGPL-3.0-only, not -or-later: LICENSE is the bare GPL text with no 'any later version' clause attached, so -only is what the repository actually grants today. Widening it later is a decision, not a typo fix.",
-  "license": "AGPL-3.0-only",
+  "//license": "FSL-1.1-ALv2 is the SPDX identifier (list 3.29.0, not OSI-approved), and LICENSE is the FSL template verbatim with only the copyright notice filled in — the whole value of the FSL is that every FSL is the same text, so edits to the terms are the one change to never make here. Versions up to v0.2.0 shipped AGPL-3.0-only and stay that way irrevocably.",
+  "license": "FSL-1.1-ALv2",
   "author": "Mahmut Efe Dara",
   "homepage": "https://covan.app",
   "repository": {

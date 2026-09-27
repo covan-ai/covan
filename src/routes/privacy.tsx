@@ -56,9 +56,10 @@ function PrivacyPage() {
   return (
     <LegalLayout title="Privacy" updated="September 2026">
       <p className="text-base text-muted-foreground">
-        Covan is open source, and this page describes what the software itself does — the data it
-        stores and every outside service it calls. Whoever runs the install you are using controls
-        that database and is responsible for it. If that is your own company, it is you.
+        Covan's full source is published, and this page describes what the software itself does —
+        the data it stores and every outside service it calls. Whoever runs the install you are
+        using controls that database and is responsible for it. If that is your own company, it is
+        you.
       </p>
 
       <LegalSection title="What is stored">

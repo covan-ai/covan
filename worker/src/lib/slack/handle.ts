@@ -225,6 +225,8 @@ export async function handleSlackEvent(
     ...(latestTurn ? [latestTurn] : []),
   ];
 
+  // Held rather than inlined, so the row can say which model answered.
+  const model = resolveModel(agent.model, runEnv);
   let completion;
   try {
     // Through the completion seam, not `createOpenAI` directly.
@@ -241,7 +243,7 @@ export async function handleSlackEvent(
     // both places. An agent asked to answer twice the same way should not do it
     // in one surface and improvise in the other.
     completion = await complete(runEnv, {
-      model: resolveModel(agent.model, runEnv),
+      model,
       messages,
       temperature: temperatureFor(mode, agent.temperature),
       reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
@@ -309,6 +311,10 @@ export async function handleSlackEvent(
     reasoning_tokens: reasoningTokens,
     // No `pass_usage`: this is one completion rather than a tool loop, so the
     // per-pass array would be the row's own totals written a second time.
+    model,
+    // One completion and no tool loop: it either answered or never reached
+    // this line, and the empty case returned above.
+    outcome: "answered",
   });
   // Posted either way. A reply that reached Slack and not the database is a
   // worse outcome than one that reached both, but it is far better than an

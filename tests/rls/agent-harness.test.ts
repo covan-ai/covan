@@ -194,6 +194,17 @@ describe("paused_turns", () => {
     expect(error).not.toBeNull();
   });
 
+  /**
+   * What the turn had spent when it parked (0065). Not on the column whitelist
+   * for the same reason as the two above: no client reads it, the worker holds
+   * service_role, and a column a client can select is a column PostgREST will
+   * let it write into.
+   */
+  it("does not hand over what the turn spent either", async () => {
+    const { error } = await owner.db.from("paused_turns").select("usage");
+    expect(error).not.toBeNull();
+  });
+
   it("cannot be approved from the browser, only through the worker", async () => {
     const { data } = await owner.db
       .from("paused_turns")

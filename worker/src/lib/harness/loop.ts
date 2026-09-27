@@ -17,6 +17,7 @@ import {
   wasCapped,
 } from "./budget";
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
+import { addUsage } from "./usage";
 
 /**
  * The loop that turns one question into however many model calls it takes.
@@ -331,18 +332,6 @@ export const NO_TOOLS_NOTICE =
   "No tools are available on this model, so you cannot look anything up or take any " +
   "action this turn. Answer from what you already know and from the material in front " +
   "of you, and say so plainly if the question needs something you cannot reach.";
-
-function addUsage(a: CompletionUsage, b: CompletionUsage): CompletionUsage {
-  const add = (x: number | null, y: number | null) =>
-    x === null && y === null ? null : (x ?? 0) + (y ?? 0);
-  return {
-    promptTokens: add(a.promptTokens, b.promptTokens),
-    completionTokens: add(a.completionTokens, b.completionTokens),
-    cachedTokens: add(a.cachedTokens, b.cachedTokens),
-    cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
-    reasoningTokens: add(a.reasoningTokens, b.reasoningTokens),
-  };
-}
 
 /**
  * The arguments, or the reason they could not be read.

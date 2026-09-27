@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompletionMessage, ToolCall } from "../completion";
 import type { AgentStep, PausedTurn } from "./loop";
+import type { TurnUsage } from "./usage";
 import { MAX_STEP_EXCERPT_CHARS, cap } from "./budget";
 
 /**
@@ -33,6 +34,16 @@ export type StoredPause = {
   messages: CompletionMessage[];
   steps: AgentStep[];
   model: string | null;
+  /**
+   * What the turn had already spent when it parked, or null when the reply row
+   * holds it already.
+   *
+   * Only ever set for a pause that asked before it said anything: there is no
+   * assistant row yet, so nothing else records the passes before the pause —
+   * and they were charged to the allowance when it parked. Once a row exists
+   * it is the accumulator, the same rule the appended text already follows.
+   */
+  usage: TurnUsage | null;
   status: string;
   expiresAt: string;
 };
@@ -99,6 +110,8 @@ export async function savePausedTurn(
     model: string;
     paused: PausedTurn;
     steps: AgentStep[];
+    /** See `StoredPause.usage`. Null when a reply row already holds it. */
+    usage?: TurnUsage | null;
   },
 ): Promise<string | null> {
   if (!input.paused.call) return null;
@@ -117,6 +130,7 @@ export async function savePausedTurn(
       messages: input.paused.messages,
       steps: input.steps,
       model: input.model,
+      usage: input.usage ?? null,
     })
     .select("id")
     .single();
@@ -163,6 +177,9 @@ export async function loadPausedTurn(
       messages: (data.messages ?? []) as CompletionMessage[],
       steps: (data.steps ?? []) as AgentStep[],
       model: data.model ? String(data.model) : null,
+      // A row parked by a build before 0065 has no column at all, and reads as
+      // "the row already holds it" — which is what it meant then.
+      usage: (data.usage as TurnUsage | null) ?? null,
       status: String(data.status),
       expiresAt: String(data.expires_at),
     },

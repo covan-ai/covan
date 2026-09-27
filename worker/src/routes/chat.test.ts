@@ -6,6 +6,7 @@ import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake
 import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
 import { MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
+import type { AgentTool } from "../lib/harness/registry";
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter } from "../lib/subrequests";
 
@@ -44,6 +45,14 @@ const pausedWritten = vi.fn();
 const pausedResolved = vi.fn();
 /** The row `POST /chat/confirm/:id` will find, or null for "not found". */
 let parked: Record<string, unknown> | null = null;
+/**
+ * The reply row a resume reads back before adding its own half to it.
+ *
+ * `messages` had no `select` on this mock at all, so the one branch that reads
+ * a row back — a pause answered into a reply that already exists — threw a
+ * TypeError under it and was therefore never tested.
+ */
+let priorMessage: Record<string, unknown> | null = null;
 /** Whether this caller is the one that claimed the turn. False is a 409. */
 let claimWins = true;
 const serviceUpdate = vi.fn();
@@ -94,6 +103,41 @@ vi.mock("../lib/harness/registry", async (importOriginal) => {
   };
 });
 
+/**
+ * A tool the stream route should offer on top of the real set, or null.
+ *
+ * The pause path — the model asks for something a person has to approve — is
+ * unreachable from this file otherwise: the two tools that ask for
+ * confirmation both look something up before they ask, and neither has
+ * anything to look up here. Same seam and same shape as the `toolByName`
+ * override above.
+ */
+let extraTool: AgentTool | null = null;
+vi.mock("../lib/harness/available", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/harness/available")>();
+  return {
+    ...actual,
+    capabilitiesFor: async (input: Parameters<typeof actual.capabilitiesFor>[0]) => {
+      const real = await actual.capabilitiesFor(input);
+      return extraTool ? { ...real, tools: [...real.tools, extraTool] } : real;
+    },
+  };
+});
+
+/** Asks before it does anything, and never does anything. */
+const ASKS_FIRST: AgentTool = {
+  name: "book_the_room",
+  description: "Books a room.",
+  input: { type: "object", properties: {}, additionalProperties: false },
+  destructive: true,
+  isConfigured: () => true,
+  run: async () => ({
+    kind: "needs_confirmation",
+    summary: "Book room A?",
+    proposal: { room: "A" },
+  }),
+};
+
 vi.mock("../lib/supabase", () => ({
   serviceClient: () => ({
     from: (table: string) => {
@@ -117,6 +161,9 @@ vi.mock("../lib/supabase", () => ({
             serviceInsert(row);
             return answered(row, "assistant-1");
           },
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: priorMessage, error: null }) }),
+          }),
           // A continuation writes into the reply it finishes rather than
           // beside it, so this is the other half of the same path.
           update: (row: Record<string, unknown>) => ({
@@ -440,6 +487,8 @@ function citedNames(): string[] {
 beforeEach(() => {
   vi.clearAllMocks();
   parked = null;
+  priorMessage = null;
+  extraTool = null;
   claimWins = true;
   approvedTool = null;
   createOpenAIKeys.length = 0;
@@ -1007,6 +1056,67 @@ describe("naming the conversation", () => {
   });
 });
 
+/** A turn that asks for a tool and stops, optionally after speaking first. */
+function asksFor(tool: string, said = "") {
+  return async (body: { stream?: boolean }) => {
+    if (!body.stream) return titleOf("A question");
+    return {
+      async *[Symbol.asyncIterator]() {
+        if (said) yield { choices: [{ delta: { content: said } }] };
+        yield {
+          choices: [
+            {
+              delta: {
+                tool_calls: [{ index: 0, id: "call_9", function: { name: tool, arguments: "{}" } }],
+              },
+            },
+          ],
+        };
+        yield { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        yield {
+          choices: [],
+          usage: { prompt_tokens: 100, completion_tokens: 20, prompt_tokens_details: {} },
+        };
+      },
+    };
+  };
+}
+
+describe("a turn that stops to ask", () => {
+  it("parks what the turn spent when it asked before saying anything", async () => {
+    // There is no assistant row yet, so the row cannot be the accumulator —
+    // and until 0065 nothing else was either: the passes before the pause were
+    // charged to the allowance and then dropped from `messages` on resume.
+    extraTool = ASKS_FIRST;
+    const { app } = appWith({ question: "book a room" });
+    completionCreate.mockImplementation(asksFor("book_the_room"));
+
+    await ask(app);
+
+    const usage = pausedWritten.mock.calls.at(-1)?.[0].usage as {
+      promptTokens: number | null;
+      passes: unknown[];
+    };
+    expect(usage.promptTokens).toBe(100);
+    expect(usage.passes).toHaveLength(1);
+    expect(serviceInsert).not.toHaveBeenCalled();
+  });
+
+  it("parks no usage when the reply row already holds it", async () => {
+    // The other half of the same rule: once a row exists it is the
+    // accumulator, so a second copy on the parked turn would be double-counted
+    // when the two are added.
+    extraTool = ASKS_FIRST;
+    const { app } = appWith({ question: "book a room" });
+    completionCreate.mockImplementation(asksFor("book_the_room", "Let me book that."));
+
+    await ask(app);
+
+    expect(serviceInsert).toHaveBeenCalled();
+    expect(pausedWritten.mock.calls.at(-1)?.[0].usage).toBeNull();
+  });
+});
+
 describe("finishing a reply that stopped mid-sentence", () => {
   const CUT_OFF = "Vacation is twenty days, and the carry-over rule is";
 
@@ -1048,6 +1158,20 @@ describe("finishing a reply that stopped mid-sentence", () => {
     const written = serviceUpdate.mock.calls[0][0];
     expect(written.prompt_tokens).toBe(400 + 100);
     expect(written.completion_tokens).toBe(1536 + 20);
+  });
+
+  it("leaves a count the provider never reported as null on a continuation", async () => {
+    // `?? 0` turned "the provider reported nothing" into "the provider
+    // reported zero" on every continuation, which erases the tell 0064 reads
+    // the provider off: a null `cache_write_tokens` is an OpenAI reply and a
+    // null `reasoning_tokens` an Anthropic one.
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: CUT_OFF });
+
+    await carryOn(app);
+
+    const written = serviceUpdate.mock.calls[0][0];
+    expect(written.cache_write_tokens).toBeNull();
+    expect(written.reasoning_tokens).toBeNull();
   });
 
   it("grounds the second half in the question, not in the half-answer", async () => {
@@ -1425,6 +1549,182 @@ describe("POST /chat/confirm/:id", () => {
     expect(stepsWritten.mock.calls[0][0]).toEqual([
       expect.objectContaining({ step_index: 0, tool: "schedule_job", status: "refused" }),
     ]);
+  });
+
+  /**
+   * What a turn cost, added up across the halves it was answered in.
+   *
+   * The resume REPLACED the reply's usage with the resumed half's, so a turn
+   * that paused once lost every pass before the pause from `messages` while
+   * still having been charged for them. 10 of the 29 turns carrying
+   * `pass_usage` between 2026-09-24 and 09-26 start above index 0.
+   */
+  describe("adding up a turn that was answered in two halves", () => {
+    /** The reply row the first half already wrote, as the resume reads it back. */
+    const FIRST_HALF = {
+      content: "Let me check.",
+      prompt_tokens: 400,
+      completion_tokens: 1536,
+      cached_tokens: 0,
+      cache_write_tokens: null,
+      reasoning_tokens: null,
+      pass_usage: [
+        { index: 0, prompt: 400, cached: 0, written: null, completion: 1536, reasoning: null },
+      ],
+    };
+
+    it("adds the resumed half to what the first half cost, instead of replacing it", async () => {
+      parked = { ...PARKED, message_id: "m1", steps: [{ ...PARKED.steps[0], pass: 0 }] };
+      priorMessage = FIRST_HALF;
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, false)).text();
+
+      const row = serviceUpdate.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row.prompt_tokens).toBe(500);
+      expect(row.completion_tokens).toBe(1556);
+      // Null is "the provider reported nothing", and a sum must not turn it
+      // into a zero — that is the tell 0064 reads the provider off.
+      expect(row.cache_write_tokens).toBeNull();
+      expect(row.reasoning_tokens).toBeNull();
+      const passes = row.pass_usage as Array<{ index: number }>;
+      expect(passes).toHaveLength(2);
+      expect(passes.map((e) => e.index)).toEqual([0, 1]);
+      expect(row.model).toBe(PARKED.model);
+      expect(row.outcome).toBe("answered");
+    });
+
+    it("writes what the turn spent before it asked, when it asked before saying anything", async () => {
+      parked = {
+        ...PARKED,
+        message_id: null,
+        usage: {
+          promptTokens: 300,
+          completionTokens: 50,
+          cachedTokens: null,
+          cacheWriteTokens: null,
+          reasoningTokens: null,
+          passes: [
+            { index: 0, prompt: 300, cached: null, written: null, completion: 50, reasoning: null },
+          ],
+        },
+        steps: [{ ...PARKED.steps[0], pass: 0 }],
+      };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, false)).text();
+
+      const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row.prompt_tokens).toBe(400);
+      expect(row.completion_tokens).toBe(70);
+      expect((row.pass_usage as Array<{ index: number }>).map((e) => e.index)).toEqual([0, 1]);
+      expect(row.model).toBe(PARKED.model);
+    });
+
+    it("ends a turn that paused three times with one row that is the sum of its four halves", async () => {
+      // Review Focus 1. Each hop is driven by what the previous hop actually
+      // parked, so the rule being checked is the one the route applies rather
+      // than one this test restates: `paused_turns.usage` holds only what no
+      // reply row holds yet, and once a row exists it is the accumulator.
+      extraTool = ASKS_FIRST;
+      parked = {
+        ...PARKED,
+        message_id: null,
+        steps: [{ ...PARKED.steps[0], pass: 0 }],
+        usage: {
+          promptTokens: 300,
+          completionTokens: 50,
+          cachedTokens: null,
+          cacheWriteTokens: null,
+          reasoningTokens: null,
+          passes: [
+            { index: 0, prompt: 300, cached: null, written: null, completion: 50, reasoning: null },
+          ],
+        },
+      };
+
+      // Three resumes: the first two ask again, the third answers.
+      for (const stream of [asksFor("book_the_room"), asksFor("book_the_room")]) {
+        const { app } = appWith({ question: "every monday" });
+        completionCreate.mockImplementation(stream);
+        await (await confirm(app, false)).text();
+
+        const row = (serviceUpdate.mock.calls.at(-1) ?? serviceInsert.mock.calls.at(-1))?.[0] as
+          Record<string, unknown> | undefined;
+        priorMessage = row ?? null;
+        const reparked = pausedWritten.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+        // Nothing is parked beside the row once one exists — otherwise the
+        // first half would be added a second time on the next hop.
+        expect(reparked.usage).toBeNull();
+        parked = { ...PARKED, ...reparked, id: "paused-1", status: "pending" };
+      }
+
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Booked."));
+      await (await confirm(app, false)).text();
+
+      const final = serviceUpdate.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      // 300 parked plus three resumed halves of 100; 50 plus three of 20.
+      expect(final.prompt_tokens).toBe(600);
+      expect(final.completion_tokens).toBe(110);
+      const passes = final.pass_usage as Array<{ index: number }>;
+      expect(passes.map((e) => e.index)).toEqual([0, 1, 2, 3]);
+      expect(final.outcome).toBe("answered");
+    });
+
+    it("bills only the resumed half, because the first half was billed when it asked", async () => {
+      // The row is the record of the whole turn; the allowance was already
+      // charged for the first half by `/chat/stream` when it parked. Feeding
+      // the merged total to `recordQuota` would charge it twice.
+      parked = {
+        ...PARKED,
+        message_id: null,
+        usage: {
+          promptTokens: 300,
+          completionTokens: 50,
+          cachedTokens: null,
+          cacheWriteTokens: null,
+          reasoningTokens: null,
+          passes: [],
+        },
+      };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, false)).text();
+
+      // 100 fresh prompt plus 20 completion at 5x. See `weighTokens`.
+      expect(quotaRecorded).toHaveBeenCalledWith(200);
+    });
+
+    it("keeps the first half's totals when the resumed half dies before its first pass", async () => {
+      parked = { ...PARKED, message_id: "m1" };
+      priorMessage = FIRST_HALF;
+      const { app } = appWith({ question: "every monday" });
+      completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+        if (!body.stream) return titleOf("A question");
+        throw new Error("socket hang up");
+      });
+
+      await (await confirm(app, false)).text();
+
+      const row = serviceUpdate.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row.prompt_tokens).toBe(400);
+      expect(row.pass_usage).toHaveLength(1);
+      expect(row.outcome).toBe("cut_short");
+    });
+
+    it("resumes a pause parked before usage was carried", async () => {
+      parked = PARKED; // no `usage` key at all
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, false)).text();
+
+      expect(serviceInsert.mock.calls.at(-1)?.[0].prompt_tokens).toBe(100);
+    });
   });
 
   /**

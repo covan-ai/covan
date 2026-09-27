@@ -435,20 +435,22 @@ function appWith(spec: {
  */
 const ENV = { ALLOWED_ORIGIN: "https://app.covan.test", ROUTINE_SECRET_KEY: "k" };
 
-async function post(app: Hono<AppEnv>, body: Record<string, unknown>) {
+async function post(app: Hono<AppEnv>, body: Record<string, unknown>, signal?: AbortSignal) {
   const res = await app.request(
     "/chat/stream",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     },
     ENV as never,
   );
   return { status: res.status, body: await res.text() };
 }
 
-const ask = (app: Hono<AppEnv>) => post(app, { sessionId: SESSION.id });
+const ask = (app: Hono<AppEnv>, signal?: AbortSignal) =>
+  post(app, { sessionId: SESSION.id }, signal);
 const carryOn = (app: Hono<AppEnv>) => post(app, { sessionId: SESSION.id, continue: true });
 const again = (app: Hono<AppEnv>, model?: string) =>
   post(app, { sessionId: SESSION.id, regenerate: true, ...(model ? { model } : {}) });
@@ -1102,6 +1104,31 @@ describe("a turn that stops to ask", () => {
     expect(serviceInsert).not.toHaveBeenCalled();
   });
 
+  it("does not call an abandoned turn paused, when nothing was parked", async () => {
+    // `announcePause` is only reached on the non-aborted branch. A turn that
+    // asked and was abandoned in the same moment writes its row and parks
+    // nothing — so `outcome: "paused"` would be a row claiming forever to be
+    // waiting on somebody who can never answer it, which is precisely the
+    // false positive the column exists to remove.
+    // The person closes the tab while the tool is deciding it needs approval.
+    const gone = new AbortController();
+    extraTool = {
+      ...ASKS_FIRST,
+      run: async () => {
+        gone.abort();
+        return { kind: "needs_confirmation", summary: "Book room A?", proposal: { room: "A" } };
+      },
+    };
+    const { app } = appWith({ question: "book a room" });
+    completionCreate.mockImplementation(asksFor("book_the_room", "Let me book that."));
+
+    await ask(app, gone.signal).catch(() => {});
+
+    const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
+    if (row) expect(row.outcome).not.toBe("paused");
+    expect(pausedWritten).not.toHaveBeenCalled();
+  });
+
   it("parks no usage when the reply row already holds it", async () => {
     // The other half of the same rule: once a row exists it is the
     // accumulator, so a second copy on the parked turn would be double-counted
@@ -1714,6 +1741,27 @@ describe("POST /chat/confirm/:id", () => {
       expect(row.prompt_tokens).toBe(400);
       expect(row.pass_usage).toHaveLength(1);
       expect(row.outcome).toBe("cut_short");
+    });
+
+    it("does not lose the resumed passes when the parked usage has no pass list", async () => {
+      // `paused_turns.usage` is jsonb read back with a cast, so `passes` is
+      // only there because the writer put it there. Missing, the sum returns
+      // an object with no `passes` at all, supabase-js drops the key, and the
+      // row lands with a NULL `pass_usage` — the column this whole change
+      // exists to fill.
+      parked = {
+        ...PARKED,
+        message_id: null,
+        usage: { promptTokens: 300, completionTokens: 50 },
+      };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, false)).text();
+
+      const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row.prompt_tokens).toBe(400);
+      expect(row.pass_usage).toHaveLength(1);
     });
 
     it("resumes a pause parked before usage was carried", async () => {

@@ -169,6 +169,29 @@ describe("describe_connection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not serve the pre-refresh answer after a refresh corrected it", async () => {
+    // Keyed on the flag, the two answers sat side by side: describe, then
+    // describe with refresh, then describe again handed back the text the
+    // refresh had just replaced — inside the same turn.
+    const ctx = { ...ctxWith(SQL_CONNECTION), describeMemo: new Map<string, string>() };
+    await describeConnectionTool.run({ connectionId: "conn-1" }, ctx);
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          { table_schema: "public", table_name: "invoices", column_name: "id", data_type: "uuid" },
+        ]),
+        { status: 200 },
+      ),
+    );
+    const refreshed = await describeConnectionTool.run(
+      { connectionId: "conn-1", refresh: true },
+      ctx,
+    );
+    const third = await describeConnectionTool.run({ connectionId: "conn-1" }, ctx);
+    expect(third).toEqual(refreshed);
+    expect((third as { content: string }).content).toContain("invoices");
+  });
+
   it("does not go near the network when the answer is already recorded", async () => {
     const result = await describeConnectionTool.run(
       { connectionId: "conn-1" },
@@ -198,7 +221,13 @@ describe("describe_connection", () => {
       { connectionId: "conn-1" },
       ctxWith({
         ...SQL_CONNECTION,
-        config: { rpc: "covan_query", summary: "auth.users(id uuid)" },
+        // `summary_cached_at` and no version: written by an older build of
+        // this tool, rather than typed by a person.
+        config: {
+          rpc: "covan_query",
+          summary: "auth.users(id uuid)",
+          summary_cached_at: "2026-09-01T00:00:00Z",
+        },
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -209,6 +238,25 @@ describe("describe_connection", () => {
       expect.any(String),
       2,
     );
+  });
+
+  it("keeps a description a person wrote about a DATABASE, and does not overwrite it", async () => {
+    // The Add-connection form offers "What it holds (optional)" for SQL
+    // connections too, and writes it to the same `config.summary`. Keying
+    // staleness on the transport treats that text as an old rendering: the
+    // tool queries information_schema and writes the generated listing over it
+    // through the service client, so a team's own words are gone from the
+    // database and from the Integrations page with nobody having asked for a
+    // refresh. `summary_cached_at` is what tells the two apart — only
+    // `cacheConnectionSummary` writes it.
+    const theirs = "Our reporting warehouse. Facts in reporting.*, dimensions in dim.*.";
+    const result = await describeConnectionTool.run(
+      { connectionId: "conn-1" },
+      ctxWith({ ...SQL_CONNECTION, config: { rpc: "covan_query", summary: theirs } }),
+    );
+    expect((result as { content: string }).content).toContain("reporting warehouse");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(cacheConnectionSummary).not.toHaveBeenCalled();
   });
 
   it("keeps a description a person wrote, which no rendering change makes stale", async () => {

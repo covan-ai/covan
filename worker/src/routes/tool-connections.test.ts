@@ -53,6 +53,8 @@ const ROW = {
 
 /** What `serviceFrom` records about the insert it was given. */
 let inserted: Record<string, unknown> | null = null;
+/** What the caller's own client was asked to UPDATE. */
+let updated: Record<string, unknown> | null = null;
 
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", (...args: unknown[]) => fetchMock(...args));
@@ -82,7 +84,10 @@ function appWith(
             error: null,
           };
         },
-        update: () => ({ data: { ...ROW, label: "Renamed" }, error: null }),
+        update: (ctx: { values?: unknown }) => {
+          updated = (ctx.values ?? null) as Record<string, unknown> | null;
+          return { data: { ...ROW, label: "Renamed" }, error: null };
+        },
         delete: () => {
           spec.onDelete?.();
           return { data: null, error: null };
@@ -127,6 +132,7 @@ const VALID = {
 
 beforeEach(() => {
   inserted = null;
+  updated = null;
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
   serviceFrom.mockReset();
@@ -290,6 +296,37 @@ describe("PATCH /tool-connections/:id", () => {
     // Nothing reached the service client, which is the claim: editing is a
     // question RLS already answers.
     expect(serviceFrom).not.toHaveBeenCalled();
+  });
+
+  it("forgets that a summary was ever machine-written when a person replaces it", async () => {
+    // `describe_connection` decides whether a cached summary is stale by
+    // looking for `summary_cached_at`. Left behind under a person's own text,
+    // the next rendering change would treat their words as an old rendering
+    // and write a generated table listing over them.
+    const res = await appWith({
+      connection: {
+        ...ROW,
+        config: {
+          rpc: "covan_query",
+          summary: "old listing",
+          summary_cached_at: "2026-09-01T00:00:00Z",
+          summary_version: 2,
+        },
+      },
+    }).request(
+      "/tool-connections/conn-1",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: "Our reporting warehouse." }),
+      },
+      ENV as never,
+    );
+    expect(res.status).toBe(200);
+    const config = (updated?.config ?? {}) as Record<string, unknown>;
+    expect(config.summary).toBe("Our reporting warehouse.");
+    expect(config.summary_cached_at).toBeUndefined();
+    expect(config.summary_version).toBeUndefined();
   });
 
   it("is a 404 for a connection the caller cannot see", async () => {

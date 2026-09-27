@@ -102,9 +102,18 @@ export type ChatLimits = {
    * OpenAI. A leg is eight steps.
    *
    * So the trim is for the transcript that is genuinely large, where the
-   * alternative is a provider 400 rather than a few cents: eight more results
-   * at `MAX_TOOL_OUTPUT_CHARS` on top of this reaches a 200k window. The same
-   * number on both plans, because Free never gets near it at eight steps.
+   * alternative is a provider 400 rather than a few cents.
+   *
+   * 80,000 rather than the 120,000 an earlier pass argued from a 200k window.
+   * `legOf` gives a Paid turn only TWO boundaries — at 24 steps and at 32 —
+   * and each is one-shot, so a gate the first one misses is eight more results
+   * at `MAX_TOOL_OUTPUT_CHARS`, roughly 24,000 tokens, before the next chance.
+   * `gpt-4o` and `gpt-4o-mini` are 128k and both are selectable per agent: at
+   * 120,000 a first boundary measuring 112,000 would pass, and the turn would
+   * meet a provider 400 it used to survive. 80,000 leaves that headroom on the
+   * smallest window the picker offers and is still a transcript large enough
+   * for the rewrite to be worth its cache write. The same number on both
+   * plans, because Free never gets near it at eight steps.
    */
   trimAbovePromptTokens: number;
 };
@@ -136,7 +145,7 @@ const FREE: PlanLimits = Object.freeze({
     extraLegs: 0,
     legSteps: 8,
     maxTurnTokens: 500_000,
-    trimAbovePromptTokens: 120_000,
+    trimAbovePromptTokens: 80_000,
   }),
 });
 
@@ -154,7 +163,7 @@ const PAID: PlanLimits = Object.freeze({
     extraLegs: 2,
     legSteps: 8,
     maxTurnTokens: 500_000,
-    trimAbovePromptTokens: 120_000,
+    trimAbovePromptTokens: 80_000,
   }),
 });
 

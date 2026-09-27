@@ -18,7 +18,7 @@ import {
   wasCapped,
 } from "./budget";
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
-import { addUsage } from "./usage";
+import { addCounts } from "./usage";
 
 /**
  * The loop that turns one question into however many model calls it takes.
@@ -644,7 +644,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       } else if (event.type === "tools") {
         if (mayAsk) calls = event.calls;
       } else {
-        usage = addUsage(usage, event.usage);
+        usage = addCounts(usage, event.usage);
         // Recorded per pass as well as summed, so a turn that spent everything
         // on its last request can be told apart from one that spread it. See
         // `PassUsage`.

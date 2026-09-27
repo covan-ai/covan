@@ -68,4 +68,49 @@ describe("compactForModel", () => {
     expect(out.content).toBe(inner);
     expect(out.encoding).toBe("utf-8");
   });
+
+  it("does not round-trip a body it had no reason to touch", () => {
+    // JSON.parse/JSON.stringify is not lossless for numbers. An int64 record
+    // id comes back off by one, the model sends the wrong id to the next call,
+    // and the service updates the neighbouring record.
+    const body = '{"id":9007199254740993,"big":12345678901234567890,"amount":1.10,"neg":-0}';
+    expect(compactForModel(body, 12_000)).toBe(body);
+  });
+
+  it("keeps a string that merely begins with a link", () => {
+    // `body` here is the issue description. A prefix match takes the whole
+    // field, and the model then reports the issue has none.
+    const body = JSON.stringify({
+      data: Array.from({ length: 200 }, (_, i) => ({
+        number: i,
+        body: `https://app.example.com/r/9f2\n\nSteps: 1. open the ${"x".repeat(80)}`,
+        url: `https://api.github.com/repos/o/r/issues/${i}`,
+      })),
+    });
+    expect(body.length).toBeGreaterThan(12_000);
+
+    const out = compactForModel(body, 12_000);
+    expect(out).toContain("Steps: 1. open the");
+    expect(out).not.toContain("api.github.com");
+  });
+
+  it("stays inside the budget it was given, notice and all", () => {
+    // The notice is the only thing that makes the loss recoverable, and it was
+    // appended AFTER the cap — so it was always the part `loop.ts` cut off,
+    // and the size it reported was the capped length rather than the real one.
+    const tree = Array.from({ length: 4000 }, (_, i) => ({
+      path: `src/file${i}.ts`,
+      sha: "a".repeat(40),
+      url: `https://api.github.com/repos/o/r/git/blobs/${"a".repeat(40)}`,
+    }));
+    const out = compactForModel(JSON.stringify({ data: { tree } }), 12_000);
+
+    expect(out.length).toBeLessThanOrEqual(12_000);
+    expect(out).toMatch(/\[urls omitted to fit/);
+  });
+
+  it("keeps a field literally called __proto__", () => {
+    const out = JSON.parse(compactForModel('{"__proto__":{"a":1},"b":2}', 12_000));
+    expect(Object.keys(out).sort()).toEqual(["__proto__", "b"]);
+  });
 });

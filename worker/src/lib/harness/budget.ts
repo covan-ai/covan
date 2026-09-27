@@ -165,7 +165,7 @@ export const MAX_TOOL_OUTPUT_CHARS = 12_000;
  * the arithmetic rather than the old unconditional rewrite. The argument for
  * the number is on `ChatLimits.trimAbovePromptTokens`.
  */
-export const TRIM_ABOVE_PROMPT_TOKENS = 120_000;
+export const TRIM_ABOVE_PROMPT_TOKENS = 80_000;
 
 /**
  * How much of it is kept in `message_steps.result_excerpt`.

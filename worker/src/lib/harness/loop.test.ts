@@ -572,6 +572,24 @@ describe("the budget", () => {
         expect(afterBoundary.some((m) => m.role === "system")).toBe(true);
       });
 
+      it("still trims before a 128k window is in reach, not after", async () => {
+        // `gpt-4o` and `gpt-4o-mini` are both 128k and both selectable per
+        // agent. Gated at 120,000 the first boundary would pass at 112,000,
+        // eight more results at MAX_TOOL_OUTPUT_CHARS would add ~24,000, and
+        // the turn would meet a provider 400 before the second boundary — a
+        // turn the unconditional trim used to finish.
+        foreverAtSize(112_000);
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const afterBoundary = sentTranscripts[4];
+        const results = afterBoundary.filter((m) => m.role === "tool");
+        expect(results.some((m) => m.content.includes("[trimmed:"))).toBe(true);
+      });
+
       it("leaves an ordinary turn's transcript alone", async () => {
         // The turn that never reaches its budget is the common one, and it must
         // not pay a cache invalidation for a ceiling it never met.

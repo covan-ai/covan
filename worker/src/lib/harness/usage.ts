@@ -63,24 +63,41 @@ function add(a: number | null, b: number | null): number | null {
   return (a ?? 0) + (b ?? 0);
 }
 
-export function addUsage(a: TurnUsage, b: TurnUsage): TurnUsage;
-export function addUsage(a: CompletionUsage, b: CompletionUsage): CompletionUsage;
-export function addUsage(
-  a: CompletionUsage & { passes?: PassUsage[] },
-  b: CompletionUsage & { passes?: PassUsage[] },
-): CompletionUsage & { passes?: PassUsage[] } {
-  const summed: CompletionUsage & { passes?: PassUsage[] } = {
+/** The five counters, summed. What a caller with no pass list wants. */
+export function addCounts(a: CompletionUsage, b: CompletionUsage): CompletionUsage {
+  return {
     promptTokens: add(a.promptTokens, b.promptTokens),
     completionTokens: add(a.completionTokens, b.completionTokens),
     cachedTokens: add(a.cachedTokens, b.cachedTokens),
     cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
     reasoningTokens: add(a.reasoningTokens, b.reasoningTokens),
   };
-  // Passes are never renumbered: an index is which model call it was inside
-  // its own half, and a resumed run already continues the numbering from
-  // `max(step.pass) + 1`.
-  if (a.passes || b.passes) summed.passes = [...(a.passes ?? []), ...(b.passes ?? [])];
-  return summed;
+}
+
+/**
+ * The same sum, carrying the per-pass list with it.
+ *
+ * Two functions rather than one overloaded one, over a single definition of
+ * the null rule. The overload this replaces promised a `TurnUsage` — whose
+ * `passes` is required — from an implementation that only built one when an
+ * operand happened to have it, and `paused_turns.usage` is jsonb read back
+ * through a cast, so an operand really can arrive without the field. Absent,
+ * `usageColumns` emits `pass_usage: undefined` and supabase-js drops the key:
+ * a NULL column where the merged list should be.
+ */
+export function addUsage(
+  a: CompletionUsage & { passes?: PassUsage[] },
+  b: CompletionUsage & { passes?: PassUsage[] },
+): TurnUsage {
+  return {
+    ...addCounts(a, b),
+    // An index is which model call it was inside its own half, and nothing
+    // here renumbers them. A RESUME continues the numbering, because the loop
+    // seeds `pass` from `max(step.pass) + 1` of the steps it carries in; a
+    // CONTINUATION does not — it runs with no `stepsSoFar`, so its passes
+    // start at zero again and one row's list can read [0, 1, 0, 1].
+    passes: [...(a.passes ?? []), ...(b.passes ?? [])],
+  };
 }
 
 /** One number off a `messages` row, where a column that is not there is not a zero. */
@@ -124,4 +141,31 @@ export function usageColumns(usage: TurnUsage): {
     reasoning_tokens: usage.reasoningTokens,
     pass_usage: usage.passes,
   };
+}
+
+/**
+ * How a reply ended, from the three facts that decide it.
+ *
+ * Its own function because the answer differs between two call sites that
+ * otherwise look identical: the turn that finishes and the turn the person
+ * walked away from. `announcePause` runs only on the first, so on the second
+ * `paused.reason === "confirmation"` describes something that was never
+ * written down — a row saying `paused` with no `paused_turns` behind it is a
+ * reply claiming forever to be waiting on somebody who can never answer it,
+ * which is exactly the false positive `messages.outcome` exists to remove.
+ *
+ * `budget` and `tokens` are unaffected by that: nothing is parked for either
+ * of them anywhere, because there is no question for a person to answer.
+ */
+export function replyOutcome(input: {
+  paused: { reason: "confirmation" | "budget" | "tokens" } | null;
+  finishReason: string | null;
+  /** Whether this turn will actually be parked for somebody to answer. */
+  parked: boolean;
+}): MessageOutcome {
+  if (input.paused) {
+    if (input.paused.reason !== "confirmation") return input.paused.reason;
+    return input.parked ? "paused" : "cut_short";
+  }
+  return input.finishReason === "length" ? "truncated" : "answered";
 }

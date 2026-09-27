@@ -44,18 +44,33 @@ function decodeBase64(value: string): Uint8Array | null {
 type Json = unknown;
 
 /**
+ * A fresh object that cannot inherit, so a key called `__proto__` stays a key.
+ *
+ * `out[key] = …` on a plain `{}` with `key === "__proto__"` runs
+ * `Object.prototype`'s setter instead of creating an own property, and
+ * `JSON.stringify` then omits it — a config dump carrying that field would
+ * lose it silently on the way to the model.
+ */
+function blank(): Record<string, Json> {
+  return Object.create(null) as Record<string, Json>;
+}
+
+/**
  * Decode every `{content, encoding: "base64"}` pair, in place, once.
  *
  * Once matters: a decoded string is never re-parsed, so a file that itself
  * contains `"encoding": "base64"` cannot trigger a second pass.
+ *
+ * Reports whether it changed anything, because the caller must be able to hand
+ * back the original bytes when it did not — see `compactForModel`.
  */
-function decodePayloads(node: Json): Json {
-  if (Array.isArray(node)) return node.map(decodePayloads);
+function decodePayloads(node: Json, touched: { changed: boolean }): Json {
+  if (Array.isArray(node)) return node.map((child) => decodePayloads(child, touched));
   if (typeof node !== "object" || node === null) return node;
 
   const row = node as Record<string, Json>;
-  const out: Record<string, Json> = {};
-  for (const [key, value] of Object.entries(row)) out[key] = decodePayloads(value);
+  const out = blank();
+  for (const [key, value] of Object.entries(row)) out[key] = decodePayloads(value, touched);
 
   if (typeof out.content === "string" && out.encoding === "base64") {
     const bytes = decodeBase64(out.content);
@@ -68,18 +83,27 @@ function decodePayloads(node: Json): Json {
         out.content = text;
         out.encoding = "utf-8";
       }
+      touched.changed = true;
     }
   }
   return out;
 }
 
-const IS_URL = /^https?:\/\//;
+/**
+ * A string that is nothing but a link.
+ *
+ * Anchored at both ends, and no whitespace allowed between them. A prefix
+ * match would also take any text that merely STARTS with a link — an issue
+ * whose description opens with the repro URL, a README whose first line is a
+ * badge — and the model would then report the field as empty.
+ */
+const IS_URL = /^https?:\/\/\S*$/;
 
-/** Every string value that is a bare URL, gone. */
+/** Every string value that is nothing but a URL, gone. */
 function dropUrls(node: Json): Json {
   if (Array.isArray(node)) return node.map(dropUrls);
   if (typeof node !== "object" || node === null) return node;
-  const out: Record<string, Json> = {};
+  const out = blank();
   for (const [key, value] of Object.entries(node as Record<string, Json>)) {
     if (typeof value === "string" && IS_URL.test(value)) continue;
     out[key] = dropUrls(value);
@@ -88,6 +112,18 @@ function dropUrls(node: Json): Json {
 }
 
 const URLS_OMITTED = "\n\n[urls omitted to fit; ask for a field with `fields` if you need one]";
+
+/**
+ * `cap`'s own notice, measured rather than guessed.
+ *
+ * Its length depends on the two numbers inside it, so the only honest way to
+ * reserve room for it is to ask `cap` for one. Measured at `max`, whose digit
+ * count is an upper bound for any smaller budget — so this over-reserves by a
+ * character or two at worst, never under.
+ */
+function capNoticeLength(text: string, max: number): number {
+  return cap(text, max).length - Math.min(text.length, max);
+}
 
 export function compactForModel(body: string, max: number): string {
   let parsed: Json;
@@ -98,7 +134,14 @@ export function compactForModel(body: string, max: number): string {
     return cap(body, max);
   }
 
-  const shaped = decodePayloads(parsed);
+  const touched = { changed: false };
+  const shaped = decodePayloads(parsed, touched);
+  // Nothing to shape and nothing to cut: hand back the ORIGINAL bytes.
+  // `JSON.parse` + `JSON.stringify` is not a round trip for numbers — an int64
+  // record id comes back off by one and `1e400` comes back `null` — and a
+  // result nobody needed to change must not be paraphrased.
+  if (!touched.changed && body.length <= max) return body;
+
   const decoded = JSON.stringify(shaped);
   if (decoded.length <= max) return decoded;
 
@@ -106,6 +149,12 @@ export function compactForModel(body: string, max: number): string {
   // lose — the model can ask for it again, and the notice below says so —
   // while a sha or a path is what the answer is made of.
   const withoutUrls = JSON.stringify(dropUrls(shaped));
-  if (withoutUrls.length <= max) return withoutUrls + URLS_OMITTED;
-  return cap(withoutUrls, max) + URLS_OMITTED;
+  if (withoutUrls.length + URLS_OMITTED.length <= max) return withoutUrls + URLS_OMITTED;
+  // Room for BOTH notices inside `max`. Appending them afterwards put the
+  // result over the budget, and `loop.ts` then capped it a second time — which
+  // cut off the one sentence that made the dropped urls recoverable and
+  // reported the capped length as the original, telling the model a large
+  // result was small.
+  const room = Math.max(0, max - URLS_OMITTED.length - capNoticeLength(withoutUrls, max));
+  return cap(withoutUrls, room) + URLS_OMITTED;
 }

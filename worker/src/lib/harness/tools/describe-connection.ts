@@ -128,9 +128,14 @@ export const describeConnectionTool: AgentTool = {
     // Answered twice in one turn more often than it should be, and a schema
     // does not change inside a turn. Its own map rather than `searchMemo`,
     // whose documentation says only `find_tool` writes there.
-    const memoKey = `describe|${connection.id}|${input.refresh === true ? "fresh" : "cached"}`;
+    //
+    // Keyed on the connection alone, and a refresh OVERWRITES the entry rather
+    // than occupying a second one beside it. With the flag in the key, a model
+    // that refreshed because the answer looked wrong could ask a third time
+    // and be handed the very text the refresh had just replaced.
+    const memoKey = `describe|${connection.id}`;
     const remembered = ctx.describeMemo?.get(memoKey);
-    if (remembered) return { kind: "ok", content: remembered };
+    if (remembered && input.refresh !== true) return { kind: "ok", content: remembered };
 
     const answer = (content: string): ToolResult => {
       ctx.describeMemo?.set(memoKey, content);
@@ -138,13 +143,19 @@ export const describeConnectionTool: AgentTool = {
     };
 
     const cached = connection.config.summary;
-    // Only a summary THIS tool rendered carries a version, and only that kind
-    // goes stale when the rendering changes. On an HTTP connection the summary
-    // is what the team wrote about their own API — treating that as stale
-    // would throw a person's description away and answer "no description has
-    // been recorded" in its place.
-    const rendered = connection.transport === "sql" || connection.transport === "supabase";
-    const cacheIsCurrent = !rendered || connection.config.summary_version === SUMMARY_VERSION;
+    // Only a summary THIS tool rendered goes stale when the rendering changes,
+    // and `summary_cached_at` is what says it did: `cacheConnectionSummary` is
+    // the only writer of that field.
+    //
+    // NOT the transport. `config.summary` is a field a person can fill in on
+    // any connection — the Add-connection form offers it for a database too
+    // ("What it holds (optional)") and the PATCH route takes it for every
+    // kind. Treating a database's summary as a rendering because of its
+    // transport would query information_schema and write the generated table
+    // listing over somebody's own description, through the service client,
+    // with nobody having asked for a refresh.
+    const wasRendered = typeof connection.config.summary_cached_at === "string";
+    const cacheIsCurrent = !wasRendered || connection.config.summary_version === SUMMARY_VERSION;
     if (input.refresh !== true && cacheIsCurrent && typeof cached === "string" && cached.trim()) {
       return answer(
         `${connection.label} (${connection.transport}, ${connection.base_url})\n\n` +

@@ -1,7 +1,28 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompletionMessage, ToolCall } from "../completion";
 import type { AgentStep, PausedTurn } from "./loop";
+import type { PassUsage } from "./loop";
 import type { TurnUsage } from "./usage";
+
+/**
+ * What a parked turn's `usage` column says it spent.
+ *
+ * jsonb, so every field is whatever the writer put there. A cast would hand
+ * `addUsage` an object whose `passes` may not exist and whose counters may not
+ * be numbers; this makes the type true.
+ */
+function usageOfParked(raw: unknown): TurnUsage {
+  const row = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  const count = (value: unknown) => (typeof value === "number" ? value : null);
+  return {
+    promptTokens: count(row.promptTokens),
+    completionTokens: count(row.completionTokens),
+    cachedTokens: count(row.cachedTokens),
+    cacheWriteTokens: count(row.cacheWriteTokens),
+    reasoningTokens: count(row.reasoningTokens),
+    passes: Array.isArray(row.passes) ? (row.passes as PassUsage[]) : [],
+  };
+}
 import { MAX_STEP_EXCERPT_CHARS, cap } from "./budget";
 
 /**
@@ -178,8 +199,10 @@ export async function loadPausedTurn(
       steps: (data.steps ?? []) as AgentStep[],
       model: data.model ? String(data.model) : null,
       // A row parked by a build before 0065 has no column at all, and reads as
-      // "the row already holds it" — which is what it meant then.
-      usage: (data.usage as TurnUsage | null) ?? null,
+      // "the row already holds it" — which is what it meant then. Normalised
+      // rather than cast: this is jsonb, so the shape is whatever was written,
+      // and `addUsage` is entitled to a real `passes` array.
+      usage: data.usage ? usageOfParked(data.usage) : null,
       status: String(data.status),
       expiresAt: String(data.expires_at),
     },

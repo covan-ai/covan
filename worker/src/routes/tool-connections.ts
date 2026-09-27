@@ -187,7 +187,15 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
 
   const config = { ...((current.config as Record<string, unknown>) ?? {}) };
   if (body.rpc !== undefined) config.rpc = body.rpc.trim();
-  if (body.summary !== undefined) config.summary = body.summary.trim();
+  if (body.summary !== undefined) {
+    config.summary = body.summary.trim();
+    // A person's words, so the marks saying a machine wrote them come off.
+    // `describe_connection` reads `summary_cached_at` to decide whether a
+    // cached summary is an old RENDERING it may replace; left behind under
+    // this text, the next rendering change would overwrite it.
+    delete config.summary_cached_at;
+    delete config.summary_version;
+  }
 
   const { data, error } = await db
     .from("tool_connections")

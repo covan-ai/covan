@@ -2,7 +2,14 @@ import { describe, it, expect } from "vitest";
 
 import { readFileSync } from "node:fs";
 
-import { MESSAGE_OUTCOMES, addUsage, emptyUsage, usageColumns, usageOfRow } from "./usage";
+import {
+  MESSAGE_OUTCOMES,
+  addUsage,
+  emptyUsage,
+  replyOutcome,
+  usageColumns,
+  usageOfRow,
+} from "./usage";
 
 describe("addUsage", () => {
   it("null + null stays null: an Anthropic reply has no reasoning count", () => {
@@ -35,6 +42,23 @@ describe("addUsage", () => {
       },
     );
     expect(sum.passes.map((p) => p.index)).toEqual([0, 4]);
+  });
+
+  it("always answers with a pass list, even when neither half carried one", () => {
+    // The signature promises a `TurnUsage`, whose `passes` is required. The
+    // implementation only built one when an operand had one, so a sum of two
+    // objects that had come in through a cast — `paused_turns.usage` is jsonb
+    // read back with one — returned an object with no `passes`, and
+    // `usageColumns` then emitted `pass_usage: undefined`, which supabase-js
+    // drops from the row entirely.
+    const bare = {
+      promptTokens: 1,
+      completionTokens: null,
+      cachedTokens: null,
+      cacheWriteTokens: null,
+      reasoningTokens: null,
+    } as unknown as ReturnType<typeof emptyUsage>;
+    expect(addUsage(bare, bare).passes).toEqual([]);
   });
 });
 
@@ -93,5 +117,44 @@ describe("MESSAGE_OUTCOMES", () => {
       .flatMap((m) => [...m[1].matchAll(/'([a-z_]+)'/g)].map((v) => v[1]))
       .sort();
     expect(allowed).toEqual([...MESSAGE_OUTCOMES].sort());
+  });
+});
+
+describe("replyOutcome", () => {
+  it("says a turn waiting on somebody is paused", () => {
+    expect(
+      replyOutcome({ paused: { reason: "confirmation" }, finishReason: null, parked: true }),
+    ).toBe("paused");
+  });
+
+  it("does not call an abandoned turn paused, when nothing was parked", () => {
+    // `announcePause` runs only on the non-aborted branch. A row saying
+    // "paused" with no `paused_turns` row behind it claims forever to be
+    // waiting on somebody who can never answer — the exact false positive the
+    // column was added to remove.
+    expect(
+      replyOutcome({ paused: { reason: "confirmation" }, finishReason: null, parked: false }),
+    ).toBe("cut_short");
+  });
+
+  it("keeps a ceiling under its own name whether or not anything was parked", () => {
+    // Nothing is parked for `budget` or `tokens` in either case: there is no
+    // question for a person to answer, and the model answered with what it had.
+    for (const parked of [true, false]) {
+      expect(replyOutcome({ paused: { reason: "budget" }, finishReason: null, parked })).toBe(
+        "budget",
+      );
+      expect(replyOutcome({ paused: { reason: "tokens" }, finishReason: null, parked })).toBe(
+        "tokens",
+      );
+    }
+  });
+
+  it("reports a reply cut off at its length limit as truncated", () => {
+    expect(replyOutcome({ paused: null, finishReason: "length", parked: true })).toBe("truncated");
+  });
+
+  it("is answered when nothing stopped it", () => {
+    expect(replyOutcome({ paused: null, finishReason: "stop", parked: true })).toBe("answered");
   });
 });

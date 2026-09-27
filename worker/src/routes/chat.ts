@@ -18,6 +18,7 @@ import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from ".
 import {
   addUsage,
   emptyUsage,
+  replyOutcome,
   usageColumns,
   usageOfRow,
   type MessageOutcome,
@@ -667,21 +668,6 @@ chat.post("/chat/stream", async (c) => {
         // abort and error paths below never look at it, and the two places
         // that do are both inside this block.
         const finishReason = turn.finishReason;
-        /**
-         * Why this reply ended, so the question stops being answered by
-         * string-matching `content`.
-         *
-         * A ceiling is not a pause the person can answer: `budget` and
-         * `tokens` ended the tool loop and the model then answered with what
-         * it had, while `confirmation` is a turn waiting on somebody.
-         */
-        const outcome: MessageOutcome = paused
-          ? paused.reason === "confirmation"
-            ? "paused"
-            : paused.reason
-          : finishReason === "length"
-            ? "truncated"
-            : "answered";
 
         if (signal.aborted) {
           deferred(
@@ -695,9 +681,11 @@ chat.post("/chat/stream", async (c) => {
                   cacheWriteTokens,
                   reasoningTokens,
                   passUsage,
-                  // The person closed the tab; the words the model had already
-                  // written are still a reply they can come back to.
-                  outcome,
+                  // `parked: false` — this branch returns before
+                  // `announcePause`, so a turn that asked and was abandoned in
+                  // the same moment has nothing to come back to and must not
+                  // say it is waiting.
+                  outcome: replyOutcome({ paused, finishReason, parked: false }),
                 });
                 // The steps belong to an abandoned turn as much as to a
                 // finished one, and this branch used to drop them: the row was
@@ -723,7 +711,7 @@ chat.post("/chat/stream", async (c) => {
             cacheWriteTokens,
             reasoningTokens,
             passUsage,
-            outcome,
+            outcome: replyOutcome({ paused, finishReason, parked: true }),
           });
           await recordSpend();
           if (!inserted) {
@@ -1164,14 +1152,11 @@ chat.post("/chat/confirm/:id", async (c) => {
         const inserted = await persistAssistant(turn.text, {
           ...spentUsage(spend),
           passUsage: turn.passes,
-          outcome:
-            turn.paused?.reason === "confirmation"
-              ? "paused"
-              : turn.paused
-                ? turn.paused.reason
-                : turn.finishReason === "length"
-                  ? "truncated"
-                  : "answered",
+          outcome: replyOutcome({
+            paused: turn.paused ?? null,
+            finishReason: turn.finishReason,
+            parked: true,
+          }),
         });
 
         if (!inserted) {
@@ -1268,8 +1253,12 @@ chat.post("/chat/confirm/:id", async (c) => {
  * the text was already being fetched and the counters are on the same row —
  * the same single subrequest it always was.
  *
- * A row that has gone reads as an empty reply that cost nothing, which is the
- * honest outcome of a message deleted while a confirmation was open.
+ * A row that has gone reads as an empty reply that cost nothing. That is a
+ * fallback rather than a case: `paused_turns.message_id` is `on delete
+ * cascade` (0060), so deleting the reply deletes the pause and the resume gets
+ * a 404 from `loadPausedTurn` instead. Only a delete landing between that read
+ * and this one reaches here, and the update below then matches no row and the
+ * caller reports that it could not save — see `persistAssistant`.
  */
 async function priorReply(
   service: ReturnType<typeof serviceClient>,

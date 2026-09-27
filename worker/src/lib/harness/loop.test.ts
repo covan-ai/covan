@@ -27,6 +27,9 @@ vi.mock("../completion", async (importOriginal) => {
 function pass(
   text: string,
   calls: Array<{ id: string; name: string; arguments: string }> = [],
+  // What the pass reports having cost. Trimming now depends on it — a leg
+  // boundary is not on its own a reason to rewrite the transcript.
+  usage: { promptTokens?: number } = {},
 ): CompletionEvent[] {
   const events: CompletionEvent[] = [];
   if (text) events.push({ type: "delta", text });
@@ -34,7 +37,7 @@ function pass(
   events.push({
     type: "end",
     usage: {
-      promptTokens: 10,
+      promptTokens: usage.promptTokens ?? 10,
       completionTokens: 5,
       cachedTokens: 2,
       cacheWriteTokens: 3,
@@ -505,8 +508,20 @@ describe("the budget", () => {
         tool("search", async () => ({ kind: "ok", content: "x".repeat(5_000) })),
       ];
 
+      /**
+       * A model that would ask forever, against a transcript already large
+       * enough for trimming to be worth its cache write.
+       *
+       * The number matters now: cutting an old result invalidates the cache
+       * from the first edit, and on a small transcript that costs more than
+       * the reads it saves. See `trimAbovePromptTokens`.
+       */
+      const foreverAtSize = (promptTokens: number) =>
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }], { promptTokens })]);
+      const HUGE = 200_000;
+
       it("trims the results it has finished with, and says it did", async () => {
-        forever();
+        foreverAtSize(HUGE);
         await runAgentTurn({
           ...base,
           tools: verbose(),
@@ -522,6 +537,39 @@ describe("the budget", () => {
         // And cut with `cap`, so the model is told rather than quietly handed
         // a truncation it would mistake for the whole answer.
         expect(results[0].content).toContain("[trimmed:");
+      });
+
+      it("leaves finished results whole at a leg boundary when the transcript is still small", async () => {
+        // The trim costs a full cache write of everything after the first edit
+        // and saves the difference in reads. On the 583k turn, pass 9 wrote
+        // 11,547 tokens to save 210 characters of reads — about $0.07 spent to
+        // save $0.004. It only pays back if the cut bytes would be re-read for
+        // more than a dozen further passes, and a leg is eight steps.
+        foreverAtSize(30_000);
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const afterBoundary = sentTranscripts[4];
+        const results = afterBoundary.filter((m) => m.role === "tool");
+        expect(results.length).toBeGreaterThan(2);
+        expect(results.every((m) => !m.content.includes("[trimmed:"))).toBe(true);
+      });
+
+      it("still says how much of the budget is left, whether or not it trimmed", async () => {
+        // The notice and the trim were one branch. They answer different
+        // questions and only one of them is about size.
+        foreverAtSize(30_000);
+        await runAgentTurn({
+          ...base,
+          tools: verbose(),
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const afterBoundary = sentTranscripts[4];
+        expect(afterBoundary.some((m) => m.role === "system")).toBe(true);
       });
 
       it("leaves an ordinary turn's transcript alone", async () => {
@@ -544,7 +592,7 @@ describe("the budget", () => {
         // Two legs means two boundaries, and a result cut at the first must not
         // be cut again at the second — `cap` would nest its own notice inside
         // the text it already added.
-        forever();
+        foreverAtSize(HUGE);
         await runAgentTurn({
           ...base,
           tools: verbose(),
@@ -710,7 +758,12 @@ describe("the budget", () => {
       // a set of indices, because a resume is a fresh call with a fresh set and
       // the same messages.
       const already = cap("y".repeat(5_000), MAX_STEP_EXCERPT_CHARS);
-      scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+      // A large transcript, so the trim actually runs and the double-cut guard
+      // is the thing being tested rather than the size gate in front of it.
+      scripted([
+        pass("", [{ id: "c", name: "search", arguments: "{}" }], { promptTokens: 200_000 }),
+        pass("done", [], { promptTokens: 200_000 }),
+      ]);
       await runAgentTurn({
         ...base,
         request: {

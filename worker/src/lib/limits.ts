@@ -87,6 +87,26 @@ export type ChatLimits = {
    * before.
    */
   maxTurnTokens: number;
+  /**
+   * How large the transcript has to get before a leg boundary trims it.
+   *
+   * Trimming old tool results invalidates the prompt cache from the first edit
+   * — everything after it is re-written at the write rate and re-read at the
+   * read rate — so the saving is the cut bytes multiplied by however many
+   * passes still come, and the cost is paid once, immediately, on the whole
+   * tail. Measured on the 583,139-token turn of 2026-09-25: pass 9 wrote
+   * 11,547 tokens for a 210-character result and pass 14 wrote 6,796 for
+   * 2,262 characters. At $3.75/M written against $0.30/M read that is about
+   * $0.07 spent to save $0.004, and it only pays back if the cut bytes would
+   * be re-read for more than twelve further passes on Anthropic or ten on
+   * OpenAI. A leg is eight steps.
+   *
+   * So the trim is for the transcript that is genuinely large, where the
+   * alternative is a provider 400 rather than a few cents: eight more results
+   * at `MAX_TOOL_OUTPUT_CHARS` on top of this reaches a 200k window. The same
+   * number on both plans, because Free never gets near it at eight steps.
+   */
+  trimAbovePromptTokens: number;
 };
 
 export type PlanLimits = {
@@ -111,7 +131,13 @@ export type PlanLimits = {
  */
 const FREE: PlanLimits = Object.freeze({
   subrequests: 50,
-  chat: Object.freeze({ maxSteps: 8, extraLegs: 0, legSteps: 8, maxTurnTokens: 500_000 }),
+  chat: Object.freeze({
+    maxSteps: 8,
+    extraLegs: 0,
+    legSteps: 8,
+    maxTurnTokens: 500_000,
+    trimAbovePromptTokens: 120_000,
+  }),
 });
 
 /**
@@ -123,7 +149,13 @@ const FREE: PlanLimits = Object.freeze({
  */
 const PAID: PlanLimits = Object.freeze({
   subrequests: 10_000,
-  chat: Object.freeze({ maxSteps: 24, extraLegs: 2, legSteps: 8, maxTurnTokens: 500_000 }),
+  chat: Object.freeze({
+    maxSteps: 24,
+    extraLegs: 2,
+    legSteps: 8,
+    maxTurnTokens: 500_000,
+    trimAbovePromptTokens: 120_000,
+  }),
 });
 
 /** Which plan this environment says it is on. Anything but `"paid"` is Free. */

@@ -91,6 +91,8 @@ export function buildToolContext(input: {
     // One per turn, so the same catalogue search asked twice is answered from
     // the first one. See `searchMemo` in `registry.ts`.
     searchMemo: new Map<string, string>(),
+    // And schemas already described, for the same reason.
+    describeMemo: new Map<string, string>(),
     // And what those searches offered, which is what `run_tool` is allowed to
     // run. Fresh and empty on both routes: on the resume, the approved call is
     // not consulted against it at all — the slug was checked when the call was

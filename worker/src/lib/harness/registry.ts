@@ -148,6 +148,14 @@ export type ToolContext = {
    */
   searchMemo?: Map<string, string>;
   /**
+   * Schemas already described this turn, keyed by connection.
+   *
+   * Its own map rather than a prefix inside `searchMemo`, whose documentation
+   * above says only `find_tool` writes there — and that sentence is worth more
+   * than the one field it costs to keep true.
+   */
+  describeMemo?: Map<string, string>;
+  /**
    * Every slug `find_tool` has put in front of the model this turn.
    *
    * `run_tool`'s own description already promises this — "a slug you have not

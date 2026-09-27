@@ -28,14 +28,67 @@ import { queryDatabaseTool } from "./query-database";
  * see — a read-only role with rights on two schemas describes two schemas,
  * which is the right answer and not a thing this query has to arrange.
  */
+/**
+ * Schemas that belong to the platform rather than to the application.
+ *
+ * Supabase ships a dozen of these and `information_schema.columns` lists them
+ * all. Ordered by `table_schema`, `auth.*` comes before `public.*` — so every
+ * call against the founder's project returned 12,054 characters beginning at
+ * `auth.audit_log_entries`, and the 1,000-row limit and the 12,000-character
+ * cap were both spent before reaching a table anybody would query. At 12:44:55
+ * on 2026-09-25 the agent answered "the messages table isn't visible; which
+ * table holds agent messages?" — a wasted pass and a wrong answer.
+ *
+ * By name, deliberately, and not "everything but public": an application that
+ * keeps its tables in a `sales` schema is describing its own tables. The cost
+ * is an application whose own schema is called one of these, which is hidden;
+ * the tool description says so.
+ */
+export const INTERNAL_SCHEMAS = [
+  "pg_catalog",
+  "information_schema",
+  "auth",
+  "storage",
+  "extensions",
+  "realtime",
+  "vault",
+  "net",
+  "supabase_functions",
+  "supabase_migrations",
+  "graphql",
+  "graphql_public",
+  "pgsodium",
+  "pgsodium_masks",
+  "cron",
+  "pgbouncer",
+];
+
 const SCHEMA_QUERY =
   "select table_schema, table_name, column_name, data_type " +
   "from information_schema.columns " +
-  "where table_schema not in ('pg_catalog', 'information_schema') " +
-  "order by table_schema, table_name, ordinal_position";
+  `where table_schema not in (${INTERNAL_SCHEMAS.map((s) => `'${s}'`).join(", ")}) ` +
+  // `public` first, so the row limit is spent on the tables the model can use.
+  "order by (table_schema <> 'public'), table_schema, table_name, ordinal_position";
 
 /** Enough columns to describe a real schema, few enough to stay readable. */
 const SCHEMA_ROW_LIMIT = 1000;
+
+/**
+ * Columns of one table the summary will name before it starts counting.
+ *
+ * A forty-column table is already more than a model needs to write a query;
+ * a two-hundred-column one is the rest of the schema not fitting.
+ */
+const MAX_COLUMNS_PER_TABLE = 40;
+
+/**
+ * What `config.summary` was written by.
+ *
+ * Bumped when the rendering changes, so a summary cached by an older build is
+ * refetched once rather than served forever — the truncated `auth.*` answers
+ * are in `config.summary` on every connection that was ever described.
+ */
+const SUMMARY_VERSION = 2;
 
 export const describeConnectionTool: AgentTool = {
   name: "describe_connection",
@@ -43,7 +96,10 @@ export const describeConnectionTool: AgentTool = {
     "Find out what a connected service offers before you use it: for a database, its " +
     "tables and columns; for an HTTP API, whatever the team recorded about it. Call this " +
     "once before your first query_database or http_request against a connection you have " +
-    "not used in this conversation.",
+    "not used in this conversation. A database answer lists the application's own tables, " +
+    "public first; the platform's internal schemas (auth, storage, extensions and the " +
+    "rest) are left out, so a table of yours that lives in a schema with one of those " +
+    "names will not appear.",
   input: {
     type: "object",
     properties: {
@@ -69,14 +125,31 @@ export const describeConnectionTool: AgentTool = {
     const connection = await loadConnection(ctx, input.connectionId);
     if (!connection) return { kind: "error", message: "no such connection in this workspace" };
 
+    // Answered twice in one turn more often than it should be, and a schema
+    // does not change inside a turn. Its own map rather than `searchMemo`,
+    // whose documentation says only `find_tool` writes there.
+    const memoKey = `describe|${connection.id}|${input.refresh === true ? "fresh" : "cached"}`;
+    const remembered = ctx.describeMemo?.get(memoKey);
+    if (remembered) return { kind: "ok", content: remembered };
+
+    const answer = (content: string): ToolResult => {
+      ctx.describeMemo?.set(memoKey, content);
+      return { kind: "ok", content };
+    };
+
     const cached = connection.config.summary;
-    if (input.refresh !== true && typeof cached === "string" && cached.trim()) {
-      return {
-        kind: "ok",
-        content:
-          `${connection.label} (${connection.transport}, ${connection.base_url})\n\n` +
+    // Only a summary THIS tool rendered carries a version, and only that kind
+    // goes stale when the rendering changes. On an HTTP connection the summary
+    // is what the team wrote about their own API — treating that as stale
+    // would throw a person's description away and answer "no description has
+    // been recorded" in its place.
+    const rendered = connection.transport === "sql" || connection.transport === "supabase";
+    const cacheIsCurrent = !rendered || connection.config.summary_version === SUMMARY_VERSION;
+    if (input.refresh !== true && cacheIsCurrent && typeof cached === "string" && cached.trim()) {
+      return answer(
+        `${connection.label} (${connection.transport}, ${connection.base_url})\n\n` +
           `${cached}${qualifiedNamesNote(connection.transport)}`,
-      };
+      );
     }
 
     // A connected application does not have a schema to describe; it has a
@@ -140,14 +213,12 @@ export const describeConnectionTool: AgentTool = {
     const qualify = connection.transport === "supabase";
     const summary = summariseSchema(result.content, { qualify });
     // Best-effort. A failed cache write costs a round trip next turn.
-    await cacheConnectionSummary(ctx.env, connection, summary);
+    await cacheConnectionSummary(ctx.env, connection, summary, SUMMARY_VERSION);
 
-    return {
-      kind: "ok",
-      content:
-        `${connection.label} (database, ${connection.base_url})\n\n` +
+    return answer(
+      `${connection.label} (database, ${connection.base_url})\n\n` +
         `${summary}${qualifiedNamesNote(connection.transport)}`,
-    };
+    );
   },
 };
 
@@ -192,10 +263,15 @@ export function summariseSchema(json: string, opts?: { qualify?: boolean }): str
     return json;
   }
   const tables = new Map<string, string[]>();
+  const internal = new Set(INTERNAL_SCHEMAS);
   for (const row of rows) {
     const schema = String(row.table_schema ?? "public");
     const table = String(row.table_name ?? "");
     if (!table) continue;
+    // Again here, not only in the query: a role that can see everything gets
+    // the same answer whichever way the rows arrived, and this is the half a
+    // unit test can hold.
+    if (internal.has(schema)) continue;
     // `public.` is dropped where it is noise and kept where it is required:
     // Supabase's read-only endpoint refuses an unqualified reference, so a
     // summary written for one has to name the schema every time.
@@ -206,5 +282,12 @@ export function summariseSchema(json: string, opts?: { qualify?: boolean }): str
     else tables.set(key, [column]);
   }
   if (tables.size === 0) return json;
-  return [...tables.entries()].map(([table, cols]) => `${table}(${cols.join(", ")})`).join("\n");
+  return [...tables.entries()]
+    .map(([table, cols]) => {
+      const shown = cols.slice(0, MAX_COLUMNS_PER_TABLE);
+      const hidden = cols.length - shown.length;
+      const more = hidden > 0 ? `, … ${hidden} more columns` : "";
+      return `${table}(${shown.join(", ")}${more})`;
+    })
+    .join("\n");
 }

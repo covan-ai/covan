@@ -174,11 +174,19 @@ export async function cacheConnectionSummary(
   env: ToolEnv,
   connection: ToolConnection,
   summary: string,
+  summaryVersion: number,
 ): Promise<void> {
   const { error } = await serviceClient(env)
     .from("tool_connections")
     .update({
-      config: { ...connection.config, summary, summary_cached_at: new Date().toISOString() },
+      config: {
+        ...connection.config,
+        summary,
+        // What rendered it. A summary written by an older build is refetched
+        // once rather than served forever — see `SUMMARY_VERSION`.
+        summary_version: summaryVersion,
+        summary_cached_at: new Date().toISOString(),
+      },
     })
     .eq("id", connection.id);
   if (error) console.error("could not cache connection summary", error);

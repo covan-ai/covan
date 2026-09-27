@@ -81,8 +81,10 @@ export type ComposioResult<T> = ({ kind: "ok" } & T) | ComposioError;
  * One operation in the catalogue.
  *
  * `inputSchema` is the JSON Schema Composio publishes for the operation's
- * arguments and is null unless it was asked for — see `searchTools`, which
- * deliberately does not fetch it.
+ * arguments. It arrives on search rows too — `toTool` fills it from whichever
+ * of the four field spellings the row carries — which is how `required` is
+ * populated without a second request, and what lets `find_tool` name an
+ * operation's arguments from a list. Null only when the row published none.
  *
  * `destructive` comes from MCP's tool annotation hints, which Composio does
  * carry — see `destructiveOf`. It is still `null` for operations annotated with

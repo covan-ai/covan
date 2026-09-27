@@ -85,6 +85,28 @@ const LINEAR_CREATE = {
   input_parameters: { required: ["title"] },
 };
 
+/** Same operation, but publishing the schema a search row really carries. */
+const SEND_WITH_PROPERTIES = {
+  ...GMAIL_SEND,
+  input_parameters: {
+    type: "object",
+    required: ["recipient_email", "subject"],
+    properties: {
+      recipient_email: { type: "string" },
+      subject: { type: "string" },
+      body: { type: "string" },
+      cc: { type: "array" },
+    },
+  },
+};
+
+/** The same row with `n` properties, for the "+N more" cut. */
+function withProperties(row: typeof SEND_WITH_PROPERTIES, n: number) {
+  const properties: Record<string, unknown> = {};
+  for (let i = 0; i < n; i += 1) properties[`p${i}`] = { type: "string" };
+  return { ...row, input_parameters: { type: "object", required: [], properties } };
+}
+
 beforeEach(() => {
   fetchMock.mockReset();
 });
@@ -148,6 +170,103 @@ describe("find_tool", () => {
     // One request, not one per candidate: a full schema each would arrive at
     // the model truncated mid-JSON by `MAX_TOOL_OUTPUT_CHARS`.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("names every argument of the first candidate, so run_tool can be called without a second search", async () => {
+    // 65 find_tool calls bought 28 run_tool calls in 2026-09-20..27 — 3.10 per
+    // turn that used it. The list already holds every candidate's schema (that
+    // is what feeds `needs:` and run_tool's validator); it just did not print
+    // the optional half, so the model asked for detail to learn it.
+    fetchMock.mockResolvedValue(catalogue([SEND_WITH_PROPERTIES, LINEAR_CREATE]));
+    const out = await findToolTool.run({ query: "send an email" }, ctxWith([GMAIL_CONNECTION]));
+    const content = out.kind === "ok" ? out.content : "";
+    const [first, second] = content.split("\n\n");
+
+    expect(first).toContain("takes: recipient_email (required)");
+    expect(first).toMatch(/takes: .*subject/);
+    // The optional ones too — they are the half a second search was buying.
+    expect(first).toContain("body");
+    // Only the first candidate, and only one request for the lot.
+    expect(second).toContain("needs:");
+    expect(second).not.toContain("takes:");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not name arguments for a first candidate nobody can run", async () => {
+    // Naming the arguments of something the workspace cannot reach invites a
+    // call that cannot succeed.
+    // A fresh Response per call: with nothing runnable in the broad answer the
+    // tool searches again per connected toolkit, and a body reads once.
+    fetchMock.mockImplementation(async () =>
+      catalogue([{ ...SEND_WITH_PROPERTIES, toolkit: { slug: "LINEAR" } }]),
+    );
+    const out = await findToolTool.run({ query: "create an issue" }, ctxWith([GMAIL_CONNECTION]));
+    const content = out.kind === "ok" ? out.content : "";
+    expect(content).toContain("NOT CONNECTED");
+    expect(content).not.toContain("takes:");
+  });
+
+  it("offers the same slugs whether or not it printed their arguments", async () => {
+    // What run_tool is allowed to run is filled before anything is rendered,
+    // so a rendering change cannot move it. Pinned because the two are easy to
+    // fuse while editing one of them.
+    const five = [1, 2, 3, 4, 5].map((n) => ({
+      ...SEND_WITH_PROPERTIES,
+      slug: `GMAIL_OP_${n}`,
+    }));
+    fetchMock.mockResolvedValue(catalogue(five));
+    const offered = new Set<string>();
+    await findToolTool.run({ query: "anything" }, ctxWith([GMAIL_CONNECTION], offered));
+    expect([...offered].sort()).toEqual(five.map((t) => t.slug).sort());
+  });
+
+  it("cuts a description that would swallow the answer, and leaves the approval card's whole", async () => {
+    // WIX_MCP_SEARCH_WIX_API_SPEC really does publish a description of this
+    // shape. The card a person approves needs the whole text; the model
+    // choosing between five candidates does not.
+    const wix = {
+      ...LINEAR_CREATE,
+      slug: "WIX_MCP_SEARCH_WIX_API_SPEC",
+      description: "Inspect the Wix REST API spec. ".repeat(100),
+    };
+    fetchMock.mockImplementation(async () => catalogue([wix]));
+    const operations = new Map<string, import("../../composio/client").ComposioTool>();
+    const out = await findToolTool.run(
+      { query: "wix" },
+      ctxWith([GMAIL_CONNECTION], new Set(), operations),
+    );
+    const content = out.kind === "ok" ? out.content : "";
+    expect(content.split("\n\n")[0].length).toBeLessThan(400);
+    expect(operations.get("WIX_MCP_SEARCH_WIX_API_SPEC")!.description.length).toBe(3100);
+  });
+
+  it("says when a schema was cut rather than ending mid-JSON", async () => {
+    const properties: Record<string, unknown> = {};
+    for (let i = 0; i < 200; i += 1) {
+      properties[`field_number_${i}`] = { type: "string", description: "x".repeat(40) };
+    }
+    fetchMock.mockResolvedValueOnce(catalogue([SEND_WITH_PROPERTIES])).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ...GMAIL_SEND,
+          input_parameters: { type: "object", required: ["recipient_email"], properties },
+        }),
+        { status: 200 },
+      ),
+    );
+    const out = await findToolTool.run(
+      { query: "send", slug: "GMAIL_SEND_EMAIL", detail: true },
+      ctxWith([GMAIL_CONNECTION]),
+    );
+    const content = out.kind === "ok" ? out.content : "";
+    expect(content).toMatch(/\[trimmed: \d+ characters, showing the first 4000\]/);
+    expect(content).toContain("Arguments:");
+  });
+
+  it("says how many arguments it did not list", async () => {
+    fetchMock.mockResolvedValue(catalogue([withProperties(SEND_WITH_PROPERTIES, 30)]));
+    const out = await findToolTool.run({ query: "send" }, ctxWith([GMAIL_CONNECTION]));
+    expect(out.kind === "ok" && out.content).toContain("+6 more");
   });
 
   it("fetches one full schema when asked for detail", async () => {

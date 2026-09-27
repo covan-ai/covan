@@ -292,6 +292,25 @@ describe("run_tool", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("hands the model a file's text rather than its base64", async () => {
+    // Left encoded, the model decodes it in output tokens: 4,625 completion
+    // tokens on one pass of message f5d874c6, whose visible text was "let me
+    // decode it fully".
+    const encoded = Buffer.from("# Covan\n\nA shared agent.", "utf8").toString("base64");
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          successful: true,
+          data: { name: "README.md", content: encoded, encoding: "base64" },
+        }),
+        { status: 200 },
+      ),
+    );
+    const out = await runToolTool.run(CALL, ctxWith({ approved: ["conn-1"] }));
+    expect(out.kind === "ok" && out.content).toContain("A shared agent.");
+    expect(out.kind === "ok" && out.content).not.toContain(encoded);
+  });
+
   it("forwards the far end's own words on a failure", async () => {
     fetchMock.mockResolvedValue(
       new Response('{"error":"unknown field `recipient`"}', { status: 400 }),

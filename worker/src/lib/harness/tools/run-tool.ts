@@ -1,5 +1,7 @@
 import { composioConfigured, executeTool, type ComposioTool } from "../../composio/client";
 import { COMPOSIO_CALL_TOKENS } from "../../entitlements";
+import { MAX_TOOL_OUTPUT_CHARS } from "../budget";
+import { compactForModel } from "../compact";
 import { loadConnection, type ToolConnection } from "../connections";
 import { composioAccount } from "../secrets";
 import { affordable, spend, wasBilled } from "../spend";
@@ -468,6 +470,12 @@ export const runToolTool: AgentTool = {
       // is what lets the model fix its next call.
       return { kind: "error", message: result.message.slice(0, MAX_ERROR_CHARS) };
     }
-    return { kind: "ok", content: result.body || "(the operation returned nothing)" };
+    // Shaped before the cap has to cut it. `loop.ts` still caps what comes back
+    // and is a no-op when this already fits. See `compactForModel`.
+    return {
+      kind: "ok",
+      content:
+        compactForModel(result.body, MAX_TOOL_OUTPUT_CHARS) || "(the operation returned nothing)",
+    };
   },
 };

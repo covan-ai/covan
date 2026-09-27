@@ -1009,44 +1009,80 @@ export async function* streamCompletion(
      * id the fragments do not repeat.
      */
     const building = new Map<number, ToolCall>();
-    for await (const event of stream) {
-      if (event.type === "message_start") {
-        usage = anthropicUsage(event.message.usage);
-      } else if (event.type === "content_block_start" && event.content_block.type === "tool_use") {
-        building.set(event.index, {
-          id: event.content_block.id,
-          name: event.content_block.name,
-          arguments: "",
-        });
-      } else if (event.type === "content_block_delta" && event.delta.type === "input_json_delta") {
-        const call = building.get(event.index);
-        if (call) call.arguments += event.delta.partial_json;
-      } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        if (event.delta.text) yield { type: "delta", text: event.delta.text };
-      } else if (event.type === "content_block_delta" && event.delta.type === "thinking_delta") {
-        // Only ever non-empty when `showThinking` asked for a summary — with
-        // `display: "omitted"` the blocks still arrive and their text does not.
-        if (event.delta.thinking) yield { type: "thinking", text: event.delta.thinking };
-      } else if (event.type === "message_delta") {
-        // The final, cumulative output count. `message_start` carried an early
-        // value for the same field; this one replaces it.
-        usage = { ...usage, completionTokens: event.usage.output_tokens ?? usage.completionTokens };
-        // `max_tokens` is Anthropic's spelling of OpenAI's `length`. Translated
-        // here so the truncation check downstream stays provider-agnostic;
-        // every other stop reason passes through under its own name.
-        // Optional-chained: the field is required on the wire, and a stream
-        // that omits it must still yield its usage rather than throw away a
-        // finished reply on the last event.
-        const stop = event.delta?.stop_reason;
-        // `tool_use` is Anthropic's spelling of OpenAI's `tool_calls`,
-        // normalised for the same reason `max_tokens` is: a consumer asking
-        // "did this turn ask for something?" writes one check, not one per
-        // provider.
-        if (stop) {
-          finishReason =
-            stop === "max_tokens" ? "length" : stop === "tool_use" ? "tool_calls" : stop;
+    /**
+     * Whether the FINAL output count has arrived.
+     *
+     * `message_start` carries an early value for the same field that is not
+     * the answer's, so a stream that dies before `message_delta` knows the
+     * prompt cost and does not know the completion cost. Reporting the early
+     * number as the completion would be a measurement nobody made.
+     */
+    let completionCounted = false;
+    /**
+     * A pass the stream dropped is still a pass that was paid for.
+     *
+     * Emitted from the catch rather than a `finally`: a `finally` also runs
+     * when a consumer breaks out of the loop, and a `yield` there would turn
+     * an ordinary early exit into a second `end` event — which `loop.ts`
+     * counts as another pass.
+     */
+    try {
+      for await (const event of stream) {
+        if (event.type === "message_start") {
+          usage = anthropicUsage(event.message.usage);
+        } else if (
+          event.type === "content_block_start" &&
+          event.content_block.type === "tool_use"
+        ) {
+          building.set(event.index, {
+            id: event.content_block.id,
+            name: event.content_block.name,
+            arguments: "",
+          });
+        } else if (
+          event.type === "content_block_delta" &&
+          event.delta.type === "input_json_delta"
+        ) {
+          const call = building.get(event.index);
+          if (call) call.arguments += event.delta.partial_json;
+        } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+          if (event.delta.text) yield { type: "delta", text: event.delta.text };
+        } else if (event.type === "content_block_delta" && event.delta.type === "thinking_delta") {
+          // Only ever non-empty when `showThinking` asked for a summary — with
+          // `display: "omitted"` the blocks still arrive and their text does not.
+          if (event.delta.thinking) yield { type: "thinking", text: event.delta.thinking };
+        } else if (event.type === "message_delta") {
+          // The final, cumulative output count. `message_start` carried an early
+          // value for the same field; this one replaces it.
+          usage = {
+            ...usage,
+            completionTokens: event.usage.output_tokens ?? usage.completionTokens,
+          };
+          completionCounted = true;
+          // `max_tokens` is Anthropic's spelling of OpenAI's `length`. Translated
+          // here so the truncation check downstream stays provider-agnostic;
+          // every other stop reason passes through under its own name.
+          // Optional-chained: the field is required on the wire, and a stream
+          // that omits it must still yield its usage rather than throw away a
+          // finished reply on the last event.
+          const stop = event.delta?.stop_reason;
+          // `tool_use` is Anthropic's spelling of OpenAI's `tool_calls`,
+          // normalised for the same reason `max_tokens` is: a consumer asking
+          // "did this turn ask for something?" writes one check, not one per
+          // provider.
+          if (stop) {
+            finishReason =
+              stop === "max_tokens" ? "length" : stop === "tool_use" ? "tool_calls" : stop;
+          }
         }
       }
+    } catch (err) {
+      yield {
+        type: "end",
+        usage: completionCounted ? usage : { ...usage, completionTokens: null },
+        finishReason,
+      };
+      throw err;
     }
     if (building.size > 0) {
       // Block order, which is the order the model wrote them in. `Map`
@@ -1086,28 +1122,38 @@ export async function* streamCompletion(
    * each delta *looks* like a whole tool call with most of its fields empty.
    */
   const building = new Map<number, ToolCall>();
-  for await (const chunk of completion) {
-    const choice = chunk.choices[0];
-    const delta = choice?.delta?.content;
-    if (delta) yield { type: "delta", text: delta };
-    for (const part of choice?.delta?.tool_calls ?? []) {
-      const existing = building.get(part.index);
-      const call = existing ?? { id: "", name: "", arguments: "" };
-      if (!existing) building.set(part.index, call);
-      if (part.id) call.id = part.id;
-      if (part.function?.name) call.name = part.function.name;
-      if (part.function?.arguments) call.arguments += part.function.arguments;
+  // Same rule as the Anthropic branch above, with nothing to salvage: this
+  // provider reports no usage at all until the final chunk, so a dropped
+  // stream leaves every count null. The event is still emitted, because a
+  // pass that reports nothing is a pass and a pass that reports nothing at
+  // all is invisible to the per-pass accounting.
+  try {
+    for await (const chunk of completion) {
+      const choice = chunk.choices[0];
+      const delta = choice?.delta?.content;
+      if (delta) yield { type: "delta", text: delta };
+      for (const part of choice?.delta?.tool_calls ?? []) {
+        const existing = building.get(part.index);
+        const call = existing ?? { id: "", name: "", arguments: "" };
+        if (!existing) building.set(part.index, call);
+        if (part.id) call.id = part.id;
+        if (part.function?.name) call.name = part.function.name;
+        if (part.function?.arguments) call.arguments += part.function.arguments;
+      }
+      if (choice?.finish_reason) finishReason = choice.finish_reason;
+      if (chunk.usage) {
+        usage = {
+          promptTokens: chunk.usage.prompt_tokens ?? null,
+          completionTokens: chunk.usage.completion_tokens ?? null,
+          cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? null,
+          cacheWriteTokens: null,
+          reasoningTokens: chunk.usage.completion_tokens_details?.reasoning_tokens ?? null,
+        };
+      }
     }
-    if (choice?.finish_reason) finishReason = choice.finish_reason;
-    if (chunk.usage) {
-      usage = {
-        promptTokens: chunk.usage.prompt_tokens ?? null,
-        completionTokens: chunk.usage.completion_tokens ?? null,
-        cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? null,
-        cacheWriteTokens: null,
-        reasoningTokens: chunk.usage.completion_tokens_details?.reasoning_tokens ?? null,
-      };
-    }
+  } catch (err) {
+    yield { type: "end", usage, finishReason };
+    throw err;
   }
   if (building.size > 0) {
     // Dropping a call with no id is not tidiness. An id is what the result is

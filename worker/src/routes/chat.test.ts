@@ -1895,6 +1895,28 @@ describe("POST /chat/confirm/:id", () => {
  * happened" were the same sentence.
  */
 describe("a turn that dies mid-flight", () => {
+  it("counts the pass the stream dropped, rather than losing it with the connection", async () => {
+    // The pass was paid for whether or not the answer arrived, and it used to
+    // leave with the throw: the salvaged row went in with no `pass_usage` at
+    // all, so the turn looked as though it had made no model call.
+    const { app } = appWith({ question: "How many vacation days?" });
+    completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+      if (!body.stream) return titleOf("A question");
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: "Vacation is" } }] };
+          throw new Error("socket hang up");
+        },
+      };
+    });
+
+    await ask(app);
+
+    const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(row.content).toBe("Vacation is");
+    expect(row.pass_usage).toHaveLength(1);
+  });
+
   /** A tool call that lands, and then a model request that does not. */
   function toolThenDrop(toolName: string, args: string) {
     let asked = false;

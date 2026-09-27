@@ -13,10 +13,12 @@ import {
   MAX_STEP_EXCERPT_CHARS,
   MAX_TOOL_OUTPUT_CHARS,
   TOOL_TIMEOUT_MS,
+  TRIM_ABOVE_PROMPT_TOKENS,
   cap,
   wasCapped,
 } from "./budget";
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
+import { addCounts } from "./usage";
 
 /**
  * The loop that turns one question into however many model calls it takes.
@@ -179,6 +181,13 @@ export type AgentTurnOptions = {
      * budget it never exceeds.
      */
     maxTurnTokens?: number;
+    /**
+     * How large the transcript must be before a leg boundary trims it.
+     *
+     * Absent falls through to `TRIM_ABOVE_PROMPT_TOKENS`, like every other
+     * ceiling here. See `ChatLimits.trimAbovePromptTokens`.
+     */
+    trimAbovePromptTokens?: number;
     toolTimeoutMs?: number;
     maxOutputChars?: number;
   };
@@ -331,18 +340,6 @@ export const NO_TOOLS_NOTICE =
   "No tools are available on this model, so you cannot look anything up or take any " +
   "action this turn. Answer from what you already know and from the material in front " +
   "of you, and say so plainly if the question needs something you cannot reach.";
-
-function addUsage(a: CompletionUsage, b: CompletionUsage): CompletionUsage {
-  const add = (x: number | null, y: number | null) =>
-    x === null && y === null ? null : (x ?? 0) + (y ?? 0);
-  return {
-    promptTokens: add(a.promptTokens, b.promptTokens),
-    completionTokens: add(a.completionTokens, b.completionTokens),
-    cachedTokens: add(a.cachedTokens, b.cachedTokens),
-    cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
-    reasoningTokens: add(a.reasoningTokens, b.reasoningTokens),
-  };
-}
 
 /**
  * The arguments, or the reason they could not be read.
@@ -497,6 +494,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   const hardSteps = softSteps + extraLegs * legSteps;
   /** Absent means no cost ceiling, which is what every caller had until now. */
   const maxTurnTokens = opts.budget?.maxTurnTokens;
+  const trimAbove = opts.budget?.trimAbovePromptTokens ?? TRIM_ABOVE_PROMPT_TOKENS;
+  /**
+   * What the last pass reported its whole prompt cost.
+   *
+   * The transcript's size, measured rather than estimated, and already in hand
+   * where `tokensSpent` is summed. Null until the first pass answers.
+   */
+  let lastPromptTokens: number | null = null;
   const toolTimeoutMs = opts.budget?.toolTimeoutMs ?? TOOL_TIMEOUT_MS;
   const maxOutputChars = opts.budget?.maxOutputChars ?? MAX_TOOL_OUTPUT_CHARS;
 
@@ -639,7 +644,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       } else if (event.type === "tools") {
         if (mayAsk) calls = event.calls;
       } else {
-        usage = addUsage(usage, event.usage);
+        usage = addCounts(usage, event.usage);
         // Recorded per pass as well as summed, so a turn that spent everything
         // on its last request can be told apart from one that spread it. See
         // `PassUsage`.
@@ -665,6 +670,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // the number the person is billed. Checked here rather than before the
         // next request because this is where it changes — a pass that has
         // already been paid for is not un-spent by noticing late.
+        lastPromptTokens = event.usage.promptTokens ?? lastPromptTokens;
         tokensSpent += (event.usage.promptTokens ?? 0) + (event.usage.completionTokens ?? 0);
         if (maxTurnTokens && tokensSpent >= maxTurnTokens && !stopped) stopped = "tokens";
         finishReason = event.finishReason;
@@ -864,7 +870,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // Before the notice, so the notice stays at the tail where it lands
         // after the cacheable prefix. The results kept whole are one leg's
         // worth — what the turn is currently working through.
-        trimSpentResults(messages, legSteps);
+        //
+        // Only when the transcript is actually large. A leg boundary is not on
+        // its own a reason to rewrite the prefix: the cut invalidates the cache
+        // from the first edit and is paid at the write rate on everything after
+        // it, while the saving is the cut bytes at the read rate for however
+        // many passes remain. At eight steps a leg that does not pay back. See
+        // `trimAbovePromptTokens`.
+        if ((lastPromptTokens ?? 0) > trimAbove) trimSpentResults(messages, legSteps);
         messages.push({ role: "system", content: paceNotice(hardSteps - steps.length) });
       }
     }

@@ -9,6 +9,7 @@ import {
 } from "../lib/harness/loop";
 import { chatBudget } from "../lib/harness/budget";
 import { writeSteps } from "../lib/harness/turn";
+import type { MessageOutcome, TurnUsage } from "../lib/harness/usage";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
 
@@ -90,6 +91,8 @@ export function buildToolContext(input: {
     // One per turn, so the same catalogue search asked twice is answered from
     // the first one. See `searchMemo` in `registry.ts`.
     searchMemo: new Map<string, string>(),
+    // And schemas already described, for the same reason.
+    describeMemo: new Map<string, string>(),
     // And what those searches offered, which is what `run_tool` is allowed to
     // run. Fresh and empty on both routes: on the resume, the approved call is
     // not consulted against it at all — the slug was checked when the call was
@@ -147,6 +150,17 @@ export function spentUsage(spend: TurnSpend): CompletionUsage {
     cacheWriteTokens: sum((p) => p.written),
     reasoningTokens: sum((p) => p.reasoning),
   };
+}
+
+/**
+ * The same thing plus the passes it was spread over.
+ *
+ * `spend.passes`, never `turn.passes`: on the paths that need this the turn
+ * either has not returned or never will, and the spend record is the only one
+ * that survives a throw.
+ */
+export function spentTurnUsage(spend: TurnSpend): TurnUsage {
+  return { ...spentUsage(spend), passes: spend.passes };
 }
 
 /**
@@ -277,7 +291,7 @@ export async function salvagePartial(input: {
   /** Write the row and answer with it, or with null if there was nowhere to write. */
   persist: (
     text: string,
-    usage: CompletionUsage & { passUsage: PassUsage[] },
+    usage: CompletionUsage & { passUsage: PassUsage[]; outcome: MessageOutcome },
   ) => Promise<{ id: string } | null>;
 }): Promise<void> {
   if (input.persisted) return;
@@ -295,6 +309,10 @@ export async function salvagePartial(input: {
     const row = await input.persist(partial, {
       ...spentUsage(input.spend),
       passUsage: input.spend.passes,
+      // `cut_short` is the placeholder row, written so the steps have
+      // something to hang off; a salvage that kept real words is a reply the
+      // person can read, however it ended.
+      outcome: said ? "answered" : "cut_short",
     });
     if (row) await writeSteps(input.service, row.id, steps);
   } catch (err) {

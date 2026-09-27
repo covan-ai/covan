@@ -15,6 +15,15 @@ import { capabilitiesFor } from "../lib/harness/available";
 import { toolByName } from "../lib/harness/registry";
 import { cap, MAX_TOOL_OUTPUT_CHARS, TOOL_TIMEOUT_MS } from "../lib/harness/budget";
 import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
+import {
+  addUsage,
+  emptyUsage,
+  replyOutcome,
+  usageColumns,
+  usageOfRow,
+  type MessageOutcome,
+  type TurnUsage,
+} from "../lib/harness/usage";
 import { retrieveForAgent } from "../lib/retrieval";
 import {
   selectHistory,
@@ -36,6 +45,7 @@ import {
   isAbort,
   runChatTurn,
   salvagePartial,
+  spentTurnUsage,
   spentUsage,
   turnSpend,
 } from "./chat-turn";
@@ -462,6 +472,8 @@ chat.post("/chat/stream", async (c) => {
           cacheWriteTokens: number | null;
           reasoningTokens: number | null;
           passUsage: PassUsage[];
+          /** How this reply ended. See `messages.outcome` (0065). */
+          outcome: MessageOutcome;
         },
       ) => {
         if (persisted || text.trim().length === 0) return null;
@@ -509,25 +521,22 @@ chat.post("/chat/stream", async (c) => {
           }
         }
 
+        // The five counters and the pass list add through one null-preserving
+        // sum rather than five `?? 0` expressions. The difference is not
+        // tidiness: `?? 0` wrote a zero where the provider had reported
+        // nothing, and a zero is a measurement — it is how a row is known to
+        // be an OpenAI reply (no `cache_write_tokens`) or an Anthropic one (no
+        // `reasoning_tokens`). The passes concatenate for the same reason the
+        // counts add: the row is one reply and both halves were paid for.
+        const delta: TurnUsage = { ...opts, passes: opts.passUsage };
         const { data: inserted, error: insertError } = continuing
           ? await service
               .from("messages")
               .update({
                 content: before.content + text,
-                prompt_tokens: (before.prompt_tokens ?? 0) + (opts.promptTokens ?? 0),
-                completion_tokens: (before.completion_tokens ?? 0) + (opts.completionTokens ?? 0),
-                cached_tokens: (before.cached_tokens ?? 0) + (opts.cachedTokens ?? 0),
-                cache_write_tokens: (before.cache_write_tokens ?? 0) + (opts.cacheWriteTokens ?? 0),
-                reasoning_tokens: (before.reasoning_tokens ?? 0) + (opts.reasoningTokens ?? 0),
-                // Concatenated for the same reason the counts add: the row is
-                // one reply and both halves were paid for. The second half's
-                // passes are numbered from zero again — they are a separate
-                // request sequence against a separate prompt — so the array is
-                // a record of two runs, not one continuous one.
-                pass_usage: [
-                  ...(Array.isArray(before.pass_usage) ? before.pass_usage : []),
-                  ...opts.passUsage,
-                ],
+                ...usageColumns(addUsage(usageOfRow(before), delta)),
+                model,
+                outcome: opts.outcome,
               })
               .eq("id", before.id)
               .select("*")
@@ -541,12 +550,9 @@ chat.post("/chat/stream", async (c) => {
                 sender_id: null,
                 sources: sources.length > 0 ? sources : null,
                 grounding,
-                prompt_tokens: opts.promptTokens,
-                completion_tokens: opts.completionTokens,
-                cached_tokens: opts.cachedTokens,
-                cache_write_tokens: opts.cacheWriteTokens,
-                reasoning_tokens: opts.reasoningTokens,
-                pass_usage: opts.passUsage,
+                ...usageColumns(delta),
+                model,
+                outcome: opts.outcome,
                 ...(regenerate
                   ? { original_message_id: before.original_message_id ?? before.id }
                   : {}),
@@ -593,6 +599,10 @@ chat.post("/chat/stream", async (c) => {
           model,
           paused,
           steps,
+          // Only when there is no reply row yet. Once one exists it is the
+          // accumulator — a second copy here would be added to it twice when
+          // the turn resumes. Same rule the appended text already follows.
+          usage: messageId ? null : spentTurnUsage(spend),
         });
         if (!id) {
           send({ type: "error", error: "could not save what the agent asked to do" });
@@ -671,6 +681,11 @@ chat.post("/chat/stream", async (c) => {
                   cacheWriteTokens,
                   reasoningTokens,
                   passUsage,
+                  // `parked: false` — this branch returns before
+                  // `announcePause`, so a turn that asked and was abandoned in
+                  // the same moment has nothing to come back to and must not
+                  // say it is waiting.
+                  outcome: replyOutcome({ paused, finishReason, parked: false }),
                 });
                 // The steps belong to an abandoned turn as much as to a
                 // finished one, and this branch used to drop them: the row was
@@ -696,6 +711,7 @@ chat.post("/chat/stream", async (c) => {
             cacheWriteTokens,
             reasoningTokens,
             passUsage,
+            outcome: replyOutcome({ paused, finishReason, parked: true }),
           });
           await recordSpend();
           if (!inserted) {
@@ -966,30 +982,33 @@ chat.post("/chat/confirm/:id", async (c) => {
        */
       const persistAssistant = async (
         text: string,
-        usage: CompletionUsage & { passUsage: PassUsage[] },
+        usage: CompletionUsage & { passUsage: PassUsage[]; outcome: MessageOutcome },
       ) => {
         if (persisted) return null;
         persisted = true;
         const existing = pause.messageId;
-        const columns = {
-          prompt_tokens: usage.promptTokens,
-          completion_tokens: usage.completionTokens,
-          cached_tokens: usage.cachedTokens,
-          cache_write_tokens: usage.cacheWriteTokens,
-          reasoning_tokens: usage.reasoningTokens,
-          // Replaced rather than concatenated, matching the counts above it —
-          // this branch has always written what the resumed half cost rather
-          // than the whole reply, and a pass list that disagreed with the
-          // totals beside it would be worse than a short one.
-          pass_usage: usage.passUsage,
-        };
+        const delta: TurnUsage = { ...usage, passes: usage.passUsage };
+        const model = pause.model ?? resolveModel(null, env);
+        // Added to what the turn had already spent, never written over it.
+        // Which half holds the "already" depends on whether the model said
+        // anything before it asked: with a row, the row; without one, the
+        // parked turn, because nothing else recorded those passes and they
+        // were charged to the allowance when it parked.
         const { data } = existing
-          ? await service
-              .from("messages")
-              .update({ content: await appendedContent(service, existing, text), ...columns })
-              .eq("id", existing)
-              .select("*")
-              .single()
+          ? await (async () => {
+              const prior = await priorReply(service, existing);
+              return service
+                .from("messages")
+                .update({
+                  content: joinHalves(prior.content, text),
+                  ...usageColumns(addUsage(prior.usage, delta)),
+                  model,
+                  outcome: usage.outcome,
+                })
+                .eq("id", existing)
+                .select("*")
+                .single();
+            })()
           : await service
               .from("messages")
               .insert({
@@ -997,7 +1016,9 @@ chat.post("/chat/confirm/:id", async (c) => {
                 role: "assistant",
                 content: text || "(no reply)",
                 sender_id: null,
-                ...columns,
+                ...usageColumns(addUsage(pause.usage ?? emptyUsage(), delta)),
+                model,
+                outcome: usage.outcome,
               })
               .select("*")
               .single();
@@ -1131,6 +1152,11 @@ chat.post("/chat/confirm/:id", async (c) => {
         const inserted = await persistAssistant(turn.text, {
           ...spentUsage(spend),
           passUsage: turn.passes,
+          outcome: replyOutcome({
+            paused: turn.paused ?? null,
+            finishReason: turn.finishReason,
+            parked: true,
+          }),
         });
 
         if (!inserted) {
@@ -1219,25 +1245,40 @@ chat.post("/chat/confirm/:id", async (c) => {
 });
 
 /**
- * The reply so far plus the rest of it, joined with nothing between them.
+ * The reply so far: what it says, and what it cost.
  *
  * Read back rather than carried through the pause, because the pause may have
  * been answered minutes later by a different request: the row is the only
- * thing that knows what was actually written. Falls back to the new half
- * alone if the row has gone, which is the honest outcome of a message that was
- * deleted while a confirmation was open.
+ * thing that knows what was actually written. One select for both, because
+ * the text was already being fetched and the counters are on the same row —
+ * the same single subrequest it always was.
+ *
+ * A row that has gone reads as an empty reply that cost nothing. That is a
+ * fallback rather than a case: `paused_turns.message_id` is `on delete
+ * cascade` (0060), so deleting the reply deletes the pause and the resume gets
+ * a 404 from `loadPausedTurn` instead. Only a delete landing between that read
+ * and this one reaches here, and the update below then matches no row and the
+ * caller reports that it could not save — see `persistAssistant`.
  */
-async function appendedContent(
+async function priorReply(
   service: ReturnType<typeof serviceClient>,
   messageId: string,
-  addition: string,
-): Promise<string> {
+): Promise<{ content: string; usage: TurnUsage }> {
   const { data } = await service
     .from("messages")
-    .select("content")
+    .select(
+      "content, prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens, reasoning_tokens, pass_usage",
+    )
     .eq("id", messageId)
     .maybeSingle();
-  const before = typeof data?.content === "string" ? data.content : "";
+  return {
+    content: typeof data?.content === "string" ? data.content : "",
+    usage: usageOfRow((data ?? {}) as Record<string, unknown>),
+  };
+}
+
+/** The two halves of one reply, joined with nothing between them. */
+function joinHalves(before: string, addition: string): string {
   if (!before) return addition;
   if (!addition) return before;
   return `${before}\n\n${addition}`;

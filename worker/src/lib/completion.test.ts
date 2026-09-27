@@ -10,6 +10,7 @@ import {
   reasoningHeadroom,
   type CompletionEnv,
   type CompletionEvent,
+  type CompletionUsage,
 } from "./completion";
 
 const openaiCreate = vi.fn();
@@ -902,6 +903,115 @@ describe("streamCompletion", () => {
 
     const end = events.at(-1) as { type: "end"; usage: { reasoningTokens: number | null } };
     expect(end.usage.reasoningTokens).toBe(850);
+  });
+
+  /** Replays events and then dies, the way a dropped connection does. */
+  async function* replayThenThrow<T>(events: T[], err: Error): AsyncGenerator<T> {
+    for (const e of events) yield e;
+    throw err;
+  }
+
+  it("still reports what the prompt cost when the stream dies after message_start", async () => {
+    // The pass was paid for whether or not the answer arrived. Without this
+    // the throw takes the prompt count with it, and the reply is salvaged with
+    // every token column NULL — three such rows in 2026-09-20..27.
+    anthropicCreate.mockResolvedValueOnce(
+      replayThenThrow(
+        [
+          {
+            type: "message_start",
+            message: {
+              usage: {
+                input_tokens: 17,
+                cache_read_input_tokens: 30_000,
+                cache_creation_input_tokens: 1_200,
+                output_tokens: 0,
+              },
+            },
+          },
+        ],
+        new Error("socket hang up"),
+      ),
+    );
+
+    const seen: CompletionEvent[] = [];
+    await expect(
+      (async () => {
+        for await (const e of streamCompletion(env, {
+          model: "claude-haiku-4-5",
+          messages: [{ role: "user", content: "Hi" }],
+        })) {
+          seen.push(e);
+        }
+      })(),
+    ).rejects.toThrow("socket hang up");
+
+    const end = seen.find((e) => e.type === "end") as
+      { type: "end"; usage: CompletionUsage } | undefined;
+    expect(end?.usage.promptTokens).toBe(31_217);
+    expect(end?.usage.cachedTokens).toBe(30_000);
+    expect(end?.usage.cacheWriteTokens).toBe(1_200);
+    // message_start carries an early output count that is not the answer's.
+    // Null is "not measured", which is the truth here.
+    expect(end?.usage.completionTokens).toBeNull();
+  });
+
+  it("keeps the final output count when the stream dies after message_delta", async () => {
+    anthropicCreate.mockResolvedValueOnce(
+      replayThenThrow(
+        [
+          { type: "message_start", message: { usage: { input_tokens: 9, output_tokens: 0 } } },
+          { type: "message_delta", usage: { output_tokens: 42 } },
+        ],
+        new Error("socket hang up"),
+      ),
+    );
+
+    const seen: CompletionEvent[] = [];
+    await expect(
+      (async () => {
+        for await (const e of streamCompletion(env, {
+          model: "claude-haiku-4-5",
+          messages: [{ role: "user", content: "Hi" }],
+        })) {
+          seen.push(e);
+        }
+      })(),
+    ).rejects.toThrow("socket hang up");
+
+    const end = seen.find((e) => e.type === "end") as
+      { type: "end"; usage: CompletionUsage } | undefined;
+    expect(end?.usage.completionTokens).toBe(42);
+  });
+
+  it("counts a dead OpenAI pass as a pass, with nothing measured", async () => {
+    // OpenAI reports nothing until the usage-only final chunk, so there is no
+    // number to keep. The event still has to be emitted: a pass that is not
+    // recorded is a pass the per-pass accounting cannot see at all.
+    openaiCreate.mockResolvedValueOnce(
+      replayThenThrow(
+        [{ choices: [{ delta: { content: "half a sen" } }] }],
+        new Error("socket hang up"),
+      ),
+    );
+
+    const seen: CompletionEvent[] = [];
+    await expect(
+      (async () => {
+        for await (const e of streamCompletion(env, {
+          model: "gpt-4.1",
+          messages: [{ role: "user", content: "Hi" }],
+        })) {
+          seen.push(e);
+        }
+      })(),
+    ).rejects.toThrow("socket hang up");
+
+    const end = seen.find((e) => e.type === "end") as
+      { type: "end"; usage: CompletionUsage } | undefined;
+    expect(end).toBeDefined();
+    expect(end?.usage.promptTokens).toBeNull();
+    expect(seen.some((e) => e.type === "delta")).toBe(true);
   });
 
   it("reads Anthropic's two-part usage and emits one event at the end", async () => {

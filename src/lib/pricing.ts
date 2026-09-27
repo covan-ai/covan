@@ -20,7 +20,10 @@ const PRICES: Record<string, ModelPrices> = {
   "gpt-5-mini": { in: 0.25, cachedIn: 0.025, out: 2 },
   "gpt-5-nano": { in: 0.05, cachedIn: 0.005, out: 0.4 },
   "claude-opus-5": { in: 5, cachedIn: 0.5, out: 25 },
-  "claude-sonnet-5": { in: 3, cachedIn: 0.3, out: 15 },
+  // $2/$10 became Sonnet 5's standard rate; the increase scheduled for
+  // 2026-09-01 did not happen. Kept in step with worker/src/lib/pricing.ts,
+  // which `pricing.test.ts` now checks row by row rather than trusting.
+  "claude-sonnet-5": { in: 2, cachedIn: 0.2, out: 10 },
   "claude-opus-4-8": { in: 5, cachedIn: 0.5, out: 25 },
   "claude-sonnet-4-6": { in: 3, cachedIn: 0.3, out: 15 },
   "claude-sonnet-4-5": { in: 3, cachedIn: 0.3, out: 15 },

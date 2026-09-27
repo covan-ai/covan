@@ -1,6 +1,7 @@
 import { composioConfigured, getTool, searchTools, type ComposioTool } from "../../composio/client";
 import { COMPOSIO_SEARCH_TOKENS } from "../../entitlements";
 import { listConnections, type ToolConnection } from "../connections";
+import { cap } from "../budget";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 
@@ -88,6 +89,38 @@ function firstWords(query: string, n: number): string {
 const MAX_PARAM_NAMES = 24;
 
 /**
+ * How much of an operation's own description a candidate line may spend.
+ *
+ * Composio publishes some very long ones — WIX_MCP_SEARCH_WIX_API_SPEC's runs
+ * to 3,100 characters — and five of those are the whole answer, cut off by
+ * MAX_TOOL_OUTPUT_CHARS before the model reaches the candidate it wanted.
+ * Render-only: the object handed to `remember()` keeps its whole text, because
+ * the approval card a person reads is built from that.
+ */
+const MAX_DESCRIPTION_CHARS = 240;
+
+/**
+ * One line of description, cut at a sentence if there is one to cut at.
+ *
+ * Not `cap()`: its 50-character notice is longer than what it would be saying
+ * about, on a one-liner. `cap` is for the schema, where the size matters.
+ */
+function brief(text: string): string {
+  if (text.length <= MAX_DESCRIPTION_CHARS) return text;
+  const head = text.slice(0, MAX_DESCRIPTION_CHARS);
+  const lastSentence = head.search(/\.(?=\s)(?![\s\S]*\.(?=\s))/);
+  if (lastSentence > MAX_DESCRIPTION_CHARS / 2) return head.slice(0, lastSentence + 1);
+  return `${head.trimEnd()}…`;
+}
+
+/** How many arguments the operation publishes, before `MAX_PARAM_NAMES` cuts. */
+function parameterCount(tool: ComposioTool): number {
+  const properties = tool.inputSchema?.properties;
+  if (typeof properties !== "object" || properties === null) return 0;
+  return Object.keys(properties).length;
+}
+
+/**
  * How many connected applications get asked the question in their own right.
  *
  * A ceiling on requests per search, not a judgement about how many connections a
@@ -139,9 +172,21 @@ function remember(ctx: ToolContext, tool: ComposioTool): void {
   ctx.offeredOperations?.set(tool.slug, tool);
 }
 
-/** One candidate, in the two or three lines a model needs to choose it. */
-function summarise(tool: ComposioTool, connection: ToolConnection | undefined): string {
-  const lines = [`${tool.slug} — ${tool.description || tool.name}`];
+/**
+ * One candidate, in the two or three lines a model needs to choose it.
+ *
+ * `opts.parameters` prints every argument by name rather than the required
+ * ones alone, which is what lets `run_tool` be called straight from a search.
+ * Asked for on the first connected candidate only: the names are free — the
+ * schemas arrive with the search — but five full argument lists is the answer
+ * being spent on candidates nobody chose.
+ */
+function summarise(
+  tool: ComposioTool,
+  connection: ToolConnection | undefined,
+  opts?: { parameters?: boolean },
+): string {
+  const lines = [`${tool.slug} — ${brief(tool.description || tool.name)}`];
   if (connection) {
     lines.push(`  app: ${tool.toolkit} · connectionId: ${connection.id} (${connection.label})`);
   } else {
@@ -153,7 +198,16 @@ function summarise(tool: ComposioTool, connection: ToolConnection | undefined): 
         `connect ${tool.toolkit} on the Integrations page.`,
     );
   }
-  if (tool.required.length > 0) lines.push(`  needs: ${tool.required.join(", ")}`);
+  const named = opts?.parameters ? parameterNames(tool) : [];
+  if (named.length > 0) {
+    // Instead of `needs:`, not beside it — the `(required)` markers carry
+    // everything `needs:` was saying.
+    const hidden = parameterCount(tool) - named.length;
+    const more = hidden > 0 ? `, … (+${hidden} more — ask for detail)` : "";
+    lines.push(`  takes: ${named.join(", ")}${more}`);
+  } else if (tool.required.length > 0) {
+    lines.push(`  needs: ${tool.required.join(", ")}`);
+  }
   // Said only when Composio said it. See `ComposioTool.destructive`: null is
   // the common answer and nothing branches on it, but a person reading the
   // approval card is better off knowing.
@@ -168,8 +222,10 @@ export const findToolTool: AgentTool = {
     "Linear, Notion and the rest — to find one that does what you need. Describe the " +
     "action in your own words. You get back candidate operation slugs, and for each one " +
     "either the connection id to run it with or a note that the app is not connected " +
-    "here. Call this before run_tool; you cannot guess a slug. Ask for detail once you " +
-    "know which operation you want and need its exact arguments.",
+    "here. The first candidate also lists its arguments by name, so in the usual case " +
+    "one search is enough and run_tool comes next. Call this before run_tool; you " +
+    "cannot guess a slug. Ask for detail only when you need a particular argument's " +
+    "type or allowed values.",
   input: {
     type: "object",
     properties: {
@@ -190,10 +246,11 @@ export const findToolTool: AgentTool = {
       detail: {
         type: "boolean",
         description:
-          "Return the full argument schema instead of a list. Use it when you know which " +
-          "operation you want and need to know what to send. The other matches still come " +
-          "back as one-liners underneath, so you never have to search again to change your " +
-          "mind.",
+          "Return the full argument schema instead of a list. You rarely need it: the " +
+          "first candidate of an ordinary search already names every argument it takes " +
+          "and marks the required ones. Ask for this when you need an argument's TYPE or " +
+          "its allowed values. The other matches still come back as one-liners " +
+          "underneath, so you never have to search again to change your mind.",
       },
       slug: {
         type: "string",
@@ -389,7 +446,10 @@ export const findToolTool: AgentTool = {
         return { kind: "error", message: `${chosen} could not be described: ${full.message}` };
       }
       const schema = full.tool.inputSchema
-        ? JSON.stringify(full.tool.inputSchema, null, 2).slice(0, MAX_SCHEMA_CHARS)
+        ? // `cap`, not a bare slice: a schema cut mid-JSON with nothing saying
+          // so reads as an operation with three arguments rather than one whose
+          // list was truncated, and the model then calls it with three.
+          cap(JSON.stringify(full.tool.inputSchema, null, 2), MAX_SCHEMA_CHARS)
         : "(this operation publishes no argument schema)";
 
       // And the rest of the shortlist, in one line each. Cheap — they were
@@ -405,7 +465,7 @@ export const findToolTool: AgentTool = {
               .map((t) => {
                 const params = parameterNames(t);
                 const takes = params.length > 0 ? `\n    takes: ${params.join(", ")}` : "";
-                return `  ${t.slug} — ${t.description || t.name}${takes}`;
+                return `  ${t.slug} — ${brief(t.description || t.name)}${takes}`;
               })
               .join("\n")
           : "";
@@ -432,12 +492,20 @@ export const findToolTool: AgentTool = {
       remember(ctx, tool);
     }
     const listed = shortlist
-      .map((tool) => summarise(tool, byToolkit.get(tool.toolkit)))
+      .map((tool, i) =>
+        summarise(tool, byToolkit.get(tool.toolkit), {
+          // The first candidate only, and only when it can actually be run:
+          // naming the arguments of something nobody can reach invites a call
+          // that cannot succeed.
+          parameters: i === 0 && byToolkit.has(tool.toolkit),
+        }),
+      )
       .join("\n\n");
 
     const answer =
-      `${listed}\n\nRun one with run_tool, giving its connectionId and slug. Ask for ` +
-      "detail on a slug by name if you need its exact arguments.";
+      `${listed}\n\nRun one with run_tool, giving its connectionId and slug. The first ` +
+      "entry's arguments are listed above; ask for detail on a slug by name only if you " +
+      "need an argument's type or allowed values.";
     // Remembered only when it found something. A turn that searched and got
     // nothing should be free to try again with different words — that is the
     // useful kind of repeat, and the retry above already depends on it.

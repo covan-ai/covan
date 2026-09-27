@@ -158,6 +158,16 @@ export const TOOL_TIMEOUT_MS = 20_000;
 export const MAX_TOOL_OUTPUT_CHARS = 12_000;
 
 /**
+ * How large a transcript has to be before a leg boundary trims it.
+ *
+ * The harness default, matching both plans in `lib/limits.ts` — Free never
+ * reaches it at eight steps, and a caller that forgets to pass one should get
+ * the arithmetic rather than the old unconditional rewrite. The argument for
+ * the number is on `ChatLimits.trimAbovePromptTokens`.
+ */
+export const TRIM_ABOVE_PROMPT_TOKENS = 80_000;
+
+/**
  * How much of it is kept in `message_steps.result_excerpt`.
  *
  * Smaller than what the model sees, deliberately. The row exists so a person

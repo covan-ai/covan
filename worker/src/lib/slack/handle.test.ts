@@ -275,7 +275,15 @@ describe("answering in a thread", () => {
 
     const written = fake.callsTo("messages").filter((c) => c.op === "insert");
     expect(written[0]?.values).toMatchObject({ role: "user", sender_id: "user-1" });
-    expect(written[1]?.values).toMatchObject({ role: "assistant", prompt_tokens: 500 });
+    expect(written[1]?.values).toMatchObject({
+      role: "assistant",
+      prompt_tokens: 500,
+      // Which model answered and how it ended, the same two facts the chat
+      // routes record. A Slack answer is one completion with no tool loop, so
+      // it either answered or never reached this line.
+      model: "gpt-4.1",
+      outcome: "answered",
+    });
   });
 
   it("treats a direct message as a private conversation", async () => {

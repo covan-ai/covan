@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { planLimits, workerPlan } from "./limits";
-import { MAX_STEPS, chatBudget } from "./harness/budget";
+import { MAX_STEPS, TRIM_ABOVE_PROMPT_TOKENS, chatBudget } from "./harness/budget";
 
 /**
  * The open build's contract, pinned.
@@ -44,6 +44,13 @@ describe("what a deployment is allowed to spend", () => {
 
     it("gives a chat turn no legs, so its ceiling is the one it has always had", () => {
       expect(chatBudget({}).extraLegs).toBe(0);
+    });
+
+    it("trims a transcript at the size the harness would have chosen anyway", () => {
+      // Not the literal again: the harness has its own default for a caller
+      // that passes no budget, and the two disagreeing would mean a route and
+      // a routine trimming at different sizes for no stated reason.
+      expect(chatBudget({}).trimAbovePromptTokens).toBe(TRIM_ABOVE_PROMPT_TOKENS);
     });
 
     it("still says fifty subrequests, which is what every Free number was derived from", () => {

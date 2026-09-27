@@ -204,7 +204,7 @@ That one line adds six models to every picker:
 | Model               | Roughly      | Good for                                                                             |
 | ------------------- | ------------ | ------------------------------------------------------------------------------------ |
 | `claude-opus-5`     | $5 / $25 a M | The strongest here. Deliberates by default, so it is also the slowest.               |
-| `claude-sonnet-5`   | $3 / $15 a M | The one to reach for first — Opus-family reasoning at Sonnet prices.                 |
+| `claude-sonnet-5`   | $2 / $10 a M | The one to reach for first — Opus-family reasoning at Sonnet prices.                 |
 | `claude-opus-4-8`   | $5 / $25 a M | The previous Opus, kept for agents already tuned against it.                         |
 | `claude-sonnet-4-6` | $3 / $15 a M | The previous Sonnet. Still takes a temperature, which the three above do not.        |
 | `claude-sonnet-4-5` | $3 / $15 a M | Older still, and the last one that takes no reasoning effort.                        |

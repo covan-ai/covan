@@ -50,23 +50,30 @@ describe("estimateCostUsd", () => {
     expect(estimateCostUsd("gpt-4o", 1_000_000, 0)).toBeCloseTo(2.5, 6);
   });
 
+  it("prices Sonnet 5 at the $2/$10 that is its standard rate", () => {
+    // It was carried at the $3/$15 of the Sonnet 4.x line, which over-reported
+    // every Claude reply on the hosted deployment by half. Checked against the
+    // pricing page on 2026-09-27: the introductory $2/$10 became standard and
+    // the increase scheduled for 2026-09-01 did not happen.
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0)).toBeCloseTo(2, 6);
+    expect(estimateCostUsd("claude-sonnet-5", 0, 1_000_000)).toBeCloseTo(10, 6);
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 1_000_000)).toBeCloseTo(0.2, 6);
+  });
+
   it("charges Anthropic's 1.25x premium on tokens written into the cache", () => {
-    // claude-sonnet-5: $3/M in, so a written token is $3.75/M. 1M prompt
+    // claude-sonnet-5: $2/M in, so a written token is $2.50/M. 1M prompt
     // tokens, all of them freshly written.
-    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 0, 1_000_000)).toBeCloseTo(3.75, 6);
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 0, 1_000_000)).toBeCloseTo(2.5, 6);
     // Half written, half plain fresh input.
-    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 0, 500_000)).toBeCloseTo(
-      1.5 + 1.875,
-      6,
-    );
+    expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 0, 500_000)).toBeCloseTo(1 + 1.25, 6);
   });
 
   it("treats written tokens as a subset of the prompt too, and disjoint from cached ones", () => {
     // A token is read from the cache or written into it, never both in one
     // request. 1M prompt = 600k read + 300k written + 100k plain fresh.
-    // claude-sonnet-5: $3/M in, $0.30/M cached, $3.75/M written.
+    // claude-sonnet-5: $2/M in, $0.20/M cached, $2.50/M written.
     expect(estimateCostUsd("claude-sonnet-5", 1_000_000, 0, 600_000, 300_000)).toBeCloseTo(
-      0.18 + 1.125 + 0.3,
+      0.12 + 0.75 + 0.2,
       6,
     );
   });
@@ -123,10 +130,15 @@ describe("estimateCostUsd", () => {
     // this can no longer be the first thing to notice one. It is kept because
     // it catches what the type cannot: a row that is present but copied from
     // the wrong model and therefore identical to the fallback.
-    const fallback = estimateCostUsd("mystery-model", 1_000_000, 0);
+    //
+    // All three rates at once, not the input rate alone. Sonnet 5's $2/M input
+    // is genuinely the same as gpt-4.1's, so an input-only comparison reports
+    // a copied row where there is none — and would have blocked a correction.
+    const priced = (id: string) => estimateCostUsd(id, 1_000_000, 1_000_000, 500_000);
+    const fallback = priced("mystery-model");
     for (const id of MODEL_IDS) {
       if (id === DEFAULT_MODEL) continue; // the fallback itself
-      expect(estimateCostUsd(id, 1_000_000, 0), id).not.toBe(fallback);
+      expect(priced(id), id).not.toBe(fallback);
     }
   });
 });

@@ -494,6 +494,81 @@ describe("checking the arguments against the schema", () => {
     expect(out.kind).toBe("ok");
     expect(fetchMock).toHaveBeenCalled();
   });
+
+  /**
+   * The narrowing argument that narrows nothing.
+   *
+   * Measured on 2026-09-28, and it is the most expensive turn on record. Asked to
+   * list a repository's open pull requests, the model ran
+   * `GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS` three times: once plain, once with
+   * `fields: [...]`, once with `response_detail: "minimal"`. Neither of those is
+   * in that operation's schema. Nothing complained, both went to Composio, and
+   * all three answers came back **byte-identical** at the 12,000-character cap —
+   * so the transcript carried the same oversized result three times, and the
+   * second and third copies alone were about 120,000 re-sent tokens, 27% of the
+   * turn.
+   *
+   * `run_tool`'s own description is what asks for this ("name only the fields you
+   * need"), so the model was following instructions into a wall. Refusing locally
+   * is strictly cheaper than letting Composio ignore it: Composio validates
+   * against this same schema — the same turn got "Following fields are missing:
+   * {'query'}" back from it — so a property the schema does not name was never
+   * going to do anything.
+   */
+  it("refuses an argument the schema does not name, and says what it does take", async () => {
+    const out = await runToolTool.run(
+      {
+        connectionId: "conn-1",
+        slug: "GMAIL_SEND_EMAIL",
+        arguments: { start_datetime: "2026-09-28T22:00:00", response_detail: "minimal" },
+      },
+      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
+    );
+
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("response_detail");
+    // The list of what it does take, so the next call is a fixed call rather
+    // than another guess.
+    expect(out.kind === "error" && out.message).toContain("start_datetime");
+    expect(out.kind === "error" && out.message).toContain("send_updates");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The gate, and the only real risk in refusing unknown properties.
+   *
+   * A Composio schema need not carry `properties` at all — `client.ts` reads
+   * `required` from a separate key, and search rows shaped `{required: [...]}`
+   * with nothing else are common enough that this repo's own fixtures are mostly
+   * that shape. With no `properties` to check against, EVERY argument looks
+   * unknown, and a validator that refused them would block every call to an
+   * operation whose publisher simply did not describe its arguments.
+   */
+  it("refuses nothing for a schema that names no properties at all", async () => {
+    const out = await runToolTool.run(
+      { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL", arguments: { anything: 1, at: "all" } },
+      ctxWith({
+        approved: ["conn-1"],
+        offeredOperations: new Map([
+          [
+            "GMAIL_SEND_EMAIL",
+            {
+              slug: "GMAIL_SEND_EMAIL",
+              name: "Send email",
+              description: "Send an email.",
+              toolkit: "gmail",
+              required: [],
+              inputSchema: { type: "object", required: [] },
+              destructive: null,
+            },
+          ],
+        ]) as Map<string, import("../../composio/client").ComposioTool>,
+      }),
+    );
+
+    expect(out.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalled();
+  });
 });
 
 /**

@@ -12,13 +12,15 @@ import { findToolTool } from "./find-tool";
  * catalogue. The other half of that property is that it never hands the model a
  * connection id for an application the workspace has not connected.
  */
+const { recordSpy } = vi.hoisted(() => ({ recordSpy: vi.fn(async () => {}) }));
+
 vi.mock("../../entitlements", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../entitlements")>();
   return {
     ...actual,
     entitlementsFor: () => ({
       check: async () => ({ allowed: true }),
-      record: async () => {},
+      record: recordSpy,
       snapshot: async () => ({ used: 0, limit: null, resetsAt: null }),
     }),
   };
@@ -213,7 +215,11 @@ describe("find_tool", () => {
       // match in an app the workspace cannot run is still a call that cannot
       // succeed, so connectedness is compared first and relevance only breaks
       // its ties.
-      fetchMock.mockResolvedValue(catalogue([DELETE_EVENT, GMAIL_SEND]));
+      // A fresh Response per call: `GMAIL_SEND_EMAIL` scores nothing for
+      // "delete event", so the connected-app re-ask now fires and a single
+      // Response would be read twice. The assertion is unchanged — connectedness
+      // is still compared before relevance.
+      fetchMock.mockImplementation(async () => catalogue([DELETE_EVENT, GMAIL_SEND]));
       const out = await findToolTool.run(
         { query: "delete event" },
         // Gmail connected, Google Calendar not.
@@ -246,7 +252,10 @@ describe("find_tool", () => {
     // parameter that names an account. So the catalogue offers operations
     // execution cannot run — twenty of the thirty run_tool failures ever
     // recorded. Learnt from the 404 and kept on the connection.
-    fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
+    // A fresh Response per call, because this test now also proves the other
+    // half: a dead row does not count as an answer, so the connected-app re-ask
+    // fires for exactly the workspace whose account is missing operations.
+    fetchMock.mockImplementation(async () => catalogue([GMAIL_SEND]));
     const dead = {
       ...GMAIL_CONNECTION,
       config: { unavailable_tools: { GMAIL_SEND_EMAIL: new Date().toISOString() } },
@@ -305,6 +314,32 @@ describe("find_tool", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("names a required argument the publisher forgot to describe", async () => {
+    // `properties` and `required` are separate keys and `composio/client.ts` reads
+    // them separately, so `required ⊆ keys(properties)` is an assumption. When it
+    // breaks, `takes:` — built from `properties` and printed INSTEAD of `needs:` —
+    // used to drop the one argument the call cannot omit, and the model learned
+    // about it from `run_tool`'s complaint after paying for the call. #210.
+    const undescribed = {
+      ...GMAIL_SEND,
+      input_parameters: {
+        type: "object",
+        required: ["recipient_email", "thread_id"],
+        properties: { recipient_email: { type: "string" }, body: { type: "string" } },
+      },
+    };
+    fetchMock.mockResolvedValue(catalogue([undescribed]));
+
+    const out = await findToolTool.run({ query: "send an email" }, ctxWith([GMAIL_CONNECTION]));
+    const content = out.kind === "ok" ? out.content : "";
+
+    expect(content).toMatch(/takes: .*thread_id/);
+    // Bare, because the schema published no type for it — the honest rendering.
+    expect(content).toContain("recipient_email: string (required)");
+    // And the count stays sane: the union is what `+N more` subtracts from.
+    expect(content).not.toMatch(/\+-?\d+ more/);
+  });
+
   it("gives every named argument its type, so the first call is the right shape", async () => {
     // The names alone were not enough, and production is where that showed up:
     // told an argument was called `attendees` and not told it was a string, the
@@ -346,7 +381,9 @@ describe("find_tool", () => {
       ...SEND_WITH_PROPERTIES,
       slug: `GMAIL_OP_${n}`,
     }));
-    fetchMock.mockResolvedValue(catalogue(five));
+    // "anything" scores zero against every candidate, so the connected-app
+    // re-ask fires and each call needs its own Response.
+    fetchMock.mockImplementation(async () => catalogue(five));
     const offered = new Set<string>();
     await findToolTool.run({ query: "anything" }, ctxWith([GMAIL_CONNECTION], offered));
     expect([...offered].sort()).toEqual(five.map((t) => t.slug).sort());
@@ -815,5 +852,166 @@ describe("what run_tool is allowed to check against", () => {
       // ...and the two fields the approval card needs. #201.
       description: "Send an email.",
     });
+  });
+});
+
+/**
+ * How much of the catalogue the ranking gets to see.
+ *
+ * `relevance` was measured correct and unreachable. On 2026-09-28 a turn asked for
+ * a repository's open pull requests; step 0 searched with `toolkit: "github"` and
+ * the first row back was `GITHUB_GENERATE_RELEASE_NOTES`.
+ * `GITHUB_LIST_PULL_REQUESTS` scores three of three and would have led — it simply
+ * was not in the ten rows the search asked for. Sixteen steps and $0.58, answered
+ * at step fifteen.
+ */
+describe("how much of the catalogue the ranking gets to see", () => {
+  const GITHUB_CONNECTION = {
+    ...GMAIL_CONNECTION,
+    id: "conn-gh",
+    label: "covan's GitHub",
+    toolkit_slug: "github",
+  };
+
+  const LIST_PRS = {
+    slug: "GITHUB_LIST_PULL_REQUESTS",
+    name: "List pull requests",
+    description: "List a repository's pull requests.",
+    toolkit: { slug: "GITHUB" },
+    input_parameters: { required: ["owner", "repo"] },
+  };
+
+  /** Rows that score nothing for "list pull requests", to bury the one that does. */
+  const noise = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      slug: `GITHUB_UNRELATED_${i}`,
+      name: `Unrelated ${i}`,
+      description: "Something else entirely.",
+      toolkit: { slug: "GITHUB" },
+      input_parameters: { required: [] },
+    }));
+
+  it("asks the catalogue for a whole page, not for the five it will show", () => {
+    fetchMock.mockImplementation(async () => catalogue([LIST_PRS]));
+    return findToolTool
+      .run({ query: "list pull requests", toolkit: "github" }, ctxWith([GITHUB_CONNECTION]))
+      .then(() => {
+        expect(String(fetchMock.mock.calls[0][0])).toContain("limit=50");
+      });
+  });
+
+  /**
+   * A catalogue that truncates like the real one.
+   *
+   * `catalogue()` above returns whatever it is handed, which is fine everywhere
+   * else and useless here: the whole subject of these tests is how many rows the
+   * request ASKS for, so the mock has to honour `limit` or the page size is not
+   * what is being varied. (It does not honour relevance ordering — that is
+   * Composio's and is the one thing about this change still unverified.)
+   */
+  const pagedCatalogue = (items: unknown[]) => async (url: unknown) => {
+    const limit = Number(new URL(String(url)).searchParams.get("limit") ?? 10);
+    return catalogue(items.slice(0, limit));
+  };
+
+  it("finds the operation Composio ranked thirtieth", async () => {
+    // The regression. With a page of ten this is unreachable however good the
+    // local scorer is, because a local sort can only reorder what arrived.
+    fetchMock.mockImplementation(pagedCatalogue([...noise(29), LIST_PRS]));
+
+    const out = await findToolTool.run(
+      { query: "list pull requests", toolkit: "github" },
+      ctxWith([GITHUB_CONNECTION]),
+    );
+    const first = (out.kind === "ok" ? out.content : "").split("\n\n")[0];
+
+    expect(first).toContain("GITHUB_LIST_PULL_REQUESTS");
+  });
+
+  it("still shows five, however many it ranked", async () => {
+    // Supply grew; the prompt did not. This is what makes the page free.
+    fetchMock.mockImplementation(pagedCatalogue([...noise(29), LIST_PRS]));
+    const offered = new Set<string>();
+
+    await findToolTool.run(
+      { query: "list pull requests", toolkit: "github" },
+      ctxWith([GITHUB_CONNECTION], offered),
+    );
+
+    expect(offered.size).toBe(5);
+  });
+
+  it("charges once, however many requests the search took", async () => {
+    // `spend()` is per search and not per row or per request. A bigger page and
+    // the connected-app re-asks must not change what somebody is billed.
+    recordSpy.mockClear();
+    fetchMock.mockImplementation(pagedCatalogue([...noise(29), LIST_PRS]));
+
+    await findToolTool.run({ query: "list pull requests" }, ctxWith([GITHUB_CONNECTION]));
+
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * When a connected row counts as an answer.
+ *
+ * The gate on the connected-app re-asks used to be mere presence — one connected
+ * row in the broad results, however irrelevant, cancelled all four targeted
+ * searches. The broad search answers alphabetically, so applications early in the
+ * catalogue and commonly connected switched the compensation off permanently.
+ */
+describe("when a connected row counts as an answer", () => {
+  const GITHUB_CONNECTION = {
+    ...GMAIL_CONNECTION,
+    id: "conn-gh",
+    label: "covan's GitHub",
+    toolkit_slug: "github",
+  };
+
+  const LIST_PRS = {
+    slug: "GITHUB_LIST_PULL_REQUESTS",
+    name: "List pull requests",
+    description: "List a repository's pull requests.",
+    toolkit: { slug: "GITHUB" },
+    input_parameters: { required: [] },
+  };
+
+  const RELEASE_NOTES = {
+    slug: "GITHUB_GENERATE_RELEASE_NOTES",
+    name: "Generate release notes",
+    description: "Generate release notes.",
+    toolkit: { slug: "GITHUB" },
+    input_parameters: { required: [] },
+  };
+
+  it("re-asks the connected application when the row it got answers nothing", async () => {
+    // Exactly the 2026-09-28 shape: the broad answer holds a connected row that
+    // scores zero for the question asked.
+    let call = 0;
+    fetchMock.mockImplementation(async () => {
+      call += 1;
+      return call === 1 ? catalogue([RELEASE_NOTES]) : catalogue([LIST_PRS, RELEASE_NOTES]);
+    });
+
+    const out = await findToolTool.run(
+      { query: "list pull requests" },
+      ctxWith([GITHUB_CONNECTION]),
+    );
+    const content = out.kind === "ok" ? out.content : "";
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(content.indexOf("GITHUB_LIST_PULL_REQUESTS")).toBeLessThan(
+      content.indexOf("GITHUB_GENERATE_RELEASE_NOTES"),
+    );
+  });
+
+  it("does not re-ask when the row it got already answers the question", async () => {
+    // The other side: a full-scoring connected row makes the extra requests waste.
+    fetchMock.mockImplementation(async () => catalogue([LIST_PRS]));
+
+    await findToolTool.run({ query: "list pull requests" }, ctxWith([GITHUB_CONNECTION]));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

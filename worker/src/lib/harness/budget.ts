@@ -37,7 +37,7 @@ import { planLimits, type ChatLimits } from "../limits";
  *
  * The other half of the argument, unchanged and still true: each step's result
  * joins the transcript and is re-sent on every later pass, so cost grows with
- * roughly the SQUARE of this number. Read `MAX_TOOL_OUTPUT_CHARS` below before
+ * roughly the SQUARE of this number. Read `MAX_TOOL_OUTPUT_TOKENS` below before
  * raising either.
  *
  * **WHAT CHANGED, 2026-09-25.** The first of those two things happened: the
@@ -63,7 +63,7 @@ import { planLimits, type ChatLimits } from "../limits";
  * finished.
  *
  * WHAT BINDS INSTEAD, on Paid: the context window. See `ChatLimits.extraLegs`
- * in `lib/limits.ts`, and read `MAX_TOOL_OUTPUT_CHARS` below before raising
+ * in `lib/limits.ts`, and read `MAX_TOOL_OUTPUT_TOKENS` below before raising
  * anything — it matters more now, not less.
  *
  * Counted in tool executions, not in round trips: a pass that asks for three
@@ -124,7 +124,7 @@ export const SCHEDULED_MAX_STEPS = 8;
 export const TOOL_TIMEOUT_MS = 20_000;
 
 /**
- * How much of a tool's answer the model is shown.
+ * How much of a tool's answer the model is shown, in TOKENS.
  *
  * A query that returns ten thousand rows is not more useful to the model than
  * one that returns forty, and it costs input tokens on every remaining pass of
@@ -132,30 +132,138 @@ export const TOOL_TIMEOUT_MS = 20_000;
  * paid for again and again. The tool says it was trimmed, so the model can ask
  * a narrower question rather than assume it saw everything.
  *
- * **Raised from 8,000 on 2026-09-25, and this time with both arguments.**
- * (`MAX_STEPS` above was moved that week on a cost argument alone, with no
- * runtime argument beside it, and had to be put straight back.)
+ * **Expressed in tokens since 2026-09-28. The character cap has not moved by one
+ * character; what moved is the unit the ceiling is CHOSEN in.** It used to be
+ * 12,000 characters with a comment converting that to tokens, and the conversion
+ * was wrong by 1.7x — see `TOOL_OUTPUT_CHARS_PER_TOKEN` below for the measurement
+ * that replaced it. The unit matters because every argument this number appears
+ * in is an argument about tokens: what a turn can afford, and whether a long turn
+ * fits its context window. The conversion in the middle was where the error lived.
  *
- * WHAT IT COSTS. A result produced at step k is re-sent on every later pass,
- * so the worst case is a full-size result at step 0 carried through all eight
- * — 12,000 characters is roughly 3,000 tokens, so about 24,000 tokens of
- * re-sent transcript. Measured against a real turn: "list my last five
- * meetings" charged 42,486 tokens in total, against a monthly allowance of a
+ * **Raised from 8,000 characters on 2026-09-25, and this time with both
+ * arguments.** (`MAX_STEPS` above was moved that week on a cost argument alone,
+ * with no runtime argument beside it, and had to be put straight back.)
+ *
+ * WHAT IT COSTS. A result produced at step k is re-sent on every later pass, so
+ * the worst case is a full-size result at step 0 carried through the whole
+ * budget: about **40,900 tokens** on Free's eight steps, and about **122,600** at
+ * the 24 steps `lib/limits.ts` budgets a Paid turn. Both are roughly 1.7 times
+ * what this comment used to claim. Measured against a real turn: "list my last
+ * five meetings" charged 42,486 tokens in total, against a monthly allowance of a
  * million. The headroom is there.
  *
- * WHAT IT RISKS AT RUNTIME. Nothing new. It is the same single `fetch`, so it
- * spends no extra subrequest — which is the ceiling that actually binds this
- * Worker. Eight steps at this size is ~24,000 tokens of tool results inside a
- * context window of 128,000, so it cannot crowd the transcript out either.
+ * WHAT IT RISKS AT RUNTIME. On Free, nothing new: it is the same single `fetch`,
+ * so it spends no extra subrequest — the ceiling that actually binds that plan.
+ * On Paid the context window binds instead, and 122,600 tokens of tool results
+ * does NOT fit inside the 128,000 that `gpt-4o` and `gpt-4o-mini` offer, both of
+ * which are selectable per agent. What keeps a long turn inside its window is the
+ * leg-boundary trim rather than this number; `ChatLimits.trimAbovePromptTokens`
+ * carries that arithmetic, and it is thinner than it reads — a leg starting at the
+ * 80,000 gate adds up to 40,900, landing at 120,900 with about 7,100 tokens spare.
+ * The largest this cap could be and still leave that sum under 128,000 is 14,100
+ * characters, so it has roughly 2,100 characters of headroom and no more.
  *
- * WHY IT WAS WORTH MOVING. Measured, not guessed: the same turn asked for a
- * week of calendar events with a `fields` list already narrowing the response
- * — following `run_tool`'s own advice — and still came back at 8,053
- * characters, trimmed. The agent then told the person it could not be sure it
- * had seen everything. A cap that truncates a correctly-narrowed request is
- * costing correctness rather than saving money.
+ * WHY IT WAS WORTH MOVING. Measured, not guessed: the same turn asked for a week
+ * of calendar events with a `fields` list already narrowing the response —
+ * following `run_tool`'s own advice — and still came back at 8,053 characters,
+ * trimmed. The agent then told the person it could not be sure it had seen
+ * everything. A cap that truncates a correctly-narrowed request is costing
+ * correctness rather than saving money. That argument was made in characters and
+ * is still sound in characters; changing the unit does not reopen it.
  */
-export const MAX_TOOL_OUTPUT_CHARS = 12_000;
+export const MAX_TOOL_OUTPUT_TOKENS = 5_000;
+
+/**
+ * How many characters of a tool result go into one token, measured.
+ *
+ * **The four-to-one rule of thumb is wrong here, and it was in this file's own
+ * comment until 2026-09-28, which said "12,000 characters is roughly 3,000
+ * tokens".** Four characters per token is an average over English prose, and a
+ * tool result is not English prose. It is JSON — quotes, braces, colons, uuids,
+ * ISO timestamps, base64 — and the tokeniser fits far fewer characters into each
+ * token. Every figure derived from 4:1 was wrong by 1.5 to 1.7 times, in the
+ * expensive direction.
+ *
+ * MEASURED, and the only way it can be measured from here: by differencing
+ * consecutive passes' reported `prompt` in `messages.pass_usage` against
+ * `message_steps.result_chars` for the same `pass_index`, over the 118
+ * single-step passes on record. (Both columns exist for exactly this. Migration
+ * 0062 added `result_chars` saying "the tool-output budget has never been tuned
+ * against anything".)
+ *
+ *     run_tool              2.35    25 samples
+ *     http_request          2.76    17
+ *     query_database        2.82     4
+ *     describe_connection   3.52    18
+ *     find_tool             4.01    29
+ *     blended               2.59   118
+ *
+ * The spread is not five numbers, it is two populations. The dense three all
+ * return JSON a foreign service wrote. The loose two return lines this harness
+ * wrote itself — a schema listing, a shortlist of candidates — which is prose
+ * with punctuation in it. The difference subtracts each pass's own completion
+ * before dividing, so per-message overhead biases the ratio slightly LOW, which
+ * makes 2.35 the conservative end of its own measurement.
+ *
+ * WHY THE DENSEST TOOL SETS IT, not the blend. `run_tool` is both the densest and
+ * by a distance the highest-traffic, so a blended divisor would under-count the
+ * tool doing most of the spending, and this number's whole job is to keep the
+ * worst case honest. 2.4 rather than 2.35 because it is what keeps the character
+ * cap below at exactly the 12,000 the 2026-09-25 measurement chose: a change made
+ * to fix a comment must not move a ceiling as a side effect. The cost of that
+ * rounding is named rather than hidden — a full-size `run_tool` result is 5,106
+ * tokens against a stated budget of 5,000, two per cent over. That is inside the
+ * noise of twenty-five samples and errs in the direction this file has already
+ * chosen once, because a cap that truncates a correctly-narrowed request costs
+ * correctness.
+ *
+ * WHY THERE IS NO PER-TOOL TABLE, having measured one. Per-tool divisors loosen
+ * exactly the tools that cannot use the room. `find_tool`'s answer is bounded by
+ * its own `MAX_RESULTS`, `MAX_DESCRIPTION_CHARS` and `MAX_SCHEMA_CHARS` long
+ * before this cap — its worst case is about ten thousand characters and production
+ * runs nearer three and a half thousand — so a 4.01 divisor would hand it eight
+ * thousand characters it has no way to write. The other direction is worse: at a
+ * 3,000-token budget `run_tool` would get 7,050 characters, below the 8,000 this
+ * cap was raised past, which is the 2026-09-25 regression bought back. And nothing
+ * has ever asked for more than 12,000 — the one measured incident asked for less
+ * and was cut. So the table above is a derivation, not a configuration.
+ *
+ * WHY THERE IS NO `estimateTokens(text)` ANYWHERE, either, and must not be. The
+ * turn budget MEASURES: `loop.ts` reads the provider's reported counts and never
+ * guesses. An output cap has to decide before anything is sent, so it can only
+ * estimate. Those are different jobs and one shared helper would hide that they
+ * are. An estimate is wrong per tool by up to 1.7 times, and the only place this
+ * codebase can afford to be that wrong is in choosing a constant once, where the
+ * error is spent on headroom that was measured — never in deciding whether a
+ * particular string fits, where it would be spent on a truncation the model reads
+ * as an answer. So the conversion happens once, at module scope, in one direction.
+ *
+ * Named for tool output and not for text in general, because it is not true of
+ * text in general: `HISTORY_CHAR_BUDGET` is conversation prose and nearer four.
+ */
+export const TOOL_OUTPUT_CHARS_PER_TOKEN = 2.4;
+
+/**
+ * The same ceiling in the unit `cap` actually cuts in.
+ *
+ * Derived rather than authored, so `MAX_TOOL_OUTPUT_TOKENS` is the number a person
+ * moves and this is the number the code reads — the two cannot drift. All three
+ * places the cap is applied read this one symbol: `loop.ts`, the confirmed-call
+ * resume in `routes/chat.ts`, and `run_tool`'s own pre-compaction through
+ * `compactForModel`. They agreed by reading one constant before and still do.
+ *
+ * 12,000 to the character, which is what it was before the unit changed.
+ *
+ * `Math.round` is not tidiness. `cap` puts this number into its notice and
+ * `wasCapped` reads it back with `\d+`, so a value like 13,200.000000000002 —
+ * which is what a token budget of 5,500 produces in floating point — would write a
+ * notice nothing can match, and every capped result would become silently
+ * re-cappable across a pause. 5,000 x 2.4 is exactly 12,000 today; the round is
+ * for the budget somebody picks next.
+ */
+export const MAX_TOOL_OUTPUT_CHARS = Math.round(
+  MAX_TOOL_OUTPUT_TOKENS * TOOL_OUTPUT_CHARS_PER_TOKEN,
+);
 
 /**
  * How large a transcript has to be before a leg boundary trims it.
@@ -199,8 +307,38 @@ export function cap(text: string, max: number): string {
  * own output happened to end this way would be left uncut, which costs some
  * transcript and breaks nothing.
  */
-const CAPPED = /\n\n\[trimmed: \d+ characters, showing the first \d+\]$/;
+const CAPPED = /\n\n\[trimmed: (\d+) characters, showing the first \d+\]$/;
 
 export function wasCapped(text: string): boolean {
   return CAPPED.test(text);
+}
+
+/**
+ * Cut an already-cut text again, without losing what it originally was.
+ *
+ * `wasCapped` exists because capping twice rewrites the notice with the cut size
+ * in place of the original — and for a while the only thing anybody did with that
+ * knowledge was refuse to cut. `trimSpentResults` in `lib/harness/loop.ts` skipped
+ * every result the notice appeared on, which is every result that reached
+ * `MAX_TOOL_OUTPUT_CHARS`: **the largest results in the transcript, the only ones
+ * the trim was written for, were the ones exempt from it.** Measured 2026-09-28;
+ * only results between `MAX_STEP_EXCERPT_CHARS` and the output cap were ever cut.
+ *
+ * So the guard was right about the hazard and wrong about the remedy. This keeps
+ * the original length — read back out of the notice the first cut wrote — and
+ * reports the new cut against it, so a result that was 40,000 characters still
+ * says 40,000 after being reduced to 2,000. The notice's SHAPE is unchanged, which
+ * is what keeps `wasCapped` and everything that matches on it working, pause and
+ * resume included.
+ *
+ * Falls through to `cap` for text that carries no notice, so one call site does
+ * not have to ask which kind of text it is holding.
+ */
+export function recap(text: string, max: number): string {
+  const seen = CAPPED.exec(text);
+  if (!seen) return cap(text, max);
+  const original = seen[1];
+  const body = text.slice(0, text.length - seen[0].length);
+  if (body.length <= max) return text;
+  return `${body.slice(0, max)}\n\n[trimmed: ${original} characters, showing the first ${max}]`;
 }

@@ -63,6 +63,43 @@ export const INTERNAL_SCHEMAS = [
   "pgbouncer",
 ];
 
+/**
+ * A schema name that can be interpolated into SQL without quoting it.
+ *
+ * `SCHEMA_QUERY` below builds its `not in (...)` list by wrapping each name in
+ * single quotes, and that is safe **today** for reasons that are all about the
+ * list rather than the code: sixteen hardcoded lowercase identifiers, no quote
+ * characters among them, evaluated once at module scope, and the result still
+ * passes through `query_database`'s single-statement and read-only guards.
+ *
+ * The hazard is entirely prospective, and it is the kind that arrives as a
+ * reasonable feature request. The moment this list becomes per-connection —
+ * `config.internal_schemas` is the obvious next ask — or somebody adds a name
+ * with an apostrophe in it, that line is string-concatenated injection into a
+ * query run with the connection's own credentials.
+ *
+ * So the assertion runs at load rather than at request time, and it throws. It
+ * cannot fire on anything a user sent: the only input is the constant above, so
+ * the only person who can trip it is a developer editing this file, and every
+ * test that imports this module trips it for them immediately. A check that
+ * merely filtered the bad name out would let that refactor ship quietly with a
+ * schema silently un-hidden. See #210.
+ */
+const INTERPOLATABLE = /^[a-z_][a-z0-9_]*$/;
+
+export function assertInterpolatable(names: readonly string[]): void {
+  for (const name of names) {
+    if (!INTERPOLATABLE.test(name)) {
+      throw new Error(
+        `INTERNAL_SCHEMAS is interpolated into SQL and ${JSON.stringify(name)} cannot be: ` +
+          "quote it properly or pass it as a parameter before adding it.",
+      );
+    }
+  }
+}
+
+assertInterpolatable(INTERNAL_SCHEMAS);
+
 const SCHEMA_QUERY =
   "select table_schema, table_name, column_name, data_type " +
   "from information_schema.columns " +
@@ -219,7 +256,7 @@ export const describeConnectionTool: AgentTool = {
     );
     if (result.kind !== "ok") return result;
 
-    const summary = summariseSchema(result.content);
+    const summary = summariseSchema(result.content, SCHEMA_ROW_LIMIT);
     // Best-effort. A failed cache write costs a round trip next turn.
     await cacheConnectionSummary(ctx.env, connection, summary, SUMMARY_VERSION);
 
@@ -243,7 +280,7 @@ export const describeConnectionTool: AgentTool = {
  * gone and PostgREST resolves against its own `search_path`, so there is one
  * answer again rather than a parameter.
  */
-export function summariseSchema(json: string): string {
+export function summariseSchema(json: string, rowLimit?: number): string {
   let rows: Array<Record<string, unknown>>;
   try {
     const parsed: unknown = JSON.parse(json);
@@ -269,7 +306,7 @@ export function summariseSchema(json: string): string {
     else tables.set(key, [column]);
   }
   if (tables.size === 0) return json;
-  return [...tables.entries()]
+  const listing = [...tables.entries()]
     .map(([table, cols]) => {
       const shown = cols.slice(0, MAX_COLUMNS_PER_TABLE);
       const hidden = cols.length - shown.length;
@@ -277,4 +314,34 @@ export function summariseSchema(json: string): string {
       return `${table}(${shown.join(", ")}${more})`;
     })
     .join("\n");
+
+  /**
+   * Whether the answer is the whole schema, said out loud when it is not.
+   *
+   * A row per column arrived and `SCHEMA_ROW_LIMIT` cut it, so exactly at the
+   * limit the last table is probably half-listed and the ones after it are
+   * missing entirely — and until 2026-09-28 nothing said so. That is the same
+   * class of wrong answer the `order by` fixed for the ordering: a model shown a
+   * truncated schema believes it is the whole schema and writes a query against a
+   * table it cannot see, which costs a pass and reads as the database being
+   * wrong. #210.
+   *
+   * It does NOT offer `refresh`, which is what the issue suggested. A refresh
+   * re-runs this same query with this same limit and returns the same cut, so
+   * offering it would be a promise the tool cannot keep. The way past the ceiling
+   * is to ask `information_schema` for one table directly, which the model can
+   * already do, so the notice points there instead.
+   *
+   * `>=` and not `===`: the caller sets the limit, `query_database` is entitled to
+   * apply its own smaller one, and a listing that came back over the number is
+   * still a listing that was cut.
+   */
+  if (rowLimit !== undefined && rows.length >= rowLimit) {
+    return (
+      `${listing}\n[cut at ${rowLimit} columns — tables after the last one listed are ` +
+      "missing, and a refresh returns the same cut. Ask query_database for " +
+      "information_schema.columns of a table you need but cannot see here.]"
+    );
+  }
+  return listing;
 }

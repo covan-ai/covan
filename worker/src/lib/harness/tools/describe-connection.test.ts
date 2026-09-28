@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolContext, ToolEnv } from "../registry";
-import { describeConnectionTool, summariseSchema } from "./describe-connection";
+import {
+  assertInterpolatable,
+  describeConnectionTool,
+  INTERNAL_SCHEMAS,
+  summariseSchema,
+} from "./describe-connection";
 
 /**
  * What the cache is for, stated as a test: the second call must not go to the
@@ -303,5 +308,69 @@ describe("describe_connection", () => {
   it("refuses a connection this workspace cannot see", async () => {
     const result = await describeConnectionTool.run({ connectionId: "conn-1" }, ctxWith(null));
     expect(result).toEqual({ kind: "error", message: "no such connection in this workspace" });
+  });
+});
+
+/**
+ * The ceiling that used to be silent.
+ *
+ * `SCHEMA_ROW_LIMIT` cuts the column listing, and a model shown a cut schema
+ * believes it is the whole schema — then writes a query against a table that was
+ * never listed and reads the failure as the database being wrong. #210.
+ */
+describe("when the column listing was cut", () => {
+  const rowsFor = (tables: number) =>
+    JSON.stringify(
+      Array.from({ length: tables }, (_, i) => ({
+        table_schema: "public",
+        table_name: `t${i}`,
+        column_name: "id",
+        data_type: "uuid",
+      })),
+    );
+
+  it("says the listing was cut when it came back at the limit", () => {
+    const out = summariseSchema(rowsFor(10), 10);
+    expect(out).toContain("cut at 10 columns");
+    // Not `refresh`: it re-runs the same query with the same limit and returns
+    // the same cut, so offering it would be a promise this tool cannot keep.
+    expect(out).not.toMatch(/refresh for the rest/i);
+    expect(out).toContain("information_schema.columns");
+  });
+
+  it("says nothing when the whole schema fitted", () => {
+    const out = summariseSchema(rowsFor(9), 10);
+    expect(out).not.toContain("cut at");
+    expect(out).toContain("t8(id uuid)");
+  });
+
+  it("says nothing when the caller did not say what the limit was", () => {
+    // The old signature, still the behaviour for every other caller.
+    expect(summariseSchema(rowsFor(10))).not.toContain("cut at");
+  });
+});
+
+/**
+ * The list that goes into SQL as text.
+ *
+ * `SCHEMA_QUERY` wraps each of these in single quotes and concatenates. Nothing a
+ * user sends reaches that line today, so this is a guard against the refactor
+ * rather than against an attacker: a per-connection schema list, or one name with
+ * an apostrophe in it, turns that concatenation into injection run with the
+ * connection's own credentials. See #210.
+ */
+describe("the schema names that are interpolated into SQL", () => {
+  it("accepts every name the build actually ships", () => {
+    expect(() => assertInterpolatable(INTERNAL_SCHEMAS)).not.toThrow();
+    expect(INTERNAL_SCHEMAS.length).toBeGreaterThan(0);
+  });
+
+  it("throws on a name that would close the quote, rather than filtering it out", () => {
+    // Filtering would be the quiet failure: the query would still run, and a
+    // schema somebody meant to hide would silently be listed instead.
+    expect(() => assertInterpolatable(["public', 'x"])).toThrow(/cannot be/);
+    expect(() => assertInterpolatable(["drop--"])).toThrow();
+    expect(() => assertInterpolatable(["MixedCase"])).toThrow();
+    expect(() => assertInterpolatable(["1leading_digit"])).toThrow();
   });
 });

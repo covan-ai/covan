@@ -56,6 +56,43 @@ const MAX_ERROR_CHARS = 2_000;
 const MAX_BYTES = 256 * 1024;
 
 /**
+ * What a CATALOGUE page may weigh before the read is abandoned.
+ *
+ * A different question from `MAX_BYTES` above, even though that number shipped as
+ * the answer to both. `MAX_BYTES` caps a body a THIRD PARTY chose the size of, on
+ * its way to a model that will be shown twelve thousand characters of it. This
+ * caps a document we asked for BY THE ROW — `searchTools` sends `limit`, so the
+ * size is ours, and the only thing a cap can decide here is whether a page we
+ * deliberately asked for arrives whole.
+ *
+ * WHY 256KB STOPPED BEING ENOUGH. A catalogue row carries the operation's whole
+ * argument schema — that is how `find_tool` names an operation's parameters
+ * without a second request — and the widest rows are large. Fifty of them can pass
+ * 256KB, and past the cap the body arrives cut, `JSON.parse` fails, `parsed`
+ * answers null, `rows(null)` is `[]`, and the caller used to be handed
+ * `{kind:"ok", tools:[]}` — which `find_tool` reports as "no operation in the
+ * catalogue matches". A page too big to read was indistinguishable from an empty
+ * catalogue. `routes/composio.ts` already chose a page of ten to stay clear of it.
+ *
+ * A megabyte is twenty kilobytes a row at the largest page this file will ask for.
+ * It costs one string and one `JSON.parse` in an isolate with 128MB, and nothing in
+ * any budget that binds: no extra subrequest, no extra charge, and nothing in the
+ * prompt — the page is read to be RANKED, and `find_tool` shows five of it.
+ */
+const MAX_CATALOGUE_BYTES = 1024 * 1024;
+
+/**
+ * The largest page this file will ask the catalogue for.
+ *
+ * Fifty, and it is OUR ceiling rather than a documented one. Nothing here has
+ * established what `/api/v3.1/tools` honours above it — the sibling clamp in
+ * `listToolkits` is a hundred only because a hundred was seen to work on
+ * `/toolkits`. So fifty is what a caller may rely on, and raising it is a live
+ * probe away rather than a guess away.
+ */
+export const MAX_TOOLS_PAGE = 50;
+
+/**
  * The deployment's Composio credentials.
  *
  * Narrow on purpose rather than `Bindings`: this module is reached from the
@@ -184,7 +221,7 @@ export function composioConfigured(env: ComposioEnv): boolean {
 async function request(
   env: ComposioEnv,
   path: string,
-  init: { method: string; body?: unknown },
+  init: { method: string; body?: unknown; maxBytes?: number },
   opts?: ComposioOptions,
 ): Promise<ComposioResult<{ body: string }>> {
   if (!env.COMPOSIO_API_KEY) {
@@ -227,7 +264,7 @@ async function request(
     return { kind: "error", status: 502, message: `Composio answered ${res.status} redirect` };
   }
 
-  const body = await readBody(res);
+  const body = await readBody(res, init.maxBytes);
 
   if (res.status === 401 || res.status === 403) {
     return {
@@ -251,9 +288,9 @@ async function request(
 }
 
 /** The response text, capped, without reading an unbounded body first. */
-async function readBody(res: Response): Promise<string> {
+async function readBody(res: Response, limit = MAX_BYTES): Promise<string> {
   const reader = res.body?.getReader();
-  if (!reader) return (await res.text().catch(() => "")).slice(0, MAX_BYTES);
+  if (!reader) return (await res.text().catch(() => "")).slice(0, limit);
   const decoder = new TextDecoder();
   let out = "";
   try {
@@ -261,9 +298,9 @@ async function readBody(res: Response): Promise<string> {
       const { done, value } = await reader.read();
       if (done) break;
       out += decoder.decode(value, { stream: true });
-      if (out.length >= MAX_BYTES) {
+      if (out.length >= limit) {
         await reader.cancel().catch(() => {});
-        return out.slice(0, MAX_BYTES);
+        return out.slice(0, limit);
       }
     }
   } catch {
@@ -393,9 +430,19 @@ function toTool(row: Record<string, unknown>): ComposioTool | null {
 /**
  * Operations matching a description of what somebody wants to do.
  *
- * `limit` is small by design and the caller's cap is smaller still: a result
- * that reaches the model truncated mid-JSON is worse than a short one, and
- * `loop.ts` slices blindly at eight thousand characters.
+ * `limit` is what the caller gets to RANK, not what a model gets SHOWN, and the
+ * two used to be nearly the same number. `find_tool` asked for ten and showed
+ * five, which made Composio's own relevance the only thing deciding whether the
+ * right operation was reachable at all — see `SEARCH_PAGE` in
+ * `lib/harness/tools/find-tool.ts` for the sixteen-step turn that cost. It now
+ * asks for the whole page; what reaches the model is its business.
+ *
+ * AN UNREADABLE BODY IS AN ERROR, not an empty catalogue. It used to be the
+ * latter and that is the quietest failure in this file: `parsed` answers null for
+ * anything that is not JSON, `rows(null)` is `[]`, and the caller was handed
+ * `{kind:"ok", tools:[]}` — which `find_tool` reports as "no operation in the
+ * catalogue matches", having read nothing at all. A page cut at the read cap is
+ * exactly that case, and a gateway's HTML error page is the other.
  */
 export async function searchTools(
   env: ComposioEnv,
@@ -404,14 +451,30 @@ export async function searchTools(
 ): Promise<ComposioResult<{ tools: ComposioTool[] }>> {
   const params = new URLSearchParams({
     search: query.search,
-    limit: String(Math.min(Math.max(query.limit ?? 10, 1), 50)),
+    limit: String(Math.min(Math.max(query.limit ?? 10, 1), MAX_TOOLS_PAGE)),
   });
   if (query.toolkit) params.set("toolkit_slug", query.toolkit.toUpperCase());
 
-  const res = await request(env, `${CATALOGUE_API}/tools?${params}`, { method: "GET" }, opts);
+  const res = await request(
+    env,
+    `${CATALOGUE_API}/tools?${params}`,
+    { method: "GET", maxBytes: MAX_CATALOGUE_BYTES },
+    opts,
+  );
   if (res.kind === "error") return res;
 
-  const tools = rows(parsed(res.body))
+  const body = parsed(res.body);
+  if (body === null) {
+    return {
+      kind: "error",
+      status: 502,
+      message:
+        `Composio's answer could not be read (${res.body.length} characters, ` +
+        `${res.body.length >= MAX_CATALOGUE_BYTES ? "cut at the read cap" : "not JSON"})`,
+    };
+  }
+
+  const tools = rows(body)
     .map(toTool)
     .filter((t): t is ComposioTool => t !== null);
   return { kind: "ok", tools };
@@ -450,16 +513,34 @@ export async function listToolkitTools(
   query: { toolkit: string; limit?: number },
   opts?: ComposioOptions,
 ): Promise<ComposioResult<{ tools: ComposioTool[]; total: number | null; more: boolean }>> {
-  const limit = Math.min(Math.max(query.limit ?? 10, 1), 50);
+  const limit = Math.min(Math.max(query.limit ?? 10, 1), MAX_TOOLS_PAGE);
   const params = new URLSearchParams({
     toolkit_slug: query.toolkit.toUpperCase(),
     limit: String(limit),
   });
 
-  const res = await request(env, `${CATALOGUE_API}/tools?${params}`, { method: "GET" }, opts);
+  const res = await request(
+    env,
+    `${CATALOGUE_API}/tools?${params}`,
+    { method: "GET", maxBytes: MAX_CATALOGUE_BYTES },
+    opts,
+  );
   if (res.kind === "error") return res;
 
   const body = parsed(res.body);
+  // Same reason as `searchTools`, and the consequence here is worse in one way:
+  // `routes/composio.ts` renders `null` honestly for an error but an empty list as
+  // "this application has no operations", so an unreadable page would tell somebody
+  // deciding whether to connect an application that there is nothing to connect.
+  if (body === null) {
+    return {
+      kind: "error",
+      status: 502,
+      message:
+        `Composio's answer could not be read (${res.body.length} characters, ` +
+        `${res.body.length >= MAX_CATALOGUE_BYTES ? "cut at the read cap" : "not JSON"})`,
+    };
+  }
   const returned = rows(body);
   const wanted = query.toolkit.toLowerCase();
   const tools = returned

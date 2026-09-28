@@ -9,6 +9,7 @@ import {
   listToolkitCategories,
   listToolkits,
   listToolkitTools,
+  MAX_TOOLS_PAGE,
   searchTools,
   statusOf,
   type ComposioEnv,
@@ -261,6 +262,31 @@ describe("searchTools", () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 302 }));
     const out = await searchTools(ENV, { search: "x" }, { fetchImpl: fetchImpl as never });
     expect(out.kind).toBe("error");
+  });
+
+  it("says the page could not be read rather than reporting an empty catalogue", async () => {
+    // The quietest failure in this file until 2026-09-28. `parsed` answers null for
+    // anything that is not JSON, `rows(null)` is `[]`, and the caller was handed
+    // `{kind:"ok", tools:[]}` — which `find_tool` reports to the person as "no
+    // operation in the catalogue matches", having read nothing at all. A gateway's
+    // HTML error page is one way in; a page cut at the read cap is the other, and
+    // the second became reachable the moment a search started asking for fifty rows.
+    const fetchImpl = vi.fn(
+      async () => new Response("<html>502 Bad Gateway</html>", { status: 200 }),
+    );
+    const out = await searchTools(ENV, { search: "x" }, { fetchImpl: fetchImpl as never });
+
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("could not be read");
+    expect(out.kind === "error" && out.message).toContain("not JSON");
+  });
+
+  it("asks for at most the page this file will read, however much a caller wants", async () => {
+    // Ours rather than Composio's documented maximum — see `MAX_TOOLS_PAGE`. A
+    // caller asking for more must not silently get a page the read cap truncates.
+    const fetchImpl = fetchReturning({ items: [] });
+    await searchTools(ENV, { search: "x", limit: 500 }, { fetchImpl: fetchImpl as never });
+    expect(String(fetchImpl.mock.calls[0][0])).toContain(`limit=${MAX_TOOLS_PAGE}`);
   });
 });
 

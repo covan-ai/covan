@@ -100,6 +100,17 @@ function confirmationSummary(
 /** How many complaints one refusal carries. Enough to fix in one go, not a wall. */
 const MAX_COMPLAINTS = 6;
 
+/**
+ * How many of an operation's argument names one refusal spells out.
+ *
+ * The same number and the same reason as `MAX_PARAM_NAMES` in `find-tool.ts`:
+ * Composio publishes operations with ninety arguments, and a refusal that listed
+ * all of them would cost more tokens than the call it is saving. The count of
+ * what was left out goes on the end, so the model can ask `find_tool` for the
+ * schema rather than guess again.
+ */
+const MAX_NAMED_ARGUMENTS = 24;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -142,15 +153,37 @@ function shapeOf(value: unknown): string {
  * Deliberately narrow, because a validator that is wrong blocks calls that would
  * have worked. It refuses only on what is unambiguous — a required field absent,
  * a declared scalar type contradicted, an array whose declared item type is
- * contradicted — and stays silent on everything else: a property the schema does
- * not mention, a field described by `anyOf` rather than `type`, a type name it
- * does not recognise.
+ * contradicted, a property the schema does not name at all — and stays silent on
+ * everything else: a field described by `anyOf` rather than `type`, a type name
+ * it does not recognise.
  *
- * The three shapes it catches are the three that were actually sent in
- * production on 2026-09-26: `attendees` as objects where Composio wants strings,
- * `send_updates` as the string the docs promise where Composio wants a boolean,
- * and `start_datetime` missing because the datetime went in a nested `start`
+ * The first three shapes are the three that were actually sent in production on
+ * 2026-09-26: `attendees` as objects where Composio wants strings, `send_updates`
+ * as the string the docs promise where Composio wants a boolean, and
+ * `start_datetime` missing because the datetime went in a nested `start`
  * instead. See #192 and #195.
+ *
+ * **The fourth was added 2026-09-28 and it used to be on the silent list.** It
+ * came off because silence turned out to be the expensive answer. In the most
+ * expensive turn on record the model ran one operation three times — plain, then
+ * with `fields: [...]`, then with `response_detail: "minimal"` — narrowing that
+ * `run_tool`'s own description asks for ("name only the fields you need"). That
+ * operation's schema names neither property. Nothing complained, both calls went
+ * to Composio, Composio ignored them, and all three answers came back
+ * byte-identical at the output cap. The second and third copies were about
+ * 120,000 re-sent tokens between them, 27% of the turn, to learn nothing.
+ *
+ * Refusing it is not a guess about the far end: Composio validates against this
+ * same schema, and the same turn has it answering "Following fields are missing:
+ * {'query'}". A property the schema does not name was going to be ignored or
+ * rejected there, so refusing it here costs a call and a pass less.
+ *
+ * WHAT GATES IT, and this is the whole risk. A schema need not carry `properties`
+ * — `client.ts` reads `required` from its own key, and a search row shaped
+ * `{required: [...]}` and nothing else is ordinary. With no `properties` every
+ * argument looks unknown, so an ungated check would refuse every call to any
+ * operation whose publisher did not describe its arguments. Hence `properties`
+ * must be present AND non-empty before a single unknown name is named.
  */
 function complaints(args: Record<string, unknown>, schema: Record<string, unknown>): string[] {
   const properties = isRecord(schema.properties) ? schema.properties : null;
@@ -160,6 +193,22 @@ function complaints(args: Record<string, unknown>, schema: Record<string, unknow
   for (const name of required) {
     if (typeof name === "string" && args[name] === undefined) {
       out.push(`\`${name}\` is required and was not sent`);
+    }
+  }
+
+  // An empty `properties` is the same as none: it describes nothing to check
+  // against, so everything would read as unknown. See the gate paragraph above.
+  if (properties && Object.keys(properties).length > 0) {
+    const unknown = Object.keys(args).filter((name) => properties[name] === undefined);
+    if (unknown.length > 0) {
+      const takes = Object.keys(properties);
+      const listed = takes.slice(0, MAX_NAMED_ARGUMENTS).join(", ");
+      const rest = takes.length - MAX_NAMED_ARGUMENTS;
+      out.push(
+        `${unknown.map((n) => `\`${n}\``).join(", ")} ` +
+          `${unknown.length === 1 ? "is not an argument" : "are not arguments"} this ` +
+          `operation takes. It takes: ${listed}${rest > 0 ? `, and ${rest} more` : ""}`,
+      );
     }
   }
 

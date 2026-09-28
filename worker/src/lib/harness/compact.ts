@@ -30,9 +30,28 @@ function readableText(bytes: Uint8Array): string | null {
   return unprintable / text.length <= 0.05 ? text : null;
 }
 
+/**
+ * Bytes out of either base64 alphabet, or null if it is not base64 at all.
+ *
+ * **The URL-safe alphabet is handled since 2026-09-28 (#210), and before that it
+ * was a silent miss.** `atob` rejects `-` and `_`, so a service that encodes with
+ * RFC 4648 §5 — which GitHub, Google and anything putting a payload in a query
+ * string all do — had its content left encoded, and the model spent OUTPUT tokens
+ * decoding it by hand. That is the exact cost `compactForModel` exists to remove,
+ * and it was being paid at the most expensive rate in the request.
+ *
+ * Padding is restored as well as the alphabet translated, because base64url
+ * conventionally omits `=` and `atob` is entitled to refuse a length that is not
+ * a multiple of four.
+ *
+ * Still returns null for anything that is not base64 — a caller uses that to
+ * leave the field exactly as the service sent it.
+ */
 function decodeBase64(value: string): Uint8Array | null {
   try {
-    const binary = atob(value.replace(/\s/g, ""));
+    const canonical = value.replace(/\s/g, "").replace(/-/g, "+").replace(/_/g, "/");
+    const padded = canonical + "=".repeat((4 - (canonical.length % 4)) % 4);
+    const binary = atob(padded);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return bytes;

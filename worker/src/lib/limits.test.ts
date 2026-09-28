@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { planLimits, workerPlan } from "./limits";
-import { MAX_STEPS, TRIM_ABOVE_PROMPT_TOKENS, chatBudget } from "./harness/budget";
+import {
+  MAX_STEPS,
+  MAX_TOOL_OUTPUT_CHARS,
+  TRIM_ABOVE_PROMPT_TOKENS,
+  chatBudget,
+} from "./harness/budget";
 
 /**
  * The open build's contract, pinned.
@@ -83,6 +88,57 @@ describe("what a deployment is allowed to spend", () => {
       const chat = chatBudget(paid);
       expect(chat.maxSteps + chat.extraLegs * chat.legSteps).toBe(40);
     });
+  });
+
+  describe("what one turn may spend, which is the same on both plans", () => {
+    it("stops a turn at the size the measured runaway starts, not at a percentile", () => {
+      // 150,000, and the reason it is not a percentile is in `limits.ts`: the
+      // week of 2026-09-21 split in two rather than tailing off — turns at or
+      // under this size averaged 4.5 steps and turns over it averaged 18.0. The
+      // number sits in that gap.
+      expect(chatBudget({}).maxTurnTokens).toBe(150_000);
+    });
+
+    it("is the same on Paid, because a runaway spends a self-hoster's own key too", () => {
+      // The one ceiling in this file that deliberately does NOT move with the
+      // plan. Paid buys headroom for turns that are working; it does not buy
+      // permission for a turn that has stopped working.
+      expect(chatBudget({ WORKER_PLAN: "paid" }).maxTurnTokens).toBe(chatBudget({}).maxTurnTokens);
+    });
+
+    it("leaves room above the turns that were finishing normally", () => {
+      // p90 of the same fifty-two tool turns was 132,836. A guard set below that
+      // would be cutting turns that were about to answer, which is the failure
+      // this number is most likely to be "tuned" into later. Measured, so it is
+      // an assertion rather than a hope.
+      expect(chatBudget({}).maxTurnTokens).toBeGreaterThan(132_836);
+    });
+  });
+
+  /**
+   * The arithmetic that was wrong, as an assertion.
+   *
+   * `trimAbovePromptTokens` is justified by a sum done in prose: a leg that starts
+   * at the gate must still fit the smallest context window an agent can be put on.
+   * That sum was computed at four characters per token and the measured figure is
+   * 2.35, so it was out by 1.7x — in the direction that matters. The value still
+   * holds, but only just, and nothing was checking it.
+   *
+   * This is the one test here that can catch a mistake nobody has made yet: it
+   * fails if the output cap is raised past ~14,100 characters, if `legSteps` grows,
+   * or if the trim gate is lifted towards the window.
+   */
+  it("lets a leg that starts at the trim gate still fit the smallest window offered", () => {
+    // `run_tool`'s measured density — the densest, so the worst case. See
+    // `budget.ts`, which carries the sample counts.
+    const DENSEST_CHARS_PER_TOKEN = 2.35;
+    // `gpt-4o` and `gpt-4o-mini`, both selectable per agent.
+    const SMALLEST_WINDOW = 128_000;
+
+    const paid = chatBudget({ WORKER_PLAN: "paid" });
+    const oneLegOfResults = (paid.legSteps * MAX_TOOL_OUTPUT_CHARS) / DENSEST_CHARS_PER_TOKEN;
+
+    expect(paid.trimAbovePromptTokens + oneLegOfResults).toBeLessThan(SMALLEST_WINDOW);
   });
 
   it("hands out a frozen record, so one route cannot retune another's turn", () => {

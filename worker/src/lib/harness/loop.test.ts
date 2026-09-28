@@ -539,6 +539,39 @@ describe("the budget", () => {
         expect(results[0].content).toContain("[trimmed:");
       });
 
+      it("trims a result that arrived already capped, which is the largest one there is", async () => {
+        /**
+         * The exemption that switched the trim off for everything it was for.
+         *
+         * `trimSpentResults` skipped any result `wasCapped` recognised, and a
+         * result at `maxOutputChars` ends with `cap`'s own notice — so the only
+         * results ever cut were the ones between the excerpt floor and the output
+         * cap, and every full-size one, the expensive ones the trim exists for,
+         * went through untouched. The test above could not see it because its
+         * tool returns exactly `maxOutputChars` and `cap` writes no notice at
+         * that length.
+         *
+         * The skip was guarding something real: capping twice rewrites the notice
+         * with the cut size in place of the original, telling the model a large
+         * result was small. So the fix keeps the original length rather than
+         * dropping the guard.
+         */
+        foreverAtSize(HUGE);
+        await runAgentTurn({
+          ...base,
+          tools: [tool("search", async () => ({ kind: "ok", content: "x".repeat(40_000) }))],
+          budget: { maxSteps: 4, extraLegs: 1, legSteps: 2, maxOutputChars: 5_000 },
+        });
+
+        const results = sentTranscripts[4].filter((m) => m.role === "tool");
+        // Same shape as above: the two it has finished with cut to the floor.
+        expect(results.map((m) => m.content.length > 3_000)).toEqual([false, false, true, true]);
+        // And still telling the truth about how big the answer really was — 40,000,
+        // not the 5,000 the output cap had already reduced it to.
+        expect(results[0].content).toContain("[trimmed: 40000 characters");
+        expect(results[0].content).toContain("showing the first 2000]");
+      });
+
       it("leaves finished results whole at a leg boundary when the transcript is still small", async () => {
         // The trim costs a full cache write of everything after the first edit
         // and saves the difference in reads. On the 583k turn, pass 9 wrote
@@ -575,9 +608,10 @@ describe("the budget", () => {
       it("still trims before a 128k window is in reach, not after", async () => {
         // `gpt-4o` and `gpt-4o-mini` are both 128k and both selectable per
         // agent. Gated at 120,000 the first boundary would pass at 112,000,
-        // eight more results at MAX_TOOL_OUTPUT_CHARS would add ~24,000, and
-        // the turn would meet a provider 400 before the second boundary — a
-        // turn the unconditional trim used to finish.
+        // eight more results at MAX_TOOL_OUTPUT_TOKENS would add ~40,900 — the
+        // figure read ~24,000 until the chars-per-token ratio was measured, see
+        // `budget.ts` — and the turn would meet a provider 400 before the second
+        // boundary, a turn the unconditional trim used to finish.
         foreverAtSize(112_000);
         await runAgentTurn({
           ...base,

@@ -54,10 +54,14 @@ export type ChatLimits = {
    * cap.** Once the plan is Paid, subrequests stop being what binds: 24 steps
    * is roughly 250 of 10,000. What binds instead is the transcript. A step's
    * result is re-sent on every later pass, so at 24 steps
-   * `MAX_TOOL_OUTPUT_CHARS` alone would be ~72,000 tokens of tool results,
+   * `MAX_TOOL_OUTPUT_TOKENS` alone would be **~122,600 tokens** of tool results,
    * before the persona, the manifest, `HISTORY_CHAR_BUDGET`, the retrieval
    * block and two dozen assistant turns — and a turn that overflows gets a
-   * provider 400 wearing the same disguise the subrequest cap does.
+   * provider 400 wearing the same disguise the subrequest cap does. That figure
+   * read ~72,000 until 2026-09-28, from a four-characters-per-token rule of thumb
+   * that a tool result does not obey; the measurement is in `budget.ts`. It does
+   * not weaken this paragraph, it makes it starker — 122,600 does not fit a 128k
+   * window on its own, with nothing else in the request at all.
    *
    * That is why 2 was not allowed to ship first. It is allowed now because
    * `trimSpentResults` in `lib/harness/loop.ts` cuts the results the turn has
@@ -82,9 +86,29 @@ export type ChatLimits = {
    * came from charged 131,868 prompt tokens inside an 8-step budget it never
    * exceeded, 88% of it cache reads of a transcript re-sent on every pass.
    *
-   * 500,000 rather than the 250,000 an earlier pass argued from a measured
-   * 42,486-token tool turn. Worth revisiting after a week of real numbers, not
-   * before.
+   * **150,000, re-derived 2026-09-28 from the week of real numbers the previous
+   * value asked for.** It was 500,000, chosen against a single measured
+   * 42,486-token tool turn with a note to revisit after a week. The week came in
+   * and 500,000 turned out to be sixteen times the median, high enough that it
+   * has never once fired: the most expensive turn on record charged 446,532
+   * tokens and passed underneath it.
+   *
+   * WHAT THE WEEK SAID. Fifty-two tool turns, 2026-09-21 to 09-28: median
+   * 31,293, p90 132,836, p95 228,672, largest 586,932. But the distribution is
+   * what decides the number, because it is not a curve — it is two groups:
+   *
+   *     turns at or under 150,000 tokens     4.5 steps on average
+   *     turns over 150,000 tokens           18.0 steps on average
+   *
+   * So 150,000 sits in the gap rather than on a percentile. It catches four of
+   * fifty-two turns (7.7%), leaves p90 untouched, and every turn it would have
+   * stopped was already in the runaway shape this guard exists for — a turn
+   * averaging eighteen steps is not a turn having a hard question, it is a turn
+   * recovering from something. Picking a percentile instead would have been
+   * picking a point on a line that is not there.
+   *
+   * Still the same on both plans, and still for the reason above: a runaway
+   * turn spends a self-hoster's own key exactly as it spends the operator's.
    */
   maxTurnTokens: number;
   /**
@@ -107,13 +131,25 @@ export type ChatLimits = {
    * 80,000 rather than the 120,000 an earlier pass argued from a 200k window.
    * `legOf` gives a Paid turn only TWO boundaries — at 24 steps and at 32 —
    * and each is one-shot, so a gate the first one misses is eight more results
-   * at `MAX_TOOL_OUTPUT_CHARS`, roughly 24,000 tokens, before the next chance.
-   * `gpt-4o` and `gpt-4o-mini` are 128k and both are selectable per agent: at
-   * 120,000 a first boundary measuring 112,000 would pass, and the turn would
-   * meet a provider 400 it used to survive. 80,000 leaves that headroom on the
-   * smallest window the picker offers and is still a transcript large enough
-   * for the rewrite to be worth its cache write. The same number on both
-   * plans, because Free never gets near it at eight steps.
+   * at `MAX_TOOL_OUTPUT_TOKENS`, roughly **40,900 tokens**, before the next
+   * chance. `gpt-4o` and `gpt-4o-mini` are 128k and both are selectable per
+   * agent: at 120,000 a first boundary measuring 112,000 would pass, then add
+   * 40,900 for 152,900, and the turn would meet a provider 400 it used to
+   * survive. 80,000 leaves that headroom on the smallest window the picker offers
+   * and is still a transcript large enough for the rewrite to be worth its cache
+   * write. The same number on both plans, because Free never gets near it at
+   * eight steps.
+   *
+   * **The real margin is thinner than this paragraph used to imply, and it is
+   * worth writing down even though the number does not move.** These figures were
+   * derived from four characters per token; the measurement in `budget.ts` puts a
+   * tool result at 2.35. So a leg starting exactly at this gate adds up to 40,900
+   * rather than 24,000, landing at 120,900 against 128,000 — about **7,100 tokens
+   * of slack**, not the ~24,000 the old arithmetic suggested. The rejection of
+   * 120,000 gets stronger, so 80,000 survives on its own argument; but the largest
+   * `MAX_TOOL_OUTPUT_CHARS` could be and still keep that sum under the window is
+   * 14,100 characters, which is the real reason not to raise it again. A number
+   * that STAYS has to stay for a true reason, the same as one that moves.
    */
   trimAbovePromptTokens: number;
 };
@@ -144,7 +180,7 @@ const FREE: PlanLimits = Object.freeze({
     maxSteps: 8,
     extraLegs: 0,
     legSteps: 8,
-    maxTurnTokens: 500_000,
+    maxTurnTokens: 150_000,
     trimAbovePromptTokens: 80_000,
   }),
 });
@@ -162,7 +198,7 @@ const PAID: PlanLimits = Object.freeze({
     maxSteps: 24,
     extraLegs: 2,
     legSteps: 8,
-    maxTurnTokens: 500_000,
+    maxTurnTokens: 150_000,
     trimAbovePromptTokens: 80_000,
   }),
 });

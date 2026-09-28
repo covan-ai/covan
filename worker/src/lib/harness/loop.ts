@@ -15,7 +15,7 @@ import {
   TOOL_TIMEOUT_MS,
   TRIM_ABOVE_PROMPT_TOKENS,
   cap,
-  wasCapped,
+  recap,
 } from "./budget";
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
 import { addCounts } from "./usage";
@@ -369,17 +369,26 @@ const SUBREQUEST_RESERVE = 8;
  *
  * `keepLast` results are left whole because they are what the model is actually
  * working through; everything older is cut to `MAX_STEP_EXCERPT_CHARS`, the
- * same size the transcript view keeps. Through `cap`, so the model is TOLD it
+ * same size the transcript view keeps. Through `recap`, so the model is TOLD it
  * was cut — a silent truncation is one the model would read as the whole
  * answer and act on.
  *
- * `wasCapped` is what stops a result being cut twice, and it reads the text
- * rather than remembering an index — because the thing that has to know is on
- * the far side of a pause. A parked turn stores its whole transcript and
- * resumes in a fresh call, where any set of "already done" indices is empty
- * again while the capped text is still sitting there. Cutting twice rewrites
- * `cap`'s own notice with the cut size in place of the original, which tells
- * the model a large result was small.
+ * **`recap` and not `cap`, since 2026-09-28, and the difference was the whole
+ * effectiveness of this function.** It used to skip any result `wasCapped`
+ * recognised, which is every result that reached `MAX_TOOL_OUTPUT_CHARS` — so the
+ * biggest results in the transcript, the only ones worth the cache write, were
+ * the ones it never touched, and only the middle band between the excerpt floor
+ * and the output cap was ever cut. `limits.ts` justifies `extraLegs` on this
+ * function doing its job, so the skip quietly undercut that argument too.
+ *
+ * The hazard the skip was guarding is real and `recap` handles it instead:
+ * cutting twice with `cap` would rewrite the notice with the cut size in place of
+ * the original and tell the model a large result was small. `recap` reads the
+ * original length back out of the notice and keeps it. That has to be read off
+ * the text rather than remembered, because the thing that needs to know is on the
+ * far side of a pause — a parked turn stores its whole transcript and resumes in
+ * a fresh call, where any set of "already done" indices is empty again while the
+ * capped text is still sitting there.
  */
 function trimSpentResults(messages: CompletionMessage[], keepLast: number): void {
   const results: number[] = [];
@@ -388,8 +397,13 @@ function trimSpentResults(messages: CompletionMessage[], keepLast: number): void
   }
   for (const i of results.slice(0, Math.max(0, results.length - keepLast))) {
     const message = messages[i];
-    if (message.content.length <= MAX_STEP_EXCERPT_CHARS || wasCapped(message.content)) continue;
-    messages[i] = { ...message, content: cap(message.content, MAX_STEP_EXCERPT_CHARS) };
+    if (message.content.length <= MAX_STEP_EXCERPT_CHARS) continue;
+    // `recap` rather than `cap`, and no `wasCapped` skip: a result that reached
+    // the output cap is the largest thing in the transcript and the whole reason
+    // this runs, so skipping it switched the trim off for exactly the wrong half.
+    // `recap` keeps the original length in the notice, which is what the skip was
+    // protecting. See `recap` in `budget.ts`.
+    messages[i] = { ...message, content: recap(message.content, MAX_STEP_EXCERPT_CHARS) };
   }
 }
 

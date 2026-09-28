@@ -23,7 +23,6 @@ function connection(over: Partial<ToolConnection>): ToolConnection {
     auth_kind: "static_header",
     allowed_methods: ["GET"],
     config: {},
-    account_id: null,
     secret_ciphertext: null,
     toolkit_slug: null,
     status: "active",

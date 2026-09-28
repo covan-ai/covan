@@ -23,7 +23,7 @@ import type { ToolContext } from "./registry";
  * its base URL and sent the connection's credential there. Every tool refuses
  * `unknown` explicitly instead.
  */
-export type ToolTransport = "http" | "sql" | "supabase" | "composio" | "unknown";
+export type ToolTransport = "http" | "sql" | "composio" | "unknown";
 
 export type ToolConnection = {
   id: string;
@@ -34,15 +34,6 @@ export type ToolConnection = {
   auth_kind: "static_header" | "composio" | "unknown";
   allowed_methods: string[];
   config: Record<string, unknown>;
-  /**
-   * The Supabase account whose token this row borrows, for `supabase` rows
-   * and null for every other kind.
-   *
-   * A project connected through an account has no credential of its own — the
-   * token is the account's and one copy of it is the point (0061). This is
-   * what `authHeaders` follows to find it.
-   */
-  account_id: string | null;
   /**
    * The Composio application this row connects, for `composio` rows.
    *
@@ -69,9 +60,9 @@ export type ToolConnection = {
  * row.
  */
 const SELECT =
-  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, toolkit_slug, status";
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status";
 
-const TRANSPORTS = new Set(["http", "sql", "supabase", "composio"]);
+const TRANSPORTS = new Set(["http", "sql", "composio"]);
 
 function normalise(row: Record<string, unknown>): ToolConnection {
   const transport =
@@ -93,7 +84,6 @@ function normalise(row: Record<string, unknown>): ToolConnection {
     allowed_methods: Array.isArray(row.allowed_methods) ? (row.allowed_methods as string[]) : [],
     config:
       row.config && typeof row.config === "object" ? (row.config as Record<string, unknown>) : {},
-    account_id: typeof row.account_id === "string" ? row.account_id : null,
     toolkit_slug: typeof row.toolkit_slug === "string" ? row.toolkit_slug.toLowerCase() : null,
     status,
   };

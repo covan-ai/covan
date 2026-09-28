@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { ConnectionCard, ConnectSourceCard } from "@/components/integrations/connection-card";
 import { AddServiceDialog } from "@/components/integrations/add-service-dialog";
 import { ToolConnectionCard, ToolList } from "@/components/integrations/tool-connection-card";
-import { SupabaseAccountCard } from "@/components/integrations/supabase-account-card";
 import { ComposioCard } from "@/components/integrations/composio-card";
 import { SlackCard } from "@/components/integrations/slack-card";
 import { SlackMark } from "@/components/integrations/brand-marks";
@@ -115,13 +114,9 @@ function IntegrationsPage() {
   // feeds three bundles, and deciding for them which of those is "enough" is
   // not a judgement this page can make.
   const providers = connections.data?.providers ?? [];
-  // A connected Supabase project is an ordinary tool connection, and it is
-  // listed inside the account card that opened it rather than a second time
-  // here — one place to see it, one place to remove it. A connected
-  // application is the same arrangement one card up.
-  const services = (tools.data?.connections ?? []).filter(
-    (c) => c.transport !== "supabase" && c.transport !== "composio",
-  );
+  // A connected application is listed inside the card one up rather than a
+  // second time here — one place to see it, one place to remove it.
+  const services = (tools.data?.connections ?? []).filter((c) => c.transport !== "composio");
   const availableTools = tools.data?.tools ?? [];
 
   return (
@@ -200,13 +195,8 @@ function IntegrationsPage() {
                 the thing somebody came to this page to use. */}
             <ComposioCard connections={tools.data?.connections ?? []} agents={agents} />
 
-            {/* Second, because it is the shortest road to the other thing most
-                teams want: a database. The projects it opens are ordinary rows
-                shown inside it rather than twice. */}
-            <SupabaseAccountCard connections={tools.data?.connections ?? []} />
-
-            {/* Third: everything somebody entered by hand. One card holding
-                rows, rather than a card per connection stacked under the two
+            {/* Second: everything somebody entered by hand. One card holding
+                rows, rather than a card per connection stacked under the one
                 above — which is what made this section unreadable. */}
             <SectionCard className="flex flex-col gap-4">
               <div className="flex items-start justify-between gap-3">

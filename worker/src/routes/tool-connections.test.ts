@@ -164,27 +164,6 @@ describe("GET /tool-connections", () => {
     expect(body.tools.map((t) => t.name)).toContain("query_database");
   });
 
-  /**
-   * The integrations page groups connected Supabase projects under the account
-   * that opened them, and it does that by `accountId`. A listing that selected
-   * every other column would show an account with no projects under it and no
-   * error anywhere.
-   */
-  it("asks for the account a project borrows its token from", async () => {
-    // Asserted on the select rather than on the answer: PostgREST returns the
-    // columns it was asked for, and a fake that answers whatever the spec
-    // holds cannot tell a missing column from a present one. The select string
-    // IS the contract here.
-    let asked = "";
-    const app = appWith({
-      onSelect: (columns) => {
-        asked = columns ?? "";
-      },
-    });
-    await app.request("/tool-connections", {}, ENV as never);
-    expect(asked).toContain("account_id");
-  });
-
   it("never names the credential column, which PostgREST would refuse whole", async () => {
     const res = await appWith().request("/tool-connections", {}, ENV as never);
     const body = (await res.json()) as { connections: Array<Record<string, unknown>> };

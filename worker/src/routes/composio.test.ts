@@ -49,7 +49,6 @@ const ROW = {
   auth_kind: "composio",
   allowed_methods: ["GET"],
   config: {},
-  account_id: null,
   toolkit_slug: "gmail",
   status: "pending",
   // Never selectable by a client (0063). It is here because the service-role
@@ -280,7 +279,6 @@ describe("POST /composio/connect", () => {
     // `listConnections` filters on status, so this row is invisible to the
     // model until the consent screen is finished.
     expect(inserted?.secret_ciphertext).toBeNull();
-    expect(inserted?.account_id).toBeNull();
   });
 
   it("sends the person back to the integrations page afterwards", async () => {

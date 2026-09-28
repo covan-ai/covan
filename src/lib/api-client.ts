@@ -13,8 +13,6 @@ import type {
   DriveFolder,
   ProviderId,
   SlackState,
-  SupabaseAccountResponse,
-  SupabaseProjectsResponse,
   SyncOutcome,
   ToolConnection,
   ToolConnectionGrant,
@@ -725,17 +723,6 @@ export const api = {
    * choosing what it may be used for is one action from where a person is
    * standing, and it reads as one.
    */
-  supabaseAccount: {
-    get: (): Promise<SupabaseAccountResponse> => request("GET", "/supabase-account"),
-    connect: (input: {
-      token: string;
-    }): Promise<SupabaseAccountResponse & SupabaseProjectsResponse> =>
-      request("POST", "/supabase-account", input),
-    projects: (): Promise<SupabaseProjectsResponse> => request("GET", "/supabase-account/projects"),
-    addProjects: (input: { refs: string[] }): Promise<{ connections: ToolConnection[] }> =>
-      request("POST", "/supabase-account/projects", input),
-    remove: (): Promise<void> => request("DELETE", "/supabase-account"),
-  },
   slack: {
     get: (): Promise<SlackState> => request("GET", "/slack"),
     start: (): Promise<{ url: string }> => request("POST", "/slack/install/start"),

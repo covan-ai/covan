@@ -1,7 +1,6 @@
 import { assertFetchableUrl, ownHostsFrom } from "../../routines/url-guard";
 import { readCapped, resolvesPublicly } from "../../routines/source";
 import { loadConnection, type ToolConnection } from "../connections";
-import { readOnlyQueryUrl } from "../../supabase-management";
 import { authHeaders } from "../secrets";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 
@@ -15,29 +14,27 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
  * read (`describe_connection`) plus SQL it can write is the only shape where
  * adding a second database is a row rather than a release.
  *
- * WHERE READ-ONLY ACTUALLY COMES FROM. Not from this file, and not from this
- * file whichever carrier the connection uses. A `sql` connection runs the
- * query inside a function that opens with `set local transaction read only`
- * (the snippet is in `docs/integrations.md`); a `supabase` connection goes to
- * an endpoint that runs it as `supabase_read_only_user`, a role holding
- * `pg_read_all_data` and nothing else. Either way a hidden INSERT, an UPDATE
- * inside a CTE, or a DDL statement is refused by Postgres itself, using its
- * own rules, with no parsing anywhere. `looksReadOnly` below is a second line
- * that catches the obvious cases early and gives the model a readable reason;
- * it is not the line that holds.
+ * WHERE READ-ONLY ACTUALLY COMES FROM. Not from this file. The query runs
+ * inside a function that opens with `set local transaction read only` (the
+ * snippet is in `docs/integrations.md`), so a hidden INSERT, an UPDATE inside a
+ * CTE, or a DDL statement is refused by Postgres itself, using its own rules,
+ * with no parsing anywhere. `looksReadOnly` below is a second line that catches
+ * the obvious cases early and gives the model a readable reason; it is not the
+ * line that holds.
  *
  * WHY HTTP AND NOT A POSTGRES DRIVER. Cloudflare Workers cannot open a raw TCP
  * socket, so a driver would work on the Node runtime and not on the other one
  * — and "both runtimes must keep working" is not negotiable here (AGENTS.md;
- * `docs/architecture.md`, "the two seams"). Both carriers here are ordinary
- * HTTPS: PostgREST will not take raw SQL but will call a function, and
- * Supabase's Management API takes the statement directly.
+ * `docs/architecture.md`, "the two seams"). PostgREST will not take raw SQL but
+ * will call a function, so the function is the carrier.
  *
- * THE TWO CARRIERS, AND WHY BOTH. The PostgREST one asks a person to install a
- * function in their database and hands over no account credential. The
- * Supabase one asks for an account token and installs nothing. Neither is
- * strictly better and the difference is what somebody would rather give, so
- * the tool speaks both and the row says which.
+ * THERE USED TO BE A SECOND CARRIER. A connected Supabase *account* let the
+ * tool post a statement to that project's read-only Management endpoint, with
+ * no function to install — it asked for an account token instead. It was
+ * removed on 2026-09-28: one road is easier to reason about than two, and the
+ * token it required opened every project in the account, not only the ticked
+ * ones. A hosted Supabase project is still perfectly reachable; it takes the
+ * function, like everything else.
  */
 
 const TIMEOUT_MS = 20_000;
@@ -110,24 +107,6 @@ export function rpcUrl(connection: ToolConnection): string {
   return `${base}rpc/${encodeURIComponent(name)}`;
 }
 
-/**
- * The statement, carrying the row cap the far end has no parameter for.
- *
- * `covan_query` takes `p_limit` and applies it itself; Supabase's read-only
- * endpoint takes a statement and nothing else. So for that carrier the cap
- * goes into the statement before it leaves, by the same wrapping the function
- * does at the other end (`docs/integrations.md`). A LIMIT the model wrote
- * survives inside the subquery and still cannot exceed this one.
- */
-export function cappedStatement(sql: string, limit: number): string {
-  return `select * from ( ${sql} ) as covan_q limit ${limit}`;
-}
-
-/** The project a `supabase` connection names, or "" if the row is malformed. */
-function projectRef(connection: ToolConnection): string {
-  return typeof connection.config.ref === "string" ? connection.config.ref.trim() : "";
-}
-
 export const queryDatabaseTool: AgentTool = {
   name: "query_database",
   description:
@@ -192,8 +171,8 @@ export const queryDatabaseTool: AgentTool = {
     if (!connection) return { kind: "error", message: "no such connection in this workspace" };
     // Stated as an allowlist rather than as "not http", so a transport added to
     // the schema without being taught to this file is refused rather than
-    // carried into the carrier split below and treated as PostgREST.
-    if (connection.transport !== "sql" && connection.transport !== "supabase") {
+    // silently treated as PostgREST.
+    if (connection.transport !== "sql") {
       return {
         kind: "error",
         message:
@@ -207,23 +186,9 @@ export const queryDatabaseTool: AgentTool = {
       };
     }
 
-    // The two carriers differ in exactly three lines — the URL, the body, and
-    // where the row cap lives. Everything around them is shared on purpose:
-    // one origin guard, one read-only check, one byte cap.
-    const viaAccount = connection.transport === "supabase";
-    if (viaAccount && !projectRef(connection)) {
-      return {
-        kind: "error",
-        message: `${connection.label} does not name a Supabase project — reconnect it`,
-      };
-    }
-
     let target: URL;
     try {
-      const url = viaAccount
-        ? readOnlyQueryUrl(connection.base_url, projectRef(connection))
-        : rpcUrl(connection);
-      target = assertFetchableUrl(url, ownHostsFrom(ctx.env));
+      target = assertFetchableUrl(rpcUrl(connection), ownHostsFrom(ctx.env));
       await resolvesPublicly(target.hostname);
     } catch (err) {
       return { kind: "error", message: err instanceof Error ? err.message : "unsafe url" };
@@ -237,9 +202,7 @@ export const queryDatabaseTool: AgentTool = {
         "User-Agent": "covan-agent/1.0",
         ...(await authHeaders(ctx.env, connection)),
       },
-      body: JSON.stringify(
-        viaAccount ? { query: cappedStatement(sql, limit) } : { p_sql: sql, p_limit: limit },
-      ),
+      body: JSON.stringify({ p_sql: sql, p_limit: limit }),
       redirect: "manual",
       signal: ctx.signal ?? AbortSignal.timeout(TIMEOUT_MS),
     });

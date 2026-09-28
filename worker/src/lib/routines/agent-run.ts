@@ -3,7 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { complete, totalTokens, type CompletionMessage } from "../completion";
 import { weighTokens } from "../entitlements";
 import { resolveModel } from "../models";
-import { temperatureFor, reasoningEffortFor, maxTokensFor } from "../prompt";
+import { temperatureFor, reasoningEffortFor, maxTokensFor, whenAndWhere } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
 import { runAgentTurn } from "../harness/loop";
 import { SCHEDULED_MAX_STEPS } from "../harness/budget";
@@ -89,6 +89,13 @@ export function runRoutineWithTools(
           "You are running a scheduled routine for this team. Nobody is watching this run, " +
             "so anything that needs a person's approval will not happen — do the work you " +
             "can do and report what you could not.",
+          // This path is the reason #192 happened. It has tools, so it writes
+          // into other people's calendars and trackers, and it is the one
+          // surface with nobody to notice a date landing wrong — and until now
+          // it was the only tool-running path never told the date or the zone.
+          // `routines.timezone` is the schedule's own zone, so "every Monday at
+          // 22:00" means the same thing to the cron and to the model.
+          whenAndWhere(new Date(), input.timezone),
           manifest,
         ]
           .filter(Boolean)

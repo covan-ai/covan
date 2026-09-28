@@ -124,6 +124,21 @@ export type SummariseInput = {
    * a thing.
    */
   mayDecline: boolean;
+  /**
+   * The zone this routine's schedule is written in, and therefore the zone its
+   * output means.
+   *
+   * `routines.timezone` (0012) — already the input to `nextRunAt`, so "9am" in
+   * the schedule and "9am" in the answer are the same 9am. It reaches the model
+   * because a run that writes a time somewhere has to write it in some zone,
+   * and the alternative is UTC by silence: production wrote a recurring Monday
+   * 22:00 meeting into a real calendar as Tuesday 01:00 that way (#192).
+   *
+   * The chat route takes the same thing from Cloudflare's `cf.timezone`, which
+   * is a per-request guess. This one is a stored setting, so it is the better
+   * of the two answers and is the one a routine should have had first.
+   */
+  timezone?: string | null;
 };
 
 /**
@@ -618,6 +633,7 @@ export async function runRoutine(
       // the thing a webhook routine is most often asked to do is stay quiet
       // unless what came in matters.
       mayDecline: routine.source_kind !== "none" || trigger !== undefined,
+      timezone: routine.timezone,
     };
 
     // The branch, and the whole of §D. A workspace with something for a tool

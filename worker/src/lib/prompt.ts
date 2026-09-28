@@ -150,8 +150,16 @@ function validZone(zone: string): boolean {
  * The zone is stated as the one times are *meant* in rather than as a fact about
  * the person, because that is the thing the agent has to act on — and because it
  * is a per-request guess, not a stored setting.
+ *
+ * **Exported because two callers need the line and must not have the rest.** A
+ * scheduled run assembles its own system message out of the persona, one
+ * sentence about being a routine, and the tool manifest — deliberately, because
+ * it is not a chat turn and has no mode. Routing it through
+ * `buildSystemPrefix` to reach this line would hand it the concision and mode
+ * instructions as well, which is a change to what every routine writes. So the
+ * line is available on its own.
  */
-function whenAndWhere(now: Date, timezone: string | null | undefined): string {
+export function whenAndWhere(now: Date, timezone: string | null | undefined): string {
   const asked = timezone?.trim() ? timezone.trim() : "UTC";
   const zone = validZone(asked) ? asked : "UTC";
   const today = now.toLocaleDateString("en-GB", {

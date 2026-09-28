@@ -211,6 +211,12 @@ export async function handleSlackEvent(
     mode,
     docNames: retrieval.docNames,
     webSearchEnabled: agent.web_search ?? false,
+    // No zone to give it — Slack's event payload carries none and we do not
+    // fetch the user's profile — so this degrades to the UTC branch
+    // `whenAndWhere` already has. That is worse than chat's guess and much
+    // better than the silence it replaces: an agent asked "what's on this
+    // week" in Slack was inferring the date from the question.
+    now: new Date(),
   });
 
   // Same assembly as the chat route: the stable prefix and prior turns first so

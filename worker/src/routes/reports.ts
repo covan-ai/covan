@@ -154,6 +154,10 @@ reports.post("/sessions/:id/report", async (c) => {
         mode: "report",
         docNames,
         webSearchEnabled: agent.web_search ?? false,
+        // A report is the surface most likely to carry a date on its face —
+        // "this quarter", "since the last one" — and it was the one with no
+        // clock at all. No zone here either; see the note on the Slack path.
+        now: new Date(),
       }),
     },
     ...history,

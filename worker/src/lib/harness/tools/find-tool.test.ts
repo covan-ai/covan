@@ -150,6 +150,83 @@ describe("find_tool", () => {
     );
   });
 
+  describe("ordering within one application", () => {
+    /** The two operations from the incident, in the order Composio returned them. */
+    const CLEAR_CALENDAR = {
+      slug: "GOOGLECALENDAR_CLEAR_CALENDAR",
+      name: "Clear calendar",
+      description: "Clears a primary calendar by deleting all events from it.",
+      toolkit: { slug: "GOOGLECALENDAR" },
+      input_parameters: { required: ["calendar_id"] },
+    };
+    const DELETE_EVENT = {
+      slug: "GOOGLECALENDAR_DELETE_EVENT",
+      name: "Delete event",
+      description: "Deletes one event from a calendar.",
+      toolkit: { slug: "GOOGLECALENDAR" },
+      input_parameters: { required: ["event_id", "calendar_id"] },
+    };
+    const CALENDAR_CONNECTION = {
+      id: "c-cal",
+      label: "Google Calendar",
+      transport: "composio",
+      toolkit_slug: "googlecalendar",
+      status: "active",
+    };
+
+    it("puts the operation that answers the question above the one that does not", async () => {
+      // 2026-09-26, production, a real calendar. Somebody asked an agent to
+      // delete a few recurring events; `find_tool` was called with exactly this
+      // query, Composio ranked CLEAR_CALENDAR first, the model read in order,
+      // and the calendar was emptied. #201.
+      //
+      // `delete` and `event` are both in DELETE_EVENT's name and neither is in
+      // CLEAR_CALENDAR's. `calendar` and `google` score for neither, because
+      // they name the application both are in.
+      fetchMock.mockResolvedValue(catalogue([CLEAR_CALENDAR, DELETE_EVENT]));
+      const out = await findToolTool.run(
+        { query: "delete event google calendar", toolkit: "googlecalendar" },
+        ctxWith([CALENDAR_CONNECTION]),
+      );
+      const content = out.kind === "ok" ? out.content : "";
+      expect(content.indexOf("GOOGLECALENDAR_DELETE_EVENT")).toBeLessThan(
+        content.indexOf("GOOGLECALENDAR_CLEAR_CALENDAR"),
+      );
+    });
+
+    it("leaves the catalogue's order alone when the query separates nothing", async () => {
+      // The degradation that makes this safe to ship. A query whose words appear
+      // in neither name scores both at zero, the sort is stable, and the result
+      // is exactly what Composio said — which is the behaviour this replaced.
+      fetchMock.mockResolvedValue(catalogue([CLEAR_CALENDAR, DELETE_EVENT]));
+      const out = await findToolTool.run(
+        { query: "tidy up", toolkit: "googlecalendar" },
+        ctxWith([CALENDAR_CONNECTION]),
+      );
+      const content = out.kind === "ok" ? out.content : "";
+      expect(content.indexOf("GOOGLECALENDAR_CLEAR_CALENDAR")).toBeLessThan(
+        content.indexOf("GOOGLECALENDAR_DELETE_EVENT"),
+      );
+    });
+
+    it("never lets relevance lift an application nobody has connected", async () => {
+      // The ordering of the two rules is the safety property. A word-for-word
+      // match in an app the workspace cannot run is still a call that cannot
+      // succeed, so connectedness is compared first and relevance only breaks
+      // its ties.
+      fetchMock.mockResolvedValue(catalogue([DELETE_EVENT, GMAIL_SEND]));
+      const out = await findToolTool.run(
+        { query: "delete event" },
+        // Gmail connected, Google Calendar not.
+        ctxWith([GMAIL_CONNECTION]),
+      );
+      const content = out.kind === "ok" ? out.content : "";
+      expect(content.indexOf("GMAIL_SEND_EMAIL")).toBeLessThan(
+        content.indexOf("GOOGLECALENDAR_DELETE_EVENT"),
+      );
+    });
+  });
+
   it("writes down which slugs it put in front of the model", async () => {
     // The other half of `run_tool`'s guard, and the half with a precedent for
     // going missing: `message_steps.tokens` was added in 0060 and is NULL on
@@ -451,11 +528,20 @@ describe("asking for the arguments of one operation", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(schemaFor), { status: 200 }));
   }
 
-  it("describes the top match when no slug is named, as it always did", async () => {
-    catalogueThen(EVENTS_GET);
+  it("describes the top match when no slug is named", async () => {
+    // Until 2026-09-28 this asserted `EVENTS_GET` — the catalogue's own first
+    // result — and that assertion was the bug #194 is about, written down. Asked
+    // to "list events", `detail` answered with the schema of an operation whose
+    // description says *"Retrieves a SINGLE event. Does NOT list events."*
+    //
+    // The ranking now scores a candidate on how much of the question its name
+    // answers: EVENTS_LIST takes both `list` and `event`, EVENTS_GET only
+    // `event`. Nothing here knows what either operation does; it is the words
+    // the model itself chose.
+    catalogueThen(EVENTS_LIST);
     const out = await findToolTool.run({ query: "list events", detail: true }, ctxWith());
     expect(new URL(String(fetchMock.mock.calls[1][0])).pathname).toContain(
-      "GOOGLECALENDAR_EVENTS_GET",
+      "GOOGLECALENDAR_EVENTS_LIST",
     );
     expect(out.kind === "ok" && out.content).toContain("Arguments:");
   });

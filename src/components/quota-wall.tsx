@@ -67,8 +67,8 @@ export function QuotaWall() {
       {/* The thorough option, which was the only one until now. Unchanged from
           usage-section.tsx, moved down to third. */}
       <p className="text-xs text-muted-foreground">
-        Covan is open source, and an install running on your own OpenAI key has no allowance at all
-        — everything here works the same way.{" "}
+        Covan's full source is published, and an install running on your own OpenAI key has no
+        allowance at all — everything here works the same way.{" "}
         <DocsLink page="self-hosting" className="text-xs">
           Running it yourself
         </DocsLink>

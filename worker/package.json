@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Covan's API. One source, two entry points: Cloudflare Workers and Node.",
   "private": true,
-  "license": "AGPL-3.0-only",
+  "license": "FSL-1.1-ALv2",
   "author": "Mahmut Efe Dara",
   "repository": {
     "type": "git",

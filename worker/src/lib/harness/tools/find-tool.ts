@@ -1,4 +1,10 @@
-import { composioConfigured, getTool, searchTools, type ComposioTool } from "../../composio/client";
+import {
+  composioConfigured,
+  getTool,
+  MAX_TOOLS_PAGE,
+  searchTools,
+  type ComposioTool,
+} from "../../composio/client";
 import { COMPOSIO_SEARCH_TOKENS } from "../../entitlements";
 import { listConnections, unavailableTools, type ToolConnection } from "../connections";
 import { cap } from "../budget";
@@ -40,6 +46,49 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
  * room to spare.
  */
 const MAX_RESULTS = 5;
+
+/**
+ * How many rows one catalogue request asks for.
+ *
+ * `MAX_TOOLS_PAGE` — every row a single search will send — and it is a different
+ * number from `MAX_RESULTS` above for a reason worth stating plainly: **this is
+ * what gets RANKED and `MAX_RESULTS` is what gets SHOWN.**
+ *
+ * WHY IT WAS TEN AND WHAT TEN COST. It was `MAX_RESULTS * 2`: a shortlist of five
+ * with one row of slack. That quietly made Composio's own relevance the only thing
+ * deciding whether the right operation was reachable, because a local sort can
+ * only reorder what arrived. On 2026-09-28 somebody asked for the open pull
+ * requests of a repository. Step 0 was `find_tool {query: "list pull requests",
+ * toolkit: "github"}` and the first row back was `GITHUB_GENERATE_RELEASE_NOTES` —
+ * which, it later turned out, GitHub does not even have.
+ * `GITHUB_LIST_PULL_REQUESTS` exists, scores three of three under `relevance`
+ * below against nothing at all for the row that came first, and is in the same
+ * toolkit — so connectedness could not separate them and the relevance tiebreak
+ * would have put it first the moment it arrived. It was not in the ten. The turn
+ * took sixteen steps and $0.58 and found it at step fifteen.
+ *
+ * So the ranking was right and the SUPPLY was wrong, and they are fixed in
+ * different places. GitHub publishes a few hundred operations; five times the page
+ * is five times the chance the one being described is in it, for:
+ *
+ *     subrequests   unchanged — one request, one response
+ *     prompt tokens unchanged — the model is shown `ranked.slice(0, MAX_RESULTS)`
+ *     money         unchanged — `spend()` is per search, never per row
+ *     `offered`     unchanged — five slugs, as before
+ *     bytes         up to fifty schemas, which is why `MAX_CATALOGUE_BYTES` had to
+ *                   stop being `http_request`'s number
+ *
+ * Not larger, because `MAX_TOOLS_PAGE` is where `searchTools` clamps and that
+ * clamp is ours rather than Composio's documented maximum.
+ *
+ * WHAT IT DEGRADES TO. A query whose words appear in no candidate's name scores
+ * every row zero, the sort is stable, and the shortlist is Composio's own first
+ * five — exactly today's answer. What is NOT established is that Composio's search
+ * is monotone in `limit`: if it truncates at a relevance threshold, rows eleven to
+ * fifty are the same rows and this buys nothing. It cannot cost anything either,
+ * which is why it ships ahead of that probe.
+ */
+const SEARCH_PAGE = MAX_TOOLS_PAGE;
 
 /** A full argument schema is verbose. This is what one is allowed to cost. */
 const MAX_SCHEMA_CHARS = 4_000;
@@ -113,11 +162,38 @@ function brief(text: string): string {
   return `${head.trimEnd()}…`;
 }
 
+/**
+ * Every argument name the operation publishes.
+ *
+ * `properties` is the description, and `required` is a SEPARATE key that
+ * `composio/client.ts` reads separately — so a publisher can name a required
+ * parameter it never described, and `required ⊆ keys(properties)` is an assumption
+ * rather than a guarantee. When that assumption breaks, the parameter used to
+ * vanish from the rendering entirely: `takes:` is built from `properties` and
+ * printed INSTEAD of `needs:`, so the one argument the call cannot omit was the
+ * one the model never saw, and it learned about it from `run_tool`'s complaint
+ * after a wasted call. Union since 2026-09-28 (#210) — it costs nothing when the
+ * schema is well formed, because then the second list is empty.
+ *
+ * Still `[]` when there is no `properties` object at all. That case is not a
+ * malformed schema, it is a catalogue entry with no schema, and `summarise` has a
+ * different line for it — returning required names here would silently replace
+ * `needs:` with `takes:` for the majority of candidates.
+ */
+function parameterKeys(tool: ComposioTool): string[] {
+  const properties = tool.inputSchema?.properties;
+  if (typeof properties !== "object" || properties === null) return [];
+  const bag = properties as Record<string, unknown>;
+  const described = Object.keys(bag);
+  const undescribed = tool.required.filter((name) => !described.includes(name));
+  return [...described, ...undescribed];
+}
+
 /** How many arguments the operation publishes, before `MAX_PARAM_NAMES` cuts. */
 function parameterCount(tool: ComposioTool): number {
-  const properties = tool.inputSchema?.properties;
-  if (typeof properties !== "object" || properties === null) return 0;
-  return Object.keys(properties).length;
+  // The same union `parameterNames` renders, or the `+N more` count goes negative
+  // on exactly the malformed schema the union exists for.
+  return parameterKeys(tool).length;
 }
 
 /**
@@ -234,8 +310,9 @@ function parameterNames(tool: ComposioTool): string[] {
   const bag = properties as Record<string, unknown>;
   const required = new Set(tool.required);
   // Required first, because a model reading a truncated list should meet the
-  // parameters it cannot omit.
-  const names = Object.keys(bag).sort((a, b) => {
+  // parameters it cannot omit. That ordering is also what keeps a required
+  // parameter the publisher never described inside `MAX_PARAM_NAMES`.
+  const names = parameterKeys(tool).sort((a, b) => {
     const ar = required.has(a) ? 0 : 1;
     const br = required.has(b) ? 0 : 1;
     return ar - br;
@@ -316,7 +393,8 @@ function summarise(
   const named = opts?.parameters ? parameterNames(tool) : [];
   if (named.length > 0) {
     // Instead of `needs:`, not beside it — the `(required)` markers carry
-    // everything `needs:` was saying.
+    // everything `needs:` was saying. That holds because `parameterKeys` unions
+    // the required names in; it did not hold while this read `properties` alone.
     const hidden = parameterCount(tool) - named.length;
     const more = hidden > 0 ? `, … (+${hidden} more — ask for detail)` : "";
     lines.push(`  takes: ${named.join(", ")}${more}`);
@@ -457,7 +535,7 @@ export const findToolTool: AgentTool = {
 
     let found = await searchTools(
       ctx.env,
-      { search: query, toolkit, limit: MAX_RESULTS * 2 },
+      { search: query, toolkit, limit: SEARCH_PAGE },
       { signal: ctx.signal },
     );
 
@@ -467,7 +545,7 @@ export const findToolTool: AgentTool = {
     if (found.kind === "ok" && found.tools.length === 0 && shorter !== query) {
       found = await searchTools(
         ctx.env,
-        { search: shorter, toolkit, limit: MAX_RESULTS * 2 },
+        { search: shorter, toolkit, limit: SEARCH_PAGE },
         { signal: ctx.signal },
       );
     }
@@ -493,33 +571,6 @@ export const findToolTool: AgentTool = {
     // retry above and for the same reason: the extra requests exist because our
     // own search cannot see what the workspace connected, and charging for that
     // is charging somebody for our shape.
-    const broadTools = found.kind === "ok" ? found.tools : [];
-    const foundSomethingRunnable = broadTools.some((t) => byToolkit.has(t.toolkit));
-    const connectedSearches: ComposioTool[] = [];
-    if (!toolkit && byToolkit.size > 0 && !foundSomethingRunnable) {
-      const slugs = [...byToolkit.keys()].slice(0, MAX_CONNECTED_SEARCHES);
-      const answers = await Promise.all(
-        slugs.map((slug) =>
-          searchTools(
-            ctx.env,
-            { search: query, toolkit: slug, limit: MAX_RESULTS },
-            { signal: ctx.signal },
-          ),
-        ),
-      );
-      for (const answer of answers) {
-        if (answer.kind === "ok") connectedSearches.push(...answer.tools);
-      }
-    }
-
-    // Charged once, however many requests that took. The second one exists
-    // because our own interface handed the catalogue something it cannot
-    // match, and billing somebody twice for that is billing them for our
-    // brittleness.
-    if (found.kind === "ok" || wasBilled(found.status)) {
-      await spend(ctx, COMPOSIO_SEARCH_TOKENS);
-    }
-
     /**
      * What the connected accounts have already proven they cannot run.
      *
@@ -539,6 +590,63 @@ export const findToolTool: AgentTool = {
     for (const [toolkitSlug, connection] of byToolkit) {
       const dead = unavailableTools(connection);
       if (dead.size > 0) deadByToolkit.set(toolkitSlug, dead);
+    }
+
+    /**
+     * Whether any of the broad results ANSWERS anything the workspace can run.
+     *
+     * This was `broadTools.some((t) => byToolkit.has(t.toolkit))` — mere presence —
+     * and that made the compensation below self-disabling. One connected row in the
+     * broad answer skipped all four targeted searches however irrelevant it was,
+     * and the broad search answers ALPHABETICALLY: `_2chat`, `airtable` and `asana`
+     * are early in the catalogue and commonly connected, which is the worst
+     * combination a presence test could meet. From then on the very failure this
+     * exists for was invisible to it.
+     *
+     * So it asks the question `relevance` already answers, over the rows that will
+     * actually survive: does a connected candidate contain any of the words the
+     * model asked with, and is there nothing anywhere containing more of them? One
+     * word is the bar because one word is the least `relevance` can tell apart —
+     * zero means the name answers none of the question, which is the
+     * `GITHUB_GENERATE_RELEASE_NOTES` case exactly. The second clause is there
+     * because a connected row scoring one beside an unconnected row scoring two is
+     * not an answer either: it means the thing being described lives in an app the
+     * workspace has not connected, and asking each connected app by name is how its
+     * equivalent gets found.
+     *
+     * Dead rows do not count. An operation the account has already 404'd answers
+     * nothing — it is about to be dropped below — and letting it suppress the
+     * targeted searches would suppress them for the one workspace that needs them.
+     */
+    const broadTools = found.kind === "ok" ? found.tools : [];
+    const alive = (t: ComposioTool) => !deadByToolkit.get(t.toolkit)?.has(t.slug);
+    const bestOf = (tools: ComposioTool[]) =>
+      tools.reduce((best, t) => (alive(t) ? Math.max(best, relevance(t, queryWords)) : best), 0);
+    const bestConnected = bestOf(broadTools.filter((t) => byToolkit.has(t.toolkit)));
+    const answeredFromConnected = bestConnected > 0 && bestConnected >= bestOf(broadTools);
+    const connectedSearches: ComposioTool[] = [];
+    if (!toolkit && byToolkit.size > 0 && !answeredFromConnected) {
+      const slugs = [...byToolkit.keys()].slice(0, MAX_CONNECTED_SEARCHES);
+      const answers = await Promise.all(
+        slugs.map((slug) =>
+          searchTools(
+            ctx.env,
+            { search: query, toolkit: slug, limit: SEARCH_PAGE },
+            { signal: ctx.signal },
+          ),
+        ),
+      );
+      for (const answer of answers) {
+        if (answer.kind === "ok") connectedSearches.push(...answer.tools);
+      }
+    }
+
+    // Charged once, however many requests that took. The second one exists
+    // because our own interface handed the catalogue something it cannot
+    // match, and billing somebody twice for that is billing them for our
+    // brittleness.
+    if (found.kind === "ok" || wasBilled(found.status)) {
+      await spend(ctx, COMPOSIO_SEARCH_TOKENS);
     }
 
     // What the workspace can run, then the rest of the catalogue, deduplicated.

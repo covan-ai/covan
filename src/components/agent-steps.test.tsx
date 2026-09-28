@@ -200,6 +200,25 @@ describe("the confirmation card", () => {
     expect(onChoose).toHaveBeenCalledTimes(1);
   });
 
+  it("says a yes does not cover anything that changes data, because it does not", async () => {
+    // `run-tool.ts` stopped letting a connection's approval cover a destructive
+    // operation in #202, and this sentence was left behind claiming it still
+    // did — telling somebody they had granted more than they had, on the card
+    // where they were deciding. The words are asserted rather than the shape
+    // because the words are the whole feature.
+    render(
+      <ConfirmCard
+        pending={pending}
+        busy={false}
+        onAnswer={() => {}}
+        standing={{ label: "Always allow this", onChoose: () => {} }}
+      />,
+    );
+    const note = screen.getByText(/Approving covers this service/);
+    expect(note).toHaveTextContent("except for anything that changes data there");
+    expect(note).toHaveTextContent("asks again each time");
+  });
+
   it("still draws something when a tool proposed nothing structured", () => {
     render(
       <ConfirmCard

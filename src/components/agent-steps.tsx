@@ -287,9 +287,17 @@ export function ConfirmCard({
         ) : null}
       </div>
       {standing ? (
+        /* The destructive clause is not a nicety. Until #202 one yes genuinely did
+           cover the whole service, and this sentence was true; #202 narrowed it so
+           that an operation which changes data is covered only by its own approval,
+           and the sentence was left behind saying somebody had granted more than
+           they had. It is on every connected-app card — `runToolProposal` returns a
+           standing action for every well-formed run_tool proposal — so a person
+           reading it is reading it at the moment they are deciding. #201. */
         <p className="text-xs leading-[1.45] text-muted-foreground">
-          Approving covers this service for the rest of this conversation. The third option applies
-          to this operation on this agent until somebody removes it, on the Integrations page.
+          Approving covers this service for the rest of this conversation, except for anything that
+          changes data there — that asks again each time. The third option applies to this operation
+          on this agent until somebody removes it, on the Integrations page.
         </p>
       ) : null}
     </div>

@@ -627,6 +627,12 @@ threads and replying is one approval, not four. A different app asks again, and
 so does the next conversation. On a scheduled run there is nobody to ask, so the
 run records what it could not do and finishes.
 
+**With one exception, and it is the important one.** An operation that changes
+data at the service is never covered by an earlier yes — it asks for itself,
+every time, however many approvals the conversation has already collected.
+Reading three threads and replying still costs one click; emptying a calendar
+does not become free because somebody approved a calendar read a minute ago.
+
 **Always-allow** is per agent, per app, per operation, and an admin sets it.
 That is the one thing that removes the asking, and it is deliberately narrow:
 "this agent may file Linear issues without asking" is a decision somebody makes

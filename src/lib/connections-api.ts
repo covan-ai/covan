@@ -126,6 +126,47 @@ export type ComposioToolkitsResponse = {
   nextCursor: string;
 };
 
+/** One operation an application publishes, as the detail card lists it. */
+export type ComposioOperation = {
+  slug: string;
+  name: string;
+  description: string;
+  /**
+   * Whether Composio annotates it as changing something at the service.
+   *
+   * `null` is the common answer and means "not annotated", never "safe" — the
+   * card says so only when it is `true`, for the same reason `find_tool` does.
+   */
+  destructive: boolean | null;
+};
+
+/** One application, described well enough to decide about before connecting it. */
+export type ComposioToolkitDetailResponse = {
+  configured: boolean;
+  toolkit: ComposioToolkit | null;
+  /**
+   * The first few operations, or `null` when they could not be read.
+   *
+   * `null` and `[]` are different facts and the card renders them differently:
+   * one says "we could not ask", the other says "we asked and there are none".
+   * Collapsing them would turn a catalogue hiccup into a claim about the
+   * application.
+   */
+  operations: ComposioOperation[] | null;
+  /**
+   * How many operations the application has **in total**, when that is
+   * knowable, and `null` when it is not.
+   *
+   * Null far more often than not, and the card must then show no number at all.
+   * `DESIGN.md`'s first failure mode is "a claim, number, logo, quote, or
+   * illustration the code cannot back", and a count inferred from a page of ten
+   * is exactly that.
+   */
+  total: number | null;
+  /** Whether the catalogue said there were more beyond the page we asked for. */
+  more: boolean;
+};
+
 /** One heading in the catalogue's taxonomy, for the filter above the grid. */
 export type ComposioCategory = { id: string; name: string };
 

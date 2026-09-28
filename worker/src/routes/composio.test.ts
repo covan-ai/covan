@@ -21,6 +21,7 @@ const getConnectedAccount = vi.fn();
 const getToolkit = vi.fn();
 const listToolkits = vi.fn();
 const listToolkitCategories = vi.fn();
+const listToolkitTools = vi.fn();
 vi.mock("../lib/composio/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/composio/client")>();
   return {
@@ -30,6 +31,7 @@ vi.mock("../lib/composio/client", async (importOriginal) => {
     getToolkit: (...args: unknown[]) => getToolkit(...args),
     listToolkits: (...args: unknown[]) => listToolkits(...args),
     listToolkitCategories: (...args: unknown[]) => listToolkitCategories(...args),
+    listToolkitTools: (...args: unknown[]) => listToolkitTools(...args),
   };
 });
 
@@ -184,6 +186,23 @@ beforeEach(() => {
     connectedAccountId: "ca_1",
   });
   getConnectedAccount.mockResolvedValue({ kind: "ok", status: "active" });
+  listToolkitTools.mockReset();
+  listToolkitTools.mockResolvedValue({
+    kind: "ok",
+    total: 1,
+    more: false,
+    tools: [
+      {
+        slug: "GMAIL_SEND_EMAIL",
+        name: "Send email",
+        description: "Send an email.",
+        toolkit: "gmail",
+        required: [],
+        inputSchema: null,
+        destructive: null,
+      },
+    ],
+  });
   listToolkits.mockResolvedValue({
     kind: "ok",
     nextCursor: "",
@@ -337,6 +356,74 @@ describe("GET /composio/connections/:id/status", () => {
       "/composio/connections/conn-1/status",
     );
     expect(status).toBe(400);
+  });
+});
+
+describe("GET /composio/toolkits/:slug", () => {
+  it("says it is unconfigured rather than erroring, the same as the listing", async () => {
+    const res = await appWith().request(
+      "/composio/toolkits/gmail",
+      {},
+      { ALLOWED_ORIGIN: ENV.ALLOWED_ORIGIN },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      configured: false,
+      toolkit: null,
+      operations: null,
+      total: null,
+      more: false,
+    });
+  });
+
+  it("describes the application and its first operations", async () => {
+    const { status, body } = await call(appWith(), "GET", "/composio/toolkits/gmail");
+    expect(status).toBe(200);
+    expect(body.toolkit).toMatchObject({ slug: "gmail", name: "Gmail" });
+    expect(body.operations[0]).toEqual({
+      slug: "GMAIL_SEND_EMAIL",
+      name: "Send email",
+      description: "Send an email.",
+      destructive: null,
+    });
+  });
+
+  it("hands the page a path on this API rather than Composio's CDN", async () => {
+    // The same assertion the listing carries, because this is the second route
+    // that could leak the upstream host and nothing else would notice.
+    const { body } = await call(appWith(), "GET", "/composio/toolkits/gmail");
+    expect(body.toolkit.logoPath).toBe(
+      "/composio/logo?u=https%3A%2F%2Flogos.composio.dev%2Fapi%2Fgmail",
+    );
+    expect(body.toolkit).not.toHaveProperty("logo");
+    expect(JSON.stringify(body)).not.toContain("logos.composio.dev/api/gmail");
+  });
+
+  it("refuses a malformed slug before it touches the network", async () => {
+    const { status } = await call(appWith(), "GET", "/composio/toolkits/NOT%20A%20SLUG");
+    expect(status).toBe(400);
+    expect(getToolkit).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for an application Composio does not know, not 502", async () => {
+    // The card has to tell "we have never heard of this" from "Composio is
+    // down", because only one of the two is worth retrying. `POST
+    // /composio/connect` flattens both to 502; this one may not.
+    getToolkit.mockResolvedValue({ kind: "error", status: 404, message: "no such toolkit" });
+    const { status } = await call(appWith(), "GET", "/composio/toolkits/nope");
+    expect(status).toBe(404);
+  });
+
+  it("still answers when the operations could not be read, so Connect survives", async () => {
+    // Nobody should be stopped from connecting Gmail because a catalogue read
+    // wobbled. `null` says "not read" — distinct from `[]`, which says "read,
+    // and there are none".
+    listToolkitTools.mockResolvedValue({ kind: "error", status: 502, message: "upstream" });
+    const { status, body } = await call(appWith(), "GET", "/composio/toolkits/gmail");
+    expect(status).toBe(200);
+    expect(body.toolkit).toMatchObject({ slug: "gmail" });
+    expect(body.operations).toBeNull();
+    expect(body.total).toBeNull();
   });
 });
 

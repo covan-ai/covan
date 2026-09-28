@@ -120,6 +120,38 @@ export function useComposioCategories(enabled: boolean) {
   });
 }
 
+export const composioToolkitDetailKey = (slug: string) =>
+  ["composio-toolkit-detail", slug] as const;
+
+/**
+ * One application, read when somebody opens its card.
+ *
+ * Named in the singular and spelled differently from `composioToolkitsKey` on
+ * purpose — two keys one character apart is a real hazard at a call site, and
+ * these answer different questions.
+ *
+ * Cached for an hour, like the categories above and for the same reason: a
+ * description and ten operation names are a taxonomy, not state, and ten
+ * minutes stale is invisible. `gcTime` matches, because the case worth covering
+ * is open, close, open again — with the five-minute default the entry is
+ * evicted the moment no card is mounted and the hour would never be reached.
+ *
+ * Deliberately no server-side cache behind this. `lib/composio/client.ts`
+ * refuses one and says why: a cache would be a second place for "which
+ * application is this" to be wrong. That argument is about the write path and
+ * this is the read one, but it is still the first cache on that path and the
+ * client one already collapses the only case with any volume.
+ */
+export function useComposioToolkitDetail(slug: string | null) {
+  return useQuery({
+    queryKey: composioToolkitDetailKey(slug ?? ""),
+    queryFn: () => api.composio.toolkit(slug as string),
+    enabled: Boolean(slug),
+    staleTime: 60 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+  });
+}
+
 /**
  * Start a consent flow and hand the browser to Composio.
  *

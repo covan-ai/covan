@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComposioToolkit } from "@/lib/connections-api";
 import { AppCatalogue } from "./app-catalogue";
@@ -16,6 +16,24 @@ import { AppCatalogue } from "./app-catalogue";
  * requests to a third party. And a logo is always an address on our own API.
  */
 const { connect } = vi.hoisted(() => ({ connect: { mutate: vi.fn(), isPending: false } }));
+
+/**
+ * What the card is told when it opens.
+ *
+ * Fixed here rather than varied per test: this file is about the grid, and the
+ * card's own states have their own file. What it must be is *present* — the
+ * hook is mocked wholesale, so a missing export throws on import and every test
+ * here fails for a reason that has nothing to do with the grid.
+ */
+const detail: {
+  data: { configured: boolean; operations: unknown[] | null; total: number | null; more: boolean };
+  isPending: boolean;
+  isError: boolean;
+} = {
+  data: { configured: true, operations: [], total: null, more: false },
+  isPending: false,
+  isError: false,
+};
 
 let pages = [{ configured: true, toolkits: [] as ComposioToolkit[], nextCursor: "" }];
 let categories = [{ id: "crm", name: "CRM" }];
@@ -45,6 +63,9 @@ vi.mock("@/hooks/use-connections", () => ({
   },
   useComposioCategories: () => ({ data: { configured: true, categories } }),
   useConnectComposio: () => connect,
+  // The card reads this when it opens. Unmocked, the module throws on the
+  // missing export and every test in the file fails for the wrong reason.
+  useComposioToolkitDetail: () => detail,
 }));
 
 function toolkit(over: Partial<ComposioToolkit> = {}): ComposioToolkit {
@@ -103,9 +124,25 @@ describe("AppCatalogue", () => {
     expect(screen.getByText("G")).toBeInTheDocument();
   });
 
-  it("hands the slug and the no-sign-in flag to the consent flow", async () => {
+  it("opens a card instead of connecting, which is the whole of this change", async () => {
+    // This used to assert `connect.mutate` on the tile press. One click on a
+    // name in a grid of fifteen hundred handed the browser to a third party's
+    // consent screen, having shown one truncated line of description — so the
+    // assertion is now that pressing a tile does NOT connect.
     render(<AppCatalogue connected={new Set(["linear"])} />);
     await userEvent.click(screen.getByRole("button", { name: /Gmail/ }));
+
+    expect(connect.mutate).not.toHaveBeenCalled();
+    expect(within(screen.getByRole("dialog")).getByText("gmail")).toBeInTheDocument();
+  });
+
+  it("hands the slug and the no-sign-in flag to the consent flow, from inside the card", async () => {
+    render(<AppCatalogue connected={new Set(["linear"])} />);
+    await userEvent.click(screen.getByRole("button", { name: /Gmail/ }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /Connect/ }),
+    );
+
     expect(connect.mutate).toHaveBeenCalledWith(
       { toolkit: "gmail", label: "Gmail", noAuth: false },
       expect.anything(),
@@ -119,21 +156,50 @@ describe("AppCatalogue", () => {
       toolkit({ slug: "hackernews", name: "Hacker News", managedAuth: false, noAuth: true }),
     );
     render(<AppCatalogue connected={new Set()} />);
-    const tile = screen.getByRole("button", { name: /Hacker News/ });
-    expect(tile).toBeEnabled();
-    await userEvent.click(tile);
+    await userEvent.click(screen.getByRole("button", { name: /Hacker News/ }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /Connect/ }),
+    );
+
     expect(connect.mutate).toHaveBeenCalledWith(
       expect.objectContaining({ toolkit: "hackernews", noAuth: true }),
       expect.anything(),
     );
   });
 
-  it("keeps an application nobody can connect visible, and says why", async () => {
+  it("lets somebody read about an application nobody can connect, and offers no Connect", async () => {
+    // The assertion flipped, and the flip is the decision. This tile used to be
+    // an inert `<div>` at `opacity-60` — so nine tenths of the catalogue could
+    // not even be read about, which is the case the card most needs to serve:
+    // "Needs setup in Composio" is four truncated words on a tile and a
+    // sentence in the card.
     withToolkits(toolkit({ slug: "obscure", name: "Obscure", managedAuth: false, noAuth: false }));
     render(<AppCatalogue connected={new Set()} />);
-    expect(screen.queryByRole("button", { name: /Obscure/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Obscure")).toBeInTheDocument();
+
+    const tile = screen.getByRole("button", { name: /Obscure/ });
     expect(screen.getByText("Needs setup in Composio")).toBeInTheDocument();
+
+    await userEvent.click(tile);
+    const card = within(screen.getByRole("dialog"));
+    expect(card.queryByRole("button", { name: /Connect/ })).not.toBeInTheDocument();
+    expect(card.getByText(/register a client/)).toBeInTheDocument();
+  });
+
+  it("never disables the grid while a connect is in flight", async () => {
+    // One press used to grey out all forty tiles for the length of a POST that
+    // is two or three upstream round trips, because `connect.isPending` was
+    // handed to every tile as `busy`. The grid does not connect anything now,
+    // so the only control that can disable is the one that was pressed.
+    connect.isPending = true;
+    try {
+      withToolkits(toolkit(), toolkit({ slug: "linear", name: "Linear" }));
+      render(<AppCatalogue connected={new Set()} />);
+      for (const name of [/Gmail/, /Linear/]) {
+        expect(screen.getByRole("button", { name })).toBeEnabled();
+      }
+    } finally {
+      connect.isPending = false;
+    }
   });
 
   it("waits for somebody to stop typing before asking a third party", async () => {

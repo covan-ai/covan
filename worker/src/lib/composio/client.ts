@@ -417,6 +417,57 @@ export async function searchTools(
   return { kind: "ok", tools };
 }
 
+/**
+ * A toolkit's own operations, for a person deciding whether to connect it.
+ *
+ * WHY NOT `searchTools`. Its `search` is required, and that is load-bearing for
+ * `find-tool.ts` — `RETRY_WORDS` re-asks with a shorter query when the first
+ * finds nothing, which assumes a real query exists. Making it optional would let
+ * a future caller silently search for nothing. This asks a different question
+ * ("what can this application do") and leaves the agent's path alone.
+ *
+ * THE ROWS ARE FILTERED AGAIN HERE, and that is not belt and braces. The rule
+ * `authConfigFor` states one function down applies exactly: *an API that ignores
+ * a filter it does not know returns EVERYTHING*, and production has already
+ * shown what everything looks like — a catalogue-wide search answers
+ * alphabetically and comes back with `_2chat` and `active_campaign`
+ * (`find-tool.ts`). Without this, a `toolkit_slug` Composio declined to honour
+ * would put ActiveCampaign's operations on Gmail's card, which is the exact
+ * shape `DESIGN.md`'s first failure mode forbids.
+ *
+ * `total` is null unless it can be *earned*. Composio publishes no count on this
+ * endpoint that we have verified, so the only honest total is the one a short
+ * page proves: fewer rows than the limit, and no cursor, means the list is all
+ * of them. Anything else and the caller renders no number at all.
+ */
+export async function listToolkitTools(
+  env: ComposioEnv,
+  query: { toolkit: string; limit?: number },
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ tools: ComposioTool[]; total: number | null; more: boolean }>> {
+  const limit = Math.min(Math.max(query.limit ?? 10, 1), 50);
+  const params = new URLSearchParams({
+    toolkit_slug: query.toolkit.toUpperCase(),
+    limit: String(limit),
+  });
+
+  const res = await request(env, `${CATALOGUE_API}/tools?${params}`, { method: "GET" }, opts);
+  if (res.kind === "error") return res;
+
+  const body = parsed(res.body);
+  const returned = rows(body);
+  const wanted = query.toolkit.toLowerCase();
+  const tools = returned
+    .map(toTool)
+    .filter((t): t is ComposioTool => t !== null && t.toolkit === wanted);
+
+  const more = Boolean(nextCursorOf(body));
+  // Counted off what Composio returned, not off what survived the filter —
+  // otherwise dropping a foreign row would fake a short page and invent a total.
+  const total = !more && returned.length < limit ? tools.length : null;
+  return { kind: "ok", tools, total, more };
+}
+
 /** One operation, with the full argument schema `searchTools` leaves out. */
 export async function getTool(
   env: ComposioEnv,

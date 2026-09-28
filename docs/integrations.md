@@ -408,7 +408,7 @@ a service is a row telling one of them where to go.
 | A hosted Supabase project                                           | An account token, and a tick beside the project                 |
 | A Postgres (self-hosted Supabase, your own PostgREST, any Postgres) | One row, plus the function below installed on it                |
 | HubSpot, Stripe, Linear, any REST API with a token                  | One row                                                         |
-| Gmail, Slack, Notion, HubSpot and the other common apps             | A search and a consent screen. See **Connected apps** below     |
+| Gmail, Slack, Notion, HubSpot and the other common apps             | A search, a read, and a consent screen. See **Connected apps**   |
 | A service that speaks MCP and has no HTTP API                       | A one-off addition to the code — not built, and deliberately so |
 
 ### What the form asks for
@@ -586,9 +586,17 @@ everything else.
 Set `COMPOSIO_API_KEY` and a **Connected apps** card appears under _Services an
 agent can call_, with the catalogue inside it. It opens on the applications
 Composio sees the most use of, filtered by its own headings and searchable;
-pick one, sign in at the application itself, and you come back to a connected
-service. There is no form: what a connection needs is a consent screen, not a
-base URL.
+pick one and a card opens saying what it is, what it does and some of the
+operations it publishes, with **Connect** inside it. Press that, sign in at the
+application itself, and you come back to a connected service. There is no form:
+what a connection needs is a consent screen, not a base URL.
+
+The card is between the tile and the consent screen on purpose. Before it, one
+click on a name in a grid of fifteen hundred handed your browser to a third
+party, and the whole of what you had been told first was one truncated line.
+An application Covan cannot connect yet opens its card too — that is where
+"somebody has to register a client for this in Composio" fits as a sentence
+rather than as four words under a name — it simply has no Connect button.
 
 **The marks are fetched by us, not by your browser.** Each tile carries the
 application's own logo, and the address on it is
@@ -653,9 +661,11 @@ Composio before the row goes, so does closing the account.
   connect as they are** — 123 because Composio keeps an OAuth application for
   them and Covan registers itself against it the first time somebody connects
   one, and 35 because they need no sign-in at all. That is a tenth of the
-  catalogue, and the other nine tenths are not a click: the tile says _Needs
-  setup in Composio_ and stays unclickable until somebody registers a client
-  with that provider and pastes it into Composio's dashboard.
+  catalogue, and the other nine tenths cannot be connected here until somebody
+  registers a client with that provider and pastes it into Composio's dashboard.
+  Their tiles still open — the card is where that sentence fits, and reading
+  about an application nobody has set up yet is most of what the catalogue is
+  for — they simply have no Connect button in them.
 
   The second of those two numbers was wrong here for as long as it had been
   written. Covan read the flag that says "Composio has an OAuth application for

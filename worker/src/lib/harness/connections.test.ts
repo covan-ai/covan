@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { connectionsManifest, type ToolConnection } from "./connections";
+import { connectionsManifest, unavailableTools, type ToolConnection } from "./connections";
 
 /**
  * The sentence that tells an agent what to do with its connections.
@@ -75,6 +75,57 @@ describe("connectionsManifest", () => {
   it("keeps the line that stops a model inventing an id, whatever is connected", () => {
     for (const set of [[GMAIL], [WAREHOUSE], [GMAIL, WAREHOUSE]]) {
       expect(connectionsManifest(set)).toContain("Never guess an id that is not on this list");
+    }
+  });
+});
+
+/**
+ * What a connection has learnt it cannot do.
+ *
+ * The largest failure class in the harness lives behind this function, so its
+ * edges are worth pinning: Composio's catalogue is the union of what every
+ * account of an application could have, a connected account holds a subset, and
+ * no documented parameter asks which. The subset is therefore learnt from 404s
+ * and kept on the row — and a reader that is wrong in either direction is
+ * expensive. Too eager, and it hides an operation that works; too shy, and the
+ * 404 is bought again.
+ */
+describe("unavailableTools", () => {
+  const withBag = (bag: unknown): ToolConnection =>
+    ({ ...GMAIL, config: { unavailable_tools: bag } }) as ToolConnection;
+
+  it("is empty for a connection that has never met a missing operation", () => {
+    expect(unavailableTools(GMAIL).size).toBe(0);
+  });
+
+  it("reads back what was recorded", () => {
+    const live = withBag({ GMAIL_SEND_EMAIL: new Date().toISOString() });
+    expect([...unavailableTools(live)]).toEqual(["GMAIL_SEND_EMAIL"]);
+  });
+
+  it("forgets an entry old enough to have stopped being true", () => {
+    // Re-authorising an application with wider scopes adds operations the
+    // account did not have. A permanent exclusion would hide one forever with
+    // nothing in the product saying why.
+    const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    expect(unavailableTools(withBag({ GMAIL_SEND_EMAIL: old })).size).toBe(0);
+  });
+
+  it("keeps an entry whose date it cannot read", () => {
+    // An older or hand-edited bag. The slug was still put there by a real 404,
+    // and discarding it would buy that 404 again — the expiry is a safety
+    // valve, not a reason to distrust the record.
+    expect([...unavailableTools(withBag({ GMAIL_SEND_EMAIL: "not a date" }))]).toEqual([
+      "GMAIL_SEND_EMAIL",
+    ]);
+  });
+
+  it("treats a malformed bag as knowing nothing, rather than throwing", () => {
+    // `config` is a jsonb column anything could have written. A search that
+    // throws here is a search that fails; a search that knows nothing is where
+    // this started.
+    for (const bad of [null, "GMAIL_SEND_EMAIL", ["GMAIL_SEND_EMAIL"], 42]) {
+      expect(unavailableTools(withBag(bad)).size).toBe(0);
     }
   });
 });

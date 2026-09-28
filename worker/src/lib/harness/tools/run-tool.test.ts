@@ -20,7 +20,14 @@ const composioAccount = vi.fn(async () => ({
   connectedAccountId: "ca_real",
   composioUserId: "cu_real",
 }));
-vi.mock("../secrets", () => ({ composioAccount: () => composioAccount() }));
+// Every 404 for a slug the account does not have is now written back to the
+// connection, so the next search stops offering it. Spied rather than stubbed
+// away: two tests below assert it was called with the slug that failed.
+const recordUnavailable = vi.fn(async (..._args: unknown[]) => {});
+vi.mock("../secrets", () => ({
+  composioAccount: () => composioAccount(),
+  recordUnavailableTool: (...args: unknown[]) => recordUnavailable(...args),
+}));
 
 const entitlements = { allowed: true as boolean };
 const recordSpy = vi.fn(async (_userId: string, _tokens: number) => {});
@@ -530,6 +537,63 @@ describe("an operation the service does not have", () => {
     // And the pivot is named, because the alternative is the model searching
     // again for what it already has.
     expect(out.kind === "error" && out.message).toContain("GMAIL_FETCH_EMAILS");
+  });
+
+  it("writes the slug back to the connection, so the withdrawal outlives the turn", async () => {
+    // Withdrawing it from the per-turn set was never enough. Measured on
+    // 2026-09-28: one conversation bought GITHUB_GET_PULL_REQUESTS three times —
+    // the next find_tool re-offered it two steps later, because the catalogue
+    // still lists it, and the turn after started over.
+    recordUnavailable.mockClear();
+    fetchMock.mockResolvedValue(NOT_FOUND());
+
+    await runToolTool.run(CALL, ctxWith({ approved: ["conn-1"] }));
+
+    expect(recordUnavailable).toHaveBeenCalledTimes(1);
+    const [, connection, slug] = recordUnavailable.mock.calls[0];
+    expect(slug).toBe("GMAIL_SEND_EMAIL");
+    expect((connection as { id: string }).id).toBe("conn-1");
+  });
+
+  it("refuses a slug the connection already proved it cannot run, without spending a call", async () => {
+    // The case the per-turn set could never catch: the slug came from the
+    // transcript of an earlier turn, so nothing this turn offered it and the
+    // offered-slugs guard has nothing to say.
+    fetchMock.mockClear();
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({
+        approved: ["conn-1"],
+        row: {
+          ...CONNECTION,
+          config: { unavailable_tools: { GMAIL_SEND_EMAIL: new Date().toISOString() } },
+        },
+      }),
+    );
+
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("does not have it");
+    // The whole point: nothing left the building.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tries again once the record has aged out", async () => {
+    // It has to expire, because re-authorising an app with broader scopes can
+    // add operations the account did not have. A permanent exclusion would hide
+    // one forever with nothing saying why.
+    const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(NOT_FOUND());
+
+    await runToolTool.run(
+      CALL,
+      ctxWith({
+        approved: ["conn-1"],
+        row: { ...CONNECTION, config: { unavailable_tools: { GMAIL_SEND_EMAIL: old } } },
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenCalled();
   });
 });
 

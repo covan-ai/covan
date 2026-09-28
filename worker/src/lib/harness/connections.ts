@@ -204,3 +204,56 @@ export function connectionsManifest(connections: ToolConnection[]): string {
 
   return `Connected services you can reach with your tools:\n${lines.join("\n")}\n${guidance.join(" ")}`;
 }
+
+/**
+ * How long a "this connection does not have that operation" fact is trusted.
+ *
+ * It has to expire, because it can stop being true: re-authorising a connected
+ * application with broader scopes can add operations the account did not have,
+ * and a permanent exclusion would hide one forever with nothing saying why. It
+ * has to expire *slowly*, because the cost of being wrong the other way is a
+ * step out of eight and a billed Composio 404 — see `recordUnavailableTool`.
+ *
+ * Thirty days is the compromise: a workspace that widens its scopes pays one
+ * failed call per operation to rediscover it, once a month at worst.
+ */
+const UNAVAILABLE_TRUSTED_DAYS = 30;
+
+/**
+ * The operations this connection has already proven it cannot run.
+ *
+ * WHY THIS EXISTS. `find_tool` searches Composio's whole catalogue, and the
+ * catalogue is the union of what every account of an application *could* have.
+ * A connected account has a subset, and the only thing that knows which subset
+ * is Composio's execute endpoint — it answers `404 Tool_ToolNotFound` for a
+ * slug that is in the catalogue and not on the account. There is no documented
+ * way to ask in advance: `/api/v3.1/tools` takes `toolkit_slug`, `tool_slugs`,
+ * `auth_config_ids`, `tags`, `scopes` and `search`, and nothing that names a
+ * connected account.
+ *
+ * So the answer is learnt rather than looked up, and this is where it is kept.
+ * Twenty of the thirty `run_tool` failures ever recorded are this one thing,
+ * which makes it the single largest failure class in the harness — larger than
+ * every other cause combined.
+ *
+ * Read off `config`, which `listConnections` already selects, so filtering a
+ * search costs no query at all.
+ *
+ * Entries past `UNAVAILABLE_TRUSTED_DAYS` are ignored rather than deleted:
+ * reading is on the critical path of every search and writing is not, so the
+ * expiry belongs on the cheap side. A malformed or missing bag reads as "we
+ * know nothing", which is where this started.
+ */
+export function unavailableTools(connection: ToolConnection): Set<string> {
+  const raw = connection.config.unavailable_tools;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return new Set();
+  const cutoff = Date.now() - UNAVAILABLE_TRUSTED_DAYS * 24 * 60 * 60 * 1000;
+  const live = new Set<string>();
+  for (const [slug, at] of Object.entries(raw as Record<string, unknown>)) {
+    const seen = typeof at === "string" ? Date.parse(at) : NaN;
+    // An unparseable date is trusted rather than discarded. It means an older
+    // or hand-edited bag, and the slug was still put there by a real 404.
+    if (Number.isNaN(seen) || seen >= cutoff) live.add(slug);
+  }
+  return live;
+}

@@ -1,6 +1,6 @@
 import { composioConfigured, getTool, searchTools, type ComposioTool } from "../../composio/client";
 import { COMPOSIO_SEARCH_TOKENS } from "../../entitlements";
-import { listConnections, type ToolConnection } from "../connections";
+import { listConnections, unavailableTools, type ToolConnection } from "../connections";
 import { cap } from "../budget";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
@@ -444,12 +444,42 @@ export const findToolTool: AgentTool = {
       await spend(ctx, COMPOSIO_SEARCH_TOKENS);
     }
 
+    /**
+     * What the connected accounts have already proven they cannot run.
+     *
+     * Free: `listConnections` above already selected `config`, which is where
+     * this is kept, so filtering costs no query. Keyed by toolkit because that
+     * is what a candidate carries — the connection behind a toolkit is the one
+     * whose account answered the 404.
+     *
+     * This is the largest failure class in the harness. `find_tool` searches
+     * Composio's whole catalogue, a connected account has a subset of it, and
+     * there is no parameter on `/api/v3.1/tools` that names an account — so the
+     * catalogue happily offers operations execution cannot run, and twenty of
+     * the thirty `run_tool` failures ever recorded are exactly that. See
+     * `unavailableTools`.
+     */
+    const deadByToolkit = new Map<string, Set<string>>();
+    for (const [toolkitSlug, connection] of byToolkit) {
+      const dead = unavailableTools(connection);
+      if (dead.size > 0) deadByToolkit.set(toolkitSlug, dead);
+    }
+
     // What the workspace can run, then the rest of the catalogue, deduplicated.
     const seen = new Set<string>();
     const candidates: ComposioTool[] = [];
+    let withheld = 0;
     for (const tool of [...connectedSearches, ...broadTools]) {
       if (seen.has(tool.slug)) continue;
       seen.add(tool.slug);
+      // Dropped rather than ranked last. A list whose entries include one the
+      // connection is known to refuse is a list that invites a call which
+      // cannot succeed — the same argument the connected-first sort below makes,
+      // and here we have proof rather than a guess.
+      if (deadByToolkit.get(tool.toolkit)?.has(tool.slug)) {
+        withheld += 1;
+        continue;
+      }
       candidates.push(tool);
     }
 
@@ -459,6 +489,20 @@ export const findToolTool: AgentTool = {
       return { kind: "error", message: `the catalogue could not be searched: ${found.message}` };
     }
     if (candidates.length === 0) {
+      // Said out loud when the filter is what emptied the list, because
+      // "the catalogue does not have it" and "your account does not have it"
+      // call for different things from the person being talked to.
+      if (withheld > 0) {
+        return {
+          kind: "ok",
+          content:
+            `Every operation matching "${input.query.trim()}"` +
+            `${toolkit ? ` in ${toolkit}` : ""} is one this workspace's connected account has ` +
+            "already been shown not to have. The catalogue lists them; the connection cannot " +
+            "run them. Tell the person this needs a broader authorisation on that app, or " +
+            "search for a genuinely different operation.",
+        };
+      }
       return {
         kind: "ok",
         content:

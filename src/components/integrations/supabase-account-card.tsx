@@ -17,6 +17,14 @@ import {
 import { SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -35,6 +43,12 @@ import { Label } from "@/components/ui/label";
  * argument `WorkspaceProviderKeys` makes about an OpenAI key, and it is
  * settled the same way. Choosing which projects an agent may read is an
  * ordinary write, because by then the decision that mattered has been made.
+ *
+ * WHY THE TWO FORMS ARE DIALOGS NOW. Both used to unfold inside this card —
+ * the token field in place of the whole card, the project picker appended to
+ * it — so the card was three different heights depending on what you had
+ * pressed, and everything below it on the page moved. What stays on the page
+ * is the part that is always true: the account, and the projects it opened.
  */
 export function SupabaseAccountCard({ connections }: { connections: ToolConnection[] }) {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
@@ -70,6 +84,11 @@ export function SupabaseAccountCard({ connections }: { connections: ToolConnecti
   const closePicker = () => {
     setPicking(false);
     setTicked([]);
+  };
+
+  const closeToken = () => {
+    setToken("");
+    setOpen(false);
   };
 
   const submitToken = () => {
@@ -116,8 +135,8 @@ export function SupabaseAccountCard({ connections }: { connections: ToolConnecti
       );
     }
 
-    if (!open) {
-      return (
+    return (
+      <>
         <SectionCard className="flex items-center justify-between gap-3">
           <span className="flex min-w-0 items-center gap-3">
             <Tile />
@@ -133,44 +152,46 @@ export function SupabaseAccountCard({ connections }: { connections: ToolConnecti
             Connect
           </Button>
         </SectionCard>
-      );
-    }
 
-    return (
-      <SectionCard className="flex flex-col gap-5">
-        <span className="font-dm text-title font-medium leading-tight">Connect Supabase</span>
+        <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : closeToken())}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Connect Supabase</DialogTitle>
+              <DialogDescription>
+                The shortest road to a database, and the one that installs nothing in it.
+              </DialogDescription>
+            </DialogHeader>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sa-token">Access token</Label>
-          <Input
-            id="sa-token"
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="sbp_..."
-          />
-          <p className="text-xs text-muted-foreground">
-            From Supabase, under Account settings → Access tokens. It reaches every project in that
-            account; agents here read only the ones you tick.
-          </p>
-        </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sa-token">Access token</Label>
+              <Input
+                id="sa-token"
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="sbp_..."
+              />
+              <p className="text-xs leading-[1.45] text-muted-foreground">
+                From Supabase, under Account settings → Access tokens. It reaches every project in
+                that account; agents here read only the ones you tick.
+              </p>
+            </div>
 
-        <div className="flex items-center gap-2">
-          <Button onClick={submitToken} disabled={token.trim().length < 20 || connect.isPending}>
-            Connect
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setToken("");
-              setOpen(false);
-            }}
-          >
-            Cancel
-          </Button>
-        </div>
-      </SectionCard>
+            <DialogFooter>
+              <Button variant="ghost" onClick={closeToken}>
+                Cancel
+              </Button>
+              <Button
+                onClick={submitToken}
+                disabled={token.trim().length < 20 || connect.isPending}
+              >
+                {connect.isPending ? "Connecting…" : "Connect"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
     );
   }
 
@@ -214,58 +235,68 @@ export function SupabaseAccountCard({ connections }: { connections: ToolConnecti
         </p>
       )}
 
-      {canWrite && !picking ? (
+      {canWrite ? (
         <div>
-          <Button variant="outline" onClick={() => setPicking(true)}>
+          <Button variant="outline" size="sm" onClick={() => setPicking(true)}>
             <Plus className="mr-1.5 h-4 w-4" />
             Add a project
           </Button>
         </div>
       ) : null}
 
-      {picking ? (
-        <div className="flex flex-col gap-3 border-t border-hairline pt-3">
-          {projects.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : offered.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Every project this account can see is already connected.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {offered.map((p) => (
-                <li key={p.ref} className="flex items-center gap-2.5">
-                  <Checkbox
-                    id={`sa-${p.ref}`}
-                    checked={ticked.includes(p.ref)}
-                    onCheckedChange={(on) =>
-                      setTicked((was) =>
-                        on === true ? [...was, p.ref] : was.filter((r) => r !== p.ref),
-                      )
-                    }
-                  />
-                  <Label htmlFor={`sa-${p.ref}`} className="flex min-w-0 flex-col gap-[2px]">
-                    <span className="truncate">{p.name}</span>
-                    <span className="text-xs font-normal text-muted-foreground">
-                      {p.region}
-                      {p.status && p.status !== "ACTIVE_HEALTHY" ? ` · ${p.status}` : ""}
-                    </span>
-                  </Label>
-                </li>
-              ))}
-            </ul>
-          )}
+      <Dialog open={picking} onOpenChange={(next) => (next ? setPicking(true) : closePicker())}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add a project</DialogTitle>
+            <DialogDescription>
+              Tick the projects agents here may read. The token already reaches every project in
+              this account; this is what decides which of them Covan will use it for.
+            </DialogDescription>
+          </DialogHeader>
 
-          <div className="flex items-center gap-2">
-            <Button onClick={submitProjects} disabled={ticked.length === 0 || add.isPending}>
-              {ticked.length === 1 ? "Connect 1 project" : `Connect ${ticked.length} projects`}
-            </Button>
+          <div className="max-h-[320px] overflow-y-auto">
+            {projects.isLoading ? (
+              <p className="px-1 py-6 text-center text-sm text-muted-foreground">Loading…</p>
+            ) : offered.length === 0 ? (
+              <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+                Every project this account can see is already connected.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {offered.map((p) => (
+                  <li key={p.ref} className="flex items-center gap-2.5">
+                    <Checkbox
+                      id={`sa-${p.ref}`}
+                      checked={ticked.includes(p.ref)}
+                      onCheckedChange={(on) =>
+                        setTicked((was) =>
+                          on === true ? [...was, p.ref] : was.filter((r) => r !== p.ref),
+                        )
+                      }
+                    />
+                    <Label htmlFor={`sa-${p.ref}`} className="flex min-w-0 flex-col gap-[2px]">
+                      <span className="truncate">{p.name}</span>
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {p.region}
+                        {p.status && p.status !== "ACTIVE_HEALTHY" ? ` · ${p.status}` : ""}
+                      </span>
+                    </Label>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <DialogFooter>
             <Button variant="ghost" onClick={closePicker}>
               Cancel
             </Button>
-          </div>
-        </div>
-      ) : null}
+            <Button onClick={submitProjects} disabled={ticked.length === 0 || add.isPending}>
+              {ticked.length === 1 ? "Connect 1 project" : `Connect ${ticked.length} projects`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SectionCard>
   );
 }

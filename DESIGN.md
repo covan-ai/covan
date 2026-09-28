@@ -40,6 +40,7 @@ contract. Read it before touching a component here.**
 | **Small / icon buttons** | §6.3 forbids them; an app cannot avoid them               | The full chip-and-roller button is reserved for real CTAs (`default` / `secondary` at default size). `outline`, `ghost`, `link`, `sm`, `icon` render plain but on-system                                     |
 | **Headline scale**       | 52px assumes one headline per screenful                   | Section headlines step down to 28/32px and page titles to 38/44px, and the app's working sizes below them are the ladder in **The type ladder**. Weight, leading, tracking and the italic turn are unchanged |
 | **Row density**          | The system's rows are illustrations, not working lists    | `DataRow` keeps the §7.8 spec (10px radius, hairline border, canvas background inside a raised panel, `overflow-wrap: anywhere` on the title) at working density                                             |
+| **Other people's marks** | A marketing page draws its own logos; a catalogue cannot  | A third-party logo renders at 22px inside the neutral 44px tile and never larger or anywhere else (`AppLogo`). It is not an accent and does not spend the amber budget; a mark that fails to load becomes a monogram, never a broken image |
 
 ## The type ladder
 
@@ -84,6 +85,7 @@ necessary, the role is probably one of the ten above.
 | `EmptyState`                            | `components/section-card.tsx`   | "nothing here yet", everywhere it happens                                         |
 | `Disclosure`                            | `components/section-card.tsx`   | the sentence somebody needs once: a native `<details>`, closed, inside a card      |
 | `UserAvatar` / `AgentAvatar`            | `components/avatars.tsx`        | people (neutral tile) and agents (neutral in lists, amber for the one you are in) |
+| `AppLogo`                               | `components/integrations/app-logo.tsx` | a third party's own mark in the neutral tile, with a monogram when it does not load |
 
 ## The five failure modes
 

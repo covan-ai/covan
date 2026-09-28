@@ -86,6 +86,7 @@ function project(over: Partial<ToolConnection> = {}): ToolConnection {
     projectRef: "abcdefghijklmnop",
     toolkitSlug: null,
     status: "active",
+    logoPath: "",
     createdAt: 1,
     ...over,
   };

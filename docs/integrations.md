@@ -584,9 +584,26 @@ here, under the same step budget, the same allowance and the same approval as
 everything else.
 
 Set `COMPOSIO_API_KEY` and a **Connected apps** card appears under _Services an
-agent can call_. Search for the app, click it, sign in at the app itself, and
-you come back to a connected service. There is no form: what a connection needs
-is a consent screen, not a base URL.
+agent can call_, with the catalogue inside it. It opens on the applications
+Composio sees the most use of, filtered by its own headings and searchable;
+pick one, sign in at the application itself, and you come back to a connected
+service. There is no form: what a connection needs is a consent screen, not a
+base URL.
+
+**The marks are fetched by us, not by your browser.** Each tile carries the
+application's own logo, and the address on it is
+`<your API URL>/composio/logo` rather than Composio's CDN. Two reasons. A grid
+of forty tiles pointed straight at a third party would tell that third party
+the address of everyone who opens this page, on every open; and Composio's
+logo hosting has a documented set of holes — some applications 404 and at
+least one has served another company's mark — so there has to be somewhere
+that turns a bad answer into no answer. A logo that does not arrive becomes the
+application's initials in the same neutral tile.
+
+That route is the only one in the API a browser reaches without a token,
+because an `<img>` sends no `Authorization` header. It will fetch from
+`logos.composio.dev` and `assets.composio.dev` and nothing else, which is what
+keeps it from being an open proxy, and it caches for a week.
 
 **What an agent does with one.** Two tools, and it uses them in order.
 `find_tool` searches the whole catalogue — every app, connected or not — for an
@@ -636,9 +653,15 @@ Composio before the row goes, so does closing the account.
   connect as they are** — 123 because Composio keeps an OAuth application for
   them and Covan registers itself against it the first time somebody connects
   one, and 35 because they need no sign-in at all. That is a tenth of the
-  catalogue, and the other nine tenths are not a click: the row says _Needs
+  catalogue, and the other nine tenths are not a click: the tile says _Needs
   setup in Composio_ and stays unclickable until somebody registers a client
   with that provider and pastes it into Composio's dashboard.
+
+  The second of those two numbers was wrong here for as long as it had been
+  written. Covan read the flag that says "Composio has an OAuth application for
+  this" and never the one that says "this needs no sign-in", so all 35 of the
+  latter were shown as needing setup and refused. They connect now. If you read
+  this page before and concluded an application was unavailable, look again.
 
   The tenth is the useful tenth. Gmail, Slack, Notion, Linear, HubSpot, GitHub,
   Google Calendar, Google Sheets, Jira, Salesforce, Stripe and Asana are all in

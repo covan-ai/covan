@@ -1,43 +1,48 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Blocks, Plus, Search, Trash2 } from "lucide-react";
+import { Blocks, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { api } from "@/lib/api-client";
+import { api, assetSrc } from "@/lib/api-client";
 import type { ToolConnection, ToolConnectionGrant } from "@/lib/connections-api";
 import { canWriteAsRole } from "@/lib/roles";
 import {
   useComposioGrants,
   useComposioStatus,
   useComposioToolkits,
-  useConnectComposio,
   useRemoveComposioGrant,
   useRemoveToolConnection,
 } from "@/hooks/use-connections";
+import { AppCatalogue } from "@/components/integrations/app-catalogue";
+import { AppLogo } from "@/components/integrations/app-logo";
 import { Chip, SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 /**
- * About fifteen hundred applications, and the search that is the only sane way
- * to offer them.
+ * The applications this workspace has connected, and the catalogue it can
+ * connect more from.
  *
- * Every other card on this page is one row per connectable thing, which works
- * at four and does not work here. So this is a search field: a person types
- * "hubspot", picks it, completes a consent screen at HubSpot, and comes back to
- * a connected application their agents can call.
+ * WHY THERE ARE LOGOS NOW. The first version of this file argued there could
+ * not be, and the argument had three legs. Two were sound and one had stopped
+ * being true. The Content Security Policy was never the obstacle — what this
+ * app actually sends is `frame-ancestors 'none'` with no `img-src` at all
+ * (`src/start.ts`) — so that leg was describing a header we do not have. The
+ * two sound ones were that a logo per row is a request to somebody else's CDN
+ * on every page view, and that a logo which 404s is worse than no logo. Both
+ * are now answered rather than avoided: every mark is fetched through
+ * `GET /composio/logo` on our own API, which will fetch from two allowlisted
+ * hosts and nothing else, and a bad answer becomes a monogram in `AppLogo`
+ * rather than a broken image. The page still speaks to nobody but us.
  *
- * WHY THERE ARE NO LOGOS. `brand-marks.tsx` is inline SVG so the page loads
- * nothing off-origin, and fifteen hundred logos cannot be — a remote logo per
- * row would be fifteen hundred requests to somebody else's CDN and a Content
- * Security Policy change to allow them. The neutral 44px tile that every row on
- * this page already carries does the job (DESIGN.md), and the application's
- * name is what a person is reading anyway.
+ * WHY THE SEARCH FIELD LEFT. It was a button that opened a text field that
+ * printed forty untitled rows and nothing before you typed — a tool for
+ * somebody who already knew the answer. `AppCatalogue` is the replacement and
+ * it is a different question: what is on offer.
  *
  * Read `DESIGN.md` before changing any of this. What it constrains here: the
- * 44px tile is the accent ceiling and holds a neutral mark, chips stay neutral,
- * and the radius ladder runs 4 chip · 8 button · 10 row · 12 card.
+ * 44px tile is the accent ceiling and a mark lives inside it at 22px, chips
+ * stay neutral, and the radius ladder runs 4 chip · 8 button · 10 row · 12
+ * card.
  */
 export function ComposioCard({
   connections,
@@ -59,17 +64,16 @@ export function ComposioCard({
   // moment late.
   const canWrite = me ? canWriteAsRole(myRole) : false;
 
-  const [searching, setSearching] = useState(false);
-  const [query, setQuery] = useState("");
-  const catalogue = useComposioToolkits(query.trim(), searching);
-  const connect = useConnectComposio();
+  // Asked here only to learn whether this deployment has a key at all. The
+  // catalogue below asks the same question and answers the same way; react-
+  // query gives them one request between them.
+  const catalogue = useComposioToolkits("", "", true);
 
   const mine = connections.filter((c) => c.transport === "composio");
   // An application already connected is not offered again: the label is unique
   // per workspace, so picking it would fail on the way back with a message
   // about a name rather than about what happened.
-  const already = new Set(mine.map((c) => c.toolkitSlug));
-  const offered = (catalogue.data?.toolkits ?? []).filter((t) => !already.has(t.slug));
+  const already = new Set(mine.map((c) => c.toolkitSlug ?? ""));
 
   // Every standing permission in the workspace, grouped by the connection it
   // is on. Unconditional rather than per-card, because it is one small read
@@ -88,7 +92,7 @@ export function ComposioCard({
   // docs for a feature their own build appears not to have is the failure this
   // pattern exists to avoid — the same call `ConnectSourceCard` makes about
   // NOTION_CLIENT_ID.
-  if (catalogue.data?.configured === false) {
+  if (catalogue.data?.pages[0]?.configured === false) {
     return (
       <SectionCard className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3.5">
@@ -107,22 +111,23 @@ export function ComposioCard({
   }
 
   return (
-    <SectionCard className="flex flex-col gap-4">
+    <SectionCard className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3.5">
           <Tile />
           <span className="flex min-w-0 flex-col gap-[3px]">
             <span className="font-dm text-title font-medium leading-tight">Connected apps</span>
             <span className="text-meta leading-tight text-muted-foreground">
-              Search about 1500 applications and connect the ones you use. The common ones need only
-              a sign-in; the rest say so. An agent asks before its first action on each.
+              Gmail, HubSpot, Linear and about fifteen hundred others. The common ones need only a
+              sign-in; the rest say so. An agent asks before its first action on each.
             </span>
           </span>
         </div>
+        {mine.length > 0 ? <Chip tone="neutral">{mine.length} connected</Chip> : null}
       </div>
 
       {mine.length > 0 ? (
-        <ul className="flex flex-col gap-1.5 border-t border-hairline pt-3">
+        <ul className="flex flex-col gap-1.5 border-t border-hairline pt-4">
           {mine.map((c) => (
             <ConnectedApp
               key={c.id}
@@ -135,93 +140,12 @@ export function ComposioCard({
         </ul>
       ) : null}
 
-      {canWrite && !searching ? (
-        <div>
-          <Button variant="outline" onClick={() => setSearching(true)}>
-            <Plus className="mr-1.5 h-4 w-4" />
-            Connect an app
-          </Button>
-        </div>
-      ) : null}
-
-      {searching ? (
-        <div className="flex flex-col gap-3 border-t border-hairline pt-3">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="composio-search">Find an app</Label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="composio-search"
-                className="pl-8"
-                autoComplete="off"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="gmail, hubspot, linear…"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              You sign in at the app itself. Covan never sees the password or the token — the grant
-              is held by Composio, and what is stored here is a reference to it.
-            </p>
-          </div>
-
-          {catalogue.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : offered.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {query.trim()
-                ? `Nothing in the catalogue matches “${query.trim()}”.`
-                : "Type to search the catalogue."}
-            </p>
-          ) : (
-            <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
-              {offered.slice(0, 40).map((toolkit) => (
-                <li key={toolkit.slug}>
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-3 rounded-[10px] px-2.5 py-2 text-left hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
-                    // An application Composio has no OAuth app of its own for
-                    // cannot be connected from here at all, so the row says so
-                    // rather than offering a button that only produces an
-                    // error from a third party.
-                    disabled={connect.isPending || !toolkit.managedAuth}
-                    onClick={() =>
-                      connect.mutate(
-                        { toolkit: toolkit.slug, label: toolkit.name },
-                        {
-                          onError: (err: Error) => toast.error(err.message),
-                        },
-                      )
-                    }
-                  >
-                    <span className="flex min-w-0 flex-col gap-[2px]">
-                      <span className="truncate text-sm">{toolkit.name}</span>
-                      {toolkit.description ? (
-                        <span className="truncate text-xs text-muted-foreground">
-                          {toolkit.description}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {toolkit.managedAuth ? "Connect" : "Needs setup in Composio"}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setSearching(false);
-                setQuery("");
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
+      {/* A viewer cannot connect anything, so they are not shown a grid of
+          things to click. The list above stays: what the workspace already
+          reaches is worth knowing whether or not you may change it. */}
+      {canWrite ? (
+        <div className="border-t border-hairline pt-4">
+          <AppCatalogue connected={already} />
         </div>
       ) : null}
     </SectionCard>
@@ -257,10 +181,24 @@ function ConnectedApp({
   useComposioStatus(connection.id, connection.status === "pending");
 
   return (
-    <li className="flex flex-col gap-1.5 text-sm">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate">{connection.label}</span>
+    // The standing permissions live INSIDE the row's box, not under it. Put
+    // outside they read as a third item between two applications, which is
+    // exactly what they are not — each one belongs to the application above
+    // it, and a list where that is ambiguous is worse than no list.
+    <li className="flex flex-col gap-2 rounded-lg border border-hairline bg-background px-3 py-2.5 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <span className="flex min-w-0 flex-1 basis-40 items-center gap-3">
+          <AppLogo
+            src={assetSrc(connection.logoPath)}
+            name={connection.label}
+            className="h-9 w-9"
+          />
+          <span className="flex min-w-0 flex-col gap-[2px]">
+            <span className="truncate">{connection.label}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">
+              {connection.toolkitSlug}
+            </span>
+          </span>
           {connection.status === "pending" ? (
             <Chip tone="neutral">Finishing…</Chip>
           ) : connection.status === "failed" ? (
@@ -268,7 +206,6 @@ function ConnectedApp({
           ) : null}
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          <span className="font-mono text-xs text-muted-foreground">{connection.toolkitSlug}</span>
           {canWrite ? (
             confirming ? (
               <>
@@ -305,7 +242,7 @@ function ConnectedApp({
           that printed "asks first" for every operation in a 1500-app catalogue
           would be a list of everything. */}
       {grants.length > 0 ? (
-        <ul className="flex flex-col gap-1 border-l border-hairline pl-2.5">
+        <ul className="flex flex-col gap-1 border-t border-hairline pt-2">
           {grants.map((grant) => (
             <StandingGrant
               key={`${grant.agentId}:${grant.slug}`}

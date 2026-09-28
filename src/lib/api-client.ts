@@ -5,6 +5,7 @@ import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
   Connection,
+  ComposioCategoriesResponse,
   ComposioToolkitsResponse,
   ConnectionRun,
   ConnectionsResponse,
@@ -186,6 +187,20 @@ async function fetchDocumentBytes(id: string): Promise<{ blob: Blob; contentType
   });
   if (!res.ok) throw new ApiError(res.status, "failed to download");
   return { blob: await res.blob(), contentType: res.headers.get("Content-Type") ?? "" };
+}
+
+/**
+ * An `<img src>` for something this API serves without a token.
+ *
+ * The one caller is the toolkit logo, and the reason it needs a helper at all
+ * is that `request()` cannot be it: an `<img>` sends no `Authorization`
+ * header, so the address has to be built rather than fetched. What comes back
+ * from the catalogue is a path and never a third-party URL, so this cannot be
+ * pointed off-origin by anything the API says — see `allowedLogoUrl` in the
+ * worker for the other half.
+ */
+export function assetSrc(path: string): string {
+  return path ? `${import.meta.env.VITE_API_URL}${path}` : "";
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -662,11 +677,23 @@ export const api = {
    * login page.
    */
   composio: {
-    toolkits: (search?: string): Promise<ComposioToolkitsResponse> =>
-      request("GET", `/composio/toolkits${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+    toolkits: (query: {
+      search?: string;
+      category?: string;
+      cursor?: string;
+    }): Promise<ComposioToolkitsResponse> => {
+      const params = new URLSearchParams();
+      if (query.search) params.set("search", query.search);
+      if (query.category) params.set("category", query.category);
+      if (query.cursor) params.set("cursor", query.cursor);
+      const qs = params.toString();
+      return request("GET", `/composio/toolkits${qs ? `?${qs}` : ""}`);
+    },
+    categories: (): Promise<ComposioCategoriesResponse> => request("GET", "/composio/categories"),
     connect: (input: {
       toolkit: string;
       label?: string;
+      noAuth?: boolean;
     }): Promise<{ url: string; connection: ToolConnection }> =>
       request("POST", "/composio/connect", input),
     status: (id: string): Promise<{ status: "pending" | "active" | "failed" }> =>

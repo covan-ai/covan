@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  allowedLogoUrl,
   composioConfigured,
   createLink,
   executeTool,
   getConnectedAccount,
+  getToolkit,
+  listToolkitCategories,
   listToolkits,
   searchTools,
   statusOf,
@@ -254,6 +257,45 @@ describe("createLink", () => {
     expect(calls[2].body).toMatchObject({ auth_config_id: "ac_new" });
   });
 
+  it("asks for a no-auth config when the application needs no sign-in", async () => {
+    // Thirty-five of the catalogue's applications want no credential at all.
+    // Asking Composio for a managed OAuth client for one of those is the 400
+    // that made them look unconnectable for as long as the flag went unread.
+    const { impl, calls } = sequenced([
+      [/auth_configs\?/, { items: [] }],
+      [/auth_configs$/, { auth_config: { id: "ac_open" } }],
+      [/connected_accounts\/link/, { connected_account_id: "ca_1" }],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "hackernews", userId: "cu_1", noAuth: true },
+      { fetchImpl: impl as never },
+    );
+
+    expect(calls[1].body).toEqual({
+      toolkit: { slug: "HACKERNEWS" },
+      auth_config: { type: "no_auth" },
+    });
+    // No consent screen to send anybody to, and that is success rather than
+    // the failure the original reading of an empty `redirect_url` made it.
+    expect(out).toMatchObject({ kind: "ok", connectedAccountId: "ca_1", redirectUrl: "" });
+  });
+
+  it("still refuses a sign-in flow that came back with nowhere to go", async () => {
+    const { impl } = sequenced([
+      [/auth_configs\?/, { items: [{ id: "ac_existing", toolkit: { slug: "gmail" } }] }],
+      [/connected_accounts\/link/, { connected_account_id: "ca_1" }],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "gmail", userId: "cu_1" },
+      {
+        fetchImpl: impl as never,
+      },
+    );
+    expect(out.kind).toBe("error");
+  });
+
   it("ignores an auth config for another provider, whatever the filter did", async () => {
     // An API that ignores a filter it does not know returns everything, and the
     // first row of everything is somebody else's OAuth application.
@@ -381,6 +423,152 @@ describe("listToolkits", () => {
       },
     );
     expect(out.kind === "ok" && out.toolkits[0].managedAuth).toBe(false);
+  });
+
+  it("reads the logo and the categories out of `meta`, where the description was", async () => {
+    const out = await listToolkits(
+      ENV,
+      {},
+      {
+        fetchImpl: fetchReturning({
+          items: [
+            {
+              slug: "gmail",
+              name: "Gmail",
+              no_auth: false,
+              meta: {
+                description: "Mail",
+                logo: "https://logos.composio.dev/api/gmail",
+                categories: [{ id: "Productivity", name: "Productivity" }, "mail"],
+              },
+            },
+          ],
+          next_cursor: "page-2",
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.toolkits[0]).toMatchObject({
+      logo: "https://logos.composio.dev/api/gmail",
+      categories: ["productivity", "mail"],
+      noAuth: false,
+    });
+    expect(out.kind === "ok" && out.nextCursor).toBe("page-2");
+  });
+
+  it("drops a logo served from anywhere we do not fetch from", async () => {
+    // The mapper is the first of the two places the allowlist is applied, and
+    // the cheaper one: an address refused here never reaches the page, so the
+    // proxy is never asked about it.
+    const out = await listToolkits(
+      ENV,
+      {},
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "x", name: "X", meta: { logo: "https://evil.example.com/x.png" } }],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.toolkits[0].logo).toBe("");
+  });
+
+  it("reads `no_auth`, which is the other half of what can be connected today", async () => {
+    const out = await listToolkits(
+      ENV,
+      {},
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "hackernews", name: "Hacker News", no_auth: true, meta: {} }],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.toolkits[0]).toMatchObject({
+      noAuth: true,
+      managedAuth: false,
+    });
+  });
+
+  it("orders by usage until somebody types, and passes the filter and the page on", async () => {
+    // Forty of fifteen hundred in catalogue order is forty applications
+    // nobody has heard of. A search brings its own relevance, so we stop
+    // sorting the moment there is one.
+    const idle = fetchReturning({ items: [] });
+    await listToolkits(ENV, { category: "crm", cursor: "c1" }, { fetchImpl: idle as never });
+    expect(idle.mock.calls[0][0]).toContain("sort_by=usage");
+    expect(idle.mock.calls[0][0]).toContain("category=crm");
+    expect(idle.mock.calls[0][0]).toContain("cursor=c1");
+
+    const searched = fetchReturning({ items: [] });
+    await listToolkits(ENV, { search: "gm" }, { fetchImpl: searched as never });
+    expect(searched.mock.calls[0][0]).not.toContain("sort_by");
+    expect(searched.mock.calls[0][0]).toContain("search=gm");
+  });
+});
+
+describe("getToolkit", () => {
+  it("reads one application by slug, for the two answers connect must not take on trust", async () => {
+    const out = await getToolkit(ENV, "gmail", {
+      fetchImpl: fetchReturning({
+        data: {
+          slug: "GMAIL",
+          name: "Gmail",
+          no_auth: false,
+          composio_managed_auth_schemes: ["OAUTH2"],
+          meta: { logo: "https://logos.composio.dev/api/gmail" },
+        },
+      }) as never,
+    });
+    expect(out).toMatchObject({
+      kind: "ok",
+      toolkit: { slug: "gmail", noAuth: false, logo: "https://logos.composio.dev/api/gmail" },
+    });
+  });
+
+  it("is an error rather than an empty toolkit when the row has no slug", async () => {
+    const out = await getToolkit(ENV, "ghost", {
+      fetchImpl: fetchReturning({ data: {} }) as never,
+    });
+    expect(out.kind).toBe("error");
+  });
+});
+
+describe("allowedLogoUrl", () => {
+  it("admits the two hosts Composio serves marks from, over HTTPS", () => {
+    expect(allowedLogoUrl("https://logos.composio.dev/api/gmail")?.hostname).toBe(
+      "logos.composio.dev",
+    );
+    expect(allowedLogoUrl("https://assets.composio.dev/logos/gmail.png")?.hostname).toBe(
+      "assets.composio.dev",
+    );
+  });
+
+  it("refuses everything else, because this is what stops an open proxy", () => {
+    for (const address of [
+      "",
+      "not a url",
+      "http://logos.composio.dev/api/gmail",
+      "https://logos.composio.dev.evil.example.com/x.png",
+      "https://evil.example.com/x.png",
+      "file:///etc/passwd",
+      "http://169.254.169.254/latest/meta-data/",
+      "//logos.composio.dev/api/gmail",
+    ]) {
+      expect(allowedLogoUrl(address), address).toBeNull();
+    }
+  });
+});
+
+describe("listToolkitCategories", () => {
+  it("reads the headings rather than hard-coding a list that goes stale", async () => {
+    const out = await listToolkitCategories(ENV, {
+      fetchImpl: fetchReturning({
+        items: [
+          { id: "CRM", name: "CRM" },
+          { id: "crm", name: "Duplicate" },
+          { name: "No id at all" },
+        ],
+      }) as never,
+    });
+    expect(out).toEqual({ kind: "ok", categories: [{ id: "crm", name: "CRM" }] });
   });
 });
 

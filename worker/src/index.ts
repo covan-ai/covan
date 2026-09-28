@@ -38,7 +38,7 @@ import { runPurge } from "./lib/purge";
 import { connections, connectionsPublic } from "./routes/connections";
 import { supabaseAccount } from "./routes/supabase-account";
 import { toolConnections } from "./routes/tool-connections";
-import { composio } from "./routes/composio";
+import { composio, composioPublic } from "./routes/composio";
 import { slack, slackPublic } from "./routes/slack";
 import { routineHooks } from "./routes/routine-hooks";
 
@@ -76,6 +76,15 @@ app.use(
     credentials: true,
   }),
 );
+
+// Ahead of the limiter, deliberately, and the only route that is. A catalogue
+// grid asks for forty logos in one burst; counted in the `standard` bucket
+// those would spend a third of an address's minute on static images, and the
+// visible symptom would be a 429 on somebody's chat message. That tier exists
+// to protect the Supabase token check, and this route never reaches it — it
+// reads no database, holds no secret, and will only fetch from the two hosts
+// `allowedLogoUrl` names. See the banner on the route itself.
+app.route("/", composioPublic);
 
 // After cors, so a preflight is answered rather than counted: an OPTIONS that
 // gets a 429 makes the browser report the real request as a CORS failure, which

@@ -3,6 +3,7 @@
  * Frontend TS types are fixed: camelCase fields, timestamps as epoch-ms.
  */
 import { NOTHING_RELEVANT_REASON } from "./routines/executor";
+import { allowedLogoUrl } from "./composio/client";
 
 export type DocumentDTO = {
   id: string;
@@ -148,6 +149,12 @@ export type ToolConnectionDTO = {
    */
   toolkitSlug: string | null;
   /**
+   * The application's mark, as a path on this API — never a third-party URL.
+   * Empty for every transport but `composio`, and for a connection made
+   * before the catalogue started recording one.
+   */
+  logoPath: string;
+  /**
    * Whether the connection has finished being made. `pending` while somebody
    * is at a consent screen; every transport but `composio` is born `active`.
    */
@@ -157,6 +164,13 @@ export type ToolConnectionDTO = {
 
 /** The transports this build knows. An unlisted one is not silently an API. */
 const TRANSPORTS = ["http", "sql", "supabase", "composio"] as const;
+
+/** A connected application's mark, as a path on this API. "" when it has none. */
+function logoPathOf(stored: unknown): string {
+  if (typeof stored !== "string") return "";
+  const url = allowedLogoUrl(stored);
+  return url ? `/composio/logo?u=${encodeURIComponent(url.toString())}` : "";
+}
 
 export function mapToolConnection(row: {
   id: string;
@@ -189,6 +203,12 @@ export function mapToolConnection(row: {
     accountId: typeof row.account_id === "string" ? row.account_id : null,
     projectRef: typeof config.ref === "string" ? config.ref : null,
     toolkitSlug: typeof row.toolkit_slug === "string" ? row.toolkit_slug : null,
+    // Validated again on the way out, not only on the way in. The column is a
+    // jsonb a service-role write put there, and a path this API hands a
+    // browser to load an image from is worth checking twice — the cost is a
+    // `new URL` and the alternative is trusting a row to be well-formed
+    // because it was well-formed when it was written.
+    logoPath: logoPathOf(config.logo),
     status: row.status === "pending" || row.status === "failed" ? row.status : "active",
     createdAt: toEpochMs(row.created_at),
   };

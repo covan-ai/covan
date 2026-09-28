@@ -417,6 +417,67 @@ export async function searchTools(
   return { kind: "ok", tools };
 }
 
+/**
+ * A toolkit's own operations, for a person deciding whether to connect it.
+ *
+ * WHY NOT `searchTools`. Its `search` is required, and that is load-bearing for
+ * `find-tool.ts` — `RETRY_WORDS` re-asks with a shorter query when the first
+ * finds nothing, which assumes a real query exists. Making it optional would let
+ * a future caller silently search for nothing. This asks a different question
+ * ("what can this application do") and leaves the agent's path alone.
+ *
+ * THE ROWS ARE FILTERED AGAIN HERE, and that is not belt and braces. The rule
+ * `authConfigFor` states one function down applies exactly: *an API that ignores
+ * a filter it does not know returns EVERYTHING*, and production has already
+ * shown what everything looks like — a catalogue-wide search answers
+ * alphabetically and comes back with `_2chat` and `active_campaign`
+ * (`find-tool.ts`). Without this, a `toolkit_slug` Composio declined to honour
+ * would put ActiveCampaign's operations on Gmail's card, which is the exact
+ * shape `DESIGN.md`'s first failure mode forbids.
+ *
+ * `total` is null unless it can be *earned*, and there are two ways to earn it.
+ * Composio's reference documents a `total_items` on this endpoint, so that is
+ * read when it is there — but documented is not the same as deployed, which is
+ * the entire subject of covan#172 (three published shapes their own API
+ * rejects), so it is read defensively rather than trusted: a number, not
+ * smaller than the page, and only when every row came back from the toolkit we
+ * asked about. Failing that, the only honest total is the one a short page
+ * proves — fewer rows than the limit, and no cursor, means the list is all of
+ * them. Anything else and the caller renders no number at all.
+ */
+export async function listToolkitTools(
+  env: ComposioEnv,
+  query: { toolkit: string; limit?: number },
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ tools: ComposioTool[]; total: number | null; more: boolean }>> {
+  const limit = Math.min(Math.max(query.limit ?? 10, 1), 50);
+  const params = new URLSearchParams({
+    toolkit_slug: query.toolkit.toUpperCase(),
+    limit: String(limit),
+  });
+
+  const res = await request(env, `${CATALOGUE_API}/tools?${params}`, { method: "GET" }, opts);
+  if (res.kind === "error") return res;
+
+  const body = parsed(res.body);
+  const returned = rows(body);
+  const wanted = query.toolkit.toLowerCase();
+  const tools = returned
+    .map(toTool)
+    .filter((t): t is ComposioTool => t !== null && t.toolkit === wanted);
+
+  const more = Boolean(nextCursorOf(body));
+  // Whether the filter was honoured at all. If anything foreign came back,
+  // `toolkit_slug` was ignored — and then every count in the body is a count of
+  // the whole catalogue, so neither road to a total may be taken.
+  const filtered = tools.length === returned.length;
+  // Counted off what Composio returned, not off what survived the filter —
+  // otherwise dropping a foreign row would fake a short page and invent a total.
+  const proven = !more && returned.length < limit ? tools.length : null;
+  const total = filtered ? (publishedTotal(body, tools.length) ?? proven) : null;
+  return { kind: "ok", tools, total, more };
+}
+
 /** One operation, with the full argument schema `searchTools` leaves out. */
 export async function getTool(
   env: ComposioEnv,
@@ -490,6 +551,25 @@ function categoryIdsOf(value: unknown): string[] {
     if (id) out.push(id.toLowerCase());
   }
   return out;
+}
+
+/**
+ * The total the catalogue claims, if it claims one this page does not contradict.
+ *
+ * Every condition here is a way the number could be wrong rather than absent,
+ * and absent is the outcome we can render honestly. A total below the rows
+ * already in hand is not a total of anything; a non-integer is a field that
+ * means something else. `DESIGN.md` forbids a number the code cannot back, so
+ * the bar is "this survives being checked", not "the key was present".
+ */
+function publishedTotal(value: unknown, atLeast: number): number | null {
+  if (!isRecord(value)) return null;
+  for (const key of ["total_items", "totalItems", "total"]) {
+    const raw = value[key];
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < atLeast) continue;
+    return raw;
+  }
+  return null;
 }
 
 /** The page token, when the answer says there is more. */

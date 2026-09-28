@@ -1,15 +1,11 @@
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
-import { toast } from "sonner";
 
 import { assetSrc } from "@/lib/api-client";
 import { canConnectToolkit, type ComposioToolkit } from "@/lib/connections-api";
-import {
-  useComposioCategories,
-  useComposioToolkits,
-  useConnectComposio,
-} from "@/hooks/use-connections";
+import { useComposioCategories, useComposioToolkits } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
+import { AppDetailDialog } from "@/components/integrations/app-detail-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -63,8 +59,10 @@ export function AppCatalogue({
   const configured = catalogue.data?.pages[0]?.configured !== false;
   const categories = useComposioCategories(configured);
 
-  const connect = useConnectComposio();
-  const [connecting, setConnecting] = useState("");
+  // The application whose card is open, or null. Held here rather than in the
+  // tile so only one can be open, and so the tile stays a button and nothing
+  // else.
+  const [reading, setReading] = useState<ComposioToolkit | null>(null);
 
   // Not configured is the `ComposioCard` above's sentence to say, and it says
   // which variable turns this on. A second copy of it here would be the page
@@ -74,19 +72,6 @@ export function AppCatalogue({
   const toolkits = (catalogue.data?.pages ?? [])
     .flatMap((page) => page.toolkits)
     .filter((t) => !connected.has(t.slug));
-
-  function onConnect(toolkit: ComposioToolkit) {
-    setConnecting(toolkit.slug);
-    connect.mutate(
-      { toolkit: toolkit.slug, label: toolkit.name, noAuth: toolkit.noAuth },
-      {
-        onError: (err: Error) => {
-          setConnecting("");
-          toast.error(err.message);
-        },
-      },
-    );
-  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -139,13 +124,13 @@ export function AppCatalogue({
             <CatalogueTile
               key={toolkit.slug}
               toolkit={toolkit}
-              busy={connect.isPending}
-              connecting={connecting === toolkit.slug}
-              onConnect={() => onConnect(toolkit)}
+              onOpen={() => setReading(toolkit)}
             />
           ))}
         </ul>
       )}
+
+      <AppDetailDialog toolkit={reading} onClose={() => setReading(null)} />
 
       {catalogue.hasNextPage ? (
         <div>
@@ -180,54 +165,50 @@ export function AppCatalogue({
  * application they use and concluding Covan has never heard of it, when the
  * truth is that somebody has to register a client with that provider first.
  */
-function CatalogueTile({
-  toolkit,
-  busy,
-  connecting,
-  onConnect,
-}: {
-  toolkit: ComposioToolkit;
-  busy: boolean;
-  connecting: boolean;
-  onConnect: () => void;
-}) {
+/**
+ * One application in the grid.
+ *
+ * The whole tile is one button, which is right for a 44px tap target and is
+ * what it always was. What changed is what pressing it does: it opens the card
+ * rather than handing the browser to a consent screen.
+ *
+ * AN APPLICATION NOBODY CAN CONNECT IS ALSO A BUTTON NOW. It used to be an inert
+ * `<div>` at `opacity-60`, which meant nine tenths of the catalogue could not
+ * even be read about — and reading about them is the case the card most needs
+ * to serve, because "needs setup in Composio" is four truncated words here and
+ * a sentence in there. The dimming goes with it: it said "not clickable", and
+ * that is now untrue.
+ *
+ * The focus ring is new and belongs to this change rather than to a tidy-up.
+ * There was none anywhere in this folder, which was survivable while the tile
+ * was close to decorative; it is not survivable now that the tile is the only
+ * way into the card.
+ */
+function CatalogueTile({ toolkit, onOpen }: { toolkit: ComposioToolkit; onOpen: () => void }) {
   const connectable = canConnectToolkit(toolkit);
-  const body = (
-    <>
-      <AppLogo src={assetSrc(toolkit.logoPath)} name={toolkit.name} />
-      <span className="flex min-w-0 flex-col gap-[3px]">
-        <span className="truncate text-sm font-medium leading-tight">{toolkit.name}</span>
-        <span className="truncate text-xs leading-tight text-muted-foreground">
-          {connecting
-            ? "Opening…"
-            : connectable
-              ? toolkit.description || "Connect it and your agents can call it."
-              : "Needs setup in Composio"}
-        </span>
-      </span>
-    </>
-  );
-
-  const classes =
-    "flex w-full items-center gap-3 rounded-lg border border-hairline bg-background p-3 text-left";
 
   return (
     <li>
-      {connectable ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConnect}
-          className={cn(
-            classes,
-            "transition-colors duration-200 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60",
-          )}
-        >
-          {body}
-        </button>
-      ) : (
-        <div className={cn(classes, "opacity-60")}>{body}</div>
-      )}
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+        className={cn(
+          "flex w-full items-center gap-3 rounded-lg border border-hairline bg-background p-3 text-left",
+          "transition-colors duration-200 hover:bg-surface-hover",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        )}
+      >
+        <AppLogo src={assetSrc(toolkit.logoPath)} name={toolkit.name} />
+        <span className="flex min-w-0 flex-col gap-[3px]">
+          <span className="truncate text-sm font-medium leading-tight">{toolkit.name}</span>
+          <span className="truncate text-xs leading-tight text-muted-foreground">
+            {connectable
+              ? toolkit.description || "Connect it and your agents can call it."
+              : "Needs setup in Composio"}
+          </span>
+        </span>
+      </button>
     </li>
   );
 }

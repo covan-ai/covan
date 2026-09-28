@@ -6,6 +6,7 @@ import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
   Connection,
   ComposioCategoriesResponse,
+  ComposioToolkitDetailResponse,
   ComposioToolkitsResponse,
   ConnectionRun,
   ConnectionsResponse,
@@ -689,6 +690,8 @@ export const api = {
       const qs = params.toString();
       return request("GET", `/composio/toolkits${qs ? `?${qs}` : ""}`);
     },
+    toolkit: (slug: string): Promise<ComposioToolkitDetailResponse> =>
+      request("GET", `/composio/toolkits/${encodeURIComponent(slug)}`),
     categories: (): Promise<ComposioCategoriesResponse> => request("GET", "/composio/categories"),
     connect: (input: {
       toolkit: string;

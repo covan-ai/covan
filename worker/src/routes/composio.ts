@@ -13,6 +13,7 @@ import {
   getToolkit,
   listToolkits,
   listToolkitCategories,
+  listToolkitTools,
   COMPOSIO_BASE,
   type ComposioToolkit,
 } from "../lib/composio/client";
@@ -58,6 +59,17 @@ const composioPublic = new Hono<AppEnv>();
 
 /** A toolkit slug as Composio spells it, loosened to what a URL can carry. */
 const toolkitPattern = /^[a-z0-9_-]{1,80}$/;
+
+/**
+ * How many of an application's operations the detail card is shown.
+ *
+ * Enough to answer "what can this thing do" and not enough to become the page.
+ * Kept small for a second reason worth writing down: catalogue rows can carry
+ * their whole argument schema, and `client.ts` caps a response at 256KB — past
+ * it the body does not parse and the card silently shows nothing rather than
+ * too much.
+ */
+const TOOLKIT_OPERATIONS = 10;
 
 /** Long enough for a cold CDN, short enough that a grid does not hang on one tile. */
 const LOGO_TIMEOUT_MS = 5_000;
@@ -138,6 +150,75 @@ composio.get("/composio/toolkits", async (c) => {
     configured: true,
     toolkits: listed.toolkits.map(toWire),
     nextCursor: listed.nextCursor,
+  });
+});
+
+/**
+ * One application, described well enough to decide about before connecting it.
+ *
+ * WHY IT EXISTS. Until this route, clicking a tile in the catalogue *connected*
+ * it — a single click on a name in a grid of fifteen hundred handed the browser
+ * to a third party's consent screen, having told the person one truncated line
+ * of description. This is what the click opens instead.
+ *
+ * THE OPERATIONS MAY LEGITIMATELY BE ABSENT, and `null` is how that is said.
+ * `null` means the list was not read; `[]` means it was read and there are none.
+ * The two are not the same thing to a card and TypeScript makes it handle both.
+ * A failure reading them does NOT fail this route: nobody should be stopped from
+ * connecting Gmail because a catalogue read wobbled, and Connect does not depend
+ * on the list.
+ *
+ * 404 AND 502 ARE DIFFERENT ANSWERS here, where `POST /composio/connect` flattens
+ * both to 502. The card has to tell "we have never heard of this application"
+ * from "Composio is down", because only one of the two is worth retrying.
+ *
+ * NOT METERED, and deliberately. `spend()` is the agent's, not the browser's —
+ * `/composio/toolkits` and `/composio/categories` spend nothing for the same
+ * reason, and charging a workspace's token allowance to *read about* an
+ * application would be a new and surprising rule on the one page whose whole job
+ * is browsing. A card open is at most two upstream requests against a grid page
+ * that already costs one per forty tiles. `rateLimit("standard")` sits in front
+ * of the whole authenticated API, and `meteredFetch` still counts subrequests
+ * wherever a meter exists — which on this route is nowhere, because only a chat
+ * turn carries one.
+ */
+composio.get("/composio/toolkits/:slug", async (c) => {
+  const slug = (c.req.param("slug") ?? "").trim().toLowerCase();
+  // Before the network, and the same regex `connectSchema` uses, so a malformed
+  // slug costs nothing at all.
+  if (!toolkitPattern.test(slug)) return c.json({ error: "not an application slug" }, 400);
+
+  if (!composioConfigured(c.env)) {
+    return c.json({ configured: false, toolkit: null, operations: null, total: null, more: false });
+  }
+
+  // In parallel: they are independent reads and each carries its own 15s
+  // timeout, so sequential would make a cold card cost up to thirty seconds.
+  const [described, listed] = await Promise.all([
+    getToolkit(c.env, slug),
+    listToolkitTools(c.env, { toolkit: slug, limit: TOOLKIT_OPERATIONS }),
+  ]);
+
+  if (described.kind === "error") {
+    return described.status === 404
+      ? c.json({ error: "no application by that name" }, 404)
+      : c.json({ error: described.message }, 502);
+  }
+
+  return c.json({
+    configured: true,
+    toolkit: toWire(described.toolkit),
+    operations:
+      listed.kind === "ok"
+        ? listed.tools.map((t) => ({
+            slug: t.slug,
+            name: t.name,
+            description: t.description,
+            destructive: t.destructive,
+          }))
+        : null,
+    total: listed.kind === "ok" ? listed.total : null,
+    more: listed.kind === "ok" ? listed.more : false,
   });
 });
 

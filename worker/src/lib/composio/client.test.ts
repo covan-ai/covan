@@ -8,6 +8,7 @@ import {
   getToolkit,
   listToolkitCategories,
   listToolkits,
+  listToolkitTools,
   searchTools,
   statusOf,
   type ComposioEnv,
@@ -41,6 +42,156 @@ describe("composioConfigured", () => {
   it("is the one question every surface asks, so chat and a schedule agree", () => {
     expect(composioConfigured({})).toBe(false);
     expect(composioConfigured(ENV)).toBe(true);
+  });
+});
+
+describe("listToolkitTools", () => {
+  it("asks for one application's operations, with the slug uppercased", async () => {
+    const fetchImpl = fetchReturning({ items: [] });
+    await listToolkitTools(ENV, { toolkit: "gmail" }, { fetchImpl: fetchImpl as never });
+    const url = new URL(String(fetchImpl.mock.calls[0][0]));
+    expect(url.pathname).toBe("/api/v3.1/tools");
+    expect(url.searchParams.get("toolkit_slug")).toBe("GMAIL");
+    // No `search`. That is the whole difference from `searchTools`, whose own
+    // required query is load-bearing for `find_tool`'s short retry.
+    expect(url.searchParams.has("search")).toBe(false);
+  });
+
+  it("drops a row belonging to another application", async () => {
+    // The defence that matters, and not a hypothetical: `authConfigFor` records
+    // the rule — an API that ignores a filter it does not know returns
+    // EVERYTHING — and production has seen what everything looks like, an
+    // alphabetical catalogue answering `_2chat` and `active_campaign`. Without
+    // this, a `toolkit_slug` Composio declined to honour would put somebody
+    // else's operations on Gmail's card.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail" },
+      {
+        fetchImpl: fetchReturning({
+          items: [
+            { slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } },
+            { slug: "LINEAR_CREATE_ISSUE", toolkit: { slug: "LINEAR" } },
+          ],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.tools.map((t) => t.slug)).toEqual(["GMAIL_SEND_EMAIL"]);
+  });
+
+  it("counts a total only when a short page proves one", async () => {
+    // Composio publishes no count on this endpoint that anybody here has
+    // verified, so the only honest total is the one the page itself proves:
+    // fewer rows than asked for, and no cursor, means this is all of them.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 10 },
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } }],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBe(1);
+    expect(out.kind === "ok" && out.more).toBe(false);
+  });
+
+  it("takes the catalogue's own count when the page does not contradict it", async () => {
+    // Composio's reference documents `total_items`. Documented is not deployed
+    // — covan#172 is three published shapes their own API rejects — so it is
+    // read only when it survives being checked.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 1 },
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } }],
+          total_items: 247,
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBe(247);
+  });
+
+  it("ignores a published count that is smaller than the page in hand", async () => {
+    // Not a total of anything. A field that disagrees with what it arrived
+    // beside is a field meaning something else, and rendering it would be the
+    // unbacked number DESIGN.md forbids.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 1 },
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } }],
+          total_items: 0,
+          next_cursor: "abc",
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBeNull();
+  });
+
+  it("ignores a published count when the filter was not honoured", async () => {
+    // A foreign row means `toolkit_slug` was ignored, and then every count in
+    // the body counts the whole catalogue rather than this application.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 5 },
+      {
+        fetchImpl: fetchReturning({
+          items: [
+            { slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } },
+            { slug: "LINEAR_CREATE_ISSUE", toolkit: { slug: "LINEAR" } },
+          ],
+          total_items: 1562,
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBeNull();
+  });
+
+  it("claims no total when the catalogue said there was more", async () => {
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 1 },
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } }],
+          next_cursor: "abc",
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBeNull();
+    expect(out.kind === "ok" && out.more).toBe(true);
+  });
+
+  it("does not let a dropped foreign row fake a short page", async () => {
+    // Counted off what Composio returned, not off what survived the filter.
+    // Two rows back for a limit of two is a full page, whatever we then drop —
+    // and a total of one here would be an invented number.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 2 },
+      {
+        fetchImpl: fetchReturning({
+          items: [
+            { slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } },
+            { slug: "LINEAR_CREATE_ISSUE", toolkit: { slug: "LINEAR" } },
+          ],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.tools).toHaveLength(1);
+    expect(out.kind === "ok" && out.total).toBeNull();
+  });
+
+  it("returns a failure rather than throwing, like everything else in this file", async () => {
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail" },
+      { fetchImpl: fetchReturning({ error: "nope" }, 502) as never },
+    );
+    expect(out.kind).toBe("error");
   });
 });
 

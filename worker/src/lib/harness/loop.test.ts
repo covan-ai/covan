@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CompletionEvent, CompletionMessage } from "../completion";
 import type { AgentTool, ToolContext, ToolResult } from "./registry";
 import { runAgentTurn, parseArguments, NO_TOOLS_NOTICE, type PassUsage } from "./loop";
@@ -700,6 +700,125 @@ describe("the budget", () => {
         });
         expect(turn.paused).toBeUndefined();
         expect(turn.text).toBe("done");
+      });
+    });
+
+    /**
+     * The ceiling that is not ours.
+     *
+     * Cloudflare allows an invocation fifty subrequests on Free, and a turn
+     * that spends every step on a connected app needs about seventy-five. Past
+     * the cap `fetch` simply stops working, and every SDK has its own word for
+     * that — the OpenAI client says `Connection error.`, which cost an evening
+     * on 2026-09-24 and reads like the network blipped. #177.
+     *
+     * The meter has counted since then and nothing read it, so a turn still
+     * learned about the ceiling by dying at it. These pin the two halves that
+     * matter: that it stops with room to spare, and that it does NOT bind
+     * anywhere the ceiling does not exist.
+     */
+    describe("the subrequest ceiling", () => {
+      /** A meter at `count` of fifty, in the shape `withMeter` puts on env. */
+      const meter = (count: number) => ({
+        SUBREQUESTS: { count, limit: 50, runtimeLimit: { hit: false } },
+      });
+
+      /**
+       * `headroom` answers null off Workers, so the gate is inert in this suite
+       * unless the runtime says otherwise. Faked rather than skipped, because
+       * "inert in tests" is exactly the bug that would make these pass while
+       * production kept dying.
+       */
+      const onWorkers = (yes: boolean) =>
+        vi.stubGlobal("navigator", yes ? { userAgent: "Cloudflare-Workers" } : undefined);
+
+      afterEach(() => vi.unstubAllGlobals());
+
+      it("stops the turn before the platform does, and says which ceiling it was", async () => {
+        onWorkers(true);
+        forever();
+        const turn = await runAgentTurn({
+          ...base,
+          env: { ...base.env, ...meter(45) },
+          tools: searching(),
+          budget: { maxSteps: 50 },
+        });
+
+        expect(turn.paused?.reason).toBe("runtime");
+        // Not the other two sentences. A person told to ask for something
+        // narrower, when nothing they could narrow would have helped, retries
+        // four times — which is the whole argument `TOKEN_INSTRUCTION` already
+        // makes about not being `BUDGET_INSTRUCTION`.
+        const told = (sentTranscripts.at(-1) ?? []).filter((m) => m.role === "system");
+        expect(String(told.at(-1)?.content)).toContain("hard ceiling on the platform");
+        expect(String(told.at(-1)?.content)).not.toContain("every tool call allowed");
+        expect(String(told.at(-1)?.content)).not.toContain("token allowance");
+      });
+
+      it("leaves a turn with room to work alone", async () => {
+        onWorkers(true);
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        const turn = await runAgentTurn({
+          ...base,
+          env: { ...base.env, ...meter(2) },
+          tools: searching(),
+          budget: { maxSteps: 50 },
+        });
+
+        expect(turn.paused).toBeUndefined();
+        expect(turn.text).toBe("done");
+      });
+
+      it("does not bind where there is no such ceiling, however full the count", async () => {
+        // The trap this was written around. `planLimits` answers Free — and so
+        // fifty — whenever `WORKER_PLAN` is unset, which is every Docker and
+        // Node install, where the platform imposes no subrequest cap at all.
+        // A gate that trusted the number would cut a self-hoster's turn short
+        // at forty-five for a limit that does not exist, which is worse than
+        // the bug it fixes.
+        onWorkers(false);
+        forever();
+        const turn = await runAgentTurn({
+          ...base,
+          env: { ...base.env, ...meter(49) },
+          tools: searching(),
+          budget: { maxSteps: 3 },
+        });
+
+        expect(turn.paused?.reason).toBe("budget");
+        expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(3);
+      });
+
+      it("does not bind when nothing is counting, which is every path but chat", async () => {
+        // A scheduled run and the eval both call `runAgentTurn` with a plain
+        // env and no middleware to build a meter. They spend subrequests too;
+        // they simply have nobody counting, and guessing on their behalf would
+        // be guessing about the cron Worker, which does this arithmetic by hand.
+        onWorkers(true);
+        forever();
+        const turn = await runAgentTurn({ ...base, tools: searching(), budget: { maxSteps: 3 } });
+
+        expect(turn.paused?.reason).toBe("budget");
+      });
+
+      it("answers the calls it refuses, so the next request is not a 400", async () => {
+        onWorkers(true);
+        scripted([
+          pass("", [
+            { id: "a", name: "search", arguments: "{}" },
+            { id: "b", name: "search", arguments: "{}" },
+          ]),
+        ]);
+        const turn = await runAgentTurn({
+          ...base,
+          env: { ...base.env, ...meter(49) },
+          tools: searching(),
+          budget: { maxSteps: 50 },
+        });
+
+        expect(turn.steps.every((s) => s.status === "refused")).toBe(true);
+        const answered = (sentTranscripts.at(-1) ?? []).filter((m) => m.role === "tool");
+        expect(answered).toHaveLength(2);
       });
     });
 

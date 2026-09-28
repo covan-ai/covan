@@ -13,19 +13,29 @@ import type { RuntimeLimitFlag } from "./runtime-limit";
  * `fetch`, which the OpenAI SDK reports as `Connection error.` An evening was
  * lost to that on 2026-09-24.
  *
- * **This is observability, not a gate, and the distinction is deliberate.** A
- * Paid chat turn's measured worst case is roughly 300 of 10,000, so a second
- * budget enforced here could only ever refuse turns that would have finished.
- * It does exactly one thing besides count: at `WARN_AT` of the limit it raises
- * the runtime-limit flag, so the honest sentence — *ask for something narrower*
- * — reaches the person **before** the first disguised failure rather than after
- * it.
+ * **This counts, and since 2026-09-28 it also stops the tool loop.** The first
+ * version of this file argued at length that it was observability and not a
+ * gate, on the grounds that a Paid turn's measured worst case is roughly 300 of
+ * 10,000 — so a budget enforced here could only refuse turns that would have
+ * finished. That argument is about **Paid**, and it is still true there:
+ * `headroom` below never binds at 10,000.
  *
- * WHERE IT MATTERS MOST is the open build, not covan.app. On Free the cap is
- * fifty, and an eight-step turn spending every step on a connected app already
- * needs about seventy-five. A self-hoster meeting that today gets
- * `Connection error.`; with this they get a sentence that names the real
- * problem.
+ * The gate is for **Free**, which is the open build. On Free the cap is fifty
+ * and an eight-step turn spending every step on a connected app already needs
+ * about seventy-five, so the ceiling is not hypothetical — it is where a
+ * self-hoster's first real question lands. Counting alone let that turn walk
+ * into the wall and report `Connection error.`; `lib/harness/loop.ts` now asks
+ * `headroom` before each pass and stops honestly instead. That is #177, and the
+ * warn flag below is kept beside it because the two do different jobs: the flag
+ * explains a failure that already happened, and the gate is what stops there
+ * being one.
+ *
+ * **It binds on Cloudflare and nowhere else.** `planLimits` answers Free — and
+ * therefore fifty — whenever `WORKER_PLAN` is unset, which is every Node and
+ * Docker deployment, where no such ceiling exists at all. A gate that trusted
+ * the number alone would cut a self-hosted turn short at forty-five for a limit
+ * that is not there, which is a worse bug than the one it fixes. So `headroom`
+ * asks where it is running first, the way `lib/routines/source.ts` does.
  *
  * HOW IT TRAVELS. On `env`, which is the one thing every client factory already
  * receives. Threading a parameter instead would mean touching all thirty-nine
@@ -94,6 +104,35 @@ export function meteredFetch(env: Pick<RoutineEnv, "SUBREQUESTS">): typeof fetch
     if (meter.count >= meter.limit * WARN_AT) meter.runtimeLimit.hit = true;
     return fetch(input, init);
   };
+}
+
+/**
+ * How many more outbound calls this invocation can make, or `null` when nothing
+ * is counting or the count does not bind.
+ *
+ * `null` rather than `Infinity` so a caller has to decide what "no ceiling"
+ * means rather than compare against a number that silently always passes. Two
+ * ways to get it, and both are the ordinary case somewhere:
+ *
+ * - **No meter.** Every path outside a chat turn — a scheduled run, the eval,
+ *   a unit test. Those spend subrequests too; they simply have nobody counting,
+ *   and a gate that guessed would be guessing about the cron Worker, which
+ *   already does this arithmetic by hand in `lib/routines/dispatcher.ts`.
+ * - **Not on Workers.** `planLimits` answers fifty for an unset `WORKER_PLAN`,
+ *   which is every Docker and Node install — and there the platform imposes no
+ *   subrequest ceiling whatsoever. Reading the number there would stop turns
+ *   that were going to finish.
+ *
+ * The runtime check is the one `lib/routines/source.ts:26-28` established and
+ * `workers-bundle.static.test.ts` already polices the spelling of.
+ */
+export function headroom(env: Pick<RoutineEnv, "SUBREQUESTS">): number | null {
+  const meter = env.SUBREQUESTS;
+  if (!meter) return null;
+  const onWorkers =
+    typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+  if (!onWorkers) return null;
+  return Math.max(0, meter.limit - meter.count);
 }
 
 /**

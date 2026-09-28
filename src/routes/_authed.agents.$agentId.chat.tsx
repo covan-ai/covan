@@ -430,7 +430,7 @@ function ChatTab() {
   const [stoppedShort, setStoppedShort] = useState<{
     sessionId: string;
     messageId: string;
-    reason: "budget" | "tokens";
+    reason: "budget" | "tokens" | "runtime";
   } | null>(null);
   // The reply a continuation is being written into, so the text arriving can
   // be drawn on the end of it rather than under it as a second answer.
@@ -597,7 +597,7 @@ function ChatTab() {
     let ranLong = false;
     // And which ceiling stopped it, if one did. Same reason it is local: the
     // reply it belongs to does not have an id until `done`.
-    let ranOut: "budget" | "tokens" | null = null;
+    let ranOut: "budget" | "tokens" | "runtime" | null = null;
 
     const controller = new AbortController();
     streamAbort.current = controller;
@@ -777,7 +777,11 @@ function ChatTab() {
             // gives at length: a toast is gone in four seconds and leaves the
             // half-finished answer sitting there looking whole. What it becomes
             // instead is a line and a button under the reply.
-            if (event.reason === "budget" || event.reason === "tokens") {
+            if (
+              event.reason === "budget" ||
+              event.reason === "tokens" ||
+              event.reason === "runtime"
+            ) {
               ranOut = event.reason;
             }
           } else if (event.type === "truncated") {
@@ -1602,7 +1606,12 @@ function ChatTab() {
                                 <span className="text-xs text-muted-foreground">
                                   {stoppedShort.reason === "tokens"
                                     ? "This turn reached the most one answer is allowed to spend."
-                                    : "This turn used every tool call it is allowed."}
+                                    : stoppedShort.reason === "runtime"
+                                      ? // Neither of our budgets — the platform. Nothing to
+                                        // narrow, so the sentence points at the one thing that
+                                        // does work: the count resets per turn.
+                                        "This turn reached how much this deployment can do in one go."
+                                      : "This turn used every tool call it is allowed."}
                                 </span>
                                 <button
                                   type="button"

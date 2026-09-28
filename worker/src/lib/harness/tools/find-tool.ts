@@ -121,6 +121,77 @@ function parameterCount(tool: ComposioTool): number {
 }
 
 /**
+ * Words too common to tell two operations apart.
+ *
+ * Short and deliberately not a general stop-word list: every entry here is a
+ * word that appears in a Composio slug often enough that matching on it says
+ * nothing. `GOOGLECALENDAR_EVENTS_LIST` and `GOOGLECALENDAR_EVENTS_GET` both
+ * contain `EVENTS`; a query saying "get the event" should be separated by
+ * `GET`, not tied by `EVENT`.
+ */
+const UNHELPFUL_WORDS = new Set(["a", "an", "the", "for", "from", "of", "in", "on", "to", "my"]);
+
+/** `EVENTS` and `EVENT` are the same word for this purpose. Nothing more clever. */
+function stem(word: string): string {
+  return word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word;
+}
+
+/** The words of a query that are worth comparing against anything. */
+function meaningfulWords(query: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of query.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (!raw || UNHELPFUL_WORDS.has(raw)) continue;
+    out.add(stem(raw));
+  }
+  return out;
+}
+
+/**
+ * How many of the query's own words this operation's name actually contains.
+ *
+ * WHY THIS EXISTS. On 2026-09-26 a person asked an agent to delete a few
+ * recurring events. `find_tool` was called with "delete event google calendar"
+ * and Composio ranked `GOOGLECALENDAR_CLEAR_CALENDAR` — *"clears a primary
+ * calendar by deleting all events from it"* — **above**
+ * `GOOGLECALENDAR_DELETE_EVENT`. The model read in order, took the first, and
+ * emptied a real calendar. #201.
+ *
+ * WHY IT IS NOT A BLAST-RADIUS RULE. #201 considered de-ranking operations that
+ * act on everything and declined, for a reason that still holds: every such
+ * rule is a string match on vendor description prose, and one that de-ranks the
+ * *correct* operation trades this failure for a new one. This rule never asks
+ * what an operation does. It asks how much of the question the operation's own
+ * name answers — `DELETE` ✓ `EVENT` ✓ against nothing — so it cannot mislabel a
+ * safe operation as dangerous, and the worst it can do is reorder two equally
+ * good candidates.
+ *
+ * Scored against the slug's segments rather than the raw string, so `EVENT` is
+ * a word and not a substring of something else.
+ *
+ * WORDS NAMING THE APPLICATION SCORE NOTHING, and that is the part that makes
+ * this work rather than backfire. Every slug opens with its toolkit —
+ * `GOOGLECALENDAR_…` — and a person's query usually names the application too,
+ * so `calendar` is inside every candidate in a Google Calendar result. Left in,
+ * it hands `CLEAR_CALENDAR` a point for being in the application it is in,
+ * which is the opposite of telling two candidates apart. Judged per candidate
+ * rather than once for the query, because the candidates can come from
+ * different applications and a word is only uninformative about its own.
+ */
+function relevance(tool: ComposioTool, words: Set<string>): number {
+  if (words.size === 0) return 0;
+  const app = tool.toolkit.toLowerCase();
+  const segments = new Set(tool.slug.toLowerCase().split("_").map(stem));
+  let score = 0;
+  for (const word of words) {
+    // `google` and `calendar` are both inside `googlecalendar`, which is how a
+    // toolkit slug is spelled — so this is a containment test, not equality.
+    if (app.includes(word)) continue;
+    if (segments.has(word)) score += 1;
+  }
+  return score;
+}
+
+/**
  * How many connected applications get asked the question in their own right.
  *
  * A ceiling on requests per search, not a judgement about how many connections a
@@ -341,6 +412,11 @@ export const findToolTool: AgentTool = {
 
     const query = input.query.trim();
     const named = typeof input.slug === "string" ? input.slug.trim().toUpperCase() : "";
+    // What the model actually asked for, in the form the ranking below compares
+    // against. Read from the query it typed rather than from the shortened
+    // retry, because the retry is a workaround for the catalogue's matching and
+    // the full question is the better statement of intent.
+    const queryWords = meaningfulWords(query);
 
     // The same search, asked twice in one turn. Answered from what it said the
     // first time, and said so — see `searchMemo` in `registry.ts` for the
@@ -517,10 +593,21 @@ export const findToolTool: AgentTool = {
     // Connected applications first. Not a cosmetic sort: the model reads in
     // order, and a list whose first entry is an operation nobody can run is a
     // list that invites a call that cannot succeed.
+    //
+    // Then, within one application, the operation whose name answers more of
+    // the question. Second and never first: connectedness is a fact about what
+    // can run, relevance is a judgement about what was meant, and a judgement
+    // must not be able to lift an operation nobody can call. See `relevance`
+    // for the calendar somebody lost to the old order.
+    //
+    // A stable sort, so a tie is left exactly as the catalogue returned it —
+    // when nothing scores, this whole comparison is a no-op and the order is
+    // Composio's, which is the right thing for it to degrade to.
     const ranked = [...candidates].sort((a, b) => {
       const ac = byToolkit.has(a.toolkit) ? 0 : 1;
       const bc = byToolkit.has(b.toolkit) ? 0 : 1;
-      return ac - bc;
+      if (ac !== bc) return ac - bc;
+      return relevance(b, queryWords) - relevance(a, queryWords);
     });
 
     if (input.detail === true) {

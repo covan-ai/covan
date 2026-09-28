@@ -2,6 +2,7 @@ import type OpenAI from "openai";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createOpenAI } from "./openai";
 import { createAnthropic } from "./anthropic";
+import type { SubrequestMeter } from "./subrequests";
 import {
   providerFor,
   acceptsTemperature,
@@ -121,6 +122,20 @@ export type CompletionEnv = {
   OPENAI_BASE_URL?: string;
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_BASE_URL?: string;
+  /**
+   * The request's subrequest count, when something is counting.
+   *
+   * Both client factories have taken it since `lib/subrequests.ts` existed —
+   * they wrap `fetch` with it — but this type did not say so, and a shape that
+   * is passed everywhere and declared nowhere is one nothing can read. The
+   * tool loop needs to read it: it asks how much room is left before starting
+   * another pass, so that a turn on Workers Free stops honestly instead of at
+   * the wall. See `headroom`.
+   *
+   * Optional, and absent is the ordinary case — a scheduled run, the eval, a
+   * unit test. Absent means "nobody is counting", never "zero left".
+   */
+  SUBREQUESTS?: SubrequestMeter;
 };
 
 export type CompletionRequest = {

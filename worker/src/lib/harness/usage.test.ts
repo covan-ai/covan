@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   MESSAGE_OUTCOMES,
@@ -104,15 +105,28 @@ describe("usageColumns", () => {
 });
 
 describe("MESSAGE_OUTCOMES", () => {
-  it("says exactly what 0065's check constraint allows", () => {
+  it("says exactly what the check constraint allows, as the migrations left it", () => {
     // A value here that the constraint does not know is a 400 from PostgREST
     // on a reply that was otherwise fine, and nothing else would catch it
     // until production: the column is written by the worker and read by
     // nobody the type checker can see.
-    const sql = readFileSync(
-      "../supabase/migrations/0065_what_one_turn_was_and_what_it_all_cost.sql",
-      "utf8",
-    );
+    //
+    // Read from whichever migration redefined the constraint LAST, rather than
+    // from 0065 by name, because that is what the database actually holds. The
+    // by-name version passed for as long as there was one file, and would have
+    // failed the day a second one widened it — which happened in 0067, and is
+    // the case worth being right about rather than the case worth hard-coding.
+    const dir = "../supabase/migrations";
+    const defining = readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort()
+      .filter((f) => /outcome in \(/.test(readFileSync(join(dir, f), "utf8")));
+
+    // If this is empty the assertion below would compare two empty lists and
+    // pass against nothing at all.
+    expect(defining.length).toBeGreaterThan(0);
+
+    const sql = readFileSync(join(dir, defining[defining.length - 1]), "utf8");
     const allowed = [...sql.matchAll(/outcome in \(([^)]*)\)/g)]
       .flatMap((m) => [...m[1].matchAll(/'([a-z_]+)'/g)].map((v) => v[1]))
       .sort();

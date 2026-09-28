@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { meteredFetch, subrequestMeter, subrequestReport, withMeter, WARN_AT } from "./subrequests";
+import {
+  headroom,
+  meteredFetch,
+  subrequestMeter,
+  subrequestReport,
+  withMeter,
+  WARN_AT,
+} from "./subrequests";
 import { runtimeLimitFlag } from "./runtime-limit";
 
 /**
@@ -89,5 +96,46 @@ describe("counting what the platform counts", () => {
     const meter = subrequestMeter({ WORKER_PLAN: "paid" }, runtimeLimitFlag());
     meter.count = 300;
     expect(subrequestReport(meter)).toBe("subrequests: 300 counted of 10000 allowed (3%)");
+  });
+});
+
+describe("headroom", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const onWorkers = (yes: boolean) =>
+    vi.stubGlobal("navigator", yes ? { userAgent: "Cloudflare-Workers" } : undefined);
+
+  it("says how many calls are left, so the loop can stop before the wall", () => {
+    onWorkers(true);
+    const meter = subrequestMeter({}, runtimeLimitFlag());
+    meter.count = 42;
+    expect(headroom(withMeter({}, meter))).toBe(8);
+  });
+
+  it("answers null when nothing is counting, which is every path but a chat turn", () => {
+    // Null rather than a large number, so a caller has to decide what "no
+    // ceiling" means instead of comparing against something that silently
+    // always passes.
+    onWorkers(true);
+    expect(headroom({})).toBeNull();
+  });
+
+  it("answers null off Workers, where the ceiling does not exist", () => {
+    // The whole reason this function exists rather than the arithmetic being
+    // written inline. `planLimits` answers Free — and so fifty — for an unset
+    // `WORKER_PLAN`, which is every Docker and Node install; there the platform
+    // imposes no subrequest cap at all, and a gate reading the number would
+    // stop turns that were going to finish.
+    onWorkers(false);
+    const meter = subrequestMeter({}, runtimeLimitFlag());
+    meter.count = 49;
+    expect(headroom(withMeter({}, meter))).toBeNull();
+  });
+
+  it("floors at zero rather than going negative past the cap", () => {
+    onWorkers(true);
+    const meter = subrequestMeter({}, runtimeLimitFlag());
+    meter.count = 80;
+    expect(headroom(withMeter({}, meter))).toBe(0);
   });
 });

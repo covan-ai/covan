@@ -19,6 +19,7 @@ import {
 } from "./budget";
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
 import { addCounts } from "./usage";
+import { headroom } from "../subrequests";
 
 /**
  * The loop that turns one question into however many model calls it takes.
@@ -151,12 +152,20 @@ export type PausedTurn = {
    * `tokens` is the cost ceiling rather than the step one, and it is a separate
    * fact on purpose: a turn that stopped because it was expensive, reported as
    * one that ran out of tool calls, sends the person to narrow the wrong thing.
+   * `runtime` is the third of those, and the same argument again: it is the
+   * platform's ceiling rather than either of ours, and the thing to do about it
+   * is different from both.
    *
-   * Widening this needed no migration — `lib/harness/turn.ts` persists a paused
-   * turn only for `confirmation`, because that is the only reason there is
-   * anything to come back to.
+   * **Widening this is not free, which is not obvious from here.** No migration
+   * was needed for `tokens`, because `lib/harness/turn.ts` persists a paused
+   * turn only for `confirmation`. But `replyOutcome` in `harness/usage.ts`
+   * returns this value straight into `messages.outcome`, which carries a check
+   * constraint — so a value the database has not been told about fails the
+   * insert and the person gets "failed to persist assistant message" instead of
+   * the reply. `runtime` is in `0067`. It is also sent to the browser, where
+   * the chat screen writes a different sentence per reason.
    */
-  reason: "confirmation" | "budget" | "tokens";
+  reason: "confirmation" | "budget" | "tokens" | "runtime";
   messages: CompletionMessage[];
   call?: ToolCall;
   summary?: string;
@@ -281,6 +290,48 @@ const TOKEN_INSTRUCTION =
   "you already have. Say plainly, in one sentence, what you were not able to finish — and " +
   "if the material you were working through was large, say so, because that is the thing " +
   "to narrow next time.";
+
+/**
+ * What the model is told when the platform is about to stop it.
+ *
+ * The third of three, and a different fact from either of the others: neither
+ * the tool budget nor the token allowance has run out, the runtime this is
+ * deployed on simply will not make another outbound call. So the advice is
+ * different too — there is nothing for the person to narrow, and asking again
+ * in a fresh turn genuinely works, because the count resets per invocation.
+ *
+ * It does not say "subrequest". A person reading their chat has no reason to
+ * know what Cloudflare charges an invocation for, and #176's whole lesson was
+ * that naming the real ceiling matters to whoever is debugging, not to whoever
+ * is asking. `subrequestReport` is where the number goes.
+ */
+const RUNTIME_INSTRUCTION =
+  "This turn has reached the limit of how much this deployment can do in one go — not a " +
+  "budget, a hard ceiling on the platform it runs on. Answer now with what you already " +
+  "have. Say plainly, in one sentence, what is still outstanding, and that asking again " +
+  "will pick it up from here.";
+
+/**
+ * Outbound calls kept back so the turn can finish saying so.
+ *
+ * Counted rather than chosen, from what `routes/chat.ts` spends **after** the
+ * loop returns: the final no-tools model call (1), persisting the reply (1, or
+ * 2 on a resumed turn, which reads the earlier half before appending to it),
+ * writing the steps (1), recording what it spent against the allowance (1), and
+ * announcing a pause where there is one (1). So 6, and this is 8 — the two
+ * spare are for the session-title settle on a first turn, and for being wrong.
+ *
+ * Written down here for the reason `lib/routines/dispatcher.ts` writes its own
+ * arithmetic down beside `BATCH_SIZE`: `MAX_STEPS` was doubled on a cost
+ * argument with no runtime argument anywhere near it, and nothing in the
+ * codebase could have caught that. A number with its derivation beside it can
+ * at least be argued with.
+ *
+ * Erring high is the safe direction. Too large stops a turn a little early and
+ * says so; too small stops it at the wall, where the reply cannot be written
+ * and the person gets an error instead.
+ */
+const SUBREQUEST_RESERVE = 8;
 
 /**
  * What the model is told when it crosses the soft ceiling with a leg in hand.
@@ -575,7 +626,20 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * `paused.reason` says — is decided in one place and cannot disagree with
    * itself. Null while the turn is still allowed to work.
    */
-  let stopped: "budget" | "tokens" | null = null;
+  let stopped: "budget" | "tokens" | "runtime" | null = null;
+  /**
+   * Whether the platform is about to stop this turn whatever we do.
+   *
+   * Asked here rather than once at the top, because the count only moves
+   * while the turn is running — every tool call and every model call spends
+   * one — so a question asked before the first pass is a question about a
+   * turn that has not happened yet. Null means nothing is counting, or
+   * nothing binds: see `headroom`.
+   */
+  const outOfRoom = () => {
+    const left = headroom(opts.env);
+    return left !== null && left <= SUBREQUEST_RESERVE;
+  };
   /**
    * What the turn has spent so far, prompt plus completion.
    *
@@ -711,6 +775,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         lastPromptTokens = event.usage.promptTokens ?? lastPromptTokens;
         tokensSpent += (event.usage.promptTokens ?? 0) + (event.usage.completionTokens ?? 0);
         if (maxTurnTokens && tokensSpent >= maxTurnTokens && !stopped) stopped = "tokens";
+        // The platform's ceiling, checked in the same place and for the same
+        // reason: this pass has just spent one, so this is where the answer
+        // changes. Last of the three, so a turn that hit a ceiling of ours
+        // keeps saying so — ours are the ones the person can do something
+        // about.
+        if (!stopped && outOfRoom()) stopped = "runtime";
         finishReason = event.finishReason;
       }
     }
@@ -754,18 +824,26 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     messages.push({ role: "assistant", content: passText, toolCalls: calls });
 
     for (const call of calls) {
-      // Either ceiling, met mid-batch. `stopped` is already set when the token
-      // ceiling was crossed on the pass that produced these calls — `mayAsk`
-      // cannot un-ask for them, so they are refused here instead.
-      const out: "budget" | "tokens" | null =
-        stopped ?? (steps.length >= hardSteps ? "budget" : null);
+      // Any ceiling, met mid-batch. `stopped` is already set when the token or
+      // the platform ceiling was crossed on the pass that produced these calls —
+      // `mayAsk` cannot un-ask for them, so they are refused here instead.
+      //
+      // `outOfRoom` is re-asked per call rather than once for the batch: a pass
+      // asking for eight connected-app calls spends eight subrequests running
+      // them, so the answer genuinely changes between the first and the last.
+      const out: "budget" | "tokens" | "runtime" | null =
+        stopped ??
+        (steps.length >= hardSteps ? "budget" : null) ??
+        (outOfRoom() ? "runtime" : null);
       if (out) {
         // Every remaining call still needs an answer or the next request is a
         // 400, so they are answered with the refusal rather than dropped.
         const refusal =
           out === "tokens"
             ? "refused: this turn has used the whole token allowance one turn is given"
-            : "refused: this turn has used every tool call it is allowed";
+            : out === "runtime"
+              ? "refused: this deployment cannot make another outbound call in this turn"
+              : "refused: this turn has used every tool call it is allowed";
         messages.push({ role: "tool", toolCallId: call.id, content: refusal });
         const refused = parseArguments(call.arguments);
         record({
@@ -774,7 +852,11 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           tool: call.name,
           request: refused.ok ? refused.args : {},
           resultExcerpt:
-            out === "tokens" ? "refused: token ceiling" : "refused: tool budget exhausted",
+            out === "tokens"
+              ? "refused: token ceiling"
+              : out === "runtime"
+                ? "refused: runtime ceiling"
+                : "refused: tool budget exhausted",
           // What the model was shown, which is the refusal and not the
           // excerpt above — the two differ here, and the point of recording
           // this at all is that they can.
@@ -900,10 +982,19 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     }
 
     if (steps.length >= hardSteps && !stopped) stopped = "budget";
+    // And again after the tools have run, because they are what actually
+    // spends the count: eight connected-app calls is eight subrequests that
+    // were not there when this pass began.
+    if (!stopped && outOfRoom()) stopped = "runtime";
     if (stopped) {
       messages.push({
         role: "system",
-        content: stopped === "tokens" ? TOKEN_INSTRUCTION : BUDGET_INSTRUCTION,
+        content:
+          stopped === "tokens"
+            ? TOKEN_INSTRUCTION
+            : stopped === "runtime"
+              ? RUNTIME_INSTRUCTION
+              : BUDGET_INSTRUCTION,
       });
     } else {
       // Past the soft ceiling with a leg still in hand. Said once per boundary

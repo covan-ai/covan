@@ -20,18 +20,27 @@ import type { PassUsage } from "./loop";
 export type TurnUsage = CompletionUsage & { passes: PassUsage[] };
 
 /**
- * How a reply ended — `messages.outcome`, and the same list 0065's check
- * constraint holds.
+ * How a reply ended — `messages.outcome`, and the same list the check
+ * constraint holds. Declared in 0065 and widened by 0067.
  *
  * A list rather than a bare union so the two can be compared: a value the
  * constraint does not know is a 400 from PostgREST on a reply that was
  * otherwise fine, and nothing between here and production would say so.
+ * `usage.test.ts` reads both migrations and asserts this list equals what they
+ * leave behind, which is what makes adding a value here a two-file change on
+ * purpose.
  */
 export const MESSAGE_OUTCOMES = [
   "answered",
   "paused",
   "budget",
   "tokens",
+  // The platform's ceiling rather than either of ours — see `RUNTIME_INSTRUCTION`
+  // in `lib/harness/loop.ts`. Separate from `budget` because recording it as a
+  // tool-budget stop would hide the one event the subrequest gate exists to make
+  // visible, which is the same argument that split `tokens` off in the first
+  // place.
+  "runtime",
   "cut_short",
   "empty",
   "truncated",
@@ -154,11 +163,12 @@ export function usageColumns(usage: TurnUsage): {
  * reply claiming forever to be waiting on somebody who can never answer it,
  * which is exactly the false positive `messages.outcome` exists to remove.
  *
- * `budget` and `tokens` are unaffected by that: nothing is parked for either
- * of them anywhere, because there is no question for a person to answer.
+ * `budget`, `tokens` and `runtime` are unaffected by that: nothing is parked
+ * for any of them anywhere, because there is no question for a person to
+ * answer.
  */
 export function replyOutcome(input: {
-  paused: { reason: "confirmation" | "budget" | "tokens" } | null;
+  paused: { reason: "confirmation" | "budget" | "tokens" | "runtime" } | null;
   finishReason: string | null;
   /** Whether this turn will actually be parked for somebody to answer. */
   parked: boolean;

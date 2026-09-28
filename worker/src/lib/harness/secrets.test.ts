@@ -4,14 +4,18 @@ import type { ToolConnection } from "./connections";
 import type { ToolEnv } from "./registry";
 
 /**
- * Where a connection's credential comes from, now that it is not always the
- * connection's own.
+ * Where a connection's credential comes from, and where it does not.
  *
- * A project connected through a Supabase account holds no ciphertext of its
- * own (0061): the token belongs to the account and exactly one copy of it
- * exists. What has to be true is that this file follows `account_id` to find
- * it, and that a row naming no account fails loudly rather than reaching for a
- * column that is null.
+ * Two answers now rather than three. An ordinary connection holds its own
+ * encrypted envelope, and a connected application holds nothing at all —
+ * Composio authenticates the deployment, so the key is on the environment and
+ * no row is read. The third answer, a project borrowing a Supabase account's
+ * Management token (0061), went with that feature in 0067.
+ *
+ * What has to stay true is the second one: a `composio` row must never fall
+ * through to the ordinary read, which would find a NULL ciphertext and fail
+ * with a sentence about a missing credential that is true of every row and
+ * explains nothing.
  */
 const KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -42,12 +46,11 @@ function connection(over: Partial<ToolConnection> = {}): ToolConnection {
     id: "conn-1",
     workspace_id: "ws-1",
     label: "covan-prod",
-    transport: "supabase",
-    base_url: "https://api.supabase.com",
+    transport: "sql",
+    base_url: "https://db.example.com/rest/v1",
     auth_kind: "static_header",
     allowed_methods: ["GET"],
-    config: { ref: "abcdefghijklmnop" },
-    account_id: "acct-1",
+    config: {},
     toolkit_slug: null,
     status: "active",
     ...over,
@@ -60,34 +63,15 @@ beforeEach(() => {
 });
 
 describe("authHeaders", () => {
-  it("reads a connected project's token from the account it borrows", async () => {
-    rows.supabase_accounts = {
-      token_ciphertext: await encryptSecret(
-        JSON.stringify({ headers: { Authorization: "Bearer sbp_token" } }),
-        KEY,
-      ),
-    };
-
-    const headers = await authHeaders(ENV, connection());
-
-    expect(headers).toEqual({ Authorization: "Bearer sbp_token" });
-    expect(reads).toEqual([{ table: "supabase_accounts", column: "id", id: "acct-1" }]);
-  });
-
   it("still reads an ordinary connection's own credential", async () => {
     rows.tool_connections = {
       secret_ciphertext: await encryptSecret(JSON.stringify({ headers: { apikey: "k" } }), KEY),
     };
 
-    const headers = await authHeaders(ENV, connection({ transport: "sql", account_id: null }));
+    const headers = await authHeaders(ENV, connection());
 
     expect(headers).toEqual({ apikey: "k" });
     expect(reads[0].table).toBe("tool_connections");
-  });
-
-  it("says so when a Supabase row names no account", async () => {
-    await expect(authHeaders(ENV, connection({ account_id: null }))).rejects.toThrow(/account/i);
-    expect(reads).toEqual([]);
   });
 
   it("authenticates a connected application from the environment, reading no row", async () => {
@@ -97,7 +81,7 @@ describe("authHeaders", () => {
     // arrangement that id is the only thing separating two tenants.
     const headers = await authHeaders(
       { ...ENV, COMPOSIO_API_KEY: "ck_test" } as ToolEnv,
-      connection({ transport: "composio", auth_kind: "composio", account_id: null }),
+      connection({ transport: "composio", auth_kind: "composio" }),
     );
 
     expect(headers).toEqual({ "x-api-key": "ck_test" });
@@ -105,8 +89,8 @@ describe("authHeaders", () => {
   });
 
   it("refuses a connected application on a deployment with no key", async () => {
-    await expect(
-      authHeaders(ENV, connection({ transport: "composio", account_id: null })),
-    ).rejects.toThrow(/COMPOSIO_API_KEY/);
+    await expect(authHeaders(ENV, connection({ transport: "composio" }))).rejects.toThrow(
+      /COMPOSIO_API_KEY/,
+    );
   });
 });

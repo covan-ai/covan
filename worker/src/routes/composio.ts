@@ -92,7 +92,7 @@ const grantSchema = z.object({
 
 /** The columns a client may select. `connected_account_id` is not among them. */
 const CONNECTION_COLUMNS =
-  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, toolkit_slug, status, created_by, created_at, updated_at";
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, created_by, created_at, updated_at";
 
 function frontendOrigin(env: Bindings): string {
   return env.ALLOWED_ORIGIN.split(",")[0].trim().replace(/\/+$/, "");
@@ -301,7 +301,6 @@ composio.post("/composio/connect", async (c) => {
       // hundred, and finding it again would mean searching for it.
       config: described.toolkit.logo ? { logo: described.toolkit.logo } : {},
       secret_ciphertext: null,
-      account_id: null,
       toolkit_slug: toolkit,
       connected_account_id: link.connectedAccountId,
       composio_user_id: composioUserId,

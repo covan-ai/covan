@@ -87,7 +87,7 @@ toolConnections.get("/tool-connections", async (c) => {
   const { data, error } = await db
     .from("tool_connections")
     .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, toolkit_slug, status, created_by, created_at, updated_at",
+      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, created_by, created_at, updated_at",
     )
     .order("label", { ascending: true });
   if (error) return c.json({ error: "failed to load connections" }, 500);
@@ -206,7 +206,7 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
     })
     .eq("id", c.req.param("id"))
     .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, account_id, toolkit_slug, status, created_by, created_at, updated_at",
+      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, created_by, created_at, updated_at",
     )
     .maybeSingle();
   if (error) return c.json({ error: "failed to update connection" }, insertErrorStatus(error));

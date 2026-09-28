@@ -124,21 +124,13 @@ export type SourceDTO = { id: string | null; name: string };
 export type ToolConnectionDTO = {
   id: string;
   label: string;
-  transport: "http" | "sql" | "supabase" | "composio";
+  transport: "http" | "sql" | "composio";
   baseUrl: string;
   allowedMethods: string[];
   /** What the agent is told this service holds, when anybody has recorded it. */
   summary: string | null;
   /** The read-only function a `sql` connection speaks through. */
   rpc: string | null;
-  /**
-   * The Supabase account this project borrows its token from, for `supabase`
-   * connections and null for the rest. The integrations page groups by it, so
-   * a person sees which projects would go if they disconnected the account.
-   */
-  accountId: string | null;
-  /** The Supabase project ref, for a `supabase` connection. */
-  projectRef: string | null;
   /**
    * The Composio application this row connects — `gmail`, `linear` — or null.
    *
@@ -163,7 +155,7 @@ export type ToolConnectionDTO = {
 };
 
 /** The transports this build knows. An unlisted one is not silently an API. */
-const TRANSPORTS = ["http", "sql", "supabase", "composio"] as const;
+const TRANSPORTS = ["http", "sql", "composio"] as const;
 
 /** A connected application's mark, as a path on this API. "" when it has none. */
 function logoPathOf(stored: unknown): string {
@@ -179,7 +171,6 @@ export function mapToolConnection(row: {
   base_url: string;
   allowed_methods?: unknown;
   config?: unknown;
-  account_id?: unknown;
   toolkit_slug?: unknown;
   status?: unknown;
   created_at: string;
@@ -200,8 +191,6 @@ export function mapToolConnection(row: {
     allowedMethods: Array.isArray(row.allowed_methods) ? (row.allowed_methods as string[]) : [],
     summary: typeof config.summary === "string" ? config.summary : null,
     rpc: typeof config.rpc === "string" ? config.rpc : null,
-    accountId: typeof row.account_id === "string" ? row.account_id : null,
-    projectRef: typeof config.ref === "string" ? config.ref : null,
     toolkitSlug: typeof row.toolkit_slug === "string" ? row.toolkit_slug : null,
     // Validated again on the way out, not only on the way in. The column is a
     // jsonb a service-role write put there, and a path this API hands a
@@ -239,31 +228,6 @@ export function mapToolConnectionGrant(row: Record<string, unknown>): ToolConnec
     mode: row.mode === "always" ? "always" : "ask",
     grantedBy: typeof row.granted_by === "string" ? row.granted_by : null,
     grantedAt: toEpochMs(String(row.granted_at ?? "")),
-  };
-}
-
-/**
- * A connected Supabase account, as every screen sees it.
- *
- * `tokenHint` is four characters of a live credential and is here on purpose:
- * it is how an admin tells two tokens apart, and it is the most that can be
- * shown without showing the token. There is no field for the token itself and
- * there is no code path that could add one — no client role may select the
- * column (0061).
- */
-export type SupabaseAccountDTO = {
-  id: string;
-  tokenHint: string;
-  connectedBy: string | null;
-  createdAt: number;
-};
-
-export function mapSupabaseAccount(row: Record<string, unknown>): SupabaseAccountDTO {
-  return {
-    id: String(row.id),
-    tokenHint: String(row.token_hint ?? ""),
-    connectedBy: typeof row.connected_by === "string" ? row.connected_by : null,
-    createdAt: toEpochMs(String(row.created_at ?? "")),
   };
 }
 

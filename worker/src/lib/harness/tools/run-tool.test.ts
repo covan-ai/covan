@@ -58,7 +58,6 @@ const CONNECTION = {
   auth_kind: "composio",
   allowed_methods: ["GET"],
   config: {},
-  account_id: null,
   toolkit_slug: "gmail",
   status: "active",
 };

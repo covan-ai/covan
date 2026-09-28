@@ -405,8 +405,7 @@ a service is a row telling one of them where to go.
 
 | What you want                                                       | What it takes                                                   |
 | ------------------------------------------------------------------- | --------------------------------------------------------------- |
-| A hosted Supabase project                                           | An account token, and a tick beside the project                 |
-| A Postgres (self-hosted Supabase, your own PostgREST, any Postgres) | One row, plus the function below installed on it                |
+| A Postgres — hosted Supabase, self-hosted, any PostgREST            | One row, plus the function below installed on it                |
 | HubSpot, Stripe, Linear, any REST API with a token                  | One row                                                         |
 | Gmail, Slack, Notion, HubSpot and the other common apps             | A search, a read, and a consent screen. See **Connected apps**   |
 | A service that speaks MCP and has no HTTP API                       | A one-off addition to the code — not built, and deliberately so |
@@ -429,47 +428,16 @@ a service is a row telling one of them where to go.
   it, so name the paths that matter. For a database it is optional — the agent
   reads the schema itself the first time it asks, and remembers.
 
-### Connecting a Supabase account
-
-The shortest road to a database, and the one that installs nothing in it.
-
-On the Integrations page, under **Services an agent can call**, the Supabase
-card takes an access token — Supabase makes them under Account settings →
-Access tokens — checks it, and lists the projects it can see. Tick the ones
-agents here may read. Each one becomes an ordinary connected service, and the
-agent queries it with the same `query_database` tool it uses for everything
-else.
-
-**The token is account-wide.** It reaches every project in that Supabase
-account, not only the ones you tick, which is why connecting an account is an
-admin's to do — the same rule, for the same reason, as the workspace's own
-OpenAI key. Choosing which projects to connect afterwards is an ordinary
-write, because by then the decision that mattered has been made. The token is
-encrypted before Postgres sees it, no client role may read the column back, and
-the page shows four characters of it so two tokens can be told apart.
-
-**Read-only is still Postgres's word, not ours.** Statements go to Supabase's
-`/database/query/read-only` endpoint, which runs them as `supabase_read_only_user`
-— a role holding `pg_read_all_data` and nothing else. A hidden `INSERT`, an
-`UPDATE` inside a CTE, DDL: refused by the database, by its own rules.
-
-**Name the schema on every table.** That endpoint refuses a reference that does
-not, so `select * from public.orders` works and `select * from orders` does
-not. Covan's schema summary is written that way, so an agent that read the
-schema first — which it does — writes it that way too.
-
-Two more things worth knowing. Disconnecting the account removes the projects
-it opened, because without the token they cannot answer anything; removing one
-project leaves the rest alone. And a Supabase account is not in your workspace
-export, for the reason a credential never is — you connect it again, in the
-install that is going to use it.
-
 ### Connecting a Postgres
 
-Use this one for a Postgres that is not a hosted Supabase project, or for a
-hosted one you would rather not hand an account token for. It asks the
-opposite trade: a function installed in the database, and no account
-credential.
+This is the road to any database, a hosted Supabase project included. It asks
+for a function installed in the database and no account credential at all.
+
+There was briefly a second road — paste a Supabase Management API token, tick
+the projects — and it was removed on 2026-09-28. It was shorter, and the token
+it asked for opened **every** project in that account rather than the ticked
+ones, which is a scope nobody can narrow. If you connected a project that way,
+connect it again with the function below.
 
 Covan talks to a database over HTTPS, through PostgREST, because a Cloudflare
 Worker cannot open a raw TCP socket and Covan has to keep running on both of
@@ -554,12 +522,12 @@ rows are in your export.
 
 ### Read-only, and where that comes from
 
-For a database, whichever road it came in on: Postgres itself. A connected
-Postgres runs the statement inside the function above, which opens with `set
-local transaction read only`; a connected Supabase project runs it as
-`supabase_read_only_user`. Covan also refuses anything that does not read like
-a `SELECT` before it sends it, but that is a second line whose job is to give
-the agent a readable reason — it is not what holds.
+For a database: Postgres itself. The statement runs inside the function above,
+which opens with `set local transaction read only`, so a hidden `INSERT`, an
+`UPDATE` in a CTE or a DDL statement is refused by the database under its own
+rules. Covan also refuses anything that does not read like a `SELECT` before it
+sends it, but that is a second line whose job is to give the agent a readable
+reason — it is not what holds.
 
 For an API: the methods you allowed. The default is `GET`.
 

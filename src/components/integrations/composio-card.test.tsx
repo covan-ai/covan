@@ -84,8 +84,6 @@ function app(over: Partial<ToolConnection> = {}): ToolConnection {
     allowedMethods: ["GET"],
     summary: null,
     rpc: null,
-    accountId: null,
-    projectRef: null,
     toolkitSlug: "gmail",
     status: "active",
     logoPath: "/composio/logo?u=https%3A%2F%2Flogos.composio.dev%2Fapi%2Fgmail",

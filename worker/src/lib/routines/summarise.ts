@@ -3,7 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { resolveModel } from "../models";
 import { complete, totalTokens } from "../completion";
 import { weighTokens } from "../entitlements";
-import { temperatureFor, reasoningEffortFor } from "../prompt";
+import { temperatureFor, reasoningEffortFor, whenAndWhere } from "../prompt";
 import type { SummariseInput } from "./executor";
 
 /**
@@ -68,7 +68,18 @@ export function summariseWithModel(env: RoutineEnv) {
       messages: [
         {
           role: "system",
-          content: [input.persona, "You are running a scheduled routine for this team."]
+          // The date matters here too, with no tool in sight. "This week's
+          // entries", "anything since Friday", "is this still upcoming" are
+          // ordinary routine instructions, and a model that has to infer the
+          // date from the material it was handed is guessing — reliably, and
+          // then wrongly on the day the feed is quiet. Same line as the tool
+          // path, same zone, so a routine reads the same either side of the
+          // branch.
+          content: [
+            input.persona,
+            "You are running a scheduled routine for this team.",
+            whenAndWhere(new Date(), input.timezone),
+          ]
             .filter(Boolean)
             .join("\n\n"),
         },

@@ -266,6 +266,11 @@ describe("runRoutine", () => {
     expect(summarise).toHaveBeenCalledTimes(1);
     expect(summarise.mock.calls[0][0].persona).toBe("You are a growth specialist");
     expect(summarise.mock.calls[0][0].items).toHaveLength(2);
+    // The schedule's own zone reaches the model, so "9am" in the cron and
+    // "9am" in the answer are the same 9am. Asserted at the one place the
+    // input is built, because a field nothing fills is how `message_steps
+    // .tokens` spent a release NULL on every row.
+    expect(summarise.mock.calls[0][0].timezone).toBe("UTC");
     expect(deliverCalls).toHaveLength(1);
     expect(claimed).toEqual(expect.arrayContaining(["b", "c"]));
   });

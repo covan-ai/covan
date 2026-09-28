@@ -113,6 +113,29 @@ describe("runRoutineWithTools", () => {
     expect(system).toContain("Connected services");
   });
 
+  it("tells it what day it is, and which zone the schedule means", async () => {
+    // #192. This path writes into other people's calendars with nobody
+    // watching, and it was the only tool-running surface never told either —
+    // so "every Monday at 22:00" was written as 22:00 UTC and landed on
+    // Tuesday at 01:00 in a real Istanbul calendar, three times.
+    await runRoutineWithTools(env, db)({ ...input, timezone: "Europe/Istanbul" }, env);
+    const system = runAgentTurn.mock.calls[0][0].request.messages[0].content as string;
+    expect(system).toContain("Europe/Istanbul");
+    expect(system).toContain("Today is");
+    // The half that fixes the actual bug: an offset inside the timestamp is
+    // what Composio discards. The instruction has to name the alternative.
+    expect(system).toContain("rather than putting an offset in the timestamp");
+  });
+
+  it("falls back to UTC for a routine with no zone, rather than saying nothing", async () => {
+    // `routines.timezone` is `not null default 'UTC'`, so this is the shape a
+    // caller that forgot to thread it produces — a silent UTC is what the bug
+    // was, and silence about the date is worse than an honest UTC.
+    await runRoutineWithTools(env, db)(input, env);
+    const system = runAgentTurn.mock.calls[0][0].request.messages[0].content as string;
+    expect(system).toContain("Times mean UTC");
+  });
+
   it("resolves every id from the routine rather than letting the model send one", async () => {
     await runRoutineWithTools(env, db)(input, env);
     expect(runAgentTurn.mock.calls[0][0].ctx).toMatchObject({

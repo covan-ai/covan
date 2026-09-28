@@ -96,6 +96,60 @@ describe("listToolkitTools", () => {
     expect(out.kind === "ok" && out.more).toBe(false);
   });
 
+  it("takes the catalogue's own count when the page does not contradict it", async () => {
+    // Composio's reference documents `total_items`. Documented is not deployed
+    // — covan#172 is three published shapes their own API rejects — so it is
+    // read only when it survives being checked.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 1 },
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } }],
+          total_items: 247,
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBe(247);
+  });
+
+  it("ignores a published count that is smaller than the page in hand", async () => {
+    // Not a total of anything. A field that disagrees with what it arrived
+    // beside is a field meaning something else, and rendering it would be the
+    // unbacked number DESIGN.md forbids.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 1 },
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } }],
+          total_items: 0,
+          next_cursor: "abc",
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBeNull();
+  });
+
+  it("ignores a published count when the filter was not honoured", async () => {
+    // A foreign row means `toolkit_slug` was ignored, and then every count in
+    // the body counts the whole catalogue rather than this application.
+    const out = await listToolkitTools(
+      ENV,
+      { toolkit: "gmail", limit: 5 },
+      {
+        fetchImpl: fetchReturning({
+          items: [
+            { slug: "GMAIL_SEND_EMAIL", toolkit: { slug: "GMAIL" } },
+            { slug: "LINEAR_CREATE_ISSUE", toolkit: { slug: "LINEAR" } },
+          ],
+          total_items: 1562,
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.total).toBeNull();
+  });
+
   it("claims no total when the catalogue said there was more", async () => {
     const out = await listToolkitTools(
       ENV,

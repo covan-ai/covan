@@ -435,10 +435,15 @@ export async function searchTools(
  * would put ActiveCampaign's operations on Gmail's card, which is the exact
  * shape `DESIGN.md`'s first failure mode forbids.
  *
- * `total` is null unless it can be *earned*. Composio publishes no count on this
- * endpoint that we have verified, so the only honest total is the one a short
- * page proves: fewer rows than the limit, and no cursor, means the list is all
- * of them. Anything else and the caller renders no number at all.
+ * `total` is null unless it can be *earned*, and there are two ways to earn it.
+ * Composio's reference documents a `total_items` on this endpoint, so that is
+ * read when it is there — but documented is not the same as deployed, which is
+ * the entire subject of covan#172 (three published shapes their own API
+ * rejects), so it is read defensively rather than trusted: a number, not
+ * smaller than the page, and only when every row came back from the toolkit we
+ * asked about. Failing that, the only honest total is the one a short page
+ * proves — fewer rows than the limit, and no cursor, means the list is all of
+ * them. Anything else and the caller renders no number at all.
  */
 export async function listToolkitTools(
   env: ComposioEnv,
@@ -462,9 +467,14 @@ export async function listToolkitTools(
     .filter((t): t is ComposioTool => t !== null && t.toolkit === wanted);
 
   const more = Boolean(nextCursorOf(body));
+  // Whether the filter was honoured at all. If anything foreign came back,
+  // `toolkit_slug` was ignored — and then every count in the body is a count of
+  // the whole catalogue, so neither road to a total may be taken.
+  const filtered = tools.length === returned.length;
   // Counted off what Composio returned, not off what survived the filter —
   // otherwise dropping a foreign row would fake a short page and invent a total.
-  const total = !more && returned.length < limit ? tools.length : null;
+  const proven = !more && returned.length < limit ? tools.length : null;
+  const total = filtered ? (publishedTotal(body, tools.length) ?? proven) : null;
   return { kind: "ok", tools, total, more };
 }
 
@@ -541,6 +551,25 @@ function categoryIdsOf(value: unknown): string[] {
     if (id) out.push(id.toLowerCase());
   }
   return out;
+}
+
+/**
+ * The total the catalogue claims, if it claims one this page does not contradict.
+ *
+ * Every condition here is a way the number could be wrong rather than absent,
+ * and absent is the outcome we can render honestly. A total below the rows
+ * already in hand is not a total of anything; a non-integer is a field that
+ * means something else. `DESIGN.md` forbids a number the code cannot back, so
+ * the bar is "this survives being checked", not "the key was present".
+ */
+function publishedTotal(value: unknown, atLeast: number): number | null {
+  if (!isRecord(value)) return null;
+  for (const key of ["total_items", "totalItems", "total"]) {
+    const raw = value[key];
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < atLeast) continue;
+    return raw;
+  }
+  return null;
 }
 
 /** The page token, when the answer says there is more. */

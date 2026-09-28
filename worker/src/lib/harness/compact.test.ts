@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { compactForModel } from "./compact";
+import { MAX_TOOL_OUTPUT_CHARS } from "./budget";
 
 const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
 
@@ -24,6 +25,27 @@ describe("compactForModel", () => {
     const out = JSON.parse(compactForModel(body, 12_000));
     expect(out.data.content).toBe("# Covan\n\nA shared AI agent.");
     expect(out.data.encoding).toBe("utf-8");
+  });
+
+  it("decodes a payload in the url-safe alphabet, which atob alone refuses", () => {
+    // RFC 4648 §5: `+` becomes `-`, `/` becomes `_`, and the padding is dropped.
+    // GitHub, Google and anything that puts a payload in a query string encode
+    // this way. `atob` throws on both substituted characters, so before #210 the
+    // content was left encoded and the model decoded it in output tokens — the
+    // one thing this function exists to prevent, paid at the dearest rate.
+    const text = "diff --git a/x?y=1 b/x?y=1\n+++ ???>>>";
+    const urlSafe = Buffer.from(text, "utf8")
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    expect(urlSafe).toMatch(/[-_]/);
+
+    const out = compactForModel(JSON.stringify({ content: urlSafe, encoding: "base64" }), 12_000);
+
+    expect(out).toContain("diff --git");
+    expect(out).toContain("utf-8");
+    expect(out).not.toContain(urlSafe);
   });
 
   it("leaves a base64 payload that is not text as a size note", () => {
@@ -112,5 +134,24 @@ describe("compactForModel", () => {
   it("keeps a field literally called __proto__", () => {
     const out = JSON.parse(compactForModel('{"__proto__":{"a":1},"b":2}', 12_000));
     expect(Object.keys(out).sort()).toEqual(["__proto__", "b"]);
+  });
+});
+
+/**
+ * The literals above are a budget, not THE budget.
+ *
+ * Every test in this file passes `12_000` by hand because each is about what
+ * `compactForModel` does at a given ceiling, and coupling them to the tuning
+ * constant would make a behaviour test fail when somebody retunes. The gap that
+ * leaves — nothing checking the function honours the ceiling it is actually given
+ * in production — is closed here instead, with one test that reads the constant.
+ */
+describe("at the ceiling production actually gives it", () => {
+  it("stays inside the real cap", () => {
+    const big = {
+      rows: Array.from({ length: 4_000 }, (_, i) => ({ id: i, url: "https://x.example/" + i })),
+    };
+    const out = compactForModel(JSON.stringify(big), MAX_TOOL_OUTPUT_CHARS);
+    expect(out.length).toBeLessThanOrEqual(MAX_TOOL_OUTPUT_CHARS);
   });
 });

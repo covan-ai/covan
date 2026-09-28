@@ -3,7 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { complete, totalTokens, type CompletionMessage } from "../completion";
 import { weighTokens } from "../entitlements";
 import { resolveModel } from "../models";
-import { temperatureFor, reasoningEffortFor } from "../prompt";
+import { temperatureFor, reasoningEffortFor, maxTokensFor } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
 import { runAgentTurn } from "../harness/loop";
 import { SCHEDULED_MAX_STEPS } from "../harness/budget";
@@ -112,6 +112,13 @@ export function runRoutineWithTools(
         messages,
         temperature: temperatureFor("normal", input.temperature),
         reasoningEffort: reasoningEffortFor(input.reasoningEffort),
+        // The same ceiling the chat route sends, and stated rather than left
+        // out. Omitted, Anthropic falls back to `DEFAULT_MAX_TOKENS` — the same
+        // 4,096 — but OpenAI sends no `max_completion_tokens` field at all, so
+        // the one surface with nobody watching it was the one with no output
+        // ceiling. `maxTurnTokens` would still have stopped a runaway, but only
+        // after the tokens were bought.
+        maxTokens: maxTokensFor("normal"),
         // Nobody is watching a scheduled run, so a readable account of the
         // model's reasoning is output tokens spent on a paragraph with no
         // reader. See `showThinking` in `lib/completion.ts`.

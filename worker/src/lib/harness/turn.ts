@@ -100,6 +100,12 @@ export async function writeSteps(
       // resumed turn upserts over this row, so the column has to be cleared
       // rather than left holding a number from the wrong half of the turn.
       result_chars: step.resultChars ?? null,
+      // Null rather than `[]` for a step that added nothing: the union of this
+      // column down a conversation is what `run_tool` refuses against, and an
+      // empty array would be indistinguishable from a search that ran and found
+      // nothing. `?? null` for the same reason as `result_chars` above — a
+      // resumed turn upserts over this row.
+      offered: step.offered ?? null,
       pass_index: step.pass ?? null,
       status: step.status,
       duration_ms: step.durationMs,

@@ -902,6 +902,41 @@ describe("the budget", () => {
     expect(turn.steps[0].resultChars).toBeGreaterThan(50);
   });
 
+  it("records what a step added to the operations the model may run", async () => {
+    // How the next turn of the same conversation knows what this one found.
+    // `find_tool` writes into `ctx.offeredSlugs` as it renders; the loop reads
+    // the set again afterwards, because nothing hands the addition back.
+    scripted([pass("", [{ id: "c", name: "find", arguments: "{}" }]), pass("ok")]);
+    const turn = await runAgentTurn({
+      ...base,
+      ctx: { offeredSlugs: new Set<string>(["ALREADY_KNOWN"]) } as ToolContext,
+      tools: [
+        tool("find", async (_args, c) => {
+          c.offeredSlugs?.add("GITHUB_LIST_PULL_REQUESTS");
+          return { kind: "ok", content: "found one" };
+        }),
+      ],
+    });
+
+    // The addition, not the whole set: what was already there was recorded by
+    // whichever step put it there.
+    expect(turn.steps[0].offered).toEqual(["GITHUB_LIST_PULL_REQUESTS"]);
+  });
+
+  it("leaves the offerings unset for a tool that offers nothing", async () => {
+    // Null rather than `[]` all the way down: the union of this field is what
+    // `run_tool` refuses against, and "added none" must not read as "searched
+    // and found none".
+    scripted([pass("", [{ id: "c", name: "quiet", arguments: "{}" }]), pass("ok")]);
+    const turn = await runAgentTurn({
+      ...base,
+      ctx: { offeredSlugs: new Set<string>() } as ToolContext,
+      tools: [tool("quiet", async () => ({ kind: "ok", content: "nothing to offer" }))],
+    });
+
+    expect(turn.steps[0].offered).toBeUndefined();
+  });
+
   it("trims a result that would otherwise be paid for on every later pass", async () => {
     scripted([pass("", [{ id: "c", name: "big", arguments: "{}" }]), pass("ok")]);
     await runAgentTurn({

@@ -9,6 +9,7 @@ import {
 } from "../lib/harness/loop";
 import { chatBudget } from "../lib/harness/budget";
 import { writeSteps } from "../lib/harness/turn";
+import { priorOfferings } from "../lib/harness/offerings";
 import type { MessageOutcome, TurnUsage } from "../lib/harness/usage";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
@@ -61,7 +62,7 @@ export const CUT_SHORT =
  * read out of anything the model wrote. See `ToolContext` for why that rule is
  * the whole security posture of the harness.
  */
-export function buildToolContext(input: {
+export async function buildToolContext(input: {
   db: SupabaseClient;
   env: ToolEnv;
   workspaceId: string;
@@ -78,7 +79,7 @@ export function buildToolContext(input: {
    * standing permission.
    */
   confirmed?: boolean;
-}): ToolContext {
+}): Promise<ToolContext> {
   return {
     db: input.db,
     env: input.env,
@@ -94,12 +95,21 @@ export function buildToolContext(input: {
     // And schemas already described, for the same reason.
     describeMemo: new Map<string, string>(),
     // And what those searches offered, which is what `run_tool` is allowed to
-    // run. Fresh and empty on both routes: on the resume, the approved call is
-    // not consulted against it at all — the slug was checked when the call was
-    // proposed, and asking again after a person said yes would be a second
-    // opinion nobody wanted — and the loop that follows repopulates it from
-    // its own `find_tool` results. See `offeredSlugs` in `registry.ts`.
-    offeredSlugs: new Set<string>(),
+    // run — seeded with what this conversation was already shown, rather than
+    // starting empty.
+    //
+    // Empty was the bug. `run_tool`'s guard stands down on an empty set,
+    // because an empty set used to mean "the slug came from somewhere this tool
+    // cannot see". After the first turn that is not what it meant: it meant the
+    // model had been shown a catalogue two questions ago and this turn had
+    // forgotten it, so a slug it half-remembered went to Composio and came back
+    // a billed 404. The invariant is unchanged and now actually holds — the set
+    // is complete or it is empty, never partial, which is why `0066` records
+    // the offerings instead of parsing them back out of a trimmed excerpt.
+    //
+    // Still safe on the resume path, where the approved call skips the guard
+    // entirely: `confirmed` short-circuits it before the set is read.
+    offeredSlugs: await priorOfferings(input.db, input.sessionId),
     // And the operations behind those slugs, so `run_tool` can refuse a call
     // whose arguments contradict one, and so the approval card can say what the
     // operation does. Same lifetime and same provenance as the set above.

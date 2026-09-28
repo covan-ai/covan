@@ -70,6 +70,25 @@ export type AgentStep = {
    * turn re-sends on every pass. The number is recorded; the text is not.
    */
   resultChars?: number;
+  /**
+   * The operation slugs this step put in front of the model, if it offered any.
+   *
+   * Only `find_tool` ever does. Recorded rather than parsed back out of
+   * `resultExcerpt` because that text is capped at `MAX_STEP_EXCERPT_CHARS` and
+   * usually hits the cap, so a parse would recover the first candidates and
+   * lose the last — and a *partial* set is the one thing
+   * `ToolContext.offeredSlugs` may not be, since `run_tool` refuses what is not
+   * in it. See `0066_what_the_catalogue_already_offered.sql`.
+   *
+   * What this step *added* to the set, rather than everything it printed: a
+   * repeated search whose candidates were all offered earlier in the turn adds
+   * nothing and records nothing, which is true and is itself the waste this
+   * work exists to remove. The union down a conversation is the set `run_tool`
+   * checks against, which is the only thing that has to be exact.
+   *
+   * Undefined on every step that added none, which is every other tool.
+   */
+  offered?: string[];
 };
 
 /**
@@ -367,6 +386,25 @@ export function parseArguments(
     return { ok: false, message: "the arguments must be a JSON object" };
   }
   return { ok: true, args: parsed as Record<string, unknown> };
+}
+
+/**
+ * What one tool call added to the set of operations the model may run.
+ *
+ * `{ offered: [...] }` or `undefined`, so the caller can spread it and leave
+ * the field off entirely rather than writing an empty array — the column means
+ * "added none" by being null, and `writeSteps` keeps that distinction.
+ *
+ * Both arguments absent is the normal case for every tool but `find_tool`, and
+ * for every caller that runs without the memo at all.
+ */
+function addedSlugs(
+  before: Set<string> | null,
+  after: Set<string> | undefined,
+): { offered: string[] } | undefined {
+  if (!before || !after) return undefined;
+  const added = [...after].filter((slug) => !before.has(slug));
+  return added.length > 0 ? { offered: added } : undefined;
 }
 
 /**
@@ -761,6 +799,11 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
 
       const tool = opts.tools.find((t) => t.name === call.name);
       const startedAt = Date.now();
+      // What the model was already allowed to run, so the step below can record
+      // what this call added. A copy rather than the live set: `find_tool`
+      // writes into that set as it renders, and `run_tool` deletes from it on a
+      // 404, so reading it again afterwards is the only way to see the change.
+      const allowedBefore = opts.ctx.offeredSlugs ? new Set(opts.ctx.offeredSlugs) : null;
       const result: ToolResult = !parsed.ok
         ? { kind: "error", message: parsed.message }
         : !tool
@@ -840,6 +883,10 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // `MAX_STEP_EXCERPT_CHARS`, which is only what the transcript keeps.
         // This is the number every remaining pass of the turn pays to re-send.
         resultChars: content.length,
+        // Only when this call actually widened what the model may run, so the
+        // column stays null for the tools that never offer anything. See
+        // `AgentStep.offered`.
+        ...(addedSlugs(allowedBefore, opts.ctx.offeredSlugs) ?? {}),
         status,
         durationMs,
       });

@@ -193,6 +193,72 @@ export async function cacheConnectionSummary(
 }
 
 /**
+ * Remember that this connection cannot run an operation, so the next search
+ * stops offering it.
+ *
+ * Composio's execute endpoint is the only thing that knows which subset of a
+ * toolkit's catalogue a connected account actually has: it answers
+ * `404 Tool_ToolNotFound` for a slug that is in the catalogue and not on the
+ * account. `find_tool` cannot ask in advance — `/api/v3.1/tools` has no
+ * parameter that names a connected account — so the fact is learnt here, the
+ * one place that finds it out, and read back by `unavailableTools` in
+ * `lib/harness/connections.ts`.
+ *
+ * It is worth writing down because it was measured: twenty of the thirty
+ * `run_tool` failures ever recorded are this, more than every other cause
+ * combined, and the same slug was bought three times in one conversation on
+ * 2026-09-28 because the withdrawal only lasted the turn.
+ *
+ * Service role, for exactly `cacheConnectionSummary`'s reason above: 0059 lets
+ * only the connection's creator or a workspace admin update the row, which is
+ * right for somebody editing a connection and wrong for a cache write nobody
+ * chose to make. Same allowlist entry, same best-effort contract — a failed
+ * write costs one more failed call later and must never fail the tool.
+ *
+ * Read-modify-write on a jsonb bag, so two 404s landing together can lose one
+ * of the two. That is accepted rather than locked: the cost is one extra failed
+ * call, and the alternative is a transaction on the critical path of a tool that
+ * has already failed.
+ */
+export async function recordUnavailableTool(
+  env: ToolEnv,
+  connection: ToolConnection,
+  slug: string,
+): Promise<void> {
+  const raw = connection.config.unavailable_tools;
+  const bag =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  // Newest last, then trimmed from the front, so a connection that has met a
+  // lot of missing operations keeps the most recent ones rather than the first
+  // ones it ever saw. The cap is for `config`, which is read on every prompt
+  // that renders the manifest.
+  const next: Record<string, unknown> = { ...bag, [slug]: new Date().toISOString() };
+  const keys = Object.keys(next);
+  const trimmed =
+    keys.length <= MAX_UNAVAILABLE_TOOLS
+      ? next
+      : Object.fromEntries(
+          keys.slice(keys.length - MAX_UNAVAILABLE_TOOLS).map((k) => [k, next[k]]),
+        );
+
+  const { error } = await serviceClient(env)
+    .from("tool_connections")
+    .update({ config: { ...connection.config, unavailable_tools: trimmed } })
+    .eq("id", connection.id);
+  if (error) console.error("could not record an unavailable tool", error);
+}
+
+/**
+ * How many missing operations one connection remembers.
+ *
+ * A ceiling on `config`, which rides in every prompt that renders the
+ * connection manifest. GitHub's catalogue is the largest here at a few hundred
+ * operations, so this is generous enough that a real workspace never reaches it
+ * and small enough that the bag cannot grow without bound.
+ */
+const MAX_UNAVAILABLE_TOOLS = 200;
+
+/**
  * A delivery channel's encrypted destination, for a channel the caller has
  * already been shown to own.
  *

@@ -163,6 +163,43 @@ describe("find_tool", () => {
     expect([...offered]).toEqual(["GMAIL_SEND_EMAIL"]);
   });
 
+  it("does not offer an operation this connection has already proven it cannot run", async () => {
+    // The largest failure class in the harness, and the one nothing could see:
+    // Composio's catalogue is the union of what every account of an app COULD
+    // have, a connected account has a subset, and `/api/v3.1/tools` takes no
+    // parameter that names an account. So the catalogue offers operations
+    // execution cannot run — twenty of the thirty run_tool failures ever
+    // recorded. Learnt from the 404 and kept on the connection.
+    fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
+    const dead = {
+      ...GMAIL_CONNECTION,
+      config: { unavailable_tools: { GMAIL_SEND_EMAIL: new Date().toISOString() } },
+    };
+
+    const out = await findToolTool.run({ query: "send" }, ctxWith([dead]));
+
+    expect(out.kind).toBe("ok");
+    expect(out.kind === "ok" && out.content).not.toContain("GMAIL_SEND_EMAIL");
+    // And the answer distinguishes "the catalogue has nothing" from "your
+    // account cannot run what it has", because those ask different things of
+    // the person being talked to.
+    expect(out.kind === "ok" && out.content).toContain("broader authorisation");
+  });
+
+  it("offers it again once the record has aged out", async () => {
+    // It expires because it can stop being true: re-authorising an app with
+    // wider scopes adds operations the account did not have.
+    const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
+    const stale = {
+      ...GMAIL_CONNECTION,
+      config: { unavailable_tools: { GMAIL_SEND_EMAIL: old } },
+    };
+
+    const out = await findToolTool.run({ query: "send" }, ctxWith([stale]));
+    expect(out.kind === "ok" && out.content).toContain("GMAIL_SEND_EMAIL");
+  });
+
   it("names the required parameters without fetching a schema", async () => {
     fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
     const out = await findToolTool.run({ query: "send" }, ctxWith([GMAIL_CONNECTION]));

@@ -2,8 +2,8 @@ import { composioConfigured, executeTool, type ComposioTool } from "../../compos
 import { COMPOSIO_CALL_TOKENS } from "../../entitlements";
 import { MAX_TOOL_OUTPUT_CHARS } from "../budget";
 import { compactForModel } from "../compact";
-import { loadConnection, type ToolConnection } from "../connections";
-import { composioAccount } from "../secrets";
+import { loadConnection, unavailableTools, type ToolConnection } from "../connections";
+import { composioAccount, recordUnavailableTool } from "../secrets";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 
@@ -336,6 +336,32 @@ export const runToolTool: AgentTool = {
       };
     }
 
+    /**
+     * Guard 2a. What this connection has already told us it does not have.
+     *
+     * The withdrawal below used to last one turn, and the measurement is what
+     * makes this worth a guard of its own: on 2026-09-28 a single conversation
+     * bought `GITHUB_GET_PULL_REQUESTS` three times — failed at step 1, removed
+     * from `offeredSlugs`, re-offered by the next `find_tool` two steps later,
+     * failed again at step 11, and failed a third time in the following turn.
+     * Each one is a step out of eight and a billed Composio call.
+     *
+     * `find_tool` already filters these out of what it offers, so reaching here
+     * means the slug came from somewhere that filter cannot see — the
+     * transcript of an earlier turn, or a person naming it. That is exactly the
+     * case the per-turn set was never able to catch.
+     */
+    const unavailable = unavailableTools(connection);
+    if (unavailable.has(slug)) {
+      return {
+        kind: "error",
+        message:
+          `${slug} is in the catalogue but ${connection.label} does not have it — that was ` +
+          "established on an earlier call, so it has not been tried again. Use find_tool to " +
+          "find an operation this connection can actually run.",
+      };
+    }
+
     // Guard 2. Locally, before anything leaves the building: pairing a Slack
     // connection with a Gmail slug is a mistake, and finding out from
     // Composio's 400 would mean the request had already been made.
@@ -453,6 +479,10 @@ export const runToolTool: AgentTool = {
       if (result.status === 404 && result.message.includes("Tool_ToolNotFound")) {
         ctx.offeredSlugs?.delete(slug);
         ctx.offeredOperations?.delete(slug);
+        // And past this turn. Withdrawing it from the per-turn set was never
+        // enough: the next `find_tool` re-offers the same slug, because the
+        // catalogue still has it. See `recordUnavailableTool`.
+        await recordUnavailableTool(ctx.env, connection, slug);
         const left = [...(ctx.offeredSlugs ?? [])];
         return {
           kind: "error",

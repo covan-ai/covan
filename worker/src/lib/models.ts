@@ -94,15 +94,27 @@ export type ModelSpec = {
   /**
    * Whether the model deliberates with nothing asked of it.
    *
-   * Claude Opus 5 does: omitting the thinking parameter runs adaptive thinking
-   * rather than none, which is the opposite of every other model on this list
-   * and of Opus 4.8, its immediate predecessor. It matters here for one reason
-   * — the output ceiling. A model that thinks unasked needs room for it on
-   * every call, and a model that does not must not be handed that room, because
-   * the room is not free: it is the number that decides how long a runaway
-   * answer is allowed to get.
+   * Claude Opus 5 and Claude Sonnet 5 both do: omitting the thinking parameter
+   * runs adaptive thinking rather than none, which is the opposite of Opus 4.8
+   * and Sonnet 4.6 — their immediate predecessors — and of every other model on
+   * this list. It matters here for one reason — the output ceiling. A model
+   * that thinks unasked needs room for it on every call, and a model that does
+   * not must not be handed that room, because the room is not free: it is the
+   * number that decides how long a runaway answer is allowed to get.
    *
-   * Absent means "only when asked", which is the normal case.
+   * SONNET 5 WAS MISSED WHEN THIS FIELD SHIPPED, and the way it failed is the
+   * argument for the field existing at all. Thinking is billed inside
+   * `output_tokens` and the provider reports no separate count for it, so a
+   * Sonnet 5 turn was thinking *and* being handed zero headroom: the
+   * deliberation ate the 4,096-token answer budget, the reply truncated
+   * mid-sentence, and `reasoning_tokens` stayed null because there was nothing
+   * to record it in. Nothing in the usage columns could show it had happened.
+   * A wrong value here is not a wrong number in a report; it is a silently
+   * shortened answer.
+   *
+   * Absent means "only when asked", which is the normal case — and is correct
+   * for Opus 4.8, Sonnet 4.6 and the two 4.5 models, all of which genuinely run
+   * thinking-off when the parameter is omitted.
    */
   thinksByDefault?: boolean;
   /**
@@ -150,7 +162,13 @@ const SPECS: Record<ModelId, ModelSpec> = {
     tools: true,
     thinksByDefault: true,
   },
-  "claude-sonnet-5": { provider: "anthropic", temperature: false, reasoning: true, tools: true },
+  "claude-sonnet-5": {
+    provider: "anthropic",
+    temperature: false,
+    reasoning: true,
+    tools: true,
+    thinksByDefault: true,
+  },
   "claude-opus-4-8": { provider: "anthropic", temperature: false, reasoning: true, tools: true },
   "claude-sonnet-4-6": { provider: "anthropic", temperature: true, reasoning: true, tools: true },
   "claude-sonnet-4-5": { provider: "anthropic", temperature: true, reasoning: false, tools: true },

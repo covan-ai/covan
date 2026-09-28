@@ -87,13 +87,20 @@ describe("what a model does before it answers", () => {
     expect(reasonsBeforeAnswering("claude-haiku-4-5")).toBe(false);
   });
 
-  it("knows which single model deliberates with nothing asked of it", () => {
-    // Opus 5 alone. Its predecessor does not, which is the trap: omitting the
-    // parameter means "think" on one and "do not" on the other, and the output
-    // ceiling in lib/completion.ts turns on the difference.
+  it("knows which models deliberate with nothing asked of it", () => {
+    // Both 5-series Claude models do. Their immediate predecessors do not,
+    // which is the trap: omitting the parameter means "think" on one and "do
+    // not" on the other, and the output ceiling in lib/completion.ts turns on
+    // the difference.
+    //
+    // This test asserted `claude-sonnet-5` was false until 2026-09-28, which is
+    // why the bug lived — a wrong answer here was pinned rather than caught.
+    // The pairs below are written predecessor-beside-successor so that the next
+    // model added has to state which side of the line it falls on.
     expect(thinksByDefault("claude-opus-5")).toBe(true);
     expect(thinksByDefault("claude-opus-4-8")).toBe(false);
-    expect(thinksByDefault("claude-sonnet-5")).toBe(false);
+    expect(thinksByDefault("claude-sonnet-5")).toBe(true);
+    expect(thinksByDefault("claude-sonnet-4-6")).toBe(false);
     expect(thinksByDefault("gpt-5")).toBe(false);
   });
 

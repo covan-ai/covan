@@ -141,25 +141,69 @@ const MAX_CONNECTED_SEARCHES = 4;
  * parameter to UTC when it is absent, which put five events on a real calendar
  * three hours from where they were asked for (#192).
  *
- * Names only, never types or descriptions. A full schema for every candidate is
- * exactly what `MAX_SCHEMA_CHARS` exists to prevent, and a name is enough both
- * to call the operation and to know it is the wrong one. Free, too: the schemas
- * arrive with the search, which is how `required` is populated at all.
+ * Names **and one word of type**, never descriptions or nested schemas. A full
+ * schema for every candidate is exactly what `MAX_SCHEMA_CHARS` exists to
+ * prevent, and this is not one: it is `name: string`, five to eight characters,
+ * with no enum, no nested object and no prose. Free, too: the schemas arrive
+ * with the search, which is how `required` is populated at all.
+ *
+ * WHY THE TYPE IS WORTH THOSE CHARACTERS. This printed names alone until
+ * 2026-09-28, on the argument that a name is enough both to call the operation
+ * and to know it is the wrong one. The first half of that is false, and
+ * production said so: the model was told an argument was called `attendees`,
+ * was never told it was a string, passed an array of strings, and got back
+ * `Input should be a valid string on parameter 'attendees.0'`. Same shape for
+ * `recursive`. A refused call costs a step out of eight, a round trip, and a
+ * Composio charge — `lib/harness/spend.ts` bills everything but 501 and 502 —
+ * to learn one word that could have been in the line above it.
  */
 function parameterNames(tool: ComposioTool): string[] {
   const properties = tool.inputSchema?.properties;
   if (typeof properties !== "object" || properties === null) return [];
+  const bag = properties as Record<string, unknown>;
   const required = new Set(tool.required);
   // Required first, because a model reading a truncated list should meet the
   // parameters it cannot omit.
-  const names = Object.keys(properties).sort((a, b) => {
+  const names = Object.keys(bag).sort((a, b) => {
     const ar = required.has(a) ? 0 : 1;
     const br = required.has(b) ? 0 : 1;
     return ar - br;
   });
-  return names
-    .slice(0, MAX_PARAM_NAMES)
-    .map((name) => (required.has(name) ? `${name} (required)` : name));
+  return names.slice(0, MAX_PARAM_NAMES).map((name) => {
+    const type = parameterType(bag[name]);
+    const labelled = type ? `${name}: ${type}` : name;
+    return required.has(name) ? `${labelled} (required)` : labelled;
+  });
+}
+
+/**
+ * The one word from a parameter's schema that decides how to write it.
+ *
+ * `null` when the schema does not say — a `oneOf`, an untyped object, a
+ * catalogue entry with no `inputSchema` at all. The caller falls back to the
+ * bare name rather than guessing, because a wrong type is worse than no type:
+ * it would be followed confidently.
+ *
+ * Arrays print their element type (`string[]`) because that is the distinction
+ * the failures were actually about — a string handed where a list was wanted,
+ * or the reverse. Nesting stops there; anything deeper is what `detail` and
+ * `MAX_SCHEMA_CHARS` are for.
+ */
+function parameterType(schema: unknown): string | null {
+  if (typeof schema !== "object" || schema === null) return null;
+  const raw = (schema as { type?: unknown }).type;
+  const name =
+    typeof raw === "string"
+      ? raw
+      : Array.isArray(raw)
+        ? // A nullable parameter arrives as ["string","null"]. The null carries
+          // nothing a caller can act on, so it is dropped rather than printed.
+          raw.filter((t): t is string => typeof t === "string" && t !== "null").join("|")
+        : "";
+  if (!name) return null;
+  if (name !== "array") return name;
+  const inner = parameterType((schema as { items?: unknown }).items);
+  return inner ? `${inner}[]` : "array";
 }
 
 /**
@@ -206,7 +250,20 @@ function summarise(
     const more = hidden > 0 ? `, … (+${hidden} more — ask for detail)` : "";
     lines.push(`  takes: ${named.join(", ")}${more}`);
   } else if (tool.required.length > 0) {
-    lines.push(`  needs: ${tool.required.join(", ")}`);
+    // Typed for the same reason `takes:` is: this is the line most candidates
+    // actually get, and `needs: operations` was what preceded the malformed
+    // call that started all this. Falls back to the bare name where the
+    // catalogue entry carries no schema to read a type off.
+    const properties = tool.inputSchema?.properties;
+    const bag = (typeof properties === "object" && properties !== null ? properties : {}) as Record<
+      string,
+      unknown
+    >;
+    const needed = tool.required.map((name) => {
+      const type = parameterType(bag[name]);
+      return type ? `${name}: ${type}` : name;
+    });
+    lines.push(`  needs: ${needed.join(", ")}`);
   }
   // Said only when Composio said it. See `ComposioTool.destructive`: null is
   // the common answer and nothing branches on it, but a person reading the

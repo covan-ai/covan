@@ -754,6 +754,15 @@ describe("complete, on Anthropic", () => {
         ...over,
       });
 
+    // Enough to make a request an agent turn: `lib/harness/loop.ts` is the only
+    // caller that sets tools, so the effort rules read a non-empty list as "a
+    // tool call could be lost here".
+    const thinkTool = {
+      name: "search_documents",
+      description: "Look something up.",
+      input: { type: "object", properties: { query: { type: "string" } } },
+    };
+
     it("sends adaptive thinking and an effort, never a token budget", async () => {
       await ask({ reasoningEffort: "high" });
 
@@ -785,16 +794,59 @@ describe("complete, on Anthropic", () => {
       expect(call).not.toHaveProperty("output_config");
     });
 
-    it("treats 'minimal' as thinking off, not as Anthropic's lowest effort", async () => {
-      // What the persona drafter and the idea extractor mean by it. Anthropic's
-      // scale has no floor below "low", so translating it into a level would
-      // charge the one caller that opted out for thinking it opted out of.
+    it("treats 'minimal' as thinking off on a turn carrying no tools", async () => {
+      // What the persona drafter and the idea extractor mean by it: translating
+      // it into a level would charge the one caller that opted out for thinking
+      // it opted out of. Conditional on there being no tools — see the tool-loop
+      // pair below.
       await ask({ reasoningEffort: "minimal" });
 
       const call = anthropicCreate.mock.calls[0][0];
       expect(call).not.toHaveProperty("thinking");
       expect(call).not.toHaveProperty("output_config");
       expect(call.max_tokens).toBe(1000);
+    });
+
+    it("turns 'minimal' into the lowest real effort when the turn carries tools", async () => {
+      // Thinking-off in an agent loop is not a saving, it is a defect: a
+      // 5-series Claude model can write a tool call into its visible text
+      // instead of a tool_use block, and the call is then silently lost. So a
+      // turn with tools gets "low" rather than nothing.
+      await ask({ model: "claude-sonnet-5", reasoningEffort: "minimal", tools: [thinkTool] });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call.thinking).toEqual({ type: "adaptive", display: "omitted" });
+      expect(call.output_config).toEqual({ effort: "low" });
+      expect(call.max_tokens).toBe(1000 + 2048);
+    });
+
+    it("leaves 'minimal' alone with tools on a model that never sends 'disabled'", async () => {
+      // The remap is scoped to models that think by default, because those are
+      // the only ones where "minimal" sends thinking: disabled out loud. On
+      // Sonnet 4.6 silence already means no thinking, nothing is sent, and there
+      // is no disabled flag for the model to misbehave under — so an agent that
+      // asked for minimal keeps it.
+      await ask({ reasoningEffort: "minimal", tools: [thinkTool] });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call).not.toHaveProperty("thinking");
+      expect(call).not.toHaveProperty("output_config");
+      expect(call.max_tokens).toBe(1000);
+    });
+
+    it("makes room on Sonnet 5, which also thinks unasked", async () => {
+      // The defect this pair exists for. Sonnet 5 runs adaptive thinking when
+      // the parameter is omitted, exactly as Opus 5 does — but it shipped
+      // without the flag, so it was thinking on every turn against a ceiling
+      // that left no room for it. Thinking is billed inside output_tokens and
+      // the provider reports no separate count, so the truncated replies that
+      // followed were invisible in the usage columns.
+      await ask({ model: "claude-sonnet-5" });
+
+      const call = anthropicCreate.mock.calls[0][0];
+      expect(call.thinking).toEqual({ type: "adaptive", display: "omitted" });
+      expect(call).not.toHaveProperty("output_config");
+      expect(call.max_tokens).toBe(1000 + REASONING_HEADROOM);
     });
 
     it("makes room on a model that thinks unasked", async () => {

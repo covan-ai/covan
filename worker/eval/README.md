@@ -226,7 +226,7 @@ number from cases nobody agreed were representative is a number nobody acts on.
 | `db-always-failing`     | query_database   | 3     | the connection is down; does it invent a number          |
 | `ctx-continue`          | query_database   | 4     | "tamam devam et" — only the history says what that means |
 | `long-history`          | query_database   | 2     | eight prior turns; does it use them and not repeat them  |
-| `schedule-job`          | schedule_job     | 1     | the one tool that proposes rather than reads             |
+| `schedule-weekly`       | schedule_job     | 1     | the one tool that proposes rather than reads             |
 | `no-tool-arithmetic`    | no-tool          | 0     | both numbers are already in the conversation             |
 | `no-tool-from-rag`      | no-tool          | 0     | the retrieved block already answers it                   |
 | `out-of-scope`          | no-tool          | 0     | no tool could reach it; does it refuse cleanly           |

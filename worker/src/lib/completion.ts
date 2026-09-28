@@ -676,12 +676,35 @@ function withCacheBreakpoint(message: Anthropic.MessageParam): Anthropic.Message
  * Two things here are easy to get wrong, and the obvious reading of each is
  * the wrong one.
  *
- * **`"minimal"` is not an Anthropic effort.** Its scale is low/medium/high and
- * has no floor below `"low"`. The translation that looks obvious — call it
- * `"low"` — is exactly backwards: `"minimal"` is what the persona drafter and
- * the idea extractor say to mean *do not deliberate at all*, and rendering that
- * as "deliberate a little" would make the one caller that opted out pay for
- * thinking it opted out of. So `"minimal"` turns thinking off rather than down.
+ * **`"minimal"` is not an Anthropic effort**, and what it should become depends
+ * on whether the turn carries tools.
+ *
+ * Off a tool loop it turns thinking *off*. `"minimal"` is what the persona
+ * drafter and the idea extractor say to mean *do not deliberate at all*, and
+ * rendering that as "deliberate a little" would make the one caller that opted
+ * out pay for thinking it opted out of.
+ *
+ * On a tool loop, **and only on a model that thinks by default**, it becomes
+ * `"low"`, because there thinking-off is not a saving — it is a defect. Those
+ * are the models where silence means "think", so turning thinking off means
+ * sending `thinking: {type: "disabled"}` out loud — and with that sent, a
+ * 5-series Claude model can write a tool call into its **visible text** instead
+ * of a `tool_use` block: the turn succeeds, the call never runs, no error is
+ * raised, and the stray text is carried into every later pass of the same turn.
+ * Sonnet 5 additionally reaches for tools less readily with thinking off. Both
+ * failures are invisible from here — nothing distinguishes "the model chose not
+ * to call a tool" from "the call was lost" — so this is the kind of bug that
+ * arrives as an unreproducible report that the agent is behaving strangely.
+ * `"low"` buys the smallest amount of deliberation the provider sells and keeps
+ * tool calls in the field they belong in.
+ *
+ * The narrowness is the point. On Sonnet 4.6 and Opus 4.8 `"minimal"` sends no
+ * `thinking` field at all and the model simply does not deliberate, which is
+ * ordinary and has always been the behaviour — there is no `disabled` to be
+ * hurt by, so those agents keep the effort they asked for.
+ *
+ * `lib/harness/loop.ts` is the only caller that sets `req.tools`, so a non-empty
+ * tool list *is* the test for "this is an agent turn".
  *
  * **The headroom follows the thinking, not the model.** `reasoningHeadroom`
  * widens the output ceiling to leave room for deliberation. Widening it on
@@ -699,15 +722,26 @@ function anthropicThinking(req: CompletionRequest): {
   // the model does by itself.
   if (!reasonsBeforeAnswering(req.model)) return { headroom: 0 };
 
-  // Narrowed in one expression rather than through a flag, so the type carries
-  // what the prose says: an effort that reaches Anthropic is one of its own
-  // three, never Covan's fourth.
-  const effort =
-    req.reasoningEffort && req.reasoningEffort !== "minimal" ? req.reasoningEffort : undefined;
+  // `loop.ts` is the only caller that sets tools, so this is the test for "this
+  // is an agent turn" rather than a one-shot shaping call.
+  const inToolLoop = (req.tools?.length ?? 0) > 0;
 
-  // No thinking this turn: the caller either said `"minimal"`, or said nothing
-  // to a model that does nothing by itself.
-  if (effort === undefined && (req.reasoningEffort === "minimal" || !thinksByDefault(req.model))) {
+  // Narrowed in one expression rather than through a flag, so the type carries
+  // what the prose says: an effort that reaches Anthropic is one of its own,
+  // never Covan's fourth. `"minimal"` is the one that has to be decided rather
+  // than dropped — off a tool loop it means "no thinking" and becomes
+  // `undefined`; on one it becomes the smallest effort the provider sells.
+  const asked = req.reasoningEffort || undefined;
+  const effort =
+    asked === "minimal"
+      ? inToolLoop && thinksByDefault(req.model)
+        ? ("low" as const)
+        : undefined
+      : asked;
+
+  // No thinking this turn: the caller either said `"minimal"` outside a tool
+  // loop, or said nothing to a model that does nothing by itself.
+  if (effort === undefined && (asked === "minimal" || !thinksByDefault(req.model))) {
     // Silence means "do not think" on every model here but one, where it means
     // the opposite and so has to be said out loud.
     return thinksByDefault(req.model)

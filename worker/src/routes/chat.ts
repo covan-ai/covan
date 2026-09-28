@@ -640,7 +640,7 @@ chat.post("/chat/stream", async (c) => {
             webSearch: agent.web_search ?? false,
           },
           tools,
-          ctx: buildToolContext({
+          ctx: await buildToolContext({
             db,
             env,
             workspaceId: session.workspace_id as string,
@@ -913,7 +913,7 @@ chat.post("/chat/confirm/:id", async (c) => {
   // `confirmed` for the one call a person has just approved, and only for it —
   // the loop below is handed the same context with it off again, because one
   // yes is one call rather than a standing permission.
-  const ctx = buildToolContext({
+  const ctx = await buildToolContext({
     db,
     env,
     workspaceId: pause.workspaceId,

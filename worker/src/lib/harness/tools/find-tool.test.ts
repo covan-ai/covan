@@ -182,7 +182,7 @@ describe("find_tool", () => {
     const content = out.kind === "ok" ? out.content : "";
     const [first, second] = content.split("\n\n");
 
-    expect(first).toContain("takes: recipient_email (required)");
+    expect(first).toContain("takes: recipient_email: string (required)");
     expect(first).toMatch(/takes: .*subject/);
     // The optional ones too — they are the half a second search was buying.
     expect(first).toContain("body");
@@ -190,6 +190,25 @@ describe("find_tool", () => {
     expect(second).toContain("needs:");
     expect(second).not.toContain("takes:");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives every named argument its type, so the first call is the right shape", async () => {
+    // The names alone were not enough, and production is where that showed up:
+    // told an argument was called `attendees` and not told it was a string, the
+    // model passed an array and bought `Input should be a valid string on
+    // parameter 'attendees.0'` — a step out of eight and a billed Composio call
+    // to learn one word.
+    fetchMock.mockResolvedValue(catalogue([SEND_WITH_PROPERTIES, LINEAR_CREATE]));
+    const out = await findToolTool.run({ query: "send an email" }, ctxWith([GMAIL_CONNECTION]));
+    const first = (out.kind === "ok" ? out.content : "").split("\n\n")[0];
+
+    // A scalar and a list read differently, which is the distinction the
+    // failures were actually about.
+    expect(first).toContain("subject: string");
+    expect(first).toContain("cc: array");
+    // One word, not a schema: no descriptions, no nesting, no enums.
+    expect(first).not.toContain("description");
+    expect(first).not.toContain("properties");
   });
 
   it("does not name arguments for a first candidate nobody can run", async () => {

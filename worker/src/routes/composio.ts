@@ -6,11 +6,15 @@ import { getActiveWorkspaceId, memberRole } from "../lib/workspace";
 import { mapToolConnection, mapToolConnectionGrant } from "../lib/dto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import {
+  allowedLogoUrl,
   composioConfigured,
   createLink,
   getConnectedAccount,
+  getToolkit,
   listToolkits,
+  listToolkitCategories,
   COMPOSIO_BASE,
+  type ComposioToolkit,
 } from "../lib/composio/client";
 
 /**
@@ -39,8 +43,27 @@ import {
  */
 const composio = new Hono<AppEnv>();
 
+/**
+ * The one route here a browser reaches without a token, and the reason is an
+ * HTML element rather than a policy: `<img>` sends no `Authorization` header
+ * and never will. `connectionsPublic` and `slackPublic` are outside the
+ * authenticated router for the same kind of reason.
+ *
+ * What stands in for a caller is the allowlist in `allowedLogoUrl`. There is
+ * nothing to authorise here — every address it admits is a public logo on a
+ * host we named — and nothing to leak: the route reads no database, holds no
+ * secret, and sends no API key upstream.
+ */
+const composioPublic = new Hono<AppEnv>();
+
 /** A toolkit slug as Composio spells it, loosened to what a URL can carry. */
 const toolkitPattern = /^[a-z0-9_-]{1,80}$/;
+
+/** Long enough for a cold CDN, short enough that a grid does not hang on one tile. */
+const LOGO_TIMEOUT_MS = 5_000;
+
+/** A logo is a few kilobytes. A megabyte is the ceiling, not the expectation. */
+const MAX_LOGO_BYTES = 1024 * 1024;
 
 const connectSchema = z.object({
   toolkit: z.string().trim().toLowerCase().regex(toolkitPattern),
@@ -80,19 +103,56 @@ async function mayWrite(
   return Boolean(role) && role !== "viewer";
 }
 
+/**
+ * A toolkit as the browser is given it.
+ *
+ * The one difference from `ComposioToolkit` is the logo, and it is the whole
+ * point of the rewrite below: the upstream address never reaches the page, so
+ * no amount of client code can accidentally make forty requests to somebody
+ * else's CDN. What the page gets is a path on this API, and the only thing
+ * that can be behind it is a host `allowedLogoUrl` admits.
+ */
+type WireToolkit = Omit<ComposioToolkit, "logo"> & { logoPath: string };
+
+function toWire({ logo, ...rest }: ComposioToolkit): WireToolkit {
+  return { ...rest, logoPath: logo ? `/composio/logo?u=${encodeURIComponent(logo)}` : "" };
+}
+
 composio.get("/composio/toolkits", async (c) => {
   if (!composioConfigured(c.env)) {
     // Not an error state. The page says which variable would turn this on,
     // exactly as `providerAvailability` does for Notion — a self-hoster reading
     // the docs for a feature their own build appears not to have is the failure
     // that pattern exists to avoid.
-    return c.json({ configured: false, toolkits: [] });
+    return c.json({ configured: false, toolkits: [], nextCursor: "" });
   }
-  const listed = await listToolkits(c.env, { search: c.req.query("search") ?? undefined });
+  const listed = await listToolkits(c.env, {
+    search: c.req.query("search") ?? undefined,
+    category: c.req.query("category") ?? undefined,
+    cursor: c.req.query("cursor") ?? undefined,
+  });
   if (listed.kind === "error") return c.json({ error: listed.message }, 502);
   // The browser never sees the API key: this route is the proxy that keeps a
   // deployment secret out of a bundle anyone can read.
-  return c.json({ configured: true, toolkits: listed.toolkits });
+  return c.json({
+    configured: true,
+    toolkits: listed.toolkits.map(toWire),
+    nextCursor: listed.nextCursor,
+  });
+});
+
+/**
+ * The catalogue's headings, for the filter above the grid.
+ *
+ * Unconfigured answers the same shape as `/composio/toolkits` rather than an
+ * error, for the same reason: a page that has to tell a self-hoster which
+ * variable to set cannot do it from a 501.
+ */
+composio.get("/composio/categories", async (c) => {
+  if (!composioConfigured(c.env)) return c.json({ configured: false, categories: [] });
+  const listed = await listToolkitCategories(c.env);
+  if (listed.kind === "error") return c.json({ error: listed.message }, 502);
+  return c.json({ configured: true, categories: listed.categories });
 });
 
 composio.post("/composio/connect", async (c) => {
@@ -114,6 +174,14 @@ composio.post("/composio/connect", async (c) => {
     return c.json({ error: "read-only in this workspace" }, 403);
   }
 
+  // Read before anything is created, and the browser's word is not taken for
+  // either answer. Whether this application needs a sign-in decides which
+  // kind of auth config gets made; where its mark lives is written onto the
+  // row below so the card keeps its logo without searching a catalogue of
+  // fifteen hundred for a slug it already has.
+  const described = await getToolkit(c.env, toolkit);
+  if (described.kind === "error") return c.json({ error: described.message }, 502);
+
   // The identity Composio executes on behalf of, chosen here and stored on the
   // row. Deliberately not `userId`: a Covan account uuid shipped to a third
   // party as a durable identifier is a thing this codebase does not do, and it
@@ -124,6 +192,7 @@ composio.post("/composio/connect", async (c) => {
   const link = await createLink(c.env, {
     toolkit,
     userId: composioUserId,
+    noAuth: described.toolkit.noAuth,
     // Where the person lands after the consent screen. The page reads the
     // query parameter, says one sentence and takes it out of the address bar —
     // `useGrantOutcome` in `_authed.integrations.tsx` already does exactly this
@@ -145,7 +214,11 @@ composio.post("/composio/connect", async (c) => {
       // Meaningless here, as it is for `sql` and `supabase`: the method is
       // Composio's business. Said explicitly so the row reads sensibly.
       allowed_methods: ["GET"],
-      config: {},
+      // The mark, as the catalogue published it and already through
+      // `allowedLogoUrl` on the way in. Written here rather than looked up
+      // later because a connected application is one row out of fifteen
+      // hundred, and finding it again would mean searching for it.
+      config: described.toolkit.logo ? { logo: described.toolkit.logo } : {},
       secret_ciphertext: null,
       account_id: null,
       toolkit_slug: toolkit,
@@ -314,4 +387,73 @@ composio.delete("/composio/grants", async (c) => {
   return c.body(null, 204);
 });
 
-export { composio };
+/**
+ * One application's mark, fetched by us so the page does not fetch it itself.
+ *
+ * WHY THIS EXISTS AT ALL, since `meta.logo` is a perfectly good public URL and
+ * an `<img>` could point straight at it. Two reasons, and the first is the
+ * one that decided it: a catalogue grid pointed at Composio's CDN tells
+ * Composio the address of every person who opens the Integrations page, on
+ * every open, forty times. That is a third party learning something about our
+ * users that the feature does not need them to learn. The second is that
+ * Composio's own logo hosting is unreliable in a documented way — a set of
+ * toolkits 404, and at least one has served the wrong company's mark — so
+ * there has to be a place that turns a bad answer into no answer, and a place
+ * that can do it is a place we control.
+ *
+ * WHAT KEEPS IT FROM BEING AN OPEN PROXY: `allowedLogoUrl`, and only that. It
+ * takes the address from the query string — which is to say from anybody —
+ * and admits it only if it is HTTPS on one of two named hosts. Everything
+ * else about the request is refused before a socket is opened.
+ *
+ * WHY IT IS NOT RATE LIMITED with the rest of the API: it is mounted in
+ * `index.ts` ahead of `rateLimit("standard")` on purpose. That tier is keyed
+ * by address and exists to protect the Supabase token check standing behind
+ * it; this route never reaches that check. Counting forty logos against it
+ * would let a first page load spend a third of the budget that a person's
+ * actual requests need, and the visible failure would be a 429 on a chat
+ * message. What bounds this instead is the allowlist, a one-megabyte ceiling
+ * and a short timeout.
+ */
+composioPublic.get("/composio/logo", async (c) => {
+  const url = allowedLogoUrl(c.req.query("u") ?? "");
+  if (!url) return c.body(null, 400);
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      // A redirect is an invitation to fetch an address nobody allowlisted,
+      // which is exactly the check above being asked to hold twice. Refused
+      // for the reason every other outbound call in this codebase refuses it.
+      redirect: "manual",
+      signal: AbortSignal.timeout(LOGO_TIMEOUT_MS),
+      headers: { Accept: "image/*", "User-Agent": "covan/1.0" },
+    });
+  } catch {
+    return c.body(null, 404);
+  }
+
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || !type.startsWith("image/")) return c.body(null, 404);
+
+  const length = Number(res.headers.get("content-length") ?? "0");
+  if (length > MAX_LOGO_BYTES) return c.body(null, 404);
+  const bytes = await res.arrayBuffer().catch(() => null);
+  if (!bytes || bytes.byteLength > MAX_LOGO_BYTES) return c.body(null, 404);
+
+  return c.body(bytes, 200, {
+    "Content-Type": type,
+    // A week, and immutable: a logo that changes is a logo with a different
+    // URL as far as anybody here is concerned, and the alternative is paying
+    // for the whole grid again on every visit.
+    "Cache-Control": "public, max-age=604800, immutable",
+    "X-Content-Type-Options": "nosniff",
+    // An SVG opened directly in a tab is a document, and a document from a
+    // third party is a document that can carry script. Inside an `<img>` it
+    // cannot run; typed into the address bar it could, and it would run on
+    // this API's origin. Neither costs us anything to prevent.
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+  });
+});
+
+export { composio, composioPublic };

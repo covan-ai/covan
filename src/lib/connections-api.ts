@@ -61,6 +61,12 @@ export type ToolConnection = {
    * `composio` is born `active`, so this is only ever interesting on one card.
    */
   status: "pending" | "active" | "failed";
+  /**
+   * The application's mark, as a path on our own API — pass it through
+   * `assetSrc` to get a `src`. Empty for every transport but `composio`, and
+   * for an application connected before the catalogue started recording one.
+   */
+  logoPath: string;
   createdAt: number;
 };
 
@@ -79,7 +85,33 @@ export type ComposioToolkit = {
    * party.
    */
   managedAuth: boolean;
+  /**
+   * Whether the application needs no sign-in at all — the second of the two
+   * ways something in this catalogue can be connected as it stands. Use
+   * `canConnectToolkit` rather than either flag on its own.
+   */
+  noAuth: boolean;
+  /**
+   * The mark, as a path on **our** API rather than an address at Composio.
+   * Empty when the catalogue published none. Build the `src` with `logoSrc`;
+   * never treat this as a URL.
+   */
+  logoPath: string;
+  /** Category ids, which is what the catalogue filter speaks. */
+  categories: string[];
 };
+
+/**
+ * Whether pressing Connect on this row can end anywhere but an error.
+ *
+ * Two ways in, and for a long time the page only knew about one: Composio
+ * keeps an OAuth application for the common providers, and a smaller set needs
+ * no credential whatsoever. Everything else wants somebody to register a
+ * client with the provider first, which is a job rather than a retry.
+ */
+export function canConnectToolkit(toolkit: ComposioToolkit): boolean {
+  return toolkit.managedAuth || toolkit.noAuth;
+}
 
 export type ComposioToolkitsResponse = {
   /**
@@ -90,6 +122,16 @@ export type ComposioToolkitsResponse = {
    */
   configured: boolean;
   toolkits: ComposioToolkit[];
+  /** The page token, or "" when this is the end of the catalogue. */
+  nextCursor: string;
+};
+
+/** One heading in the catalogue's taxonomy, for the filter above the grid. */
+export type ComposioCategory = { id: string; name: string };
+
+export type ComposioCategoriesResponse = {
+  configured: boolean;
+  categories: ComposioCategory[];
 };
 
 /**

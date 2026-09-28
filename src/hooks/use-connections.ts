@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { ProviderId } from "@/lib/connections-api";
 
@@ -72,21 +72,50 @@ export function useRemoveToolConnection() {
   });
 }
 
-export const composioToolkitsKey = (search: string) => ["composio-toolkits", search] as const;
+export const composioToolkitsKey = (search: string, category: string) =>
+  ["composio-toolkits", search, category] as const;
+export const composioCategoriesKey = ["composio-categories"] as const;
 export const composioGrantsKey = ["composio-grants"] as const;
 
 /**
- * The catalogue, fetched only while somebody is looking at it.
+ * The catalogue, a page at a time.
+ *
+ * The only `useInfiniteQuery` in the application, and it earns the exception:
+ * Composio pages with an opaque cursor, the grid has a "Show more" under it,
+ * and the alternative is accumulating pages in component state and getting
+ * the reset-on-filter-change wrong. Changing the search or the category
+ * changes the key, which starts a new list rather than appending to the old
+ * one — which is the bug the hand-rolled version would have.
  *
  * `enabled` rather than an unconditional query, for the reason
- * `useSupabaseProjects` is: every call is a round trip to a third party against
- * a rate limit the deployment shares, and nothing on the page needs the
- * catalogue until a person opens it.
+ * `useSupabaseProjects` is: every call is a round trip to a third party
+ * against a rate limit the deployment shares.
  */
-export function useComposioToolkits(search: string, enabled: boolean) {
+export function useComposioToolkits(search: string, category: string, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: composioToolkitsKey(search, category),
+    queryFn: ({ pageParam }) =>
+      api.composio.toolkits({ search, category, cursor: pageParam as string }),
+    initialPageParam: "",
+    // "" is the catalogue saying there is no more, and it has to be mapped to
+    // undefined or the button offers a page that comes back identical.
+    getNextPageParam: (last) => last.nextCursor || undefined,
+    enabled,
+  });
+}
+
+/**
+ * The catalogue's own headings.
+ *
+ * Read once and cached hard: this is a taxonomy, not state. Re-asking on
+ * every mount would be a request to a third party for a list that changes
+ * about never.
+ */
+export function useComposioCategories(enabled: boolean) {
   return useQuery({
-    queryKey: composioToolkitsKey(search),
-    queryFn: () => api.composio.toolkits(search),
+    queryKey: composioCategoriesKey,
+    queryFn: () => api.composio.categories(),
+    staleTime: 60 * 60 * 1000,
     enabled,
   });
 }
@@ -107,10 +136,14 @@ export function useComposioToolkits(search: string, enabled: boolean) {
 export function useConnectComposio() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { toolkit: string; label?: string }) => {
+    mutationFn: async (input: { toolkit: string; label?: string; noAuth?: boolean }) => {
       const { url } = await api.composio.connect(input);
       await queryClient.invalidateQueries({ queryKey: toolConnectionsKey });
-      window.location.assign(url);
+      // An application that asks for no sign-in comes back with no address to
+      // send anybody to, and that is the whole flow: the row is already there
+      // and `useComposioStatus` settles it. Navigating to "" would reload the
+      // page onto itself and look like the connect button did nothing.
+      if (url) window.location.assign(url);
     },
   });
 }

@@ -5,14 +5,15 @@ import type { ToolConnection, ToolConnectionGrant } from "@/lib/connections-api"
 import { ComposioCard } from "./composio-card";
 
 /**
- * The catalogue, as a person walks it: search, click, sign in elsewhere.
+ * What this workspace has connected, and what may be done about it.
  *
- * Three claims are worth keeping. A deployment without the key says which
- * variable would turn the feature on rather than hiding it, which is the rule
- * every provider card on this page follows. An application already connected is
- * not offered again, because picking it would fail on a name rather than on
- * what happened. And a viewer is shown what exists without being offered a
- * control that would answer 403.
+ * The catalogue itself moved out to `app-catalogue.test.tsx` when it stopped
+ * being a text field inside this card, and it is stubbed here: a test that
+ * renders both is a test that fails for two reasons. What is left is the part
+ * that was always this card's — a deployment without the key says which
+ * variable would turn the feature on rather than hiding it, a viewer is shown
+ * what exists without being offered a control that would answer 403, and a
+ * standing permission is listed with a way to take it back.
  */
 const { connect, removeConnection, revokeGrant } = vi.hoisted(() => ({
   connect: { mutate: vi.fn(), isPending: false },
@@ -25,24 +26,26 @@ let grants: ToolConnectionGrant[] = [];
 
 let configured = true;
 let role = "admin";
-const DEFAULT_TOOLKITS = [
-  { slug: "gmail", name: "Gmail", description: "Mail", authSchemes: ["OAUTH2"], managedAuth: true },
-  {
-    slug: "linear",
-    name: "Linear",
-    description: "Issues",
-    authSchemes: ["OAUTH2"],
-    managedAuth: true,
-  },
-];
-let toolkits = DEFAULT_TOOLKITS;
+
+/** What the card is handed, so a test can assert on the dedupe it computes. */
+let offeredTo: Set<string> | null = null;
 
 // Mocked whole rather than partially, for the reason connection-card.test.tsx
 // gives: the real module constructs a Supabase client at import time, which
 // needs an origin no unit test has.
 vi.mock("@/lib/api-client", () => ({
   api: { me: vi.fn() },
+  assetSrc: (path: string) => (path ? `https://api.test${path}` : ""),
   ApiError: class ApiError extends Error {},
+}));
+
+// Stubbed rather than rendered: it has its own file, and it would otherwise
+// pull three more hooks into every test here.
+vi.mock("@/components/integrations/app-catalogue", () => ({
+  AppCatalogue: ({ connected }: { connected: Set<string> }) => {
+    offeredTo = connected;
+    return <div data-testid="catalogue" />;
+  },
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -63,7 +66,10 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 vi.mock("@/hooks/use-connections", () => ({
   useComposioGrants: () => ({ data: { grants } }),
   useRemoveComposioGrant: () => revokeGrant,
-  useComposioToolkits: () => ({ data: { configured, toolkits }, isLoading: false }),
+  useComposioToolkits: () => ({
+    data: { pages: [{ configured, toolkits: [], nextCursor: "" }] },
+    isPending: false,
+  }),
   useConnectComposio: () => connect,
   useComposioStatus: () => ({ data: undefined }),
   useRemoveToolConnection: () => removeConnection,
@@ -82,6 +88,7 @@ function app(over: Partial<ToolConnection> = {}): ToolConnection {
     projectRef: null,
     toolkitSlug: "gmail",
     status: "active",
+    logoPath: "/composio/logo?u=https%3A%2F%2Flogos.composio.dev%2Fapi%2Fgmail",
     createdAt: 1,
     ...over,
   };
@@ -91,7 +98,7 @@ beforeEach(() => {
   configured = true;
   role = "admin";
   grants = [];
-  toolkits = DEFAULT_TOOLKITS;
+  offeredTo = null;
   connect.mutate.mockClear();
   removeConnection.mutate.mockClear();
   revokeGrant.mutate.mockClear();
@@ -103,52 +110,25 @@ describe("ComposioCard", () => {
     render(<ComposioCard connections={[]} agents={AGENTS} />);
     expect(screen.getByText(/COMPOSIO_API_KEY/)).toBeInTheDocument();
     expect(screen.getByText("Not configured")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /connect an app/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("catalogue")).not.toBeInTheDocument();
   });
 
-  it("offers only applications this workspace has not connected", async () => {
+  it("tells the catalogue what is already connected, so it is not offered twice", async () => {
+    // Offering Gmail again would fail on the unique label, with a message
+    // about a name rather than about what happened.
     render(<ComposioCard connections={[app()]} agents={AGENTS} />);
-    await userEvent.click(screen.getByRole("button", { name: /connect an app/i }));
-
-    // Gmail is already connected — offering it again would fail on the unique
-    // label with a message about a name rather than about what happened.
-    expect(screen.getByRole("button", { name: /Linear/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Gmail/ })).not.toBeInTheDocument();
+    expect(screen.getByTestId("catalogue")).toBeInTheDocument();
+    expect([...(offeredTo ?? [])]).toEqual(["gmail"]);
   });
 
-  it("hands the toolkit slug to the consent flow", async () => {
-    render(<ComposioCard connections={[]} agents={AGENTS} />);
-    await userEvent.click(screen.getByRole("button", { name: /connect an app/i }));
-    await userEvent.click(screen.getByRole("button", { name: /Linear/ }));
-
-    expect(connect.mutate).toHaveBeenCalledWith(
-      { toolkit: "linear", label: "Linear" },
-      expect.anything(),
+  it("shows the application's own mark, fetched through this API and not Composio", async () => {
+    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
+    const logo = screen.getByRole("presentation", { hidden: true });
+    expect(logo).toHaveAttribute(
+      "src",
+      "https://api.test/composio/logo?u=https%3A%2F%2Flogos.composio.dev%2Fapi%2Fgmail",
     );
-  });
-
-  it("will not offer an app Composio has no sign-in for", async () => {
-    // Registering an OAuth client with that provider is a job somebody does in
-    // Composio's dashboard. A Connect button here would only produce a 400
-    // from a third party and leave nothing to act on.
-    toolkits = [
-      {
-        slug: "obscure",
-        name: "Obscure",
-        description: "",
-        authSchemes: ["OAUTH2"],
-        managedAuth: false,
-      },
-    ];
-    render(<ComposioCard connections={[]} agents={AGENTS} />);
-    await userEvent.click(screen.getByRole("button", { name: /connect an app/i }));
-
-    const row = screen.getByRole("button", { name: /Obscure/ });
-    expect(row).toBeDisabled();
-    expect(row).toHaveTextContent("Needs setup in Composio");
-
-    await userEvent.click(row);
-    expect(connect.mutate).not.toHaveBeenCalled();
+    expect(logo).toHaveAttribute("loading", "lazy");
   });
 
   it("says a half-finished connection is not finished", async () => {
@@ -160,7 +140,7 @@ describe("ComposioCard", () => {
     role = "viewer";
     render(<ComposioCard connections={[app()]} agents={AGENTS} />);
     expect(screen.getByText("Ana's Gmail")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /connect an app/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("catalogue")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
   });
 

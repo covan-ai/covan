@@ -1,17 +1,20 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Code2 } from "lucide-react";
+import { Code2, Plus } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { PageContainer, PageHeader, SectionHeading } from "@/components/page-container";
+import {
+  PageContainer,
+  PageHeader,
+  PanelEyebrow,
+  SectionHeading,
+} from "@/components/page-container";
 import { Chip, EmptyState, SectionCard } from "@/components/section-card";
 import { DocsLink } from "@/components/docs-link";
+import { Button } from "@/components/ui/button";
 import { ConnectionCard, ConnectSourceCard } from "@/components/integrations/connection-card";
-import {
-  AddToolConnectionCard,
-  ToolConnectionCard,
-  ToolList,
-} from "@/components/integrations/tool-connection-card";
+import { AddServiceDialog } from "@/components/integrations/add-service-dialog";
+import { ToolConnectionCard, ToolList } from "@/components/integrations/tool-connection-card";
 import { SupabaseAccountCard } from "@/components/integrations/supabase-account-card";
 import { ComposioCard } from "@/components/integrations/composio-card";
 import { SlackCard } from "@/components/integrations/slack-card";
@@ -75,6 +78,29 @@ function useGrantOutcome() {
   }, []);
 }
 
+/**
+ * Three sections, and they were four.
+ *
+ * WHAT THIS PAGE LOOKED LIKE BEFORE, because the shape is the change.
+ * "Connected sources" and "Add a source" were two top-level sections asking
+ * one question between them, so a workspace with one Notion connection read
+ * its provider list twice. "Services an agent can call" then held five
+ * different things in a single column — an account card with rows inside it,
+ * an applications card with rows and a search field inside it, loose
+ * full-width cards per service, a two-hundred-line form that unfolded in
+ * place, and a list of every tool in the build. Cards inside cards, and a
+ * page whose height changed on every click.
+ *
+ * The rules it follows now:
+ *
+ * - **One subject per card, and no card inside a card.** A connected thing is
+ *   a row. A row never contains a card.
+ * - **Nothing expands in place.** Every form that used to unfold is a dialog
+ *   (`add-service-dialog`, and both of the Supabase ones), so the page is the
+ *   same height before and after you press anything.
+ * - **The catalogue is visible before you type.** That is `AppCatalogue`, and
+ *   it is the reason the applications card is the largest thing here.
+ */
 function IntegrationsPage() {
   useGrantOutcome();
 
@@ -82,6 +108,7 @@ function IntegrationsPage() {
   const tools = useToolConnections();
   const slack = useSlack();
   const { bundles, agents } = useAgentsStore();
+  const [addingService, setAddingService] = useState(false);
 
   const live = connections.data?.connections ?? [];
   // Every provider is offered every time, connected or not: one team's Notion
@@ -91,10 +118,11 @@ function IntegrationsPage() {
   // A connected Supabase project is an ordinary tool connection, and it is
   // listed inside the account card that opened it rather than a second time
   // here — one place to see it, one place to remove it. A connected
-  // application is the same arrangement one card down.
+  // application is the same arrangement one card up.
   const services = (tools.data?.connections ?? []).filter(
     (c) => c.transport !== "supabase" && c.transport !== "composio",
   );
+  const availableTools = tools.data?.tools ?? [];
 
   return (
     <AppShell>
@@ -105,8 +133,15 @@ function IntegrationsPage() {
           turn="And where the answers go."
         />
 
+        {/* One section, not two. "What is syncing" and "what could sync" are
+            the same question asked from either end, and splitting them put a
+            provider's name on the screen twice. */}
         <section className="mt-14">
-          <SectionHeading title="Connected sources" />
+          <SectionHeading
+            title="Connected sources"
+            description="A source is copied in and re-read on a schedule, so a bundle stays right after the month somebody filled it."
+          />
+
           <div className="mt-6 flex flex-col gap-2.5">
             {connections.isPending ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
@@ -121,69 +156,99 @@ function IntegrationsPage() {
               />
             )}
           </div>
-        </section>
 
-        <section className="mt-16">
-          <SectionHeading title="Add a source" />
-          {bundles.length === 0 ? (
-            <div className="mt-6">
-              <EmptyState
-                title="Make a bundle first."
-                description={
-                  <>
-                    A connection keeps a bundle current, so there has to be one to keep. Create one
-                    on an agent's <Link to="/">Knowledge tab</Link>.
-                  </>
-                }
-              />
-            </div>
-          ) : (
-            <div className="mt-6 grid gap-2.5">
-              {providers.map((provider) => (
-                <ConnectSourceCard key={provider.id} provider={provider} bundles={bundles} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* A different idea from the two sections above, which is why it is
-            its own and not another row in them. A source syncs documents into
-            a bundle and the agent never speaks to it. A service is something
-            the agent calls while it is answering — and the reason it is a
-            form rather than a release is that the worker has no per-service
-            code to go with it. */}
-        <section className="mt-16">
-          <SectionHeading title="Services an agent can call" />
-          <div className="mt-6 flex flex-col gap-2.5">
-            {/* Above the list, because it is the shortest road to the thing
-                most of that list is: a database. The projects it connects are
-                ordinary rows underneath, and they are shown inside this card
-                rather than twice. */}
-            <SupabaseAccountCard connections={tools.data?.connections ?? []} />
-            {/* Above the hand-made connections for the same reason the card
-                above it is: it is the shortest road to most of what a team
-                wants an agent to reach, and the applications it connects are
-                ordinary rows underneath, shown inside it rather than twice. */}
-            <ComposioCard connections={tools.data?.connections ?? []} agents={agents} />
-            {tools.isPending ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : services.length > 0 ? (
-              services.map((connection) => (
-                <ToolConnectionCard key={connection.id} connection={connection} />
-              ))
+          <div className="mt-8">
+            <PanelEyebrow>Add a source</PanelEyebrow>
+            {bundles.length === 0 ? (
+              <div className="mt-2.5">
+                <EmptyState
+                  title="Make a bundle first."
+                  description={
+                    <>
+                      A connection keeps a bundle current, so there has to be one to keep. Create
+                      one on an agent's <Link to="/">Knowledge tab</Link>.
+                    </>
+                  }
+                />
+              </div>
             ) : (
-              <EmptyState
-                title="No service is connected."
-                description="Connect a database or an API and an agent can go and look something up while it answers — and schedule itself to do it again."
-              />
+              // Side by side rather than stacked: two providers as two
+              // full-width cards read as two decisions, and they are one.
+              <div className="mt-2.5 grid gap-2.5 lg:grid-cols-2">
+                {providers.map((provider) => (
+                  <ConnectSourceCard key={provider.id} provider={provider} bundles={bundles} />
+                ))}
+              </div>
             )}
-            <AddToolConnectionCard />
-            <ToolList tools={tools.data?.tools ?? []} />
+          </div>
+        </section>
+
+        {/* A different idea from the section above, which is why it is its own.
+            A source syncs documents into a bundle and the agent never speaks to
+            it. A service is something the agent calls while it is answering —
+            and the reason it is a form rather than a release is that the worker
+            has no per-service code to go with it. */}
+        <section className="mt-16">
+          <SectionHeading
+            title="Services an agent can call"
+            description="A database, an API, or one of about fifteen hundred applications. An agent asks you before its first action on each."
+          />
+
+          <div className="mt-6 flex flex-col gap-2.5">
+            {/* First, because it is the shortest road to most of what a team
+                wants an agent to reach, and because the catalogue inside it is
+                the thing somebody came to this page to use. */}
+            <ComposioCard connections={tools.data?.connections ?? []} agents={agents} />
+
+            {/* Second, because it is the shortest road to the other thing most
+                teams want: a database. The projects it opens are ordinary rows
+                shown inside it rather than twice. */}
+            <SupabaseAccountCard connections={tools.data?.connections ?? []} />
+
+            {/* Third: everything somebody entered by hand. One card holding
+                rows, rather than a card per connection stacked under the two
+                above — which is what made this section unreadable. */}
+            <SectionCard className="flex flex-col gap-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 flex-col gap-[3px]">
+                  <span className="font-dm text-title font-medium leading-tight">
+                    Databases and APIs
+                  </span>
+                  <span className="text-meta leading-tight text-muted-foreground">
+                    Anything with a base address and a token. No per-service code — a row.
+                  </span>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setAddingService(true)}>
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  Add
+                </Button>
+              </div>
+
+              {tools.isPending ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : services.length > 0 ? (
+                <ul className="flex flex-col gap-1.5 border-t border-hairline pt-4">
+                  {services.map((connection) => (
+                    <ToolConnectionCard key={connection.id} connection={connection} />
+                  ))}
+                </ul>
+              ) : (
+                <p className="border-t border-hairline pt-4 text-sm text-muted-foreground">
+                  Nothing entered by hand. Connect a database or an API and an agent can go and look
+                  something up while it answers — and schedule itself to do it again.
+                </p>
+              )}
+
+              {availableTools.length > 0 ? <ToolList tools={availableTools} /> : null}
+            </SectionCard>
           </div>
         </section>
 
         <section className="mt-16">
-          <SectionHeading title="Where the answers go" />
+          <SectionHeading
+            title="Where the answers go"
+            description="The same retrieval, the same citations and the same allowance, asked for somewhere other than here."
+          />
           <div className="mt-6 grid gap-2.5">
             {slack.isPending ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
@@ -192,39 +257,20 @@ function IntegrationsPage() {
             ) : null}
 
             {/* Two things that were already true before any of the above, and
-                are still the honest description of them. */}
-            <SectionCard className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3.5">
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-                  <Code2 className="h-[22px] w-[22px]" />
-                </span>
-                <span className="flex min-w-0 flex-col gap-[3px]">
-                  <span className="font-dm text-title font-medium leading-tight">REST API</span>
-                  <span className="text-meta leading-tight text-muted-foreground">
-                    Call any shared agent programmatically, with a key you mint in Settings.
-                  </span>
-                </span>
-              </div>
-              <Chip tone="on">Available</Chip>
-            </SectionCard>
-
-            <SectionCard className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3.5">
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-                  <SlackMark className="h-[22px] w-[22px]" />
-                </span>
-                <span className="flex min-w-0 flex-col gap-[3px]">
-                  <span className="font-dm text-title font-medium leading-tight">
-                    Slack webhook
-                  </span>
-                  <span className="text-meta leading-tight text-muted-foreground">
-                    Deliver a routine's results to a channel, through a webhook URL you paste in
-                    Settings.
-                  </span>
-                </span>
-              </div>
-              <Chip tone="on">Available</Chip>
-            </SectionCard>
+                are still the honest description of them. Side by side, because
+                neither is a decision — they are two sentences. */}
+            <div className="grid gap-2.5 lg:grid-cols-2">
+              <SurfaceCard
+                mark={<Code2 className="h-[22px] w-[22px]" />}
+                title="REST API"
+                meta="Call any shared agent programmatically, with a key you mint in Settings."
+              />
+              <SurfaceCard
+                mark={<SlackMark className="h-[22px] w-[22px]" />}
+                title="Slack webhook"
+                meta="Deliver a routine's results to a channel, through a webhook URL you paste in Settings."
+              />
+            </div>
           </div>
         </section>
 
@@ -241,6 +287,40 @@ function IntegrationsPage() {
           in Settings for where routines send their updates.
         </p>
       </PageContainer>
+
+      <AddServiceDialog open={addingService} onOpenChange={setAddingService} />
     </AppShell>
+  );
+}
+
+/**
+ * A way out that needs no setting up here, only saying.
+ *
+ * Both of these are configured in Settings and neither has a control on this
+ * page, so they are one shape with two labels rather than two hand-written
+ * cards that had drifted a class apart.
+ */
+function SurfaceCard({
+  mark,
+  title,
+  meta,
+}: {
+  mark: React.ReactNode;
+  title: string;
+  meta: string;
+}) {
+  return (
+    <SectionCard className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3.5">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
+          {mark}
+        </span>
+        <span className="flex min-w-0 flex-col gap-[3px]">
+          <span className="font-dm text-title font-medium leading-tight">{title}</span>
+          <span className="text-meta leading-tight text-muted-foreground">{meta}</span>
+        </span>
+      </div>
+      <Chip tone="on">Available</Chip>
+    </SectionCard>
   );
 }

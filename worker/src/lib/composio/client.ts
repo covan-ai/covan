@@ -121,7 +121,37 @@ export type ComposioToolkit = {
    * button whose only outcome is a 400 from a third party.
    */
   managedAuth: boolean;
+  /**
+   * Whether the provider needs no sign-in at all.
+   *
+   * The second of the two ways an application can be connected as it stands,
+   * and for a while the forgotten one: `docs/integrations.md` has counted these
+   * thirty-five into "158 connect as they are" since the feature shipped, while
+   * the field was never read — so the page called every one of them "Needs
+   * setup in Composio" and refused to connect it. Read here, and the connect
+   * route builds a `no_auth` config for it instead of an OAuth one.
+   */
+  noAuth: boolean;
+  /**
+   * The application's own mark, as an address on a host we are willing to
+   * fetch from — see `allowedLogoUrl`. Empty when the catalogue published none
+   * or published one somewhere we do not follow.
+   *
+   * This is the UPSTREAM address and it is not what the browser is given.
+   * `routes/composio.ts` rewrites it into a path on our own proxy, so a page
+   * showing forty logos makes forty requests to Covan and none to Composio.
+   */
+  logo: string;
+  /**
+   * Category ids, which is what the catalogue filter speaks. Names are a
+   * separate read (`listToolkitCategories`) because the same id arrives with a
+   * different display name in different rows.
+   */
+  categories: string[];
 };
+
+/** One heading in the catalogue's own taxonomy. */
+export type ComposioCategory = { id: string; name: string };
 
 export type ConnectedAccountStatus = "pending" | "active" | "failed";
 
@@ -408,42 +438,185 @@ export async function getTool(
   return { kind: "ok", tool };
 }
 
-/** The applications a person can connect, for the catalogue screen. */
+/**
+ * The hosts a toolkit logo may be fetched from.
+ *
+ * `meta.logo` is a string in somebody else's database, which makes it an
+ * address a third party chooses and we resolve — the shape `lib/routines/
+ * url-guard.ts` exists for. The guard here is narrower and cheaper than an
+ * SSRF check because it can be: Composio serves every mark it publishes from
+ * one of these two, so an allowlist answers the question completely and an
+ * address anywhere else is refused rather than investigated.
+ *
+ * This is what keeps `GET /composio/logo` from being an open proxy. Widening
+ * it is not a configuration change; it is a decision about what our own
+ * servers will fetch on an anonymous caller's behalf.
+ */
+const LOGO_HOSTS = new Set(["logos.composio.dev", "assets.composio.dev"]);
+
+/**
+ * The logo address if we are willing to fetch it, `null` otherwise.
+ *
+ * HTTPS only, host on the list above, and nothing else about the URL is
+ * trusted — a path, a query and a port are all the far end's business.
+ */
+export function allowedLogoUrl(raw: string): URL | null {
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  if (!LOGO_HOSTS.has(url.hostname)) return null;
+  return url;
+}
+
+/**
+ * Category ids off a toolkit row.
+ *
+ * Composio has published these as `[{id,name}]` and as bare strings, and both
+ * are in circulation — `toolkitOf`'s situation one field over. The id is what
+ * the `category` filter takes, so the name is only a fallback for a row that
+ * carried no id at all.
+ */
+function categoryIdsOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    const id =
+      typeof entry === "string" ? entry : isRecord(entry) ? text(entry.id) || text(entry.name) : "";
+    if (id) out.push(id.toLowerCase());
+  }
+  return out;
+}
+
+/** The page token, when the answer says there is more. */
+function nextCursorOf(value: unknown): string {
+  if (!isRecord(value)) return "";
+  return text(value.next_cursor) || text(value.nextCursor);
+}
+
+/**
+ * The applications a person can connect, for the catalogue screen.
+ *
+ * Ordered by usage when nobody has typed anything, which is the whole reason
+ * the page can open on something useful: the first forty of fifteen hundred
+ * applications in catalogue order is forty applications nobody has heard of.
+ * A search brings its own relevance and we do not fight it.
+ */
 export async function listToolkits(
   env: ComposioEnv,
-  query: { search?: string; limit?: number },
+  query: { search?: string; category?: string; cursor?: string; limit?: number },
   opts?: ComposioOptions,
-): Promise<ComposioResult<{ toolkits: ComposioToolkit[] }>> {
+): Promise<ComposioResult<{ toolkits: ComposioToolkit[]; nextCursor: string }>> {
+  const search = query.search?.trim();
   const params = new URLSearchParams({
     limit: String(Math.min(Math.max(query.limit ?? 40, 1), 100)),
   });
-  if (query.search?.trim()) params.set("search", query.search.trim());
+  if (search) params.set("search", search);
+  else params.set("sort_by", "usage");
+  if (query.category?.trim()) params.set("category", query.category.trim());
+  if (query.cursor?.trim()) params.set("cursor", query.cursor.trim());
 
   const res = await request(env, `${CATALOGUE_API}/toolkits?${params}`, { method: "GET" }, opts);
   if (res.kind === "error") return res;
 
-  const toolkits = rows(parsed(res.body))
-    .map((row): ComposioToolkit | null => {
-      const slug = text(row.slug);
-      if (!slug) return null;
-      const schemes = row.auth_schemes ?? row.authSchemes;
-      const managed = row.composio_managed_auth_schemes;
-      // The description lives under `meta`, not at the top level. Read from
-      // the wrong place it is silently the empty string and the card renders a
-      // row with nothing under the name.
-      const meta = isRecord(row.meta) ? row.meta : {};
-      return {
-        slug: slug.toLowerCase(),
-        name: text(row.name) || slug,
-        description: text(meta.description) || text(row.description),
-        authSchemes: Array.isArray(schemes)
-          ? schemes.filter((s): s is string => typeof s === "string")
-          : [],
-        managedAuth: Array.isArray(managed) && managed.length > 0,
-      };
-    })
+  const body = parsed(res.body);
+  const toolkits = rows(body)
+    .map(toToolkit)
     .filter((t): t is ComposioToolkit => t !== null);
-  return { kind: "ok", toolkits };
+  return { kind: "ok", toolkits, nextCursor: nextCursorOf(body) };
+}
+
+function toToolkit(row: Record<string, unknown>): ComposioToolkit | null {
+  const slug = text(row.slug);
+  if (!slug) return null;
+  const schemes = row.auth_schemes ?? row.authSchemes;
+  const managed = row.composio_managed_auth_schemes;
+  // The description lives under `meta`, not at the top level. Read from the
+  // wrong place it is silently the empty string and the card renders a row
+  // with nothing under the name. The logo and the categories are in there
+  // with it, and were being dropped for the same reason the description
+  // nearly was.
+  const meta = isRecord(row.meta) ? row.meta : {};
+  const logo = allowedLogoUrl(text(meta.logo) || text(row.logo));
+  return {
+    slug: slug.toLowerCase(),
+    name: text(row.name) || slug,
+    description: text(meta.description) || text(row.description),
+    authSchemes: Array.isArray(schemes)
+      ? schemes.filter((s): s is string => typeof s === "string")
+      : [],
+    managedAuth: Array.isArray(managed) && managed.length > 0,
+    noAuth: row.no_auth === true,
+    logo: logo ? logo.toString() : "",
+    categories: categoryIdsOf(meta.categories ?? row.categories),
+  };
+}
+
+/**
+ * One application, by slug.
+ *
+ * Read at connect time, and it answers two questions the caller must not be
+ * trusted for. **Whether it needs a sign-in at all** decides which kind of
+ * auth config gets made, and taking that from the browser would mean a
+ * request could pick. **Where its mark lives** is written onto the connection
+ * row, so a connected application keeps its logo without the page having to
+ * find it again in a catalogue of fifteen hundred — and so the logo is the
+ * one the catalogue published rather than an address this code guessed from
+ * the slug.
+ *
+ * One extra request, on the rarest action in the product. `authConfigFor`
+ * makes the same trade one function down and for the same reason.
+ */
+export async function getToolkit(
+  env: ComposioEnv,
+  slug: string,
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ toolkit: ComposioToolkit }>> {
+  const res = await request(
+    env,
+    `${CATALOGUE_API}/toolkits/${encodeURIComponent(slug)}`,
+    { method: "GET" },
+    opts,
+  );
+  if (res.kind === "error") return res;
+
+  const body = parsed(res.body);
+  const row = isRecord(body) ? (isRecord(body.data) ? body.data : body) : null;
+  const toolkit = row ? toToolkit(row) : null;
+  if (!toolkit) {
+    return { kind: "error", status: 502, message: `Composio describes no application ${slug}` };
+  }
+  return { kind: "ok", toolkit };
+}
+
+/**
+ * The catalogue's own headings, for the filter above the grid.
+ *
+ * Read rather than hard-coded: a list of categories written here is a list
+ * that goes stale silently, and the ids are what the `category` filter takes —
+ * so a guess that is one character out filters everything away rather than
+ * failing.
+ */
+export async function listToolkitCategories(
+  env: ComposioEnv,
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ categories: ComposioCategory[] }>> {
+  const res = await request(env, `${CATALOGUE_API}/toolkits/categories`, { method: "GET" }, opts);
+  if (res.kind === "error") return res;
+
+  const seen = new Set<string>();
+  const categories: ComposioCategory[] = [];
+  for (const row of rows(parsed(res.body))) {
+    const id = text(row.id) || text(row.slug);
+    if (!id || seen.has(id.toLowerCase())) continue;
+    seen.add(id.toLowerCase());
+    categories.push({ id: id.toLowerCase(), name: text(row.name) || id });
+  }
+  return { kind: "ok", categories };
 }
 
 /**
@@ -534,6 +707,7 @@ export async function executeTool(
 async function authConfigFor(
   env: ComposioEnv,
   toolkit: string,
+  noAuth: boolean,
   opts?: ComposioOptions,
 ): Promise<{ kind: "ok"; id: string } | ComposioError> {
   const slug = toolkit.toLowerCase();
@@ -561,7 +735,12 @@ async function authConfigFor(
       method: "POST",
       body: {
         toolkit: { slug: slug.toUpperCase() },
-        auth_config: { type: "use_composio_managed_auth" },
+        // An application that asks for no credentials still needs a config to
+        // hang a connection off; what it does not need is an OAuth client.
+        // Asking for a managed one here is what Composio answers 400 to, and
+        // for a long time that 400 was the whole reason these thirty-five
+        // looked unconnectable.
+        auth_config: { type: noAuth ? "no_auth" : "use_composio_managed_auth" },
       },
     },
     opts,
@@ -574,10 +753,11 @@ async function authConfigFor(
     return {
       kind: "error",
       status: made.status,
-      message:
-        `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
-        `application for it in Composio's dashboard before it can be connected here. ` +
-        `(${made.message})`,
+      message: noAuth
+        ? `Composio would not open ${slug} without a sign-in after all. (${made.message})`
+        : `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
+          `application for it in Composio's dashboard before it can be connected here. ` +
+          `(${made.message})`,
     };
   }
 
@@ -600,13 +780,13 @@ async function authConfigFor(
  */
 export async function createLink(
   env: ComposioEnv,
-  link: { toolkit: string; userId: string; callbackUrl?: string },
+  link: { toolkit: string; userId: string; callbackUrl?: string; noAuth?: boolean },
   opts?: ComposioOptions,
 ): Promise<ComposioResult<{ redirectUrl: string; connectedAccountId: string }>> {
   // A link is made against an AUTH CONFIG, not against a toolkit — which is
   // the one thing a reading of the documentation got wrong and a single probe
   // settled: `{"toolkit":…}` comes back 400 `payload.auth_config_id: Required`.
-  const config = await authConfigFor(env, link.toolkit, opts);
+  const config = await authConfigFor(env, link.toolkit, link.noAuth === true, opts);
   if (config.kind === "error") return config;
 
   const res = await request(
@@ -628,7 +808,11 @@ export async function createLink(
   const row = isRecord(body) ? (isRecord(body.data) ? body.data : body) : null;
   const redirectUrl = row ? text(row.redirect_url) || text(row.redirectUrl) || text(row.url) : "";
   const connectedAccountId = row ? text(row.id) || text(row.connected_account_id) : "";
-  if (!redirectUrl || !connectedAccountId) {
+  // The account is the part that must exist. The consent screen is not: an
+  // application that needs no sign-in has nowhere to send anybody, and comes
+  // back with an account and an empty address. The caller reads an empty
+  // `redirectUrl` as "there is nothing to go and do" rather than as a failure.
+  if (!connectedAccountId || (!redirectUrl && link.noAuth !== true)) {
     return {
       kind: "error",
       status: 502,

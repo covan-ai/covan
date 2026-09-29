@@ -1,5 +1,6 @@
 import { Textarea } from "@/components/ui/textarea";
 import { useAutoGrow } from "@/lib/use-auto-grow";
+import { cn } from "@/lib/utils";
 
 /**
  * A past question, open for editing.
@@ -20,15 +21,18 @@ export function EditTurn({
   onChange,
   onCancel,
   onSave,
+  className,
 }: {
   value: string;
   onChange: (next: string) => void;
   onCancel: () => void;
   onSave: () => void;
+  /** How much air goes above this turn. See `gapBefore`. */
+  className?: string;
 }) {
   const ref = useAutoGrow<HTMLTextAreaElement>(value);
   return (
-    <div className="flex flex-col items-end gap-1.5">
+    <div className={cn("flex flex-col items-end gap-1.5", className)}>
       {/* The same fill and the same corner as the bubble it stands in for —
           this is that message, opened, and a different surface would read as
           the message having been replaced by a dialog. The border is the only

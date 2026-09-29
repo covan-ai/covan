@@ -69,6 +69,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   onContinue,
   onKeepGoing,
   onRegenerate,
+  className,
 }: {
   message: Message;
   /** Tokens still arriving for THIS message. Null for every settled row. */
@@ -99,6 +100,8 @@ export const AnswerTurn = memo(function AnswerTurn({
   onContinue: (id: string) => void;
   onKeepGoing: () => void;
   onRegenerate: (model?: string) => void;
+  /** How much air goes above this turn. See `gapBefore`. */
+  className?: string;
 }) {
   const sources = message.sources ?? [];
 
@@ -117,7 +120,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   // are the only unattributed thing on screen. One line, one baseline, and the
   // answer still starts at the margin the questions are measured from.
   return (
-    <div className="group flex flex-col gap-2">
+    <div className={cn("group flex flex-col gap-2", className)}>
       <div className="min-w-0" data-turn="answer">
         <div data-part="byline" className="mb-2 flex items-center gap-2">
           <AgentAvatar emoji={agentEmoji} className="h-5 w-5 text-[11px]" />

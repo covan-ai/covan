@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Pencil } from "lucide-react";
 import type { Message } from "@/lib/agents-store";
+import { cn } from "@/lib/utils";
 
 /**
  * One question in a transcript.
@@ -28,6 +29,7 @@ export function QuestionTurn({
   busy,
   onEdit,
   footer,
+  className,
 }: {
   message: Message;
   sender: { name: string | null; avatarUrl: string | null } | null;
@@ -44,9 +46,11 @@ export function QuestionTurn({
   busy: boolean;
   onEdit: (id: string, content: string) => void;
   footer?: ReactNode;
+  /** How much air goes above this turn. See `gapBefore`. */
+  className?: string;
 }) {
   return (
-    <div className="group flex flex-col items-end gap-1.5">
+    <div className={cn("group flex flex-col items-end gap-1.5", className)}>
       {sender && (
         <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
           {sender.avatarUrl ? (

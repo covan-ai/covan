@@ -33,6 +33,7 @@ import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
 import { modelsFor } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
+import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
 import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
@@ -1378,7 +1379,13 @@ function ChatTab() {
               </div>
             </div>
           ) : (
-            <div className="space-y-6">
+            /* No `space-y` here. Three children with three different jobs: the
+               "load earlier" button wants air under it, the search-empty note
+               brings its own padding, and the live answer is the answer to the
+               LAST QUESTION IN THE LOG — 20px, the same as any other pair.
+               A uniform 24px got that last one wrong in the one place people
+               watch most closely. */
+            <div>
               {/*
                 A log, which is what a transcript is, and what makes a screen
                 reader read a reply out when it lands instead of leaving the
@@ -1391,7 +1398,7 @@ function ChatTab() {
                 is not access, it is a torrent.
               */}
               {hasEarlier && (
-                <div className="flex justify-center">
+                <div className="mb-11 flex justify-center">
                   <button
                     type="button"
                     onClick={() => void loadEarlier()}
@@ -1407,16 +1414,15 @@ function ChatTab() {
                   Nothing in this conversation matches “{searchQuery}”.
                 </p>
               )}
-              <div
-                role="log"
-                aria-label="Conversation"
-                aria-relevant="additions"
-                className="space-y-6"
-              >
+              {/* Each turn carries its own top margin rather than the log
+                  spacing them all alike — see `gapBefore`. A question and its
+                  answer are 20px apart; one exchange is 44px from the next. */}
+              <div role="log" aria-label="Conversation" aria-relevant="additions">
                 {messages.map((m, idx, arr) => {
                   // Set when this message is the first of its day, undefined
                   // when it is not. See `dateDividers`.
                   const dividerLabel = dividers.get(m.id);
+                  const gap = GAP_CLASS[gapBefore(arr[idx - 1], m, Boolean(dividerLabel))];
 
                   // `role`, not ownership — this decides the LAYOUT. A
                   // teammate's message in a shared session is still somebody's
@@ -1428,6 +1434,7 @@ function ChatTab() {
                         <Fragment key={m.id}>
                           {dividerLabel && <DateDivider label={dividerLabel} />}
                           <EditTurn
+                            className={gap}
                             value={editText}
                             onChange={setEditText}
                             onCancel={() => setEditingId(null)}
@@ -1440,6 +1447,7 @@ function ChatTab() {
                       <Fragment key={m.id}>
                         {dividerLabel && <DateDivider label={dividerLabel} />}
                         <QuestionTurn
+                          className={gap}
                           message={m}
                           sender={isShared ? (m.sender ?? null) : null}
                           time={formatTime(m.createdAt)}
@@ -1480,6 +1488,7 @@ function ChatTab() {
                     <Fragment key={m.id}>
                       {dividerLabel && <DateDivider label={dividerLabel} />}
                       <AnswerTurn
+                        className={gap}
                         message={m}
                         /* The one row the tokens belong to gets a string; every
                            other row gets `null`, which is a stable primitive —
@@ -1527,6 +1536,7 @@ function ChatTab() {
               {continuingId === null &&
                 (replyingIn === active?.id || settlingIn === active?.id) && (
                   <LiveAnswer
+                    className="mt-5"
                     streamText={streamText}
                     thinkingText={thinkingText}
                     thinking={thinking}

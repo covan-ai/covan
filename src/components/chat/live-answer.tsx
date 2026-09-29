@@ -23,6 +23,7 @@ export function LiveAnswer({
   thinking,
   steps,
   streaming,
+  className,
 }: {
   /** The answer so far. Empty while the model is between passes. */
   streamText: string;
@@ -38,13 +39,14 @@ export function LiveAnswer({
    * question as `thinking`.
    */
   streaming: boolean;
+  className?: string;
 }) {
   return (
     // Outside the log, and silent. The words arrive here one token at a time;
     // a screen reader is told *that* a reply is coming by the status line
     // below, and reads the reply itself once it lands in the log above as a
     // finished thing.
-    <div className="flex flex-col gap-2" aria-live="off">
+    <div className={cn("flex flex-col gap-2", className)} aria-live="off">
       <div className="min-w-0" data-turn="answer">
         {/* What the model is working through, while it works through it.
             Folded, and closed by default: this is context for a pause, not the

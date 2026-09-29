@@ -59,3 +59,28 @@ export function groupMessagesByDate(messages: Message[]): MessageGroup[] {
 
   return groups;
 }
+
+/**
+ * Which messages open a new calendar day, and what that day is called.
+ *
+ * Keyed by message id and not by index: the transcript looks a divider up while
+ * it draws a turn, so it never has to remember what it drew last. A message
+ * absent from the map opens nothing and draws no divider.
+ *
+ * The day itself is compared rather than the label. The two agree today — one
+ * label per day — but a day boundary is the real question, and asking it
+ * directly means a later change to how a day is *named* cannot silently move
+ * where the lines fall.
+ */
+export function dateDividers(messages: Message[]): Map<string, string> {
+  const dividers = new Map<string, string>();
+  let previousDay: string | null = null;
+
+  for (const msg of messages) {
+    const day = new Date(msg.createdAt).toDateString();
+    if (day !== previousDay) dividers.set(msg.id, dateLabel(msg.createdAt));
+    previousDay = day;
+  }
+
+  return dividers;
+}

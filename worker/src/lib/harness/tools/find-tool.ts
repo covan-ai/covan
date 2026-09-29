@@ -83,10 +83,30 @@ const MAX_RESULTS = 5;
  *
  * WHAT IT DEGRADES TO. A query whose words appear in no candidate's name scores
  * every row zero, the sort is stable, and the shortlist is Composio's own first
- * five — exactly today's answer. What is NOT established is that Composio's search
- * is monotone in `limit`: if it truncates at a relevance threshold, rows eleven to
- * fifty are the same rows and this buys nothing. It cannot cost anything either,
- * which is why it ships ahead of that probe.
+ * five — exactly today's answer.
+ *
+ * **MEASURED 2026-09-29, and it settles the one thing that shipped unproven.**
+ * The question was whether Composio's search is monotone in `limit` — if it
+ * truncated at a relevance threshold, rows eleven to fifty would be the same
+ * rows and the larger page would buy nothing. It does not truncate, and the
+ * answer is better than monotone. `GET /api/v3.1/tools?search=list pull
+ * requests&toolkit_slug=GITHUB`:
+ *
+ *     limit=10   ten rows, `next_cursor` set, GITHUB_LIST_PULL_REQUESTS ABSENT
+ *     limit=50   twenty-three rows, `next_cursor` null, it is at index ELEVEN
+ *
+ * One row past the old page. And the order it arrives in is **alphabetical** —
+ * GENERATE_RELEASE_NOTES, GET_PULL_REQUESTS, LIST_BRANCHES, LIST_COMMENTS_…,
+ * LIST_COMMITS_…, … , LIST_PULL_REQUESTS — not relevance, not popularity. So
+ * `limit` is the whole of whether the right row is on the page: there is no
+ * "best ten" to ask for, and `relevance` below is not reordering a good list,
+ * it is the only ranking in the system.
+ *
+ * Two things follow. The page raise was load-bearing rather than speculative;
+ * and a second page is not needed for this query class, because fifty exhausted
+ * a twenty-three-row result set. `next_cursor` is still real at ten, so the
+ * cursor remains the answer for a toolkit whose search genuinely overflows
+ * fifty — it is just not this one.
  */
 const SEARCH_PAGE = MAX_TOOLS_PAGE;
 
@@ -220,6 +240,59 @@ function meaningfulWords(query: string): Set<string> {
     out.add(stem(raw));
   }
   return out;
+}
+
+/**
+ * How many words an operation's name carries that the question did not ask for.
+ *
+ * The tiebreak `relevance` cannot provide, and it is needed because ties are
+ * common rather than exotic. Measured on the 2026-09-28 turn: for "list pull
+ * requests", both `GITHUB_LIST_PULL_REQUESTS` and
+ * `GITHUB_LIST_COMMENTS_FOR_A_PULL_REQUEST_REVIEW` score three of three —
+ * `LIST` ✓ `PULL` ✓ `REQUEST` ✓ — and the second is about comments on a review.
+ * The model happened to pick the right one; nothing in the order helped it.
+ *
+ * AND THE FALLBACK IS WORTH NOTHING, which is what makes this more than a
+ * refinement. The sort below says a tie degrades to "the order the catalogue
+ * returned", which reads as deferring to the vendor's own judgement. Measured
+ * 2026-09-29 against `GET /api/v3.1/tools?search=…&toolkit_slug=GITHUB`: the
+ * order is **alphabetical**. `GENERATE_RELEASE_NOTES` came first for "list pull
+ * requests" because G precedes L. So a tie was being broken by spelling, and on
+ * this exact query spelling puts the operation about review comments ahead of
+ * the one that was asked for.
+ *
+ * Precision, not blast radius. `relevance` asks how much of the question the
+ * name answers; this asks how much of the name the question did not ask about,
+ * and the lower number wins. It reads the slug and nothing else — no vendor
+ * description prose, which is the rule #201 set when it declined to de-rank
+ * operations by what they do — so the worst it can do is reorder two candidates
+ * that already scored identically.
+ *
+ * **Applied only to candidates that scored.** At a relevance of zero there is
+ * nothing to refine and this degenerates into "prefer the shorter name", which
+ * on a query separating nothing puts `GOOGLECALENDAR_CLEAR_CALENDAR` — one
+ * unasked word — above `GOOGLECALENDAR_DELETE_EVENT` — two. That is the #201
+ * order, rebuilt by the tiebreak that exists because of #201. The sort guards
+ * it; this paragraph is why the guard is not an oversight to tidy away.
+ *
+ * Three kinds of segment are not noise and are skipped. A segment naming the
+ * application, for `relevance`'s reason: every slug opens with its toolkit, and
+ * penalising `GITHUB_…` for containing `GITHUB` would penalise every candidate
+ * equally and tell nobody anything. A segment in `UNHELPFUL_WORDS` — `FOR`, `A`
+ * — because a word that cannot distinguish two operations should not condemn
+ * one either. And a segment the query did ask for, which `relevance` has
+ * already credited.
+ */
+function unasked(tool: ComposioTool, words: Set<string>): number {
+  const app = tool.toolkit.toLowerCase();
+  let extra = 0;
+  for (const segment of new Set(tool.slug.toLowerCase().split("_").map(stem))) {
+    if (app.includes(segment)) continue;
+    if (UNHELPFUL_WORDS.has(segment)) continue;
+    if (words.has(segment)) continue;
+    extra += 1;
+  }
+  return extra;
 }
 
 /**
@@ -708,14 +781,30 @@ export const findToolTool: AgentTool = {
     // must not be able to lift an operation nobody can call. See `relevance`
     // for the calendar somebody lost to the old order.
     //
-    // A stable sort, so a tie is left exactly as the catalogue returned it —
-    // when nothing scores, this whole comparison is a no-op and the order is
-    // Composio's, which is the right thing for it to degrade to.
+    // Then, among names that answer the question equally well, the one that is
+    // about less else — see `unasked`, and note that the thing this replaced was
+    // not "the catalogue's judgement" but its alphabet.
+    //
+    // A stable sort, so a tie surviving all three comparisons is left exactly as
+    // the catalogue returned it. When the query matches nothing at all, every
+    // score is zero and every `unasked` count is the same shape of noise, and the
+    // order degrades to Composio's — which is alphabetical, and is the honest
+    // place to stop rather than a ranking worth defending.
     const ranked = [...candidates].sort((a, b) => {
       const ac = byToolkit.has(a.toolkit) ? 0 : 1;
       const bc = byToolkit.has(b.toolkit) ? 0 : 1;
       if (ac !== bc) return ac - bc;
-      return relevance(b, queryWords) - relevance(a, queryWords);
+      const byRelevance = relevance(b, queryWords) - relevance(a, queryWords);
+      if (byRelevance !== 0) return byRelevance;
+      // Only among names that answered something. A pair that both scored zero
+      // has nothing for a tiebreak to refine, and `unasked` applied there
+      // becomes "prefer the shorter name" — which on "tidy up" in a calendar
+      // puts CLEAR_CALENDAR above DELETE_EVENT, because `CLEAR` is one unasked
+      // word against `DELETE` and `EVENT`. That is the #201 order exactly,
+      // reintroduced by a rule meant to help. So at zero this stops and the
+      // stable sort keeps the catalogue's order.
+      if (relevance(a, queryWords) === 0) return 0;
+      return unasked(a, queryWords) - unasked(b, queryWords);
     });
 
     if (input.detail === true) {

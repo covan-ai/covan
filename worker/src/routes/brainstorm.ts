@@ -22,7 +22,7 @@ const suggestSchema = z.object({ sessionId: z.string().min(1) });
 // through `selectHistory` for exactly this reason; this one did not, and it is
 // the one nobody was watching. It does now, on the same two budgets, so the
 // worst case is `MAX_HISTORY_TOKENS` rather than unbounded.
-const EXTRACT_MSG_LIMIT = 30;
+export const EXTRACT_MSG_LIMIT = 30;
 
 // POST /brainstorm/ideas/suggest — distill the conversation so far into
 // candidate idea cards. Nothing is persisted; the client adds the ones it wants.

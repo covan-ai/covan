@@ -1,17 +1,12 @@
 import type { Message } from "./agents-store";
 
 /**
- * Group messages by calendar date for rendering date dividers.
+ * What to call the day a message was sent on, and which messages open one.
  *
  * "Today", "Yesterday", and explicit dates for older messages. Uses local time
  * rather than UTC — a message sent at 11 PM appears under "Today" if it is
  * still today where the reader is, not where the server is.
  */
-
-type MessageGroup = {
-  label: string;
-  messages: Message[];
-};
 
 function dateLabel(ts: number): string {
   const date = new Date(ts);
@@ -36,26 +31,27 @@ function dateLabel(ts: number): string {
   });
 }
 
-export function groupMessagesByDate(messages: Message[]): MessageGroup[] {
-  if (messages.length === 0) return [];
-
-  const groups: MessageGroup[] = [];
-  let currentLabel = dateLabel(messages[0].createdAt);
-  let currentMessages: Message[] = [];
+/**
+ * Which messages open a new calendar day, and what that day is called.
+ *
+ * Keyed by message id and not by index: the transcript looks a divider up while
+ * it draws a turn, so it never has to remember what it drew last. A message
+ * absent from the map opens nothing and draws no divider.
+ *
+ * The day itself is compared rather than the label. The two agree today — one
+ * label per day — but a day boundary is the real question, and asking it
+ * directly means a later change to how a day is *named* cannot silently move
+ * where the lines fall.
+ */
+export function dateDividers(messages: Message[]): Map<string, string> {
+  const dividers = new Map<string, string>();
+  let previousDay: string | null = null;
 
   for (const msg of messages) {
-    const label = dateLabel(msg.createdAt);
-    if (label !== currentLabel) {
-      groups.push({ label: currentLabel, messages: currentMessages });
-      currentLabel = label;
-      currentMessages = [];
-    }
-    currentMessages.push(msg);
+    const day = new Date(msg.createdAt).toDateString();
+    if (day !== previousDay) dividers.set(msg.id, dateLabel(msg.createdAt));
+    previousDay = day;
   }
 
-  if (currentMessages.length > 0) {
-    groups.push({ label: currentLabel, messages: currentMessages });
-  }
-
-  return groups;
+  return dividers;
 }

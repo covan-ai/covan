@@ -65,6 +65,10 @@ vi.mock("@/lib/api-client", () => ({
     status = 500;
   },
   getAccessToken: () => Promise.resolve("token"),
+  // The empty screen builds a `src` for each connected app's mark with this.
+  // Absent from the mock it is `undefined`, and every logo on that screen
+  // throws before it can fall back to a monogram.
+  assetSrc: (path: string) => (path ? `https://api.test${path}` : ""),
   api: {
     me: () => Promise.resolve({ user: { id: "user-1" }, models: ["gpt-4.1", "claude-opus-5"] }),
     sessions: { messages: listMessages, setVisibility: vi.fn() },
@@ -118,6 +122,24 @@ vi.mock("@/components/chat-report", () => ({
 vi.mock("@/components/chat-mic", () => ({ ChatMic: () => null }));
 vi.mock("@/components/feedback-dialog", () => ({ FeedbackDialog: () => null }));
 vi.mock("@/components/idea-board", () => ({ IdeaBoard: () => null }));
+
+/*
+ * The connection hooks, mocked whole rather than served by a QueryClient.
+ *
+ * This file mocks `@/lib/api-client` by SHAPE — an object literal with the
+ * handful of endpoints the chat uses — so the real hooks would call
+ * `api.connections.list()` and find nothing there. Wrapping every render in a
+ * provider to reach two queries that answer "nothing connected" in almost
+ * every test here would be a lot of machinery for one default; the pattern is
+ * `composio-card.test.tsx`'s.
+ *
+ * Empty by default, so the existing tests see exactly the screen they saw
+ * before. The tests that care about connected apps override these.
+ */
+vi.mock("@/hooks/use-connections", () => ({
+  useConnections: () => ({ data: { connections: [], providers: [] } }),
+  useToolConnections: () => ({ data: { connections: [], tools: [] } }),
+}));
 vi.mock("@/components/source-chip", () => ({ SourceChip: () => null }));
 
 const question = {

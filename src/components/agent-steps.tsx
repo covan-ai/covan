@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Check, Loader2, Minus, X } from "lucide-react";
+import { Check, Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Disclosure } from "@/components/section-card";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,14 @@ export type AgentStepView = {
   status: "running" | "ok" | "failed" | "refused" | "pending";
   /** One line: the tool and, where there is one, what it was pointed at. */
   label: string;
+  /**
+   * How long it took, or null for a step recorded before the column existed.
+   *
+   * Null and zero are different answers, which is why the summary omits the
+   * figure entirely rather than printing "0.0s" — a measurement where there
+   * was none.
+   */
+  durationMs?: number | null;
 };
 
 const WORDS: Record<AgentStepView["status"], string> = {
@@ -38,15 +46,29 @@ const WORDS: Record<AgentStepView["status"], string> = {
   pending: "waiting for you",
 };
 
+/**
+ * THERE ARE TWO AMBERS IN THE TRAIL AND THEY MEAN OPPOSITE THINGS.
+ *
+ * A waiting step is a FILLED amber square: somebody is being asked, and
+ * nothing moves until they answer. A running step is an amber OUTLINE with the
+ * fill sweeping through it: the machine is busy and nothing is being asked.
+ *
+ * The distinction is shape, not motion, and that is the whole of why it works.
+ * A reader with `prefers-reduced-motion` set sees a ring and a fill — still two
+ * different marks — where "one of them is animated" would have collapsed into
+ * two identical squares. See `.step-running` in `styles.css`.
+ *
+ * Running used to be lucide's `Loader2` spinning. It was the one circle on a
+ * screen whose rule is squares, and it said "busy" in general rather than
+ * "this row", which is the only thing a trail exists to say.
+ */
 function Mark({ status }: { status: AgentStepView["status"] }) {
   if (status === "running") {
-    return <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />;
+    return <span className="step-running h-2 w-2 shrink-0 rounded-[2px]" />;
   }
   if (status === "ok") return <Check className="h-3 w-3 shrink-0 text-muted-foreground" />;
   if (status === "failed") return <X className="h-3 w-3 shrink-0 text-destructive" />;
   if (status === "refused") return <Minus className="h-3 w-3 shrink-0 text-muted-foreground" />;
-  // Waiting. A filled square rather than an outline: the amber says "this one
-  // is yours", and it is the only amber in the trail.
   return <span className="h-2 w-2 shrink-0 rounded-[2px] bg-accent-orange" />;
 }
 
@@ -65,7 +87,7 @@ export function StepTrail({ steps, className }: { steps: AgentStepView[]; classN
       {steps.map((step) => (
         <li
           key={step.index}
-          className="flex items-center gap-2 text-xs leading-[1.45] text-muted-foreground"
+          className="step-arrive flex items-center gap-2 text-xs leading-[1.45] text-muted-foreground"
         >
           <Mark status={step.status} />
           <span className="min-w-0 truncate">{step.label || step.tool}</span>
@@ -90,10 +112,21 @@ export function SettledSteps({ steps }: { steps: AgentStepView[] }) {
   if (steps.length === 0) return null;
   const failed = steps.filter((s) => s.status === "failed" || s.status === "refused").length;
   const count = steps.length === 1 ? "1 step" : `${steps.length} steps`;
+
+  // The question people actually have about a pause is how long it was, and
+  // the number was already in `message_steps` — it was being dropped on the
+  // way to the screen. Omitted rather than zeroed when no step recorded one:
+  // "0.0s" is a measurement, and there was none.
+  const timed = steps.filter((s) => typeof s.durationMs === "number");
+  const total = timed.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+  const took = timed.length > 0 ? `${(total / 1000).toFixed(1)}s` : null;
+
   return (
     <Disclosure
       className="mt-3"
-      label={failed > 0 ? `${count} · ${failed} did not complete` : count}
+      label={[count, took, failed > 0 ? `${failed} did not complete` : null]
+        .filter(Boolean)
+        .join(" · ")}
     >
       <StepTrail steps={steps} />
     </Disclosure>
@@ -123,6 +156,7 @@ export function toStepViews(
     tool: string;
     status: "ok" | "failed" | "refused" | "pending";
     request: unknown;
+    durationMs?: number | null;
   }>,
 ): AgentStepView[] {
   return steps.map((step) => {
@@ -138,6 +172,7 @@ export function toStepViews(
       index: step.index,
       tool: step.tool,
       status: step.status,
+      durationMs: step.durationMs,
       label: oneLine
         ? `${step.tool} · ${oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine}`
         : step.tool,

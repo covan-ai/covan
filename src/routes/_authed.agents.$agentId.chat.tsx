@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,22 +10,13 @@ import { IdeaBoard } from "@/components/idea-board";
 import {
   ArrowDown,
   ArrowUp,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
   FileText,
   Lock,
-  Pencil,
-  RefreshCw,
   Search,
   Sparkles,
   Square,
-  ThumbsDown,
-  ThumbsUp,
   Upload,
   Users,
-  Volume2,
-  VolumeX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -40,31 +31,27 @@ import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
-import { modelsFor, costFor } from "@/lib/agent-meta";
-import { ModelCost } from "@/components/model-cost";
-import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
-import { groupMessagesByDate } from "@/lib/message-groups";
+import { modelsFor } from "@/lib/agent-meta";
+import { dateDividers } from "@/lib/message-groups";
+import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
+import { DateDivider } from "@/components/chat/date-divider";
+import { EditTurn } from "@/components/chat/edit-turn";
+import { QuestionTurn } from "@/components/chat/question-turn";
+import { AnswerTurn } from "@/components/chat/answer-turn";
+import { LiveAnswer } from "@/components/chat/live-answer";
+import { ConnectedStarters } from "@/components/chat/connected-starters";
+import { HeaderAction } from "@/components/chat/turn-actions";
 import { useTTS } from "@/lib/use-tts";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { runToolProposal } from "@/lib/connections-api";
 import { isAdminRole } from "@/lib/roles";
 import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
-import { SourceChip } from "@/components/source-chip";
-import { Disclosure } from "@/components/section-card";
+import { useStableCallback } from "@/lib/use-stable-callback";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 import {
   ConfirmCard,
-  SettledSteps,
-  StepTrail,
-  toStepViews,
   type AgentStepView,
   type PendingConfirmation,
 } from "@/components/agent-steps";
@@ -248,7 +235,7 @@ function ChatTab() {
   // have, and taking it back on the next one is answering a question they did
   // not ask.
   const [pageSize, setPageSize] = useState(MESSAGE_PAGE);
-  const { data: allMessages = [] } = useQuery({
+  const { data: allMessages = [], isSuccess: messagesLoaded } = useQuery({
     queryKey: ["messages", active?.id],
     queryFn: () => api.sessions.messages(active!.id, { limit: pageSize }),
     enabled: !!active?.id,
@@ -265,6 +252,12 @@ function ChatTab() {
           m.sender?.name?.toLowerCase().includes(lowerQuery),
       )
     : allMessages;
+
+  // Which messages open a new day, worked out once for the list rather than
+  // twice per message inside the loop. Searching rebuilds `messages` on every
+  // keystroke, so this rebuilds too — which is what it should do: the dividers
+  // belong to what is on screen, and a filtered transcript has different ones.
+  const dividers = useMemo(() => dateDividers(messages), [messages]);
 
   // A full page came back, so there is probably another behind it. "Probably"
   // is the honest word: a conversation of exactly a hundred turns offers a
@@ -1191,7 +1184,63 @@ function ChatTab() {
    */
   const [rating, setRating] = useState<{ messageId: string; kind: FeedbackKind } | null>(null);
 
-  const isEmpty = !active || allMessages.length === 0;
+  /*
+   * One identity each, for the life of the screen.
+   *
+   * `AnswerTurn` is memoised so that a hundred-message transcript does not
+   * re-parse a hundred Markdown documents per streamed token. That only works
+   * if its props are stable, and none of these would be: they close over
+   * `active`, `busy`, `submit` and `streamReply`, which are rebuilt on every
+   * render. A dependency array would move the churn rather than stop it — see
+   * `useStableCallback`.
+   *
+   * Anything added here must go through the same wrapper, and an inline arrow
+   * at the call site undoes all of it with nothing failing.
+   */
+  /*
+   * WHICH answer is being read aloud.
+   *
+   * `useTTS` has one `speaking` flag for the whole screen, which was invisible
+   * while the action strip was hover-only: you could only see one answer's
+   * buttons at a time. Now that the strip is always on, reading one answer
+   * aloud would put EVERY answer's button into "Stop reading" — a screenful of
+   * controls claiming to stop something they have nothing to do with.
+   *
+   * ANDed with `tts.speaking` rather than cleared on end, so there is nothing
+   * to keep in sync: a stale id is harmless because the flag beside it is
+   * false, and the speech API's own "finished" is the only source of truth
+   * about whether anything is being read.
+   */
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const onSpeak = useStableCallback((id: string, text: string) => {
+    setSpeakingId(id);
+    tts.speak(text);
+  });
+  const onStopSpeaking = useStableCallback(() => {
+    setSpeakingId(null);
+    tts.stop();
+  });
+
+  const onContinue = useStableCallback(carryOn);
+  const onKeepGoing = useStableCallback(keepGoing);
+  const onRegenerate = useStableCallback(regenerate);
+  const onShowVersion = useStableCallback((id: string) => void showVersion(id));
+  const onCopy = useStableCallback(copyMessage);
+  const onRate = useStableCallback((messageId: string, kind: FeedbackKind) =>
+    setRating({ messageId, kind }),
+  );
+
+  /*
+   * Empty means "asked, and there is nothing", not "have not asked yet".
+   *
+   * `allMessages` defaults to `[]` while the query is in flight, so every
+   * conversation opened rendered the empty screen for one frame before the
+   * transcript arrived. Nobody minded while that screen was four static
+   * buttons. It is about to own two queries of its own, and a branch that
+   * mounts and unmounts a frame later would fire them on every single chat
+   * anybody opens.
+   */
+  const isEmpty = !active || (messagesLoaded && allMessages.length === 0);
 
   const chatPane = (
     <section
@@ -1328,20 +1377,37 @@ function ChatTab() {
                 Ask anything — this chat is private to you, grounded in your team's shared
                 knowledge.
               </p>
-              <div className="mt-8 grid gap-2.5 sm:grid-cols-2">
-                {starters.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => void submit(s)}
-                    className="rounded-md border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
-                  >
-                    {s}
-                  </button>
-                ))}
+              {/* Two groups, because they answer two questions: what this
+                  agent has READ, and what it can REACH. The second draws
+                  nothing at all when there is nothing connected — heading
+                  included — so a workspace on its first day sees exactly what
+                  it saw before. */}
+              <div className="mt-8 text-left">
+                <h4 className="text-xs font-medium uppercase tracking-[0.06em] text-micro-foreground">
+                  Knowledge
+                </h4>
+                <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                  {starters.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => void submit(s)}
+                      className="rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
+              <ConnectedStarters onPick={(s) => void submit(s)} />
             </div>
           ) : (
-            <div className="space-y-6">
+            /* No `space-y` here. Three children with three different jobs: the
+               "load earlier" button wants air under it, the search-empty note
+               brings its own padding, and the live answer is the answer to the
+               LAST QUESTION IN THE LOG — 20px, the same as any other pair.
+               A uniform 24px got that last one wrong in the one place people
+               watch most closely. */
+            <div>
               {/*
                 A log, which is what a transcript is, and what makes a screen
                 reader read a reply out when it lands instead of leaving the
@@ -1354,12 +1420,12 @@ function ChatTab() {
                 is not access, it is a torrent.
               */}
               {hasEarlier && (
-                <div className="flex justify-center">
+                <div className="mb-11 flex justify-center">
                   <button
                     type="button"
                     onClick={() => void loadEarlier()}
                     disabled={loadingEarlier}
-                    className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+                    className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
                   >
                     {loadingEarlier ? "Loading…" : "Load earlier messages"}
                   </button>
@@ -1370,40 +1436,15 @@ function ChatTab() {
                   Nothing in this conversation matches “{searchQuery}”.
                 </p>
               )}
-              <div
-                role="log"
-                aria-label="Conversation"
-                aria-relevant="additions"
-                className="space-y-6"
-              >
+              {/* Each turn carries its own top margin rather than the log
+                  spacing them all alike — see `gapBefore`. A question and its
+                  answer are 20px apart; one exchange is 44px from the next. */}
+              <div role="log" aria-label="Conversation" aria-relevant="additions">
                 {messages.map((m, idx, arr) => {
-                  // Date divider: show when date changes
-                  const showDateDivider = (() => {
-                    if (idx === 0) return true;
-                    const prev = arr[idx - 1];
-                    const prevDate = new Date(prev.createdAt).toDateString();
-                    const currDate = new Date(m.createdAt).toDateString();
-                    return prevDate !== currDate;
-                  })();
-
-                  const dateLabel = (() => {
-                    const date = new Date(m.createdAt);
-                    const today = new Date();
-                    const yesterday = new Date(today);
-                    yesterday.setDate(yesterday.getDate() - 1);
-                    const isSameDay = (a: Date, b: Date) =>
-                      a.getFullYear() === b.getFullYear() &&
-                      a.getMonth() === b.getMonth() &&
-                      a.getDate() === b.getDate();
-                    if (isSameDay(date, today)) return "Today";
-                    if (isSameDay(date, yesterday)) return "Yesterday";
-                    const sameYear = date.getFullYear() === today.getFullYear();
-                    return date.toLocaleDateString("en-US", {
-                      month: "long",
-                      day: "numeric",
-                      ...(sameYear ? {} : { year: "numeric" }),
-                    });
-                  })();
+                  // Set when this message is the first of its day, undefined
+                  // when it is not. See `dateDividers`.
+                  const dividerLabel = dividers.get(m.id);
+                  const gap = GAP_CLASS[gapBefore(arr[idx - 1], m, Boolean(dividerLabel))];
 
                   // `role`, not ownership — this decides the LAYOUT. A
                   // teammate's message in a shared session is still somebody's
@@ -1413,8 +1454,9 @@ function ChatTab() {
                     if (editingId === m.id) {
                       return (
                         <Fragment key={m.id}>
-                          {showDateDivider && <DateDivider label={dateLabel} />}
+                          {dividerLabel && <DateDivider label={dividerLabel} />}
                           <EditTurn
+                            className={gap}
                             value={editText}
                             onChange={setEditText}
                             onCancel={() => setEditingId(null)}
@@ -1425,290 +1467,87 @@ function ChatTab() {
                     }
                     return (
                       <Fragment key={m.id}>
-                        {showDateDivider && <DateDivider label={dateLabel} />}
-                        <div className="group flex flex-col items-end gap-1.5">
-                          {isShared && m.sender && (
-                            <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-                              {m.sender.avatarUrl ? (
-                                <img
-                                  src={m.sender.avatarUrl}
-                                  alt=""
-                                  className="h-4 w-4 rounded-full"
-                                />
-                              ) : null}
-                              <span>{m.sender.name ?? "Someone"}</span>
-                            </div>
-                          )}
-                          <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-base text-primary-foreground">
-                            {m.content}
-                          </div>
-                          {/* Show pending uploads under user message while composing */}
-                          {idx === arr.length - 1 && uploads.receipts.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {uploads.receipts.map((r) => (
-                                <div
-                                  key={r.id}
-                                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs"
-                                >
-                                  <FileText className="h-3 w-3 text-muted-foreground" />
-                                  <span className="text-muted-foreground">{r.name}</span>
-                                  {r.state === "uploading" && (
-                                    <span className="tabular-nums text-muted-foreground">
-                                      {r.progress}%
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {/* Ownership, not role. This used to branch on the same
-                          flag as the layout above, so in a shared session an
-                          Edit button appeared over a colleague's message —
-                          and answered 404, because messages_update_owner is
-                          keyed to whoever owns the SESSION. Editing also
-                          discards every reply after the edited turn, which is
-                          not something to offer over somebody else's
-                          conversation even if the policy allowed it. */}
-                          {/* The clock and the one thing you can do to your
-                          own turn, on a single line under it. The time used
-                          to have a line of its own *above* the bubble, which
-                          put a second piece of furniture between every pair
-                          of messages in the transcript.
-
-                          Ownership, not role. This used to branch on the same
-                          flag as the layout above, so in a shared session an
-                          Edit button appeared over a colleague's message —
-                          and answered 404, because messages_update_owner is
-                          keyed to whoever owns the SESSION. Editing also
-                          discards every reply after the edited turn, which is
-                          not something to offer over somebody else's
-                          conversation even if the policy allowed it. */}
-                          <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
-                            <span className="tabular-nums">{formatTime(m.createdAt)}</span>
-                            {isOwner && (
-                              <button
-                                onClick={() => startEdit(m.id, m.content)}
-                                disabled={busy}
-                                className="flex items-center gap-1 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
-                              >
-                                <Pencil className="h-3 w-3" /> Edit
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                        {dividerLabel && <DateDivider label={dividerLabel} />}
+                        <QuestionTurn
+                          className={gap}
+                          message={m}
+                          sender={isShared ? (m.sender ?? null) : null}
+                          time={formatTime(m.createdAt)}
+                          canEdit={isOwner}
+                          busy={busy}
+                          onEdit={startEdit}
+                          footer={
+                            /* The receipts for files still going up, under the
+                               LAST question only. A slot rather than a prop on
+                               the turn: this is a condition about the list, and
+                               a turn cannot see the list. */
+                            idx === arr.length - 1 && uploads.receipts.length > 0 ? (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {uploads.receipts.map((r) => (
+                                  <div
+                                    key={r.id}
+                                    className="flex items-center gap-1.5 rounded-sm border border-border bg-surface px-2.5 py-1 text-xs"
+                                  >
+                                    <FileText className="h-3 w-3 text-muted-foreground" />
+                                    <span className="text-muted-foreground">{r.name}</span>
+                                    {r.state === "uploading" && (
+                                      <span className="tabular-nums text-muted-foreground">
+                                        {r.progress}%
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null
+                          }
+                        />
                       </Fragment>
                     );
                   }
-                  const sources = m.sources ?? [];
                   const prevUser = idx > 0 && arr[idx - 1].role === "user" ? arr[idx - 1] : null;
                   const isLast = idx === arr.length - 1;
                   return (
                     <Fragment key={m.id}>
-                      {showDateDivider && <DateDivider label={dateLabel} />}
-                      {/* No avatar, no name, no indent.
-
-                          There is one agent in this conversation and its name
-                          is in the rail, in the header of the screen it was
-                          opened from, and under the composer. Repeating it
-                          above every reply — with a tile and a clock beside it
-                          — meant three lines of furniture for every answer,
-                          and pushed the answer itself nine pixels off the
-                          margin the questions are measured from. The reply is
-                          the only thing on this side of the transcript, so it
-                          is allowed to simply be the text. */}
-                      <div className="group flex flex-col gap-2">
-                        <div className="min-w-0" data-turn="answer">
-                          {/* A continuation is drawn on the end of the reply it
-                            finishes, not under it. The server writes it into
-                            the same row, so anything else would show two
-                            answers for the length of the stream and then
-                            silently become one. */}
-                          <Markdown
-                            content={
-                              continuingId === m.id && replyingIn === active?.id
-                                ? m.content + streamText
-                                : m.content
-                            }
-                            className={cn(
-                              "text-base text-foreground",
-                              continuingId === m.id && replyingIn === active?.id && "stream-live",
-                            )}
-                          />
-
-                          {/* Which take on this answer is showing, when there
-                            is more than one. Beside the answer rather than in
-                            the hover actions, because it is a fact about what
-                            is on screen: somebody reading a regenerated reply
-                            needs to know the other one still exists without
-                            having to go looking. */}
-                          {m.versions && m.versions.length > 1 && (
-                            <VersionPicker
-                              versions={m.versions}
-                              current={m.id}
-                              busy={busy}
-                              onShow={(id) => void showVersion(id)}
-                            />
-                          )}
-
-                          {/* Above Sources, because it is the earlier half of
-                            the same sentence: these are the places the answer
-                            went looking, and those are the documents it came
-                            back with. Folded shut — somebody checking an
-                            answer opens it, and everybody else reads the
-                            reply. */}
-                          {m.steps && m.steps.length > 0 && (
-                            <SettledSteps steps={toStepViews(m.steps)} />
-                          )}
-
-                          {sources.length > 0 && (
-                            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                              <span className="text-xs text-muted-foreground">Sources</span>
-                              {sources.map((source, i) => (
-                                <SourceChip
-                                  key={source.id ?? `${source.name}:${i}`}
-                                  source={source}
-                                  uploadedAt={source.id ? uploadedAt.get(source.id) : undefined}
-                                />
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Not hidden behind hover like the actions below it.
-                            Those are conveniences; this one is the only thing
-                            saying the answer above it is unfinished, and an
-                            answer that stops mid-thought otherwise looks
-                            exactly like one that finished. */}
-                          {truncated?.messageId === m.id && truncated.sessionId === active?.id && (
-                            <div className="mt-3 flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">
-                                This answer hit its length limit.
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => carryOn(m.id)}
-                                disabled={busy}
-                                className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
-                              >
-                                Continue
-                              </button>
-                            </div>
-                          )}
-
-                          {/* The same argument as the row above, about the
-                            other way a reply stops early. This was a toast:
-                            four seconds, over an answer that looked finished,
-                            with nothing to press. The sentence differs by
-                            ceiling because they ask the person to narrow
-                            different things. */}
-                          {stoppedShort?.messageId === m.id &&
-                            stoppedShort.sessionId === active?.id && (
-                              <div className="mt-3 flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground">
-                                  {stoppedShort.reason === "tokens"
-                                    ? "This turn reached the most one answer is allowed to spend."
-                                    : stoppedShort.reason === "runtime"
-                                      ? // Neither of our budgets — the platform. Nothing to
-                                        // narrow, so the sentence points at the one thing that
-                                        // does work: the count resets per turn.
-                                        "This turn reached how much this deployment can do in one go."
-                                      : "This turn used every tool call it is allowed."}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={keepGoing}
-                                  disabled={busy}
-                                  className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
-                                >
-                                  Keep going
-                                </button>
-                              </div>
-                            )}
-
-                          {/* Token usage badge - hover only, assistant messages only */}
-                          {m.role === "assistant" &&
-                            m.promptTokens != null &&
-                            m.completionTokens != null && (
-                              <div className="mt-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
-                                {formatTokens(m.promptTokens)} in ·{" "}
-                                {formatTokens(m.completionTokens)} out
-                                {m.cachedTokens != null && m.cachedTokens > 0 && (
-                                  <> · {formatTokens(m.cachedTokens)} cached</>
-                                )}
-                                {" · "}
-                                {formatCost(
-                                  estimateCostUsd(
-                                    agent.model || "gpt-4.1",
-                                    m.promptTokens,
-                                    m.completionTokens,
-                                    m.cachedTokens ?? 0,
-                                    m.cacheWriteTokens ?? 0,
-                                  ),
-                                )}
-                              </div>
-                            )}
-
-                          <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                            {/* On the same line as the actions, and on the same
-                              hover. A timestamp on every answer is the kind of
-                              fact you want once and never again. */}
-                            <span className="mr-1.5 text-xs tabular-nums text-muted-foreground">
-                              {formatTime(m.createdAt)}
-                            </span>
-                            <MsgAction label="Copy" onClick={() => copyMessage(m.content)}>
-                              <Copy className="h-3.5 w-3.5" />
-                            </MsgAction>
-                            {tts.supported && (
-                              <MsgAction
-                                label={tts.speaking ? "Stop reading" : "Read aloud"}
-                                onClick={() => (tts.speaking ? tts.stop() : tts.speak(m.content))}
-                              >
-                                {tts.speaking ? (
-                                  <VolumeX className="h-3.5 w-3.5" />
-                                ) : (
-                                  <Volume2 className="h-3.5 w-3.5" />
-                                )}
-                              </MsgAction>
-                            )}
-                            <MsgAction
-                              label="This answer was good — say why"
-                              onClick={() => setRating({ messageId: m.id, kind: "other" })}
-                            >
-                              <ThumbsUp className="h-3.5 w-3.5" />
-                            </MsgAction>
-                            <MsgAction
-                              label="Something's wrong with this answer"
-                              onClick={() => setRating({ messageId: m.id, kind: "problem" })}
-                            >
-                              <ThumbsDown className="h-3.5 w-3.5" />
-                            </MsgAction>
-                            {/* Ownership, not role — the same rule as Edit
-                            above. `messages_delete_owner` is keyed to whoever
-                            owns the SESSION, and so is `show_message_version`;
-                            offered to a colleague reading a shared thread this
-                            changed nothing, reported nothing, and then failed
-                            to answer a question that already had an answer
-                            under it.
-
-                            The last answer only. Regenerating one in the
-                            middle would leave every turn after it replying to
-                            something no longer there, and making those turns a
-                            branch is a conversation tree rather than a version
-                            list — a different feature, and a much larger one. */}
-                            {isLast && prevUser && isOwner && (
-                              <>
-                                <MsgAction label="Regenerate" onClick={() => regenerate()}>
-                                  <RefreshCw className="h-3.5 w-3.5" />
-                                </MsgAction>
-                                <RetryOn
-                                  models={pickableModels}
-                                  costs={me?.modelCosts}
-                                  onPick={regenerate}
-                                />
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                      {dividerLabel && <DateDivider label={dividerLabel} />}
+                      <AnswerTurn
+                        className={gap}
+                        message={m}
+                        /* The one row the tokens belong to gets a string; every
+                           other row gets `null`, which is a stable primitive —
+                           so React redraws one answer per token rather than the
+                           whole transcript. The ids being compared live here,
+                           which is why the comparison does too. */
+                        streamTail={
+                          continuingId === m.id && replyingIn === active?.id ? streamText : null
+                        }
+                        time={formatTime(m.createdAt)}
+                        busy={busy}
+                        model={agent.model || "gpt-4.1"}
+                        uploadedAt={uploadedAt}
+                        canRegenerate={isLast && !!prevUser && isOwner}
+                        pickableModels={pickableModels}
+                        modelCosts={me?.modelCosts}
+                        truncated={
+                          truncated?.messageId === m.id && truncated.sessionId === active?.id
+                        }
+                        stoppedShort={
+                          stoppedShort?.messageId === m.id && stoppedShort.sessionId === active?.id
+                            ? stoppedShort.reason
+                            : null
+                        }
+                        agentName={agent.name}
+                        agentEmoji={agent.emoji}
+                        canSpeak={tts.supported}
+                        speaking={tts.speaking && speakingId === m.id}
+                        onSpeak={onSpeak}
+                        onStopSpeaking={onStopSpeaking}
+                        onCopy={onCopy}
+                        onShowVersion={onShowVersion}
+                        onRate={onRate}
+                        onContinue={onContinue}
+                        onKeepGoing={onKeepGoing}
+                        onRegenerate={onRegenerate}
+                      />
                     </Fragment>
                   );
                 })}
@@ -1718,106 +1557,14 @@ function ChatTab() {
                   drawn on the end of the reply above instead. */}
               {continuingId === null &&
                 (replyingIn === active?.id || settlingIn === active?.id) && (
-                  // Outside the log, and silent. The words arrive here one token
-                  // at a time; a screen reader is told *that* a reply is coming
-                  // by the status line below, and reads the reply itself once it
-                  // lands in the log above as a finished thing.
-                  <div className="flex flex-col gap-2" aria-live="off">
-                    <div className="min-w-0" data-turn="answer">
-                      {/*
-                      What the model is working through, while it works
-                      through it. Folded, and closed by default: this is
-                      context for a pause, not the answer — somebody who wants
-                      to know why an answer came out the way it did can open
-                      it, and everybody else should not have to scroll past it
-                      to read the reply.
-                    */}
-                      {thinkingText && (
-                        <Disclosure label="Thinking" className="mb-3">
-                          <Markdown content={thinkingText} className="text-xs" />
-                        </Disclosure>
-                      )}
-                      {/* Between the reasoning and the answer, which is
-                        where they happen. A step line is the one thing on
-                        this screen that says the agent left the room — it
-                        went and read something — and it belongs above the
-                        words that came back from it. */}
-                      {liveSteps.length > 0 && <StepTrail steps={liveSteps} className="mb-3" />}
-                      {/*
-                        The words so far, and the dots, as siblings rather than
-                        as two branches of a ternary.
-
-                        They used to be either/or, which was right while a turn
-                        wrote once: there was nothing to show until the model
-                        started, and once it started it never went quiet again.
-                        A tool turn goes quiet repeatedly — every pass after the
-                        first begins with the model reading a tool result,
-                        which can take many seconds and produces nothing. With
-                        the ternary, bringing the dots back for those gaps would
-                        have taken the already-written text off the screen.
-
-                        So: text if there is any, dots if something is
-                        happening, and frequently both.
-                      */}
-                      {streamText && (
-                        // The same renderer the settled answer uses, so the
-                        // reply arrives in the shape it will keep. It used to be
-                        // plain `whitespace-pre-wrap`, which meant watching raw
-                        // `**`, bare `|` rows and unopened fences for the length
-                        // of the answer and then having the whole thing reflow
-                        // into something else the moment it finished. That
-                        // reflow was the single most visible difference between
-                        // this and the chat products people arrive from.
-                        //
-                        // Measured before it was written: a full parse and mount
-                        // of a 700-character answer costs ~1.1ms per delta under
-                        // jsdom, which re-mounts the tree every time. A browser
-                        // re-renders an existing one. There is nothing here to
-                        // batch.
-                        //
-                        // `stream-live` is what draws the caret — see
-                        // `styles.css`. A sibling span cannot: the answer is
-                        // blocks now, and a span after them sits on its own line
-                        // under the last paragraph rather than at the end of it.
-                        // Dropped once the stream stops, because at that point
-                        // the text is waiting to be replaced by the server's
-                        // copy rather than still arriving.
-                        <Markdown
-                          content={streamText}
-                          className={cn(
-                            "text-base text-foreground",
-                            replyingIn === active?.id && "stream-live",
-                          )}
-                        />
-                      )}
-                      {thinking && (
-                        // `aria-hidden`, where this used to carry an `aria-label`
-                        // on a bare `<div>` — a label on an element with no role
-                        // is a string most screen readers have nowhere to put.
-                        // The words are in the status line at the foot of the
-                        // conversation instead, where they are announced rather
-                        // than merely present.
-                        <div
-                          className={cn(
-                            "flex items-center gap-1.5 text-xs text-muted-foreground",
-                            streamText && "mt-2",
-                          )}
-                          aria-hidden="true"
-                        >
-                          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                          <span
-                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                            style={{ animationDelay: "0.15s" }}
-                          />
-                          <span
-                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                            style={{ animationDelay: "0.3s" }}
-                          />
-                          <span className="ml-1">Thinking…</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <LiveAnswer
+                    className="mt-5"
+                    streamText={streamText}
+                    thinkingText={thinkingText}
+                    thinking={thinking}
+                    steps={liveSteps}
+                    streaming={replyingIn === active?.id}
+                  />
                 )}
             </div>
           )}
@@ -1874,14 +1621,14 @@ function ChatTab() {
             type="button"
             onClick={jumpToEnd}
             aria-label="Jump to the latest message"
-            className="absolute -top-5 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-card transition-colors duration-200 hover:text-foreground"
+            className="absolute -top-5 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-md border border-border bg-popover text-muted-foreground transition-colors duration-200 hover:text-foreground"
           >
             <ArrowDown className="h-4 w-4" />
           </button>
         )}
         <div className="mx-auto max-w-3xl">
           {quota && quota.level !== "fine" && (
-            <div className="mb-2 flex items-center gap-2 rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
               <span className="h-2 w-2 shrink-0 bg-accent-orange" />
               <span>{quotaSentence(quota)}</span>
             </div>
@@ -1893,14 +1640,14 @@ function ChatTab() {
                   key={q}
                   type="button"
                   onClick={() => void submit(q)}
-                  className="rounded-full border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground"
+                  className="rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground"
                 >
                   {q}
                 </button>
               ))}
             </div>
           )}
-          <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">
+          <div className="rounded-3xl border border-border bg-popover transition-colors duration-200">
             <ChatReceipts uploads={uploads} />
             <ChatReportReceipt reports={reports} />
             <Textarea
@@ -1981,7 +1728,7 @@ function ChatTab() {
                 <button
                   onClick={stop}
                   aria-label="Stop generating"
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
                 >
                   <Square className="h-3.5 w-3.5 fill-current" />
                 </button>
@@ -1991,7 +1738,7 @@ function ChatTab() {
                   disabled={!input.trim() || busy}
                   aria-label="Send message"
                   title={busy ? "Waiting for the current reply to finish" : undefined}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-accent-orange text-[#251f19] transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <ArrowUp className="h-4 w-4" />
                 </button>
@@ -2045,14 +1792,14 @@ function ChatTab() {
                 <button
                   type="button"
                   onClick={reports.download}
-                  className="rounded-sm px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   Download
                 </button>
                 <button
                   type="button"
                   onClick={reports.dismiss}
-                  className="rounded-sm px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   aria-label="Close preview"
                 >
                   Close
@@ -2141,255 +1888,5 @@ function ChatTab() {
         </div>
       </ResizablePanel>
     </ResizablePanelGroup>
-  );
-}
-
-/**
- * A past question, open for editing.
- *
- * Its own component only so it can hold a hook: `useAutoGrow` cannot be called
- * from inside the message loop, which renders this conditionally. The box had
- * the same fixed-height problem as the composer and for the same reason — two
- * rows, no growing — and it is the worse of the two places to have it, because
- * what is being edited is by definition something already long enough to be
- * worth fixing.
- */
-function EditTurn({
-  value,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  const ref = useAutoGrow<HTMLTextAreaElement>(value);
-  return (
-    <div className="flex flex-col items-end gap-1.5">
-      <div className="w-full max-w-[560px] rounded-2xl bg-popover p-2 shadow-card">
-        <Textarea
-          ref={ref}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-              return;
-            }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && value.trim()) {
-              e.preventDefault();
-              onSave();
-            }
-          }}
-          rows={1}
-          autoFocus
-          aria-label="Edit your message"
-          className="max-h-60 min-h-[40px] resize-none overflow-y-auto border-0 bg-transparent p-1.5 text-sm shadow-none focus-visible:ring-0"
-        />
-        <div className="flex justify-end gap-1.5 pt-1">
-          <button
-            onClick={onCancel}
-            className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onSave}
-            disabled={!value.trim()}
-            className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            Save & send
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Which take on an answer is showing, and how to get to the others.
- *
- * `‹ 2/3 ›` rather than a list, because the versions have no names and never
- * will: they are the same question answered twice. What somebody wants is to
- * flick between them and stop on the one they liked, which is two buttons and
- * a count.
- */
-function VersionPicker({
-  versions,
-  current,
-  busy,
-  onShow,
-}: {
-  versions: string[];
-  current: string;
-  busy: boolean;
-  onShow: (id: string) => void;
-}) {
-  const at = versions.indexOf(current);
-  // A chain that does not contain the message showing is a transcript and a
-  // version list that disagree, and drawing `0/3` over it helps nobody.
-  if (at === -1) return null;
-  const step = (by: number) => onShow(versions[at + by]);
-  return (
-    <div className="mt-2 flex items-center gap-0.5 text-xs text-muted-foreground">
-      <button
-        type="button"
-        onClick={() => step(-1)}
-        disabled={busy || at === 0}
-        aria-label="Previous version of this answer"
-        className="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
-      >
-        <ChevronLeft className="h-3.5 w-3.5" />
-      </button>
-      <span className="tabular-nums" aria-label={`Version ${at + 1} of ${versions.length}`}>
-        {at + 1}/{versions.length}
-      </span>
-      <button
-        type="button"
-        onClick={() => step(1)}
-        disabled={busy || at === versions.length - 1}
-        aria-label="Next version of this answer"
-        className="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
-      >
-        <ChevronRight className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
-
-/**
- * Answer that again, on something else.
- *
- * Beside Regenerate rather than replacing it: the common press is "try again",
- * and burying it behind a menu to make room for a choice nobody makes most of
- * the time is a worse default. Absent entirely on a deployment that serves one
- * model, where the menu would have nothing in it.
- */
-/**
- * Answer again, somewhere else.
- *
- * The prices are worth more here than in any settings screen: this is the one
- * model picker somebody uses with a bill in mind, because pressing it spends
- * again on a question that has already been answered once.
- */
-function RetryOn({
-  models,
-  costs,
-  onPick,
-}: {
-  models: string[];
-  costs: Record<string, number> | undefined;
-  onPick: (model: string) => void;
-}) {
-  if (models.length === 0) return null;
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          title="Answer again on another model"
-          aria-label="Answer again on another model"
-          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {models.map((model) => (
-          <DropdownMenuItem
-            key={model}
-            onSelect={() => onPick(model)}
-            className="font-mono text-xs"
-          >
-            <span className="flex w-full items-center justify-between">
-              <span>{model}</span>
-              <ModelCost cost={costFor(costs, model)} />
-            </span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function MsgAction({
-  label,
-  active,
-  onClick,
-  children,
-}: {
-  label: string;
-  active?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      className={cn(
-        "grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-accent",
-        active ? "text-primary" : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-/**
- * A control in the conversation header.
- *
- * The same object as `MsgAction` one step up the ladder: 36px rather than 28px,
- * because it sits in a 56px bar and not in a hover strip, and because a header
- * control is a target you reach for deliberately.
- */
-function HeaderAction({
-  label,
-  active,
-  onClick,
-  children,
-}: {
-  label: string;
-  active?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      className={cn(
-        "grid h-9 w-9 place-items-center rounded-md transition-colors duration-200 hover:bg-accent",
-        active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-/**
- * "Today", "Yesterday", "March 4" — the one thing between two turns.
- *
- * Its own component because three of the four branches in the message loop
- * draw it, and it used to be written out in exactly one of them: a day that
- * began with a question rather than an answer got no divider at all.
- */
-function DateDivider({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-3 py-2">
-      <div className="h-px flex-1 bg-border" />
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="h-px flex-1 bg-border" />
-    </div>
   );
 }

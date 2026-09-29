@@ -20,6 +20,9 @@
  * neutral tile they sit in was sized for.
  */
 
+import type { ReactElement } from "react";
+import type { ProviderId } from "@/lib/connections-api";
+
 type MarkProps = { className?: string };
 
 /**
@@ -98,3 +101,21 @@ export function SlackMark({ className }: MarkProps) {
     </svg>
   );
 }
+
+/**
+ * Which mark belongs to which reconciled source.
+ *
+ * It lived in `connection-card.tsx` until the chat's empty screen needed to
+ * draw the same logos. Importing it from there would have pulled a Radix
+ * `Select`, five `use-connections` hooks and `DriveFolderDialog` into the chat
+ * route's graph for the sake of two SVG paths — a table of marks belongs with
+ * the marks.
+ *
+ * Typed as a record over `ProviderId` and not a lookup with a fallback, so a
+ * provider added to `connections-api.ts` without a mark is a type error here
+ * rather than an empty tile somewhere else.
+ */
+export const PROVIDER_MARK: Record<ProviderId, (props: MarkProps) => ReactElement> = {
+  notion: NotionMark,
+  google_drive: GoogleDriveMark,
+};

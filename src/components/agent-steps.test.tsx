@@ -7,10 +7,12 @@ import { ConfirmCard, SettledSteps, StepTrail, toStepViews } from "./agent-steps
  * What an answer did, and the card that stops it doing something nobody
  * agreed to.
  *
- * Two of the assertions here are about `DESIGN.md` rather than about
- * behaviour, and they are the ones worth keeping: a chip is never
- * destructive, so a failed step carries its failure at the row level; and the
- * card is the only amber on the screen, because amber is a pointer.
+ * Several of the assertions here are about `DESIGN.md` rather than about
+ * behaviour, and they are the ones worth keeping: a chip is never destructive,
+ * so a failed step carries its failure at the row level; the marks are squares
+ * rather than circles; and the two ambers on this screen — the step that is
+ * running and the confirmation waiting on somebody — are told apart by SHAPE,
+ * so that the distinction survives with animation switched off.
  */
 
 const step = (over: Partial<Parameters<typeof toStepViews>[0][number]> = {}) => ({
@@ -55,6 +57,34 @@ describe("the live trail", () => {
     expect(screen.getByText("running")).toBeInTheDocument();
   });
 
+  it("marks a running step with a square, not a spinning circle", () => {
+    // `DESIGN.md` allows circles in two places and both are window chrome.
+    // This was lucide's `Loader2`, which was neither — and said "busy" in
+    // general where the trail's whole job is saying which row.
+    const { container } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
+    );
+    expect(container.querySelector(".step-running")).toBeInTheDocument();
+    expect(container.querySelector(".animate-spin")).not.toBeInTheDocument();
+  });
+
+  it("gives the two ambers different shapes, not different animations", () => {
+    // A waiting step is a FILLED amber square: this one is yours. A running
+    // step is an amber OUTLINE with the fill sweeping through it: the machine
+    // is busy and nothing is being asked. The sweep is the only animated part,
+    // so a reader with motion switched off still has outline against fill —
+    // rather than two identical squares, one of which was moving.
+    const { container: waiting } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "pending", label: "a" }]} />,
+    );
+    const { container: busy } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
+    );
+
+    expect(waiting.querySelector(".bg-accent-orange")).toBeInTheDocument();
+    expect(busy.querySelector(".bg-accent-orange")).not.toBeInTheDocument();
+  });
+
   it("draws nothing at all when there are no steps", () => {
     const { container } = render(<StepTrail steps={[]} />);
     expect(container).toBeEmptyDOMElement();
@@ -80,6 +110,60 @@ describe("the settled trail", () => {
   it('counts one step in the singular, because "1 steps" is a bug people notice', () => {
     render(<SettledSteps steps={[{ index: 0, tool: "a", status: "ok", label: "a" }]} />);
     expect(screen.getByText("1 step")).toBeInTheDocument();
+  });
+
+  it("says how long the work took, when the steps recorded it", () => {
+    // The number was already in `message_steps` and was being dropped on the
+    // way to the screen. A folded line that says only "3 steps" answers a
+    // question nobody asked; the one people actually have about a pause is how
+    // long it was.
+    render(
+      <SettledSteps
+        steps={[
+          { index: 0, tool: "a", status: "ok", label: "a", durationMs: 800 },
+          { index: 1, tool: "b", status: "ok", label: "b", durationMs: 1400 },
+        ]}
+      />,
+    );
+    expect(screen.getByText("2 steps · 2.2s")).toBeInTheDocument();
+  });
+
+  it("says nothing about duration for steps written before it was stored", () => {
+    // `durationMs` is null on every step recorded before the column existed,
+    // and "0.0s" would be a measurement rather than a missing one.
+    render(
+      <SettledSteps
+        steps={[{ index: 0, tool: "a", status: "ok", label: "a", durationMs: null }]}
+      />,
+    );
+    expect(screen.getByText("1 step")).toBeInTheDocument();
+  });
+
+  it("still leads with what went wrong when something did", () => {
+    render(
+      <SettledSteps
+        steps={[
+          { index: 0, tool: "a", status: "ok", label: "a", durationMs: 500 },
+          { index: 1, tool: "b", status: "failed", label: "b", durationMs: 500 },
+        ]}
+      />,
+    );
+    expect(screen.getByText("2 steps · 1.0s · 1 did not complete")).toBeInTheDocument();
+  });
+});
+
+describe("a step arriving", () => {
+  it("slides in, with the offset only in the keyframe", () => {
+    // `prefers-reduced-motion` switches the animation off and leaves the
+    // element in its BASE state. A class whose base declaration carries the
+    // translate would leave every row permanently four pixels out of place for
+    // the readers who asked for less movement — the opposite of the favour.
+    const { container } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
+    );
+    const row = container.querySelector("li");
+    expect(row).toHaveClass("step-arrive");
+    expect(row?.getAttribute("style") ?? "").not.toContain("transform");
   });
 });
 

@@ -102,6 +102,7 @@
   --color-surface: var(--surface);
   --color-surface-hover: var(--surface-hover);
   --color-surface-muted: var(--surface-muted);
+  --color-bubble: var(--bubble);
   --color-hairline: var(--hairline);
   --color-card-body: var(--card-body);
   --color-micro-foreground: var(--micro-foreground);
@@ -136,6 +137,16 @@
   --surface: #eeede6; /* cards, list panels, the rail */
   --surface-hover: #e8e6dd; /* the hover state of anything --surface */
   --surface-muted: #f5f4f0; /* panel title bars, empty wells */
+  /*
+   * The fill of a question in a transcript. Its value matches --surface-hover
+   * in both themes and it is still its own token, because a coincidence of
+   * value is not a shared role: a bubble is not hovering, and retuning what
+   * hover feels like must not silently restyle every question anybody has
+   * asked. Two steps down from the canvas is the whole brief — enough to read
+   * as an opened area, not so much that the question outweighs the answer
+   * under it.
+   */
+  --bubble: #e8e6dd;
   --card: #eeede6;
   --popover: #ffffff; /* white is a promotion: menus and dialogs float */
 
@@ -216,6 +227,7 @@
   --surface: #1f1a15;
   --surface-hover: #272119;
   --surface-muted: #1b1611;
+  --bubble: #272119;
   --card: #1f1a15;
   --popover: #26201a;
 
@@ -353,6 +365,75 @@
   animation: typing-bob 1.2s infinite ease-in-out;
 }
 
+/*
+ * The step that is running, as a square rather than a spinning circle.
+ *
+ * It used to be lucide's `Loader2` with `animate-spin`, which was the one
+ * circle on a screen whose own rule is squares, and which said "busy" in
+ * general rather than "this row". The trail's marks are 8px squares and this
+ * is one of them, in the state between arriving and being done.
+ *
+ * TWO AMBERS, AND THEY MUST STAY TELLABLE APART. A filled amber square means
+ * "this one is yours" — a confirmation waiting on a person. This one is an
+ * amber OUTLINE with the fill sweeping through it: the machine is busy and
+ * nothing is being asked. Outline against fill is the distinction, and it is
+ * the distinction that survives with motion switched off, which is why the
+ * ring is the resting state and the sweep is the only animated part.
+ */
+@keyframes step-sweep {
+  from {
+    background-position: 175% 0;
+  }
+  to {
+    background-position: -75% 0;
+  }
+}
+
+.step-running {
+  box-shadow: inset 0 0 0 1.5px var(--accent-orange);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-orange) 50%,
+    transparent 100%
+  );
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  /* Parked off the right edge, so the square at rest is the ring alone. This
+     is what a reader with motion switched off sees, and it has to be a state
+     that reads correctly rather than a frame of the animation. */
+  background-position: 175% 0;
+  animation: step-sweep 1.3s ease-in-out infinite;
+}
+
+/*
+ * A step arriving in the trail.
+ *
+ * The offset lives ONLY in the keyframe, and that is the whole care this rule
+ * needs. `prefers-reduced-motion` switches the animation off and leaves the
+ * element in its BASE state — so a base declaration carrying the translate
+ * would leave every row permanently four pixels out of place for exactly the
+ * readers who asked for less movement.
+ *
+ * `both` so the row does not flash at full opacity before the animation's
+ * first frame. It runs once per element, which is once per step, because React
+ * keeps the rows mounted and only a new one is a new element.
+ */
+@keyframes step-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.step-arrive {
+  animation: step-arrive 220ms ease-out both;
+}
+
 /* Blinking caret at the end of streaming text. */
 @keyframes caret-blink {
   0%,
@@ -396,6 +477,8 @@
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
   .stream-caret,
+  .step-arrive,
+  .step-running,
   .stream-live > :last-child::after {
     animation: none;
   }

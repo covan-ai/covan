@@ -239,7 +239,12 @@ export const MAX_TOOL_OUTPUT_TOKENS = 5_000;
  * as an answer. So the conversion happens once, at module scope, in one direction.
  *
  * Named for tool output and not for text in general, because it is not true of
- * text in general: `HISTORY_CHAR_BUDGET` is conversation prose and nearer four.
+ * text in general. This comment used to say conversation prose was "nearer four"
+ * and leave it there; `count_tokens` on 2026-09-29 put English instruction prose
+ * at 3.2-3.6 and Turkish prose at **1.92**, so "nearer four" was right for one
+ * language and nearly twice wrong for another. `HISTORY_CHARS_PER_TOKEN` in
+ * `lib/history.ts` now carries the measured figure for that budget, at its dense
+ * end, for the same reason this one is at its dense end.
  */
 export const TOOL_OUTPUT_CHARS_PER_TOKEN = 2.4;
 
@@ -276,12 +281,28 @@ export const MAX_TOOL_OUTPUT_CHARS = Math.round(
 export const TRIM_ABOVE_PROMPT_TOKENS = 80_000;
 
 /**
- * How much of it is kept in `message_steps.result_excerpt`.
+ * How much of it is kept in `message_steps.result_excerpt` — **and how much of a
+ * spent tool result survives into the prompt.**
  *
  * Smaller than what the model sees, deliberately. The row exists so a person
  * can tell what the agent actually did, which needs the shape of the answer
  * and not the whole of it — and these rows are read back by the transcript
  * query on every message load.
+ *
+ * THE SECOND JOB WAS NOT WRITTEN DOWN HERE AND IT IS THE MODEL-FACING ONE.
+ * `trimSpentResults` in `lib/harness/loop.ts` rewrites older `tool` messages in
+ * the live transcript to this size at a leg boundary, so this constant decides
+ * how much of every already-used tool result the model still sees on the passes
+ * after it. `limits.ts` leans `extraLegs` on exactly that. A reader who came here
+ * to ask "what does it cost to make this bigger" would have been told about a
+ * database row and not about the prompt, which is the more expensive of the two
+ * by a wide margin: at 2,000 chars and the `run_tool` divisor of 2.35 each spent
+ * result is ~850 tokens, times up to eight steps in a leg.
+ *
+ * One constant and not two, because the two jobs want the same answer for the
+ * same reason — enough to tell what a step did, not enough to re-read it — and a
+ * second name would be two numbers to keep equal with nothing holding them
+ * together. The comment is what was missing, not the split.
  */
 export const MAX_STEP_EXCERPT_CHARS = 2_000;
 

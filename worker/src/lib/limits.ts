@@ -55,13 +55,23 @@ export type ChatLimits = {
    * is roughly 250 of 10,000. What binds instead is the transcript. A step's
    * result is re-sent on every later pass, so at 24 steps
    * `MAX_TOOL_OUTPUT_TOKENS` alone would be **~122,600 tokens** of tool results,
-   * before the persona, the manifest, `HISTORY_CHAR_BUDGET`, the retrieval
-   * block and two dozen assistant turns — and a turn that overflows gets a
-   * provider 400 wearing the same disguise the subrequest cap does. That figure
-   * read ~72,000 until 2026-09-28, from a four-characters-per-token rule of thumb
-   * that a tool result does not obey; the measurement is in `budget.ts`. It does
-   * not weaken this paragraph, it makes it starker — 122,600 does not fit a 128k
-   * window on its own, with nothing else in the request at all.
+   * and a turn that overflows gets a provider 400 wearing the same disguise the
+   * subrequest cap does. That figure read ~72,000 until 2026-09-28, from a
+   * four-characters-per-token rule of thumb that a tool result does not obey; the
+   * measurement is in `budget.ts`. It does not weaken this paragraph, it makes it
+   * starker — 122,600 does not fit a 128k window on its own, with nothing else in
+   * the request at all.
+   *
+   * And "before the persona, the manifest, the history and the retrieval block"
+   * used to end that sentence with no figure on any of them. Measured
+   * 2026-09-29 (`count_tokens`, see `0069_what_the_prompt_was_made_of.sql`): the
+   * persona, both manifests, the retrieval block and all eight tool schemas come
+   * to **~11,000 tokens** together, of which the largest single item is not ours —
+   * Anthropic's server-side web_search tool is 5,588 of it. `MAX_HISTORY_TOKENS`
+   * in `lib/history.ts` is a further **~16,800** at its worst. So the fixed
+   * envelope around a tool loop is on the order of 28,000 tokens before the first
+   * result lands, which is what `trimAbovePromptTokens: 80_000` is really leaving
+   * room for.
    *
    * That is why 2 was not allowed to ship first. It is allowed now because
    * `trimSpentResults` in `lib/harness/loop.ts` cuts the results the turn has

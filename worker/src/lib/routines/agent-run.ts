@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { routineMaterial } from "./material";
 import type { RoutineEnv } from "../../types";
 import { complete, totalTokens, type CompletionMessage } from "../completion";
 import { weighTokens } from "../entitlements";
@@ -73,13 +74,7 @@ export function runRoutineWithTools(
     if (tools.length === 0) return null;
 
     const model = resolveModel(input.model, runEnv);
-    const body = input.payloadText
-      ? `Incoming webhook payload:\n\n${input.payloadText.slice(0, 20_000)}`
-      : input.pageText
-        ? `Watched page content:\n\n${input.pageText.slice(0, 20_000)}`
-        : input.items
-            .map((i) => `- ${i.title}\n  ${i.link}\n  ${i.summary.slice(0, 1_000)}`)
-            .join("\n\n");
+    const body = routineMaterial(input);
 
     const messages: CompletionMessage[] = [
       {

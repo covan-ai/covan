@@ -138,20 +138,48 @@ function normaliseForComparison(text: string): string {
 }
 
 /**
+ * What a retrieval block is allowed to cost.
+ *
+ * It was an inline `budget = 4000` default and every caller took it, so this is
+ * the same number with a name and, for the first time, a token figure.
+ *
+ * **Measured 2026-09-29: 4,000 characters of this is 2,085 tokens** — Anthropic's
+ * `count_tokens`, on a block built by this function out of a real document
+ * (`0069_what_the_prompt_was_made_of.sql` has the whole table). That makes it 18%
+ * of a real chat prompt and the third largest item in one, behind the
+ * server-side web_search tool and the eight app tool schemas.
+ *
+ * And it is the most expensive 18% per token in the prompt, because it is the
+ * only large part that is different on every turn. `retrieval.ts` says this
+ * outright — the block rides after the cacheable prefix on purpose — so where the
+ * persona and the schemas are written once per cache window and read back
+ * afterwards, these 2,085 tokens are fresh input every single turn.
+ *
+ * Not changed here, deliberately. The number bounds what the model gets to read
+ * before it answers, so moving it is a change to answer quality and belongs with
+ * evidence about answers rather than in a unit fix. What was missing was the
+ * price tag.
+ */
+export const RAG_BLOCK_CHARS = 4000;
+
+/**
  * Assembles retrieved chunks into a system-prompt context block under a total
  * char budget, and reports which of them fitted.
  *
  * Chunks are added most-relevant-first (the caller passes them in fused-RRF
  * order) and the budget covers the whole block — header, per-document framing
- * and separators included, which it did not before, so a block asked for 4000
- * chars no longer returns 4300. Once what is left cannot hold a useful excerpt
+ * and separators included, which it did not before, so a block asked for
+ * `RAG_BLOCK_CHARS` no longer returns 4300. Once what is left cannot hold a useful excerpt
  * the rest are dropped rather than admitted as fragments; they are the least
  * relevant ones by construction.
  *
  * `text` is "" when nothing fits, and `used` is empty with it — the caller
  * skips the block and cites nothing.
  */
-export function buildContextBlock(chunks: RetrievedChunk[], budget = 4000): ContextBlock {
+export function buildContextBlock(
+  chunks: RetrievedChunk[],
+  budget = RAG_BLOCK_CHARS,
+): ContextBlock {
   const empty: ContextBlock = { text: "", used: [] };
   if (chunks.length === 0) return empty;
 

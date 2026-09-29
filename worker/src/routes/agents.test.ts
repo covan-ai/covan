@@ -206,6 +206,43 @@ describe("POST /agents", () => {
     expect(writes[0]).toMatchObject({ temperature: null, reasoning_effort: null });
   });
 
+  /**
+   * On by default since 2026-09-17 (`037cd94`, "web search should be the
+   * default modern experience"), and off again from 2026-09-29 on a
+   * measurement that did not exist when that was decided: attaching
+   * Anthropic's `web_search` costs **5,588 prompt tokens on every request**,
+   * searched or not, at the front of the cacheable prefix — ~36% of a cold
+   * turn's cost. 35 of 40 live agents already have it off, nothing recorded
+   * whether a single search had ever run, and the column default in migration
+   * 0051 was `false` all along; only this route overrode it.
+   *
+   * The toggle is untouched, and no existing agent changes: the column is
+   * already written for every one of them. See covan-ai/covan#228.
+   */
+  it("leaves web search off unless the caller asks for it", async () => {
+    const { db, writes } = fakeDb();
+
+    await appWith(db).request("/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "GTM" }),
+    });
+
+    expect(writes[0]).toMatchObject({ web_search: false });
+  });
+
+  it("still turns it on for a caller that does ask", async () => {
+    const { db, writes } = fakeDb();
+
+    await appWith(db).request("/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "GTM", webSearch: true }),
+    });
+
+    expect(writes[0]).toMatchObject({ web_search: true });
+  });
+
   it("takes both settings when the caller does name them", async () => {
     const { db, writes } = fakeDb();
 

@@ -23,6 +23,7 @@ import {
   usageOfRow,
   type MessageOutcome,
   type TurnUsage,
+  sumOverPasses,
 } from "../lib/harness/usage";
 import { retrieveForAgent } from "../lib/retrieval";
 import {
@@ -551,7 +552,15 @@ chat.post("/chat/stream", async (c) => {
         // be an OpenAI reply (no `cache_write_tokens`) or an Anthropic one (no
         // `reasoning_tokens`). The passes concatenate for the same reason the
         // counts add: the row is one reply and both halves were paid for.
-        const delta: TurnUsage = { ...opts, passes: opts.passUsage };
+        // `webSearches` is derived here rather than threaded as a seventh
+        // local, because it is derivable: the count lives per pass, and
+        // `usageOfRow` reads it back the same way. Threading it would create
+        // two paths to one number that could disagree.
+        const delta: TurnUsage = {
+          ...opts,
+          webSearches: sumOverPasses(opts.passUsage, (p) => p.searches),
+          passes: opts.passUsage,
+        };
         const { data: inserted, error: insertError } = continuing
           ? await service
               .from("messages")

@@ -42,6 +42,7 @@ function pass(
       cachedTokens: 2,
       cacheWriteTokens: 3,
       reasoningTokens: 4,
+      webSearches: null,
     },
     finishReason: calls.length > 0 ? "tool_calls" : "stop",
   });
@@ -172,6 +173,7 @@ describe("a turn that asks for one thing", () => {
       // that deliberates once are the same row total, which is why the split
       // below is kept as well.
       reasoningTokens: 8,
+      webSearches: null,
     });
   });
 
@@ -186,8 +188,8 @@ describe("a turn that asks for one thing", () => {
     });
 
     expect(turn.passes).toEqual([
-      { index: 0, prompt: 10, cached: 2, written: 3, completion: 5, reasoning: 4 },
-      { index: 1, prompt: 10, cached: 2, written: 3, completion: 5, reasoning: 4 },
+      { index: 0, prompt: 10, cached: 2, written: 3, completion: 5, reasoning: 4, searches: null },
+      { index: 1, prompt: 10, cached: 2, written: 3, completion: 5, reasoning: 4, searches: null },
     ]);
     expect(turn.passes.reduce((n, p) => n + (p.prompt ?? 0), 0)).toBe(turn.usage.promptTokens);
   });

@@ -2,9 +2,22 @@
 -- An open door when asked
 --
 -- Web search: the feature that decides whether an agent can look beyond what
--- its documents say. Web search is ON by default for new agents as of
--- 2026-09-17. Models that support it (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6) get
--- web_search_20260209; older models get web_search_20250305.
+-- its documents say. The column default below is `false` and always has been;
+-- what has moved twice is what `routes/agents.ts` writes when the caller says
+-- nothing. OFF at first, ON from 2026-09-17 (037cd94), and OFF again from
+-- 2026-09-29 — this comment has been edited each time, which is safe because
+-- `covan_meta.migrations` tracks filenames and no checksum.
+--
+-- The last move is the one with a number behind it rather than an opinion:
+-- Anthropic expands the tool request into 5,588 prompt tokens on EVERY
+-- request, searched or not, at the front of the cacheable prefix — ~36% of a
+-- cold turn's cost. Nothing recorded whether a search had ever run until
+-- `PassUsage.searches` landed the same day. See covan-ai/covan#228.
+--
+-- Which tool version a model takes is no longer written here: `SPECS` in
+-- worker/src/lib/models.ts keys it by model id, because the list that used to
+-- be restated in four places had drifted to include two models that do not
+-- exist.
 --
 -- The toggle remains for edge cases where teams explicitly want answers
 -- limited to their documents only (e.g., summarizing confidential files).

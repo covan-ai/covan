@@ -164,10 +164,24 @@ agents.post("/agents", async (c) => {
       // agent created before 0048 has.
       temperature: temperature ?? null,
       reasoning_effort: reasoningEffort ?? null,
-      // Web search is on by default; the toggle remains for edge cases where the
-      // team explicitly wants answers limited to their documents only. Which
-      // tool version a model takes is `SPECS`'s answer — see `webSearchToolFor`.
-      web_search: webSearch ?? true,
+      // Off unless asked for. This was `?? true` from 2026-09-17 (037cd94,
+      // "web search should be the default modern experience") until 2026-09-29,
+      // and what changed is not the product opinion but a number that did not
+      // exist then: Anthropic expands the 51 characters `anthropicParams` sends
+      // into **5,588 prompt tokens on every request**, searched or not, at the
+      // front of the cacheable prefix — ~36% of a cold turn's cost and ~8% of a
+      // warm one, $0.365 across production to date.
+      //
+      // What made it indefensible rather than merely expensive is that nothing
+      // recorded whether a search had ever run: `server_tool_use` was read
+      // nowhere, so every agent paying for it was paying on an assumption.
+      // `PassUsage.searches` now records it, which is what a future argument
+      // for turning this back on would be made of.
+      //
+      // Note the column default in 0051 is `false`; only this line overrode it.
+      // Existing agents are untouched — the column is already written for all
+      // of them — and the Settings toggle is unchanged. See covan-ai/covan#228.
+      web_search: webSearch ?? false,
       created_by: user.id,
     })
     .select("*")

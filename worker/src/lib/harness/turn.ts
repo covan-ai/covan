@@ -20,6 +20,7 @@ function usageOfParked(raw: unknown): TurnUsage {
     cachedTokens: count(row.cachedTokens),
     cacheWriteTokens: count(row.cacheWriteTokens),
     reasoningTokens: count(row.reasoningTokens),
+    webSearches: count(row.webSearches),
     passes: Array.isArray(row.passes) ? (row.passes as PassUsage[]) : [],
   };
 }

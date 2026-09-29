@@ -116,6 +116,25 @@ export type CompletionUsage = {
    * `output_tokens` with no separate count in the response.
    */
   reasoningTokens: number | null;
+  /**
+   * How many web searches the provider actually ran on this request.
+   *
+   * `null` means the tool was not attached, `0` means it was attached and went
+   * unused, and those are the two facts the cost of it turns on. Attaching
+   * Anthropic's `web_search` costs **5,588 prompt tokens on every request**
+   * whether it searches or not — measured 2026-09-29 with `count_tokens` for
+   * the 51 characters `anthropicParams` sends — and it sits at the front of the
+   * cacheable prefix, so it is ~36% of a cold turn's cost and ~8% of a warm one.
+   *
+   * Until this field existed, `server_tool_use` was read nowhere in
+   * `worker/src`, so nothing could say how many of the requests that paid for
+   * the tool used it. Every argument about the default was therefore an
+   * estimate. See covan-ai/covan#228.
+   *
+   * Null on OpenAI for good, not pending: `web_search_options` is a no-op on
+   * every model offered here, so there is no search to count.
+   */
+  webSearches: number | null;
 };
 
 export type CompletionEnv = {
@@ -284,6 +303,7 @@ export const EMPTY_USAGE: CompletionUsage = {
   cachedTokens: null,
   cacheWriteTokens: null,
   reasoningTokens: null,
+  webSearches: null,
 };
 
 /** What a turn cost, for the quota counter. Cached prompt tokens are inside `promptTokens`. */
@@ -908,6 +928,18 @@ function anthropicParams(
 }
 
 /**
+ * Whether this request actually carried a web search tool.
+ *
+ * Not the same question as `req.webSearch`: the flag is accepted on every
+ * agent, and `webSearchToolFor` answers `null` for the providers where it
+ * reaches no tool at all. Asked as one function so the usage record and
+ * `anthropicParams` cannot disagree about what was sent.
+ */
+function searchAttached(req: CompletionRequest): boolean {
+  return Boolean(req.webSearch) && webSearchToolFor(req.model) !== null;
+}
+
+/**
  * Anthropic's usage numbers in the shape the rest of the app counts in.
  *
  * `input_tokens` there excludes anything served from or written to the cache,
@@ -916,7 +948,10 @@ function anthropicParams(
  * the quota counter and `lib/pricing.ts` all assume `cachedTokens` is a subset
  * of `promptTokens`, and it would be double-counted the moment it was not.
  */
-function anthropicUsage(usage: Anthropic.Usage | null | undefined): CompletionUsage {
+function anthropicUsage(
+  usage: Anthropic.Usage | null | undefined,
+  searchAttached: boolean,
+): CompletionUsage {
   if (!usage) return EMPTY_USAGE;
   const cached = usage.cache_read_input_tokens ?? 0;
   const written = usage.cache_creation_input_tokens ?? 0;
@@ -933,6 +968,12 @@ function anthropicUsage(usage: Anthropic.Usage | null | undefined): CompletionUs
     // inside `output_tokens` and reports no separate count, so a zero here
     // would be a claim the API never made.
     reasoningTokens: null,
+    // `server_tool_use` is omitted entirely on a turn that ran no search, so
+    // the fallback is 0 rather than null — but only when the tool was actually
+    // sent. Without that distinction a turn that never had the tool and a turn
+    // that had it and ignored it would record the same thing, and telling those
+    // two apart is the entire reason this is here.
+    webSearches: searchAttached ? (usage.server_tool_use?.web_search_requests ?? 0) : null,
   };
 }
 
@@ -972,7 +1013,7 @@ export async function complete(
       }));
     return {
       text: req.json ? extractJsonObject(text) : text,
-      usage: anthropicUsage(message.usage),
+      usage: anthropicUsage(message.usage, searchAttached(req)),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
@@ -1005,6 +1046,9 @@ export async function complete(
       // claim that nothing was written, which is not what the API said.
       cacheWriteTokens: null,
       reasoningTokens: completion.usage?.completion_tokens_details?.reasoning_tokens ?? null,
+      // Null, not zero: `web_search_options` is a no-op on every model offered
+      // here, so no search was possible rather than none having happened.
+      webSearches: null,
     },
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
   };
@@ -1098,7 +1142,7 @@ export async function* streamCompletion(
     try {
       for await (const event of stream) {
         if (event.type === "message_start") {
-          usage = anthropicUsage(event.message.usage);
+          usage = anthropicUsage(event.message.usage, searchAttached(req));
         } else if (
           event.type === "content_block_start" &&
           event.content_block.type === "tool_use"
@@ -1217,6 +1261,7 @@ export async function* streamCompletion(
           cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? null,
           cacheWriteTokens: null,
           reasoningTokens: chunk.usage.completion_tokens_details?.reasoning_tokens ?? null,
+          webSearches: null,
         };
       }
     }

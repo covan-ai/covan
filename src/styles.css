@@ -102,6 +102,7 @@
   --color-surface: var(--surface);
   --color-surface-hover: var(--surface-hover);
   --color-surface-muted: var(--surface-muted);
+  --color-bubble: var(--bubble);
   --color-hairline: var(--hairline);
   --color-card-body: var(--card-body);
   --color-micro-foreground: var(--micro-foreground);
@@ -136,6 +137,16 @@
   --surface: #eeede6; /* cards, list panels, the rail */
   --surface-hover: #e8e6dd; /* the hover state of anything --surface */
   --surface-muted: #f5f4f0; /* panel title bars, empty wells */
+  /*
+   * The fill of a question in a transcript. Its value matches --surface-hover
+   * in both themes and it is still its own token, because a coincidence of
+   * value is not a shared role: a bubble is not hovering, and retuning what
+   * hover feels like must not silently restyle every question anybody has
+   * asked. Two steps down from the canvas is the whole brief — enough to read
+   * as an opened area, not so much that the question outweighs the answer
+   * under it.
+   */
+  --bubble: #e8e6dd;
   --card: #eeede6;
   --popover: #ffffff; /* white is a promotion: menus and dialogs float */
 
@@ -216,6 +227,7 @@
   --surface: #1f1a15;
   --surface-hover: #272119;
   --surface-muted: #1b1611;
+  --bubble: #272119;
   --card: #1f1a15;
   --popover: #26201a;
 

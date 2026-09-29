@@ -2222,7 +2222,7 @@ function VersionPicker({
         onClick={() => step(-1)}
         disabled={busy || at === 0}
         aria-label="Previous version of this answer"
-        className="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+        className="grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
       >
         <ChevronLeft className="h-3.5 w-3.5" />
       </button>
@@ -2234,7 +2234,7 @@ function VersionPicker({
         onClick={() => step(1)}
         disabled={busy || at === versions.length - 1}
         aria-label="Next version of this answer"
-        className="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+        className="grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
       >
         <ChevronRight className="h-3.5 w-3.5" />
       </button>

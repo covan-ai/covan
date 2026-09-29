@@ -111,6 +111,60 @@ describe("the settled trail", () => {
     render(<SettledSteps steps={[{ index: 0, tool: "a", status: "ok", label: "a" }]} />);
     expect(screen.getByText("1 step")).toBeInTheDocument();
   });
+
+  it("says how long the work took, when the steps recorded it", () => {
+    // The number was already in `message_steps` and was being dropped on the
+    // way to the screen. A folded line that says only "3 steps" answers a
+    // question nobody asked; the one people actually have about a pause is how
+    // long it was.
+    render(
+      <SettledSteps
+        steps={[
+          { index: 0, tool: "a", status: "ok", label: "a", durationMs: 800 },
+          { index: 1, tool: "b", status: "ok", label: "b", durationMs: 1400 },
+        ]}
+      />,
+    );
+    expect(screen.getByText("2 steps · 2.2s")).toBeInTheDocument();
+  });
+
+  it("says nothing about duration for steps written before it was stored", () => {
+    // `durationMs` is null on every step recorded before the column existed,
+    // and "0.0s" would be a measurement rather than a missing one.
+    render(
+      <SettledSteps
+        steps={[{ index: 0, tool: "a", status: "ok", label: "a", durationMs: null }]}
+      />,
+    );
+    expect(screen.getByText("1 step")).toBeInTheDocument();
+  });
+
+  it("still leads with what went wrong when something did", () => {
+    render(
+      <SettledSteps
+        steps={[
+          { index: 0, tool: "a", status: "ok", label: "a", durationMs: 500 },
+          { index: 1, tool: "b", status: "failed", label: "b", durationMs: 500 },
+        ]}
+      />,
+    );
+    expect(screen.getByText("2 steps · 1.0s · 1 did not complete")).toBeInTheDocument();
+  });
+});
+
+describe("a step arriving", () => {
+  it("slides in, with the offset only in the keyframe", () => {
+    // `prefers-reduced-motion` switches the animation off and leaves the
+    // element in its BASE state. A class whose base declaration carries the
+    // translate would leave every row permanently four pixels out of place for
+    // the readers who asked for less movement — the opposite of the favour.
+    const { container } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
+    );
+    const row = container.querySelector("li");
+    expect(row).toHaveClass("step-arrive");
+    expect(row?.getAttribute("style") ?? "").not.toContain("transform");
+  });
 });
 
 describe("the confirmation card", () => {

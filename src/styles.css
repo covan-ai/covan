@@ -406,6 +406,34 @@
   animation: step-sweep 1.3s ease-in-out infinite;
 }
 
+/*
+ * A step arriving in the trail.
+ *
+ * The offset lives ONLY in the keyframe, and that is the whole care this rule
+ * needs. `prefers-reduced-motion` switches the animation off and leaves the
+ * element in its BASE state — so a base declaration carrying the translate
+ * would leave every row permanently four pixels out of place for exactly the
+ * readers who asked for less movement.
+ *
+ * `both` so the row does not flash at full opacity before the animation's
+ * first frame. It runs once per element, which is once per step, because React
+ * keeps the rows mounted and only a new one is a new element.
+ */
+@keyframes step-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.step-arrive {
+  animation: step-arrive 220ms ease-out both;
+}
+
 /* Blinking caret at the end of streaming text. */
 @keyframes caret-blink {
   0%,
@@ -449,6 +477,7 @@
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
   .stream-caret,
+  .step-arrive,
   .step-running,
   .stream-live > :last-child::after {
     animation: none;

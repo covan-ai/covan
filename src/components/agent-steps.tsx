@@ -28,6 +28,14 @@ export type AgentStepView = {
   status: "running" | "ok" | "failed" | "refused" | "pending";
   /** One line: the tool and, where there is one, what it was pointed at. */
   label: string;
+  /**
+   * How long it took, or null for a step recorded before the column existed.
+   *
+   * Null and zero are different answers, which is why the summary omits the
+   * figure entirely rather than printing "0.0s" — a measurement where there
+   * was none.
+   */
+  durationMs?: number | null;
 };
 
 const WORDS: Record<AgentStepView["status"], string> = {
@@ -79,7 +87,7 @@ export function StepTrail({ steps, className }: { steps: AgentStepView[]; classN
       {steps.map((step) => (
         <li
           key={step.index}
-          className="flex items-center gap-2 text-xs leading-[1.45] text-muted-foreground"
+          className="step-arrive flex items-center gap-2 text-xs leading-[1.45] text-muted-foreground"
         >
           <Mark status={step.status} />
           <span className="min-w-0 truncate">{step.label || step.tool}</span>
@@ -104,10 +112,21 @@ export function SettledSteps({ steps }: { steps: AgentStepView[] }) {
   if (steps.length === 0) return null;
   const failed = steps.filter((s) => s.status === "failed" || s.status === "refused").length;
   const count = steps.length === 1 ? "1 step" : `${steps.length} steps`;
+
+  // The question people actually have about a pause is how long it was, and
+  // the number was already in `message_steps` — it was being dropped on the
+  // way to the screen. Omitted rather than zeroed when no step recorded one:
+  // "0.0s" is a measurement, and there was none.
+  const timed = steps.filter((s) => typeof s.durationMs === "number");
+  const total = timed.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
+  const took = timed.length > 0 ? `${(total / 1000).toFixed(1)}s` : null;
+
   return (
     <Disclosure
       className="mt-3"
-      label={failed > 0 ? `${count} · ${failed} did not complete` : count}
+      label={[count, took, failed > 0 ? `${failed} did not complete` : null]
+        .filter(Boolean)
+        .join(" · ")}
     >
       <StepTrail steps={steps} />
     </Disclosure>
@@ -137,6 +156,7 @@ export function toStepViews(
     tool: string;
     status: "ok" | "failed" | "refused" | "pending";
     request: unknown;
+    durationMs?: number | null;
   }>,
 ): AgentStepView[] {
   return steps.map((step) => {
@@ -152,6 +172,7 @@ export function toStepViews(
       index: step.index,
       tool: step.tool,
       status: step.status,
+      durationMs: step.durationMs,
       label: oneLine
         ? `${step.tool} · ${oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine}`
         : step.tool,

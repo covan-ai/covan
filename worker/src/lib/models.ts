@@ -56,6 +56,13 @@ export const REASONING_EFFORTS = ["minimal", "low", "medium", "high"] as const;
 
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
+/**
+ * Anthropic's server-side search tools, by the date each was published. A model
+ * accepts exactly one of them; `null` is for the providers where asking for web
+ * search is not a tool at all.
+ */
+export type WebSearchTool = "web_search_20260209" | "web_search_20250305" | null;
+
 export type ModelSpec = {
   provider: ModelProvider;
   /**
@@ -132,6 +139,25 @@ export type ModelSpec = {
    * the turn with no tools and says so — see `lib/harness/loop.ts`.
    */
   tools: boolean;
+  /**
+   * Which server-side web search tool this model takes, or `null` for a model
+   * where the flag reaches no parameter at all.
+   *
+   * Anthropic versions its server tools by date and will not accept a newer
+   * one on an older model, so this is a per-model fact rather than a per-build
+   * one. It lived as a six-id array inside `anthropicParams` until 2026-09-29,
+   * and the reason to move it is what that array had quietly become: two of
+   * its six ids, `claude-opus-4-7` and `claude-opus-4-6`, are models this build
+   * has never offered. Nothing broke — an id that is never sent cannot be
+   * matched wrongly — but the list that decided a request parameter was one
+   * nothing type-checked and nothing read.
+   *
+   * Here it is keyed by `ModelId`, so a model added to the tuple without an
+   * answer is a compile error. `null` on every OpenAI row is the honest value
+   * rather than an omission: `webSearch` is accepted on those agents and
+   * changes nothing, which `openaiParams` explains.
+   */
+  webSearchTool: WebSearchTool;
 };
 
 /**
@@ -140,13 +166,55 @@ export type ModelSpec = {
  * model that reaches `lib/completion.ts` with no provider.
  */
 const SPECS: Record<ModelId, ModelSpec> = {
-  "gpt-4o": { provider: "openai", temperature: true, reasoning: false, tools: true },
-  "gpt-4o-mini": { provider: "openai", temperature: true, reasoning: false, tools: true },
-  "gpt-4.1": { provider: "openai", temperature: true, reasoning: false, tools: true },
-  "gpt-4.1-mini": { provider: "openai", temperature: true, reasoning: false, tools: true },
-  "gpt-5": { provider: "openai", temperature: false, reasoning: true, tools: true },
-  "gpt-5-mini": { provider: "openai", temperature: false, reasoning: true, tools: true },
-  "gpt-5-nano": { provider: "openai", temperature: false, reasoning: true, tools: true },
+  "gpt-4o": {
+    provider: "openai",
+    temperature: true,
+    reasoning: false,
+    tools: true,
+    webSearchTool: null,
+  },
+  "gpt-4o-mini": {
+    provider: "openai",
+    temperature: true,
+    reasoning: false,
+    tools: true,
+    webSearchTool: null,
+  },
+  "gpt-4.1": {
+    provider: "openai",
+    temperature: true,
+    reasoning: false,
+    tools: true,
+    webSearchTool: null,
+  },
+  "gpt-4.1-mini": {
+    provider: "openai",
+    temperature: true,
+    reasoning: false,
+    tools: true,
+    webSearchTool: null,
+  },
+  "gpt-5": {
+    provider: "openai",
+    temperature: false,
+    reasoning: true,
+    tools: true,
+    webSearchTool: null,
+  },
+  "gpt-5-mini": {
+    provider: "openai",
+    temperature: false,
+    reasoning: true,
+    tools: true,
+    webSearchTool: null,
+  },
+  "gpt-5-nano": {
+    provider: "openai",
+    temperature: false,
+    reasoning: true,
+    tools: true,
+    webSearchTool: null,
+  },
   // `temperature: false` on the three newest Claude models is not a style
   // choice mirroring the GPT-5 rows above it — the parameter was removed from
   // those endpoints and sending one is a 400, exactly as it is on GPT-5. The
@@ -161,6 +229,7 @@ const SPECS: Record<ModelId, ModelSpec> = {
     reasoning: true,
     tools: true,
     thinksByDefault: true,
+    webSearchTool: "web_search_20260209",
   },
   "claude-sonnet-5": {
     provider: "anthropic",
@@ -168,11 +237,36 @@ const SPECS: Record<ModelId, ModelSpec> = {
     reasoning: true,
     tools: true,
     thinksByDefault: true,
+    webSearchTool: "web_search_20260209",
   },
-  "claude-opus-4-8": { provider: "anthropic", temperature: false, reasoning: true, tools: true },
-  "claude-sonnet-4-6": { provider: "anthropic", temperature: true, reasoning: true, tools: true },
-  "claude-sonnet-4-5": { provider: "anthropic", temperature: true, reasoning: false, tools: true },
-  "claude-haiku-4-5": { provider: "anthropic", temperature: true, reasoning: false, tools: true },
+  "claude-opus-4-8": {
+    provider: "anthropic",
+    temperature: false,
+    reasoning: true,
+    tools: true,
+    webSearchTool: "web_search_20260209",
+  },
+  "claude-sonnet-4-6": {
+    provider: "anthropic",
+    temperature: true,
+    reasoning: true,
+    tools: true,
+    webSearchTool: "web_search_20260209",
+  },
+  "claude-sonnet-4-5": {
+    provider: "anthropic",
+    temperature: true,
+    reasoning: false,
+    tools: true,
+    webSearchTool: "web_search_20250305",
+  },
+  "claude-haiku-4-5": {
+    provider: "anthropic",
+    temperature: true,
+    reasoning: false,
+    tools: true,
+    webSearchTool: "web_search_20250305",
+  },
 };
 
 /**
@@ -253,6 +347,19 @@ export function reasonsBeforeAnswering(model: string | null | undefined): boolea
  */
 export function thinksByDefault(model: string | null | undefined): boolean {
   return modelSpec(model)?.thinksByDefault ?? false;
+}
+
+/**
+ * The web search tool to send for a model, or `null` where there is none.
+ *
+ * Not written as `?? "web_search_20250305"`, because `null` is a real answer
+ * here and that operator cannot tell it from a missing row. An id with no spec
+ * at all — which under `OPENAI_BASE_URL` is every id — gets the older tool, the
+ * same conservative fall the inline array gave it by not listing it.
+ */
+export function webSearchToolFor(model: string | null | undefined): WebSearchTool {
+  const spec = modelSpec(model);
+  return spec ? spec.webSearchTool : "web_search_20250305";
 }
 
 /**

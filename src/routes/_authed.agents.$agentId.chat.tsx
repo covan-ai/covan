@@ -39,6 +39,7 @@ import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
 import { LiveAnswer } from "@/components/chat/live-answer";
+import { ConnectedStarters } from "@/components/chat/connected-starters";
 import { HeaderAction } from "@/components/chat/turn-actions";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
@@ -1376,17 +1377,28 @@ function ChatTab() {
                 Ask anything — this chat is private to you, grounded in your team's shared
                 knowledge.
               </p>
-              <div className="mt-8 grid gap-2.5 sm:grid-cols-2">
-                {starters.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => void submit(s)}
-                    className="rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
-                  >
-                    {s}
-                  </button>
-                ))}
+              {/* Two groups, because they answer two questions: what this
+                  agent has READ, and what it can REACH. The second draws
+                  nothing at all when there is nothing connected — heading
+                  included — so a workspace on its first day sees exactly what
+                  it saw before. */}
+              <div className="mt-8 text-left">
+                <h4 className="text-xs font-medium uppercase tracking-[0.06em] text-micro-foreground">
+                  Knowledge
+                </h4>
+                <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                  {starters.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => void submit(s)}
+                      className="rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
+              <ConnectedStarters onPick={(s) => void submit(s)} />
             </div>
           ) : (
             /* No `space-y` here. Three children with three different jobs: the

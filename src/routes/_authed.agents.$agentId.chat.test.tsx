@@ -137,8 +137,8 @@ vi.mock("@/components/idea-board", () => ({ IdeaBoard: () => null }));
  * before. The tests that care about connected apps override these.
  */
 vi.mock("@/hooks/use-connections", () => ({
-  useConnections: () => ({ data: [] }),
-  useToolConnections: () => ({ data: [] }),
+  useConnections: () => ({ data: { connections: [], providers: [] } }),
+  useToolConnections: () => ({ data: { connections: [], tools: [] } }),
 }));
 vi.mock("@/components/source-chip", () => ({ SourceChip: () => null }));
 

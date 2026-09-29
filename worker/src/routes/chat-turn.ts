@@ -158,6 +158,7 @@ export function spentUsage(spend: TurnSpend): CompletionUsage {
     completionTokens: sum((p) => p.completion),
     cachedTokens: sum((p) => p.cached),
     cacheWriteTokens: sum((p) => p.written),
+    webSearches: sum((p) => p.searches),
     reasoningTokens: sum((p) => p.reasoning),
   };
 }

@@ -118,6 +118,17 @@ export type PassUsage = {
    * written before 0064 — absent is not zero.
    */
   reasoning?: number | null;
+  /**
+   * How many web searches the provider ran on this pass.
+   *
+   * Per pass rather than per turn because that is where the decision is: the
+   * tool costs 5,588 prompt tokens on *every* pass of a turn, so a turn that
+   * searched once across seven passes paid for it seven times. Absent on a
+   * pass written before 2026-09-29, `null` when the tool was not attached, and
+   * `0` when it was attached and went unused — which is the number
+   * covan-ai/covan#228 could not quote.
+   */
+  searches?: number | null;
 };
 
 /**
@@ -775,6 +786,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           // seven grows with the step budget. Both sum to the same row total
           // and argue for different fixes.
           reasoning: event.usage.reasoningTokens,
+          searches: event.usage.webSearches,
         };
         passes.push(spent);
         // Handed out here rather than at the foot of the turn, for the reason

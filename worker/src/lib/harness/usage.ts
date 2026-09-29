@@ -55,6 +55,7 @@ export function emptyUsage(): TurnUsage {
     cachedTokens: null,
     cacheWriteTokens: null,
     reasoningTokens: null,
+    webSearches: null,
     passes: [],
   };
 }
@@ -72,7 +73,7 @@ function add(a: number | null, b: number | null): number | null {
   return (a ?? 0) + (b ?? 0);
 }
 
-/** The five counters, summed. What a caller with no pass list wants. */
+/** The six counters, summed. What a caller with no pass list wants. */
 export function addCounts(a: CompletionUsage, b: CompletionUsage): CompletionUsage {
   return {
     promptTokens: add(a.promptTokens, b.promptTokens),
@@ -80,6 +81,7 @@ export function addCounts(a: CompletionUsage, b: CompletionUsage): CompletionUsa
     cachedTokens: add(a.cachedTokens, b.cachedTokens),
     cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
     reasoningTokens: add(a.reasoningTokens, b.reasoningTokens),
+    webSearches: add(a.webSearches, b.webSearches),
   };
 }
 
@@ -109,6 +111,16 @@ export function addUsage(
   };
 }
 
+/** One counter summed across a row's recorded passes, null when none recorded it. */
+export function sumOverPasses(
+  raw: unknown,
+  pick: (p: PassUsage) => number | null | undefined,
+): number | null {
+  if (!Array.isArray(raw)) return null;
+  const seen = (raw as PassUsage[]).map(pick).filter((n) => typeof n === "number");
+  return seen.length === 0 ? null : seen.reduce((x, y) => x + y, 0);
+}
+
 /** One number off a `messages` row, where a column that is not there is not a zero. */
 function count(value: unknown): number | null {
   return typeof value === "number" ? value : null;
@@ -129,6 +141,11 @@ export function usageOfRow(row: Record<string, unknown>): TurnUsage {
     cachedTokens: count(row.cached_tokens),
     cacheWriteTokens: count(row.cache_write_tokens),
     reasoningTokens: count(row.reasoning_tokens),
+    // Derived from the passes rather than read from a column, because there is
+    // no column: the count lives in each `pass_usage` entry, where the cost it
+    // explains is also per pass. Null when no pass recorded one, which is every
+    // reply written before 2026-09-29 and every OpenAI reply since.
+    webSearches: sumOverPasses(row.pass_usage, (p) => p.searches),
     passes: Array.isArray(row.pass_usage) ? (row.pass_usage as PassUsage[]) : [],
   };
 }

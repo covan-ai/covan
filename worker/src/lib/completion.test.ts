@@ -265,6 +265,7 @@ describe("complete, on OpenAI", () => {
       cachedTokens: null,
       cacheWriteTokens: null,
       reasoningTokens: null,
+      webSearches: null,
     });
     const call = openaiCreate.mock.calls[0][0];
     expect(call.messages).toHaveLength(2);
@@ -696,8 +697,66 @@ describe("complete, on Anthropic", () => {
       cachedTokens: 900,
       cacheWriteTokens: 60,
       reasoningTokens: null,
+      webSearches: null,
     });
     expect(totalTokens(usage)).toBe(1020);
+  });
+
+  it("records how many web searches the provider actually ran", async () => {
+    // The tool costs 5,588 prompt tokens on every Anthropic request whether it
+    // is used or not (measured 2026-09-29, `count_tokens`). Until this landed,
+    // `server_tool_use` was read nowhere in `worker/src`, so there was no way
+    // to say how many of the requests that paid for it searched — which is the
+    // one number the decision about the default needs.
+    anthropicCreate.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 20,
+        server_tool_use: { web_search_requests: 2 },
+      },
+    });
+
+    const { usage } = await complete(env, {
+      model: "claude-sonnet-5",
+      messages: [{ role: "user", content: "Hi" }],
+      webSearch: true,
+    });
+
+    expect(usage.webSearches).toBe(2);
+  });
+
+  it("says zero searches, not null, when the tool was attached and never used", async () => {
+    // Anthropic omits `server_tool_use` entirely on a turn that ran no search,
+    // and the difference between "asked and did not search" and "never had the
+    // tool" is the whole point of recording it. Zero is an answer; null is the
+    // absence of one.
+    anthropicCreate.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 1000, output_tokens: 20 },
+    });
+
+    const { usage } = await complete(env, {
+      model: "claude-sonnet-5",
+      messages: [{ role: "user", content: "Hi" }],
+      webSearch: true,
+    });
+
+    expect(usage.webSearches).toBe(0);
+  });
+
+  it("leaves it null when no web search tool was attached at all", async () => {
+    anthropicCreate.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 1000, output_tokens: 20 },
+    });
+
+    const { usage } = await complete(env, {
+      model: "claude-sonnet-5",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(usage.webSearches).toBeNull();
   });
 
   it("reports the cache-written tokens separately as well as inside promptTokens", () => {
@@ -967,6 +1026,7 @@ describe("streamCompletion", () => {
           cachedTokens: null,
           cacheWriteTokens: null,
           reasoningTokens: null,
+          webSearches: null,
         },
       },
     ]);
@@ -1153,6 +1213,7 @@ describe("streamCompletion", () => {
           // that means: nothing was written, or the provider did not say.
           cacheWriteTokens: null,
           reasoningTokens: null,
+          webSearches: null,
         },
       },
     ]);
@@ -1220,6 +1281,7 @@ describe("streamCompletion", () => {
           cachedTokens: null,
           cacheWriteTokens: null,
           reasoningTokens: null,
+          webSearches: null,
         },
       },
     ]);
@@ -1562,6 +1624,7 @@ describe("a streamed tool call", () => {
           cachedTokens: null,
           cacheWriteTokens: null,
           reasoningTokens: null,
+          webSearches: null,
         },
         finishReason: "tool_calls",
       },

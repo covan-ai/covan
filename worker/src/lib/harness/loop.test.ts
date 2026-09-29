@@ -399,6 +399,16 @@ describe("the budget", () => {
     /** A model that would ask forever, one call at a time. */
     const forever = () => scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }])]);
     const searching = () => [tool("search", async () => ({ kind: "ok", content: "x" }))];
+    /** `n` steps already spent, in the shape a carried half arrives in. */
+    const carried = (n: number) =>
+      Array.from({ length: n }, (_, index) => ({
+        index,
+        tool: "search",
+        request: {},
+        resultExcerpt: "",
+        status: "ok" as const,
+        durationMs: 1,
+      }));
 
     it("carries on past the soft ceiling without saying it ran out", async () => {
       forever();
@@ -482,6 +492,83 @@ describe("the budget", () => {
         messages.filter((m) => String(m.content).includes("Do not stop")),
       );
       expect(announced).toEqual([]);
+    });
+
+    /**
+     * A continuation is not a resume, and the ceiling is where they part.
+     *
+     * Both arrive with steps already spent, so both need `stepsSoFar` — the
+     * numbering has to carry on, or one reply's `message_steps` gets two rows
+     * at index 0 and one of them is overwritten. What does not carry on is the
+     * budget, and the reason is in the transcript rather than in a preference:
+     *
+     * - A RESUME continues the same request. `paused_turns.messages` holds the
+     *   tool results from before the pause, so every later pass re-sends them
+     *   and the cost the ceiling exists to bound is still being paid.
+     * - A CONTINUATION is a fresh request — the conversation, the half-written
+     *   answer, and a short instruction asking for the rest. The first half's
+     *   tool results are not in it, nothing is re-sent, and a turn charged for
+     *   them would be told it had run out before it made a single call.
+     *
+     * So `stepsCharged` is separate from `stepsSoFar`, and defaults to it: a
+     * caller that says nothing keeps the resume's behaviour, which is what
+     * every existing caller means.
+     */
+    it("charges a resume for the steps it carries", async () => {
+      // Three carried against a hard ceiling of three: spent before it starts,
+      // so the one call it asks for is refused rather than run. Recorded, not
+      // dropped — every call in a batch needs an answer or the next request is
+      // a 400.
+      scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 3 },
+        stepsSoFar: carried(3),
+      });
+
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(3);
+      expect(turn.steps.at(-1)).toMatchObject({
+        index: 3,
+        status: "refused",
+        resultExcerpt: "refused: tool budget exhausted",
+      });
+    });
+
+    it("does not charge a continuation for the steps it is only carrying", async () => {
+      // The same three carried, the same ceiling of three, and `stepsCharged: 0`
+      // — a fresh budget. Two calls land and the turn answers, so the carried
+      // three are numbered before its own rather than spent instead of them.
+      scripted([
+        pass("", [{ id: "c1", name: "search", arguments: "{}" }]),
+        pass("", [{ id: "c2", name: "search", arguments: "{}" }]),
+        pass("done"),
+      ]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 3 },
+        stepsSoFar: carried(3),
+        stepsCharged: 0,
+      });
+
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(5);
+      expect(turn.steps.some((s) => s.status === "refused")).toBe(false);
+    });
+
+    it("numbers a continuation's passes after the half it is finishing", async () => {
+      // The defect this pair exists for: without `stepsSoFar` the pass counter
+      // restarts, and one row's `pass_usage` reads [0, 1, 0, 1].
+      scripted([pass("", [{ id: "c1", name: "search", arguments: "{}" }]), pass("done")]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 3 },
+        stepsSoFar: carried(2).map((step, i) => ({ ...step, pass: i })),
+        stepsCharged: 0,
+      });
+
+      expect(turn.passes.map((p: PassUsage) => p.index)).toEqual([2, 3]);
     });
 
     /**

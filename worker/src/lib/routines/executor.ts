@@ -1,5 +1,6 @@
 // worker/src/lib/routines/executor.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { MessageOutcome } from "../harness/usage";
 import type { RoutineEnv } from "../../types";
 import { nextRunAt } from "./schedule";
 import { fetchSource, type FetchDeps, type SourceResult } from "./source";
@@ -164,6 +165,28 @@ export type AgentRunResult = {
   /** What they cost, in the unit the allowance counts in. See `weighTokens`. */
   weightedTokens: number;
   declined: boolean;
+} & ModelCall;
+
+/**
+ * The two facts about the model call that `routine_runs` had nowhere to put.
+ *
+ * Both producers answer them — `lib/routines/agent-run.ts` for a run with tools
+ * and `lib/routines/summarise.ts` for the single call beside it — so the row
+ * carries them whichever branch ran, and neither has to be inferred from
+ * `status`. See 0070.
+ */
+export type ModelCall = {
+  /** Which model answered, as `resolveModel` settled it. */
+  model: string;
+  /**
+   * How the model stopped, through the same `replyOutcome` the chat path uses.
+   *
+   * Named apart from `status` because they are different questions with
+   * different readers: `status` is the delivery verdict a person reads in the
+   * run history, and this is what happened to the request underneath it. A run
+   * can be `ok` and `truncated`, or `skipped` and `answered`.
+   */
+  modelOutcome: MessageOutcome;
 };
 
 export type RetrievalInput = { agentId: string; query: string };
@@ -181,18 +204,20 @@ export type ExecutorDeps = {
   summarise: (
     input: SummariseInput,
     env: RoutineEnv,
-  ) => Promise<{
-    text: string;
-    tokens: number;
-    /** What they cost, in the unit the allowance counts in. See `weighTokens`. */
-    weightedTokens: number;
-    /**
-     * The model read the material and judged none of it to be what the
-     * instruction asked for, so this run delivers nothing. Only ever true when
-     * the input allowed it — see `SummariseInput.mayDecline`.
-     */
-    declined: boolean;
-  }>;
+  ) => Promise<
+    ModelCall & {
+      text: string;
+      tokens: number;
+      /** What they cost, in the unit the allowance counts in. See `weighTokens`. */
+      weightedTokens: number;
+      /**
+       * The model read the material and judged none of it to be what the
+       * instruction asked for, so this run delivers nothing. Only ever true
+       * when the input allowed it — see `SummariseInput.mayDecline`.
+       */
+      declined: boolean;
+    }
+  >;
   /**
    * The same run, with tools.
    *
@@ -674,6 +699,11 @@ export async function runRoutine(
         cursor: nextCursor,
         error: NOTHING_RELEVANT_REASON,
         keys,
+        // A declined run made the call — two of them, in fact, since the
+        // decision is a turn of its own. The columns describe the request, not
+        // the delivery, so a `skipped` run that spent real money still says
+        // which model spent it.
+        modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
       });
       return { status: "skipped", itemsNew: 0 };
     }
@@ -719,6 +749,7 @@ export async function runRoutine(
       itemsOverflow: overflow,
       documentId: filing.documentId,
       filingNote: filing.note,
+      modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
       // One counter write for the run, so the embeddings this run paid for are
       // charged with the completion rather than in a second place that a later
       // change could forget — including the decision about whose key paid,
@@ -884,6 +915,15 @@ type RunOutcome = {
   transient?: boolean;
   /** Pause the routine with this reason, independently of the failure count. */
   pause?: string;
+  /**
+   * The model call this run made, when it made one.
+   *
+   * Absent on every branch that never reached a model — a feed that had not
+   * moved, an allowance already spent, an upstream that failed before the
+   * request. Absent means null in both columns, which is the truth rather than
+   * a default: there is no model and no outcome for a request nobody sent.
+   */
+  modelCall?: ModelCall;
 } & (
   | {
       status: "ok";
@@ -933,6 +973,14 @@ async function finish(
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
     status: outcome.status,
+    // What the run delivered, and — separately — what the model did. See 0070
+    // for why these are two columns: `status` answers "did my routine send
+    // anything?" for a person reading the history, and these answer "and what
+    // happened to the request", which a run can get wrong while still
+    // delivering. Null together, from one optional field, so a branch cannot
+    // record one and forget the other.
+    model: outcome.modelCall?.model ?? null,
+    outcome: outcome.modelCall?.modelOutcome ?? null,
     items_new: outcome.itemsNew,
     items_overflow: outcome.itemsOverflow ?? 0,
     tokens: outcome.tokens,

@@ -102,6 +102,10 @@ describe("runRoutineWithTools", () => {
       tokens: 140,
       weightedTokens: 300,
       declined: false,
+      // And the two facts the row keeps about the call itself — see 0070 and
+      // the describe at the foot of this file.
+      model: "gpt-4.1",
+      modelOutcome: "answered",
     });
   });
 
@@ -203,5 +207,70 @@ describe("runRoutineWithTools", () => {
     expect(out?.text).toContain("Forty orders.");
     expect(out?.text).toContain("Email the team?");
     expect(out?.text).toContain("nobody to ask");
+  });
+
+  /**
+   * What the row will say about the call, which until 0070 it could not.
+   *
+   * The model was resolved here and discarded; `replyOutcome` was never called
+   * on this path at all. Both were in hand: `runAgentTurn` returns the finish
+   * reason and whether it stopped to ask.
+   */
+  describe("what the run will record about the call", () => {
+    it("names the model it resolved and how the turn ended", async () => {
+      const out = await runRoutineWithTools(env, db)(input, env);
+      expect(out?.model).toBe("gpt-4.1");
+      expect(out?.modelOutcome).toBe("answered");
+    });
+
+    it("calls a run that stopped to ask cut_short, never paused", async () => {
+      // A pause is a question waiting for a person, and a tick has nobody to
+      // ask — so `parked` is false on this path by construction and the word is
+      // `cut_short`. `paused` on a `routine_runs` row would claim forever to be
+      // waiting on somebody who was never asked.
+      runAgentTurn.mockResolvedValue({
+        text: "Forty orders.",
+        usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
+        steps: [],
+        finishReason: "stop",
+        paused: { reason: "confirmation", messages: [], summary: "Email the team?" },
+      });
+      const out = await runRoutineWithTools(env, db)(input, env);
+      expect(out?.modelOutcome).toBe("cut_short");
+    });
+
+    it("keeps a ceiling under its own name", async () => {
+      runAgentTurn.mockResolvedValue({
+        text: "As far as I got.",
+        usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
+        steps: [],
+        finishReason: "stop",
+        paused: { reason: "budget", messages: [] },
+      });
+      const out = await runRoutineWithTools(env, db)(input, env);
+      expect(out?.modelOutcome).toBe("budget");
+    });
+
+    it("says truncated when the report hit its length limit", async () => {
+      runAgentTurn.mockResolvedValue({
+        text: "Forty ord",
+        usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
+        steps: [],
+        finishReason: "length",
+      });
+      const out = await runRoutineWithTools(env, db)(input, env);
+      expect(out?.modelOutcome).toBe("truncated");
+    });
+
+    it("says empty when the turn came back with no words", async () => {
+      runAgentTurn.mockResolvedValue({
+        text: "",
+        usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
+        steps: [],
+        finishReason: "stop",
+      });
+      const out = await runRoutineWithTools(env, db)(input, env);
+      expect(out?.modelOutcome).toBe("empty");
+    });
   });
 });

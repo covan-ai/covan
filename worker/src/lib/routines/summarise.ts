@@ -5,7 +5,8 @@ import { resolveModel } from "../models";
 import { complete, totalTokens } from "../completion";
 import { weighTokens } from "../entitlements";
 import { temperatureFor, reasoningEffortFor, whenAndWhere } from "../prompt";
-import type { SummariseInput } from "./executor";
+import { replyOutcome } from "../harness/usage";
+import type { ModelCall, SummariseInput } from "./executor";
 
 /**
  * What the model is told when it is allowed to send nothing.
@@ -47,11 +48,19 @@ type Decision = { relevant?: unknown; summary?: unknown };
 export function summariseWithModel(env: RoutineEnv) {
   return async (
     input: SummariseInput,
-  ): Promise<{ text: string; tokens: number; weightedTokens: number; declined: boolean }> => {
+  ): Promise<
+    ModelCall & { text: string; tokens: number; weightedTokens: number; declined: boolean }
+  > => {
     const body = routineMaterial(input);
 
-    const { text, usage } = await complete(env, {
-      model: resolveModel(input.model, env),
+    // Named rather than inlined, because the row has to say which model
+    // ANSWERED and that is not always the one the agent stores: nobody is
+    // watching a scheduled run, so an agent whose model has had its key rotated
+    // out falls back silently here. See 0070.
+    const model = resolveModel(input.model, env);
+
+    const { text, usage, finishReason } = await complete(env, {
+      model,
       json: input.mayDecline,
       // The agent's own settings, so a routine reports the way the agent
       // answers. There is no mode here — a routine is neither normal chat nor
@@ -122,9 +131,22 @@ export function summariseWithModel(env: RoutineEnv) {
     const tokens = totalTokens(usage);
     // What the allowance is charged, as against what moved. See `weighTokens`.
     const weightedTokens = weighTokens(usage);
-    if (!input.mayDecline) return { text, tokens, weightedTokens, declined: false };
+    // How the call ended, through the same function the chat path uses rather
+    // than a second mapping. `said` is read off the RAW reply, not off the text
+    // that survives `readDecision`: a run that declined to send still had the
+    // model say something, and `empty` is for a call that came back with
+    // nothing at all. Nothing pauses here — no tools are passed — so `paused`
+    // and `parked` are constants.
+    const modelOutcome = replyOutcome({
+      paused: null,
+      finishReason,
+      parked: false,
+      said: text.trim().length > 0,
+    });
+    const call = { model, modelOutcome };
+    if (!input.mayDecline) return { ...call, text, tokens, weightedTokens, declined: false };
 
-    return { ...readDecision(text), tokens, weightedTokens };
+    return { ...call, ...readDecision(text), tokens, weightedTokens };
   };
 }
 

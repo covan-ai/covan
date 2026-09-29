@@ -105,32 +105,46 @@ describe("usageColumns", () => {
 });
 
 describe("MESSAGE_OUTCOMES", () => {
-  it("says exactly what the check constraint allows, as the migrations left it", () => {
+  it("says exactly what every outcome constraint allows, as the migrations left them", () => {
     // A value here that the constraint does not know is a 400 from PostgREST
     // on a reply that was otherwise fine, and nothing else would catch it
     // until production: the column is written by the worker and read by
     // nobody the type checker can see.
     //
-    // Read from whichever migration redefined the constraint LAST, rather than
-    // from 0065 by name, because that is what the database actually holds. The
-    // by-name version passed for as long as there was one file, and would have
-    // failed the day a second one widened it — which happened in 0067, and is
-    // the case worth being right about rather than the case worth hard-coding.
+    // Read per CONSTRAINT rather than per file, and from whichever migration
+    // redefined each one LAST, because that is what the database actually
+    // holds. Two tables carry this vocabulary now — `messages.outcome` since
+    // 0065 and `routine_runs.outcome` since 0070 — and one list is the whole
+    // point: a scheduled run and a chat turn that ended the same way have to
+    // say so with the same word, or the two histories cannot be read together.
+    // Reading only the last file to mention `outcome in (` would have checked
+    // whichever table happened to be touched most recently and silently
+    // stopped checking the other.
     const dir = "../supabase/migrations";
-    const defining = readdirSync(dir)
+    const latest = new Map<string, string[]>();
+    for (const file of readdirSync(dir)
       .filter((f) => f.endsWith(".sql"))
-      .sort()
-      .filter((f) => /outcome in \(/.test(readFileSync(join(dir, f), "utf8")));
+      .sort()) {
+      const sql = readFileSync(join(dir, file), "utf8");
+      // Every constraint is written as `add constraint <table>_outcome_known
+      // check (... outcome in (...))`, so the name is the table and the list
+      // that follows it is that table's vocabulary.
+      for (const m of sql.matchAll(
+        /add constraint (\w+_outcome_known)[\s\S]*?outcome in \(([^)]*)\)/g,
+      )) {
+        latest.set(m[1], [...m[2].matchAll(/'([a-z_]+)'/g)].map((v) => v[1]).sort());
+      }
+    }
 
-    // If this is empty the assertion below would compare two empty lists and
-    // pass against nothing at all.
-    expect(defining.length).toBeGreaterThan(0);
-
-    const sql = readFileSync(join(dir, defining[defining.length - 1]), "utf8");
-    const allowed = [...sql.matchAll(/outcome in \(([^)]*)\)/g)]
-      .flatMap((m) => [...m[1].matchAll(/'([a-z_]+)'/g)].map((v) => v[1]))
-      .sort();
-    expect(allowed).toEqual([...MESSAGE_OUTCOMES].sort());
+    // Both tables, or the loop above found nothing and every assertion below
+    // would pass against an empty map.
+    expect([...latest.keys()].sort()).toEqual([
+      "messages_outcome_known",
+      "routine_runs_outcome_known",
+    ]);
+    for (const [name, allowed] of latest) {
+      expect(allowed, name).toEqual([...MESSAGE_OUTCOMES].sort());
+    }
   });
 });
 
@@ -170,5 +184,56 @@ describe("replyOutcome", () => {
 
   it("is answered when nothing stopped it", () => {
     expect(replyOutcome({ paused: null, finishReason: "stop", parked: true })).toBe("answered");
+  });
+
+  /**
+   * `empty` was in the vocabulary from 0065 and nothing could write it.
+   *
+   * `routes/chat.ts` sends an SSE error and persists nothing when a streamed
+   * reply comes back with no text, so there was no row to carry it — but two
+   * paths DO write a row for a reply that said nothing: `POST /chat/confirm/:id`
+   * stores `(no reply)` for a resumed half, and a scheduled run records what it
+   * called. Both said `answered`, which is a row claiming it answered while
+   * holding nothing. 0070 chose to write the value rather than drop it.
+   */
+  describe("a reply with no words in it", () => {
+    it("is empty when nothing else explains it", () => {
+      expect(replyOutcome({ paused: null, finishReason: "stop", parked: false, said: false })).toBe(
+        "empty",
+      );
+    });
+
+    it("stays answered when something was said", () => {
+      expect(replyOutcome({ paused: null, finishReason: "stop", parked: false, said: true })).toBe(
+        "answered",
+      );
+    });
+
+    it("defaults to said, so no existing caller changes meaning", () => {
+      expect(replyOutcome({ paused: null, finishReason: "stop", parked: false })).toBe("answered");
+    });
+
+    it("is outranked by every reason that says more", () => {
+      // A turn that stopped to ask and said nothing is not "empty" — it is a
+      // turn that stopped to ask, and that is the more useful word. Same for a
+      // ceiling. `truncated` is the one case `empty` can never collide with: a
+      // reply cut off at its length limit has words in it by definition.
+      expect(
+        replyOutcome({
+          paused: { reason: "confirmation" },
+          finishReason: null,
+          parked: false,
+          said: false,
+        }),
+      ).toBe("cut_short");
+      expect(
+        replyOutcome({
+          paused: { reason: "budget" },
+          finishReason: null,
+          parked: false,
+          said: false,
+        }),
+      ).toBe("budget");
+    });
   });
 });

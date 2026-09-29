@@ -603,6 +603,105 @@ describe("runRoutine", () => {
     expect(run.values.summary).toBeNull();
   });
 
+  /**
+   * What model answered, and how it stopped — the two facts `messages` has
+   * carried since 0064 and 0065 and `routine_runs` had not.
+   *
+   * `status` is a delivery verdict and stays one: `ok` means something was
+   * sent. It cannot tell a report the model finished from a report cut off at
+   * its token ceiling, and on the one surface with nobody watching it that is
+   * the difference between a routine working and a routine quietly delivering
+   * three quarters of the job. See 0070.
+   */
+  describe("what the model did, on a run nobody watched", () => {
+    it("records which model answered and how it ended", async () => {
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+      summarise = vi.fn(async () => ({
+        text: "summary",
+        tokens: 120,
+        weightedTokens: 45,
+        declined: false,
+        model: "gpt-4.1",
+        modelOutcome: "answered" as const,
+      }));
+      const { db, inserts } = makeDb();
+      const r = routine({
+        cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+      });
+
+      await runRoutine(r, makeDeps(db) as any);
+
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values.model).toBe("gpt-4.1");
+      expect(run.values.outcome).toBe("answered");
+    });
+
+    it("says truncated on a run whose report was cut off", async () => {
+      // `status` is still `ok` — something was delivered. The two columns
+      // answer different questions, which is why widening `status` was not the
+      // fix.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+      summarise = vi.fn(async () => ({
+        text: "summary",
+        tokens: 120,
+        weightedTokens: 45,
+        declined: false,
+        model: "gpt-4.1",
+        modelOutcome: "truncated" as const,
+      }));
+      const { db, inserts } = makeDb();
+      const r = routine({
+        cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+      });
+
+      await runRoutine(r, makeDeps(db) as any);
+
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values.status).toBe("ok");
+      expect(run.values.outcome).toBe("truncated");
+    });
+
+    it("leaves both null for a run that never called a model", async () => {
+      // Null rather than a guess. A feed that had not moved made no model call,
+      // so there is no model and no outcome — and a zero-ish default here would
+      // be a claim about a request nobody sent.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+      const { db, inserts } = makeDb();
+
+      await runRoutine(routine(), makeDeps(db) as any);
+
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values.status).toBe("skipped");
+      expect(run.values.model).toBeNull();
+      expect(run.values.outcome).toBeNull();
+    });
+
+    it("keeps them on a run that read the material and declined to send", async () => {
+      // A declined run is `skipped` and still made a model call — two of them,
+      // in fact. The columns describe the call, not the delivery.
+      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+      summarise = vi.fn(async () => ({
+        text: "",
+        tokens: 120,
+        weightedTokens: 45,
+        declined: true,
+        model: "gpt-4.1",
+        modelOutcome: "answered" as const,
+      }));
+      const { db, inserts } = makeDb();
+      const r = routine({
+        cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+      });
+
+      await runRoutine(r, makeDeps(db) as any);
+
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values.status).toBe("skipped");
+      expect(run.values.model).toBe("gpt-4.1");
+      expect(run.values.outcome).toBe("answered");
+    });
+  });
+
   it("advances next_run_at from the cron expression", async () => {
     fetchImpl = vi.fn(async () => res("", { status: 304 }));
     const { db, updates } = makeDb();

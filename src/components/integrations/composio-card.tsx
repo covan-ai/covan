@@ -188,11 +188,7 @@ function ConnectedApp({
     <li className="flex flex-col gap-2 rounded-lg border border-hairline bg-background px-3 py-2.5 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <span className="flex min-w-0 flex-1 basis-40 items-center gap-3">
-          <AppLogo
-            src={assetSrc(connection.logoPath)}
-            name={connection.label}
-            className="h-9 w-9"
-          />
+          <AppLogo src={assetSrc(connection.logoPath)} name={connection.label} size={36} />
           <span className="flex min-w-0 flex-col gap-[2px]">
             <span className="truncate">{connection.label}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">

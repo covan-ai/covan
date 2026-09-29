@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
 import type {
@@ -26,23 +26,7 @@ import {
   useUpdateConnection,
 } from "@/hooks/use-connections";
 import { DriveFolderDialog } from "./drive-folder-dialog";
-import { GoogleDriveMark, NotionMark } from "./brand-marks";
-
-/**
- * A brand mark lives in a 44px tile — the accent ceiling, and what that tile
- * was sized for.
- *
- * These were descriptive icons — a notebook for Notion, a folder for Drive — on
- * the reasoning that lucide 1 had dropped its brand icons and a logo would be
- * the odd entry out. That was true of a list where one row in five wore one.
- * Every connectable source is a product with a mark somebody recognises, and a
- * person scanning this page is looking for *Notion*: the fastest way to say
- * Notion is Notion's own mark.
- */
-export const PROVIDER_MARK: Record<ProviderId, (props: { className?: string }) => ReactElement> = {
-  notion: NotionMark,
-  google_drive: GoogleDriveMark,
-};
+import { PROVIDER_MARK } from "./brand-marks";
 
 /**
  * How often a source is re-read. Hours rather than a cron expression: a routine

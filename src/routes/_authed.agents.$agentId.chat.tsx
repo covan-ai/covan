@@ -1339,7 +1339,7 @@ function ChatTab() {
                   <button
                     key={s}
                     onClick={() => void submit(s)}
-                    className="rounded-md border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
+                    className="rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
                   >
                     {s}
                   </button>
@@ -1365,7 +1365,7 @@ function ChatTab() {
                     type="button"
                     onClick={() => void loadEarlier()}
                     disabled={loadingEarlier}
-                    className="rounded-full border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+                    className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
                   >
                     {loadingEarlier ? "Loading…" : "Load earlier messages"}
                   </button>
@@ -1415,7 +1415,7 @@ function ChatTab() {
                                 <img
                                   src={m.sender.avatarUrl}
                                   alt=""
-                                  className="h-4 w-4 rounded-full"
+                                  className="h-4 w-4 rounded-sm object-cover"
                                 />
                               ) : null}
                               <span>{m.sender.name ?? "Someone"}</span>
@@ -1430,7 +1430,7 @@ function ChatTab() {
                               {uploads.receipts.map((r) => (
                                 <div
                                   key={r.id}
-                                  className="flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs"
+                                  className="flex items-center gap-1.5 rounded-sm border border-border bg-surface px-2.5 py-1 text-xs"
                                 >
                                   <FileText className="h-3 w-3 text-muted-foreground" />
                                   <span className="text-muted-foreground">{r.name}</span>
@@ -1569,7 +1569,7 @@ function ChatTab() {
                                 type="button"
                                 onClick={() => carryOn(m.id)}
                                 disabled={busy}
-                                className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
+                                className="rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
                               >
                                 Continue
                               </button>
@@ -1599,7 +1599,7 @@ function ChatTab() {
                                   type="button"
                                   onClick={keepGoing}
                                   disabled={busy}
-                                  className="rounded-full border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
+                                  className="rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
                                 >
                                   Keep going
                                 </button>
@@ -1856,14 +1856,14 @@ function ChatTab() {
             type="button"
             onClick={jumpToEnd}
             aria-label="Jump to the latest message"
-            className="absolute -top-5 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-card transition-colors duration-200 hover:text-foreground"
+            className="absolute -top-5 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-md border border-border bg-popover text-muted-foreground transition-colors duration-200 hover:text-foreground"
           >
             <ArrowDown className="h-4 w-4" />
           </button>
         )}
         <div className="mx-auto max-w-3xl">
           {quota && quota.level !== "fine" && (
-            <div className="mb-2 flex items-center gap-2 rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
               <span className="h-2 w-2 shrink-0 bg-accent-orange" />
               <span>{quotaSentence(quota)}</span>
             </div>
@@ -1875,14 +1875,14 @@ function ChatTab() {
                   key={q}
                   type="button"
                   onClick={() => void submit(q)}
-                  className="rounded-full border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground"
+                  className="rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground"
                 >
                   {q}
                 </button>
               ))}
             </div>
           )}
-          <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">
+          <div className="rounded-3xl border border-border bg-popover transition-colors duration-200">
             <ChatReceipts uploads={uploads} />
             <ChatReportReceipt reports={reports} />
             <Textarea
@@ -1963,7 +1963,7 @@ function ChatTab() {
                 <button
                   onClick={stop}
                   aria-label="Stop generating"
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
                 >
                   <Square className="h-3.5 w-3.5 fill-current" />
                 </button>
@@ -1973,7 +1973,7 @@ function ChatTab() {
                   disabled={!input.trim() || busy}
                   aria-label="Send message"
                   title={busy ? "Waiting for the current reply to finish" : undefined}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-accent-orange text-[#251f19] transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-accent-orange text-[#251f19] transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <ArrowUp className="h-4 w-4" />
                 </button>
@@ -2027,14 +2027,14 @@ function ChatTab() {
                 <button
                   type="button"
                   onClick={reports.download}
-                  className="rounded-sm px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   Download
                 </button>
                 <button
                   type="button"
                   onClick={reports.dismiss}
-                  className="rounded-sm px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   aria-label="Close preview"
                 >
                   Close
@@ -2150,7 +2150,7 @@ function EditTurn({
   const ref = useAutoGrow<HTMLTextAreaElement>(value);
   return (
     <div className="flex flex-col items-end gap-1.5">
-      <div className="w-full max-w-[560px] rounded-2xl bg-popover p-2 shadow-card">
+      <div className="w-full max-w-[560px] rounded-2xl border border-border bg-popover p-2">
         <Textarea
           ref={ref}
           value={value}

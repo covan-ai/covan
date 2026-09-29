@@ -37,6 +37,7 @@ import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
+import { LiveAnswer } from "@/components/chat/live-answer";
 import { HeaderAction } from "@/components/chat/turn-actions";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
@@ -46,11 +47,9 @@ import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { useStableCallback } from "@/lib/use-stable-callback";
-import { Disclosure } from "@/components/section-card";
 import { FeedbackDialog } from "@/components/feedback-dialog";
 import {
   ConfirmCard,
-  StepTrail,
   type AgentStepView,
   type PendingConfirmation,
 } from "@/components/agent-steps";
@@ -1501,106 +1500,13 @@ function ChatTab() {
                   drawn on the end of the reply above instead. */}
               {continuingId === null &&
                 (replyingIn === active?.id || settlingIn === active?.id) && (
-                  // Outside the log, and silent. The words arrive here one token
-                  // at a time; a screen reader is told *that* a reply is coming
-                  // by the status line below, and reads the reply itself once it
-                  // lands in the log above as a finished thing.
-                  <div className="flex flex-col gap-2" aria-live="off">
-                    <div className="min-w-0" data-turn="answer">
-                      {/*
-                      What the model is working through, while it works
-                      through it. Folded, and closed by default: this is
-                      context for a pause, not the answer — somebody who wants
-                      to know why an answer came out the way it did can open
-                      it, and everybody else should not have to scroll past it
-                      to read the reply.
-                    */}
-                      {thinkingText && (
-                        <Disclosure label="Thinking" className="mb-3">
-                          <Markdown content={thinkingText} className="text-xs" />
-                        </Disclosure>
-                      )}
-                      {/* Between the reasoning and the answer, which is
-                        where they happen. A step line is the one thing on
-                        this screen that says the agent left the room — it
-                        went and read something — and it belongs above the
-                        words that came back from it. */}
-                      {liveSteps.length > 0 && <StepTrail steps={liveSteps} className="mb-3" />}
-                      {/*
-                        The words so far, and the dots, as siblings rather than
-                        as two branches of a ternary.
-
-                        They used to be either/or, which was right while a turn
-                        wrote once: there was nothing to show until the model
-                        started, and once it started it never went quiet again.
-                        A tool turn goes quiet repeatedly — every pass after the
-                        first begins with the model reading a tool result,
-                        which can take many seconds and produces nothing. With
-                        the ternary, bringing the dots back for those gaps would
-                        have taken the already-written text off the screen.
-
-                        So: text if there is any, dots if something is
-                        happening, and frequently both.
-                      */}
-                      {streamText && (
-                        // The same renderer the settled answer uses, so the
-                        // reply arrives in the shape it will keep. It used to be
-                        // plain `whitespace-pre-wrap`, which meant watching raw
-                        // `**`, bare `|` rows and unopened fences for the length
-                        // of the answer and then having the whole thing reflow
-                        // into something else the moment it finished. That
-                        // reflow was the single most visible difference between
-                        // this and the chat products people arrive from.
-                        //
-                        // Measured before it was written: a full parse and mount
-                        // of a 700-character answer costs ~1.1ms per delta under
-                        // jsdom, which re-mounts the tree every time. A browser
-                        // re-renders an existing one. There is nothing here to
-                        // batch.
-                        //
-                        // `stream-live` is what draws the caret — see
-                        // `styles.css`. A sibling span cannot: the answer is
-                        // blocks now, and a span after them sits on its own line
-                        // under the last paragraph rather than at the end of it.
-                        // Dropped once the stream stops, because at that point
-                        // the text is waiting to be replaced by the server's
-                        // copy rather than still arriving.
-                        <Markdown
-                          content={streamText}
-                          className={cn(
-                            "text-base text-foreground",
-                            replyingIn === active?.id && "stream-live",
-                          )}
-                        />
-                      )}
-                      {thinking && (
-                        // `aria-hidden`, where this used to carry an `aria-label`
-                        // on a bare `<div>` — a label on an element with no role
-                        // is a string most screen readers have nowhere to put.
-                        // The words are in the status line at the foot of the
-                        // conversation instead, where they are announced rather
-                        // than merely present.
-                        <div
-                          className={cn(
-                            "flex items-center gap-1.5 text-xs text-muted-foreground",
-                            streamText && "mt-2",
-                          )}
-                          aria-hidden="true"
-                        >
-                          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-                          <span
-                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                            style={{ animationDelay: "0.15s" }}
-                          />
-                          <span
-                            className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
-                            style={{ animationDelay: "0.3s" }}
-                          />
-                          <span className="ml-1">Thinking…</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <LiveAnswer
+                    streamText={streamText}
+                    thinkingText={thinkingText}
+                    thinking={thinking}
+                    steps={liveSteps}
+                    streaming={replyingIn === active?.id}
+                  />
                 )}
             </div>
           )}

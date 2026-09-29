@@ -1973,7 +1973,7 @@ function ChatTab() {
                   disabled={!input.trim() || busy}
                   aria-label="Send message"
                   title={busy ? "Waiting for the current reply to finish" : undefined}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-accent-orange text-[#251f19] transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <ArrowUp className="h-4 w-4" />
                 </button>

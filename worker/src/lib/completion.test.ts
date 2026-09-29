@@ -87,15 +87,23 @@ function stripCache(messages: unknown): unknown {
 }
 
 describe("toAnthropicMessages", () => {
-  it("lifts the leading system messages into the system field", () => {
+  it("lifts the first system message into the system field and no others", () => {
+    // The first, not "the leading ones". Every caller sends exactly one prefix
+    // (`routes/chat.ts:277`, `slack/handle.ts:228`, `routes/reports.ts:150`,
+    // `routines/agent-run.ts:85`, `routines/summarise.ts:70`), so folding a
+    // second one bought nothing — and it is how the retrieved block got into
+    // the cached block on a turn with no history. See the test below.
     const { system, messages } = toAnthropicMessages([
       { role: "system", content: "You are Ada." },
       { role: "system", content: "Be brief." },
       { role: "user", content: "Hello" },
     ]);
 
-    expect(system).toBe("You are Ada.\n\nBe brief.");
-    expect(messages).toEqual([{ role: "user", content: "Hello" }]);
+    expect(system).toBe("You are Ada.");
+    expect(messages).toEqual([
+      { role: "user", content: "Be brief." },
+      { role: "user", content: "Hello" },
+    ]);
   });
 
   it("delivers a mid-conversation system message as a user turn", () => {
@@ -117,6 +125,42 @@ describe("toAnthropicMessages", () => {
       { role: "user", content: "KNOWLEDGE: the handbook says Tuesdays." },
       { role: "user", content: "Well?" },
     ]);
+  });
+
+  it("keeps a retrieved block out of the system field when there is no history yet", () => {
+    // The shape every retrieval caller builds is
+    // `[prefix, ...history, ragBlock, question]`, and on the first turn of a
+    // session — and on EVERY routine run, which has no history at all — the
+    // history is empty. The block then arrived while `out` was still empty and
+    // was lifted into `system` beside the persona, where two things went wrong
+    // at once: the cached block carried 2,085 tokens of this question's
+    // excerpts, and the next turn's `system` was the persona alone, so the
+    // entry could never be read back. Measured on the 2026-09-28 21:41 turn.
+    const { system, messages } = toAnthropicMessages([
+      { role: "system", content: "You are Ada." },
+      { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+      { role: "user", content: "What does the handbook say?" },
+    ]);
+
+    expect(system).toBe("You are Ada.");
+    expect(messages).toEqual([
+      { role: "user", content: "KNOWLEDGE: the handbook says Tuesdays." },
+      { role: "user", content: "What does the handbook say?" },
+    ]);
+  });
+
+  it("marks nothing when the retrieved block is all there is before the question", () => {
+    // The corollary: with the block out of `system` there is no turn before the
+    // question that repeats, so there is nothing to mark. `worthCaching` in
+    // `anthropicParams` still marks the system block, which is now the persona
+    // and therefore worth marking.
+    const { cacheIndex } = toAnthropicMessages([
+      { role: "system", content: "You are Ada." },
+      { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+      { role: "user", content: "What does the handbook say?" },
+    ]);
+
+    expect(cacheIndex).toBeNull();
   });
 
   it("drops a leading assistant turn, which the API refuses outright", () => {

@@ -434,15 +434,21 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
  *
  * Three differences, none of them cosmetic:
  *
- * - **System prompts are a field, not a turn.** The leading system messages
- *   become `system`, which is also where they belong for caching: that block is
+ * - **The system prompt is a field, not a turn.** The first system message
+ *   becomes `system`, which is also where it belongs for caching: that block is
  *   byte-identical turn over turn.
- * - **A later system message has nowhere to go.** `routes/chat.ts` puts the
+ * - **Every later system message has nowhere to go.** `routes/chat.ts` puts the
  *   retrieved-knowledge block in one, just before the newest question, so the
  *   stable prefix in front of it stays cacheable. Mid-conversation system turns
  *   exist on Anthropic's newest models and on none of the ones offered here, so
  *   it is delivered as a user turn instead — same position, same effect on the
  *   answer, and consecutive user turns are merged by the API.
+ *
+ *   The *first* and not "the leading ones", which is what this did until
+ *   2026-09-29 and is the whole reason the retrieved block leaked into the
+ *   cached block on a turn with no history. Nothing sends two leading system
+ *   messages meaning both to be cached — all five callers send exactly one
+ *   prefix — so the generosity bought nothing and cost a cache entry.
  * - **The first turn must be a user turn.** History trimming can leave an
  *   assistant message first; OpenAI accepts that and Anthropic returns a 400.
  *   Leading assistant turns are dropped rather than sent.
@@ -458,9 +464,10 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
   const systemParts: string[] = [];
   const out: Anthropic.MessageParam[] = [];
   // Where the stable half of the conversation ends: the last turn pushed before
-  // the first mid-conversation system message, which is the volatile retrieved
-  // block. Null until one is seen, and resolved below for the callers that send
-  // no block at all.
+  // the first system message that is not the prefix, which is the volatile
+  // retrieved block. Null until one is seen, and resolved below for the callers
+  // that send no block at all. Stays null when the block is the only thing
+  // before the question, because then nothing in `messages` repeats.
   let stableThrough: number | null = null;
   /**
    * The `tool_use` ids actually sent, so a `tool_result` that answers a call
@@ -508,7 +515,17 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
 
     if (message.role === "system") {
       if (!content) continue;
-      if (out.length === 0) systemParts.push(content);
+      // The FIRST one, and `out.length` is not enough to say so. Every
+      // retrieval caller builds `[prefix, ...history, ragBlock, question]`, and
+      // the history is empty on the first turn of a session and on every
+      // routine run (`lib/routines/agent-run.ts` has none by construction). The
+      // block then arrived here with `out` still empty and was lifted into
+      // `system` beside the persona, which cost twice: the cached block carried
+      // that one question's excerpts, and the next turn's `system` was the
+      // persona alone, so the entry could never be read back. Measured on the
+      // 2026-09-28 21:41 turn — 2,085 tokens written at the 1.25x premium into
+      // an entry with no possible reader.
+      if (systemParts.length === 0 && out.length === 0) systemParts.push(content);
       else {
         if (stableThrough === null) stableThrough = out.length - 1;
         out.push({ role: "user", content });
@@ -617,20 +634,26 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
  * exactly where a short prompt is most likely to run — a marker on anything
  * under four thousand tokens buys nothing at all.
  *
- * **Both markers are set together or not at all**, which is `cacheIndex`'s
- * second job. A cache write is not free on this provider — Anthropic charges
- * 1.25x input for the tokens it stores, as `lib/pricing.ts` says — so a marker
- * on a prefix that will never be read back is a bill, not a saving. That is
- * exactly what the first turn of a conversation is: with no prior turns,
- * `toAnthropicMessages` folds the retrieved block into `system` (nothing
- * precedes it, so by this function's own rule it is a leading system message),
- * and the next turn's `system` is the persona alone. The two do not match, the
- * entry is never read, and the write was paid for.
+ * A cache write is not free on this provider — Anthropic charges 1.25x input
+ * for the tokens it stores, as `lib/pricing.ts` says — so a marker on a prefix
+ * that will never be read back is a bill, not a saving. `cacheIndex` is null in
+ * the one-shot callers (titling, persona drafting, a routine's summary) which
+ * send one system message and one question and never ask twice, and that is the
+ * right condition for them: mark nothing until there is something to mark.
  *
- * `cacheIndex` is null in precisely that case and in the one-shot callers
- * (titling, persona drafting, a routine's summary) which send one system
- * message and one question and never ask twice. So it is the right condition
- * for both: mark nothing until there is repeated history to mark.
+ * **This paragraph used to say the first turn of a conversation was the same
+ * case, and it was right for the wrong reason.** `toAnthropicMessages` folded
+ * the retrieved block into `system` when no turn preceded it, so turn one's
+ * `system` was persona + that question's excerpts and turn two's was the
+ * persona alone; the two never matched and the write was paid for. Measured on
+ * the live project, 2026-09-28 19:36 → 19:38, 165 seconds apart and well inside
+ * the five-minute window: the second turn read **zero** of the first's 11,967
+ * written tokens. The leak was in the fold, not in the marker — `worthCaching`
+ * below marks the system block on a first turn anyway, deliberately and for a
+ * good reason of its own — so the fix went there (see the rule in
+ * `toAnthropicMessages`) and the marker stayed. With the block out of `system`,
+ * the first turn's system block is the persona and the manifest, it is
+ * byte-identical on turn two, and it is now read back.
  */
 const CACHE_CONTROL = { type: "ephemeral" as const };
 

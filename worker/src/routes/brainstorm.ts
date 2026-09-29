@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { selectHistory, HISTORY_CHAR_BUDGET, PER_MESSAGE_CHAR_CAP } from "../lib/history";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
@@ -12,6 +13,15 @@ const suggestSchema = z.object({ sessionId: z.string().min(1) });
 
 // How many recent messages to feed the extractor. A brainstorm is short-lived;
 // the last 30 turns capture the ideas raised without inflating the prompt.
+//
+// The row count was the ONLY bound here until 2026-09-29, and a row count is not
+// a bound on a prompt: `routes/messages.ts` validates message content as
+// `z.string().min(1)` with no maximum, so thirty rows is thirty times whatever
+// somebody pasted. Every other surface that turns messages into a prompt —
+// `routes/chat.ts`, `lib/slack/handle.ts`, `routes/reports.ts` — runs them
+// through `selectHistory` for exactly this reason; this one did not, and it is
+// the one nobody was watching. It does now, on the same two budgets, so the
+// worst case is `MAX_HISTORY_TOKENS` rather than unbounded.
 const EXTRACT_MSG_LIMIT = 30;
 
 // POST /brainstorm/ideas/suggest — distill the conversation so far into
@@ -66,11 +76,14 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
     return c.json({ ideas: [] });
   }
 
-  const transcript = rows
-    .map(
-      (m: { role: string; content: string }) =>
-        `${m.role === "assistant" ? "Agent" : "User"}: ${m.content}`,
-    )
+  const transcript = selectHistory(
+    rows.map((m: { role: string; content: string }) => ({
+      role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+      content: m.content,
+    })),
+    { maxChars: HISTORY_CHAR_BUDGET, perMessageCap: PER_MESSAGE_CHAR_CAP },
+  )
+    .map((m) => `${m.role === "assistant" ? "Agent" : "User"}: ${m.content}`)
     .join("\n");
 
   try {

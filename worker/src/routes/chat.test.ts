@@ -480,6 +480,11 @@ function grounding(): string | undefined {
   return serviceInsert.mock.calls[0]?.[0]?.grounding as string | undefined;
 }
 
+/** What 0069 stores alongside the reply. */
+function storedParts(): Record<string, unknown> | undefined {
+  return serviceInsert.mock.calls[0]?.[0]?.prompt_parts as Record<string, unknown> | undefined;
+}
+
 function citedNames(): string[] {
   const sources = serviceInsert.mock.calls[0]?.[0]?.sources as
     Array<{ name: string }> | null | undefined;
@@ -723,6 +728,50 @@ describe("the lexical arm (Task 5)", () => {
 
     const match = rpcCalls.find((c) => c.name === "match_chunks");
     expect(match?.args.p_query_terms).toEqual([]);
+  });
+});
+
+describe("what the prompt was made of (0069)", () => {
+  it("stores the lengths of the parts the request was assembled from", async () => {
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      documents: [HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    await ask(app);
+
+    const parts = storedParts();
+    expect(parts).toBeTruthy();
+    // The total is the measured length of the whole system block, so it is
+    // larger than the manifest it contains and larger than nothing.
+    expect(parts?.system_chars as number).toBeGreaterThan(0);
+    expect(parts?.manifest_chars as number).toBeLessThanOrEqual(parts?.system_chars as number);
+    expect(parts?.doc_names).toBe(1);
+    expect(parts?.rag_chars as number).toBeGreaterThan(0);
+    expect(parts?.question_chars).toBe("How many vacation days do I get?".length);
+    expect(parts?.mode).toBe("normal");
+  });
+
+  it("names the tools the turn was offered and whether web search rode along", async () => {
+    // The flag matters out of proportion to its width: Anthropic's server-side
+    // web_search tool measured 5,588 tokens on 2026-09-29, 47% of that prompt,
+    // and it has no length on this side of the wire to record. See 0069.
+    const { app } = appWith({ question: "Hello", documents: [], matches: [] });
+    await ask(app);
+
+    const parts = storedParts();
+    expect(Array.isArray(parts?.tools)).toBe(true);
+    expect(typeof parts?.web_search).toBe("boolean");
+  });
+
+  it("records nothing about retrieval when retrieval found nothing", async () => {
+    const { app } = appWith({ question: "Hello", documents: [], matches: [] });
+    await ask(app);
+
+    expect(storedParts()?.rag_chars).toBe(0);
+    expect(storedParts()?.doc_names).toBe(0);
   });
 });
 

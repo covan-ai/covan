@@ -210,6 +210,63 @@ describe("find_tool", () => {
       );
     });
 
+    it("breaks a tie on the name that is about less else", async () => {
+      // The 2026-09-28 tie, verbatim. "list pull requests" scores three of three
+      // against BOTH of these — LIST, PULL, REQUEST — and the second is about
+      // comments on a review. Composio returns them alphabetically (measured
+      // 2026-09-29), so C precedes P and the wrong one came first; the model
+      // happened to choose correctly and nothing in the order helped it.
+      const LIST_PRS = {
+        slug: "GITHUB_LIST_PULL_REQUESTS",
+        name: "List pull requests",
+        description: "Lists pull requests in a repository.",
+        toolkit: { slug: "GITHUB" },
+        input_parameters: { required: ["owner", "repo"] },
+      };
+      const LIST_REVIEW_COMMENTS = {
+        slug: "GITHUB_LIST_COMMENTS_FOR_A_PULL_REQUEST_REVIEW",
+        name: "List comments for a pull request review",
+        description: "Lists comments left on one review of a pull request.",
+        toolkit: { slug: "GITHUB" },
+        input_parameters: { required: ["owner", "repo", "pull_number", "review_id"] },
+      };
+      const GITHUB_CONNECTION = {
+        id: "c-gh",
+        label: "GitHub",
+        transport: "composio",
+        toolkit_slug: "github",
+        status: "active",
+      };
+
+      fetchMock.mockImplementation(async () => catalogue([LIST_REVIEW_COMMENTS, LIST_PRS]));
+      const out = await findToolTool.run(
+        { query: "list pull requests", toolkit: "github" },
+        ctxWith([GITHUB_CONNECTION]),
+      );
+      const content = out.kind === "ok" ? out.content : "";
+      expect(content.indexOf("GITHUB_LIST_PULL_REQUESTS")).toBeLessThan(
+        content.indexOf("GITHUB_LIST_COMMENTS_FOR_A_PULL_REQUEST_REVIEW"),
+      );
+    });
+
+    it("does not break a tie of zero, which would rebuild the order #201 was about", async () => {
+      // The guard, as its own case. `unasked` prefers the name carrying fewer
+      // words nobody asked for, and at a score of zero that is just "prefer the
+      // shorter name": CLEAR is one unasked word, DELETE and EVENT are two. So
+      // an unguarded tiebreak puts the destructive operation first on a query
+      // that separates neither — which is what #201 was. The test above this one
+      // asserts the catalogue order survives; this one says why it must.
+      fetchMock.mockImplementation(async () => catalogue([CLEAR_CALENDAR, DELETE_EVENT]));
+      const out = await findToolTool.run(
+        { query: "tidy up", toolkit: "googlecalendar" },
+        ctxWith([CALENDAR_CONNECTION]),
+      );
+      const content = out.kind === "ok" ? out.content : "";
+      expect(content.indexOf("GOOGLECALENDAR_CLEAR_CALENDAR")).toBeLessThan(
+        content.indexOf("GOOGLECALENDAR_DELETE_EVENT"),
+      );
+    });
+
     it("never lets relevance lift an application nobody has connected", async () => {
       // The ordering of the two rules is the safety property. A word-for-word
       // match in an app the workspace cannot run is still a call that cannot

@@ -9,6 +9,7 @@ import {
   DEFAULT_PERSONA,
   MANIFEST_NAME_LIMIT,
   REPORT_INSTRUCTIONS,
+  promptParts,
 } from "./prompt";
 
 describe("buildSystemPrefix", () => {
@@ -244,5 +245,69 @@ describe("the date and zone in the prefix", () => {
   it("says nothing about the date when it was not given a clock", () => {
     const out = buildSystemPrefix({ persona: null, mode: "normal", docNames: [] });
     expect(out).not.toContain("Today is");
+  });
+});
+
+describe("promptParts", () => {
+  const block = (docNames: string[]) =>
+    buildSystemPrefix({ persona: "You are Ada.", mode: "normal", docNames });
+  const MANIFEST =
+    "Connected services you can reach with your tools:\n- GitHub (id: x, github via run_tool)";
+
+  const parts = (docNames: string[]) => {
+    const prefix = block(docNames);
+    return promptParts({
+      systemPrefix: `${prefix}\n\n${MANIFEST}`,
+      manifest: MANIFEST,
+      docNames,
+      ragBlock: "KNOWLEDGE: ...",
+      history: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi" },
+      ],
+      question: "what?",
+      toolNames: ["find_tool", "run_tool"],
+      webSearch: true,
+      mode: "normal",
+    });
+  };
+
+  it("measures the whole system block rather than summing the pieces it names", () => {
+    // The contract that keeps this record honest as the prefix grows. Adding a
+    // part to `buildSystemPrefix` and forgetting to itemise it here leaves the
+    // BREAKDOWN incomplete and the TOTAL exactly right — and the total is what
+    // closes an accounting. So the test is that the number tracks the string.
+    const withoutDocs = parts([]);
+    const withDocs = parts(["COVAN.md", "README.md"]);
+
+    expect(withoutDocs.system_chars).toBe(`${block([])}\n\n${MANIFEST}`.length);
+    expect(withDocs.system_chars).toBe(
+      withoutDocs.system_chars + (block(["COVAN.md", "README.md"]).length - block([]).length),
+    );
+    expect(withDocs.doc_names).toBe(2);
+  });
+
+  it("reports the manifest as a substring of the system block, not as an addition", () => {
+    const p = parts([]);
+    expect(p.manifest_chars).toBe(MANIFEST.length);
+    expect(p.manifest_chars).toBeLessThan(p.system_chars);
+  });
+
+  it("counts history in turns and in characters, and the question separately", () => {
+    const p = parts([]);
+    expect(p.history_turns).toBe(2);
+    expect(p.history_chars).toBe("hello".length + "hi".length);
+    expect(p.question_chars).toBe("what?".length);
+    expect(p.rag_chars).toBe("KNOWLEDGE: ...".length);
+  });
+
+  it("records the tool names and whether the web-search tool was attached", () => {
+    // `web_search` is in a record otherwise made of lengths because the thing it
+    // stands for is the largest single item in the prompt and has no length on
+    // this side of the wire: 5,588 tokens, measured 2026-09-29. See 0069.
+    const p = parts([]);
+    expect(p.tools).toEqual(["find_tool", "run_tool"]);
+    expect(p.web_search).toBe(true);
+    expect(p.mode).toBe("normal");
   });
 });

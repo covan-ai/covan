@@ -15,6 +15,7 @@ import {
   listToolkitCategories,
   listToolkitTools,
   COMPOSIO_BASE,
+  MAX_TOOLS_PAGE,
   type ComposioToolkit,
 } from "../lib/composio/client";
 
@@ -64,12 +65,22 @@ const toolkitPattern = /^[a-z0-9_-]{1,80}$/;
  * How many of an application's operations the detail card is shown.
  *
  * Enough to answer "what can this thing do" and not enough to become the page.
- * Kept small for a second reason worth writing down: catalogue rows can carry
- * their whole argument schema, and `client.ts` caps a response at 256KB — past
- * it the body does not parse and the card silently shows nothing rather than
- * too much.
+ *
+ * It was ten, and the second half of the reason has since stopped being true.
+ * The comment here used to say that catalogue rows can carry their whole
+ * argument schema and that `client.ts` caps a response at 256KB, past which the
+ * body does not parse and the card silently shows nothing. covan#226 gave the
+ * catalogue its own ceiling — `MAX_CATALOGUE_BYTES`, a megabyte — and made an
+ * unreadable body an error instead of an empty list, and `listToolkitTools`
+ * passes it. So the cap that forced ten is gone, and ten was leaving a user
+ * looking at a tenth of GitHub with nothing saying so.
+ *
+ * `MAX_TOOLS_PAGE` rather than a number of its own, so the page this card asks
+ * for and the page `find_tool` asks for cannot drift apart — they are the same
+ * endpoint with the same ceiling, and the card is the surface where somebody
+ * checks by eye what the agent will be offered.
  */
-const TOOLKIT_OPERATIONS = 10;
+const TOOLKIT_OPERATIONS = MAX_TOOLS_PAGE;
 
 /** Long enough for a cold CDN, short enough that a grid does not hang on one tile. */
 const LOGO_TIMEOUT_MS = 5_000;

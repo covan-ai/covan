@@ -31,7 +31,13 @@ import {
   HISTORY_CHAR_BUDGET,
   PER_MESSAGE_CHAR_CAP,
 } from "../lib/history";
-import { buildSystemPrefix, temperatureFor, maxTokensFor, reasoningEffortFor } from "../lib/prompt";
+import {
+  buildSystemPrefix,
+  temperatureFor,
+  maxTokensFor,
+  reasoningEffortFor,
+  promptParts,
+} from "../lib/prompt";
 import { effectiveMode } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
 import { generateFollowUps } from "../lib/follow-ups";
@@ -283,6 +289,23 @@ chat.post("/chat/stream", async (c) => {
     // is a user turn rather than the obvious thing.
     ...(continuing ? [{ role: "user" as const, content: CONTINUE_INSTRUCTION }] : []),
   ];
+
+  // What that request was made of, for `messages.prompt_parts` (0069). Every
+  // value is a length of something already in scope; nothing is recomputed and
+  // nothing travels — `persistAssistant` below is inside this closure, which is
+  // the whole reason this needed no new field on the turn options and no second
+  // callback beside `onPass`.
+  const parts = promptParts({
+    systemPrefix,
+    manifest,
+    docNames,
+    ragBlock: ragBlock ?? "",
+    history,
+    question,
+    toolNames: tools.map((t) => t.name),
+    webSearch: agent.web_search ?? false,
+    mode,
+  });
 
   // The agent's model, unless this one reply asked for another.
   //
@@ -551,6 +574,10 @@ chat.post("/chat/stream", async (c) => {
                 sources: sources.length > 0 ? sources : null,
                 grounding,
                 ...usageColumns(delta),
+                // Insert only. A continuation's row already describes the
+                // request that produced its first half, which is the rule
+                // `sources` and `grounding` follow a few lines up.
+                prompt_parts: parts,
                 model,
                 outcome: opts.outcome,
                 ...(regenerate

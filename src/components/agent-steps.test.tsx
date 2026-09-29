@@ -7,10 +7,12 @@ import { ConfirmCard, SettledSteps, StepTrail, toStepViews } from "./agent-steps
  * What an answer did, and the card that stops it doing something nobody
  * agreed to.
  *
- * Two of the assertions here are about `DESIGN.md` rather than about
- * behaviour, and they are the ones worth keeping: a chip is never
- * destructive, so a failed step carries its failure at the row level; and the
- * card is the only amber on the screen, because amber is a pointer.
+ * Several of the assertions here are about `DESIGN.md` rather than about
+ * behaviour, and they are the ones worth keeping: a chip is never destructive,
+ * so a failed step carries its failure at the row level; the marks are squares
+ * rather than circles; and the two ambers on this screen — the step that is
+ * running and the confirmation waiting on somebody — are told apart by SHAPE,
+ * so that the distinction survives with animation switched off.
  */
 
 const step = (over: Partial<Parameters<typeof toStepViews>[0][number]> = {}) => ({
@@ -53,6 +55,34 @@ describe("the live trail", () => {
     expect(screen.getByText("search_documents · leave")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
     expect(screen.getByText("running")).toBeInTheDocument();
+  });
+
+  it("marks a running step with a square, not a spinning circle", () => {
+    // `DESIGN.md` allows circles in two places and both are window chrome.
+    // This was lucide's `Loader2`, which was neither — and said "busy" in
+    // general where the trail's whole job is saying which row.
+    const { container } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
+    );
+    expect(container.querySelector(".step-running")).toBeInTheDocument();
+    expect(container.querySelector(".animate-spin")).not.toBeInTheDocument();
+  });
+
+  it("gives the two ambers different shapes, not different animations", () => {
+    // A waiting step is a FILLED amber square: this one is yours. A running
+    // step is an amber OUTLINE with the fill sweeping through it: the machine
+    // is busy and nothing is being asked. The sweep is the only animated part,
+    // so a reader with motion switched off still has outline against fill —
+    // rather than two identical squares, one of which was moving.
+    const { container: waiting } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "pending", label: "a" }]} />,
+    );
+    const { container: busy } = render(
+      <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
+    );
+
+    expect(waiting.querySelector(".bg-accent-orange")).toBeInTheDocument();
+    expect(busy.querySelector(".bg-accent-orange")).not.toBeInTheDocument();
   });
 
   it("draws nothing at all when there are no steps", () => {

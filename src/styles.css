@@ -365,6 +365,47 @@
   animation: typing-bob 1.2s infinite ease-in-out;
 }
 
+/*
+ * The step that is running, as a square rather than a spinning circle.
+ *
+ * It used to be lucide's `Loader2` with `animate-spin`, which was the one
+ * circle on a screen whose own rule is squares, and which said "busy" in
+ * general rather than "this row". The trail's marks are 8px squares and this
+ * is one of them, in the state between arriving and being done.
+ *
+ * TWO AMBERS, AND THEY MUST STAY TELLABLE APART. A filled amber square means
+ * "this one is yours" — a confirmation waiting on a person. This one is an
+ * amber OUTLINE with the fill sweeping through it: the machine is busy and
+ * nothing is being asked. Outline against fill is the distinction, and it is
+ * the distinction that survives with motion switched off, which is why the
+ * ring is the resting state and the sweep is the only animated part.
+ */
+@keyframes step-sweep {
+  from {
+    background-position: 175% 0;
+  }
+  to {
+    background-position: -75% 0;
+  }
+}
+
+.step-running {
+  box-shadow: inset 0 0 0 1.5px var(--accent-orange);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-orange) 50%,
+    transparent 100%
+  );
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  /* Parked off the right edge, so the square at rest is the ring alone. This
+     is what a reader with motion switched off sees, and it has to be a state
+     that reads correctly rather than a frame of the animation. */
+  background-position: 175% 0;
+  animation: step-sweep 1.3s ease-in-out infinite;
+}
+
 /* Blinking caret at the end of streaming text. */
 @keyframes caret-blink {
   0%,
@@ -408,6 +449,7 @@
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
   .stream-caret,
+  .step-running,
   .stream-live > :last-child::after {
     animation: none;
   }

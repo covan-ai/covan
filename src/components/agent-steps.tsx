@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Check, Loader2, Minus, X } from "lucide-react";
+import { Check, Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Disclosure } from "@/components/section-card";
 import { cn } from "@/lib/utils";
@@ -38,15 +38,29 @@ const WORDS: Record<AgentStepView["status"], string> = {
   pending: "waiting for you",
 };
 
+/**
+ * THERE ARE TWO AMBERS IN THE TRAIL AND THEY MEAN OPPOSITE THINGS.
+ *
+ * A waiting step is a FILLED amber square: somebody is being asked, and
+ * nothing moves until they answer. A running step is an amber OUTLINE with the
+ * fill sweeping through it: the machine is busy and nothing is being asked.
+ *
+ * The distinction is shape, not motion, and that is the whole of why it works.
+ * A reader with `prefers-reduced-motion` set sees a ring and a fill — still two
+ * different marks — where "one of them is animated" would have collapsed into
+ * two identical squares. See `.step-running` in `styles.css`.
+ *
+ * Running used to be lucide's `Loader2` spinning. It was the one circle on a
+ * screen whose rule is squares, and it said "busy" in general rather than
+ * "this row", which is the only thing a trail exists to say.
+ */
 function Mark({ status }: { status: AgentStepView["status"] }) {
   if (status === "running") {
-    return <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />;
+    return <span className="step-running h-2 w-2 shrink-0 rounded-[2px]" />;
   }
   if (status === "ok") return <Check className="h-3 w-3 shrink-0 text-muted-foreground" />;
   if (status === "failed") return <X className="h-3 w-3 shrink-0 text-destructive" />;
   if (status === "refused") return <Minus className="h-3 w-3 shrink-0 text-muted-foreground" />;
-  // Waiting. A filled square rather than an outline: the amber says "this one
-  // is yours", and it is the only amber in the trail.
   return <span className="h-2 w-2 shrink-0 rounded-[2px] bg-accent-orange" />;
 }
 

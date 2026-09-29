@@ -628,15 +628,18 @@ chat.post("/chat/stream", async (c) => {
        * ignores both and sees a reply that stops early, which is the honest
        * degradation.
        */
-      const announcePause = async (messageId: string | null) => {
-        if (!paused) return;
+      const announcePause = async (messageId: string | null): Promise<boolean> => {
+        if (!paused) return false;
         // Every reason but `confirmation` has nothing to come back to — there
         // is no question for a person to answer, so there is nothing to park.
         // The client is told which ceiling it was, because the two ask the
         // person to narrow different things.
         if (paused.reason !== "confirmation") {
           send({ type: "paused", reason: paused.reason });
-          return;
+          // Nothing was parked, and nothing was meant to be — there is no
+          // question for a person to answer. `replyOutcome` reads these reasons
+          // straight through, so the row already says the right thing.
+          return false;
         }
         const id = await savePausedTurn(service, {
           sessionId,
@@ -654,7 +657,7 @@ chat.post("/chat/stream", async (c) => {
         });
         if (!id) {
           send({ type: "error", error: "could not save what the agent asked to do" });
-          return;
+          return false;
         }
         send({
           type: "confirm",
@@ -664,6 +667,33 @@ chat.post("/chat/stream", async (c) => {
           proposal: paused.proposal ?? null,
         });
         send({ type: "paused", reason: "confirmation" });
+        return true;
+      };
+
+      /**
+       * Correct a row whose outcome was decided before the park was attempted.
+       *
+       * `outcome` is written with the reply, and the reply has to exist before
+       * `paused_turns.message_id` can point at it — so the insert asserts
+       * `parked: true` on a park that has not happened yet. When it then fails,
+       * the row claims forever to be waiting on somebody who was never asked,
+       * which is the exact false positive `cut_short` was added to say instead.
+       *
+       * An update rather than a reordering, because the ordering is forced. It
+       * fires only when the answer actually changed, so the common path — the
+       * park lands — writes nothing.
+       */
+      const settleOutcome = async (
+        messageId: string,
+        written: MessageOutcome,
+        settled: MessageOutcome,
+      ) => {
+        if (settled === written) return;
+        const { error } = await service
+          .from("messages")
+          .update({ outcome: settled })
+          .eq("id", messageId);
+        if (error) console.error("failed to correct the reply's outcome", error);
       };
 
       try {
@@ -758,6 +788,10 @@ chat.post("/chat/stream", async (c) => {
         }
 
         if (spend.text.trim().length > 0) {
+          // `parked: true` is a claim about something that has not happened
+          // yet: the park needs this row's id, so the row goes first. Kept in a
+          // variable so `settleOutcome` below can tell whether the claim held.
+          const claimed = replyOutcome({ paused, finishReason, parked: true });
           const inserted = await persistAssistant(spend.text, {
             promptTokens,
             completionTokens,
@@ -765,7 +799,7 @@ chat.post("/chat/stream", async (c) => {
             cacheWriteTokens,
             reasoningTokens,
             passUsage,
-            outcome: replyOutcome({ paused, finishReason, parked: true }),
+            outcome: claimed,
           });
           await recordSpend();
           if (!inserted) {
@@ -782,7 +816,14 @@ chat.post("/chat/stream", async (c) => {
 
           // Before `done`, which is the client's terminal event.
           if (finishReason === "length") send({ type: "truncated" });
-          if (paused) await announcePause(inserted.id);
+          if (paused) {
+            const parked = await announcePause(inserted.id);
+            await settleOutcome(
+              inserted.id,
+              claimed,
+              replyOutcome({ paused, finishReason, parked }),
+            );
+          }
           send({ type: "done", message: mapMessage(inserted) });
 
           // Follow-up suggestions: a lightweight second call on the cheapest
@@ -1231,14 +1272,26 @@ chat.post("/chat/confirm/:id", async (c) => {
 
         await recordSpend();
 
+        // `parked: true` is claimed before the next park is attempted, for the
+        // same forced ordering as `/chat/stream`: the park points at this row, so
+        // the row goes first. Kept so the correction below can tell whether the
+        // claim held.
+        //
+        // `said` is what makes `empty` reachable at last. This is the one path
+        // that writes a row for a reply with no words in it — `(no reply)`,
+        // below — and it recorded that as `answered`, a row claiming it answered
+        // while holding no answer. See 0070 for the decision to write the value
+        // rather than drop it from the constraint.
+        const claimed = replyOutcome({
+          paused: turn.paused ?? null,
+          finishReason: turn.finishReason,
+          parked: true,
+          said: turn.text.trim().length > 0,
+        });
         const inserted = await persistAssistant(turn.text, {
           ...spentUsage(spend),
           passUsage: turn.passes,
-          outcome: replyOutcome({
-            paused: turn.paused ?? null,
-            finishReason: turn.finishReason,
-            parked: true,
-          }),
+          outcome: claimed,
         });
 
         if (!inserted) {
@@ -1273,6 +1326,21 @@ chat.post("/chat/confirm/:id", async (c) => {
               proposal: turn.paused.proposal ?? null,
             });
             send({ type: "paused", reason: "confirmation" });
+          }
+          // The claim, settled. Only when it did not hold — a park that landed
+          // writes nothing here.
+          const settled = replyOutcome({
+            paused: turn.paused,
+            finishReason: turn.finishReason,
+            parked: Boolean(nextId),
+            said: turn.text.trim().length > 0,
+          });
+          if (settled !== claimed) {
+            const { error } = await service
+              .from("messages")
+              .update({ outcome: settled })
+              .eq("id", inserted.id);
+            if (error) console.error("failed to correct the reply's outcome", error);
           }
         } else if (turn.paused) {
           send({ type: "paused", reason: turn.paused.reason });

@@ -64,6 +64,15 @@ let priorMessage: Record<string, unknown> | null = null;
 let priorSteps: Array<Record<string, unknown>> = [];
 /** Whether this caller is the one that claimed the turn. False is a 409. */
 let claimWins = true;
+/**
+ * Whether the `paused_turns` insert lands.
+ *
+ * False is the case the `parked: true` assertion could not see: the reply row
+ * has to exist before the pause can point at it, so the outcome is decided
+ * before the park is attempted — and a park that then fails leaves a row saying
+ * it is waiting on somebody who was never asked.
+ */
+let parkSucceeds = true;
 const serviceUpdate = vi.fn();
 const sessionUpdate = vi.fn();
 /** The OPENAI_API_KEY every `createOpenAI(env)` call was actually made with. */
@@ -206,7 +215,12 @@ vi.mock("../lib/supabase", () => ({
           insert: (row: Record<string, unknown>) => {
             pausedWritten(row);
             return {
-              select: () => ({ single: async () => ({ data: { id: "paused-1" }, error: null }) }),
+              select: () => ({
+                single: async () =>
+                  parkSucceeds
+                    ? { data: { id: "paused-1" }, error: null }
+                    : { data: null, error: { message: "paused_turns insert failed" } },
+              }),
             };
           },
           select: () => ({
@@ -520,6 +534,7 @@ beforeEach(() => {
   parked = null;
   priorMessage = null;
   priorSteps = [];
+  parkSucceeds = true;
   extraTool = null;
   claimWins = true;
   approvedTool = null;
@@ -1203,6 +1218,43 @@ describe("a turn that stops to ask", () => {
     expect(pausedWritten).not.toHaveBeenCalled();
   });
 
+  /**
+   * The false positive the column exists to remove, reached the other way.
+   *
+   * `outcome` is decided when the row is written, and the row has to exist
+   * before `paused_turns.message_id` can point at it — so `parked: true` was
+   * being asserted before the park was attempted. A park that then fails leaves
+   * a reply claiming forever to be waiting on somebody who was never asked,
+   * which is exactly what `cut_short` was added to say instead.
+   */
+  it("does not leave a row saying paused when the park failed", async () => {
+    extraTool = ASKS_FIRST;
+    parkSucceeds = false;
+    const { app } = appWith({ question: "book a room" });
+    completionCreate.mockImplementation(asksFor("book_the_room", "Let me book that."));
+
+    const res = await ask(app);
+
+    // The client is told, and the row is corrected to what actually happened.
+    expect(frames(res.body).some((f) => f.type === "error")).toBe(true);
+    expect(serviceUpdate.mock.calls.at(-1)?.[0]).toMatchObject({
+      id: "assistant-1",
+      outcome: "cut_short",
+    });
+  });
+
+  it("writes nothing extra when the park did land", async () => {
+    // The correction is a real update, so it must not fire on the common path.
+    extraTool = ASKS_FIRST;
+    const { app } = appWith({ question: "book a room" });
+    completionCreate.mockImplementation(asksFor("book_the_room", "Let me book that."));
+
+    await ask(app);
+
+    expect(serviceInsert.mock.calls.at(-1)?.[0].outcome).toBe("paused");
+    expect(serviceUpdate).not.toHaveBeenCalled();
+  });
+
   it("parks no usage when the reply row already holds it", async () => {
     // The other half of the same rule: once a row exists it is the
     // accumulator, so a second copy on the parked turn would be double-counted
@@ -1738,6 +1790,49 @@ describe("POST /chat/confirm/:id", () => {
     claimWins = false;
     const { app } = appWith({ question: "every monday" });
     expect((await confirm(app, true)).status).toBe(409);
+  });
+
+  /**
+   * The two things `messages.outcome` still got wrong on this route.
+   *
+   * `empty` has been in the vocabulary since 0065 with nothing able to write
+   * it, and this is the one path that writes a row for a reply with no words —
+   * `(no reply)`, recorded as `answered`. And `parked: true` is claimed before
+   * the next park is attempted, for the same forced ordering as `/chat/stream`.
+   * See 0070.
+   */
+  it("records a resumed half that said nothing as empty, not answered", async () => {
+    parked = PARKED;
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf(""));
+
+    await (await confirm(app, true)).text();
+
+    const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(row.content).toBe("(no reply)");
+    expect(row.outcome).toBe("empty");
+  });
+
+  it("does not leave a row saying paused when the next park failed", async () => {
+    parked = PARKED;
+    parkSucceeds = false;
+    approvedTool = {
+      name: "schedule_job",
+      description: "Schedules.",
+      input: { type: "object", properties: {}, additionalProperties: false },
+      destructive: true,
+      isConfigured: () => true,
+      run: async () => ({ kind: "ok", content: "scheduled" }),
+    };
+    const { app } = appWith({ question: "every monday" });
+    // The resumed half says something and then asks for something else.
+    extraTool = ASKS_FIRST;
+    completionCreate.mockImplementation(asksFor("book_the_room", "Done. Now the room:"));
+
+    await (await confirm(app, true)).text();
+
+    expect(serviceInsert.mock.calls.at(-1)?.[0].outcome).toBe("paused");
+    expect(serviceUpdate.mock.calls.at(-1)?.[0]).toMatchObject({ outcome: "cut_short" });
   });
 
   it("tells the model the person declined, in the tool's own answer", async () => {

@@ -189,10 +189,33 @@ export function replyOutcome(input: {
   finishReason: string | null;
   /** Whether this turn will actually be parked for somebody to answer. */
   parked: boolean;
+  /**
+   * Whether the reply has any words in it.
+   *
+   * Optional, defaulting to yes, which is what every caller that omits it
+   * means: `routes/chat.ts` and `lib/slack/handle.ts` both reach this only on a
+   * reply with text, and a streamed reply with none never gets a row at all —
+   * the route sends an SSE error instead. So `empty` sat in `MESSAGE_OUTCOMES`
+   * from 0065 with nothing able to write it.
+   *
+   * Two callers can: `POST /chat/confirm/:id`, which stores `(no reply)` for a
+   * resumed half that said nothing, and a scheduled run, which records what it
+   * called whatever came back. Both used to say `answered` — a row claiming it
+   * answered while holding no answer, which is the class of false positive this
+   * column exists to remove. 0070 records the decision to write the value
+   * rather than drop it from the constraint.
+   *
+   * Ranked below every other reason on purpose: a turn that stopped to ask and
+   * said nothing is better described by the asking, and the same goes for a
+   * ceiling. `truncated` cannot collide with it — a reply cut off at its length
+   * limit has words in it by definition.
+   */
+  said?: boolean;
 }): MessageOutcome {
   if (input.paused) {
     if (input.paused.reason !== "confirmation") return input.paused.reason;
     return input.parked ? "paused" : "cut_short";
   }
+  if (input.said === false) return "empty";
   return input.finishReason === "length" ? "truncated" : "answered";
 }

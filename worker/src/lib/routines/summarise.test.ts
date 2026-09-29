@@ -294,3 +294,88 @@ describe("summariseWithModel", () => {
     expect(createMock.mock.calls[0][0].response_format).toEqual({ type: "json_object" });
   });
 });
+
+/**
+ * What the row could not say about the call underneath it.
+ *
+ * `routine_runs.status` is a delivery verdict — `ok` means something was sent.
+ * It cannot tell a report the model finished from a report that hit its token
+ * ceiling, and this is the surface with nobody watching. Both facts were in
+ * hand here already: `resolveModel` settles the model at the top of the call,
+ * and `complete` has returned a normalised `finishReason` since covan#209.
+ * See 0070.
+ */
+describe("what the run will record about the call", () => {
+  beforeEach(() => {
+    createMock.mockReset();
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "the summary" } }, { finish_reason: "stop" }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+  });
+
+  it("names the model it actually resolved, not the one it was asked for", async () => {
+    // The distinction matters on this path more than on any other: nobody is
+    // watching, so an agent whose stored model has had its key rotated out
+    // falls back silently. The row has to say which model answered.
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "the summary" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+    const summarise = summariseWithModel(env);
+
+    const out = await summarise({
+      persona: "You are Ada.",
+      model: "claude-opus-5",
+      instruction: "Summarise.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+    });
+
+    // No ANTHROPIC_API_KEY in this env, so the Claude pick cannot be served.
+    expect(out.model).toBe(DEFAULT_MODEL);
+    expect(out.modelOutcome).toBe("answered");
+  });
+
+  it("says truncated when the report hit its ceiling", async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "the summary, cut o" }, finish_reason: "length" }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+    const summarise = summariseWithModel(env);
+
+    const out = await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Summarise.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+    });
+
+    expect(out.modelOutcome).toBe("truncated");
+  });
+
+  it("says empty when the model came back with nothing", async () => {
+    // The value 0065 put in the vocabulary and nothing could reach. A run that
+    // paid for a call and got no words is not an answered run, and on a
+    // schedule there is nobody to notice.
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 30, completion_tokens: 12 },
+    });
+    const summarise = summariseWithModel(env);
+
+    const out = await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Summarise.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+    });
+
+    expect(out.modelOutcome).toBe("empty");
+  });
+});

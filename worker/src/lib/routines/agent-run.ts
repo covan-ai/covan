@@ -10,6 +10,7 @@ import { runAgentTurn } from "../harness/loop";
 import { SCHEDULED_MAX_STEPS } from "../harness/budget";
 import type { ToolEnv } from "../harness/registry";
 import { DECISION_INSTRUCTION, readDecision } from "./summarise";
+import { replyOutcome } from "../harness/usage";
 import type { AgentRunInput, AgentRunResult } from "./executor";
 
 /**
@@ -198,6 +199,30 @@ export function runRoutineWithTools(
         `because it needs somebody to approve it, and a scheduled run has nobody to ask._`;
     }
 
-    return { text, tokens, weightedTokens, declined };
+    return {
+      text,
+      tokens,
+      weightedTokens,
+      declined,
+      // What the row will say about the call, through the same `replyOutcome`
+      // the chat path uses rather than a second mapping. `parked: false` is a
+      // constant here and the reason is the whole character of this surface: a
+      // pause is a question waiting for a person, and a tick has nobody to ask,
+      // so a run that stopped to ask is `cut_short` — never `paused`, which
+      // would be a row claiming forever to be waiting on somebody who was never
+      // asked.
+      //
+      // `said` is read off `turn.text` rather than the `text` above, which by
+      // this point may carry the appended note about what the run stopped short
+      // of. `empty` is about what the model produced, not about what was written
+      // around it.
+      model,
+      modelOutcome: replyOutcome({
+        paused: turn.paused ?? null,
+        finishReason: turn.finishReason,
+        parked: false,
+        said: turn.text.trim().length > 0,
+      }),
+    };
   };
 }

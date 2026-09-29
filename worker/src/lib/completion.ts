@@ -977,6 +977,31 @@ function anthropicUsage(
   };
 }
 
+/**
+ * A stop reason in OpenAI's vocabulary, whichever provider said it.
+ *
+ * Two translations, and both exist so that a consumer asking a question about
+ * the turn writes one check rather than one per provider:
+ *
+ * - `max_tokens` is Anthropic's spelling of OpenAI's `length`. Left
+ *   untranslated, a Claude agent's answers would be cut off with nothing
+ *   downstream able to say so — `"length"` is the only value anything reads.
+ * - `tool_use` is Anthropic's spelling of `tool_calls`, for the same reason:
+ *   "did this turn ask for something?" is one comparison.
+ *
+ * Every other reason passes through under its own name, and an absent one stays
+ * null rather than becoming a guessed `"stop"`: "the provider did not say" and
+ * "it finished normally" are different facts, and only one of them was reported.
+ *
+ * Shared by `complete` and `streamCompletion` rather than written twice, because
+ * the waited-for path and the streamed path answering this differently is a
+ * difference nothing above them could see.
+ */
+function normaliseStopReason(stop: string | null | undefined): string | null {
+  if (!stop) return null;
+  return stop === "max_tokens" ? "length" : stop === "tool_use" ? "tool_calls" : stop;
+}
+
 // ---- the seam --------------------------------------------------------------
 
 /**
@@ -988,12 +1013,25 @@ function anthropicUsage(
  * a `tool_use` block reaching the `block.type === "text" ? ... : ""` below
  * became an empty string, so a model that asked for something looked like a
  * model that answered with nothing.
+ *
+ * `finishReason` was dropped the same way for the same reason, and cost the
+ * same kind of silence: both providers report it on the reply this function
+ * waits for, and every caller here — follow-ups, session titles, routine runs,
+ * summaries, Slack, reports, brainstorms, personas — was left unable to tell a
+ * truncated answer from a finished one. Additive: a caller that does not ask
+ * the question is unaffected, and `lib/slack/handle.ts` is the one that now
+ * does, because it records an outcome and has no Continue button to offer.
  */
 export async function complete(
   env: CompletionEnv,
   req: CompletionRequest,
   opts: { signal?: AbortSignal } = {},
-): Promise<{ text: string; usage: CompletionUsage; toolCalls?: ToolCall[] }> {
+): Promise<{
+  text: string;
+  usage: CompletionUsage;
+  finishReason: string | null;
+  toolCalls?: ToolCall[];
+}> {
   if (providerFor(req.model) === "anthropic") {
     const client = createAnthropic(env);
     const message = await client.messages.create(
@@ -1014,6 +1052,7 @@ export async function complete(
     return {
       text: req.json ? extractJsonObject(text) : text,
       usage: anthropicUsage(message.usage, searchAttached(req)),
+      finishReason: normaliseStopReason(message.stop_reason),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   }
@@ -1050,6 +1089,10 @@ export async function complete(
       // here, so no search was possible rather than none having happened.
       webSearches: null,
     },
+    // Read off the choice rather than its message: `finish_reason` sits beside
+    // `message`, not inside it, which is why `choice` above is the message and
+    // this is not spelled `choice.finish_reason`.
+    finishReason: normaliseStopReason(completion.choices[0]?.finish_reason),
     ...(toolCalls.length > 0 ? { toolCalls } : {}),
   };
 }
@@ -1172,21 +1215,16 @@ export async function* streamCompletion(
             completionTokens: event.usage.output_tokens ?? usage.completionTokens,
           };
           completionCounted = true;
-          // `max_tokens` is Anthropic's spelling of OpenAI's `length`. Translated
-          // here so the truncation check downstream stays provider-agnostic;
-          // every other stop reason passes through under its own name.
+          // Translated by `normaliseStopReason`, which is where the two
+          // Anthropic-to-OpenAI renamings and the reason for them live.
+          //
           // Optional-chained: the field is required on the wire, and a stream
           // that omits it must still yield its usage rather than throw away a
-          // finished reply on the last event.
-          const stop = event.delta?.stop_reason;
-          // `tool_use` is Anthropic's spelling of OpenAI's `tool_calls`,
-          // normalised for the same reason `max_tokens` is: a consumer asking
-          // "did this turn ask for something?" writes one check, not one per
-          // provider.
-          if (stop) {
-            finishReason =
-              stop === "max_tokens" ? "length" : stop === "tool_use" ? "tool_calls" : stop;
-          }
+          // finished reply on the last event. Assigned only when it said
+          // something, so a later event with no stop reason cannot erase one an
+          // earlier event carried.
+          const stop = normaliseStopReason(event.delta?.stop_reason);
+          if (stop) finishReason = stop;
         }
       }
     } catch (err) {

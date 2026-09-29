@@ -1731,3 +1731,90 @@ describe("complete, when the model asked for something", () => {
     expect(out).not.toHaveProperty("toolCalls");
   });
 });
+
+/**
+ * The same signal the stream already carries, on the waited-for path.
+ *
+ * `streamCompletion` has surfaced `finishReason` since the chat screen needed a
+ * truncation warning; `complete` read the identical field off both providers and
+ * dropped it, so nine callers on this path could not tell a cut-off answer from
+ * a finished one. The normalisation is shared with the stream rather than
+ * written twice — these tests are the reason it is one function.
+ */
+describe("complete, and whether the answer was cut off", () => {
+  it("passes OpenAI's finish_reason straight through", async () => {
+    openaiCreate.mockResolvedValue({
+      choices: [{ message: { content: "Hal" }, finish_reason: "length" }],
+      usage: { prompt_tokens: 9, completion_tokens: 2 },
+    });
+
+    const out = await complete(openaiOnly, {
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(out.finishReason).toBe("length");
+  });
+
+  it("translates Anthropic's max_tokens into it", async () => {
+    anthropicCreate.mockResolvedValue({
+      content: [{ type: "text", text: "Hal" }],
+      stop_reason: "max_tokens",
+      usage: { input_tokens: 9, output_tokens: 2 },
+    });
+
+    const out = await complete(env, {
+      model: "claude-haiku-4-5",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(out.finishReason).toBe("length");
+  });
+
+  it("translates Anthropic's tool_use the same way the stream does", async () => {
+    anthropicCreate.mockResolvedValue({
+      content: [{ type: "tool_use", id: "toolu_1", name: "t", input: {} }],
+      stop_reason: "tool_use",
+      usage: { input_tokens: 9, output_tokens: 2 },
+    });
+
+    const out = await complete(env, {
+      model: "claude-haiku-4-5",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(out.finishReason).toBe("tool_calls");
+  });
+
+  it("leaves a normal ending under its own name", async () => {
+    anthropicCreate.mockResolvedValue({
+      content: [{ type: "text", text: "an answer" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 9, output_tokens: 2 },
+    });
+
+    const out = await complete(env, {
+      model: "claude-haiku-4-5",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(out.finishReason).toBe("end_turn");
+  });
+
+  it("is null when the provider said nothing, on either side", async () => {
+    // Both default fixtures omit the field. Null rather than a guessed
+    // "stop": a caller asking "was this cut off?" gets "the provider did not
+    // say", which is the truth and is not the same as "no".
+    const anthropic = await complete(env, {
+      model: "claude-haiku-4-5",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+    const openai = await complete(openaiOnly, {
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    expect(anthropic.finishReason).toBeNull();
+    expect(openai.finishReason).toBeNull();
+  });
+});

@@ -32,7 +32,10 @@ vi.mock("../retrieval", () => ({ retrieveForAgent }));
 
 const { create } = vi.hoisted(() => ({
   create: vi.fn(async () => ({
-    choices: [{ message: { content: "Twenty days a year." } }],
+    // `finish_reason` on every fixture below, because the handler reads it now
+    // and a choice on the wire always carries one. A reply that omitted it
+    // would be a reply no provider sends.
+    choices: [{ message: { content: "Twenty days a year." }, finish_reason: "stop" }],
     usage: { prompt_tokens: 500, completion_tokens: 20 },
   })),
 }));
@@ -183,7 +186,7 @@ beforeEach(() => {
   createOpenAI.mockImplementation(() => ({ chat: { completions: { create } } }));
   readWorkspaceKeys.mockResolvedValue({ openai: null, anthropic: null });
   create.mockResolvedValue({
-    choices: [{ message: { content: "Twenty days a year." } }],
+    choices: [{ message: { content: "Twenty days a year." }, finish_reason: "stop" }],
     usage: { prompt_tokens: 500, completion_tokens: 20 },
   });
 });
@@ -245,6 +248,7 @@ describe("answering in a thread", () => {
           message: {
             content: "**Twenty days** a year — see [the policy](https://example.com/p).",
           },
+          finish_reason: "stop",
         },
       ],
       usage: { prompt_tokens: 500, completion_tokens: 20 },
@@ -284,6 +288,25 @@ describe("answering in a thread", () => {
       model: "gpt-4.1",
       outcome: "answered",
     });
+  });
+
+  // The one place the missing finish reason was a live bug rather than a gap.
+  // Slack has no Continue button, so a cut-off answer is not a truncated answer
+  // here — it is a wrong one, and `outcome: "answered"` said it was right.
+  it("records a cut-off answer as truncated, not answered", async () => {
+    create.mockResolvedValueOnce({
+      choices: [{ message: { content: "Twenty days a" }, finish_reason: "length" }],
+      usage: { prompt_tokens: 500, completion_tokens: 20 },
+    });
+    const fake = db({ identity: true });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    const written = fake.callsTo("messages").filter((c) => c.op === "insert");
+    expect(written[1]?.values).toMatchObject({ role: "assistant", outcome: "truncated" });
+    // Still posted: half an answer the person can see beats a silent drop, and
+    // the row is what records that it was half.
+    expect(posted().text).toContain("Twenty days a");
   });
 
   it("treats a direct message as a private conversation", async () => {

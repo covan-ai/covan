@@ -12,6 +12,7 @@ import {
 import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../prompt";
 import { resolveModel } from "../models";
 import { complete, type CompletionMessage } from "../completion";
+import { replyOutcome } from "../harness/usage";
 import { decryptSecret } from "../secret-box";
 import { billsTheOperator, keysForUser, withProviderKeys } from "../keys/resolve";
 import { lookupEmail, postMessage } from "./api";
@@ -318,9 +319,18 @@ export async function handleSlackEvent(
     // No `pass_usage`: this is one completion rather than a tool loop, so the
     // per-pass array would be the row's own totals written a second time.
     model,
-    // One completion and no tool loop: it either answered or never reached
-    // this line, and the empty case returned above.
-    outcome: "answered",
+    // Through the shared mapping, not a literal. One completion and no tool
+    // loop, so `paused` and `parked` are settled here — nothing in this path
+    // can pause and there is no turn to park — which leaves the finish reason
+    // as the only thing that decides it. Said out loud because this line used
+    // to be `"answered"` unconditionally, and Slack is the surface where that
+    // was a wrong answer rather than an incomplete one: there is no Continue
+    // button here, so a cut-off reply is the whole reply the person gets.
+    outcome: replyOutcome({
+      paused: null,
+      finishReason: completion.finishReason,
+      parked: false,
+    }),
   });
   // Posted either way. A reply that reached Slack and not the database is a
   // worse outcome than one that reached both, but it is far better than an

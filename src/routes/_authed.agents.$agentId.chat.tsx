@@ -43,7 +43,7 @@ import { startersFor } from "@/lib/chat-starters";
 import { modelsFor, costFor } from "@/lib/agent-meta";
 import { ModelCost } from "@/components/model-cost";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
-import { groupMessagesByDate } from "@/lib/message-groups";
+import { dateDividers } from "@/lib/message-groups";
 import { useTTS } from "@/lib/use-tts";
 import {
   DropdownMenu,
@@ -265,6 +265,12 @@ function ChatTab() {
           m.sender?.name?.toLowerCase().includes(lowerQuery),
       )
     : allMessages;
+
+  // Which messages open a new day, worked out once for the list rather than
+  // twice per message inside the loop. Searching rebuilds `messages` on every
+  // keystroke, so this rebuilds too — which is what it should do: the dividers
+  // belong to what is on screen, and a filtered transcript has different ones.
+  const dividers = useMemo(() => dateDividers(messages), [messages]);
 
   // A full page came back, so there is probably another behind it. "Probably"
   // is the honest word: a conversation of exactly a hundred turns offers a
@@ -1377,33 +1383,9 @@ function ChatTab() {
                 className="space-y-6"
               >
                 {messages.map((m, idx, arr) => {
-                  // Date divider: show when date changes
-                  const showDateDivider = (() => {
-                    if (idx === 0) return true;
-                    const prev = arr[idx - 1];
-                    const prevDate = new Date(prev.createdAt).toDateString();
-                    const currDate = new Date(m.createdAt).toDateString();
-                    return prevDate !== currDate;
-                  })();
-
-                  const dateLabel = (() => {
-                    const date = new Date(m.createdAt);
-                    const today = new Date();
-                    const yesterday = new Date(today);
-                    yesterday.setDate(yesterday.getDate() - 1);
-                    const isSameDay = (a: Date, b: Date) =>
-                      a.getFullYear() === b.getFullYear() &&
-                      a.getMonth() === b.getMonth() &&
-                      a.getDate() === b.getDate();
-                    if (isSameDay(date, today)) return "Today";
-                    if (isSameDay(date, yesterday)) return "Yesterday";
-                    const sameYear = date.getFullYear() === today.getFullYear();
-                    return date.toLocaleDateString("en-US", {
-                      month: "long",
-                      day: "numeric",
-                      ...(sameYear ? {} : { year: "numeric" }),
-                    });
-                  })();
+                  // Set when this message is the first of its day, undefined
+                  // when it is not. See `dateDividers`.
+                  const dividerLabel = dividers.get(m.id);
 
                   // `role`, not ownership — this decides the LAYOUT. A
                   // teammate's message in a shared session is still somebody's
@@ -1413,7 +1395,7 @@ function ChatTab() {
                     if (editingId === m.id) {
                       return (
                         <Fragment key={m.id}>
-                          {showDateDivider && <DateDivider label={dateLabel} />}
+                          {dividerLabel && <DateDivider label={dividerLabel} />}
                           <EditTurn
                             value={editText}
                             onChange={setEditText}
@@ -1425,7 +1407,7 @@ function ChatTab() {
                     }
                     return (
                       <Fragment key={m.id}>
-                        {showDateDivider && <DateDivider label={dateLabel} />}
+                        {dividerLabel && <DateDivider label={dividerLabel} />}
                         <div className="group flex flex-col items-end gap-1.5">
                           {isShared && m.sender && (
                             <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
@@ -1504,7 +1486,7 @@ function ChatTab() {
                   const isLast = idx === arr.length - 1;
                   return (
                     <Fragment key={m.id}>
-                      {showDateDivider && <DateDivider label={dateLabel} />}
+                      {dividerLabel && <DateDivider label={dividerLabel} />}
                       {/* No avatar, no name, no indent.
 
                           There is one agent in this conversation and its name

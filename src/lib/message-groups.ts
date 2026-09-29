@@ -1,17 +1,12 @@
 import type { Message } from "./agents-store";
 
 /**
- * Group messages by calendar date for rendering date dividers.
+ * What to call the day a message was sent on, and which messages open one.
  *
  * "Today", "Yesterday", and explicit dates for older messages. Uses local time
  * rather than UTC — a message sent at 11 PM appears under "Today" if it is
  * still today where the reader is, not where the server is.
  */
-
-type MessageGroup = {
-  label: string;
-  messages: Message[];
-};
 
 function dateLabel(ts: number): string {
   const date = new Date(ts);
@@ -34,30 +29,6 @@ function dateLabel(ts: number): string {
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),
   });
-}
-
-export function groupMessagesByDate(messages: Message[]): MessageGroup[] {
-  if (messages.length === 0) return [];
-
-  const groups: MessageGroup[] = [];
-  let currentLabel = dateLabel(messages[0].createdAt);
-  let currentMessages: Message[] = [];
-
-  for (const msg of messages) {
-    const label = dateLabel(msg.createdAt);
-    if (label !== currentLabel) {
-      groups.push({ label: currentLabel, messages: currentMessages });
-      currentLabel = label;
-      currentMessages = [];
-    }
-    currentMessages.push(msg);
-  }
-
-  if (currentMessages.length > 0) {
-    groups.push({ label: currentLabel, messages: currentMessages });
-  }
-
-  return groups;
 }
 
 /**

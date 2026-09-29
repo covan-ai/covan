@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +40,11 @@ import { fileURLToPath } from "node:url";
  * ledger row keyed on the old filename, so the file comes back around for a
  * second application under its new name — harmless for a migration written
  * with `if not exists` throughout, an error for one that was not.
+ *
+ * All of which a contributor needs BEFORE they pick a number, and a test
+ * docblock is not where anybody reads anything. `CONTRIBUTING.md` carries the
+ * rule and this recovery procedure as prose (covan#105); the last case below
+ * pins the three names that would make that prose wrong if they ever moved.
  */
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -84,5 +89,30 @@ describe("migration numbering", () => {
     const unnumbered = migrationsIn(dir).filter((f) => versionOf(f) === null);
 
     expect(unnumbered).toEqual([]);
+  });
+
+  /**
+   * The rule a contributor follows is prose, and prose rots quietly.
+   *
+   * This test is detection. Prevention is `CONTRIBUTING.md` telling people to
+   * re-check their number before they merge — which was covan#105's conclusion
+   * after weighing timestamp prefixes and merge-time allocation, and is only as
+   * good as the text still being there and still being true.
+   *
+   * So: the three names that carry the explanation. Not the prose around them —
+   * that is the author's to word — but a ledger table that gets renamed, or this
+   * file getting moved, must not leave behind a document confidently describing
+   * something that no longer exists. Identifiers only, for exactly that reason.
+   */
+  it("CONTRIBUTING.md still names what makes a collision dangerous", () => {
+    const contributing = readFileSync(resolve(root, "CONTRIBUTING.md"), "utf8");
+
+    for (const name of [
+      "covan_meta.migrations",
+      "supabase_migrations.schema_migrations",
+      "scripts/migration-numbering.test.mjs",
+    ]) {
+      expect(contributing, `CONTRIBUTING.md no longer mentions ${name}`).toContain(name);
+    }
   });
 });

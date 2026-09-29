@@ -216,6 +216,72 @@ export function buildSystemPrefix(input: {
 }
 
 /**
+ * What a prompt was assembled from, in characters, for `messages.prompt_parts`.
+ *
+ * Here rather than in `lib/harness/usage.ts` because `usageColumns` is about
+ * what a reply *cost* and this is about what it was *made of*; and here rather
+ * than inline in `routes/chat.ts` so that a part added to `buildSystemPrefix`
+ * above and not added to this record is visible in one screenful.
+ *
+ * **`systemChars` is the length of the whole assembled block**, not a sum of the
+ * itemised pieces. That is the point: an itemisation can fall behind the thing it
+ * itemises, and a field that stopped being true is worse than no field — so the
+ * breakdown is allowed to go incomplete while the total stays exactly right.
+ * `prompt.test.ts` pins that equality.
+ *
+ * What is deliberately absent, and why the record is ten numbers rather than
+ * twenty. The lengths of the persona, `CAPABILITIES`, the mode block and the
+ * document manifest are all derivable from `mode`, `webSearch` and `docNames`
+ * plus constants that live in git. Tool byte counts are absent because a schema
+ * is a property of the build and not of the request — the names say which build
+ * this was, and `git show` says how big they were. And nothing here records what
+ * the provider added on its own side: measured on 2026-09-29, Anthropic's
+ * server-side web_search tool is 5,588 tokens for the 51 characters
+ * `anthropicParams` sends, and no character count on this side can see it. That
+ * is what `webSearch` is doing in a record otherwise made of lengths — it is the
+ * flag that says whether the largest single item in the prompt was present.
+ */
+export type PromptParts = {
+  system_chars: number;
+  manifest_chars: number;
+  doc_names: number;
+  rag_chars: number;
+  history_turns: number;
+  history_chars: number;
+  question_chars: number;
+  tools: string[];
+  web_search: boolean;
+  mode: PromptMode;
+};
+
+export function promptParts(input: {
+  /** The whole system block as sent: `buildSystemPrefix` plus the manifest. */
+  systemPrefix: string;
+  /** The connection-and-channel manifest, a substring of the above. */
+  manifest: string;
+  docNames: string[];
+  ragBlock: string;
+  history: { role: string; content: string }[];
+  question: string;
+  toolNames: string[];
+  webSearch: boolean;
+  mode: PromptMode;
+}): PromptParts {
+  return {
+    system_chars: input.systemPrefix.length,
+    manifest_chars: input.manifest.length,
+    doc_names: input.docNames.length,
+    rag_chars: input.ragBlock.length,
+    history_turns: input.history.length,
+    history_chars: input.history.reduce((n, m) => n + m.content.length, 0),
+    question_chars: input.question.length,
+    tools: input.toolNames,
+    web_search: input.webSearch,
+    mode: input.mode,
+  };
+}
+
+/**
  * How much the model may vary its wording, and who decides.
  *
  * The agent's own setting wins when it has one (0048). Null — which is every

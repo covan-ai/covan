@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,8 +10,6 @@ import { IdeaBoard } from "@/components/idea-board";
 import {
   ArrowDown,
   ArrowUp,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   FileText,
   Lock,
@@ -40,17 +38,14 @@ import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
 import { useQuota, quotaSentence } from "@/lib/quota";
 import { startersFor } from "@/lib/chat-starters";
-import { modelsFor, costFor } from "@/lib/agent-meta";
-import { ModelCost } from "@/components/model-cost";
+import { modelsFor } from "@/lib/agent-meta";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
 import { dateDividers } from "@/lib/message-groups";
+import { DateDivider } from "@/components/chat/date-divider";
+import { EditTurn } from "@/components/chat/edit-turn";
+import { MsgAction, HeaderAction } from "@/components/chat/turn-actions";
+import { VersionPicker, RetryOn } from "@/components/chat/answer-controls";
 import { useTTS } from "@/lib/use-tts";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { runToolProposal } from "@/lib/connections-api";
 import { isAdminRole } from "@/lib/roles";
@@ -2123,255 +2118,5 @@ function ChatTab() {
         </div>
       </ResizablePanel>
     </ResizablePanelGroup>
-  );
-}
-
-/**
- * A past question, open for editing.
- *
- * Its own component only so it can hold a hook: `useAutoGrow` cannot be called
- * from inside the message loop, which renders this conditionally. The box had
- * the same fixed-height problem as the composer and for the same reason — two
- * rows, no growing — and it is the worse of the two places to have it, because
- * what is being edited is by definition something already long enough to be
- * worth fixing.
- */
-function EditTurn({
-  value,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  const ref = useAutoGrow<HTMLTextAreaElement>(value);
-  return (
-    <div className="flex flex-col items-end gap-1.5">
-      <div className="w-full max-w-[560px] rounded-2xl border border-border bg-popover p-2">
-        <Textarea
-          ref={ref}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-              return;
-            }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && value.trim()) {
-              e.preventDefault();
-              onSave();
-            }
-          }}
-          rows={1}
-          autoFocus
-          aria-label="Edit your message"
-          className="max-h-60 min-h-[40px] resize-none overflow-y-auto border-0 bg-transparent p-1.5 text-sm shadow-none focus-visible:ring-0"
-        />
-        <div className="flex justify-end gap-1.5 pt-1">
-          <button
-            onClick={onCancel}
-            className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onSave}
-            disabled={!value.trim()}
-            className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            Save & send
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Which take on an answer is showing, and how to get to the others.
- *
- * `‹ 2/3 ›` rather than a list, because the versions have no names and never
- * will: they are the same question answered twice. What somebody wants is to
- * flick between them and stop on the one they liked, which is two buttons and
- * a count.
- */
-function VersionPicker({
-  versions,
-  current,
-  busy,
-  onShow,
-}: {
-  versions: string[];
-  current: string;
-  busy: boolean;
-  onShow: (id: string) => void;
-}) {
-  const at = versions.indexOf(current);
-  // A chain that does not contain the message showing is a transcript and a
-  // version list that disagree, and drawing `0/3` over it helps nobody.
-  if (at === -1) return null;
-  const step = (by: number) => onShow(versions[at + by]);
-  return (
-    <div className="mt-2 flex items-center gap-0.5 text-xs text-muted-foreground">
-      <button
-        type="button"
-        onClick={() => step(-1)}
-        disabled={busy || at === 0}
-        aria-label="Previous version of this answer"
-        className="grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
-      >
-        <ChevronLeft className="h-3.5 w-3.5" />
-      </button>
-      <span className="tabular-nums" aria-label={`Version ${at + 1} of ${versions.length}`}>
-        {at + 1}/{versions.length}
-      </span>
-      <button
-        type="button"
-        onClick={() => step(1)}
-        disabled={busy || at === versions.length - 1}
-        aria-label="Next version of this answer"
-        className="grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
-      >
-        <ChevronRight className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
-
-/**
- * Answer that again, on something else.
- *
- * Beside Regenerate rather than replacing it: the common press is "try again",
- * and burying it behind a menu to make room for a choice nobody makes most of
- * the time is a worse default. Absent entirely on a deployment that serves one
- * model, where the menu would have nothing in it.
- */
-/**
- * Answer again, somewhere else.
- *
- * The prices are worth more here than in any settings screen: this is the one
- * model picker somebody uses with a bill in mind, because pressing it spends
- * again on a question that has already been answered once.
- */
-function RetryOn({
-  models,
-  costs,
-  onPick,
-}: {
-  models: string[];
-  costs: Record<string, number> | undefined;
-  onPick: (model: string) => void;
-}) {
-  if (models.length === 0) return null;
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          title="Answer again on another model"
-          aria-label="Answer again on another model"
-          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {models.map((model) => (
-          <DropdownMenuItem
-            key={model}
-            onSelect={() => onPick(model)}
-            className="font-mono text-xs"
-          >
-            <span className="flex w-full items-center justify-between">
-              <span>{model}</span>
-              <ModelCost cost={costFor(costs, model)} />
-            </span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function MsgAction({
-  label,
-  active,
-  onClick,
-  children,
-}: {
-  label: string;
-  active?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      className={cn(
-        "grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-accent",
-        active ? "text-primary" : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-/**
- * A control in the conversation header.
- *
- * The same object as `MsgAction` one step up the ladder: 36px rather than 28px,
- * because it sits in a 56px bar and not in a hover strip, and because a header
- * control is a target you reach for deliberately.
- */
-function HeaderAction({
-  label,
-  active,
-  onClick,
-  children,
-}: {
-  label: string;
-  active?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      className={cn(
-        "grid h-9 w-9 place-items-center rounded-md transition-colors duration-200 hover:bg-accent",
-        active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-/**
- * "Today", "Yesterday", "March 4" — the one thing between two turns.
- *
- * Its own component because three of the four branches in the message loop
- * draw it, and it used to be written out in exactly one of them: a day that
- * began with a question rather than an answer got no divider at all.
- */
-function DateDivider({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-3 py-2">
-      <div className="h-px flex-1 bg-border" />
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="h-px flex-1 bg-border" />
-    </div>
   );
 }

@@ -54,6 +54,58 @@ way on a fork as they do here.
 Keep pull requests focused on one change. Explain what problem it solves, not
 only what it does.
 
+## Migrations
+
+Migrations live in `supabase/migrations/` and are numbered in sequence from
+`0001`. **Take the next unused number when you open your pull request, and check
+it again before you merge.** The number you took was right when your branch
+opened and is wrong the moment another branch merges first — with several
+branches open at once, which is normal here, that is the ordinary case and not
+bad luck.
+
+Numbers must be unique **within** a directory, not across directories.
+
+`scripts/migration-numbering.test.mjs` runs as part of `bun run test` and fails
+on a collision, so one is found in seconds rather than in a schema. But it finds
+it *after* both branches have already picked, and the cost then is a red `main`
+and a rebase. Re-checking the number is what avoids that; the guard is what
+catches you not doing it.
+
+### Why the number is not just a sort order
+
+Two tools record what they have already applied, and they disagree about what
+identifies a migration:
+
+| Applied by | Ledger | Keyed on |
+| --- | --- | --- |
+| `docker/migrate.sh` — the compose stack, CI, production | `covan_meta.migrations` | the **filename** |
+| the Supabase CLI — `supabase start`, a local reset | `supabase_migrations.schema_migrations` | the **number** alone |
+
+So `0039_a.sql` and `0039_b.sql` are two migrations to `migrate.sh` and one
+migration to the CLI. The CLI applies whichever it reaches first, writes `0039`,
+and skips the other one permanently: no error, and a schema missing a migration
+that nothing will ever try to apply again.
+
+It then hides itself. `tests/rls/preflight.ts` treats a file as applied if
+*either* ledger knows about it, so that single `0039` row vouches for both files
+— and the preflight whose job is to catch a database behind the checkout reports
+everything present. The suite goes green against a schema that is missing a
+table. A collision is not untidy filenames; it is a silently incomplete
+database, which is why there is a test for it.
+
+### Renumbering after a collision
+
+Which file moves is not a coin toss:
+
+1. the one that has **not** been applied to production yet moves;
+2. if both have, the one whose migration is **idempotent** moves.
+
+Renaming a file orphans the ledger row keyed on its old name, so the migration
+comes back around for a second application under the new one. That is harmless
+for a migration written with `if not exists` (and `drop ... if exists` before a
+`create`) throughout, and an error for one that was not — which is the other
+reason to write them that way.
+
 ## Database tests
 
 Tenant isolation in Covan is enforced by Postgres Row Level Security, not by

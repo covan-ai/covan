@@ -193,6 +193,12 @@ export async function runChatTurn(opts: {
   ctx: ToolContext;
   /** Steps spent before this call, so a resume continues its budget. */
   stepsSoFar?: AgentStep[];
+  /**
+   * How many of those count against the ceiling. Absent means all of them,
+   * which is the resume; the continuation passes 0 — see `stepsCharged` in
+   * `lib/harness/loop.ts` for why the two differ.
+   */
+  stepsCharged?: number;
   signal?: AbortSignal;
   /** Taken from `AgentTurnOptions` rather than restated, so a knob added to the
    * harness's budget cannot become one this seam silently refuses to pass. */
@@ -208,6 +214,7 @@ export async function runChatTurn(opts: {
     tools: opts.tools,
     ctx: opts.ctx,
     ...(opts.stepsSoFar ? { stepsSoFar: opts.stepsSoFar } : {}),
+    ...(opts.stepsCharged === undefined ? {} : { stepsCharged: opts.stepsCharged }),
     signal: opts.signal,
     budget: opts.budget ?? chatBudget(opts.env),
     onEvent: (event) => {

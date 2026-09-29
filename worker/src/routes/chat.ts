@@ -346,6 +346,10 @@ chat.post("/chat/stream", async (c) => {
   // On the metered overlay, so the reply's own writes are counted too.
   const service = serviceClient(env);
 
+  // What the half being continued already did. Read before the stream opens,
+  // like everything else this turn needs — see `stepsOfReply`.
+  const carriedSteps = continuing ? await stepsOfReply(service, lastMessage.id as string) : [];
+
   // Name the conversation from the message that opened it, the way every other
   // chat product does — an untitled sidebar of "New chat, New chat, New chat"
   // is a list you cannot navigate.
@@ -500,7 +504,15 @@ chat.post("/chat/stream", async (c) => {
           outcome: MessageOutcome;
         },
       ) => {
-        if (persisted || text.trim().length === 0) return null;
+        if (persisted) return null;
+        // An empty reply is not written, with one exception. The insert path
+        // must never put a blank assistant row in the transcript — but a
+        // CONTINUATION already has its row, and one that spent passes and then
+        // stopped to ask has tokens that belong in it. `announcePause` records
+        // usage only when no row holds it, so without this those passes are
+        // charged to the allowance and then absent from `messages`. The update
+        // below appends nothing, which is the truth: nothing was said.
+        if (text.trim().length === 0 && !continuing) return null;
         persisted = true;
 
         // A continuation is written *into* the reply it finishes, not beside
@@ -685,6 +697,12 @@ chat.post("/chat/stream", async (c) => {
             sessionId,
             runtimeLimit,
           }),
+          // What the first half spent, so the second half's steps and passes are
+          // numbered after it — and `stepsCharged: 0` because the budget does
+          // not come with them: the transcript above is the conversation and
+          // the half-answer, not the first half's tool results, so nothing is
+          // re-sent and there is no cost for the ceiling to bound.
+          ...(continuing ? { stepsSoFar: carriedSteps, stepsCharged: 0 } : {}),
           signal,
           send,
           spend,
@@ -793,8 +811,36 @@ chat.post("/chat/stream", async (c) => {
           // A turn that asked before it said anything. There is no assistant
           // row to hang the steps off yet, so they ride in the parked turn
           // and are written when it resumes — see `paused_turns.steps`.
+          //
+          // Unless this is a continuation, where there *is* a row: the reply
+          // being finished. Parking against it is what keeps one answer in one
+          // row — parked with no id, the resume inserted a second assistant
+          // message, and the next turn then re-sent one answer as two turns.
+          // The row is updated first so it holds the passes spent before the
+          // question, because from here on `announcePause` treats it as the
+          // accumulator and writes none of its own.
+          //
+          // One known consequence, conservative and deliberate: the parked turn
+          // carries the whole reply's steps, because the loop's next index is
+          // `steps.length` and the first half's have to be in there for the
+          // numbering to continue. `POST /chat/confirm/:id` then charges its
+          // ceiling for all of them, so the resumed half of a continuation gets
+          // a smaller tool budget than a resumed first half would. It can only
+          // ever be smaller, never unbounded — and the alternative needs either
+          // a column on `paused_turns` or a monotonic index in the loop.
+          const row = continuing
+            ? await persistAssistant("", {
+                promptTokens,
+                completionTokens,
+                cachedTokens,
+                cacheWriteTokens,
+                reasoningTokens,
+                passUsage,
+                outcome: replyOutcome({ paused, finishReason, parked: true }),
+              })
+            : null;
           await recordSpend();
-          await announcePause(null);
+          await announcePause(row?.id ?? null);
           send({ type: "done" });
         } else {
           await recordSpend();
@@ -1311,6 +1357,59 @@ async function priorReply(
     content: typeof data?.content === "string" ? data.content : "",
     usage: usageOfRow((data ?? {}) as Record<string, unknown>),
   };
+}
+
+/**
+ * The steps a reply has already taken, in the shape the harness carries them.
+ *
+ * The continuation's answer to what `paused_turns.steps` is for a resume. A
+ * resume round-trips its steps through jsonb because the turn never finished;
+ * a continuation's first half finished, so its steps are already rows in
+ * `message_steps` and this reads them back rather than storing a second copy.
+ *
+ * Why it has to be read at all: `writeSteps` upserts on
+ * `(message_id, step_index)` and both halves write against the same reply. A
+ * second half that numbers from zero does not add to the trail, it overwrites
+ * it — and the first half's tool calls leave the transcript. Handing them to
+ * the loop as `stepsSoFar` makes the indices and the pass numbers continue,
+ * which is the whole of the fix; `stepsCharged: 0` is what stops the budget
+ * coming with them.
+ *
+ * Ordered, because the loop's next index is the length of what it carries and
+ * a gap in the middle would put two steps on one number.
+ */
+async function stepsOfReply(
+  service: ReturnType<typeof serviceClient>,
+  messageId: string,
+): Promise<AgentStep[]> {
+  const { data, error } = await service
+    .from("message_steps")
+    .select(
+      "step_index, tool, request, result_excerpt, result_chars, pass_index, offered, status, duration_ms",
+    )
+    .eq("message_id", messageId)
+    .order("step_index", { ascending: true });
+  if (error) {
+    // Logged and carried on with nothing. A continuation that cannot read the
+    // first half's trail is the behaviour this function replaces, which is
+    // worse than it was but not worse than failing the reply outright.
+    console.error("failed to read the steps of the reply being continued", error);
+    return [];
+  }
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    index: row.step_index as number,
+    tool: row.tool as string,
+    request: row.request ?? {},
+    resultExcerpt: typeof row.result_excerpt === "string" ? row.result_excerpt : "",
+    status: row.status as AgentStep["status"],
+    durationMs: typeof row.duration_ms === "number" ? row.duration_ms : 0,
+    // Null in the column means "not recorded", and the field is optional for
+    // the same reason — an `undefined` here round-trips back to a null, where
+    // a zero would claim the step was measured and cost nothing.
+    ...(typeof row.pass_index === "number" ? { pass: row.pass_index } : {}),
+    ...(typeof row.result_chars === "number" ? { resultChars: row.result_chars } : {}),
+    ...(Array.isArray(row.offered) ? { offered: row.offered as string[] } : {}),
+  }));
 }
 
 /** The two halves of one reply, joined with nothing between them. */

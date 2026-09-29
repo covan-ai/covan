@@ -5,7 +5,7 @@ import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
 import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
-import { MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
+import { MAX_STEPS, MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
 import type { AgentTool } from "../lib/harness/registry";
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter } from "../lib/subrequests";
@@ -53,6 +53,15 @@ let parked: Record<string, unknown> | null = null;
  * TypeError under it and was therefore never tested.
  */
 let priorMessage: Record<string, unknown> | null = null;
+/**
+ * The `message_steps` rows of the half a continuation is finishing.
+ *
+ * Read back on `continue` for the same reason `paused_turns.steps` is read
+ * back on resume: the second half has to number its own steps after the
+ * first's, and `writeSteps` upserts on `(message_id, step_index)` — so a
+ * second half that starts at zero overwrites the first half's trail.
+ */
+let priorSteps: Array<Record<string, unknown>> = [];
 /** Whether this caller is the one that claimed the turn. False is a 409. */
 let claimWins = true;
 const serviceUpdate = vi.fn();
@@ -183,6 +192,10 @@ vi.mock("../lib/supabase", () => ({
             stepsWritten(rows);
             return Promise.resolve({ error: null });
           },
+          // What the half being continued already did.
+          select: () => ({
+            eq: () => ({ order: async () => ({ data: priorSteps, error: null }) }),
+          }),
         };
       }
       // A turn parked waiting for somebody. Reads hand back whatever the
@@ -347,7 +360,18 @@ function appWith(spec: {
     // What the first half of a cut-off reply cost, so a continuation can be
     // checked for adding to it rather than overwriting it.
     ...(m.role === "assistant"
-      ? { prompt_tokens: 400, completion_tokens: 1536, cached_tokens: 0 }
+      ? {
+          prompt_tokens: 400,
+          completion_tokens: 1536,
+          cached_tokens: 0,
+          // And which passes it was spread over, because a continuation's
+          // passes are appended to this list and the indices have to stay
+          // monotonic across the join.
+          pass_usage: [
+            { index: 0, prompt: 160, cached: 0, written: null, completion: 512 },
+            { index: 1, prompt: 240, cached: 0, written: null, completion: 1024 },
+          ],
+        }
       : {}),
   }));
 
@@ -495,6 +519,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   parked = null;
   priorMessage = null;
+  priorSteps = [];
   extraTool = null;
   claimWins = true;
   approvedTool = null;
@@ -1272,6 +1297,163 @@ describe("finishing a reply that stopped mid-sentence", () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toMatch(/nothing to continue/);
+  });
+
+  /**
+   * What a continuation was not being told, and the three things that followed.
+   *
+   * A resume arrives at `POST /chat/confirm/:id` with `stepsSoFar` and picks up
+   * the numbering where the first half left it. A continuation arrived at
+   * `POST /chat/stream` with nothing, so the loop started from zero — and one
+   * reply is the accumulator for both halves, which is where it showed:
+   *
+   * 1. `pass_usage` on one row could read `[0, 1, 0, 1]`.
+   * 2. `writeSteps` upserts on `(message_id, step_index)`, so the second half's
+   *    step 0 overwrote the first half's and its tool calls left the transcript.
+   * 3. A continuation that stopped to ask before it said anything parked with
+   *    no message id, and the resume then inserted a SECOND assistant row.
+   *
+   * One missing seam, three symptoms — the same diagnosis `chat-turn.ts` makes
+   * about the confirm route one level down.
+   */
+  describe("what the first half already did", () => {
+    /** The first half's trail, as `message_steps` holds it. */
+    const firstHalfSteps = [
+      {
+        step_index: 0,
+        tool: "search_documents",
+        request: { query: "vacation" },
+        result_excerpt: "Vacation is 20 days.",
+        result_chars: 20,
+        pass_index: 0,
+        offered: null,
+        status: "ok",
+        duration_ms: 12,
+      },
+      {
+        step_index: 1,
+        tool: "search_documents",
+        request: { query: "carry-over" },
+        result_excerpt: "Five days carry over.",
+        result_chars: 21,
+        pass_index: 1,
+        offered: null,
+        status: "ok",
+        duration_ms: 9,
+      },
+    ];
+
+    it("numbers the second half's steps after the first half's, and keeps both", async () => {
+      priorSteps = firstHalfSteps;
+      const { app } = appWith({
+        question: "How many vacation days?",
+        cutOffReply: CUT_OFF,
+        documents: [HANDBOOK],
+      });
+      completionCreate.mockImplementation(
+        toolThenAnswer("search_documents", '{"query":"rest"}', "Twenty days."),
+      );
+
+      await carryOn(app);
+
+      const written = stepsWritten.mock.calls.at(-1)?.[0] as Array<Record<string, unknown>>;
+      expect(written.map((r) => r.step_index)).toEqual([0, 1, 2]);
+      // The first half's rows are re-upserted with what they always said, so
+      // the trail survives the join rather than being overwritten by it.
+      expect(written[0]).toMatchObject({
+        tool: "search_documents",
+        request: { query: "vacation" },
+      });
+      expect(written[2]).toMatchObject({ request: { query: "rest" }, pass_index: 2 });
+      expect(written.every((r) => r.message_id === "m1")).toBe(true);
+    });
+
+    it("does not restart the pass numbering", async () => {
+      priorSteps = firstHalfSteps;
+      const { app } = appWith({
+        question: "How many vacation days?",
+        cutOffReply: CUT_OFF,
+        documents: [HANDBOOK],
+      });
+      completionCreate.mockImplementation(
+        toolThenAnswer("search_documents", '{"query":"rest"}', "Twenty days."),
+      );
+
+      await carryOn(app);
+
+      const indices = (
+        serviceUpdate.mock.calls.at(-1)?.[0].pass_usage as Array<{ index: number }>
+      ).map((p) => p.index);
+      expect(indices).toEqual([0, 1, 2, 3]);
+    });
+
+    it("parks the reply it is finishing, rather than starting a second one", async () => {
+      // The continuation's first pass asks for something needing approval
+      // before it says a word, so there is no text to append — which is the
+      // case that used to park with no message id and be resumed into a new
+      // row, splitting one answer across two.
+      priorSteps = firstHalfSteps;
+      extraTool = ASKS_FIRST;
+      const { app } = appWith({ question: "book a room", cutOffReply: CUT_OFF });
+      completionCreate.mockImplementation(asksFor("book_the_room"));
+
+      await carryOn(app);
+
+      expect(serviceInsert).not.toHaveBeenCalled();
+      expect(pausedWritten.mock.calls.at(-1)?.[0].message_id).toBe("m1");
+    });
+
+    it("records what the continuation spent before it stopped to ask", async () => {
+      // Once a row is named on the parked turn, the row is the accumulator and
+      // `announcePause` writes no second copy. So the row has to actually hold
+      // those passes, or they are charged to the allowance and then lost.
+      priorSteps = firstHalfSteps;
+      extraTool = ASKS_FIRST;
+      const { app } = appWith({ question: "book a room", cutOffReply: CUT_OFF });
+      completionCreate.mockImplementation(asksFor("book_the_room"));
+
+      await carryOn(app);
+
+      const written = serviceUpdate.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(written.id).toBe("m1");
+      // The first half plus the pass that asked.
+      expect(written.prompt_tokens).toBe(400 + 100);
+      // And nothing appended, because nothing was said.
+      expect(written.content).toBe(CUT_OFF);
+      expect(pausedWritten.mock.calls.at(-1)?.[0].usage).toBeNull();
+    });
+
+    it("does not tell a continuation it has run out before it has started", async () => {
+      // The budget must not carry over, and the reason is the transcript: a
+      // continuation is sent the conversation and the half-answer, not the
+      // first half's tool results, so nothing is re-sent and there is no cost
+      // for the ceiling to bound. Charged for them, the reply most in need of
+      // continuing — the long one — would be refused its first call.
+      priorSteps = Array.from({ length: MAX_STEPS }, (_, i) => ({
+        step_index: i,
+        tool: "search_documents",
+        request: {},
+        result_excerpt: "",
+        result_chars: 0,
+        pass_index: i,
+        offered: null,
+        status: "ok",
+        duration_ms: 1,
+      }));
+      const { app } = appWith({
+        question: "How many vacation days?",
+        cutOffReply: CUT_OFF,
+        documents: [HANDBOOK],
+      });
+      completionCreate.mockImplementation(
+        toolThenAnswer("search_documents", '{"query":"rest"}', "Twenty days."),
+      );
+
+      await carryOn(app);
+
+      const written = stepsWritten.mock.calls.at(-1)?.[0] as Array<Record<string, unknown>>;
+      expect(written.at(-1)).toMatchObject({ step_index: MAX_STEPS, status: "ok" });
+    });
   });
 });
 

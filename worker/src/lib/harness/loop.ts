@@ -237,6 +237,29 @@ export type AgentTurnOptions = {
    */
   stepsSoFar?: AgentStep[];
   /**
+   * How many of `stepsSoFar` count against this turn's ceiling.
+   *
+   * Defaults to all of them, which is what a resume means and what every
+   * caller meant before this existed. The one caller that passes something
+   * else is a CONTINUATION — the person pressed Continue on a reply that hit
+   * its length limit — and the difference is in the transcript rather than in
+   * a preference:
+   *
+   * - A resume continues the same request. `paused_turns.messages` carries the
+   *   tool results from before the pause, so every later pass re-sends them
+   *   and the cost the ceiling bounds is still being paid.
+   * - A continuation is a fresh request: the conversation, the half-written
+   *   answer, and a short instruction asking for the rest. The first half's
+   *   tool results are not in it and nothing is re-sent, so a turn charged for
+   *   them would be refused its first call for spending nobody is making.
+   *
+   * It still needs `stepsSoFar`, and for a reason the budget cannot supply: the
+   * indices and the pass numbers have to carry on, or two halves of one reply
+   * both write `message_steps` from zero and `writeSteps` upserts one over the
+   * other.
+   */
+  stepsCharged?: number;
+  /**
    * Each step as it settles, for a caller that has to survive this function
    * throwing.
    *
@@ -633,6 +656,19 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   const specs = toolsUsable ? toolSpecs(opts.tools) : undefined;
   const steps: AgentStep[] = [...(opts.stepsSoFar ?? [])];
   /**
+   * What the ceiling has been charged, which is not the same as how many steps
+   * are in the record.
+   *
+   * `steps` is the accumulator: it carries the earlier half so the indices and
+   * the pass numbers continue, and it is what gets written out. The budget is
+   * counted from here instead, so a caller can carry steps without paying for
+   * them — see `stepsCharged`. With the default the two are identical, which
+   * is why every existing caller is unaffected.
+   */
+  const carriedSteps = steps.length;
+  const chargedBefore = opts.stepsCharged ?? carriedSteps;
+  const spentSteps = () => chargedBefore + (steps.length - carriedSteps);
+  /**
    * The one way a step enters the record, so `onStep` cannot be forgotten at
    * one of the three places a step settles.
    */
@@ -705,9 +741,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * Which leg `n` steps puts the turn in — 0 while it is still inside its
    * budget, 1 once it has crossed into the first extra leg, and so on.
    *
-   * A pure function of `steps.length`, which is what lets a turn pause for an
-   * approval at step 27, resume with 27 entries in `stepsSoFar`, and work out
-   * where it is again from nothing but those. No column, no migration.
+   * A pure function of the count charged so far, which is what lets a turn
+   * pause for an approval at step 27, resume with 27 entries in `stepsSoFar`,
+   * and work out where it is again from nothing but those. No column, no
+   * migration. A continuation passes `stepsCharged: 0` and is therefore in
+   * leg 0, which is the same answer read off the transcript it actually
+   * carries.
    */
   const legOf = (n: number) => (n < softSteps ? 0 : Math.floor((n - softSteps) / legSteps) + 1);
   /**
@@ -859,7 +898,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       // them, so the answer genuinely changes between the first and the last.
       const out: "budget" | "tokens" | "runtime" | null =
         stopped ??
-        (steps.length >= hardSteps ? "budget" : null) ??
+        (spentSteps() >= hardSteps ? "budget" : null) ??
         (outOfRoom() ? "runtime" : null);
       if (out) {
         // Every remaining call still needs an answer or the next request is a
@@ -1007,7 +1046,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       });
     }
 
-    if (steps.length >= hardSteps && !stopped) stopped = "budget";
+    if (spentSteps() >= hardSteps && !stopped) stopped = "budget";
     // And again after the tools have run, because they are what actually
     // spends the count: eight connected-app calls is eight subrequests that
     // were not there when this pass began.
@@ -1028,7 +1067,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       // notice pushed every pass would stack up inside one request — and
       // deliberately without setting `stopped` or touching `toolsWithheld`:
       // the model keeps its tools and keeps working.
-      const leg = legOf(steps.length);
+      const leg = legOf(spentSteps());
       if (leg > noticedLeg) {
         noticedLeg = leg;
         // Before the notice, so the notice stays at the tail where it lands
@@ -1042,7 +1081,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // many passes remain. At eight steps a leg that does not pay back. See
         // `trimAbovePromptTokens`.
         if ((lastPromptTokens ?? 0) > trimAbove) trimSpentResults(messages, legSteps);
-        messages.push({ role: "system", content: paceNotice(hardSteps - steps.length) });
+        messages.push({ role: "system", content: paceNotice(hardSteps - spentSteps()) });
       }
     }
     pass += 1;

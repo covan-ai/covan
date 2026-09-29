@@ -29,7 +29,14 @@ export function EditTurn({
   const ref = useAutoGrow<HTMLTextAreaElement>(value);
   return (
     <div className="flex flex-col items-end gap-1.5">
-      <div className="w-full max-w-[560px] rounded-2xl border border-border bg-popover p-2">
+      {/* The same fill and the same corner as the bubble it stands in for —
+          this is that message, opened, and a different surface would read as
+          the message having been replaced by a dialog. The border is the only
+          thing that differs, and it is what says "editable". */}
+      <div
+        data-part="bubble"
+        className="w-full max-w-[80%] rounded-2xl border border-border bg-bubble p-2"
+      >
         <Textarea
           ref={ref}
           value={value}

@@ -55,30 +55,59 @@ export function QuestionTurn({
           <span>{sender.name ?? "Someone"}</span>
         </div>
       )}
-      <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-base text-primary-foreground">
-        {message.content}
-      </div>
-      {footer}
-      {/* The clock and the one thing you can do to your own turn, on a single
-          line under it. The time used to have a line of its own *above* the
-          bubble, which put a second piece of furniture between every pair of
-          messages in the transcript.
+      {/* The clock and the one thing you can do to your own turn, ABOVE the
+          bubble rather than under it.
 
-          `focus-visible:opacity-100` is not decoration: the button is revealed
-          on hover, so focus has to reveal it too or it does not exist for a
-          keyboard. Failure mode #5. */}
-      <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+          This reverses a decision, and the reason it can be reversed is that
+          the rest of the screen changed around it. The time sat underneath
+          once, to keep a second piece of furniture out of the gap between
+          every pair of messages. That gap is no longer uniform: a question and
+          its answer are 20px apart and one exchange is 44px from the next, so
+          there is a wide gap above a question and a tight one below it. Small
+          print belongs in the wide one — under the bubble it was wedged into
+          the single gap that has to read as "these two belong together".
+
+          It is also hidden until wanted, which the old position could not be:
+          a line between two messages leaves a hole when it disappears, and a
+          line above one does not.
+
+          THE TWO REVEALS ARE BOTH LOAD-BEARING. `focus-within` is how this
+          exists for a keyboard, and `[@media(hover:none)]` is how it exists on
+          a phone — where `group-hover` alone means no timestamp and no way to
+          fix a typo, ever. Failure mode #5 is not only about keyboards. */}
+      <div
+        data-part="meta"
+        className="flex items-center gap-2 px-1 text-xs text-muted-foreground opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+      >
         <span className="tabular-nums">{time}</span>
         {canEdit && (
           <button
             onClick={() => onEdit(message.id, message.content)}
             disabled={busy}
-            className="flex items-center gap-1 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
+            className="flex items-center gap-1 transition-colors hover:text-foreground disabled:hidden"
           >
             <Pencil className="h-3 w-3" /> Edit
           </button>
         )}
       </div>
+      {/* Warm fill, not ink.
+
+          `bg-primary` made the question the heaviest object on the screen, so
+          the eye landed on what the reader had typed rather than on the answer
+          under it — the opposite of the relationship every chat product they
+          arrive from has. `--bubble` is two steps down from the canvas: enough
+          to read as an opened area, not enough to compete.
+
+          No tail: `rounded-br-sm` pointed at an avatar that is not there. No
+          pixel width either — a percentage, so a four-word question draws a
+          four-word box instead of a paragraph-sized slab. */}
+      <div
+        data-part="bubble"
+        className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-bubble px-4 py-3 text-base text-foreground"
+      >
+        {message.content}
+      </div>
+      {footer}
     </div>
   );
 }

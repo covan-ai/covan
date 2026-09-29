@@ -21,6 +21,10 @@ const message = (over: Partial<Message> = {}): Message => ({
   ...over,
 });
 
+/** The bubble, and the line of small print that goes with it. */
+const bubble = (container: HTMLElement) => container.querySelector("[data-part='bubble']");
+const meta = (container: HTMLElement) => container.querySelector("[data-part='meta']");
+
 const base = {
   message: message(),
   sender: null,
@@ -85,18 +89,58 @@ describe("QuestionTurn", () => {
   });
 
   it("keeps the edit reachable without a mouse", async () => {
-    // Failure mode #5: the button is revealed on hover, so focus has to reveal
-    // it too or it does not exist for a keyboard.
+    // Failure mode #5: the row is revealed on hover, so focus has to reveal it
+    // too or it does not exist for a keyboard.
     //
     // Two assertions because neither is enough alone. Tabbing to it proves it
     // is in the tab order — but a focused element at `opacity: 0` is focused
     // and invisible, and jsdom evaluates no cascade, so the only handle on the
-    // second half is the class that does it.
-    render(<QuestionTurn {...base} />);
+    // second half is the class that does the revealing.
+    const { container } = render(<QuestionTurn {...base} />);
     await userEvent.tab();
 
-    const edit = screen.getByRole("button", { name: /edit/i });
-    expect(edit).toHaveFocus();
-    expect(edit).toHaveClass("focus-visible:opacity-100");
+    expect(screen.getByRole("button", { name: /edit/i })).toHaveFocus();
+    expect(meta(container)).toHaveClass("focus-within:opacity-100");
+  });
+
+  it("keeps the time and the edit there at all on a screen with no hover", () => {
+    // The other half of failure mode #5, and the one usually missed. A phone
+    // has no hover: `group-hover` alone means the timestamp does not exist on
+    // a touch device, and neither does the only way to fix a typo.
+    const { container } = render(<QuestionTurn {...base} />);
+    expect(meta(container)).toHaveClass("[@media(hover:none)]:opacity-100");
+  });
+
+  /**
+   * The redesign, as three claims about one element.
+   *
+   * The question used to be the heaviest object on the screen — `bg-primary`,
+   * which is ink — so the eye went to what the reader had typed rather than to
+   * the answer underneath. The reference this was built against has it the
+   * other way round, and so does every chat product people arrive from.
+   */
+  it("fills the bubble with its own colour rather than with ink", () => {
+    const { container } = render(<QuestionTurn {...base} />);
+    expect(bubble(container)).toHaveClass("bg-bubble");
+    expect(bubble(container)).not.toHaveClass("bg-primary");
+  });
+
+  it("has no tail, and no fixed width to fill", () => {
+    // `rounded-br-sm` was a speech-bubble tail pointing at nobody — there is no
+    // avatar on that side to point at. And a 560px minimum-looking slab made a
+    // four-word question draw a box the size of a paragraph.
+    const { container } = render(<QuestionTurn {...base} />);
+    expect(bubble(container)?.className).not.toMatch(/rounded-br/);
+    expect(bubble(container)?.className).not.toMatch(/max-w-\[\d+px\]/);
+  });
+
+  it("puts the time above the bubble, where it is out of the way of the next turn", () => {
+    // It was underneath, between this question and the answer to it — the one
+    // gap in the transcript that has to read as "these two belong together".
+    // Above, it sits in the gap that already separates one exchange from the
+    // last.
+    const { container } = render(<QuestionTurn {...base} />);
+    const order = [...(container.firstElementChild?.children ?? [])];
+    expect(order.indexOf(meta(container)!)).toBeLessThan(order.indexOf(bubble(container)!));
   });
 });

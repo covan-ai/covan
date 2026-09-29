@@ -88,6 +88,35 @@ const patch = (app: Hono<AppEnv>, body: unknown) =>
   });
 
 describe("PATCH /agents/:id", () => {
+  /**
+   * `model` was `z.string().optional()` while `reasoningEffort` two lines below
+   * it was already `z.enum(...)`, so an agent could be pointed at any string at
+   * all — a typo, a retired id, a model from a different provider's catalogue —
+   * and the first sign of it would be every reply arriving from `DEFAULT_MODEL`
+   * because `resolveModel` fell the unknown id through.
+   *
+   * Checked against production before narrowing it: all 55 agents held ids that
+   * are in `MODEL_IDS`, so nothing already stored is locked out of a PATCH of
+   * some other field.
+   */
+  it("refuses a model id that is not in the catalogue", async () => {
+    const { db, writes } = fakeDb();
+
+    const res = await patch(appWith(db), { model: "gpt-4.2-turbo" });
+
+    expect(res.status).toBe(400);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("still takes every id the catalogue does offer", async () => {
+    const { db, writes } = fakeDb();
+
+    const res = await patch(appWith(db), { model: "claude-sonnet-5" });
+
+    expect(res.status).toBe(200);
+    expect(writes[0]).toEqual({ model: "claude-sonnet-5" });
+  });
+
   it("writes the reasoning effort to the column that exists", async () => {
     const { db, writes } = fakeDb();
 

@@ -5,6 +5,7 @@ import {
   acceptsTemperature,
   reasonsBeforeAnswering,
   thinksByDefault,
+  webSearchToolFor,
   availableModels,
   modelSpec,
   titleModelFor,
@@ -223,5 +224,49 @@ describe("modelSpecsFor", () => {
 
   it("carries no provider, which is a routing decision and nobody else's business", () => {
     expect(modelSpecsFor(["gpt-4o"])["gpt-4o"]).not.toHaveProperty("provider");
+  });
+});
+
+describe("which web search tool a model takes", () => {
+  /**
+   * This lived as a six-id array inside `anthropicParams`, and two of those six
+   * — `claude-opus-4-7` and `claude-opus-4-6` — were ids this build has never
+   * offered. Nothing failed, because an id that is never sent cannot be matched
+   * wrongly; it just meant the list nobody could see was the one nobody checked.
+   *
+   * Keyed off `SPECS` now, so the answer for a new model is a type error rather
+   * than a silent fall to the older tool.
+   */
+  it("gives every id it offers an answer", () => {
+    for (const id of MODEL_IDS) {
+      expect(webSearchToolFor(id), id).not.toBeUndefined();
+    }
+  });
+
+  it("gives the 2026 tool to the four Anthropic models that take it", () => {
+    const newer = MODEL_IDS.filter((id) => webSearchToolFor(id) === "web_search_20260209");
+    expect([...newer]).toEqual([
+      "claude-opus-5",
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "claude-sonnet-4-6",
+    ]);
+  });
+
+  it("leaves the two older Claude models on the 2025 tool", () => {
+    expect(webSearchToolFor("claude-sonnet-4-5")).toBe("web_search_20250305");
+    expect(webSearchToolFor("claude-haiku-4-5")).toBe("web_search_20250305");
+  });
+
+  it("answers null for OpenAI, where the flag reaches no parameter at all", () => {
+    expect(webSearchToolFor("gpt-4.1")).toBeNull();
+    expect(webSearchToolFor("gpt-5")).toBeNull();
+  });
+
+  it("falls an unknown id to the older tool, which is what a custom endpoint gets", () => {
+    // Under OPENAI_BASE_URL every id is unknown. The Anthropic path should not
+    // reach here at all, and if it does the conservative tool is the one that
+    // has existed longer.
+    expect(webSearchToolFor("llama-3.3-70b")).toBe("web_search_20250305");
   });
 });

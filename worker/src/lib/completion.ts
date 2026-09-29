@@ -8,6 +8,7 @@ import {
   acceptsTemperature,
   reasonsBeforeAnswering,
   thinksByDefault,
+  webSearchToolFor,
   type ReasoningEffort,
 } from "./models";
 
@@ -190,8 +191,9 @@ export type CompletionRequest = {
   /**
    * Enable web search tool.
    *
-   * Anthropic: web_search_20260209 on models that support it (Opus 5/4.8/4.7/4.6,
-   * Sonnet 5/4.6). Older models get web_search_20250305.
+   * Anthropic: the tool version is per model and `SPECS` holds it — see
+   * `webSearchToolFor` in `lib/models.ts`. Restating the list here is how it
+   * drifted the first time.
    * OpenAI: no effect on any model offered here — see `openaiParams` below for
    * why this isn't a gap that closes by passing a parameter.
    *
@@ -817,26 +819,21 @@ function anthropicParams(
   const systemText = [system, req.json ? JSON_ONLY_INSTRUCTION : ""].filter(Boolean).join("\n\n");
   const { thinking, outputConfig, headroom } = anthropicThinking(req);
 
-  // Web search tool. Newer models (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6) get
-  // web_search_20260209; older models get web_search_20250305.
+  // Which web search tool a model takes is the catalogue's answer, not this
+  // function's: `lib/models.ts` keys it by `ModelId`, so a new model without one
+  // is a compile error. This used to be a six-id array right here, two of whose
+  // ids were models that have never existed.
   const tools: Array<
     | Anthropic.Messages.WebSearchTool20260209
     | Anthropic.Messages.WebSearchTool20250305
     | Anthropic.Tool
   > = [];
   if (req.webSearch) {
-    const newerModels = [
-      "claude-opus-5",
-      "claude-opus-4-8",
-      "claude-opus-4-7",
-      "claude-opus-4-6",
-      "claude-sonnet-5",
-      "claude-sonnet-4-6",
-    ];
-    if (newerModels.includes(req.model)) {
-      tools.push({ type: "web_search_20260209", name: "web_search" });
-    } else {
-      tools.push({ type: "web_search_20250305", name: "web_search" });
+    const version = webSearchToolFor(req.model);
+    if (version === "web_search_20260209") {
+      tools.push({ type: version, name: "web_search" });
+    } else if (version === "web_search_20250305") {
+      tools.push({ type: version, name: "web_search" });
     }
   }
 

@@ -1367,6 +1367,31 @@ describe("tools, on the way out", () => {
     const names = anthropicCreate.mock.calls[0][0].tools.map((t: { name?: string }) => t.name);
     expect(names).toEqual(["web_search", "search_documents"]);
   });
+
+  // Nothing asserted which VERSION of the tool went out until 2026-09-29, which
+  // is how a six-id array listing two non-existent models survived in here. The
+  // answer now comes from `SPECS`; these two pin that it still reaches the wire.
+  it("sends the 2026 tool for a model whose spec says so", async () => {
+    await complete(env, {
+      model: "claude-sonnet-5",
+      messages: [{ role: "user", content: "hi" }],
+      webSearch: true,
+    });
+    expect(anthropicCreate.mock.calls[0][0].tools).toEqual([
+      { type: "web_search_20260209", name: "web_search" },
+    ]);
+  });
+
+  it("sends the 2025 tool for one whose spec says that, and would 400 on the newer", async () => {
+    await complete(env, {
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "hi" }],
+      webSearch: true,
+    });
+    expect(anthropicCreate.mock.calls[0][0].tools).toEqual([
+      { type: "web_search_20250305", name: "web_search" },
+    ]);
+  });
 });
 
 describe("a tool result, on its way back to the model", () => {

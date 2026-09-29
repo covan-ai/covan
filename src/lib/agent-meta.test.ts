@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, it, expect } from "vitest";
 import {
   EMOJIS,
@@ -196,5 +198,47 @@ describe("formatReplyCost", () => {
   it("does not round the cheapest model to free", () => {
     expect(formatReplyCost(0.00048)).toBe("$0.0005");
     expect(formatReplyCost(0.00089)).toBe("$0.0009");
+  });
+});
+
+/**
+ * The sixth copy of the model list, and the one nothing checked.
+ *
+ * `worker/src/lib/models.ts` has `MODEL_IDS` and `SPECS`, `worker/src/lib/pricing.ts`
+ * and `src/lib/pricing.ts` have a table each — and those two are compared by
+ * `pricing.test.ts`, because they had already drifted 50% apart on Sonnet 5.
+ * This one is the frontend's fallback picker, used whenever `/me` has not
+ * answered yet, so drift here is not a wrong price: it is a model missing from
+ * the dropdown, or one offered that the API will now refuse.
+ *
+ * Read out of the file rather than imported, for the same reason `pricing.test.ts`
+ * does it: importing from `worker/` would make this assert that two modules agree
+ * at runtime, and what needs asserting is that two *source files* say the same
+ * thing. The whole failure mode is somebody editing one of them.
+ */
+describe("the frontend model list and the worker catalogue", () => {
+  const idsIn = (source: string, decl: string) => {
+    const from = source.indexOf(decl);
+    expect(from, decl).toBeGreaterThan(-1);
+    const to = source.indexOf("] as const", from);
+    return [...source.slice(from, to).matchAll(/^ {2}"([a-z0-9.-]+)",$/gm)].map((m) => m[1]);
+  };
+
+  it("offer exactly the same ids, in the same order", () => {
+    const worker = idsIn(
+      readFileSync("worker/src/lib/models.ts", "utf8"),
+      "export const MODEL_IDS = [",
+    );
+    const here = idsIn(readFileSync("src/lib/agent-meta.ts", "utf8"), "export const MODELS = [");
+
+    expect(worker.length).toBeGreaterThan(5);
+    expect(here).toEqual(worker);
+  });
+
+  it("is the same list the module actually exports, so the regex cannot rot", () => {
+    // If the parse above ever stops matching the file it would return [] and
+    // compare two empty arrays happily. This is what makes that a failure.
+    const here = idsIn(readFileSync("src/lib/agent-meta.ts", "utf8"), "export const MODELS = [");
+    expect(here).toEqual([...MODELS]);
   });
 });

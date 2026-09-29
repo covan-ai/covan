@@ -4,7 +4,7 @@ import type { AppEnv } from "../types";
 import { mapAgent } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
-import { REASONING_EFFORTS } from "../lib/models";
+import { REASONING_EFFORTS, MODEL_IDS } from "../lib/models";
 
 const agents = new Hono<AppEnv>();
 
@@ -47,10 +47,24 @@ const tuningFields = {
   webSearch: z.boolean().optional(),
 };
 
+/**
+ * `model` is an allowlist for the same reason `reasoningEffort` beside it is:
+ * an id this build does not know is not a preference, it is a silent fall to
+ * `DEFAULT_MODEL` at every read, which nothing in the product ever says out
+ * loud. It followed `routes/workspace.ts:25` two fields late.
+ *
+ * Narrowed 2026-09-29 after checking what is actually stored: every one of the
+ * 55 agents in production holds an id that is in `MODEL_IDS`, so no existing
+ * agent is locked out of a PATCH of some other field. Whether this *deployment*
+ * can serve the id is a second question and deliberately not asked here —
+ * `modelsFor` on the settings screen keeps an agent's current pick in the list
+ * even when the key behind it is gone, and `resolveModel` falls it through at
+ * read time rather than refusing to answer.
+ */
 const createAgentSchema = z.object({
   name: z.string().min(1),
   emoji: z.string().optional(),
-  model: z.string().optional(),
+  model: z.enum(MODEL_IDS).optional(),
   persona: z.string().optional(),
   mode: z.enum(["normal", "brainstorm"]).optional(),
   ...tuningFields,
@@ -60,7 +74,7 @@ const updateAgentSchema = z
   .object({
     name: z.string().min(1).optional(),
     emoji: z.string().optional(),
-    model: z.string().optional(),
+    model: z.enum(MODEL_IDS).optional(),
     persona: z.string().optional(),
     mode: z.enum(["normal", "brainstorm"]).optional(),
     ...tuningFields,
@@ -150,9 +164,9 @@ agents.post("/agents", async (c) => {
       // agent created before 0048 has.
       temperature: temperature ?? null,
       reasoning_effort: reasoningEffort ?? null,
-      // Web search is on by default. Models that support it (Opus 5/4.8/4.7/4.6,
-      // Sonnet 5/4.6) get web_search_20260209; the toggle remains for edge cases
-      // where the team explicitly wants answers limited to their documents only.
+      // Web search is on by default; the toggle remains for edge cases where the
+      // team explicitly wants answers limited to their documents only. Which
+      // tool version a model takes is `SPECS`'s answer — see `webSearchToolFor`.
       web_search: webSearch ?? true,
       created_by: user.id,
     })

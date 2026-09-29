@@ -1195,6 +1195,30 @@ function ChatTab() {
    * Anything added here must go through the same wrapper, and an inline arrow
    * at the call site undoes all of it with nothing failing.
    */
+  /*
+   * WHICH answer is being read aloud.
+   *
+   * `useTTS` has one `speaking` flag for the whole screen, which was invisible
+   * while the action strip was hover-only: you could only see one answer's
+   * buttons at a time. Now that the strip is always on, reading one answer
+   * aloud would put EVERY answer's button into "Stop reading" — a screenful of
+   * controls claiming to stop something they have nothing to do with.
+   *
+   * ANDed with `tts.speaking` rather than cleared on end, so there is nothing
+   * to keep in sync: a stale id is harmless because the flag beside it is
+   * false, and the speech API's own "finished" is the only source of truth
+   * about whether anything is being read.
+   */
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const onSpeak = useStableCallback((id: string, text: string) => {
+    setSpeakingId(id);
+    tts.speak(text);
+  });
+  const onStopSpeaking = useStableCallback(() => {
+    setSpeakingId(null);
+    tts.stop();
+  });
+
   const onContinue = useStableCallback(carryOn);
   const onKeepGoing = useStableCallback(keepGoing);
   const onRegenerate = useStableCallback(regenerate);
@@ -1480,10 +1504,12 @@ function ChatTab() {
                             ? stoppedShort.reason
                             : null
                         }
+                        agentName={agent.name}
+                        agentEmoji={agent.emoji}
                         canSpeak={tts.supported}
-                        speaking={tts.speaking}
-                        onSpeak={tts.speak}
-                        onStopSpeaking={tts.stop}
+                        speaking={tts.speaking && speakingId === m.id}
+                        onSpeak={onSpeak}
+                        onStopSpeaking={onStopSpeaking}
                         onCopy={onCopy}
                         onShowVersion={onShowVersion}
                         onRate={onRate}

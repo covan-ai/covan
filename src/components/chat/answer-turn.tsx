@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Copy, RefreshCw, ThumbsDown, ThumbsUp, Volume2, VolumeX } from "lucide-react";
 import type { Message } from "@/lib/agents-store";
+import { AgentAvatar } from "@/components/avatars";
 import type { FeedbackKind } from "@/lib/api-client";
 import { Markdown } from "@/components/markdown";
 import { SourceChip } from "@/components/source-chip";
@@ -47,6 +48,8 @@ import { cn } from "@/lib/utils";
 export const AnswerTurn = memo(function AnswerTurn({
   message,
   streamTail,
+  agentName,
+  agentEmoji,
   time,
   busy,
   model,
@@ -70,6 +73,8 @@ export const AnswerTurn = memo(function AnswerTurn({
   message: Message;
   /** Tokens still arriving for THIS message. Null for every settled row. */
   streamTail: string | null;
+  agentName: string;
+  agentEmoji: string;
   /** Already formatted. A turn should not own a locale. */
   time: string;
   busy: boolean;
@@ -86,7 +91,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   stoppedShort: "budget" | "tokens" | "runtime" | null;
   canSpeak: boolean;
   speaking: boolean;
-  onSpeak: (text: string) => void;
+  onSpeak: (id: string, text: string) => void;
   onStopSpeaking: () => void;
   onCopy: (content: string) => void;
   onShowVersion: (id: string) => void;
@@ -97,18 +102,28 @@ export const AnswerTurn = memo(function AnswerTurn({
 }) {
   const sources = message.sources ?? [];
 
-  // No avatar, no name, no indent.
+  // A byline, which this file argued against and now carries.
   //
-  // There is one agent in this conversation and its name is in the rail, in
-  // the header of the screen it was opened from, and under the composer.
-  // Repeating it above every reply — with a tile and a clock beside it — meant
-  // three lines of furniture for every answer, and pushed the answer itself
-  // nine pixels off the margin the questions are measured from. The reply is
-  // the only thing on this side of the transcript, so it is allowed to simply
-  // be the text.
+  // The old reason was arithmetic and it was right: a tile, a name and a clock
+  // above every reply is three lines of furniture per answer, and the reply
+  // was already the only thing on this side of the transcript. What changed is
+  // the other side of that sum. The clock left every question for a hover row,
+  // the step trail folded into one line, the dots stopped taking a line of
+  // their own — so a byline is now the transcript's only repeated furniture
+  // rather than its fourth.
+  //
+  // It earns the space by answering a question the rail cannot: in a shared
+  // session the questions have names above them, and without this the answers
+  // are the only unattributed thing on screen. One line, one baseline, and the
+  // answer still starts at the margin the questions are measured from.
   return (
     <div className="group flex flex-col gap-2">
       <div className="min-w-0" data-turn="answer">
+        <div data-part="byline" className="mb-2 flex items-center gap-2">
+          <AgentAvatar emoji={agentEmoji} className="h-5 w-5 text-[11px]" />
+          <span className="font-dm text-sm font-medium leading-none">{agentName}</span>
+          <span className="text-xs tabular-nums text-muted-foreground">{time}</span>
+        </div>
         <Markdown
           content={streamTail === null ? message.content : message.content + streamTail}
           className={cn("text-base text-foreground", streamTail !== null && "stream-live")}
@@ -195,7 +210,10 @@ export const AnswerTurn = memo(function AnswerTurn({
         )}
 
         {message.promptTokens != null && message.completionTokens != null && (
-          <div className="mt-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+          <div
+            data-part="cost"
+            className="mt-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+          >
             {formatTokens(message.promptTokens)} in · {formatTokens(message.completionTokens)} out
             {message.cachedTokens != null && message.cachedTokens > 0 && (
               <> · {formatTokens(message.cachedTokens)} cached</>
@@ -213,18 +231,21 @@ export const AnswerTurn = memo(function AnswerTurn({
           </div>
         )}
 
-        <div className="mt-2 flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-          {/* On the same line as the actions, and on the same hover. A
-              timestamp on every answer is the kind of fact you want once and
-              never again. */}
-          <span className="mr-1.5 text-xs tabular-nums text-muted-foreground">{time}</span>
+        {/* On screen, not behind a hover.
+            
+            Failure mode #5: a control revealed only by a pointer does not
+            exist on a phone, and Copy and the two feedback buttons are not
+            conveniences — they are how anybody tells us an answer was wrong.
+            The cost badge above stays hover-only because it genuinely is
+            incidental, which is why the wrapper keeps its `group`. */}
+        <div data-part="actions" className="mt-2 flex items-center gap-0.5">
           <MsgAction label="Copy" onClick={() => onCopy(message.content)}>
             <Copy className="h-3.5 w-3.5" />
           </MsgAction>
           {canSpeak && (
             <MsgAction
               label={speaking ? "Stop reading" : "Read aloud"}
-              onClick={() => (speaking ? onStopSpeaking() : onSpeak(message.content))}
+              onClick={() => (speaking ? onStopSpeaking() : onSpeak(message.id, message.content))}
             >
               {speaking ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
             </MsgAction>

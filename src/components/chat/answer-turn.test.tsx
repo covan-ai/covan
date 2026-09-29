@@ -36,6 +36,8 @@ const message = (over: Partial<Message> = {}): Message => ({
 const base = {
   message: message(),
   streamTail: null,
+  agentName: "Support Insights",
+  agentEmoji: "📊",
   time: "13:30",
   busy: false,
   model: "gpt-4.1",
@@ -47,7 +49,7 @@ const base = {
   stoppedShort: null,
   canSpeak: false,
   speaking: false,
-  onSpeak: () => {},
+  onSpeak: (_id: string, _text: string) => {},
   onStopSpeaking: () => {},
   onCopy: () => {},
   onShowVersion: () => {},
@@ -154,14 +156,59 @@ describe("AnswerTurn", () => {
   it("reads this answer aloud, and only says Stop while it is reading", async () => {
     const onSpeak = vi.fn();
     const { rerender } = render(
-      <AnswerTurn {...base} canSpeak speaking={false} onSpeak={onSpeak} />,
+      <AnswerTurn {...base} message={message({ id: "a4" })} canSpeak onSpeak={onSpeak} />,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Read aloud" }));
-    expect(onSpeak).toHaveBeenCalledWith("Integration tickets take 41% of resolution time.");
+    // The id goes with it. `speaking` used to be one flag for the whole
+    // screen, so reading ONE answer aloud put every answer's button into
+    // "Stop reading" — invisible while the actions were hover-only, and a
+    // screenful of wrong buttons once they stopped being.
+    expect(onSpeak).toHaveBeenCalledWith("a4", "Integration tickets take 41% of resolution time.");
 
-    rerender(<AnswerTurn {...base} canSpeak speaking onSpeak={onSpeak} />);
+    rerender(
+      <AnswerTurn {...base} message={message({ id: "a4" })} canSpeak speaking onSpeak={onSpeak} />,
+    );
     expect(screen.getByRole("button", { name: "Stop reading" })).toBeInTheDocument();
+  });
+
+  /**
+   * The header the answer grew, and the actions that stopped hiding.
+   *
+   * Both reverse a decision this component's comment used to argue for, and
+   * both are only affordable because the transcript around them lost furniture
+   * at the same time — the per-message clock, the open step trail, the
+   * separate line of dots.
+   */
+  it("says who is answering, once, above the answer", () => {
+    render(<AnswerTurn {...base} />);
+    expect(screen.getByText("Support Insights")).toBeInTheDocument();
+  });
+
+  it("puts the time in that header rather than in the action strip", () => {
+    const { container } = render(<AnswerTurn {...base} />);
+    const header = container.querySelector("[data-part='byline']");
+    expect(header).toHaveTextContent("Support Insights");
+    expect(header).toHaveTextContent("13:30");
+  });
+
+  it("leaves the actions on screen instead of waiting for a mouse", () => {
+    // Failure mode #5. Copy, read-aloud and the two feedback buttons were
+    // `opacity-0` until hover, which on a phone means they do not exist.
+    const { container } = render(<AnswerTurn {...base} />);
+    const actions = container.querySelector("[data-part='actions']");
+    expect(actions?.className).not.toMatch(/opacity-0/);
+  });
+
+  it("keeps the hover group, because the cost badge still rides on it", () => {
+    // Taking `group` off the wrapper when the actions stopped needing it would
+    // have made the token count permanently invisible — it is the one thing
+    // here that is genuinely incidental and still hover-only.
+    const { container } = render(
+      <AnswerTurn {...base} message={message({ promptTokens: 100, completionTokens: 50 })} />,
+    );
+    expect(container.firstElementChild?.className).toMatch(/\bgroup\b/);
+    expect(container.querySelector("[data-part='cost']")?.className).toMatch(/group-hover/);
   });
 
   it("offers nothing to read aloud where the browser cannot", () => {

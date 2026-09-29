@@ -13,7 +13,6 @@ import {
   Copy,
   FileText,
   Lock,
-  Pencil,
   RefreshCw,
   Search,
   Sparkles,
@@ -43,6 +42,7 @@ import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
 import { dateDividers } from "@/lib/message-groups";
 import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
+import { QuestionTurn } from "@/components/chat/question-turn";
 import { MsgAction, HeaderAction } from "@/components/chat/turn-actions";
 import { VersionPicker, RetryOn } from "@/components/chat/answer-controls";
 import { useTTS } from "@/lib/use-tts";
@@ -1403,76 +1403,38 @@ function ChatTab() {
                     return (
                       <Fragment key={m.id}>
                         {dividerLabel && <DateDivider label={dividerLabel} />}
-                        <div className="group flex flex-col items-end gap-1.5">
-                          {isShared && m.sender && (
-                            <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-                              {m.sender.avatarUrl ? (
-                                <img
-                                  src={m.sender.avatarUrl}
-                                  alt=""
-                                  className="h-4 w-4 rounded-sm object-cover"
-                                />
-                              ) : null}
-                              <span>{m.sender.name ?? "Someone"}</span>
-                            </div>
-                          )}
-                          <div className="max-w-[560px] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-4 py-3 text-base text-primary-foreground">
-                            {m.content}
-                          </div>
-                          {/* Show pending uploads under user message while composing */}
-                          {idx === arr.length - 1 && uploads.receipts.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {uploads.receipts.map((r) => (
-                                <div
-                                  key={r.id}
-                                  className="flex items-center gap-1.5 rounded-sm border border-border bg-surface px-2.5 py-1 text-xs"
-                                >
-                                  <FileText className="h-3 w-3 text-muted-foreground" />
-                                  <span className="text-muted-foreground">{r.name}</span>
-                                  {r.state === "uploading" && (
-                                    <span className="tabular-nums text-muted-foreground">
-                                      {r.progress}%
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {/* Ownership, not role. This used to branch on the same
-                          flag as the layout above, so in a shared session an
-                          Edit button appeared over a colleague's message —
-                          and answered 404, because messages_update_owner is
-                          keyed to whoever owns the SESSION. Editing also
-                          discards every reply after the edited turn, which is
-                          not something to offer over somebody else's
-                          conversation even if the policy allowed it. */}
-                          {/* The clock and the one thing you can do to your
-                          own turn, on a single line under it. The time used
-                          to have a line of its own *above* the bubble, which
-                          put a second piece of furniture between every pair
-                          of messages in the transcript.
-
-                          Ownership, not role. This used to branch on the same
-                          flag as the layout above, so in a shared session an
-                          Edit button appeared over a colleague's message —
-                          and answered 404, because messages_update_owner is
-                          keyed to whoever owns the SESSION. Editing also
-                          discards every reply after the edited turn, which is
-                          not something to offer over somebody else's
-                          conversation even if the policy allowed it. */}
-                          <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
-                            <span className="tabular-nums">{formatTime(m.createdAt)}</span>
-                            {isOwner && (
-                              <button
-                                onClick={() => startEdit(m.id, m.content)}
-                                disabled={busy}
-                                className="flex items-center gap-1 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
-                              >
-                                <Pencil className="h-3 w-3" /> Edit
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                        <QuestionTurn
+                          message={m}
+                          sender={isShared ? (m.sender ?? null) : null}
+                          time={formatTime(m.createdAt)}
+                          canEdit={isOwner}
+                          busy={busy}
+                          onEdit={startEdit}
+                          footer={
+                            /* The receipts for files still going up, under the
+                               LAST question only. A slot rather than a prop on
+                               the turn: this is a condition about the list, and
+                               a turn cannot see the list. */
+                            idx === arr.length - 1 && uploads.receipts.length > 0 ? (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {uploads.receipts.map((r) => (
+                                  <div
+                                    key={r.id}
+                                    className="flex items-center gap-1.5 rounded-sm border border-border bg-surface px-2.5 py-1 text-xs"
+                                  >
+                                    <FileText className="h-3 w-3 text-muted-foreground" />
+                                    <span className="text-muted-foreground">{r.name}</span>
+                                    {r.state === "uploading" && (
+                                      <span className="tabular-nums text-muted-foreground">
+                                        {r.progress}%
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null
+                          }
+                        />
                       </Fragment>
                     );
                   }

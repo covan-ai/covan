@@ -234,7 +234,7 @@ function ChatTab() {
   // have, and taking it back on the next one is answering a question they did
   // not ask.
   const [pageSize, setPageSize] = useState(MESSAGE_PAGE);
-  const { data: allMessages = [] } = useQuery({
+  const { data: allMessages = [], isSuccess: messagesLoaded } = useQuery({
     queryKey: ["messages", active?.id],
     queryFn: () => api.sessions.messages(active!.id, { limit: pageSize }),
     enabled: !!active?.id,
@@ -1229,7 +1229,17 @@ function ChatTab() {
     setRating({ messageId, kind }),
   );
 
-  const isEmpty = !active || allMessages.length === 0;
+  /*
+   * Empty means "asked, and there is nothing", not "have not asked yet".
+   *
+   * `allMessages` defaults to `[]` while the query is in flight, so every
+   * conversation opened rendered the empty screen for one frame before the
+   * transcript arrived. Nobody minded while that screen was four static
+   * buttons. It is about to own two queries of its own, and a branch that
+   * mounts and unmounts a frame later would fire them on every single chat
+   * anybody opens.
+   */
+  const isEmpty = !active || (messagesLoaded && allMessages.length === 0);
 
   const chatPane = (
     <section

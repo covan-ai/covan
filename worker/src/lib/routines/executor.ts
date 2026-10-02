@@ -528,7 +528,10 @@ export async function runRoutine(
       // anyone. Composing with the slot still dedupes the case the backstop
       // exists for: a retry after failed bookkeeping runs against an
       // unadvanced next_run_at, so it lands in the same slot with the same key.
-      keysToClaim = [`hash:${result.hash}@${routine.next_run_at}`];
+      keysToClaim =
+        deps.trigger === "manual"
+          ? [`hash:${result.hash}@manual:${startedAt.toISOString()}`]
+          : [`hash:${result.hash}@${routine.next_run_at}`];
     } else {
       // source_kind === "none": nothing to diff, so it always runs — including
       // the first time. The scheduled slot is its identity, so two runs that
@@ -547,7 +550,15 @@ export async function runRoutine(
       // here: two different events inside one scheduled slot would collide
       // with each other, and a retry of one event across a slot boundary
       // would not collide at all.
-      keysToClaim = trigger ? [`hook:${trigger.eventId}`] : [`slot:${routine.next_run_at}`];
+      //
+      // A manual run is on-demand: it uses a timestamped manual key so it
+      // neither collides with a previous manual run nor consumes the future
+      // scheduled slot.
+      keysToClaim = trigger
+        ? [`hook:${trigger.eventId}`]
+        : deps.trigger === "manual"
+          ? [`manual:${routine.id}@${startedAt.toISOString()}`]
+          : [`slot:${routine.next_run_at}`];
     }
 
     const hasWork = routine.source_kind === "none" || items.length > 0 || pageText !== undefined;

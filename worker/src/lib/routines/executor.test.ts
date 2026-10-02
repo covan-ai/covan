@@ -1227,6 +1227,26 @@ describe("runRoutine", () => {
     expect(claim.values[0].item_key).toBe("slot:2026-08-14T10:00:00.000Z");
   });
 
+  it("claims a distinct manual key for on-demand runs so it does not collide with scheduled slots", async () => {
+    fetchImpl = vi.fn();
+    const { db, inserts } = makeDb({ claimWins: () => [] });
+
+    const out = await runRoutine(
+      routine({
+        id: "r1",
+        source_kind: "none",
+        source_config: {},
+        next_run_at: "2026-08-14T10:00:00.000Z",
+      }),
+      { ...(makeDeps(db) as any), trigger: "manual" },
+    );
+
+    expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    const claim = inserts.find((i) => i.table === "routine_deliveries")!;
+    expect(claim.values[0].item_key).toMatch(/^manual:r1@/);
+    expect(claim.values[0].item_key).not.toContain("slot:");
+  });
+
   // ---- membership ----------------------------------------------------------
 
   it("pauses instead of running when the owner is no longer a workspace member", async () => {

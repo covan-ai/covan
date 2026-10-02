@@ -32,7 +32,7 @@ import type { Connection } from "@/lib/connections-api";
  * connection has since been deleted, and neither is worth showing a uuid for.
  */
 function sourceLabel(routine: Routine, connections: Connection[]): string {
-  if (routine.sourceKind === "none") return "Scheduled prompt";
+  if (routine.sourceKind === "none") return "Scheduled task";
   if (routine.sourceKind === "connection") {
     const connection = connections.find((c) => c.id === routine.connectionId);
     if (!connection) return "A connected source";
@@ -62,14 +62,19 @@ function RunRow({ run }: { run: RoutineRun }) {
       <Minus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     );
 
-  // `skipped` is the answer to "why didn't it send me anything?" — the engine
-  // looked and there was nothing new. On a healthy feed it is the common case,
-  // so it stays neutral and never reads as a failure.
+  // `skipped` means the run completed without needing to deliver or report.
+  // It stays neutral and never reads as a failure.
   const label =
     run.status === "ok" ? (
       <span className="text-sm">
-        Sent · <span className="tabular-nums">{run.itemsNew}</span> new item
-        {run.itemsNew === 1 ? "" : "s"}
+        {run.itemsNew > 0 ? (
+          <>
+            Delivered · <span className="tabular-nums">{run.itemsNew}</span> new item
+            {run.itemsNew === 1 ? "" : "s"}
+          </>
+        ) : (
+          "Delivered"
+        )}
         {/* What the per-run cap declined. These were marked seen, so they are
             not waiting for the next run — they were never delivered and never
             will be. A run that shows only "10 new items" reads as complete,
@@ -89,16 +94,19 @@ function RunRow({ run }: { run: RoutineRun }) {
     ) : run.status === "failed" ? (
       <span className="text-sm text-destructive">{run.error ?? "Failed"}</span>
     ) : run.nothingRelevant ? (
-      // A different answer to "why didn't it send me anything?" than the one
-      // below: this run had entries and the agent decided none of them were
-      // what you asked for. The count is not decoration — a filtered routine
-      // and a broken one both look like silence from the outside, and this is
-      // the only place to see that it is still reading.
+      // A different answer than no action needed: this run evaluated material
+      // and judged that nothing warranted reporting.
       <span className="text-sm text-muted-foreground">
-        Nothing relevant · <span className="tabular-nums">{run.itemsNew}</span> reviewed
+        Nothing to report
+        {run.itemsNew > 0 && (
+          <>
+            {" · "}
+            <span className="tabular-nums">{run.itemsNew}</span> reviewed
+          </>
+        )}
       </span>
     ) : (
-      <span className="text-sm text-muted-foreground">Nothing new</span>
+      <span className="text-sm text-muted-foreground">No action needed</span>
     );
 
   const when = (

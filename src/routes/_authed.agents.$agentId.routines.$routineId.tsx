@@ -100,11 +100,15 @@ function RoutineDetailPage() {
     try {
       const result = await runRoutine.mutateAsync(routine.id);
       if (result.status === "ok") {
-        toast.success(`Sent ${result.itemsNew} new item${result.itemsNew === 1 ? "" : "s"}`);
+        if (result.itemsNew > 0) {
+          toast.success(
+            `Delivered · ${result.itemsNew} new item${result.itemsNew === 1 ? "" : "s"}`,
+          );
+        } else {
+          toast.success("Routine executed and delivered");
+        }
       } else if (result.status === "skipped") {
-        // Not a failure. On a healthy feed with nothing new it is the common
-        // case, and on a source-watching routine's first run it is expected.
-        toast.message("Nothing new to send");
+        toast.message("No action needed");
       } else {
         toast.error("That run failed — see the run history for why");
       }

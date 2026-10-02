@@ -21,14 +21,13 @@ export type DraftDeps = {
 
 const SYSTEM = `Convert the user's request into a routine definition.
 Reply with JSON only, matching exactly:
-{"name": string, "sourceKind": "rss"|"web"|"none", "sourceUrl": string|null,
+{"name": string, "sourceKind": "none", "sourceUrl": null,
  "cron": string (5-field cron), "instruction": string, "channelKind": "slack"|"email"}
 
 Rules:
-- A subreddit becomes sourceKind "rss" with url https://www.reddit.com/r/<sub>/new/.rss
-- A page to watch for changes becomes "web". No external source becomes "none".
+- Routines are standing orders for the agent to run tasks on a schedule using its tools and knowledge. sourceKind is always "none" and sourceUrl is null.
 - "every 15 minutes" is "*/15 * * * *"; "every morning at 9" is "0 9 * * *".
-- instruction is what the agent should do with what it finds, in the user's language.`;
+- instruction is what the agent should do when the routine runs, in the user's language.`;
 
 /**
  * The LLM reasons exactly once, here at setup time. Everything the engine does

@@ -63,7 +63,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   const [drafting, setDrafting] = useState(false);
 
   const [name, setName] = useState("");
-  const [sourceKind, setSourceKind] = useState<RoutineSourceKind>("rss");
+  const [sourceKind, setSourceKind] = useState<RoutineSourceKind>("none");
   const [triggerKind, setTriggerKind] = useState<RoutineTriggerKind>("schedule");
   const [sourceUrl, setSourceUrl] = useState("");
   const [connectionId, setConnectionId] = useState("");
@@ -80,7 +80,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     setStep(1);
     setProse("");
     setName("");
-    setSourceKind("rss");
+    setSourceKind("none");
     setTriggerKind("schedule");
     setSourceUrl("");
     setConnectionId("");
@@ -199,7 +199,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                 value={prose}
                 onChange={(e) => setProse(e.target.value)}
                 rows={4}
-                placeholder="Scan r/SaaS every hour and email me a summary of new posts."
+                placeholder="Check Jira for open high-priority bugs every morning at 9am and post a summary to Slack."
               />
               <div className="flex items-center justify-between gap-2">
                 <Button variant="ghost" size="sm" onClick={skipToForm}>
@@ -217,29 +217,23 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                 <Input id="routine-name" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="routine-source">Source</Label>
-                <Select
-                  value={sourceKind}
-                  onValueChange={(v) => setSourceKind(v as RoutineSourceKind)}
-                >
-                  <SelectTrigger id="routine-source">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="rss">RSS / Atom feed</SelectItem>
-                    <SelectItem value="web">Web page</SelectItem>
-                    {/* Offered only when there is something to point at. An
-                        option that opens onto an empty list reads as a broken
-                        feature rather than as one nobody has set up yet — the
-                        Integrations page is where a connection is made. */}
-                    {connections.length > 0 && (
+              {connections.length > 0 && (
+                <div className="space-y-2">
+                  <Label htmlFor="routine-source">Source</Label>
+                  <Select
+                    value={sourceKind}
+                    onValueChange={(v) => setSourceKind(v as RoutineSourceKind)}
+                  >
+                    <SelectTrigger id="routine-source">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Scheduled task</SelectItem>
                       <SelectItem value="connection">A connected source</SelectItem>
-                    )}
-                    <SelectItem value="none">Scheduled prompt (no source)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               {/* Offered only where it is valid. A routine that watches
                   something cannot also be poked — see 0055 for why the pairing
@@ -267,21 +261,6 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                       You will get a URL to paste into whatever should start it, and whatever it
                       POSTs is what the agent reads.
                     </p>
-                  )}
-                </div>
-              )}
-
-              {(sourceKind === "rss" || sourceKind === "web") && (
-                <div className="space-y-2">
-                  <Label htmlFor="routine-url">URL</Label>
-                  <Input
-                    id="routine-url"
-                    value={sourceUrl}
-                    onChange={(e) => setSourceUrl(e.target.value)}
-                    placeholder="https://www.reddit.com/r/SaaS/new/.rss"
-                  />
-                  {fieldError?.field === "url" && (
-                    <p className="text-xs text-destructive">{fieldError.message}</p>
                   )}
                 </div>
               )}

@@ -98,15 +98,17 @@ export function EditRoutineDialog({
               <Label>Source</Label>
               <p className="truncate rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
                 {routine.sourceKind === "none"
-                  ? "Scheduled prompt"
+                  ? "Scheduled task"
                   : routine.sourceKind === "connection"
                     ? "A connected source"
                     : routine.sourceUrl}
               </p>
-              <p className="text-xs text-muted-foreground">
-                A routine remembers how far it has read, so the source is fixed. To watch something
-                else, delete it and make a new one.
-              </p>
+              {routine.sourceKind !== "none" && (
+                <p className="text-xs text-muted-foreground">
+                  A routine remembers how far it has read, so the source is fixed. To watch
+                  something else, delete it and make a new one.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">

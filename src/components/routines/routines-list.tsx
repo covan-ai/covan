@@ -32,7 +32,7 @@ export function RoutinesList({
       <EmptyState
         className="mt-8"
         title="No routines yet"
-        description="A routine lets this agent watch a feed or a page on a schedule and send you what changed."
+        description="A routine gives this agent standing orders to run tasks on a schedule and deliver results."
         action={action}
       />
     );

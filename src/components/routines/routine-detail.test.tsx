@@ -103,7 +103,7 @@ const props = {
 describe("RoutineDetail", () => {
   it("renders skipped neutrally, not as an error", () => {
     render(<RoutineDetail {...props} />);
-    const row = screen.getByText("Nothing new");
+    const row = screen.getByText("No action needed");
     expect(row.className).toContain("text-muted-foreground");
     expect(row.className).not.toContain("rose");
   });
@@ -123,7 +123,7 @@ describe("RoutineDetail", () => {
     expect(screen.getByText(/skipped/)).toBeInTheDocument();
   });
 
-  // "Nothing new" and "nothing here was relevant" are different answers to
+  // "No action needed" and "nothing to report" are different answers to
   // "why didn't it send me anything?", and only one of them means the model
   // made a judgement somebody might disagree with. Silence is what a broken
   // routine looks like too, so the count is what gives anyone a way to check.
@@ -136,14 +136,16 @@ describe("RoutineDetail", () => {
     // failing on anything about the count. Asserting the row's whole sentence
     // is both unambiguous and closer to what the row has to say: the number is
     // only useful attached to what it counts.
-    expect(screen.getByText(/Nothing relevant/)).toHaveTextContent("Nothing relevant · 6 reviewed");
-    expect(screen.queryByText("Nothing new")).not.toBeInTheDocument();
+    expect(screen.getByText(/Nothing to report/)).toHaveTextContent(
+      "Nothing to report · 6 reviewed",
+    );
+    expect(screen.queryByText("No action needed")).not.toBeInTheDocument();
   });
 
   it("still reads as neutral, not as a failure", () => {
     const filtered = [{ ...runs[1], nothingRelevant: true, itemsNew: 6 }];
     render(<RoutineDetail {...props} runs={filtered} />);
-    const row = screen.getByText(/Nothing relevant/);
+    const row = screen.getByText(/Nothing to report/);
     expect(row.className).toContain("text-muted-foreground");
     expect(row.className).not.toContain("destructive");
   });
@@ -227,7 +229,7 @@ describe("RoutineDetail", () => {
 
     it("does not offer to expand a run that sent nothing", () => {
       render(<RoutineDetail {...props} />);
-      expect(screen.queryByRole("button", { name: /nothing new/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /no action needed/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /upstream 503/i })).not.toBeInTheDocument();
     });
 
@@ -238,7 +240,7 @@ describe("RoutineDetail", () => {
       expect(screen.queryByRole("button", { name: /3 new items/i })).not.toBeInTheDocument();
       // The count is still on screen, just as plain text split across spans
       // rather than a button — so match the row, not a single text node.
-      expect(screen.getByRole("listitem")).toHaveTextContent("Sent · 3 new items");
+      expect(screen.getByRole("listitem")).toHaveTextContent("Delivered · 3 new items");
     });
   });
 

@@ -149,6 +149,15 @@ export function runRoutineWithTools(
         describeMemo: new Map<string, string>(),
         offeredSlugs: new Set<string>(),
         offeredOperations: new Map(),
+        // And no `priorSearches`, which is not an omission that can be fixed
+        // here: the cross-turn seeding reads this conversation's own
+        // `message_steps` (see `lib/harness/offerings.ts`), and a scheduled run
+        // has no session and writes no steps at all. So a routine that runs the
+        // same search every morning pays for it every morning, and `run_tool`'s
+        // guard stands down on every run. Both halves of covan#216 and #214
+        // stop at the same place, and closing it means deciding what a run
+        // should be allowed to remember of the last one — a product question,
+        // not a missing read.
       },
     });
 

@@ -203,6 +203,29 @@ export type ToolContext = {
    * `destructive` was true, and neither reached the person being asked. #201.
    */
   offeredOperations?: Map<string, ComposioTool>;
+  /**
+   * The searches an EARLIER turn of this conversation already paid for, keyed
+   * the way `searchMemoKey` keys a live one, each holding the slugs that search
+   * offered.
+   *
+   * The other three maps above are a turn's own scratch space. This one is
+   * read-only and comes from `message_steps` — `request` for the question,
+   * `offered` for the answer — so a repeat can be recognised rather than
+   * bought again. 94 discovery steps in production held 24 byte-identical
+   * repeats, 20 of them in a later turn, 80,368 characters (covan#216).
+   *
+   * THE SAME PROVENANCE RULE AS `offeredSlugs`, and here it is the whole
+   * safety argument rather than a convention: the key carries no workspace at
+   * all. A store that outlived a turn on these keys would answer one tenant's
+   * search with another's. Nothing does — `priorSearches` in
+   * `lib/harness/offerings.ts` reads it back through the caller's own
+   * RLS-scoped client every turn, from this session's own rows, and that read
+   * IS the tenant check.
+   *
+   * Values are slugs and never rendered text: see `priorSearches` for why the
+   * answer has to be rebuilt rather than recovered.
+   */
+  priorSearches?: Map<string, string[]>;
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };

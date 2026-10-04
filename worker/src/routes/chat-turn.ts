@@ -9,7 +9,7 @@ import {
 } from "../lib/harness/loop";
 import { chatBudget } from "../lib/harness/budget";
 import { writeSteps } from "../lib/harness/turn";
-import { priorOfferings } from "../lib/harness/offerings";
+import { priorOfferings, priorSearches } from "../lib/harness/offerings";
 import type { MessageOutcome, TurnUsage } from "../lib/harness/usage";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
@@ -80,6 +80,14 @@ export async function buildToolContext(input: {
    */
   confirmed?: boolean;
 }): Promise<ToolContext> {
+  // Two independent reads of the same table, both on the critical path of every
+  // turn, so they overlap rather than queue. Neither can fail the turn: each
+  // answers empty on a database that will not, which is the behaviour this
+  // seeding replaced.
+  const [offeredSlugs, searches] = await Promise.all([
+    priorOfferings(input.db, input.sessionId),
+    priorSearches(input.db, input.sessionId),
+  ]);
   return {
     db: input.db,
     env: input.env,
@@ -109,11 +117,16 @@ export async function buildToolContext(input: {
     //
     // Still safe on the resume path, where the approved call skips the guard
     // entirely: `confirmed` short-circuits it before the set is read.
-    offeredSlugs: await priorOfferings(input.db, input.sessionId),
+    offeredSlugs,
     // And the operations behind those slugs, so `run_tool` can refuse a call
     // whose arguments contradict one, and so the approval card can say what the
     // operation does. Same lifetime and same provenance as the set above.
     offeredOperations: new Map(),
+    // And the questions those slugs were the answers to, so a search this
+    // conversation has already paid for is recognised rather than bought again.
+    // The set above is what `run_tool` may run; this is which search offered
+    // what, which is the half that did not cross a turn — covan#216.
+    priorSearches: searches,
   };
 }
 

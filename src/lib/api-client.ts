@@ -1004,15 +1004,21 @@ export type UsageResponse = {
 };
 
 /**
- * One month of the workspace's traffic. No cost: `messages` records no model,
- * so pricing a month would mean assuming every reply in it came from whatever
- * the agent is set to today. The per-agent rows carry the money.
+ * One month of the workspace's traffic.
+ *
+ * `estCostUsd` is optional and that is not a style choice: until `0071` a month
+ * could not be priced at all, because `messages` recorded no model and the only
+ * available guess was "assume every reply came from whatever its agent is set
+ * to today" — across six months, the assumption most likely to be wrong. The
+ * column exists now, and the field is absent only against an API or a database
+ * that has not caught up. Absent means "not known"; zero would mean "free".
  */
 export type UsageMonth = {
   /** First day of the month, ISO. Oldest first, so it draws left to right. */
   month: string;
   messageCount: number;
   totalTokens: number;
+  estCostUsd?: number;
   cachedTokens: number;
   cacheWriteTokens: number;
 };

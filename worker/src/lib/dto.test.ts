@@ -62,6 +62,38 @@ describe("mapDocument", () => {
 describe("mapMessage", () => {
   const base = { id: "m1", role: "assistant", content: "hi", created_at: "2026-01-01T00:00:00Z" };
 
+  /**
+   * The three columns `0065` added and nothing carried out.
+   *
+   * covan#205 Task 7 and covan#204 item 2 both ask questions of production that
+   * only SQL can answer right now — which model answered, whether a turn
+   * stopped short, how much of the output was reasoning — because the reply
+   * that reaches a screen or an export carries none of them. Adding a column to
+   * a table and a writer for it is two thirds of a change.
+   */
+  it("carries which model answered, how it ended, and what it thought", () => {
+    const mapped = mapMessage({
+      ...base,
+      model: "claude-sonnet-5",
+      outcome: "cut_short",
+      reasoning_tokens: 2816,
+    });
+
+    expect(mapped.model).toBe("claude-sonnet-5");
+    expect(mapped.outcome).toBe("cut_short");
+    expect(mapped.reasoningTokens).toBe(2816);
+  });
+
+  it("leaves all three absent on a reply that recorded none of them", () => {
+    // 361 rows predate the column, and a user message never had one. Absent
+    // rather than null, which is how every other optional field here travels.
+    const mapped = mapMessage({ ...base });
+
+    expect(mapped).not.toHaveProperty("model");
+    expect(mapped).not.toHaveProperty("outcome");
+    expect(mapped.reasoningTokens).toBeUndefined();
+  });
+
   it("reads the ids stored with a source", () => {
     expect(
       mapMessage({

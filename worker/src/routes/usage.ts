@@ -1,11 +1,27 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { getActiveWorkspaceId } from "../lib/workspace";
-import { resolveModel } from "../lib/models";
+import { resolveModel, type ModelEnv } from "../lib/models";
 import { estimateCostUsd } from "../lib/pricing";
 import { weighTokens } from "../lib/entitlements";
 
 const usage = new Hono<AppEnv>();
+
+/**
+ * What one model's share of a row cost, as `0071`'s functions return it.
+ *
+ * `model` is null on a reply written before `0065` added the column — 361 rows
+ * in production, and no row written after 2026-09-27T19:12Z. A null is
+ * therefore "nobody recorded one", not "no model answered", and the only
+ * honest price for it is the agent's own.
+ */
+type ModelShare = {
+  model: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheWriteTokens: number;
+};
 
 type UsageRow = {
   agent_id: string;
@@ -18,6 +34,8 @@ type UsageRow = {
   cached_tokens: number;
   cache_write_tokens: number;
   measured_prompt_tokens: number;
+  /** Absent against a database `0071` has not reached. See `costOf`. */
+  by_model?: unknown;
 };
 
 type MonthRow = {
@@ -27,7 +45,53 @@ type MonthRow = {
   completion_tokens: number;
   cached_tokens: number;
   cache_write_tokens: number;
+  by_model?: unknown;
 };
+
+/**
+ * What a row cost, priced by the model that answered each reply in it.
+ *
+ * WHY THIS IS NOT `estimateCostUsd(agentModel, …)`. It was, and covan#208 is
+ * what that produced: every reply priced at the agent's model **today**, joined
+ * through `chat_sessions.agent_id → agents.model`. An agent moved from gpt-5 to
+ * Sonnet took its whole history onto Sonnet's price list, and `0065`'s header
+ * names the shape that makes it visible — a gpt-5 agent carrying 19,704
+ * `cache_write_tokens`, a number OpenAI does not report.
+ *
+ * Returns null when the column is absent rather than 0. CI never applies
+ * migrations, so there is a window where this code runs against a schema
+ * without `by_model`, and in that window the caller falls back to the old
+ * reading. Zero would be a claim that the month was free.
+ */
+function costOf(byModel: unknown, fallbackModel: string | null): number | null {
+  if (!Array.isArray(byModel)) return null;
+  let total = 0;
+  for (const raw of byModel) {
+    if (!raw || typeof raw !== "object") continue;
+    const share = raw as Partial<ModelShare>;
+    total += estimateCostUsd(
+      // The recorded id, NOT `resolveModel`'d. That function answers "what
+      // would serve a request now" — it turns a Claude pick into the default
+      // on a deployment with no Anthropic key — and a reply that has already
+      // been answered and billed is not asking that question. Routing it
+      // through there is what priced every Anthropic reply at gpt-4.1: 64 of
+      // the 66 turns in the week to 2026-10-04 are Anthropic, Sonnet 5 bills
+      // $10/M out against gpt-4.1's $8 and Opus 5 bills $25, and a cached
+      // Anthropic token is $0.20 against gpt-4.1's $0.50. `estimateCostUsd`
+      // takes an unknown id to `DEFAULT_PRICE` on its own, which is the
+      // behaviour this wants.
+      //
+      // The fallback is per share, not per row: one agent holds both replies
+      // that recorded a model and replies that predate the column.
+      share.model ?? fallbackModel ?? "",
+      Number(share.promptTokens) || 0,
+      Number(share.completionTokens) || 0,
+      Number(share.cachedTokens) || 0,
+      Number(share.cacheWriteTokens) || 0,
+    );
+  }
+  return total;
+}
 
 const emptyTotals = {
   messageCount: 0,
@@ -43,8 +107,13 @@ const emptyTotals = {
 
 /** One agent's row, priced. Shared by the per-caller and workspace-wide reads,
     which return identical columns on purpose so one renderer can read either. */
-function mapAgent(r: UsageRow) {
-  const model = resolveModel(r.agent_model);
+function mapAgent(r: UsageRow, env?: ModelEnv) {
+  // What this deployment will actually answer with, which is the question this
+  // field is for — an agent set to Claude on an install with no Anthropic key
+  // answers with the default, and saying so is the point of resolving it.
+  // Passed the env, because without it every Anthropic agent resolved to the
+  // default and the screen named the wrong model on every Claude row.
+  const model = resolveModel(r.agent_model, env);
   const promptTokens = Number(r.prompt_tokens) || 0;
   const completionTokens = Number(r.completion_tokens) || 0;
   // A subset of promptTokens, so it is priced into estCostUsd rather than
@@ -85,13 +154,18 @@ function mapAgent(r: UsageRow) {
       cachedTokens,
       cacheWriteTokens,
     }),
-    estCostUsd: estimateCostUsd(
-      model,
-      promptTokens,
-      completionTokens,
-      cachedTokens,
-      cacheWriteTokens,
-    ),
+    // Priced by what answered, not by `model` above — which is what the agent
+    // is set to now, and therefore what it will answer with NEXT. The two
+    // disagreeing on a row is the fact rather than a glitch: see `costOf`.
+    estCostUsd:
+      costOf(r.by_model, r.agent_model) ??
+      estimateCostUsd(
+        r.agent_model ?? "",
+        promptTokens,
+        completionTokens,
+        cachedTokens,
+        cacheWriteTokens,
+      ),
   };
 }
 
@@ -138,7 +212,7 @@ usage.get("/usage", async (c) => {
     return c.json({ error: "failed to load usage" }, 500);
   }
 
-  const agents = ((data ?? []) as UsageRow[]).map(mapAgent);
+  const agents = ((data ?? []) as UsageRow[]).map((r) => mapAgent(r, c.env));
   return c.json({ agents, totals: sumTotals(agents), quota });
 });
 
@@ -195,20 +269,27 @@ usage.get("/usage/workspace", async (c) => {
     return c.json({ error: "failed to load usage" }, 500);
   }
 
-  const agents = ((wide.data ?? []) as UsageRow[]).map(mapAgent);
+  const agents = ((wide.data ?? []) as UsageRow[]).map((r) => mapAgent(r, c.env));
   const months = ((monthly.data ?? []) as MonthRow[]).map((m) => {
     const promptTokens = Number(m.prompt_tokens) || 0;
     const completionTokens = Number(m.completion_tokens) || 0;
+    const cost = costOf(m.by_model, null);
     return {
       month: m.month,
       messageCount: Number(m.message_count) || 0,
-      // No cost here, and not an oversight: `messages` records no model, so a
-      // month's tokens cannot be priced without assuming every reply in it
-      // came from whatever the agent is set to today. Tokens are the honest
-      // figure at this grain; the per-agent rows above carry the money.
       totalTokens: promptTokens + completionTokens,
       cachedTokens: Number(m.cached_tokens) || 0,
       cacheWriteTokens: Number(m.cache_write_tokens) || 0,
+      // A month CAN be priced now, which it could not be when this shape was
+      // written: there was no per-reply model, so the only available answer was
+      // "assume every reply came from whatever its agent is set to today" —
+      // across six months, the one assumption most likely to be wrong. `0071`
+      // groups each bucket by the model that answered.
+      //
+      // Spread rather than set, so a database without `0071` returns a month
+      // with no cost at all instead of a free one. There is no agent to fall
+      // back to at this grain; a month is every agent at once.
+      ...(cost === null ? {} : { estCostUsd: cost }),
     };
   });
 

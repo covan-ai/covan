@@ -11,7 +11,10 @@ const compact = (n: number) =>
       ? `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
       : String(n);
 
-const usd = (n: number) => (n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
+// `<$0.01` is for an amount too small to print, not for the absence of one: a
+// month or an agent that really spent nothing reads `$0.00`, because "<$0.01"
+// under 0 replies says money moved and none did.
+const usd = (n: number) => (n === 0 ? "$0.00" : n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
 
 const monthLabel = (iso: string) =>
   new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en", {
@@ -115,6 +118,14 @@ export function WorkspaceUsageSection() {
  */
 function MonthlyTrend({ months }: { months: UsageMonth[] }) {
   const peak = Math.max(...months.map((m) => m.totalTokens), 1);
+  // Summed only over the months that carry one. A month whose cost is absent is
+  // a month nothing can price — an API or a database without `0071` — and
+  // folding it in as zero would quietly understate the total instead of saying
+  // the figure is incomplete. All or nothing is the honest pair of options, and
+  // nothing is the one that cannot mislead.
+  const priced = months.filter((m) => typeof m.estCostUsd === "number");
+  const spend =
+    priced.length === months.length ? priced.reduce((n, m) => n + m.estCostUsd!, 0) : null;
 
   return (
     <SectionCard className="mt-6">
@@ -122,6 +133,7 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
         <span className="text-sm text-muted-foreground">Last {months.length} months</span>
         <span className="text-sm font-medium">
           {compact(months.reduce((n, m) => n + m.totalTokens, 0))} tokens
+          {spend === null ? null : <span className="ml-2 text-muted-foreground">{usd(spend)}</span>}
         </span>
       </div>
 
@@ -130,7 +142,14 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
           <div key={m.month} className="flex flex-1 flex-col items-center gap-2">
             {/* 64px of headroom, and a 2px floor so an empty month still reads
                 as a month rather than as missing. */}
-            <div className="flex h-16 w-full items-end" title={`${compact(m.totalTokens)} tokens`}>
+            <div
+              className="flex h-16 w-full items-end"
+              title={
+                typeof m.estCostUsd === "number"
+                  ? `${compact(m.totalTokens)} tokens · ${usd(m.estCostUsd)}`
+                  : `${compact(m.totalTokens)} tokens`
+              }
+            >
               <div
                 className="w-full bg-accent-orange"
                 style={{ height: `${Math.max(2, Math.round((m.totalTokens / peak) * 100))}%` }}
@@ -148,6 +167,7 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
         {months.map((m) => (
           <li key={m.month}>
             {monthLabel(m.month)}: {m.totalTokens} tokens across {m.messageCount} replies
+            {typeof m.estCostUsd === "number" ? `, ${usd(m.estCostUsd)}` : ""}
           </li>
         ))}
       </ul>

@@ -248,8 +248,8 @@ describe("pricing by the model that answered", () => {
   });
 
   it("prices a reply that predates the column by the agent's model", async () => {
-    // 361 rows in production. A null here is not a missing model, it is a reply
-    // written before anything recorded one.
+    // 183 of production's 254 assistant replies. A null here is not a missing
+    // model, it is a reply written before anything recorded one.
     const { db } = fakeDb({
       workspace_usage: {
         data: [

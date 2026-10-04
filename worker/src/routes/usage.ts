@@ -10,10 +10,10 @@ const usage = new Hono<AppEnv>();
 /**
  * What one model's share of a row cost, as `0071`'s functions return it.
  *
- * `model` is null on a reply written before `0065` added the column — 361 rows
- * in production, and no row written after 2026-09-27T19:12Z. A null is
- * therefore "nobody recorded one", not "no model answered", and the only
- * honest price for it is the agent's own.
+ * `model` is null on a reply written before `0065` added the column — 183 of
+ * production's 254 assistant replies, and none written after
+ * 2026-09-27T19:12Z. A null is therefore "nobody recorded one", not "no model
+ * answered", and the only honest price for it is the agent's own.
  */
 type ModelShare = {
   model: string | null;

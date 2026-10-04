@@ -26,10 +26,14 @@
 -- which prices", and the caller folds the second into one figure.
 --
 -- WHY THE FALLBACK IS IN SQL. `coalesce(m.model, a.model)` rather than a null
--- carried to the caller: 361 production rows predate the column, every row
--- written after 2026-09-27T19:12Z has it, and the only honest price for a reply
--- that recorded no model is the agent's own. Doing it here means one definition
--- of that rule instead of one per reader.
+-- carried to the caller: 183 of production's 254 assistant replies predate the
+-- column, every reply written after 2026-09-27T19:12Z has it, and the only
+-- honest price for a reply that recorded no model is the agent's own. Doing it
+-- here means one definition of that rule instead of one per reader.
+--
+-- (covan#208 says 361, counting every row of `messages` with a null `model`.
+-- 277 of those are user messages, which have no model and never will. Measured
+-- 2026-10-05: 460 null of 531 rows, 183 of them assistant replies.)
 --
 -- WHY EVERY CTE COLUMN CARRIES A PREFIX. Two of these are `plpgsql`, and there
 -- a `returns table (...)` entry is an OUT *variable* as well as an output

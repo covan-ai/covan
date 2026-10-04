@@ -494,6 +494,36 @@ function summarise(
   return lines.join("\n");
 }
 
+/**
+ * What makes two searches the same search.
+ *
+ * Exported because two places need to agree on it and they read from different
+ * sources: this tool, from the arguments the model just wrote, and
+ * `priorSearches` in `lib/harness/offerings.ts`, from the arguments an earlier
+ * turn's step recorded in `message_steps.request`. Two spellings of this key
+ * would be a memo that silently never hits — no error, no failing test, just a
+ * catalogue bought twice — so there is one.
+ *
+ * Normalising rather than validating: a missing or unusable query is the
+ * caller's to refuse, and both callers do. Idempotent on its own output, so
+ * passing values that are already trimmed and cased through it changes nothing.
+ *
+ * `detail` is part of the key because a schema and a shortlist are different
+ * answers to the same words, and `slug` is because `detail` on a named
+ * operation describes that one rather than the top match.
+ */
+export function searchMemoKey(args: {
+  query: string;
+  toolkit?: unknown;
+  detail?: unknown;
+  slug?: unknown;
+}): string {
+  const toolkit = typeof args.toolkit === "string" ? args.toolkit.trim().toLowerCase() : "";
+  const named = typeof args.slug === "string" ? args.slug.trim().toUpperCase() : "";
+  const detail = args.detail === true ? "detail" : "list";
+  return `${toolkit}|${detail}|${named}|${args.query.trim().toLowerCase()}`;
+}
+
 export const findToolTool: AgentTool = {
   name: "find_tool",
   description:
@@ -573,7 +603,12 @@ export const findToolTool: AgentTool = {
     // first time, and said so — see `searchMemo` in `registry.ts` for the
     // production turn that made this worth having. Before `affordable`,
     // because nothing is about to be bought.
-    const memoKey = `${toolkit ?? ""}|${input.detail === true ? "detail" : "list"}|${named}|${query.toLowerCase()}`;
+    const memoKey = searchMemoKey({
+      query,
+      toolkit,
+      detail: input.detail,
+      slug: named,
+    });
     const remembered = ctx.searchMemo?.get(memoKey);
     if (remembered !== undefined) {
       return {
@@ -582,6 +617,46 @@ export const findToolTool: AgentTool = {
           "You already ran this exact search earlier in this turn. Here is what it said — " +
           "choose an operation from it and call run_tool, or ask for detail on a slug by " +
           `name. Searching again will keep giving you this.\n\n${remembered}`,
+      };
+    }
+
+    /**
+     * The same search, asked again in a LATER turn.
+     *
+     * Second, because what this turn said is the better answer: the memo above
+     * holds the whole rendered thing, and this holds slugs. There is no
+     * rendered answer to hold — 45 of 61 stored `find_tool` excerpts are
+     * truncated, so replaying one would show three candidates where five
+     * matched and the model would choose from three (covan#216). So this names
+     * the operations and points at the two places the rest of it already is:
+     * that earlier answer, still in the transcript this turn was built from,
+     * and `detail`, which is a different question and really asks it.
+     *
+     * Narrowed to what is still allowed. `offered` records what a step put in
+     * front of the model, and `run_tool` withdraws a slug the moment Composio
+     * 404s it — so the live set decides, and a recall with nothing left in it
+     * falls through to a search worth making again.
+     *
+     * Where the connection id comes from is unchanged and deliberately not
+     * repeated here: `connectionsManifest` puts every id in the system prompt
+     * of every turn, so a recall that re-listed them would spend characters to
+     * say what the model has already been told twice.
+     */
+    const recalled = (ctx.priorSearches?.get(memoKey) ?? []).filter(
+      (slug) => ctx.offeredSlugs?.has(slug) ?? true,
+    );
+    if (recalled.length > 0) {
+      return {
+        kind: "ok",
+        content:
+          "You already ran this exact search earlier in this conversation, and it offered " +
+          `these operations:\n${recalled.map((slug) => `  ${slug}`).join("\n")}\n\n` +
+          "Those are the ones you may run. Call run_tool with one of them and that app's " +
+          "connection id from the list of connected services. What each one does — and the " +
+          "arguments of the first — are in that earlier answer, further up this " +
+          "conversation; if you need an argument's type or its allowed values, ask for " +
+          "detail on a slug by name. Repeating this search in these same words will keep " +
+          "giving you this.",
       };
     }
 

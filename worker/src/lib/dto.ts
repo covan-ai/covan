@@ -267,6 +267,32 @@ export type MessageDTO = {
   cachedTokens?: number | null;
   cacheWriteTokens?: number | null;
   /**
+   * How much of `completionTokens` the model spent thinking rather than
+   * answering.
+   *
+   * Null on every Anthropic reply for good rather than pending: thinking is
+   * billed inside `output_tokens` and reported with no separate count, so a
+   * zero here would be a claim the API never made. See `lib/completion.ts`.
+   */
+  reasoningTokens?: number | null;
+  /**
+   * Which model answered, as recorded on the reply by `0065`.
+   *
+   * Absent on the 361 rows written before the column existed, and on every
+   * user message. Not the same question as the agent's `model`, which is what
+   * will answer NEXT — that difference is what covan#208 is about.
+   */
+  model?: string;
+  /**
+   * How the turn ended, when it ended in any way worth naming.
+   *
+   * `answered` is the ordinary case. The others say a turn stopped: `tokens`
+   * and `budget` are our own ceilings, `runtime` is the platform's, `paused`
+   * is waiting on a person, and `cut_short` is a turn that did work and never
+   * spoke. Absent before `0065`.
+   */
+  outcome?: string;
+  /**
    * What the reply did before it wrote, when it did anything.
    *
    * Absent on every reply that ran no tool, which is most of them and all of
@@ -522,6 +548,9 @@ export function mapMessage(row: {
   completion_tokens?: number | null;
   cached_tokens?: number | null;
   cache_write_tokens?: number | null;
+  reasoning_tokens?: number | null;
+  model?: string | null;
+  outcome?: string | null;
   /** The embedded `message_steps` rows, when the caller asked for them. */
   message_steps?: unknown;
 }): MessageDTO {
@@ -540,6 +569,13 @@ export function mapMessage(row: {
     completionTokens: row.completion_tokens ?? undefined,
     cachedTokens: row.cached_tokens ?? undefined,
     cacheWriteTokens: row.cache_write_tokens ?? undefined,
+    reasoningTokens: row.reasoning_tokens ?? undefined,
+    // Spread rather than assigned, because these two are strings: `undefined`
+    // would travel as a key with no value in some serialisers, and "the reply
+    // recorded no model" is better said by the field not being there. The token
+    // counts above are numbers and already read that way.
+    ...(row.model ? { model: row.model } : {}),
+    ...(row.outcome ? { outcome: row.outcome } : {}),
     ...(steps.length > 0 ? { steps } : {}),
   };
 }

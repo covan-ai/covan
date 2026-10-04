@@ -97,6 +97,56 @@ describe("WorkspaceUsageSection", () => {
     expect(screen.getByText(/Jul: 0 tokens across 0 replies/)).toBeInTheDocument();
   });
 
+  it("says what a month cost, now that a reply records which model answered", () => {
+    // covan#208. The trend showed tokens and nothing else, because `messages`
+    // recorded no model and the only guess available was "assume every reply
+    // came from whatever its agent is set to today". `0071` groups each bucket
+    // by the model that actually answered.
+    renderWith(
+      response({
+        months: [
+          { month: "2026-07-01", messageCount: 0, totalTokens: 0, cachedTokens: 0, estCostUsd: 0 },
+          {
+            month: "2026-08-01",
+            messageCount: 12,
+            totalTokens: 120_000,
+            cachedTokens: 0,
+            estCostUsd: 3.5,
+          },
+        ],
+      } as Partial<WorkspaceUsageResponse>),
+    );
+
+    expect(screen.getByText("$3.50")).toBeInTheDocument();
+    expect(screen.getByText(/Aug: 120000 tokens across 12 replies, \$3\.50/)).toBeInTheDocument();
+  });
+
+  it("shows a month no cost at all rather than a free one", () => {
+    // Against an API or a database without `0071` the field is absent, and
+    // absent means "not known". A `$0.00` under a month with 120,000 tokens in
+    // it would be a claim.
+    renderWith(response());
+
+    // `$1.40` is the agent row's and stays. What must not appear is a figure
+    // for a month, and the readable version of the trend is where to check it.
+    expect(screen.queryByText(/^\$0\.00$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Aug: 120000 tokens across 12 replies$/)).toBeInTheDocument();
+  });
+
+  it("reads a month that really spent nothing as nothing", () => {
+    // `<$0.01` means "too small to print". A month with no replies in it spent
+    // zero, and saying "<$0.01" there claims money moved.
+    renderWith(
+      response({
+        months: [
+          { month: "2026-07-01", messageCount: 0, totalTokens: 0, cachedTokens: 0, estCostUsd: 0 },
+        ],
+      } as Partial<WorkspaceUsageResponse>),
+    );
+
+    expect(screen.getByText(/Jul: 0 tokens across 0 replies, \$0\.00/)).toBeInTheDocument();
+  });
+
   it("leaves the trend out when there is no history to draw", () => {
     renderWith(response({ months: [] }));
 

@@ -31,16 +31,22 @@ let seeded: Seeded;
 const OWNERS_TOKENS = 111;
 const COLLEAGUES_TOKENS = 999;
 
-async function replyIn(sessionId: string, tokens: number) {
+async function replyIn(sessionId: string, tokens: number, model?: string | null) {
   // Assistant rows carry no sender and cannot be written by any client since
   // 0018 — the worker writes them with the service role, and so does this.
-  const { error } = await serviceClient().from("messages").insert({
-    session_id: sessionId,
-    role: "assistant",
-    content: "An answer.",
-    prompt_tokens: tokens,
-    completion_tokens: 0,
-  });
+  const { error } = await serviceClient()
+    .from("messages")
+    .insert({
+      session_id: sessionId,
+      role: "assistant",
+      content: "An answer.",
+      prompt_tokens: tokens,
+      completion_tokens: 0,
+      // Undefined leaves the column alone, which is the 361 production rows
+      // that predate `0065`. `null` and absent are the same thing here on
+      // purpose: both mean nobody recorded a model.
+      ...(model === undefined ? {} : { model }),
+    });
   if (error) throw new Error(`could not seed an assistant reply: ${error.message}`);
 }
 
@@ -189,5 +195,96 @@ describe("the workspace-wide figures", () => {
       p_months: 6,
     });
     expect(refused.error?.code).toBe("42501");
+  });
+});
+
+/**
+ * Which model's price list a reply belongs on.
+ *
+ * covan#208: `0065` recorded the model on every reply and nothing read it, so
+ * `/usage` priced the lot at whatever the agent is set to today. `0071` adds the
+ * dimension, and the thing worth asserting against a real database is not the
+ * money — that is `routes/usage.test.ts` — but that the two aggregations in one
+ * row cannot drift: `by_model` has to add up to the scalar sums beside it, or
+ * the screen shows one total and charges another.
+ */
+describe("the model each reply was priced at", () => {
+  const SONNET_TOKENS = 1_234;
+  const OPUS_TOKENS = 5_678;
+
+  type Share = {
+    model: string | null;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    cacheWriteTokens: number;
+  };
+  type Row = { agent_id: string; prompt_tokens: number; by_model: Share[] | null };
+
+  let priced: Row | undefined;
+
+  beforeAll(async () => {
+    // The agent needs a model of its own for the fallback to have anything to
+    // fall back TO — `seedWorkspace` leaves it null, which is a real state and
+    // the reason `estimateCostUsd` takes an unknown id to a default price.
+    const setModel = await serviceClient()
+      .from("agents")
+      .update({ model: "gpt-4.1" })
+      .eq("id", seeded.agentId);
+    if (setModel.error) {
+      throw new Error(`could not set the agent's model: ${setModel.error.message}`);
+    }
+
+    // One agent, three replies: two models that recorded themselves and the
+    // pre-0065 shape that did not.
+    await replyIn(seeded.sessionId, SONNET_TOKENS, "claude-sonnet-5");
+    await replyIn(seeded.sessionId, OPUS_TOKENS, "claude-opus-5");
+
+    const { data, error } = await owner.db.rpc("workspace_usage", {
+      p_workspace_id: owner.workspaceId,
+    });
+    if (error) throw new Error(`workspace_usage failed: ${error.message}`);
+    priced = ((data ?? []) as Row[]).find((r) => r.agent_id === seeded.agentId);
+  });
+
+  it("splits one agent's replies by the model that answered each", () => {
+    const byModel = priced?.by_model ?? [];
+    const sonnet = byModel.find((m) => m.model === "claude-sonnet-5");
+    const opus = byModel.find((m) => m.model === "claude-opus-5");
+
+    expect(sonnet?.promptTokens).toBe(SONNET_TOKENS);
+    expect(opus?.promptTokens).toBe(OPUS_TOKENS);
+  });
+
+  it("prices a reply that recorded no model at the agent's own", () => {
+    // `OWNERS_TOKENS` was seeded with the column left alone — the shape of every
+    // row written before 2026-09-27T19:12Z. The fallback is in SQL so that one
+    // rule has one definition, and `seedWorkspace`'s agent is what it falls back
+    // to.
+    const byModel = priced?.by_model ?? [];
+    const named = new Set(["claude-sonnet-5", "claude-opus-5"]);
+    const fallback = byModel.filter((m) => !named.has(m.model ?? ""));
+
+    expect(fallback).toHaveLength(1);
+    expect(fallback[0].promptTokens).toBe(OWNERS_TOKENS);
+    // The agent's own, resolved in SQL — not a null handed to the caller to
+    // work out for itself.
+    expect(fallback[0].model).toBe("gpt-4.1");
+  });
+
+  it("adds up to the row it sits beside, which is what stops the two drifting", () => {
+    const byModel = priced?.by_model ?? [];
+    const summed = byModel.reduce((n, m) => n + Number(m.promptTokens), 0);
+
+    expect(summed).toBe(Number(priced?.prompt_tokens));
+    expect(summed).toBe(OWNERS_TOKENS + SONNET_TOKENS + OPUS_TOKENS);
+  });
+
+  it("hands the caller an array, which is how it knows the schema has the column", () => {
+    // The caller reads "not an array" as "this database has not had `0071`
+    // applied yet" and falls back to the old pricing — CI never applies
+    // migrations, so that window is real. One entry per model that answered.
+    expect(Array.isArray(priced?.by_model)).toBe(true);
+    expect(priced?.by_model).toHaveLength(3);
   });
 });

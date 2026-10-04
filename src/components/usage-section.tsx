@@ -14,7 +14,10 @@ const compact = (n: number) =>
       ? `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
       : String(n);
 
-const usd = (n: number) => (n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
+// `<$0.01` is for an amount too small to print, not for the absence of one: a
+// month or an agent that really spent nothing reads `$0.00`, because "<$0.01"
+// under 0 replies says money moved and none did.
+const usd = (n: number) => (n === 0 ? "$0.00" : n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
 
 /**
  * What this account has used, on the one screen with room to say it properly.

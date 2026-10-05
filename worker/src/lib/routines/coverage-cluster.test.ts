@@ -157,12 +157,23 @@ describe("enforcing the floor on what the model returned", () => {
 
     it("does not match a label against a larger word that happens to contain it", () => {
       // The review's own named example: a raw substring check matches "ai"
-      // inside "email" and "hr" inside "hrs" with no word boundary.
-      const d: DedupedQuestion[] = [
+      // inside "email" and "hr" inside "hrs" with no word boundary. Fix
+      // round 2: tokenising makes this stronger than a boundary check ever
+      // was — "email" and "hrs" are each one indivisible token, so there is
+      // no position at which "ai" or "hr" could appear as a token on their
+      // own.
+      const email: DedupedQuestion[] = [
         { question: "can you forward that email", askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
-      expect(enforceFloor([{ label: "AI", members: [0] }], d, 3)).toEqual([
+      expect(enforceFloor([{ label: "AI", members: [0] }], email, 3)).toEqual([
         { label: "AI", questions: 3, askers: 3 },
+      ]);
+
+      const hrs: DedupedQuestion[] = [
+        { question: "the hrs are flexible this week", askerKeys: new Set([1, 2, 3]), copies: 3 },
+      ];
+      expect(enforceFloor([{ label: "HR", members: [0] }], hrs, 3)).toEqual([
+        { label: "HR", questions: 3, askers: 3 },
       ]);
     });
 
@@ -188,6 +199,54 @@ describe("enforcing the floor on what the model returned", () => {
         { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
       expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([]);
+    });
+
+    describe("fix round 2: terminal punctuation must not defeat direction B", () => {
+      // The regression this round found: `containsAsWholeWords` matched with
+      // a regex `\b` at each end of the needle. A needle ending in
+      // punctuation — almost every real question, via "?" — can leave both
+      // sides of that final `\b` non-word, so the boundary never fires and
+      // the match silently fails. Reproduced and fixed by tokenising instead
+      // of matching on a word-boundary regex.
+      it("drops when the question ends in '?' and the label is exactly the question", () => {
+        const d: DedupedQuestion[] = [
+          { question: "how do i expense a flight?", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(
+          enforceFloor([{ label: "How do I expense a flight?", members: [0] }], d, 3),
+        ).toEqual([]);
+      });
+
+      it("drops when the question ends in '?' and the label embeds it in extra words", () => {
+        const d: DedupedQuestion[] = [
+          { question: "how do i expense a flight?", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(
+          enforceFloor(
+            [{ label: "FAQ: how do I expense a flight? (see policy)", members: [0] }],
+            d,
+            3,
+          ),
+        ).toEqual([]);
+      });
+
+      it("drops when the question ends in '.'", () => {
+        const d: DedupedQuestion[] = [
+          { question: "how do i expense a flight.", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(
+          enforceFloor([{ label: "How do I expense a flight.", members: [0] }], d, 3),
+        ).toEqual([]);
+      });
+
+      it("drops when the question has no terminal punctuation at all (control)", () => {
+        const d: DedupedQuestion[] = [
+          { question: "how do i expense a flight", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(
+          enforceFloor([{ label: "How do I expense a flight", members: [0] }], d, 3),
+        ).toEqual([]);
+      });
     });
 
     it("drops a quotation at exactly the word-count threshold, keeps one word short", () => {
@@ -230,6 +289,61 @@ describe("enforcing the floor on what the model returned", () => {
       expect(enforceFloor([{ label: "aa bb cc", members: [0] }], sixWords, 3)).toEqual([
         { label: "aa bb cc", questions: 3, askers: 3 },
       ]);
+    });
+
+    describe("fix round 2: the same boundaries, with punctuation in the question", () => {
+      // Proves the word counts the thresholds read come from the same token
+      // arrays `containsTokenSequence` matched on. If counting instead split
+      // on raw whitespace while matching tokenised, punctuation would shift
+      // the two apart — e.g. "record," would count as one word but never
+      // equal the token "record" — and these boundaries would land in the
+      // wrong place.
+      it("word-count threshold still lands correctly with commas and a trailing '?'", () => {
+        const q = "please note, aa bb cc dd, for the record, always?";
+        const d: DedupedQuestion[] = [
+          { question: q, askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(enforceFloor([{ label: "aa bb cc dd", members: [0] }], d, 3)).toEqual([]);
+        expect(enforceFloor([{ label: "aa bb cc", members: [0] }], d, 3)).toEqual([
+          { label: "aa bb cc", questions: 3, askers: 3 },
+        ]);
+      });
+
+      it("character threshold still lands correctly with commas, '!' and a trailing '?'", () => {
+        const atForty: DedupedQuestion[] = [
+          {
+            question: `intro, ${"a".repeat(40)}! outro?`,
+            askerKeys: new Set([1, 2, 3]),
+            copies: 3,
+          },
+        ];
+        expect(enforceFloor([{ label: "a".repeat(40), members: [0] }], atForty, 3)).toEqual([]);
+
+        const atThirtyNine: DedupedQuestion[] = [
+          {
+            question: `intro, ${"a".repeat(39)}! outro?`,
+            askerKeys: new Set([1, 2, 3]),
+            copies: 3,
+          },
+        ];
+        expect(
+          enforceFloor([{ label: "a".repeat(39), members: [0] }], atThirtyNine, 3),
+        ).toEqual([{ label: "a".repeat(39), questions: 3, askers: 3 }]);
+      });
+
+      it("ratio threshold still lands correctly with commas and a trailing '.' or '?'", () => {
+        const fiveWords: DedupedQuestion[] = [
+          { question: "aa, bb, cc, dd, ee?", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(enforceFloor([{ label: "aa bb cc", members: [0] }], fiveWords, 3)).toEqual([]);
+
+        const sixWords: DedupedQuestion[] = [
+          { question: "aa, bb, cc, dd, ee, ff.", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(enforceFloor([{ label: "aa bb cc", members: [0] }], sixWords, 3)).toEqual([
+          { label: "aa bb cc", questions: 3, askers: 3 },
+        ]);
+      });
     });
   });
 

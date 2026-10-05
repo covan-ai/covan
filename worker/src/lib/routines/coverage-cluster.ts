@@ -147,30 +147,42 @@ const QUOTATION_MIN_WORDS = 4;
 const QUOTATION_MIN_CHARS = 40;
 const QUOTATION_MIN_RATIO = 0.6;
 
-/** Escape `s` so it can be interpolated into a `RegExp` source literally. */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Split already-normalised (single-spaced, trimmed, lowercased) text into
- * its words. */
-function wordsOf(normalised: string): string[] {
-  return normalised.split(" ").filter((w) => w !== "");
-}
-
 /**
- * Does `haystack` contain `needle` as a contiguous run of whole words?
+ * Split into word-ish tokens: runs of letters and digits, case-folded.
+ * Punctuation, whitespace and everything else is a separator and is
+ * discarded rather than preserved.
  *
- * Not `haystack.includes(needle)`. A raw substring check matches "ai" inside
- * "email" and "hr" inside "hrs" — exactly the false positives that made the
- * rule this supports indiscriminate before it was split in two. Word
- * boundaries are checked only at the two ends of `needle`; its own internal
- * spaces are matched literally, so a multi-word needle still has to appear as
- * one contiguous phrase, not as scattered words.
+ * Fix round 2: the previous version of this check matched on a regex word
+ * boundary (`\b`), which depends on there being a transition between a word
+ * character and a non-word one. A needle that itself ends in punctuation —
+ * almost every real question does, with "?" — can leave both sides of that
+ * transition non-word, so the boundary, and the match, never fired. That
+ * silently defeated Direction B below on the common case rather than the
+ * edge case. Tokenising first and comparing token arrays has no boundary to
+ * fail: punctuation is gone before the comparison runs, so
+ * `"expense a flight?"` and `"expense a flight"` tokenise identically.
+ *
+ * This errs toward matching, not away from it: `"don't"` tokenises as
+ * `["don", "t"]`, so a contraction's halves can each match on their own.
+ * That is the safe direction here — Direction B is unconditional, and
+ * Direction A is still gated by the three thresholds below, so a little
+ * extra matching costs a few more borderline topic labels rejected, never a
+ * question let through.
  */
-function containsAsWholeWords(haystack: string, needle: string): boolean {
-  if (needle === "") return false;
-  return new RegExp(`\\b${escapeRegExp(needle)}\\b`).test(haystack);
+function tokenise(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t !== "");
+}
+
+/** Does `needle` appear as a contiguous run inside `haystack`, token for
+ * token? Tokens never contain the delimiter, so joining each array with a
+ * single space and checking that one joined string contains the other,
+ * space-bounded, is exact — no partial-token match is possible. */
+function containsTokenSequence(haystack: string[], needle: string[]): boolean {
+  if (needle.length === 0) return false;
+  return ` ${haystack.join(" ")} `.includes(` ${needle.join(" ")} `);
 }
 
 /**
@@ -185,24 +197,31 @@ function containsAsWholeWords(haystack: string, needle: string): boolean {
  *     shared run of words clears `QUOTATION_MIN_WORDS`, `QUOTATION_MIN_CHARS`
  *     or `QUOTATION_MIN_RATIO` — see that constant's comment for why those
  *     three and not a flat containment check.
+ *
+ * The word counts those thresholds read are lengths of the same token arrays
+ * `containsTokenSequence` matched on, not a separately computed word count —
+ * so the counting and the matching cannot disagree with each other about
+ * what a "word" is.
  */
 function isQuotation(label: string, questions: DedupedQuestion[]): boolean {
-  const normalisedLabel = normaliseForComparison(label);
-  if (normalisedLabel === "") return false;
-  const labelWords = wordsOf(normalisedLabel);
+  const labelTokens = tokenise(label);
+  if (labelTokens.length === 0) return false;
+  // Character length is measured on the normalised label text, not the
+  // token count — a separate, textual notion of "how long is this label",
+  // orthogonal to how many words it tokenises into.
+  const labelCharLength = normaliseForComparison(label).length;
 
   return questions.some((q) => {
-    const normalisedQuestion = normaliseForComparison(q.question);
-    if (normalisedQuestion === "") return false;
+    const qTokens = tokenise(q.question);
+    if (qTokens.length === 0) return false;
 
-    if (containsAsWholeWords(normalisedLabel, normalisedQuestion)) return true;
+    if (containsTokenSequence(labelTokens, qTokens)) return true;
 
-    if (!containsAsWholeWords(normalisedQuestion, normalisedLabel)) return false;
-    const qWords = wordsOf(normalisedQuestion);
+    if (!containsTokenSequence(qTokens, labelTokens)) return false;
     return (
-      labelWords.length >= QUOTATION_MIN_WORDS ||
-      normalisedLabel.length >= QUOTATION_MIN_CHARS ||
-      labelWords.length / qWords.length >= QUOTATION_MIN_RATIO
+      labelTokens.length >= QUOTATION_MIN_WORDS ||
+      labelCharLength >= QUOTATION_MIN_CHARS ||
+      labelTokens.length / qTokens.length >= QUOTATION_MIN_RATIO
     );
   });
 }

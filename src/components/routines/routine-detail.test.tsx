@@ -186,6 +186,20 @@ describe("RoutineDetail", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
+  // A finished series has nothing to pause and is not meant to be resumed —
+  // "Resume" would PATCH it back to active for one more delivery before it
+  // completes itself again. The restart somebody actually wants is a new
+  // routine from the template, not this button.
+  it("offers no pause or resume control on a completed routine", () => {
+    render(<RoutineDetail {...props} routine={{ ...routine, status: "completed" }} />);
+    expect(screen.queryByRole("button", { name: /pause/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
+    // The rest of the owner toolbar is still there — only this one control
+    // disappears.
+    expect(screen.getByRole("button", { name: /run now/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /delete/i })).toBeInTheDocument();
+  });
+
   // Delivery channels are scoped by RLS to their owner, so a teammate's target
   // is genuinely unreadable — say so rather than render an empty field.
   it("explains that a teammate's delivery target is not visible", () => {

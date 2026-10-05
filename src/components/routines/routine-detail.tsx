@@ -248,9 +248,17 @@ export function RoutineDetail({
               {running ? "Running…" : "Run now"}
             </Button>
             {editAction}
-            <Button variant="outline" size="sm" onClick={onTogglePause} disabled={busy}>
-              {routine.status === "active" ? "Pause" : "Resume"}
-            </Button>
+            {/* A completed routine has nothing to pause and nothing to resume
+                into: `ends_after_runs` ran its course, and "Resume" would read
+                as an invitation to restart a finished series — exactly what
+                0072's header argues a status distinct from `paused` is for.
+                Starting over means a new routine from the template, not this
+                button. */}
+            {routine.status !== "completed" && (
+              <Button variant="outline" size="sm" onClick={onTogglePause} disabled={busy}>
+                {routine.status === "active" ? "Pause" : "Resume"}
+              </Button>
+            )}
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" size="sm">

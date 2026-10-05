@@ -36,6 +36,15 @@ export type Workspace = {
   slug: string;
   /** Model new agents start on. `null` means the interface picks. */
   defaultModel: string | null;
+  /**
+   * Whether this workspace has turned the coverage report on.
+   *
+   * Optional for the reason `models` is: a frontend deployed ahead of its API
+   * gets nothing here, and the template picker reads the absence as off —
+   * which is the safe direction, since the alternative is offering a routine
+   * the engine would refuse.
+   */
+  gapReportEnabled?: boolean;
 };
 
 export type WorkspaceMember = {

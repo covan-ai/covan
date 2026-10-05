@@ -11,13 +11,15 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));
 
-const { draft, channelsList } = vi.hoisted(() => ({
+const { draft, channelsList, me } = vi.hoisted(() => ({
   draft: vi.fn(),
   channelsList: vi.fn(),
+  me: vi.fn(),
 }));
 
 vi.mock("@/lib/api-client", () => ({
   api: {
+    me,
     routines: { draft, create: vi.fn() },
     deliveryChannels: { list: channelsList, create: vi.fn(), remove: vi.fn() },
   },
@@ -28,6 +30,14 @@ vi.mock("@/lib/api-client", () => ({
       this.status = status;
     }
   },
+}));
+
+// The dialog reads this agent's document count off the agents store to decide
+// which templates are offered — a plain context hook, so a component under
+// test that is not wrapped in AgentsProvider needs it mocked rather than
+// provided.
+vi.mock("@/lib/agents-store", () => ({
+  useAgentsStore: () => ({ agents: [] }),
 }));
 
 function renderDialog() {
@@ -43,6 +53,20 @@ describe("CreateRoutineDialog", () => {
   beforeEach(() => {
     draft.mockReset();
     channelsList.mockReset();
+    me.mockReset();
+    me.mockResolvedValue({
+      user: { id: "u1", name: "Ada", email: "ada@example.com", avatarUrl: null },
+      workspace: {
+        id: "w1",
+        name: "Acme",
+        slug: "acme",
+        defaultModel: null,
+        gapReportEnabled: true,
+      },
+      members: [
+        { id: "u1", name: "Ada", email: "ada@example.com", role: "admin", avatarUrl: null },
+      ],
+    });
   });
 
   it("sends the user to Settings when they have no delivery channel", async () => {

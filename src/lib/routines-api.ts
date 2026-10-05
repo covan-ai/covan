@@ -145,6 +145,8 @@ export type CreateRoutineInput = {
   /** Null or omitted means the routine keeps nothing, which is the default. */
   outputBundleId?: string | null;
   outputRetention?: number;
+  /** After how many delivered runs this routine ends itself, or null for never. */
+  endsAfterRuns?: number | null;
 };
 
 export type UpdateRoutineInput = Partial<{

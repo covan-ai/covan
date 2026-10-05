@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link as RouterLink } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,10 +16,13 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api-client";
+import { useAgentsStore } from "@/lib/agents-store";
 import { useDeliveryChannels, useCreateRoutine } from "@/hooks/use-routines";
 import { useConnections } from "@/hooks/use-connections";
 import { SchedulePicker, scheduleError } from "@/components/routines/schedule-picker";
+import { TemplatePicker } from "@/components/routines/template-picker";
 import type { RoutineSourceKind, RoutineTriggerKind } from "@/lib/routines-api";
+import type { RoutineTemplate } from "@/lib/routine-templates";
 
 /**
  * Says what a connection routine can and cannot see, in the units the person
@@ -57,6 +61,18 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   const { data: connectionData } = useConnections();
   const connections = (connectionData?.connections ?? []).filter((c) => !c.needsFolder);
 
+  // Facts the picker needs, read off state this screen already holds.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const { agents } = useAgentsStore();
+  const facts = {
+    // This agent's documents, not the workspace's: the series reads what this
+    // agent can see. See `TemplateFacts`.
+    agentDocumentCount: agents.find((a) => a.id === agentId)?.documents.length ?? 0,
+    isAdmin: me?.members.find((m) => m.id === me.user.id)?.role === "admin",
+    gapReportEnabled: me?.workspace.gapReportEnabled ?? false,
+    memberCount: me?.members.length ?? 1,
+  };
+
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [prose, setProse] = useState("");
@@ -71,6 +87,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
   const [timezone, setTimezone] = useState(browserTimezone());
   const [channelId, setChannelId] = useState("");
+  const [endsAfterRuns, setEndsAfterRuns] = useState<number | null>(null);
   const [fieldError, setFieldError] = useState<{
     field: "schedule" | "url";
     message: string;
@@ -88,6 +105,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     setScheduleCron("0 * * * *");
     setTimezone(browserTimezone());
     setChannelId("");
+    setEndsAfterRuns(null);
     setFieldError(null);
   };
 
@@ -122,6 +140,28 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     }
   };
 
+  /**
+   * A template is a draft that cost nothing.
+   *
+   * The same six assignments `runDraft` makes, from the same shape, without the
+   * call — which is the whole of what a template is. `endsAfterRuns` is the one
+   * field a drafted routine never has, because only a template knows a routine is
+   * a series.
+   */
+  const applyTemplate = (template: RoutineTemplate) => {
+    const d = template.draft;
+    setName(d.name);
+    setSourceKind(d.sourceKind);
+    setSourceUrl(d.sourceUrl ?? "");
+    setInstruction(d.instruction);
+    setScheduleCron(d.scheduleCron);
+    setTimezone(browserTimezone());
+    setEndsAfterRuns(template.endsAfterRuns);
+    const wanted = d.channelKind === "slack" ? "slack_webhook" : "email";
+    setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
+    setStep(2);
+  };
+
   const skipToForm = () => {
     setChannelId(channels[0]?.id ?? "");
     setStep(2);
@@ -145,6 +185,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
         deliveryChannelId: channelId,
         scheduleCron: scheduleCron.trim(),
         timezone,
+        endsAfterRuns,
       });
       toast.success("Routine created");
       close();
@@ -201,6 +242,12 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                 rows={4}
                 placeholder="Check Jira for open high-priority bugs every morning at 9am and post a summary to Slack."
               />
+              <div className="flex items-center gap-3">
+                <span className="h-px flex-1 bg-border" />
+                <span className="text-meta text-muted-foreground">or start from one of these</span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+              <TemplatePicker facts={facts} onPick={applyTemplate} />
               <div className="flex items-center justify-between gap-2">
                 <Button variant="ghost" size="sm" onClick={skipToForm}>
                   Set it up myself

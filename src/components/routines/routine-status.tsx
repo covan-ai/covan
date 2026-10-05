@@ -2,9 +2,10 @@ import { cn } from "@/lib/utils";
 import type { Routine } from "@/lib/routines-api";
 
 /**
- * Three states, expressed the way this system expresses state: a square, not a
+ * Four states, expressed the way this system expresses state: a square, not a
  * dot, and amber-or-neutral rather than a traffic light. The palette allows one
- * saturated colour, so "running" is amber and "paused" is simply not amber.
+ * saturated colour, so "running" is amber and everything else is simply not
+ * amber.
  *
  * The failure case keeps `--destructive`, which is the one deliberate extension
  * to the palette: the engine pausing a routine itself after five consecutive
@@ -12,6 +13,10 @@ import type { Routine } from "@/lib/routines-api";
  * routine that died while the interface looked calm is the failure that
  * destroys trust in this feature, so the reason travels with the label
  * wherever the status is shown.
+ *
+ * A routine that ran its course (0072) reads "Finished", not "Completed" — the
+ * past tense is what tells it apart from a task list, and from the quiet
+ * "Paused" beside it.
  */
 export function RoutineStatus({ routine, className }: { routine: Routine; className?: string }) {
   const failed = routine.status === "paused" && routine.pausedReason !== null;
@@ -27,6 +32,8 @@ export function RoutineStatus({ routine, className }: { routine: Routine; classN
       <span className={cn("h-2 w-2 shrink-0", mark)} aria-hidden />
       {routine.status === "active" ? (
         <span className="text-muted-foreground">Active</span>
+      ) : routine.status === "completed" ? (
+        <span className="text-muted-foreground">Finished</span>
       ) : failed ? (
         <span className="min-w-0 truncate text-destructive">Paused — {routine.pausedReason}</span>
       ) : (

@@ -35,7 +35,11 @@ export type Routine = {
   outputBundleId: string | null;
   /** How many of its own filed documents this routine keeps. 52 by default. */
   outputRetention: number;
-  status: "active" | "paused";
+  /** After how many delivered runs this routine ends itself, or null for never. */
+  endsAfterRuns: number | null;
+  /** How many it has delivered. */
+  runsDone: number;
+  status: "active" | "paused" | "completed";
   /** Set when the engine paused this itself after repeated failures. */
   pausedReason: string | null;
   nextRunAt: number | null;

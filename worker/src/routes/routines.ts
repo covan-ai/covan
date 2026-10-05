@@ -369,6 +369,12 @@ const createSchema = z
     outputBundleId: z.string().uuid().nullable().optional(),
     /** Bounded here as well as by 0056's CHECK, so the refusal names the field. */
     outputRetention: z.number().int().min(1).max(520).optional(),
+    /**
+     * A series' length, decided once at creation (0072) — `updateSchema` below
+     * does not get this, the same way it does not get `sourceKind`. Null or
+     * omitted means it runs until somebody stops it.
+     */
+    endsAfterRuns: z.number().int().min(1).max(365).nullish(),
   })
   // Exactly one. Both is a caller that has not decided, and neither is a routine
   // the database would refuse anyway — `delivery_channel_id` is `not null`.
@@ -495,6 +501,7 @@ routines.post("/routines", async (c) => {
       triggerKind: body.triggerKind,
       outputBundleId: body.outputBundleId ?? null,
       ...(body.outputRetention !== undefined ? { outputRetention: body.outputRetention } : {}),
+      endsAfterRuns: body.endsAfterRuns ?? null,
     },
     ownHostsFrom(c.env),
   );

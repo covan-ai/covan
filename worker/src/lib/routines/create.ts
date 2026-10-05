@@ -36,6 +36,8 @@ export type CreateRoutineInput = {
   triggerKind?: "schedule" | "webhook" | "both";
   outputBundleId?: string | null;
   outputRetention?: number;
+  /** After how many delivered runs this routine ends itself, or null for never. */
+  endsAfterRuns?: number | null;
 };
 
 export type CreateRoutineResult =
@@ -107,6 +109,7 @@ export async function createRoutine(
       trigger_kind: input.triggerKind ?? "schedule",
       output_bundle_id: input.outputBundleId ?? null,
       ...(input.outputRetention !== undefined ? { output_retention: input.outputRetention } : {}),
+      ends_after_runs: input.endsAfterRuns ?? null,
       // The first run is scheduled, not immediate. Creating "every day at
       // 09:00" used to send a real message within one 5-minute tick, because
       // claim_due_routines claims anything already due and `now()` is. Use

@@ -19,6 +19,8 @@ const base: Routine = {
   triggerKind: "schedule" as const,
   outputBundleId: null,
   outputRetention: 52,
+  endsAfterRuns: null,
+  runsDone: 0,
   status: "active",
   pausedReason: null,
   nextRunAt: null,
@@ -42,5 +44,11 @@ describe("RoutineStatus", () => {
   it("surfaces the reason when the engine paused it after repeated failures", () => {
     render(<RoutineStatus routine={{ ...base, status: "paused", pausedReason: "upstream 503" }} />);
     expect(screen.getByText(/upstream 503/)).toBeInTheDocument();
+  });
+
+  it("says a finished series is finished, not paused", () => {
+    render(<RoutineStatus routine={{ ...base, status: "completed" }} />);
+    expect(screen.getByText(/finished/i)).toBeInTheDocument();
+    expect(screen.queryByText(/paused/i)).not.toBeInTheDocument();
   });
 });

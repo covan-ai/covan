@@ -20,6 +20,8 @@ const routine: Routine = {
   triggerKind: "schedule" as const,
   outputBundleId: null,
   outputRetention: 52,
+  endsAfterRuns: null,
+  runsDone: 0,
   status: "active",
   pausedReason: null,
   nextRunAt: Date.now() + 60_000,

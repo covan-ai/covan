@@ -727,7 +727,11 @@ export type RoutineDTO = {
   outputBundleId: string | null;
   /** How many filed documents this routine keeps. 52 unless somebody changed it. */
   outputRetention: number;
-  status: "active" | "paused";
+  /** After how many delivered runs this routine ends itself, or null for never. */
+  endsAfterRuns: number | null;
+  /** How many it has delivered. */
+  runsDone: number;
+  status: "active" | "paused" | "completed";
   pausedReason: string | null;
   nextRunAt: number | null;
   lastRunAt: number | null;
@@ -749,6 +753,8 @@ export function mapRoutine(row: {
   trigger_kind?: string | null;
   output_bundle_id?: string | null;
   output_retention?: number | null;
+  ends_after_runs?: number | null;
+  runs_done?: number | null;
   status: string;
   paused_reason: string | null;
   next_run_at: string | null;
@@ -779,7 +785,12 @@ export function mapRoutine(row: {
     // 0056 still has the default behind it, and reporting 0 here would put "0
     // kept" in front of somebody whose routine keeps a year of them.
     outputRetention: row.output_retention ?? 52,
-    status: row.status === "paused" ? "paused" : "active",
+    // Null for every row before 0072, which is the same "no column yet" case
+    // `outputRetention` above falls back on.
+    endsAfterRuns: row.ends_after_runs ?? null,
+    runsDone: row.runs_done ?? 0,
+    status:
+      row.status === "paused" ? "paused" : row.status === "completed" ? "completed" : "active",
     pausedReason: row.paused_reason ?? null,
     nextRunAt: row.next_run_at ? toEpochMs(row.next_run_at) : null,
     lastRunAt: row.last_run_at ? toEpochMs(row.last_run_at) : null,

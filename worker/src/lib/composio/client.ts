@@ -142,6 +142,32 @@ export type ComposioTool = {
   destructive: boolean | null;
 };
 
+/**
+ * What connecting an application actually requires.
+ *
+ * The question the Connect button should be asking, and for a long time it
+ * asked a different one — whether either of two catalogue columns was set.
+ * Those columns can prove two of these four and are silent about the other
+ * two, which is how an application whose key the user supplies came to be
+ * told it needed an OAuth client registered on its behalf.
+ *
+ * `needs_setup` is the only one that is a job rather than a flow: somebody has
+ * to put something into Composio's dashboard before anybody can connect.
+ */
+export type ComposioConnectKind = "no_auth" | "managed_oauth" | "user_credential" | "needs_setup";
+
+/**
+ * Which kind of auth config a connect attempt needs at Composio.
+ *
+ * Derived by `authConfigPlanFor` from `connectKind` and `credentialScheme` and
+ * from nothing else — the same two fields the card renders its sentence from.
+ * That identity is the whole consistency guarantee between what a person is
+ * promised and what gets built: the page cannot offer a button whose plan the
+ * worker would refuse, because both are reading one value.
+ */
+export type AuthConfigPlan =
+  { kind: "no_auth" } | { kind: "managed_oauth" } | { kind: "user_credential"; scheme: string };
+
 /** One application, as the catalogue lists it. */
 export type ComposioToolkit = {
   slug: string;
@@ -152,23 +178,59 @@ export type ComposioToolkit = {
   /**
    * Whether Composio has an OAuth application of its own for this provider.
    *
-   * False means somebody has to register a client with that provider and paste
-   * it into Composio before anybody here can connect — a real job, not a
-   * retry. Surfaced so the card can say so, rather than offering a Connect
-   * button whose only outcome is a 400 from a third party.
+   * A raw catalogue column, and **not** the answer to whether this can be
+   * connected — `connectKind` is. False here used to mean "somebody has to
+   * register a client with that provider", which is true of fifty toolkits and
+   * was being said to one and a half thousand.
    */
   managedAuth: boolean;
   /**
-   * Whether the provider needs no sign-in at all.
+   * Whether the provider needs no sign-in at all, as the catalogue's own
+   * column says it.
    *
-   * The second of the two ways an application can be connected as it stands,
-   * and for a while the forgotten one: `docs/integrations.md` has counted these
-   * thirty-five into "158 connect as they are" since the feature shipped, while
-   * the field was never read — so the page called every one of them "Needs
-   * setup in Composio" and refused to connect it. Read here, and the connect
-   * route builds a `no_auth` config for it instead of an OAuth one.
+   * Another raw column, and a trap: **the detail endpoint does not carry it**,
+   * so a row read by `getToolkit` has this false whatever the truth, and the
+   * connect route has been reading exactly that. `connectKind` reads the
+   * column *or* a `NO_AUTH` entry among the published modes, which is the one
+   * predicate that works on either row. Measured 2026-10-05: the two name the
+   * same thirty-five toolkits, so the union invents nothing.
+   *
+   * None of those thirty-five can be connected today regardless — Composio
+   * refuses to make any auth config for a toolkit that needs none, and refuses
+   * a link without one. That is its own fix and its own migration.
    */
   noAuth: boolean;
+  /**
+   * What connecting this one requires — the authoritative field, and the only
+   * one a gate should read.
+   *
+   * Null means *this row cannot say*, which is the honest answer for a
+   * catalogue list row: it can prove no-sign-in and managed OAuth and is
+   * silent about the rest. A detail row is always one of the four. The
+   * nullability is what keeps the field truthful on both paths instead of
+   * quietly empty on one.
+   */
+  connectKind: ComposioConnectKind | null;
+  /**
+   * Composio's own name for the credential mode chosen, empty unless
+   * `connectKind` is `user_credential`.
+   *
+   * Carried so the card can name the noun it is asking somebody to go and
+   * fetch — a key, or a username and password. Telling a person to paste an
+   * API key into a field labelled password is the kind of thing `DESIGN.md`
+   * opens with, and the scheme is the only thing that distinguishes them.
+   */
+  credentialScheme: string;
+  /**
+   * A page at the provider where the credential can be obtained, when the
+   * catalogue publishes one. Empty otherwise.
+   *
+   * Non-empty on about a quarter of the applications this applies to, counted
+   * 2026-10-05. For a flow whose entire failure mode is somebody wandering off
+   * to find a key and not coming back, a link straight to the right page is
+   * worth more than any amount of copy.
+   */
+  authHintUrl: string;
   /**
    * The application's own mark, as an address on a host we are willing to
    * fetch from — see `allowedLogoUrl`. Empty when the catalogue published none
@@ -691,11 +753,172 @@ export async function listToolkits(
   return { kind: "ok", toolkits, nextCursor: nextCursorOf(body) };
 }
 
+/**
+ * Composio's name for the stage at which a field is asked for. One is asked of
+ * whoever sets the application up here; the other of whoever connects it. The
+ * whole classification turns on which side of that line the required fields
+ * fall, so both spellings are named once and read nowhere else.
+ */
+const CREATION = "auth_config_creation";
+const INITIATION = "connected_account_initiation";
+
+/**
+ * Preferred order when an application publishes more than one way to supply a
+ * credential.
+ *
+ * Datadog publishes three — OAuth, a bearer personal-access token, and an API
+ * key — and the one chosen here becomes a durable auth config at Composio, so
+ * taking whichever came first in their array would make a lasting decision
+ * depend on their ordering staying stable. An API key leads because it is what
+ * most providers document for this purpose; anything not named falls back to
+ * the published order.
+ */
+const CREDENTIAL_MODES = ["API_KEY", "BEARER_TOKEN", "BASIC"];
+
+/**
+ * The authentication modes a toolkit publishes, or null when this row does not
+ * carry them at all.
+ *
+ * Only the detail endpoint publishes these. An empty array is a different
+ * thing from an absent one and is left as empty: the row spoke and said there
+ * is nothing, which lands on `needs_setup` — refusing, which is the safe side.
+ */
+function authConfigDetailsOf(row: Record<string, unknown>): Record<string, unknown>[] | null {
+  const raw = row.auth_config_details ?? row.authConfigDetails;
+  if (!Array.isArray(raw)) return null;
+  return raw.filter(isRecord);
+}
+
+/**
+ * How many fields a mode requires at one stage, or null when the row does not
+ * say.
+ *
+ * This distinction is the most error-prone line in the classification, so it
+ * is the only thing this function does. "Nothing is required" and "we were not
+ * told what is required" are both falsy and mean opposite things — the first
+ * is an application anyone can connect, the second is one we know nothing
+ * about. Callers compare against `0` and `1` and never test truthiness, and an
+ * absent parent object reads as unknown and so refuses.
+ *
+ * A missing `required` **beside a present parent** counts as empty, because a
+ * JSON emitter dropping an empty array is a real thing. Composio's own API
+ * emits them as of 2026-10-05, but that is a fact about today.
+ */
+function requiredCount(mode: Record<string, unknown>, stage: string): number | null {
+  const fields = isRecord(mode.fields) ? mode.fields : null;
+  if (!fields) return null;
+  const at = fields[stage];
+  if (!isRecord(at)) return null;
+  const required = at.required;
+  if (required === undefined || required === null) return 0;
+  return Array.isArray(required) ? required.length : null;
+}
+
+/**
+ * Whether this mode asks nothing of whoever set Covan up and something of
+ * whoever is connecting — which is precisely what "the user supplies the
+ * credential" means, said in the catalogue's own terms rather than by listing
+ * the scheme names we happen to know about.
+ *
+ * The second half is load-bearing and easy to leave out. Without it every one
+ * of the ninety-five `DCR_OAUTH` toolkits qualifies, because they require
+ * nothing at either stage, and each would be sent to a hosted page with no
+ * field on it. With it, they fall through to `needs_setup` on their own
+ * merits. The same clause is what keeps `lever` and `brex` out, whose API-key
+ * modes do require a field of their operator.
+ */
+function userSupplies(mode: Record<string, unknown>): boolean {
+  const initiation = requiredCount(mode, INITIATION);
+  return requiredCount(mode, CREATION) === 0 && initiation !== null && initiation >= 1;
+}
+
+/** The mode a credential connect would use, or null when there is none. */
+function credentialModeOf(modes: Record<string, unknown>[]): Record<string, unknown> | null {
+  const candidates = modes.filter(userSupplies);
+  if (candidates.length === 0) return null;
+  for (const preferred of CREDENTIAL_MODES) {
+    const found = candidates.find((m) => text(m.mode).toUpperCase() === preferred);
+    if (found) return found;
+  }
+  return candidates[0];
+}
+
+/**
+ * A page where somebody can get the credential, if it is somewhere a browser
+ * should be sent.
+ *
+ * `https` and nothing else. Deliberately not `allowedLogoUrl`'s host
+ * allowlist: that list exists because we *fetch* the logo, and this address is
+ * only ever handed to the browser as a link — restricting it to hosts we
+ * happen to know would throw away the fourteen hundred providers whose own
+ * documentation is the whole point of the link. What is excluded is the thing
+ * that matters: a `javascript:` or `data:` address reaching an anchor tag.
+ */
+function allowedHintUrl(raw: string): string {
+  if (!raw) return "";
+  try {
+    return new URL(raw).protocol === "https:" ? raw : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * What connecting this application requires, as far as this row can say, plus
+ * the two things the answer carries with it.
+ *
+ * The order of the questions is load-bearing twice. **No sign-in** is asked
+ * first because such a toolkit has no credential to discuss at all. **Managed
+ * OAuth** is asked before a supplied credential because a good few
+ * applications publish both — Linear has Composio's own OAuth client *and* an
+ * API-key mode — and a consent screen is the better of the two to offer a
+ * person, since nothing has to be found first.
+ *
+ * Then, and only for a row that published its modes, the data-driven question:
+ * is there a mode that asks nothing of an operator and something of the user?
+ * Everything else is `needs_setup`, which is now said to a hundred and
+ * fifty-nine applications rather than to fourteen hundred.
+ */
+function connectKindOf(
+  row: Record<string, unknown>,
+  modes: Record<string, unknown>[] | null,
+): { kind: ComposioConnectKind | null; scheme: string; hintUrl: string } {
+  const none = { scheme: "", hintUrl: "" };
+  // Two spellings of one fact, and each path carries only one of them. The
+  // list row has a `no_auth` column; the detail row has no such column and
+  // publishes a `NO_AUTH` mode instead. Reading only the column — which is
+  // what the connect route does — is why all thirty-five of these fail there.
+  const noAuth =
+    row.no_auth === true || (modes ?? []).some((m) => text(m.mode).toUpperCase() === "NO_AUTH");
+  if (noAuth) return { kind: "no_auth", ...none };
+
+  const managed = row.composio_managed_auth_schemes;
+  if (Array.isArray(managed) && managed.length > 0) return { kind: "managed_oauth", ...none };
+
+  // A list row. It has already told us everything it can and the answer is not
+  // in it; saying `needs_setup` here would be inventing one.
+  if (modes === null) return { kind: null, ...none };
+
+  const credential = credentialModeOf(modes);
+  if (!credential) return { kind: "needs_setup", ...none };
+  return {
+    kind: "user_credential",
+    scheme: text(credential.mode).toUpperCase(),
+    hintUrl: allowedHintUrl(text(credential.auth_hint_url) || text(credential.authHintUrl)),
+  };
+}
+
 function toToolkit(row: Record<string, unknown>): ComposioToolkit | null {
   const slug = text(row.slug);
   if (!slug) return null;
-  const schemes = row.auth_schemes ?? row.authSchemes;
+  const modes = authConfigDetailsOf(row);
+  // The list endpoint publishes `auth_schemes` and the detail endpoint does
+  // not, publishing the same names as the `mode` of each entry instead. Taken
+  // from one place only, a toolkit read on the connect path would lose the
+  // field it had in the grid — and the tile's hint is built from it.
+  const schemes = row.auth_schemes ?? row.authSchemes ?? (modes ?? []).map((m) => m.mode);
   const managed = row.composio_managed_auth_schemes;
+  const connect = connectKindOf(row, modes);
   // The description lives under `meta`, not at the top level. Read from the
   // wrong place it is silently the empty string and the card renders a row
   // with nothing under the name. The logo and the categories are in there
@@ -712,9 +935,45 @@ function toToolkit(row: Record<string, unknown>): ComposioToolkit | null {
       : [],
     managedAuth: Array.isArray(managed) && managed.length > 0,
     noAuth: row.no_auth === true,
+    connectKind: connect.kind,
+    credentialScheme: connect.scheme,
+    authHintUrl: connect.hintUrl,
     logo: logo ? logo.toString() : "",
     categories: categoryIdsOf(meta.categories ?? row.categories),
   };
+}
+
+/**
+ * What a connect attempt should ask Composio to build, or null when it should
+ * not ask at all.
+ *
+ * Reads `connectKind` and `credentialScheme` and nothing else. That is not an
+ * implementation detail to tidy up later — it is the reason the page and the
+ * worker cannot disagree. The card renders its sentence from those two fields;
+ * if this function consulted a third, there would be a row somewhere whose
+ * button promises one thing and whose connect builds another.
+ *
+ * Null for `needs_setup` and for a row that could not say. A caller holding
+ * null has no business calling Composio: it should refuse, in the same words
+ * the card used.
+ */
+export function authConfigPlanFor(toolkit: ComposioToolkit): AuthConfigPlan | null {
+  switch (toolkit.connectKind) {
+    case "no_auth":
+      return { kind: "no_auth" };
+    case "managed_oauth":
+      return { kind: "managed_oauth" };
+    case "user_credential":
+      // A scheme is what the credential branch is *for*; without one there is
+      // no body to post. Unreachable as `connectKindOf` is written, and
+      // refusing rather than guessing is still the right shape, because the
+      // guess would be a durable auth config of the wrong kind.
+      return toolkit.credentialScheme
+        ? { kind: "user_credential", scheme: toolkit.credentialScheme }
+        : null;
+    default:
+      return null;
+  }
 }
 
 /**

@@ -5,6 +5,7 @@ import { serviceClient } from "../lib/supabase";
 import { getActiveWorkspaceId, memberRole } from "../lib/workspace";
 import { mapToolConnection, mapToolConnectionGrant } from "../lib/dto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
+import { revokeConnectedAccounts } from "../lib/composio/revoke";
 import {
   allowedLogoUrl,
   authConfigPlanFor,
@@ -320,7 +321,47 @@ composio.post("/composio/connect", async (c) => {
   });
   if (link.kind === "error") return c.json({ error: link.message }, 502);
 
-  const { data, error } = await serviceClient(c.env)
+  /**
+   * The row somebody abandoned, if this is a second attempt at the same
+   * application.
+   *
+   * The label is unique per workspace (0059), so without this a retry answers
+   * *"a connection with that name already exists here"* — a message about a
+   * name, for something that has nothing to do with naming. The only way out
+   * was to notice the "Finishing…" row above the grid and press Remove, which
+   * means the recovery depended on spotting it.
+   *
+   * Only a row that is **not active** is replaced. An active one is a working
+   * connection and a second with the same label is a genuine collision, which
+   * still gets the message it always did.
+   */
+  const admin = serviceClient(c.env);
+  const { data: abandoned } = await admin
+    .from("tool_connections")
+    .select("id, connected_account_id")
+    .eq("workspace_id", workspaceId)
+    .eq("transport", "composio")
+    .eq("toolkit_slug", toolkit)
+    .neq("status", "active")
+    .limit(1)
+    .maybeSingle();
+  if (abandoned?.id) {
+    // Hand the half-made grant back first, while there is still a handle on
+    // it. The update below overwrites the only column that names it, and an
+    // account nothing points at is `lib/composio/revoke.ts`'s whole subject.
+    const stale =
+      typeof abandoned.connected_account_id === "string" ? abandoned.connected_account_id : "";
+    if (stale) await revokeConnectedAccounts(c.env, [stale]);
+    const { error: replaceError } = await admin
+      .from("tool_connections")
+      .delete()
+      .eq("id", abandoned.id);
+    if (replaceError) {
+      return c.json({ error: "failed to start that connection" }, insertErrorStatus(replaceError));
+    }
+  }
+
+  const { data, error } = await admin
     .from("tool_connections")
     .insert({
       workspace_id: workspaceId,
@@ -365,6 +406,21 @@ composio.post("/composio/connect", async (c) => {
 });
 
 /**
+ * How long a connection may sit unfinished before it is called off.
+ *
+ * Composio's link expires ten minutes after it is issued — measured, not
+ * documented — so after fifteen there is no outcome still coming and the row
+ * is describing something that already failed.
+ */
+const STALE_PENDING_MS = 15 * 60 * 1000;
+
+function staleSince(createdAt: unknown): boolean {
+  if (typeof createdAt !== "string") return false;
+  const started = Date.parse(createdAt);
+  return Number.isFinite(started) && Date.now() - started > STALE_PENDING_MS;
+}
+
+/**
  * How a consent flow ended.
  *
  * Polled by the page while somebody is away at the provider. It is a read of
@@ -375,7 +431,7 @@ composio.get("/composio/connections/:id/status", async (c) => {
   const db = c.get("db");
   const { data: row, error } = await db
     .from("tool_connections")
-    .select("id, workspace_id, transport, status")
+    .select("id, workspace_id, transport, status, created_at")
     .eq("id", c.req.param("id"))
     .maybeSingle();
   if (error) return c.json({ error: "failed to load that connection" }, 500);
@@ -404,8 +460,30 @@ composio.get("/composio/connections/:id/status", async (c) => {
   if (!accountId) return c.json({ status: "failed" });
 
   const asked = await getConnectedAccount(c.env, accountId);
+  // A read that failed says nothing about the connection. Settling on it would
+  // mean an upstream wobble failing rows that are halfway through a consent
+  // screen.
   if (asked.kind === "error") return c.json({ status: "pending" });
-  if (asked.status === "pending") return c.json({ status: "pending" });
+  if (asked.status === "pending") {
+    // Somebody who walked away. The page gives up polling after two minutes,
+    // so without this the row stays `pending` until the next time anybody
+    // happens to open Integrations — and a pending row is one the card calls
+    // "Finishing…" and the catalogue counts as connected.
+    //
+    // Fifteen minutes because Composio's own link dies after ten, so by then
+    // the page they were sent to has expired and no outcome is coming. Written
+    // here rather than in a cron for the reason the banner at the top of this
+    // file gives: the poll is the only thing that needs to know.
+    if (staleSince(row.created_at)) {
+      const { error: failError } = await admin
+        .from("tool_connections")
+        .update({ status: "failed" })
+        .eq("id", row.id);
+      if (failError) console.error("could not fail a stale connection", failError);
+      return c.json({ status: "failed" });
+    }
+    return c.json({ status: "pending" });
+  }
 
   // Through the service role because `status` is granted to `authenticated` for
   // reading only — the settings screen edits a label, not the state of somebody

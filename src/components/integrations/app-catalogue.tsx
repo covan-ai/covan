@@ -69,9 +69,20 @@ export function AppCatalogue({
   // telling a self-hoster the same thing twice.
   if (!configured) return null;
 
-  const toolkits = (catalogue.data?.pages ?? [])
-    .flatMap((page) => page.toolkits)
-    .filter((t) => !connected.has(t.slug));
+  const found = (catalogue.data?.pages ?? []).flatMap((page) => page.toolkits);
+  // Deduplicated by slug. The pages are a cursor walk over a catalogue of
+  // fifteen hundred and nothing promises an application appears on one page
+  // only; a repeat would be a duplicate React key, which is a warning in the
+  // console and a row that will not update.
+  const seen = new Set<string>();
+  const toolkits = found.filter(
+    (t) => !connected.has(t.slug) && !seen.has(t.slug) && seen.add(t.slug),
+  );
+  // Which of the two empty states this is. The catalogue answering nothing and
+  // the filter above removing everything read identically on screen and are
+  // opposite facts — and the second is what somebody sees when they search for
+  // the application they just connected.
+  const emptyBecauseConnected = toolkits.length === 0 && found.length > 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -114,9 +125,13 @@ export function AppCatalogue({
         </p>
       ) : toolkits.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {search
-            ? `Nothing in the catalogue matches “${search}”.`
-            : "Everything in this part of the catalogue is already connected."}
+          {emptyBecauseConnected
+            ? search
+              ? `Everything matching “${search}” is already connected — it is in the list above.`
+              : "Everything in this part of the catalogue is already connected."
+            : search
+              ? `Nothing in the catalogue matches “${search}”.`
+              : "Nothing in this part of the catalogue."}
         </p>
       ) : (
         <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -132,7 +147,9 @@ export function AppCatalogue({
 
       <AppDetailDialog toolkit={reading} onClose={() => setReading(null)} />
 
-      {catalogue.hasNextPage ? (
+      {/* Not offered beside an empty grid. "Nothing matches" over a live
+          "Show more" is the page contradicting itself in two lines. */}
+      {catalogue.hasNextPage && toolkits.length > 0 ? (
         <div>
           <Button
             variant="outline"

@@ -70,10 +70,15 @@ export function ComposioCard({
   const catalogue = useComposioToolkits("", "", true);
 
   const mine = connections.filter((c) => c.transport === "composio");
-  // An application already connected is not offered again: the label is unique
-  // per workspace, so picking it would fail on the way back with a message
-  // about a name rather than about what happened.
-  const already = new Set(mine.map((c) => c.toolkitSlug ?? ""));
+  // An application already connected is not offered again. **Only one that is
+  // actually connected**: a row left `pending` by somebody who went to find an
+  // API key and did not come back used to take the application out of the
+  // catalogue entirely, so the one thing they would try next — search for it
+  // again — answered that Covan had never heard of it. Those rows are still
+  // listed above the grid, which is where they get finished or removed.
+  const already = new Set(
+    mine.filter((c) => c.status === "active").map((c) => c.toolkitSlug ?? ""),
+  );
 
   // Every standing permission in the workspace, grouped by the connection it
   // is on. Unconditional rather than per-card, because it is one small read

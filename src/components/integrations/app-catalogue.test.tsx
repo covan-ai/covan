@@ -241,9 +241,41 @@ describe("AppCatalogue", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("says what was searched for when nothing matches", async () => {
+  it("says the catalogue had nothing, when the catalogue had nothing", async () => {
     withToolkits();
     render(<AppCatalogue connected={new Set()} />);
+    await waitFor(() =>
+      expect(screen.getByText(/Nothing in this part of the catalogue/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("does not claim it has never heard of an application that is already connected", async () => {
+    // The two empty states read identically on screen and are opposite facts.
+    // Searching for the application you just connected got the wrong one of
+    // them — Covan saying it had never heard of it.
+    render(<AppCatalogue connected={new Set(["gmail", "linear"])} />);
     await waitFor(() => expect(screen.getByText(/already connected/i)).toBeInTheDocument());
+    expect(screen.queryByText(/Nothing in the catalogue matches/i)).not.toBeInTheDocument();
+  });
+
+  it("offers no Show more beside an empty grid", async () => {
+    // "Nothing matches" over a live "Show more" is the page contradicting
+    // itself in two lines.
+    hasNextPage = true;
+    render(<AppCatalogue connected={new Set(["gmail", "linear"])} />);
+    await waitFor(() => expect(screen.getByText(/already connected/i)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Show more/i })).not.toBeInTheDocument();
+  });
+
+  it("shows an application once, however many pages it turns up on", async () => {
+    // A cursor walk over fifteen hundred rows promises nothing about an
+    // application appearing on one page only, and a repeat is a duplicate
+    // React key: a console warning and a row that will not update.
+    pages = [
+      { configured: true, toolkits: [toolkit()], nextCursor: "a" },
+      { configured: true, toolkits: [toolkit()], nextCursor: "" },
+    ];
+    render(<AppCatalogue connected={new Set()} />);
+    expect(screen.getAllByRole("button", { name: /Gmail/ })).toHaveLength(1);
   });
 });

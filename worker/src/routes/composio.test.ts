@@ -35,6 +35,11 @@ vi.mock("../lib/composio/client", async (importOriginal) => {
   };
 });
 
+const revokeConnectedAccounts = vi.fn(async () => {});
+vi.mock("../lib/composio/revoke", () => ({
+  revokeConnectedAccounts: (...args: unknown[]) => revokeConnectedAccounts(...(args as [])),
+}));
+
 const { composio, composioPublic } = await import("./composio");
 
 const USER = { id: "user-1", email: "a@example.com" };
@@ -64,6 +69,9 @@ const ROW = {
 /** What the service client was asked to write, per table. */
 let inserted: Record<string, unknown> | null = null;
 let updated: Record<string, unknown> | null = null;
+/** A row somebody abandoned, when a test wants the retry path. */
+let abandoned: Record<string, unknown> | null = null;
+let deleted = false;
 
 function appWith(spec: { role?: string; row?: Record<string, unknown> | null } = {}) {
   const dbSpec: FakeDbSpec = {
@@ -114,6 +122,10 @@ function appWith(spec: { role?: string; row?: Record<string, unknown> | null } =
 /** The service-role client, answering the insert and the settle-the-status update. */
 function serviceTables(row: Record<string, unknown> = ROW) {
   return () => {
+    // `.neq` is used by exactly one query here — the look for a row somebody
+    // abandoned — so it doubles as the way this fake tells that query apart
+    // from the others reaching the same chain.
+    let lookingForAbandoned = false;
     const link = {
       insert: (values: Record<string, unknown>) => {
         inserted = values;
@@ -123,9 +135,21 @@ function serviceTables(row: Record<string, unknown> = ROW) {
         updated = values;
         return link;
       },
+      delete: () => {
+        deleted = true;
+        return link;
+      },
       select: () => link,
       eq: () => link,
-      maybeSingle: async () => ({ data: row, error: null }),
+      neq: () => {
+        lookingForAbandoned = true;
+        return link;
+      },
+      limit: () => link,
+      maybeSingle: async () => ({
+        data: lookingForAbandoned ? abandoned : row,
+        error: null,
+      }),
       single: async () => ({ data: { ...row, ...(inserted ?? {}) }, error: null }),
       then: (resolve: (v: unknown) => unknown) =>
         Promise.resolve({ data: row, error: null }).then(resolve),
@@ -157,6 +181,9 @@ async function call(
 beforeEach(() => {
   inserted = null;
   updated = null;
+  abandoned = null;
+  deleted = false;
+  revokeConnectedAccounts.mockClear();
   serviceFrom.mockReset();
   serviceFrom.mockImplementation(serviceTables());
   // Cleared as well as re-stubbed: `mockResolvedValue` replaces the
@@ -331,6 +358,21 @@ describe("POST /composio/connect", () => {
     });
   });
 
+  it("replaces a connection somebody abandoned, rather than refusing the name", async () => {
+    // The label is unique per workspace, so a second attempt used to answer "a
+    // connection with that name already exists here" — a message about naming,
+    // for something that has nothing to do with naming. The only way out was
+    // to notice the "Finishing…" row and press Remove.
+    abandoned = { id: "conn-old", connected_account_id: "ca_half_made" };
+    const { status } = await call(appWith(), "POST", "/composio/connect", { toolkit: "gmail" });
+    expect(status).toBe(201);
+    expect(deleted).toBe(true);
+    // Handed back while there is still a handle on it: the insert overwrites
+    // the only column that names the account, and an account nothing points at
+    // is what `lib/composio/revoke.ts` exists to prevent.
+    expect(revokeConnectedAccounts).toHaveBeenCalledWith(expect.anything(), ["ca_half_made"]);
+  });
+
   it("refuses an application nobody has set up, and creates nothing anywhere", async () => {
     // The first connectability gate this route has had. The card asks the same
     // question of the same field and offers no button, so only a crafted
@@ -412,6 +454,55 @@ describe("GET /composio/connections/:id/status", () => {
       "/composio/connections/conn-1/status",
     );
     expect(status).toBe(400);
+  });
+
+  it("calls off a connection nobody came back to finish", async () => {
+    // The page stops asking after two minutes, so without this the row stays
+    // "Finishing…" until somebody happens to open Integrations again — and the
+    // catalogue counts it as connected in the meantime, which hides the
+    // application whose key they went to fetch.
+    getConnectedAccount.mockResolvedValue({ kind: "ok", status: "pending" });
+    const { body } = await call(
+      appWith({
+        row: {
+          ...ROW,
+          status: "pending",
+          created_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        },
+      }),
+      "GET",
+      "/composio/connections/conn-1/status",
+    );
+    expect(body.status).toBe("failed");
+    expect(updated).toEqual({ status: "failed" });
+  });
+
+  it("leaves a flow somebody is still in the middle of alone", async () => {
+    getConnectedAccount.mockResolvedValue({ kind: "ok", status: "pending" });
+    const { body } = await call(
+      appWith({
+        row: { ...ROW, status: "pending", created_at: new Date(Date.now() - 60_000).toISOString() },
+      }),
+      "GET",
+      "/composio/connections/conn-1/status",
+    );
+    expect(body.status).toBe("pending");
+    expect(updated).toBeNull();
+  });
+
+  it("does not fail a row because the catalogue was unreachable for a moment", async () => {
+    // An upstream wobble says nothing about the connection, and settling on
+    // one would call off consent screens people are halfway through.
+    getConnectedAccount.mockResolvedValue({ kind: "error", status: 502, message: "upstream" });
+    const { body } = await call(
+      appWith({
+        row: { ...ROW, status: "pending", created_at: new Date(0).toISOString() },
+      }),
+      "GET",
+      "/composio/connections/conn-1/status",
+    );
+    expect(body.status).toBe("pending");
+    expect(updated).toBeNull();
   });
 });
 

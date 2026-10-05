@@ -332,6 +332,64 @@ describe("enforcing the floor on what the model returned", () => {
       });
     });
 
+    describe("fix round 5: the raw disjunct needs a needle long enough to mean something", () => {
+      // Round 3 added a raw substring check to direction B for scripts
+      // `tokenise` cannot segment. A substring match has no word boundary, so
+      // on a two-letter question it censors not that question's topic but
+      // every label containing those two letters anywhere — the "ai" inside
+      // "email" defect, readmitted through direction B. Gap questions are
+      // where junk lives, since they are by definition the ones that found
+      // nothing, so a colleague typing "hi" at an agent was deleting a slice
+      // of the week's report. The three no-separator tests above are the
+      // regression guard for this round: whatever bounds the disjunct must
+      // not stop them dropping. A rule conditioned on the question being a
+      // single token would have — the Thai question tokenises to SEVEN
+      // fragments, which is why the bound is a character count.
+      const anchor: DedupedQuestion[] = [
+        {
+          question: "what is the hiring process for contractors",
+          askerKeys: new Set([1, 2, 3]),
+          copies: 4,
+        },
+      ];
+      const withJunk = (q: string): DedupedQuestion[] => [
+        ...anchor,
+        { question: q, askerKeys: new Set([7]), copies: 1 },
+      ];
+
+      it("keeps a label that merely contains a junk question's letters inside a word", () => {
+        const labels = [
+          "Hiring process",
+          "Shipping and delivery",
+          "Rapid prototyping",
+          "Latest releases",
+        ];
+        // Each junk question is a sub-word run of at least one label:
+        // *hi*ring, s*hi*pping, r*api*d, la*test*. Each is also a single
+        // asker, so it is never reported in its own right.
+        for (const junk of ["hi", "ok", "vpn", "api", "test"]) {
+          for (const label of labels) {
+            expect(
+              enforceFloor([{ label, members: [0] }], withJunk(junk), 3),
+              `${JSON.stringify(junk)} must not censor ${JSON.stringify(label)}`,
+            ).toEqual([{ label, questions: 4, askers: 3 }]);
+          }
+        }
+      });
+
+      it("applies the raw disjunct at five characters and not below", () => {
+        // One label, two needles differing only in length. "price" is a
+        // literal run inside "prices"; "pric" is the same run one character
+        // shorter, and is ignored.
+        expect(
+          enforceFloor([{ label: "Prices and discounts", members: [0] }], withJunk("price"), 3),
+        ).toEqual([]);
+        expect(
+          enforceFloor([{ label: "Prices and discounts", members: [0] }], withJunk("pric"), 3),
+        ).toEqual([{ label: "Prices and discounts", questions: 4, askers: 3 }]);
+      });
+    });
+
     it("drops a quotation at exactly the word-count threshold, keeps one word short", () => {
       const d: DedupedQuestion[] = [
         {
@@ -547,6 +605,18 @@ describe("enforcing the floor on what the model returned", () => {
     const gaps = enforceFloor([{ label: longLabel, members: [0] }], deduped, 3);
     expect(gaps[0].label).toBe(longLabel.slice(0, MAX_LABEL_CHARS));
     expect(gaps[0].label.length).toBe(MAX_LABEL_CHARS);
+  });
+
+  it("does not emit the whitespace that truncation left at the end (fix round 5)", () => {
+    // The label is trimmed before truncation, which says nothing about the
+    // end of the prefix: a label padded with whitespace in the middle was
+    // reported as one word followed by seventy-nine spaces.
+    const gaps = enforceFloor(
+      [{ label: "Expenses" + " ".repeat(200) + "and travel", members: [0] }],
+      deduped,
+      3,
+    );
+    expect(gaps).toEqual([{ label: "Expenses", questions: 5, askers: 3 }]);
   });
 
   it("truncates by code point, so a surrogate pair at the boundary survives whole (fix round 1, finding 9)", () => {

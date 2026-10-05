@@ -148,6 +148,46 @@ const QUOTATION_MIN_CHARS = 40;
 const QUOTATION_MIN_RATIO = 0.6;
 
 /**
+ * The shortest question the raw-substring half of Direction B will act on.
+ *
+ * That half exists for one reason: `tokenise` cannot segment a script with no
+ * inter-word separators, so a question glued into a label in Japanese, Chinese
+ * or Thai survives the token-sequence check (fix round 3). But it is a
+ * substring match with no word boundary — the mechanism this module
+ * deliberately moved off everywhere else, because `"ai"` matches inside
+ * `"email"` — and applied to a two-letter question it does not censor that
+ * question's topic, it censors every label containing those two letters
+ * anywhere. Measured against this module: one junk `"hi"` row deletes both
+ * `"Hiring process"` and `"Shipping and delivery"`, `"api"` deletes `"Rapid
+ * prototyping"`, `"test"` deletes `"Latest releases"`. Gap questions are
+ * precisely where junk lives — they are by definition the ones that found
+ * nothing in the documents — so without this threshold one person typing "hi"
+ * at an agent takes a slice of the week's report with them, and the only
+ * symptom is a shorter email.
+ *
+ * Five characters, measured on the normalised question: the same string the
+ * `includes` call then searches for, so the length and the match cannot
+ * disagree about what was measured.
+ *
+ * Deliberately a character count and not a token count. The Thai question in
+ * the fix-round-3 tests tokenises to SEVEN fragments — Thai's combining vowel
+ * marks are separators to `tokenise` and nothing of the kind to a reader — and
+ * both its seam tokens are corrupted where the label glues onto it, so the
+ * token sequence still does not match and this check is still the only thing
+ * that catches it. A rule conditioned on the question being a single token
+ * would have reopened exactly the leak round 3 closed. Every real
+ * no-separator question is a long run of characters instead — the three in the
+ * tests are 8, 10 and 31 — so a threshold far below them costs nothing this
+ * half is for.
+ *
+ * Counted in UTF-16 units, like `QUOTATION_MIN_CHARS` beside it. For every
+ * script in that evidence that is the character count exactly; where it is not
+ * (an astral character counts two) it over-counts, which applies an absolute
+ * check more often rather than less.
+ */
+const RAW_SUBSTRING_MIN_CHARS = 5;
+
+/**
  * Split into word-ish tokens: runs of letters and digits, case-folded.
  * Punctuation, whitespace and everything else is a separator and is
  * discarded rather than preserved.
@@ -202,7 +242,12 @@ function containsTokenSequence(haystack: string[], needle: string[]): boolean {
  *     what `containsTokenSequence` exists to refuse. The raw-substring check
  *     restores what this guard did for B before tokenising replaced it, but
  *     only for B: it can only ever ADD a drop here, which is the safe
- *     direction for an absolute check, and it never reaches Direction A.
+ *     direction for an absolute check, and it never reaches Direction A. Fix
+ *     round 5: and only for a question of at least `RAW_SUBSTRING_MIN_CHARS`
+ *     — see that constant for the junk two-letter question that was deleting
+ *     a slice of the report through it. The *match* is still absolute; what
+ *     has a threshold is which questions this one half of it looks at, and
+ *     it is a threshold no real no-separator question comes near.
  *   * Direction A — a question embeds the label. Only a quotation once the
  *     shared run of words clears `QUOTATION_MIN_WORDS`, `QUOTATION_MIN_CHARS`
  *     or `QUOTATION_MIN_RATIO` — see that constant's comment for why those
@@ -224,9 +269,15 @@ function isQuotation(label: string, questions: DedupedQuestion[]): boolean {
   return questions.some((q) => {
     const qTokens = tokenise(q.question);
     if (qTokens.length === 0) return false;
+    const normalisedQuestion = normaliseForComparison(q.question);
 
     if (containsTokenSequence(labelTokens, qTokens)) return true;
-    if (normalisedLabel.includes(normaliseForComparison(q.question))) return true;
+    if (
+      normalisedQuestion.length >= RAW_SUBSTRING_MIN_CHARS &&
+      normalisedLabel.includes(normalisedQuestion)
+    ) {
+      return true;
+    }
 
     if (!containsTokenSequence(qTokens, labelTokens)) return false;
     return (
@@ -244,9 +295,15 @@ function isQuotation(label: string, questions: DedupedQuestion[]): boolean {
  * of an emoji (or anything else outside the Basic Multilingual Plane) leaves
  * a lone surrogate behind — a string that is not valid UTF-16, which breaks
  * an email renderer or a JSON payload rather than merely looking cut off.
+ *
+ * Fix round 5: trimmed again afterwards. The caller trims before truncating,
+ * which says nothing about the end of the *prefix* — a label padded with
+ * whitespace in the middle was reported as a word followed by seventy-nine
+ * spaces. Only the end needs it: the string arrives already trimmed, so the
+ * prefix can never begin with whitespace.
  */
 function truncateLabel(label: string): string {
-  return [...label].slice(0, MAX_LABEL_CHARS).join("");
+  return [...label].slice(0, MAX_LABEL_CHARS).join("").trimEnd();
 }
 
 /**

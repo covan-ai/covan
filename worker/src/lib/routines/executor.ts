@@ -54,6 +54,7 @@ export const MAX_TRANSIENT_FAILURES = 20;
 /** Backoff never pushes a routine more than this far past its natural next run. */
 const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 
+/** A field added here must also be added to `ingest.ts`'s `ROUTINE_COLUMNS`. */
 export type RoutineRow = {
   id: string;
   agent_id: string;
@@ -1089,11 +1090,22 @@ async function finish(
    * declined run delivered nothing. Two different questions about the same
    * run, and the comment above says so for its own.
    *
-   * Last, so a pause set by either branch above wins. A run that delivered and
-   * then found its reason to stop reads as stopped — "Finished" is a claim that
-   * the series ran its course, and that one did not.
+   * A manual "Run now" counts the same as a scheduled tick: it delivers, and
+   * the spec's rule is "only a delivered run increments" — nothing here asks
+   * who or what started the run. The visible consequence is that pressing it
+   * on a seven-morning series finishes the series one calendar day sooner,
+   * with all seven pieces still delivered in order.
+   *
+   * Last, so a pause set by either branch above wins — *if* one is ever set
+   * on an `"ok"` outcome. Nothing today does: `pausedByFailures` requires
+   * `status === "failed"`, and the one call site that sets `outcome.pause`
+   * always pairs it with `status: "skipped"`. So the `patch.status ===
+   * undefined` check below is forward protection for a pause path that does
+   * not exist yet, not a condition exercised by any test — written so that if
+   * one is ever added, "delivered and then found a reason to stop" still
+   * reads as stopped rather than as a finished series.
    */
-  if (routine.ends_after_runs !== null && outcome.status === "ok") {
+  if (routine.ends_after_runs != null && outcome.status === "ok") {
     const done = routine.runs_done + 1;
     patch.runs_done = done;
     if (done >= routine.ends_after_runs && patch.status === undefined) {

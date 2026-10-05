@@ -298,6 +298,8 @@ export function RoutineDetail({
           <Field label="Next run">
             {routine.status === "active" && routine.nextRunAt !== null ? (
               <span className="tabular-nums">{formatRelative(routine.nextRunAt)}</span>
+            ) : routine.status === "completed" ? (
+              "Finished"
             ) : (
               "Paused"
             )}

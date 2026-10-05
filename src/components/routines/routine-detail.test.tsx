@@ -198,6 +198,10 @@ describe("RoutineDetail", () => {
     // disappears.
     expect(screen.getByRole("button", { name: /run now/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /delete/i })).toBeInTheDocument();
+    // The status badge above already reads "Finished" (routine-status.tsx).
+    // The "Next run" field must not contradict it four lines down by falling
+    // back to "Paused" for a status it has no branch for.
+    expect(screen.queryByText("Paused")).not.toBeInTheDocument();
   });
 
   // Delivery channels are scoped by RLS to their owner, so a teammate's target

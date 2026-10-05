@@ -1996,6 +1996,28 @@ describe("a routine that ends", () => {
     expect(saved.values.runs_done).toBeUndefined();
   });
 
+  // The headline case 0072's own header is written around: "a week of a dead
+  // delivery channel would otherwise complete a seven-morning series that
+  // nobody ever read." An `rss` source that has not moved never reaches
+  // `summarise` at all — `result.status === "unchanged"` skips straight to
+  // `finish` — so this exercises the same `"ok"` gate through the one path
+  // that is actually the risk the spec names, not through `source_kind:
+  // "none"` the way every other test in this block does.
+  it("does not count a run whose feed came back unchanged", async () => {
+    fetchImpl = vi.fn(async () => res("", { status: 304 }));
+    const { db, updates } = makeDb();
+    const r = routine({
+      ends_after_runs: 7,
+      runs_done: 2,
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: '"v1"', contentHash: null },
+    });
+
+    await runRoutine(r, makeDeps(db) as any);
+
+    const saved = updates.find((u) => u.table === "routines")!;
+    expect(saved.values.runs_done).toBeUndefined();
+  });
+
   it("finishes on the last delivered run", async () => {
     const r = endingRoutine({ ends_after_runs: 7, runs_done: 6 });
     const { deps, updates } = depsThatDeliver();

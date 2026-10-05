@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 
 import { assetSrc } from "@/lib/api-client";
-import { canConnectToolkit, type ComposioToolkit } from "@/lib/connections-api";
+import { mightConnectToolkit, type ComposioToolkit } from "@/lib/connections-api";
 import { useComposioCategories, useComposioToolkits } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
 import { AppDetailDialog } from "@/components/integrations/app-detail-dialog";
@@ -166,9 +166,10 @@ export function AppCatalogue({
       ) : null}
 
       <p className="text-xs leading-[1.5] text-muted-foreground">
-        You sign in at the application itself. Covan never sees the password or the token — the
-        grant is held by Composio, and what is stored here is a reference to it. An agent asks
-        before its first action on each.
+        Some of these you sign in to; most want a key you get from the application itself, typed on
+        a page at Composio. Either way Covan never sees the password, the token or the key — they
+        are held by Composio, and what is stored here is a reference. An agent asks before its first
+        action on each.
       </p>
     </div>
   );
@@ -202,7 +203,12 @@ export function AppCatalogue({
  * way into the card.
  */
 function CatalogueTile({ toolkit, onOpen }: { toolkit: ComposioToolkit; onOpen: () => void }) {
-  const connectable = canConnectToolkit(toolkit);
+  // The optimistic question, not the authoritative one. A list row cannot tell
+  // an application whose key the person supplies from one that needs a job
+  // doing in Composio, and asking for the detail of forty tiles to decide
+  // forty subtitles would be forty requests. The card re-asks with the row
+  // that can say, so no tile state can produce a bad click.
+  const connectable = mightConnectToolkit(toolkit);
 
   return (
     <li>

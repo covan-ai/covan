@@ -408,6 +408,25 @@ describe("a composio connection", () => {
     }
   });
 
+  /**
+   * The other half of that claim, and the half with no test until now.
+   *
+   * `config` IS client-writable — 0059 grants `update (label, allowed_methods,
+   * config)` to `authenticated`, and the anon key ships in the browser. That is
+   * fine and deliberate: what lives in there is a logo. It is also exactly why
+   * nothing identifying an account may ever be put there, and the reason to
+   * assert the permission rather than only its absence is that the next person
+   * to want a field on this row will reach for `config` first. If this test
+   * ever has to be changed to make room for an id, the change is wrong.
+   */
+  it("lets a member edit config, which is why no account reference may live in it", async () => {
+    const { error } = await colleague.db
+      .from("tool_connections")
+      .update({ config: { logo: "https://logos.composio.dev/api/gmail" } })
+      .eq("id", appId);
+    expect(error).toBeNull();
+  });
+
   it("cannot be re-pointed at another account through an update", async () => {
     // The column is not in the update grant either, so this is refused rather
     // than matching no row — as far as a client is concerned it does not exist.

@@ -70,18 +70,37 @@ export type ComposioToolkit = {
   /**
    * Whether Composio has an OAuth application of its own for this provider.
    *
-   * False means somebody has to register a client with that provider and paste
-   * it into Composio first — a job, not a retry. The card says so instead of
-   * offering a Connect button whose only outcome is an error from a third
-   * party.
+   * A raw catalogue column. **Not** whether this can be connected — that is
+   * `connectKind`, and reading this instead is the bug that made nine tenths
+   * of the catalogue unreachable.
    */
   managedAuth: boolean;
   /**
-   * Whether the application needs no sign-in at all — the second of the two
-   * ways something in this catalogue can be connected as it stands. Use
-   * `canConnectToolkit` rather than either flag on its own.
+   * Whether the application needs no sign-in at all, as the catalogue's own
+   * column says it. Another raw column; the detail read does not carry it, so
+   * `connectKind` is the field to trust on either path.
    */
   noAuth: boolean;
+  /**
+   * What connecting this one requires — the authoritative field.
+   *
+   * Null means *this row cannot say*, which is honest rather than missing: a
+   * catalogue list row proves no-sign-in and managed OAuth and is silent about
+   * the rest. The card opens a detail read, which is never null.
+   */
+  connectKind: ComposioConnectKind | null;
+  /**
+   * Composio's name for the credential this one wants, empty unless
+   * `connectKind` is `user_credential`. What the card names the noun from —
+   * never printed at a person as it stands.
+   */
+  credentialScheme: string;
+  /**
+   * A page at the provider where the credential can be got, or empty. Already
+   * checked to be https by the worker; still open it with
+   * `rel="noreferrer noopener"`.
+   */
+  authHintUrl: string;
   /**
    * The mark, as a path on **our** API rather than an address at Composio.
    * Empty when the catalogue published none. Build the `src` with `logoSrc`;
@@ -93,15 +112,54 @@ export type ComposioToolkit = {
 };
 
 /**
+ * What connecting an application requires. The worker derives it; see
+ * `worker/src/lib/composio/client.ts` for how.
+ */
+export type ComposioConnectKind = "no_auth" | "managed_oauth" | "user_credential" | "needs_setup";
+
+/**
+ * The credential schemes a tile may optimistically offer.
+ *
+ * A hardcoded list, unavoidably: the catalogue's list endpoint publishes no
+ * field-level detail, and asking for it per tile would be forty extra requests
+ * to decide forty subtitles. It is a **hint** — `canConnectToolkit` is the
+ * answer, and the card stands between every tile and every button.
+ */
+const SELF_SUPPLIED = new Set(["API_KEY", "BASIC", "BEARER_TOKEN"]);
+
+/**
  * Whether pressing Connect on this row can end anywhere but an error.
  *
- * Two ways in, and for a long time the page only knew about one: Composio
- * keeps an OAuth application for the common providers, and a smaller set needs
- * no credential whatsoever. Everything else wants somebody to register a
- * client with the provider first, which is a job rather than a retry.
+ * Three ways in, and for a long time the page knew about one and a half.
+ * Composio keeps an OAuth application for the common providers; a small set
+ * needs no credential at all; and **most of the catalogue — about 1,279
+ * applications — needs only a credential the person connecting supplies**,
+ * typed on a page Composio hosts. That third way had nowhere to be expressed,
+ * so every one of those was told to go and register an OAuth client, which is
+ * a job providers like PostHog do not offer.
+ *
+ * Precise on a detail row. On a list row it is exactly what
+ * `managedAuth || noAuth` used to be, which is why Gmail's button does not
+ * wait for a second request.
  */
 export function canConnectToolkit(toolkit: ComposioToolkit): boolean {
-  return toolkit.managedAuth || toolkit.noAuth;
+  return toolkit.connectKind !== null && toolkit.connectKind !== "needs_setup";
+}
+
+/**
+ * Whether a **tile** should look connectable. Optimistic by design.
+ *
+ * The two can disagree, and both directions are harmless because the card is
+ * unconditionally between them. Hint yes and answer no: the tile shows the
+ * description and the card says setup is needed, with no button — nobody sees
+ * an error. Hint no and answer yes: the tile says setup is needed and the card
+ * offers Connect, which is a pleasant surprise and one array entry to fix.
+ */
+export function mightConnectToolkit(toolkit: ComposioToolkit): boolean {
+  return (
+    canConnectToolkit(toolkit) ||
+    toolkit.authSchemes.some((scheme) => SELF_SUPPLIED.has(scheme.toUpperCase()))
+  );
 }
 
 export type ComposioToolkitsResponse = {

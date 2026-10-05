@@ -694,7 +694,6 @@ export const api = {
     connect: (input: {
       toolkit: string;
       label?: string;
-      noAuth?: boolean;
     }): Promise<{ url: string; connection: ToolConnection }> =>
       request("POST", "/composio/connect", input),
     status: (id: string): Promise<{ status: "pending" | "active" | "failed" }> =>

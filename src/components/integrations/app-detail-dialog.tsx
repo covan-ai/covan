@@ -1,7 +1,11 @@
 import { toast } from "sonner";
 
 import { assetSrc } from "@/lib/api-client";
-import { canConnectToolkit, type ComposioToolkit } from "@/lib/connections-api";
+import {
+  canConnectToolkit,
+  type ComposioConnectKind,
+  type ComposioToolkit,
+} from "@/lib/connections-api";
 import { useComposioToolkitDetail, useConnectComposio } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
 import { Chip } from "@/components/section-card";
@@ -50,7 +54,30 @@ export function AppDetailDialog({
   // of truth for "is a card showing" and it is the same value the card renders.
   const detail = useComposioToolkitDetail(toolkit?.slug ?? null);
   const connect = useConnectComposio();
-  const connectable = toolkit ? canConnectToolkit(toolkit) : false;
+  /**
+   * The row the card decides from.
+   *
+   * The detail read is preferred because only it carries what connecting
+   * requires in full — a list row can prove no-sign-in and managed OAuth and
+   * is silent about the rest. The list row is the fallback, and that fallback
+   * is what keeps Gmail's Connect button from waiting on a second request: its
+   * answer was already in the grid.
+   */
+  const described = detail.data?.toolkit ?? toolkit;
+  const kind: ComposioConnectKind | null = described?.connectKind ?? null;
+  const connectable = described ? canConnectToolkit(described) : false;
+  /**
+   * Whether the card is still finding out.
+   *
+   * Only reachable for an application whose list row could not say — so never
+   * for the hundred and twenty-three that connect today. This deliberately
+   * differs from `Operations` below, which shows Connect anyway when its read
+   * fails: nobody should be stopped from connecting Gmail because a catalogue
+   * read wobbled. Here the read is not decoration — without it there is no way
+   * to name the thing somebody is being asked to go and fetch, and offering a
+   * button that cannot say what it wants is worse than saying so.
+   */
+  const checking = kind === null && detail.isPending;
 
   return (
     <Dialog open={Boolean(toolkit)} onOpenChange={(next) => !next && onClose()}>
@@ -80,7 +107,9 @@ export function AppDetailDialog({
             </DialogDescription>
 
             <div className="flex flex-wrap items-center gap-1.5">
-              <Chip tone="neutral">{authLabel(toolkit)}</Chip>
+              {/* No chip at all while the answer is unknown — a guess here is
+                  the thing this whole change exists to stop. */}
+              {described && kind ? <Chip tone="neutral">{authLabel(described)}</Chip> : null}
               {/* Only when the route could back it. See the note at the top. */}
               {detail.data?.total != null ? (
                 <Chip tone="neutral">{`${detail.data.total} operation${detail.data.total === 1 ? "" : "s"}`}</Chip>
@@ -98,27 +127,75 @@ export function AppDetailDialog({
             />
           </div>
 
-          <DialogFooter className="shrink-0 border-t border-hairline px-5 py-4">
-            {connectable ? (
-              <Button
-                disabled={connect.isPending}
-                onClick={() =>
-                  connect.mutate(
-                    { toolkit: toolkit.slug, label: toolkit.name, noAuth: toolkit.noAuth },
-                    { onError: (err: Error) => toast.error(err.message) },
-                  )
-                }
-              >
-                {connect.isPending ? "Opening…" : "Connect"}
-              </Button>
+          <DialogFooter className="shrink-0 flex-col items-stretch gap-2.5 border-t border-hairline px-5 py-4 sm:flex-col sm:items-stretch">
+            {checking ? (
+              <p className="text-meta leading-[1.45] text-muted-foreground">
+                Checking what this one needs&hellip;
+              </p>
+            ) : connectable ? (
+              <>
+                {kind === "user_credential" ? (
+                  // Named before the button, not after it. Covan is about to
+                  // send somebody to a third party to type a secret, and which
+                  // third party that is belongs above the thing they press.
+                  <p className="text-meta leading-[1.45] text-muted-foreground">
+                    <strong className="font-medium text-foreground">
+                      Connect opens a page at Composio.
+                    </strong>{" "}
+                    You enter your {toolkit.name}{" "}
+                    {credentialWords(described?.credentialScheme).noun} there; Covan never sees it —
+                    the credential stays at Composio, and what is stored here is a reference to it.
+                    The page expires about ten minutes after you open it, so have the{" "}
+                    {credentialWords(described?.credentialScheme).noun} to hand.
+                    {described?.authHintUrl ? (
+                      <>
+                        {" "}
+                        <a
+                          href={described.authHintUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="underline underline-offset-2 hover:text-foreground"
+                        >
+                          Where to find it at {toolkit.name}
+                        </a>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
+                <div className="flex justify-end">
+                  <Button
+                    disabled={connect.isPending}
+                    onClick={() =>
+                      connect.mutate(
+                        {
+                          toolkit: toolkit.slug,
+                          label: toolkit.name,
+                          // Only a no-sign-in application legitimately comes
+                          // back with nowhere to go. Anything else that does
+                          // is a bug, and this is what makes it a toast
+                          // rather than a button that un-disables and does
+                          // nothing.
+                          expectRedirect: kind !== "no_auth",
+                        },
+                        { onError: (err: Error) => toast.error(err.message) },
+                      )
+                    }
+                  >
+                    {connect.isPending ? "Opening…" : "Connect"}
+                  </Button>
+                </div>
+              </>
             ) : (
               // No button at all rather than a disabled one. The thing standing
               // in the way is a job somebody has to do in Composio's dashboard,
-              // not a state this page is waiting out.
+              // not a state this page is waiting out. Said generically because
+              // it is not always an OAuth client — some of these want a machine
+              // client, and ninety-five want something Composio documents
+              // nowhere.
               <p className="text-meta leading-[1.45] text-muted-foreground">
-                Covan has no OAuth application for this one, and it needs a sign-in. Somebody has to
-                register a client with {toolkit.name} and paste it into Composio&rsquo;s dashboard
-                before it can be connected here.
+                {kind === null
+                  ? `Covan could not check what ${toolkit.name} needs just now. Try again in a moment.`
+                  : `Composio cannot connect ${toolkit.name} until somebody sets it up in Composio’s dashboard first.`}
               </p>
             )}
           </DialogFooter>
@@ -129,15 +206,48 @@ export function AppDetailDialog({
 }
 
 /**
+ * The noun somebody is being asked to go and fetch, with its article.
+ *
+ * From Composio's scheme, and never Composio's word for it: telling a person
+ * to paste an API key into something labelled `BASIC` is `DESIGN.md`'s opening
+ * failure. The fallback is deliberately vague rather than wrong — three
+ * applications in the catalogue ask for a client id and secret, and calling
+ * that "a key" would send somebody looking for the wrong thing.
+ *
+ * The article is written out rather than derived from the first letter, which
+ * is a rule about spelling pretending to be a rule about pronunciation: it
+ * reads "an username" the first time a `BASIC` application opens this card.
+ */
+const CREDENTIAL_WORDS: Record<string, { noun: string; article: string }> = {
+  API_KEY: { noun: "API key", article: "an" },
+  BEARER_TOKEN: { noun: "access token", article: "an" },
+  BASIC: { noun: "username and password", article: "a" },
+};
+
+function credentialWords(scheme: string | undefined): { noun: string; article: string } {
+  return CREDENTIAL_WORDS[(scheme ?? "").toUpperCase()] ?? { noun: "credential", article: "a" };
+}
+
+/**
  * What the chip says about signing in.
  *
- * Read off the two flags `canConnectToolkit` reads, never off `authSchemes` —
- * `OAUTH2` is Composio's vocabulary and means nothing to the person deciding.
+ * Read off `connectKind`, never off `authSchemes` — `OAUTH2` is Composio's
+ * vocabulary and means nothing to the person deciding. The scheme is consulted
+ * only to pick an English noun, which is what `credentialNoun` is for.
  */
 function authLabel(toolkit: ComposioToolkit): string {
-  if (toolkit.noAuth) return "No sign-in needed";
-  if (toolkit.managedAuth) return `Sign in at ${toolkit.name}`;
-  return "Needs setup in Composio";
+  switch (toolkit.connectKind) {
+    case "no_auth":
+      return "No sign-in needed";
+    case "managed_oauth":
+      return `Sign in at ${toolkit.name}`;
+    case "user_credential": {
+      const { noun, article } = credentialWords(toolkit.credentialScheme);
+      return `Needs ${article} ${noun} from ${toolkit.name}`;
+    }
+    default:
+      return "Needs setup in Composio";
+  }
 }
 
 type OperationsState =

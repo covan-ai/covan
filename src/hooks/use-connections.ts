@@ -168,20 +168,26 @@ export function useComposioToolkitDetail(slug: string | null) {
 export function useConnectComposio() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { toolkit: string; label?: string; noAuth?: boolean }) => {
-      const { url } = await api.composio.connect(input);
+    mutationFn: async (input: { toolkit: string; label?: string; expectRedirect?: boolean }) => {
+      const { expectRedirect = true, ...body } = input;
+      const { url } = await api.composio.connect(body);
       await queryClient.invalidateQueries({ queryKey: toolConnectionsKey });
       // An application that asks for no sign-in comes back with no address to
       // send anybody to, and that is the whole flow: the row is already there
       // and `useComposioStatus` settles it. Navigating to "" would reload the
       // page onto itself and look like the connect button did nothing.
       //
+      // `expectRedirect` is the caller's own reading of the catalogue and is
+      // deliberately NOT sent to the worker, which re-derives everything it
+      // needs: it exists only to decide whether an empty address here is the
+      // flow working or a bug going quiet.
+      //
       // Which is exactly why the other case must not reach here silently. A
       // sign-in flow with no address is a bug upstream, and this line is where
       // it would become invisible: the button would un-disable, nothing would
       // happen, and no error would fire so there would be no toast.
       if (url) window.location.assign(url);
-      else if (input.noAuth !== true) {
+      else if (expectRedirect) {
         throw new Error("That connection started but there is nowhere to finish it.");
       }
     },

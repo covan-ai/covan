@@ -22,6 +22,8 @@ workers_dev = true
 #   NOTION_CLIENT_ID, NOTION_CLIENT_SECRET
 #   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 #   SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET
+#   COMPOSIO_API_KEY — connected apps. Set it on the CRON WORKER TOO, or a
+#     scheduled run and a chat turn disagree about what exists.
 # -----------------------------------------------------------------------------
 
 [vars]

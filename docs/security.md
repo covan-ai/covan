@@ -135,9 +135,9 @@ operation)**, the modes are `ask` and `always`, and only an admin may promote
 one to `always`. What is deliberately different is the default. Where an absent
 grant on a source means **never**, an absent grant on a connected app means
 **ask** — because that connection does not exist until somebody searched for the
-app and completed a consent screen at it, and the absence of a further grant on
-something somebody went to that trouble for should surface a question rather
-than a dead end.
+app and either signed in at it or went and fetched a key for it, and the absence
+of a further grant on something somebody went to that trouble for should surface
+a question rather than a dead end.
 
 The asking is scoped to **one app for the rest of one turn**. That is a
 deliberate trade and worth stating: a confirmation per call would mean four
@@ -153,12 +153,27 @@ property: naming the recipient is what the operation is for. The approval is
 what stands in its place — you are shown the address and the body before
 anything is sent — and on an unattended run nothing happens at all.
 
-**What is stored.** Not the token. The OAuth grant is held by Composio, which is
-a subprocessor on the hosted product; what this database holds is an opaque
-reference to it, readable by no client role. That last part is not decoration:
-one deployment-wide API key opens every workspace's connections, so the
-reference IS the boundary between two tenants, and it is withheld exactly as a
-credential is.
+**What is stored.** Not the credential, of either kind. An application is
+connected either by signing in at it — which produces an OAuth grant — or by
+supplying a key the application issues, typed on a page Composio hosts and
+never passing through Covan at all. Both are held by Composio, which is a
+subprocessor on the hosted product; what this database holds is an opaque
+reference, readable by no client role. That last part is not decoration: one
+deployment-wide API key opens every workspace's connections, so the reference IS
+the boundary between two tenants, and it is withheld exactly as a credential is.
+
+Composio does not hand either one back. Asked about a connection, it returns the
+key redacted to its first few characters, so not even the deployment's own API
+key can read what a member typed.
+
+**Taking one back differs by kind, and the difference matters.** An OAuth grant
+is revoked at the provider — its own connected-applications page — and that
+works whatever Covan does. A supplied key is not revocable that way: it stays
+valid until somebody **rotates or deletes it at the provider**, and until then
+it remains at Composio for as long as the connection row exists. Pressing Remove
+in Covan hands the connection back to Composio and deletes the row; it does not
+and cannot invalidate a key the provider issued. Rotate it at the provider if
+that is what you need.
 
 Every human action in this is still an ordinary policy, because every one of
 them is a person changing a row: members see grants, anyone who can write may

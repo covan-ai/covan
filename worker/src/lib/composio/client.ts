@@ -1102,6 +1102,146 @@ export async function executeTool(
 }
 
 /**
+ * Whether a listed auth config was made by Covan's own side of this, or by
+ * hand in Composio's dashboard. Null when the row says neither way.
+ *
+ * Two fields answer it and both are published: `is_composio_managed`, and
+ * `type`, which reads `"custom"`. Either will do, and reading both means a
+ * project whose list omits one still gets a right answer.
+ */
+function customConfig(row: Record<string, unknown>): boolean | null {
+  if (row.is_composio_managed === false) return true;
+  if (row.is_composio_managed === true) return false;
+  const type = text(row.type).toLowerCase();
+  if (type === "custom") return true;
+  if (type) return false;
+  return null;
+}
+
+/**
+ * Whether an auth config Composio already has is the one this connect needs.
+ *
+ * It used to be "same toolkit, not disabled, first one wins", which was right
+ * while there was only one kind of config a toolkit could have. There are two
+ * now — Linear has Composio's own OAuth client *and* an API-key mode, and both
+ * are legitimate in one project — so matching on the slug alone would hand an
+ * API-key request somebody else's consent screen, or worse and permanently,
+ * hand a *managed* request the API-key config and quietly break the
+ * dashboard escape hatch this file documents two functions down.
+ *
+ * Three asymmetries, each deliberate:
+ *
+ * **No sign-in keeps the loose match.** Such a toolkit has exactly one
+ * possible kind of config, so "any enabled one" is still correct, and keeping
+ * it loose is what stops the thirty-five from making a config per connect.
+ *
+ * **Managed refuses only an explicit custom.** Absent is no information, and
+ * no information has to mean today's behaviour or every project that omits the
+ * field starts making duplicates.
+ *
+ * **A credential needs a positive match**, by scheme or by the name we write.
+ * The name is the fallback because `auth_scheme` is documented optional on
+ * list rows: without it, a project whose list omits the scheme would create a
+ * fresh config on every connect forever — unbounded, where today the ceiling
+ * is one per toolkit.
+ */
+function reusableConfig(row: Record<string, unknown>, slug: string, plan: AuthConfigPlan): boolean {
+  const rowToolkit = isRecord(row.toolkit) ? text(row.toolkit.slug) : text(row.toolkit);
+  if (rowToolkit.toLowerCase() !== slug) return false;
+  // `is_disabled` is not on this shape — the live list carries
+  // `status: "ENABLED" | "DISABLED"` — so reading only it meant a disabled
+  // config was reusable, because `undefined !== true`. Both are read: the
+  // field is real on connected accounts, so it is absent here rather than
+  // imaginary, and it may yet appear.
+  if (row.is_disabled === true) return false;
+  if (text(row.status).toUpperCase() === "DISABLED") return false;
+
+  const custom = customConfig(row);
+  switch (plan.kind) {
+    case "no_auth":
+      return true;
+    case "managed_oauth":
+      return custom !== true;
+    case "user_credential":
+      return (
+        custom !== false &&
+        (text(row.auth_scheme).toUpperCase() === plan.scheme.toUpperCase() ||
+          text(row.name) === configName(plan.scheme))
+      );
+  }
+}
+
+/**
+ * The name written on a config Covan creates for a supplied credential.
+ *
+ * Deterministic on purpose: it is the fallback key `reusableConfig` matches on
+ * when Composio's list row omits the scheme, so it has to be derivable from
+ * the plan alone rather than carry a timestamp or an id.
+ */
+function configName(scheme: string): string {
+  return `covan:${scheme.toUpperCase()}`;
+}
+
+/**
+ * The `auth_config` object to post for one plan.
+ *
+ * The managed body is byte-identical to what this file has always sent, and
+ * deliberately gains no field: covan#172 was three published request shapes
+ * their own API rejected, and the hundred and twenty-three applications that
+ * connect today must be provably untouched by this.
+ *
+ * **`authScheme` is camelCase.** The rest of Composio's API is snake_case and
+ * the response to this very request echoes `auth_scheme`, but the request key
+ * is camelCase and sending `auth_scheme` is a 400 —
+ * *"Error in payload.auth_config.authScheme: Required"*. Found by trying it.
+ *
+ * `credentials: {}` is the load-bearing emptiness: it says the credential
+ * arrives from whoever connects, at Composio, rather than from here.
+ */
+function createBodyFor(plan: AuthConfigPlan): Record<string, unknown> {
+  switch (plan.kind) {
+    case "no_auth":
+      // Kept as it was, and it does not work: Composio refuses to make any
+      // config for a toolkit that needs none, and refuses a link without one.
+      // Changing it here would be inventing a shape for a flow that needs a
+      // migration first — covan#253 — so the failure stays one failure.
+      return { type: "no_auth" };
+    case "managed_oauth":
+      return { type: "use_composio_managed_auth" };
+    case "user_credential":
+      return {
+        type: "use_custom_auth",
+        authScheme: plan.scheme,
+        credentials: {},
+        name: configName(plan.scheme),
+      };
+  }
+}
+
+/**
+ * What Composio says it made, when that is not what was asked for.
+ *
+ * The create response carries `auth_scheme` and `is_composio_managed` as
+ * required fields, so this is nearly free. Absence is read as no information
+ * rather than as a mismatch — the check exists to catch a wrong answer, not to
+ * demand a complete one.
+ */
+function echoMismatch(echo: Record<string, unknown>, plan: AuthConfigPlan): string {
+  const managed = echo.is_composio_managed;
+  if (plan.kind === "managed_oauth") {
+    return managed === false ? "a config with no OAuth application of its own" : "";
+  }
+  if (plan.kind === "user_credential") {
+    if (managed === true) return "an OAuth config rather than a credential one";
+    const scheme = text(echo.auth_scheme);
+    if (scheme && scheme.toUpperCase() !== plan.scheme.toUpperCase()) {
+      return `a ${scheme} config where ${plan.scheme} was asked for`;
+    }
+  }
+  return "";
+}
+
+/**
  * The auth config a toolkit's consent flows hang off, made if there is not one.
  *
  * Composio's model has a layer the first draft of this file did not: an **auth
@@ -1121,13 +1261,28 @@ export async function executeTool(
  * its own client in Composio's dashboard, which this will then find and use
  * instead of making a second.
  *
+ * **`use_custom_auth` with empty credentials is the other half**, and it is the
+ * larger one: for an application whose credential the person connecting
+ * supplies, Composio hosts the page that collects it. Covan asks for a config
+ * with no credentials in it and never sees what gets typed — which is the
+ * whole reason this shape was chosen over a form of our own. Probed
+ * 2026-10-05: the hosted page renders every required field with the
+ * catalogue's own description, and submitting redirects to our callback like
+ * any consent screen.
+ *
+ * **Nothing in Covan ever deletes an auth config.** `revoke.ts` revokes
+ * connected accounts; configs accumulate monotonically, one per toolkit per
+ * plan. That is deliberate — deleting one would orphan every other
+ * workspace's accounts bound to it, and one Composio project serves every
+ * workspace here.
+ *
  * Not cached. It is one extra request on the rarest action in the product, and
  * a cache would be a second place for "which application is this" to be wrong.
  */
 async function authConfigFor(
   env: ComposioEnv,
   toolkit: string,
-  noAuth: boolean,
+  plan: AuthConfigPlan,
   opts?: ComposioOptions,
 ): Promise<{ kind: "ok"; id: string } | ComposioError> {
   const slug = toolkit.toLowerCase();
@@ -1142,10 +1297,12 @@ async function authConfigFor(
   // Filtered again here rather than trusting the query parameter. An API that
   // ignores a filter it does not know returns EVERYTHING, and the first row of
   // everything is an OAuth application for some other provider entirely.
-  const existing = rows(parsed(listed.body)).find((row) => {
-    const rowToolkit = isRecord(row.toolkit) ? text(row.toolkit.slug) : text(row.toolkit);
-    return rowToolkit.toLowerCase() === slug && row.is_disabled !== true;
-  });
+  //
+  // Residual, a comment rather than code: this asks for twenty rows and
+  // follows no cursor, so a project with more than twenty configs for one
+  // toolkit could page past ours and make a duplicate. Twenty is already far
+  // more than the two kinds that can legitimately exist.
+  const existing = rows(parsed(listed.body)).find((row) => reusableConfig(row, slug, plan));
   if (existing && text(existing.id)) return { kind: "ok", id: text(existing.id) };
 
   const made = await request(
@@ -1155,29 +1312,29 @@ async function authConfigFor(
       method: "POST",
       body: {
         toolkit: { slug: slug.toUpperCase() },
-        // An application that asks for no credentials still needs a config to
-        // hang a connection off; what it does not need is an OAuth client.
-        // Asking for a managed one here is what Composio answers 400 to, and
-        // for a long time that 400 was the whole reason these thirty-five
-        // looked unconnectable.
-        auth_config: { type: noAuth ? "no_auth" : "use_composio_managed_auth" },
+        auth_config: createBodyFor(plan),
       },
     },
     opts,
   );
   if (made.kind === "error") {
-    // The likely cause is a provider Composio has no OAuth application for, and
-    // that is a job rather than a retry: somebody has to register a client with
-    // the provider and paste it into Composio. Said in those words, because the
-    // raw message is about a config type nobody outside this file has heard of.
+    // Each branch fails for its own reason and the raw message is about a
+    // config type nobody outside this file has heard of, so each gets its own
+    // sentence. Only the managed one is a job somebody can go and do.
     return {
       kind: "error",
       status: made.status,
-      message: noAuth
-        ? `Composio would not open ${slug} without a sign-in after all. (${made.message})`
-        : `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
-          `application for it in Composio's dashboard before it can be connected here. ` +
-          `(${made.message})`,
+      message:
+        plan.kind === "no_auth"
+          ? `${slug} needs no sign-in, and Composio will not make a connection for an ` +
+            `application that needs none — so there is nothing here to connect. This is ` +
+            `covan#253 and it affects every one of the thirty-five like it. (${made.message})`
+          : plan.kind === "user_credential"
+            ? `Composio would not set up a credential-based sign-in for ${slug}. ` +
+              `(${made.message})`
+            : `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
+              `application for it in Composio's dashboard before it can be connected here. ` +
+              `(${made.message})`,
     };
   }
 
@@ -1186,6 +1343,13 @@ async function authConfigFor(
   const id = isRecord(inner) ? text(inner.id) : "";
   if (!id) {
     return { kind: "error", status: 502, message: `Composio made no sign-in config for ${slug}` };
+  }
+  const wrong = isRecord(inner) ? echoMismatch(inner, plan) : "";
+  if (wrong) {
+    // A config of the wrong kind is durable and silent: connections get bound
+    // to it, and the only symptom is a person being asked for the wrong thing
+    // months later. Cheaper to refuse the one connect.
+    return { kind: "error", status: 502, message: `Composio made ${wrong} for ${slug}` };
   }
   return { kind: "ok", id };
 }
@@ -1200,13 +1364,14 @@ async function authConfigFor(
  */
 export async function createLink(
   env: ComposioEnv,
-  link: { toolkit: string; userId: string; callbackUrl?: string; noAuth?: boolean },
+  link: { toolkit: string; userId: string; plan: AuthConfigPlan; callbackUrl?: string },
   opts?: ComposioOptions,
 ): Promise<ComposioResult<{ redirectUrl: string; connectedAccountId: string }>> {
   // A link is made against an AUTH CONFIG, not against a toolkit — which is
   // the one thing a reading of the documentation got wrong and a single probe
   // settled: `{"toolkit":…}` comes back 400 `payload.auth_config_id: Required`.
-  const config = await authConfigFor(env, link.toolkit, link.noAuth === true, opts);
+  // Still true on v3.1, checked 2026-10-05.
+  const config = await authConfigFor(env, link.toolkit, link.plan, opts);
   if (config.kind === "error") return config;
 
   const res = await request(
@@ -1228,15 +1393,34 @@ export async function createLink(
   const row = isRecord(body) ? (isRecord(body.data) ? body.data : body) : null;
   const redirectUrl = row ? text(row.redirect_url) || text(row.redirectUrl) || text(row.url) : "";
   const connectedAccountId = row ? text(row.id) || text(row.connected_account_id) : "";
-  // The account is the part that must exist. The consent screen is not: an
-  // application that needs no sign-in has nowhere to send anybody, and comes
-  // back with an account and an empty address. The caller reads an empty
-  // `redirectUrl` as "there is nothing to go and do" rather than as a failure.
-  if (!connectedAccountId || (!redirectUrl && link.noAuth !== true)) {
+
+  /**
+   * Whether a page is part of this flow at all.
+   *
+   * Keyed on no-sign-in **specifically**, and the specificity is the point. An
+   * application that needs no sign-in has nowhere to send anybody and comes
+   * back with an account and an empty address, which is success. Everything
+   * else — a consent screen or a page that collects a credential — is a
+   * redirect, and an empty one is a failure.
+   *
+   * Written as "not managed", or as "has no scheme", this line would accept a
+   * credential link with no page as success, and the result would be silent:
+   * the route inserts a pending row, answers `{url: ""}`, and the browser's
+   * `if (url) window.location.assign(url)` does nothing whatever. The button
+   * un-disables, a ghost row appears above the grid, the application vanishes
+   * from the catalogue because it now counts as connected, and no error fires
+   * so there is no toast. Every test still passes.
+   */
+  const needsRedirect = link.plan.kind !== "no_auth";
+  if (!connectedAccountId || (needsRedirect && !redirectUrl)) {
     return {
       kind: "error",
       status: 502,
-      message: "Composio started no consent flow we could follow",
+      message:
+        link.plan.kind === "user_credential" && connectedAccountId
+          ? `Composio made an account for ${link.toolkit} but no page to enter the ` +
+            `credential on.`
+          : "Composio started no consent flow we could follow",
     };
   }
   return { kind: "ok", redirectUrl, connectedAccountId };

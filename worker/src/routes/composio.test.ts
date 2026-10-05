@@ -174,6 +174,9 @@ beforeEach(() => {
       authSchemes: ["OAUTH2"],
       managedAuth: true,
       noAuth: false,
+      connectKind: "managed_oauth",
+      credentialScheme: "",
+      authHintUrl: "",
       logo: "https://logos.composio.dev/api/gmail",
       categories: ["productivity"],
     },
@@ -287,20 +290,75 @@ describe("POST /composio/connect", () => {
     expect(link.callbackUrl).toBe("https://app.example.com/integrations?connected=gmail");
   });
 
-  it("asks the catalogue whether this needs a sign-in, rather than the browser", async () => {
-    // The flag decides which kind of auth config gets made. Taken from the
-    // request body it would be a request choosing, so it is read here even
+  it("asks the catalogue how this connects, rather than the browser", async () => {
+    // What gets built at Composio is decided from the catalogue. Taken from
+    // the request body it would be a request choosing, so it is read here even
     // though the page that sent the request already knew the answer.
     getToolkit.mockResolvedValueOnce({
       kind: "ok",
-      toolkit: { slug: "hackernews", name: "Hacker News", noAuth: true, logo: "" },
+      toolkit: { slug: "hackernews", name: "Hacker News", connectKind: "no_auth", logo: "" },
     });
     await call(appWith(), "POST", "/composio/connect", {
       toolkit: "hackernews",
       // A lie, and it must not survive.
       noAuth: false,
     });
-    expect((createLink.mock.calls[0][1] as { noAuth: boolean }).noAuth).toBe(true);
+    expect((createLink.mock.calls[0][1] as { plan: unknown }).plan).toEqual({ kind: "no_auth" });
+  });
+
+  it("takes the credential scheme from the catalogue too, never from the request", async () => {
+    // The scheme becomes a durable auth config at Composio. A request that
+    // could name it could have a config of its choosing made, once, for every
+    // workspace on the deployment.
+    getToolkit.mockResolvedValueOnce({
+      kind: "ok",
+      toolkit: {
+        slug: "posthog",
+        name: "PostHog",
+        connectKind: "user_credential",
+        credentialScheme: "API_KEY",
+        logo: "",
+      },
+    });
+    const { status } = await call(appWith(), "POST", "/composio/connect", {
+      toolkit: "posthog",
+      credentialScheme: "BASIC",
+    });
+    expect(status).toBe(201);
+    expect((createLink.mock.calls[0][1] as { plan: unknown }).plan).toEqual({
+      kind: "user_credential",
+      scheme: "API_KEY",
+    });
+  });
+
+  it("refuses an application nobody has set up, and creates nothing anywhere", async () => {
+    // The first connectability gate this route has had. The card asks the same
+    // question of the same field and offers no button, so only a crafted
+    // request arrives here — but it arrives before anything is made at
+    // Composio, which is the point of where it sits.
+    getToolkit.mockResolvedValueOnce({
+      kind: "ok",
+      toolkit: { slug: "docusign", name: "DocuSign", connectKind: "needs_setup", logo: "" },
+    });
+    const { status, body } = await call(appWith(), "POST", "/composio/connect", {
+      toolkit: "docusign",
+    });
+    expect(status).toBe(400);
+    expect(String(body.error)).toContain("Composio's dashboard");
+    expect(createLink).not.toHaveBeenCalled();
+    expect(inserted).toBeNull();
+  });
+
+  it("refuses a row the catalogue could not classify, rather than guessing managed", async () => {
+    // `connectKind: null` means the row could not say. Reaching Composio on a
+    // guess would make a durable auth config out of one.
+    getToolkit.mockResolvedValueOnce({
+      kind: "ok",
+      toolkit: { slug: "mystery", name: "Mystery", connectKind: null, logo: "" },
+    });
+    const { status } = await call(appWith(), "POST", "/composio/connect", { toolkit: "mystery" });
+    expect(status).toBe(400);
+    expect(createLink).not.toHaveBeenCalled();
   });
 
   it("writes the mark the catalogue published onto the row", async () => {
@@ -314,7 +372,7 @@ describe("POST /composio/connect", () => {
   it("leaves config empty when the catalogue published no usable mark", async () => {
     getToolkit.mockResolvedValueOnce({
       kind: "ok",
-      toolkit: { slug: "gmail", name: "Gmail", noAuth: false, logo: "" },
+      toolkit: { slug: "gmail", name: "Gmail", connectKind: "managed_oauth", logo: "" },
     });
     await call(appWith(), "POST", "/composio/connect", { toolkit: "gmail" });
     expect(inserted?.config).toEqual({});

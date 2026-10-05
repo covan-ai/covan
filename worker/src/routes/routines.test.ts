@@ -436,3 +436,103 @@ describe("the ingest trigger endpoints", () => {
     expect(serviceFrom).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /routines, creating a delivery channel inline", () => {
+  const AGENT_ID = "11111111-1111-4111-8111-111111111111";
+  const CHANNEL_ID = "22222222-2222-4222-8222-222222222222";
+
+  const ROUTINE_BODY = {
+    agentId: AGENT_ID,
+    name: "First week",
+    sourceKind: "none",
+    instruction: "say something",
+    scheduleCron: "0 9 * * *",
+    timezone: "UTC",
+  };
+
+  /**
+   * `POST /routines` writes two tables: `routines` through the caller's own
+   * client, and — only when an address arrives instead of a channel id —
+   * `delivery_channels` through the service role. Both are captured here,
+   * keyed by table, the way a real database would hand rows back: with their
+   * generated `id` included.
+   */
+  function requestWith() {
+    const byTable: Record<string, Array<Record<string, unknown>>> = {};
+
+    serviceFrom.mockImplementation((table: string) => ({
+      insert: (values: Record<string, unknown>) => {
+        const row = { id: `${table}-generated`, ...values };
+        (byTable[table] ??= []).push(row);
+        return { select: () => ({ single: async () => ({ data: { id: row.id }, error: null }) }) };
+      },
+    }));
+
+    const request = appWith({
+      tables: {
+        agents: {
+          select: async () => ({ data: { workspace_id: WORKSPACE_ID }, error: null }),
+        },
+        routines: {
+          insert: async (ctx) => {
+            const row = {
+              id: "routine-1",
+              visibility: "private",
+              status: "active",
+              paused_reason: null,
+              last_run_at: null,
+              created_at: "2026-09-20T00:00:00.000Z",
+              ...ctx.values,
+            };
+            (byTable.routines ??= []).push(row);
+            return { data: row, error: null };
+          },
+        },
+      },
+    });
+
+    return { request, inserted: (table: string) => byTable[table] ?? [] };
+  }
+
+  it("creates a channel from an address when the caller has none", async () => {
+    const { request, inserted } = requestWith();
+
+    const { status } = await request("POST", "/routines", {
+      ...ROUTINE_BODY,
+      deliveryEmail: "me@example.com",
+    });
+
+    expect(status).toBe(201);
+    // The channel exists, belongs to the caller, and its label is masked.
+    const channels = inserted("delivery_channels");
+    expect(channels).toHaveLength(1);
+    expect(channels[0].kind).toBe("email");
+    expect(channels[0].secret_ciphertext).not.toContain("me@example.com");
+    expect(inserted("routines")[0].delivery_channel_id).toBe(channels[0].id);
+  });
+
+  it("refuses both an address and a channel id in one request", async () => {
+    const { request } = requestWith();
+
+    const { status } = await request("POST", "/routines", {
+      ...ROUTINE_BODY,
+      name: "Both",
+      deliveryChannelId: CHANNEL_ID,
+      deliveryEmail: "me@example.com",
+    });
+
+    expect(status).toBe(400);
+  });
+
+  it("refuses an address that is not one", async () => {
+    const { request } = requestWith();
+
+    const { status } = await request("POST", "/routines", {
+      ...ROUTINE_BODY,
+      name: "Bad",
+      deliveryEmail: "not-an-address",
+    });
+
+    expect(status).toBe(400);
+  });
+});

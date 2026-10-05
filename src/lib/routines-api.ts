@@ -137,7 +137,14 @@ export type CreateRoutineInput = {
   /** Required when sourceKind is `connection`. */
   connectionId?: string | null;
   instruction: string;
-  deliveryChannelId: string;
+  /**
+   * Exactly one of `deliveryChannelId` and `deliveryEmail`, enforced by the
+   * worker's schema rather than by this type: a workspace with an existing
+   * channel sends its id, and a workspace with none sends an address instead,
+   * and the API creates the channel from it in the same request.
+   */
+  deliveryChannelId?: string;
+  deliveryEmail?: string;
   scheduleCron: string;
   timezone: string;
   /** Omitted means `schedule`, which is what every routine was before this. */

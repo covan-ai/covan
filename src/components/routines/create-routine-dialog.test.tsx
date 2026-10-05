@@ -4,13 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CreateRoutineDialog } from "./create-routine-dialog";
 
-// The empty-channel branch links to Settings with a TanStack Router <Link>,
-// which needs a router context this test has no reason to build. Same stub as
-// routines-list.test.tsx.
-vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
-}));
-
 const { draft, channelsList, me } = vi.hoisted(() => ({
   draft: vi.fn(),
   channelsList: vi.fn(),
@@ -69,18 +62,23 @@ describe("CreateRoutineDialog", () => {
     });
   });
 
-  it("sends the user to Settings when they have no delivery channel", async () => {
+  it("asks for an address in place of the channel picker when there is none", async () => {
     channelsList.mockResolvedValue([]);
+    me.mockResolvedValue({
+      user: { id: "u1", email: "me@example.com" },
+      workspace: {},
+      members: [{ id: "u1", role: "admin" }],
+    });
     const user = userEvent.setup();
 
     renderDialog();
     await user.click(screen.getByRole("button", { name: /new routine/i }));
     await user.click(screen.getByRole("button", { name: /set it up myself/i }));
 
-    expect(
-      await screen.findByText(/Add a delivery channel in Settings first/i),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Create routine$/i })).toBeDisabled();
+    const field = await screen.findByLabelText(/deliver to/i);
+    // Pre-filled with the signed-in account's own address.
+    expect(field).toHaveValue("me@example.com");
+    expect(screen.queryByText(/open Settings/)).not.toBeInTheDocument();
   });
 
   // A draft the parser cannot read must not trap the user on step one retrying

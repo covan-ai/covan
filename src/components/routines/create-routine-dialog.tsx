@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link as RouterLink } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -97,6 +96,13 @@ export function CreateRoutineDialog({
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
   const [timezone, setTimezone] = useState(browserTimezone());
   const [channelId, setChannelId] = useState("");
+  // Only relevant once `channels` is empty — see the "Deliver to" branch
+  // below. Seeded with the signed-in account's own address at every point
+  // that moves the dialog to step 2, the same way `channelId` is seeded from
+  // `channels` at each of those points rather than from one effect watching
+  // it — so a dialog reopened after a close re-seeds from whatever `me` is by
+  // then, instead of being stuck with whatever it saw once.
+  const [deliveryEmail, setDeliveryEmail] = useState("");
   const [endsAfterRuns, setEndsAfterRuns] = useState<number | null>(null);
   const [fieldError, setFieldError] = useState<{
     field: "schedule" | "url";
@@ -115,6 +121,7 @@ export function CreateRoutineDialog({
     setScheduleCron("0 * * * *");
     setTimezone(browserTimezone());
     setChannelId("");
+    setDeliveryEmail("");
     setEndsAfterRuns(null);
     setFieldError(null);
   };
@@ -139,11 +146,13 @@ export function CreateRoutineDialog({
       // preselects the first channel of a matching kind if one exists.
       const wanted = draft.channelKind === "slack" ? "slack_webhook" : "email";
       setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
+      setDeliveryEmail(me?.user.email ?? "");
     } catch {
       // 422 means the parser could not read the request. Trapping the user on
       // step one retrying prose helps nobody; the form is always reachable.
       toast.message("Couldn't read that one — fill it in below instead.");
       setChannelId(channels[0]?.id ?? "");
+      setDeliveryEmail(me?.user.email ?? "");
     } finally {
       setDrafting(false);
       setStep(2);
@@ -169,6 +178,7 @@ export function CreateRoutineDialog({
     setEndsAfterRuns(template.endsAfterRuns);
     const wanted = d.channelKind === "slack" ? "slack_webhook" : "email";
     setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
+    setDeliveryEmail(me?.user.email ?? "");
     setStep(2);
   };
 
@@ -197,6 +207,7 @@ export function CreateRoutineDialog({
       applyTemplate(template);
     } else {
       setChannelId(channels[0]?.id ?? "");
+      setDeliveryEmail(me?.user.email ?? "");
     }
     onTemplateConsumed?.();
     // `channels` is read inside and deliberately not a dependency: it arrives a
@@ -208,6 +219,7 @@ export function CreateRoutineDialog({
 
   const skipToForm = () => {
     setChannelId(channels[0]?.id ?? "");
+    setDeliveryEmail(me?.user.email ?? "");
     setStep(2);
   };
 
@@ -226,7 +238,9 @@ export function CreateRoutineDialog({
         sourceUrl: sourceKind === "rss" || sourceKind === "web" ? sourceUrl.trim() : null,
         connectionId: sourceKind === "connection" ? connectionId : null,
         instruction: instruction.trim(),
-        deliveryChannelId: channelId,
+        ...(channels.length === 0
+          ? { deliveryEmail: deliveryEmail.trim() }
+          : { deliveryChannelId: channelId }),
         scheduleCron: scheduleCron.trim(),
         timezone,
         endsAfterRuns,
@@ -258,7 +272,7 @@ export function CreateRoutineDialog({
   const canSave =
     name.trim() !== "" &&
     instruction.trim() !== "" &&
-    channelId !== "" &&
+    (channels.length === 0 ? deliveryEmail.trim() !== "" : channelId !== "") &&
     // The picker emits "" while a number field is mid-edit, so this also covers
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
@@ -412,15 +426,24 @@ export function CreateRoutineDialog({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="routine-channel">Deliver to</Label>
+                <Label
+                  htmlFor={channels.length === 0 ? "routine-channel-email" : "routine-channel"}
+                >
+                  Deliver to
+                </Label>
                 {channels.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Add a delivery channel in Settings first —{" "}
-                    <RouterLink to="/settings" className="text-primary underline">
-                      open Settings
-                    </RouterLink>
-                    .
-                  </p>
+                  <>
+                    <Input
+                      id="routine-channel-email"
+                      type="email"
+                      value={deliveryEmail}
+                      onChange={(e) => setDeliveryEmail(e.target.value)}
+                    />
+                    <p className="text-meta leading-[1.45] text-muted-foreground">
+                      The result arrives here. You can add Slack or another address in Settings
+                      later.
+                    </p>
+                  </>
                 ) : (
                   <Select value={channelId} onValueChange={setChannelId}>
                     <SelectTrigger id="routine-channel">

@@ -117,6 +117,17 @@ describe("what a screen's facts leave unmet", () => {
     ).toEqual([]);
   });
 
+  /**
+   * The cases above only prove the floor is above 2 — both loop over `[1, 2]`
+   * and re-derive the "at floor" input from this same constant, so neither
+   * notices the floor being silently raised. The worker keeps its own copy of
+   * this number (`src/` cannot import from `worker/src/`), and a literal-drift
+   * test on each side is the only thing that catches the two disagreeing.
+   */
+  it("pins the floor at 3, so the worker's matching copy cannot drift unnoticed", () => {
+    expect(GAP_REPORT_MIN_MEMBERS).toBe(3);
+  });
+
   it("gives every requirement a sentence that says what to do", () => {
     for (const r of ["documents", "admin", "gapReport", "enoughPeople"] as const) {
       expect(requirementReason(r).length, r).toBeGreaterThan(30);

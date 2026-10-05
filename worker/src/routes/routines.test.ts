@@ -597,4 +597,36 @@ describe("POST /routines, creating a delivery channel inline", () => {
     expect(deletedIds).toEqual([channels[0].id]);
     expect(inserted("routines")).toHaveLength(0);
   });
+
+  // 0072 bounds a series at 1–365 delivered runs — a year is not a series, and
+  // 0 is not a bound at all. Caught by `createSchema` itself, before anything
+  // is written, unlike the cron check above: no channel is minted and nothing
+  // needs rolling back.
+  describe("endsAfterRuns bounds", () => {
+    it.each([0, 366])("refuses %i", async (endsAfterRuns) => {
+      const { request, inserted } = requestWith();
+
+      const { status } = await request("POST", "/routines", {
+        ...ROUTINE_BODY,
+        deliveryChannelId: CHANNEL_ID,
+        endsAfterRuns,
+      });
+
+      expect(status).toBe(400);
+      expect(inserted("routines")).toHaveLength(0);
+    });
+
+    it.each([1, 365])("accepts %i", async (endsAfterRuns) => {
+      const { request, inserted } = requestWith();
+
+      const { status } = await request("POST", "/routines", {
+        ...ROUTINE_BODY,
+        deliveryChannelId: CHANNEL_ID,
+        endsAfterRuns,
+      });
+
+      expect(status).toBe(201);
+      expect(inserted("routines")[0].ends_after_runs).toBe(endsAfterRuns);
+    });
+  });
 });

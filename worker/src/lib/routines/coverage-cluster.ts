@@ -122,18 +122,130 @@ export function dedupeQuestions(rows: GapQuestion[]): DedupedQuestion[] {
 }
 
 /**
+ * How much of a question a label may reproduce before it stops naming a
+ * topic and starts quoting an answer.
+ *
+ * Any one of the three is enough on its own: `QUOTATION_MIN_WORDS` words,
+ * `QUOTATION_MIN_CHARS` characters, or sharing `QUOTATION_MIN_RATIO` of the
+ * question's own words with it. Below all three, the shared text cannot
+ * carry both a subject and a predicate — three words under forty characters
+ * that are also under 60% of the question is a noun phrase, which is what a
+ * topic label is. The floor already requires three independent askers behind
+ * anything that reaches this check, so a phrase that survives it is one
+ * three people raised on their own, not one lifted word for word out of a
+ * single person's mouth.
+ *
+ * A review of the single-expression version this replaced ran it over
+ * thirteen realistic label/question pairs and found it drops eleven of them
+ * — including `"Expense policy"` and `"Parental leave"`, the exact multi-word
+ * phrases colleagues use to ask about those subjects — while keeping
+ * `"Expenses"` and dropping `"Expense"` against the same question, a result
+ * that turns on whether the model pluralised a noun. These thresholds are
+ * the fix: a rule that can tell a topic name from a quoted question apart.
+ */
+const QUOTATION_MIN_WORDS = 4;
+const QUOTATION_MIN_CHARS = 40;
+const QUOTATION_MIN_RATIO = 0.6;
+
+/** Escape `s` so it can be interpolated into a `RegExp` source literally. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Split already-normalised (single-spaced, trimmed, lowercased) text into
+ * its words. */
+function wordsOf(normalised: string): string[] {
+  return normalised.split(" ").filter((w) => w !== "");
+}
+
+/**
+ * Does `haystack` contain `needle` as a contiguous run of whole words?
+ *
+ * Not `haystack.includes(needle)`. A raw substring check matches "ai" inside
+ * "email" and "hr" inside "hrs" — exactly the false positives that made the
+ * rule this supports indiscriminate before it was split in two. Word
+ * boundaries are checked only at the two ends of `needle`; its own internal
+ * spaces are matched literally, so a multi-word needle still has to appear as
+ * one contiguous phrase, not as scattered words.
+ */
+function containsAsWholeWords(haystack: string, needle: string): boolean {
+  if (needle === "") return false;
+  return new RegExp(`\\b${escapeRegExp(needle)}\\b`).test(haystack);
+}
+
+/**
+ * Is `label` a quotation of one of `questions`, rather than a name for one?
+ *
+ * Two different events, deliberately never one expression again:
+ *
+ *   * Direction B — the label embeds a whole question. Absolute, no
+ *     threshold: there is no length at which reproducing somebody's question
+ *     verbatim stops being the disclosure.
+ *   * Direction A — a question embeds the label. Only a quotation once the
+ *     shared run of words clears `QUOTATION_MIN_WORDS`, `QUOTATION_MIN_CHARS`
+ *     or `QUOTATION_MIN_RATIO` — see that constant's comment for why those
+ *     three and not a flat containment check.
+ */
+function isQuotation(label: string, questions: DedupedQuestion[]): boolean {
+  const normalisedLabel = normaliseForComparison(label);
+  if (normalisedLabel === "") return false;
+  const labelWords = wordsOf(normalisedLabel);
+
+  return questions.some((q) => {
+    const normalisedQuestion = normaliseForComparison(q.question);
+    if (normalisedQuestion === "") return false;
+
+    if (containsAsWholeWords(normalisedLabel, normalisedQuestion)) return true;
+
+    if (!containsAsWholeWords(normalisedQuestion, normalisedLabel)) return false;
+    const qWords = wordsOf(normalisedQuestion);
+    return (
+      labelWords.length >= QUOTATION_MIN_WORDS ||
+      normalisedLabel.length >= QUOTATION_MIN_CHARS ||
+      labelWords.length / qWords.length >= QUOTATION_MIN_RATIO
+    );
+  });
+}
+
+/**
+ * Slice to `MAX_LABEL_CHARS` by Unicode code point, not UTF-16 unit.
+ *
+ * `label.slice(0, N)` counts UTF-16 units, so a label truncated in the middle
+ * of an emoji (or anything else outside the Basic Multilingual Plane) leaves
+ * a lone surrogate behind — a string that is not valid UTF-16, which breaks
+ * an email renderer or a JSON payload rather than merely looking cut off.
+ */
+function truncateLabel(label: string): string {
+  return [...label].slice(0, MAX_LABEL_CHARS).join("");
+}
+
+/**
  * Keep only the clusters that may be reported, and say how big each one is.
  *
- * Five refusals, and each is a thing a model can do that must not become a
- * disclosure or a broken report:
+ * Refuses six things a model, or a caller, can hand it — each one a way a
+ * disclosure or a broken report would reach an admin without anybody having
+ * chosen it:
  *
- *   * fewer distinct askers than the floor — the floor itself
- *   * a label that contains, or is contained by, one single question — a
- *     verbatim question identifies its author to anybody who knows the team
- *   * a label that is empty or whitespace — a blank bullet
- *   * a label longer than `MAX_LABEL_CHARS` — cut rather than dropped, since a
- *     long label is usually a correct label with an explanation glued on
- *   * a member index that is not in the list — a model counting past the end
+ *   * a floor that is not a positive integer. `askerFloor` already answers
+ *     `null` for exactly this input; refusing it again here closes the gap a
+ *     caller would otherwise hit at the type checker and paper over with
+ *     `floor ?? 0` — which this function would satisfy for every cluster,
+ *     since a count can never be less than zero. The function that computes
+ *     the floor refuses garbage; this one must too, or the refusal is only
+ *     theatre at one end of the call.
+ *   * fewer distinct askers than the floor — the floor itself.
+ *   * a repeated member index — de-duplicated before counting, so a model
+ *     repeating an index cannot inflate a gap's count and promote it.
+ *   * a member index that is not in the list — a model counting past the end.
+ *   * a label that quotes a question, per `isQuotation` — checked against
+ *     every question the model saw (`deduped`), not just this cluster's own
+ *     members, because a quoted question is the same disclosure whichever
+ *     cluster it was filed under; and checked against the label both before
+ *     and after truncation, because truncating first can cut a quote in half
+ *     and let the surviving half through.
+ *   * a label that is empty, whitespace, or longer than `MAX_LABEL_CHARS` —
+ *     the last of these is truncated rather than dropped, since a long label
+ *     is usually a correct label with an explanation glued on.
  *
  * Ordered by how many questions are behind the gap, so the thing most worth
  * writing down is first. That is `0053`'s ordering choice for its own pair of
@@ -142,12 +254,16 @@ export function dedupeQuestions(rows: GapQuestion[]): DedupedQuestion[] {
 export function enforceFloor(
   clusters: RawCluster[],
   deduped: DedupedQuestion[],
-  floor: number,
+  floor: number | null,
 ): Gap[] {
+  if (floor === null || !Number.isInteger(floor) || floor < 1) return [];
+
   const gaps: Gap[] = [];
 
   for (const cluster of clusters) {
-    const members = cluster.members
+    // De-duplicated before the range filter: a model repeating an index must
+    // not get to count that question's askers and copies more than once.
+    const members = [...new Set(cluster.members)]
       .filter((i) => Number.isInteger(i) && i >= 0 && i < deduped.length)
       .map((i) => deduped[i]);
     if (members.length === 0) continue;
@@ -160,20 +276,18 @@ export function enforceFloor(
     }
     if (askers.size < floor) continue;
 
-    const label = cluster.label.trim().slice(0, MAX_LABEL_CHARS);
-    if (label === "") continue;
+    const fullLabel = cluster.label.trim();
+    if (fullLabel === "") continue;
 
-    // Containment either way round. A label that is a question is the obvious
-    // case; a question that contains the label happens when the model answers
-    // with a fragment of one, which is the same disclosure in fewer words.
-    const normalisedLabel = normaliseForComparison(label);
-    const quotesSomebody = members.some((m) => {
-      const q = normaliseForComparison(m.question);
-      return q.includes(normalisedLabel) || normalisedLabel.includes(q);
-    });
-    if (quotesSomebody) continue;
+    const truncatedLabel = truncateLabel(fullLabel);
 
-    gaps.push({ label, questions, askers: askers.size });
+    // Both the label as the model wrote it and the label as the report will
+    // show it, against every question the model saw — not just this
+    // cluster's members. See `enforceFloor`'s own comment for why each half
+    // of this matters on its own.
+    if (isQuotation(fullLabel, deduped) || isQuotation(truncatedLabel, deduped)) continue;
+
+    gaps.push({ label: truncatedLabel, questions, askers: askers.size });
   }
 
   return gaps.sort((a, b) => b.questions - a.questions || a.label.localeCompare(b.label));

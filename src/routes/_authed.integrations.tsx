@@ -68,7 +68,16 @@ function useGrantOutcome() {
     }
 
     if (connected) {
-      toast.success(`${CONNECTED_LABEL[connected] ?? connected} connected.`);
+      // Named providers are done by the time they land back here — the grant
+      // was exchanged before the redirect. A connected application is not: the
+      // row is still `pending` and only the card's own poll can settle it, so
+      // saying "connected" here asserts something this code cannot back, and
+      // would say it over a connection that turns out to have failed.
+      if (CONNECTED_LABEL[connected]) {
+        toast.success(`${CONNECTED_LABEL[connected]} connected.`);
+      } else {
+        toast.success(`Finishing ${connected}…`);
+      }
     } else if (error) {
       toast.error(connectErrorMessage(error));
     }

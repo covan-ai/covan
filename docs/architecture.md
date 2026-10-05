@@ -357,10 +357,13 @@ not change when a service is added.**
 | Core                  | `completion.ts` types, `harness/loop.ts`, the registry, the budget, `message_steps`, the SSE frames       | nothing                                   |
 | Tools                 | `search_documents`, `describe_connection`, `query_database`, `http_request`, `send_email`, `schedule_job` | nothing                                   |
 | Credential            | a `tool_connections` row: transport, base URL, auth, allowed methods                                      | **one row**                               |
-| Transport / auth kind | `http`, `sql`; `static_header`                                                                            | code, once, only for a genuinely new kind |
+| Transport / auth kind | `http`, `sql`, `composio`; `static_header`, `composio`                                                    | code, once, only for a genuinely new kind |
 
 So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
-function installed on it. A tool named after a service gets written the day
+function installed on it. The `composio` transport is the same shape with the
+credential column empty: the row names an application and an account held at
+Composio, and about fifteen hundred applications fit it without a row needing
+to be designed for any of them. A tool named after a service gets written the day
 the general road is genuinely not enough, and then it is one entry in
 `harness/registry.ts`.
 

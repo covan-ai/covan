@@ -76,6 +76,9 @@ function toolkit(over: Partial<ComposioToolkit> = {}): ComposioToolkit {
     authSchemes: ["OAUTH2"],
     managedAuth: true,
     noAuth: false,
+    connectKind: "managed_oauth",
+    credentialScheme: "",
+    authHintUrl: "",
     logoPath: "/composio/logo?u=https%3A%2F%2Flogos.composio.dev%2Fapi%2Fgmail",
     categories: ["productivity"],
     ...over,
@@ -136,7 +139,7 @@ describe("AppCatalogue", () => {
     expect(within(screen.getByRole("dialog")).getByText("gmail")).toBeInTheDocument();
   });
 
-  it("hands the slug and the no-sign-in flag to the consent flow, from inside the card", async () => {
+  it("hands the slug to the consent flow, from inside the card", async () => {
     render(<AppCatalogue connected={new Set(["linear"])} />);
     await userEvent.click(screen.getByRole("button", { name: /Gmail/ }));
     await userEvent.click(
@@ -144,7 +147,7 @@ describe("AppCatalogue", () => {
     );
 
     expect(connect.mutate).toHaveBeenCalledWith(
-      { toolkit: "gmail", label: "Gmail", noAuth: false },
+      { toolkit: "gmail", label: "Gmail", expectRedirect: true },
       expect.anything(),
     );
   });
@@ -153,7 +156,14 @@ describe("AppCatalogue", () => {
     // Thirty-five of these, and for as long as the flag went unread every one
     // of them said "Needs setup in Composio" and refused to be clicked.
     withToolkits(
-      toolkit({ slug: "hackernews", name: "Hacker News", managedAuth: false, noAuth: true }),
+      toolkit({
+        slug: "hackernews",
+        name: "Hacker News",
+        connectKind: "no_auth",
+        authSchemes: ["NO_AUTH"],
+        managedAuth: false,
+        noAuth: true,
+      }),
     );
     render(<AppCatalogue connected={new Set()} />);
     await userEvent.click(screen.getByRole("button", { name: /Hacker News/ }));
@@ -161,10 +171,62 @@ describe("AppCatalogue", () => {
       within(screen.getByRole("dialog")).getByRole("button", { name: /Connect/ }),
     );
 
+    // The one kind that legitimately comes back with nowhere to go, so the
+    // hook must not treat an empty address as a bug.
     expect(connect.mutate).toHaveBeenCalledWith(
-      expect.objectContaining({ toolkit: "hackernews", noAuth: true }),
+      expect.objectContaining({ toolkit: "hackernews", expectRedirect: false }),
       expect.anything(),
     );
+  });
+
+  it("offers an application whose key the person connecting supplies", async () => {
+    // The tile used to say "Needs setup in Composio" for 1,279 of these and
+    // the card refused to offer a button.
+    withToolkits(
+      toolkit({
+        slug: "posthog",
+        name: "PostHog",
+        description: "Product analytics",
+        connectKind: "user_credential",
+        credentialScheme: "API_KEY",
+        authSchemes: ["API_KEY"],
+        managedAuth: false,
+        noAuth: false,
+      }),
+    );
+    render(<AppCatalogue connected={new Set()} />);
+    expect(screen.getByText("Product analytics")).toBeInTheDocument();
+    expect(screen.queryByText("Needs setup in Composio")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /PostHog/ }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /Connect/ }),
+    );
+    expect(connect.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ toolkit: "posthog" }),
+      expect.anything(),
+    );
+  });
+
+  it("shows the description for a credential application the list row cannot classify", async () => {
+    // A list row carries no field detail, so `connectKind` is null and only
+    // the tile's hint can speak. Saying "Needs setup in Composio" here is what
+    // this change exists to stop.
+    withToolkits(
+      toolkit({
+        slug: "posthog",
+        name: "PostHog",
+        description: "Product analytics",
+        connectKind: null,
+        credentialScheme: "",
+        authSchemes: ["API_KEY"],
+        managedAuth: false,
+        noAuth: false,
+      }),
+    );
+    render(<AppCatalogue connected={new Set()} />);
+    expect(screen.getByText("Product analytics")).toBeInTheDocument();
+    expect(screen.queryByText("Needs setup in Composio")).not.toBeInTheDocument();
   });
 
   it("lets somebody read about an application nobody can connect, and offers no Connect", async () => {
@@ -173,16 +235,32 @@ describe("AppCatalogue", () => {
     // not even be read about, which is the case the card most needs to serve:
     // "Needs setup in Composio" is four truncated words on a tile and a
     // sentence in the card.
-    withToolkits(toolkit({ slug: "obscure", name: "Obscure", managedAuth: false, noAuth: false }));
+    // A group-F fixture. The old one was `managedAuth: false, noAuth: false`
+    // with the factory's default `authSchemes: ["OAUTH2"]`, which is still
+    // unconnectable under the new rule — so this test would have stayed green
+    // while covering none of the new class.
+    withToolkits(
+      toolkit({
+        slug: "docusign",
+        name: "DocuSign",
+        connectKind: "needs_setup",
+        authSchemes: ["OAUTH2"],
+        managedAuth: false,
+        noAuth: false,
+      }),
+    );
     render(<AppCatalogue connected={new Set()} />);
 
-    const tile = screen.getByRole("button", { name: /Obscure/ });
+    const tile = screen.getByRole("button", { name: /DocuSign/ });
     expect(screen.getByText("Needs setup in Composio")).toBeInTheDocument();
 
     await userEvent.click(tile);
     const card = within(screen.getByRole("dialog"));
     expect(card.queryByRole("button", { name: /Connect/ })).not.toBeInTheDocument();
-    expect(card.getByText(/register a client/)).toBeInTheDocument();
+    // Said generically now, because it is not always an OAuth client: some of
+    // these want a machine client of the workspace's own, and ninety-five want
+    // something Composio documents nowhere.
+    expect(card.getByText(/sets it up in Composio/)).toBeInTheDocument();
   });
 
   it("never disables the grid while a connect is in flight", async () => {

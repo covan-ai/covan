@@ -123,8 +123,9 @@ export function ComposioCard({
           <span className="flex min-w-0 flex-col gap-[3px]">
             <span className="font-dm text-title font-medium leading-tight">Connected apps</span>
             <span className="text-meta leading-tight text-muted-foreground">
-              Gmail, HubSpot, Linear and about fifteen hundred others. The common ones need only a
-              sign-in; the rest say so. An agent asks before its first action on each.
+              Gmail, HubSpot, Linear and about fifteen hundred others. Some need only a sign-in,
+              most need a key from the application itself, and the few nobody can connect yet say
+              so. An agent asks before its first action on each.
             </span>
           </span>
         </div>

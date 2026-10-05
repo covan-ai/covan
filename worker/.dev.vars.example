@@ -68,6 +68,14 @@ RESEND_FROM=
 # `x-admin-key` header. Unset, that endpoint fails closed.
 # ADMIN_API_KEY=
 
+# Optional. Connected apps — about fifteen hundred applications an agent can
+# search, and the ones somebody has connected it can call. Unset, the feature is
+# not offered and the Integrations page names this variable. Get one at
+# dashboard.composio.dev, and read docs/integrations.md first: it adds a
+# subprocessor, it bills per call, and the page that collects a user's key
+# carries Composio's branding until you set your own.
+# COMPOSIO_API_KEY=
+
 # Not set here: DOCS_DIR. Document storage on Cloudflare is the DOCS R2 binding
 # declared in wrangler.toml; DOCS_DIR is the Node/Docker filesystem fallback and
 # is set by docker-compose.yml, not by this file.

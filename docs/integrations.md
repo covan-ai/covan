@@ -539,11 +539,12 @@ anything with inside the methods and origin you gave it.
 
 ### Connected apps
 
-The three roads above all end at a token you can paste. Most of the software a
-team uses does not have one: Gmail, Slack, Notion, HubSpot and a few thousand
-others want an OAuth consent screen, which needs a registered application at
-each provider — which is a release per service, and the thing this whole design
-exists to avoid.
+The three roads above all end at a token you paste into Covan, against a base
+URL you chose. Most of the software a team uses does not fit that: Gmail,
+Slack, Notion, HubSpot and a few thousand others want either an OAuth consent
+screen — which needs a registered application at each provider, a release per
+service, and the thing this whole design exists to avoid — or a key of their
+own against an API shape nobody here has described.
 
 So Covan buys that half. **Composio** describes about 1500 services in a
 machine-readable form, and keeps a registered application for the common ones,
@@ -555,16 +556,20 @@ Set `COMPOSIO_API_KEY` and a **Connected apps** card appears under _Services an
 agent can call_, with the catalogue inside it. It opens on the applications
 Composio sees the most use of, filtered by its own headings and searchable;
 pick one and a card opens saying what it is, what it does and some of the
-operations it publishes, with **Connect** inside it. Press that, sign in at the
-application itself, and you come back to a connected service. There is no form:
-what a connection needs is a consent screen, not a base URL.
+operations it publishes, with **Connect** inside it. Press that and one of two
+things happens: for an application Composio has a sign-in for, you sign in at
+the application itself; for the much larger number that want a key of their
+own, you land on a page Composio hosts that asks for exactly the fields that
+application needs. Either way you come back to a connected service, and either
+way there is no form here: what Covan stores is a reference to a credential it
+has never seen, not a base URL and a secret.
 
 The card is between the tile and the consent screen on purpose. Before it, one
 click on a name in a grid of fifteen hundred handed your browser to a third
 party, and the whole of what you had been told first was one truncated line.
-An application Covan cannot connect yet opens its card too — that is where
-"somebody has to register a client for this in Composio" fits as a sentence
-rather than as four words under a name — it simply has no Connect button.
+An application nobody has set up yet opens its card too — that is where
+"somebody has to set this up in Composio first" fits as a sentence rather than
+as four words under a name — it simply has no Connect button.
 
 **The marks are fetched by us, not by your browser.** Each tile carries the
 application's own logo, and the address on it is
@@ -630,27 +635,49 @@ Composio before the row goes, so does closing the account.
 - **It adds a subprocessor.** Data passing through an operation passes through
   Composio. See [Security](security.md) and, on the hosted product, the
   subprocessor list in the DPA.
-- **The catalogue is much larger than the part you can connect by clicking.**
-  Counted against the live API on 2026-09-24: **1562 applications, of which 158
-  connect as they are** — 123 because Composio keeps an OAuth application for
-  them and Covan registers itself against it the first time somebody connects
-  one, and 35 because they need no sign-in at all. That is a tenth of the
-  catalogue, and the other nine tenths cannot be connected here until somebody
-  registers a client with that provider and pastes it into Composio's dashboard.
-  Their tiles still open — the card is where that sentence fits, and reading
-  about an application nobody has set up yet is most of what the catalogue is
-  for — they simply have no Connect button in them.
+- **Nearly everything in the catalogue can be connected, but not all of it the
+  same way.** Counted against the live API on 2026-10-05, reading every one of
+  the applications' own descriptions of what it requires: **1596 applications,
+  of which 1437 can be connected from this page.** They come in three kinds.
 
-  The second of those two numbers was wrong here for as long as it had been
-  written. Covan read the flag that says "Composio has an OAuth application for
-  this" and never the one that says "this needs no sign-in", so all 35 of the
-  latter were shown as needing setup and refused. They connect now. If you read
-  this page before and concluded an application was unavailable, look again.
+  **123 need only a sign-in.** Composio keeps an OAuth application for these,
+  and Covan registers itself against it the first time somebody connects one.
+  Gmail, Slack, Notion, Linear, HubSpot, GitHub, Google Calendar, Google
+  Sheets, Jira, Salesforce, Stripe and Asana are all here. Press Connect, allow
+  it at the provider, done.
 
-  The tenth is the useful tenth. Gmail, Slack, Notion, Linear, HubSpot, GitHub,
-  Google Calendar, Google Sheets, Jira, Salesforce, Stripe and Asana are all in
-  it. But "about 1500 applications" is what an agent can **search**, not what a
-  workspace can connect, and the two numbers are a factor of ten apart.
+  **1279 need a credential you get from the application itself** — an API key
+  for most, a username and password for a few. Connect sends you to a page
+  Composio hosts, which asks for exactly the fields that application needs and
+  links to where they live. Covan never sees what you type: the credential is
+  held by Composio and what this database keeps is a reference to it. The page
+  expires about ten minutes after it opens, so have the key to hand before you
+  press Connect.
+
+  **35 need nothing at all.** No sign-in, no key. These are currently broken
+  for an unrelated reason and the card says so.
+
+  **The remaining 159 cannot be connected here yet** until somebody registers a
+  client with that provider and pastes it into Composio's dashboard — 50
+  conventional OAuth providers, 95 whose scheme Composio documents nowhere, 13
+  that want a machine client of the workspace's own, and one SAML. Their tiles
+  still open: the card is where that sentence fits, and reading about an
+  application nobody has set up yet is most of what the catalogue is for.
+
+  **This page said the opposite until 2026-10-05, and was wrong by an order of
+  magnitude.** It said a tenth of the catalogue was connectable and that the
+  other nine tenths needed a hand-registered OAuth client. The truth is the
+  inverse: nine tenths need no registration from anybody, and were shut out
+  only because the page had nowhere to put a credential. If you read this
+  before and concluded an application was unavailable, look again.
+
+- **A credential that is accepted is not a credential that works.** Composio
+  does not check a key when you paste it, so a mistyped one produces a
+  connection that says it is connected and fails on the first use, with the
+  provider's own refusal in the step. An OAuth sign-in that completes is a
+  sign-in that worked; a key is not, and this is the one place in the feature
+  that can look like it lied. If an agent reports an authentication error on an
+  application you just connected, the key is the first thing to check.
 - **The consent screen shows Composio's brand** unless the workspace supplies
   its own OAuth application for that service.
 - **Calls cost money** — Composio bills per tool call — so they are metered

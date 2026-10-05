@@ -324,6 +324,11 @@ defaults to `covan_query`) and `summary`. `headers` is a map of header name to
 value, encrypted before it is stored and **never returned** — rotating a token
 means removing the connection and adding it again.
 
+A connected application is the third transport, `composio`, and is not created
+here: it has its own routes under `/composio`, because what it needs is a page
+at a third party rather than a credential in a request body. `GET
+/tool-connections` returns those rows alongside the others.
+
 `baseUrl` goes through the same SSRF guard as every other outbound address:
 loopback, RFC1918, link-local, cloud metadata and this deployment's own hosts
 are refused with a `400`. See [Integrations](integrations.md#services-an-agent-can-call)

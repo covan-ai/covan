@@ -60,8 +60,13 @@
 -- RUN TIME IS A SEPARATE CHECK AND THIS IS NOT IT. The executor runs under the
 -- service role and bypasses RLS entirely, so no policy here can catch an admin
 -- who was demoted last week or a workspace that turned the report off
--- yesterday. `lib/routines/coverage-source.ts` re-asks both on every run and
--- pauses the routine with a reason. This guard is about creation — and about
+-- yesterday. `lib/routines/coverage-source.ts` WILL re-ask both on every run
+-- and pause the routine with a reason — it is not written yet, and this
+-- sentence is a requirement on it rather than a description of it. The
+-- functions it will call are in 0074: `workspace_coverage_gaps` and
+-- `workspace_coverage_totals` raise 42501 when the owner is no longer an admin
+-- or the workspace has turned the report off, which is the refusal the pause
+-- will be built on. This guard is about creation — and about
 -- the one update that creation cannot cover, which is adding an output bundle
 -- to a routine that already reads the workspace.
 -- =========================================================================
@@ -229,7 +234,9 @@ create policy "routines_update_own"
     -- is in the right workspace and the caller can see it — and this is the only
     -- thing that refuses it. And an admin who is demoted cannot be stopped from
     -- owning the routine they already made, but can be stopped from editing it;
-    -- the run-time check in coverage-source.ts is what pauses it.
+    -- the run-time check in coverage-source.ts, once that file exists, is what
+    -- will pause it — on the 42501 that 0074's two read functions raise for an
+    -- owner who is no longer an admin.
     and public.routine_workspace_source_is_permitted(
       routines.source_kind, routines.workspace_id, routines.output_bundle_id
     )

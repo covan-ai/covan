@@ -111,13 +111,9 @@ describe("enforcing the floor on what the model returned", () => {
     expect(gaps).toEqual([{ label: "Trains", questions: 1, askers: 1 }]);
   });
 
-  it("drops a label that is one of the questions", () => {
-    const gaps = enforceFloor(
-      [{ label: "Expense a flight", members: [0] }],
-      deduped,
-      3,
-    );
-    expect(gaps).toEqual([]);
+  it("emits a label that is one of the questions without a name", () => {
+    const gaps = enforceFloor([{ label: "Expense a flight", members: [0] }], deduped, 3);
+    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
   });
 
   // Fix round 1, finding 3: a single short word is no longer dropped just
@@ -129,13 +125,13 @@ describe("enforcing the floor on what the model returned", () => {
     expect(gaps).toEqual([{ label: "flight", questions: 5, askers: 3 }]);
   });
 
-  it("drops a label that wraps one single question in extra words", () => {
+  it("emits a label that wraps one single question in extra words without a name", () => {
     const gaps = enforceFloor(
       [{ label: "about: expense a flight, please", members: [0] }],
       deduped,
       3,
     );
-    expect(gaps).toEqual([]);
+    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
   });
 
   describe("the containment rule, split (fix round 1, finding 3)", () => {
@@ -186,19 +182,17 @@ describe("enforcing the floor on what the model returned", () => {
       const d: DedupedQuestion[] = [
         { question: "xpineapple torte recipe ideasy", askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
-      const gaps = enforceFloor(
-        [{ label: "pineapple torte recipe ideas", members: [0] }],
-        d,
-        3,
-      );
+      const gaps = enforceFloor([{ label: "pineapple torte recipe ideas", members: [0] }], d, 3);
       expect(gaps).toEqual([{ label: "pineapple torte recipe ideas", questions: 3, askers: 3 }]);
     });
 
-    it("drops a short label when it embeds a whole question (direction B is unconditional)", () => {
+    it("unnames a short label when it embeds a whole question (direction B is unconditional)", () => {
       const d: DedupedQuestion[] = [
         { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
-      expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([]);
+      expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([
+        { label: null, questions: 3, askers: 3 },
+      ]);
     });
 
     describe("fix round 2: terminal punctuation must not defeat direction B", () => {
@@ -208,16 +202,16 @@ describe("enforcing the floor on what the model returned", () => {
       // sides of that final `\b` non-word, so the boundary never fires and
       // the match silently fails. Reproduced and fixed by tokenising instead
       // of matching on a word-boundary regex.
-      it("drops when the question ends in '?' and the label is exactly the question", () => {
+      it("unnames when the question ends in '?' and the label is exactly the question", () => {
         const d: DedupedQuestion[] = [
           { question: "how do i expense a flight?", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
-        expect(
-          enforceFloor([{ label: "How do I expense a flight?", members: [0] }], d, 3),
-        ).toEqual([]);
+        expect(enforceFloor([{ label: "How do I expense a flight?", members: [0] }], d, 3)).toEqual(
+          [{ label: null, questions: 3, askers: 3 }],
+        );
       });
 
-      it("drops when the question ends in '?' and the label embeds it in extra words", () => {
+      it("unnames when the question ends in '?' and the label embeds it in extra words", () => {
         const d: DedupedQuestion[] = [
           { question: "how do i expense a flight?", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
@@ -227,25 +221,25 @@ describe("enforcing the floor on what the model returned", () => {
             d,
             3,
           ),
-        ).toEqual([]);
+        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
       });
 
-      it("drops when the question ends in '.'", () => {
+      it("unnames when the question ends in '.'", () => {
         const d: DedupedQuestion[] = [
           { question: "how do i expense a flight.", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
-        expect(
-          enforceFloor([{ label: "How do I expense a flight.", members: [0] }], d, 3),
-        ).toEqual([]);
+        expect(enforceFloor([{ label: "How do I expense a flight.", members: [0] }], d, 3)).toEqual(
+          [{ label: null, questions: 3, askers: 3 }],
+        );
       });
 
-      it("drops when the question has no terminal punctuation at all (control)", () => {
+      it("unnames when the question has no terminal punctuation at all (control)", () => {
         const d: DedupedQuestion[] = [
           { question: "how do i expense a flight", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
-        expect(
-          enforceFloor([{ label: "How do I expense a flight", members: [0] }], d, 3),
-        ).toEqual([]);
+        expect(enforceFloor([{ label: "How do I expense a flight", members: [0] }], d, 3)).toEqual([
+          { label: null, questions: 3, askers: 3 },
+        ]);
       });
     });
 
@@ -260,29 +254,25 @@ describe("enforcing the floor on what the model returned", () => {
       // unlike English, which needs a space or punctuation to glue anything
       // at all, which is why English never hit this. Each case below is
       // known-failing without the raw-substring disjunct added this round.
-      it("drops a label that wraps a Japanese question with no separator", () => {
+      it("unnames a label that wraps a Japanese question with no separator", () => {
         const d: DedupedQuestion[] = [
           { question: "経費精算はどうやるの", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
         expect(
-          enforceFloor(
-            [{ label: "経費精算はどうやるのという質問について", members: [0] }],
-            d,
-            3,
-          ),
-        ).toEqual([]);
+          enforceFloor([{ label: "経費精算はどうやるのという質問について", members: [0] }], d, 3),
+        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
       });
 
-      it("drops a label that wraps a Chinese question with no separator", () => {
+      it("unnames a label that wraps a Chinese question with no separator", () => {
         const d: DedupedQuestion[] = [
           { question: "报销流程是怎样的", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
         expect(
           enforceFloor([{ label: "关于报销流程是怎样的这个问题", members: [0] }], d, 3),
-        ).toEqual([]);
+        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
       });
 
-      it("drops a label that wraps a Thai question with no separator", () => {
+      it("unnames a label that wraps a Thai question with no separator", () => {
         const d: DedupedQuestion[] = [
           {
             question: "คำถามเกี่ยวกับการเบิกค่าใช้จ่าย",
@@ -296,10 +286,10 @@ describe("enforcing the floor on what the model returned", () => {
             d,
             3,
           ),
-        ).toEqual([]);
+        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
       });
 
-      it("drops an English label that wraps a question with a separator (control)", () => {
+      it("unnames an English label that wraps a question with a separator (control)", () => {
         // English cannot reproduce the bug above — a label cannot glue
         // letters onto an English question without a space or punctuation —
         // so this exists to show the token-sequence path and the
@@ -307,7 +297,9 @@ describe("enforcing the floor on what the model returned", () => {
         const d: DedupedQuestion[] = [
           { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
-        expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([]);
+        expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([
+          { label: null, questions: 3, askers: 3 },
+        ]);
       });
 
       it("does not let the raw-substring disjunct reach direction A's sub-word false positives", () => {
@@ -332,7 +324,7 @@ describe("enforcing the floor on what the model returned", () => {
       });
     });
 
-    describe("fix round 5: the raw disjunct needs a needle long enough to mean something", () => {
+    describe("fix round 6: a sub-word match costs the name, not the row", () => {
       // Round 3 added a raw substring check to direction B for scripts
       // `tokenise` cannot segment. A substring match has no word boundary, so
       // on a two-letter question it censors not that question's topic but
@@ -340,11 +332,17 @@ describe("enforcing the floor on what the model returned", () => {
       // "email" defect, readmitted through direction B. Gap questions are
       // where junk lives, since they are by definition the ones that found
       // nothing, so a colleague typing "hi" at an agent was deleting a slice
-      // of the week's report. The three no-separator tests above are the
-      // regression guard for this round: whatever bounds the disjunct must
-      // not stop them dropping. A rule conditioned on the question being a
-      // single token would have — the Thai question tokenises to SEVEN
-      // fragments, which is why the bound is a character count.
+      // of the week's report.
+      //
+      // Round 5 answered that with a five-character floor on the needle, and
+      // that floor is what shipped the Critical: four characters in a script
+      // with no inter-word separators is not a topic word, it is a whole
+      // first-person sentence, and a label wrapping one reached the admin
+      // verbatim. Round 6 answers it where the cost actually is instead. The
+      // refusal no longer deletes the row, so a false positive costs a NAME
+      // and not a gap, and the needle needs no length at all: the match is
+      // absolute again, as it was before the threshold, and the rows below
+      // survive — nameless, counted, and visible to the admin as a refusal.
       const anchor: DedupedQuestion[] = [
         {
           question: "what is the hiring process for contractors",
@@ -357,7 +355,7 @@ describe("enforcing the floor on what the model returned", () => {
         { question: q, askerKeys: new Set([7]), copies: 1 },
       ];
 
-      it("keeps a label that merely contains a junk question's letters inside a word", () => {
+      it("keeps the row, without its name, when a junk question runs through a word", () => {
         const labels = [
           "Hiring process",
           "Shipping and delivery",
@@ -366,31 +364,136 @@ describe("enforcing the floor on what the model returned", () => {
         ];
         // Each junk question is a sub-word run of at least one label:
         // *hi*ring, s*hi*pping, r*api*d, la*test*. Each is also a single
-        // asker, so it is never reported in its own right.
+        // asker, so it is never reported in its own right. What the admin
+        // loses to one of these is a topic name; what they keep is the fact
+        // that the topic was there, which is the whole point of the change.
         for (const junk of ["hi", "ok", "vpn", "api", "test"]) {
           for (const label of labels) {
+            const gaps = enforceFloor([{ label, members: [0] }], withJunk(junk), 3);
             expect(
-              enforceFloor([{ label, members: [0] }], withJunk(junk), 3),
-              `${JSON.stringify(junk)} must not censor ${JSON.stringify(label)}`,
-            ).toEqual([{ label, questions: 4, askers: 3 }]);
+              gaps,
+              `${JSON.stringify(junk)} must not delete ${JSON.stringify(label)}`,
+            ).toHaveLength(1);
+            // Named or unnamed, the row survives and its counts are intact.
+            expect(gaps[0].questions).toBe(4);
+            expect(gaps[0].askers).toBe(3);
           }
         }
       });
 
-      it("applies the raw disjunct at five characters and not below", () => {
+      it("unnames rather than deletes at four characters and at five alike", () => {
         // One label, two needles differing only in length. "price" is a
         // literal run inside "prices"; "pric" is the same run one character
-        // shorter, and is ignored.
-        expect(
-          enforceFloor([{ label: "Prices and discounts", members: [0] }], withJunk("price"), 3),
-        ).toEqual([]);
-        expect(
-          enforceFloor([{ label: "Prices and discounts", members: [0] }], withJunk("pric"), 3),
-        ).toEqual([{ label: "Prices and discounts", questions: 4, askers: 3 }]);
+        // shorter. Round 5 split them — the first deleted the row, the second
+        // was ignored — and that split is exactly what the Critical rode in
+        // on. Now neither length decides anything: both refuse the name and
+        // neither takes the gap with it.
+        for (const junk of ["price", "pric"]) {
+          expect(
+            enforceFloor([{ label: "Prices and discounts", members: [0] }], withJunk(junk), 3),
+            `${JSON.stringify(junk)} must unname rather than delete`,
+          ).toEqual([{ label: null, questions: 4, askers: 3 }]);
+        }
+      });
+
+      it("unnames rather than deletes for every junk question measured", () => {
+        // The five needles and the labels they run through, from the review
+        // that produced this change. Each pair was either a deleted row
+        // (five characters and up) or a kept, named one (below five); every
+        // pair is now one unnamed row.
+        const pairs: [string, string][] = [
+          ["hi", "Hiring process"],
+          ["hi", "Shipping and delivery"],
+          ["api", "Rapid prototyping"],
+          ["test", "Latest releases"],
+          ["price", "Prices and discounts"],
+          ["state", "Real estate listings"],
+        ];
+        for (const [junk, label] of pairs) {
+          expect(
+            enforceFloor([{ label, members: [0] }], withJunk(junk), 3),
+            `${JSON.stringify(junk)} vs ${JSON.stringify(label)}`,
+          ).toEqual([{ label: null, questions: 4, askers: 3 }]);
+        }
       });
     });
 
-    it("drops a quotation at exactly the word-count threshold, keeps one word short", () => {
+    describe("fix round 6: four characters with no separator is a sentence, not a word", () => {
+      /**
+       * The Critical round 5's threshold shipped, and the reason the
+       * containment check stopped deciding two questions at once.
+       *
+       * Each question below is four characters long, has no inter-word
+       * separator anywhere in it, and is a complete first-person sentence —
+       * "I'm pregnant", "I want to resign". `tokenise` cannot segment any of
+       * them, so the token-sequence check sees the label as one indivisible
+       * superstring and correctly refuses to call that a match; the raw
+       * substring check was the only thing left that could catch it, and a
+       * five-character floor on the needle switched it off at exactly the
+       * length where the needle stops being a word. Measured before this
+       * change: all six reached the admin inside the label, verbatim.
+       *
+       * They must now come back UNNAMED. Not kept — the sentence is in the
+       * label. Not deleted — a deleted row is indistinguishable from a quiet
+       * week, and the admin is owed the topic's existence even when they
+       * cannot be given its name.
+       */
+      const sentences: [string, string, string][] = [
+        ["Chinese", "我怀孕了", "关于我怀孕了的问题"],
+        ["Chinese", "我要辞职", "关于我要辞职的问题"],
+        ["Japanese", "妊娠した", "妊娠したという質問について"],
+        ["Japanese", "離婚する", "離婚するという質問について"],
+        ["Korean", "임신했다", "임신했다라는질문에대해"],
+        ["Korean", "퇴사한다", "퇴사한다라는질문에대해"],
+      ];
+
+      for (const [script, question, label] of sentences) {
+        it(`unnames a ${script} four-character sentence glued into a label`, () => {
+          expect([...question]).toHaveLength(4);
+          const d: DedupedQuestion[] = [{ question, askerKeys: new Set([1, 2, 3]), copies: 3 }];
+          const gaps = enforceFloor([{ label, members: [0] }], d, 3);
+          expect(gaps).toEqual([{ label: null, questions: 3, askers: 3 }]);
+          // Belt and braces: whatever else happens, the question itself must
+          // not be sitting in an emitted label. `?? ""` because a withheld
+          // label is `null`, and `toContain` refuses a null subject — the
+          // coalesce keeps this assertion meaningful for a named label and
+          // vacuously true for a withheld one, which is the right reading.
+          for (const gap of gaps) expect(gap.label ?? "").not.toContain(question);
+        });
+      }
+    });
+
+    describe("fix round 6: every other refusal is still a deletion", () => {
+      // The amendment turns ONE refusal into an unnamed row. The rest stay
+      // drops, and a row with no name is not a licence to emit a row with no
+      // topic behind it.
+      it("deletes a cluster below the floor rather than unnaming it", () => {
+        expect(enforceFloor([{ label: "Payroll", members: [2] }], deduped, 3)).toEqual([]);
+      });
+
+      it("deletes a cluster whose member indices were all invented", () => {
+        expect(enforceFloor([{ label: "Nothing", members: [99] }], deduped, 3)).toEqual([]);
+      });
+
+      it("deletes a label with no letter or digit rather than unnaming it", () => {
+        // There is no topic here to withhold the name of — the label never
+        // named anything. Withholding it would put a nameless row in the
+        // report for a cluster whose only distinguishing feature was
+        // punctuation.
+        expect(enforceFloor([{ label: "???!!!", members: [0] }], deduped, 3)).toEqual([]);
+        expect(enforceFloor([{ label: "😀😀", members: [0] }], deduped, 3)).toEqual([]);
+        expect(enforceFloor([{ label: "   ", members: [0] }], deduped, 3)).toEqual([]);
+      });
+
+      it("still refuses every cluster when the floor itself is nonsense", () => {
+        const quoting = [{ label: "Expense a flight", members: [0] }];
+        expect(enforceFloor(quoting, deduped, 0)).toEqual([]);
+        expect(enforceFloor(quoting, deduped, null)).toEqual([]);
+        expect(enforceFloor(quoting, deduped, Number.NaN)).toEqual([]);
+      });
+    });
+
+    it("unnames a quotation at exactly the word-count threshold, names one word short", () => {
       const d: DedupedQuestion[] = [
         {
           question: "please note aa bb cc dd for the record always",
@@ -398,31 +501,37 @@ describe("enforcing the floor on what the model returned", () => {
           copies: 3,
         },
       ];
-      expect(enforceFloor([{ label: "aa bb cc dd", members: [0] }], d, 3)).toEqual([]);
+      expect(enforceFloor([{ label: "aa bb cc dd", members: [0] }], d, 3)).toEqual([
+        { label: null, questions: 3, askers: 3 },
+      ]);
       expect(enforceFloor([{ label: "aa bb cc", members: [0] }], d, 3)).toEqual([
         { label: "aa bb cc", questions: 3, askers: 3 },
       ]);
     });
 
-    it("drops a quotation at exactly the character threshold, keeps one character short", () => {
+    it("unnames a quotation at exactly the character threshold, names one character short", () => {
       const atForty: DedupedQuestion[] = [
         { question: `intro ${"a".repeat(40)} outro`, askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
-      expect(enforceFloor([{ label: "a".repeat(40), members: [0] }], atForty, 3)).toEqual([]);
+      expect(enforceFloor([{ label: "a".repeat(40), members: [0] }], atForty, 3)).toEqual([
+        { label: null, questions: 3, askers: 3 },
+      ]);
 
       const atThirtyNine: DedupedQuestion[] = [
         { question: `intro ${"a".repeat(39)} outro`, askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
-      expect(
-        enforceFloor([{ label: "a".repeat(39), members: [0] }], atThirtyNine, 3),
-      ).toEqual([{ label: "a".repeat(39), questions: 3, askers: 3 }]);
+      expect(enforceFloor([{ label: "a".repeat(39), members: [0] }], atThirtyNine, 3)).toEqual([
+        { label: "a".repeat(39), questions: 3, askers: 3 },
+      ]);
     });
 
-    it("drops a quotation at exactly the ratio threshold, keeps it just below", () => {
+    it("unnames a quotation at exactly the ratio threshold, names it just below", () => {
       const fiveWords: DedupedQuestion[] = [
         { question: "aa bb cc dd ee", askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
-      expect(enforceFloor([{ label: "aa bb cc", members: [0] }], fiveWords, 3)).toEqual([]);
+      expect(enforceFloor([{ label: "aa bb cc", members: [0] }], fiveWords, 3)).toEqual([
+        { label: null, questions: 3, askers: 3 },
+      ]);
 
       const sixWords: DedupedQuestion[] = [
         { question: "aa bb cc dd ee ff", askerKeys: new Set([1, 2, 3]), copies: 3 },
@@ -443,10 +552,10 @@ describe("enforcing the floor on what the model returned", () => {
       // pins down.)
       it("word-count threshold still lands correctly with commas and a trailing '?'", () => {
         const q = "please note, aa bb cc dd, for the record, always?";
-        const d: DedupedQuestion[] = [
-          { question: q, askerKeys: new Set([1, 2, 3]), copies: 3 },
-        ];
-        expect(enforceFloor([{ label: "aa bb cc dd", members: [0] }], d, 3)).toEqual([]);
+        const d: DedupedQuestion[] = [{ question: q, askerKeys: new Set([1, 2, 3]), copies: 3 }];
+        expect(enforceFloor([{ label: "aa bb cc dd", members: [0] }], d, 3)).toEqual([
+          { label: null, questions: 3, askers: 3 },
+        ]);
         expect(enforceFloor([{ label: "aa bb cc", members: [0] }], d, 3)).toEqual([
           { label: "aa bb cc", questions: 3, askers: 3 },
         ]);
@@ -460,7 +569,9 @@ describe("enforcing the floor on what the model returned", () => {
             copies: 3,
           },
         ];
-        expect(enforceFloor([{ label: "a".repeat(40), members: [0] }], atForty, 3)).toEqual([]);
+        expect(enforceFloor([{ label: "a".repeat(40), members: [0] }], atForty, 3)).toEqual([
+          { label: null, questions: 3, askers: 3 },
+        ]);
 
         const atThirtyNine: DedupedQuestion[] = [
           {
@@ -469,16 +580,18 @@ describe("enforcing the floor on what the model returned", () => {
             copies: 3,
           },
         ];
-        expect(
-          enforceFloor([{ label: "a".repeat(39), members: [0] }], atThirtyNine, 3),
-        ).toEqual([{ label: "a".repeat(39), questions: 3, askers: 3 }]);
+        expect(enforceFloor([{ label: "a".repeat(39), members: [0] }], atThirtyNine, 3)).toEqual([
+          { label: "a".repeat(39), questions: 3, askers: 3 },
+        ]);
       });
 
       it("ratio threshold still lands correctly with commas and a trailing '.' or '?'", () => {
         const fiveWords: DedupedQuestion[] = [
           { question: "aa, bb, cc, dd, ee?", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
-        expect(enforceFloor([{ label: "aa bb cc", members: [0] }], fiveWords, 3)).toEqual([]);
+        expect(enforceFloor([{ label: "aa bb cc", members: [0] }], fiveWords, 3)).toEqual([
+          { label: null, questions: 3, askers: 3 },
+        ]);
 
         const sixWords: DedupedQuestion[] = [
           { question: "aa, bb, cc, dd, ee, ff.", askerKeys: new Set([1, 2, 3]), copies: 3 },
@@ -491,6 +604,10 @@ describe("enforcing the floor on what the model returned", () => {
   });
 
   it("checks containment against the untruncated label, not only the truncated one (fix round 1, finding 1)", () => {
+    // Round 6: the refusal is now a missing name rather than a missing row,
+    // so the assertion is `label: null`. What the finding was about is
+    // unchanged — the check must see the label the model wrote, not only the
+    // eighty characters of it that survive truncation.
     const berlin: DedupedQuestion[] = [
       {
         question: "how do i expense a flight to the berlin office",
@@ -504,16 +621,18 @@ describe("enforcing the floor on what the model returned", () => {
     // too.
     const label =
       "Questions about the expense policy, for example: how do i expense a flight to the berlin office";
-    expect(enforceFloor([{ label, members: [0] }], berlin, 3)).toEqual([]);
+    expect(enforceFloor([{ label, members: [0] }], berlin, 3)).toEqual([
+      { label: null, questions: 3, askers: 3 },
+    ]);
   });
 
-  it("drops a label that quotes a question from a different cluster (fix round 1, finding 2)", () => {
+  it("unnames a label that quotes a question from a different cluster (fix round 1, finding 2)", () => {
     // Labelled over question 0 ("expense a flight") but written in question
     // 1's exact words ("expense a train"). A check scoped to this cluster's
-    // own members would never see question 1 and would keep this; the model
+    // own members would never see question 1 and would name this; the model
     // saw every question, so the check must too.
     const gaps = enforceFloor([{ label: "expense a train", members: [0] }], deduped, 3);
-    expect(gaps).toEqual([]);
+    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
   });
 
   it("refuses a floor that is not a positive integer rather than reporting everything (fix round 1, finding 4)", () => {
@@ -588,6 +707,13 @@ describe("enforcing the floor on what the model returned", () => {
       // on the untruncated label too (fix round 1, finding 1), so a question
       // parked past character 80 was always dropped — what got through was
       // only ever the punctuation, never anybody's words.
+      //
+      // Round 6: still a deletion, and now for the no-letter reason rather
+      // than the quotation one. The no-letter refusal is asked first and is
+      // still a drop, so this row never reaches the containment check that
+      // would have unnamed it — which is the right order. A cluster whose
+      // emitted label is eighty exclamation marks has no topic to withhold
+      // the name of.
       expect(
         enforceFloor(
           [{ label: "!".repeat(MAX_LABEL_CHARS) + "expense a flight", members: [0] }],
@@ -603,8 +729,13 @@ describe("enforcing the floor on what the model returned", () => {
     // suffix and a middle slice of the same length were indistinguishable.
     const longLabel = "0123456789".repeat(40);
     const gaps = enforceFloor([{ label: longLabel, members: [0] }], deduped, 3);
-    expect(gaps[0].label).toBe(longLabel.slice(0, MAX_LABEL_CHARS));
-    expect(gaps[0].label.length).toBe(MAX_LABEL_CHARS);
+    // `?? ""` rather than a non-null assertion: a run of digits quotes
+    // nobody, so this label must be NAMED, and coalescing a withheld label to
+    // the empty string makes the assertion below fail on the value rather
+    // than crash on the type.
+    const emitted = gaps[0].label ?? "";
+    expect(emitted).toBe(longLabel.slice(0, MAX_LABEL_CHARS));
+    expect(emitted.length).toBe(MAX_LABEL_CHARS);
   });
 
   it("does not emit the whitespace that truncation left at the end (fix round 5)", () => {
@@ -622,8 +753,11 @@ describe("enforcing the floor on what the model returned", () => {
   it("truncates by code point, so a surrogate pair at the boundary survives whole (fix round 1, finding 9)", () => {
     const label = "a".repeat(79) + "😀" + "b".repeat(50);
     const gaps = enforceFloor([{ label, members: [0] }], deduped, 3);
-    expect([...gaps[0].label]).toHaveLength(MAX_LABEL_CHARS);
-    expect(gaps[0].label.endsWith("😀")).toBe(true);
+    // As above: a label of a's, b's and an emoji quotes nobody, so a withheld
+    // label here is a failure of this assertion and not a type error.
+    const emitted = gaps[0].label ?? "";
+    expect([...emitted]).toHaveLength(MAX_LABEL_CHARS);
+    expect(emitted.endsWith("😀")).toBe(true);
   });
 
   it("ignores a member index the model invented", () => {

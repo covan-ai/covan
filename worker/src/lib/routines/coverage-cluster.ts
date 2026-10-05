@@ -7,7 +7,9 @@ import { normaliseForComparison } from "../rag";
  * because the alternative was a prompt that asks a model not to report a
  * cluster of one and not to quote anybody, and a prompt is a request. These
  * functions run on what the model sent back, so a model that ignores its
- * instructions produces a SHORTER report rather than a disclosure.
+ * instructions produces a report that says LESS rather than a disclosure:
+ * clusters it should not have sent are dropped, and labels it should not have
+ * written are withheld while the topic underneath them is still counted.
  *
  * covan-ai/covan#44 is the issue; `0053`'s header is the argument about why the
  * counts could ship without any of this and the questions behind them could
@@ -37,8 +39,22 @@ export type DedupedQuestion = {
 /** What the model answered: a label, and which deduped questions it covers. */
 export type RawCluster = { label: string; members: number[] };
 
-/** A gap that survived. The only shape the renderer ever sees. */
-export type Gap = { label: string; questions: number; askers: number };
+/**
+ * A gap that survived. The only shape the renderer ever sees.
+ *
+ * `label` is `null` when the containment check refused to name the topic. The
+ * row is no less real for it: at least the floor's worth of different people
+ * asked about this, the counts are the counts, and the admin is told the topic
+ * is there. What is withheld is the name the model gave it, because that name
+ * reproduced somebody's question.
+ *
+ * Deliberately `null` rather than a display string like `"(topic withheld)"`.
+ * How a refusal should read to an admin is the renderer's decision
+ * (`coverage-render.ts`), and a sentinel string in the data is one that gets
+ * reworded, localised, sorted as a label, or — the real risk — read as a
+ * topic name. `null` cannot be mistaken for a topic.
+ */
+export type Gap = { label: string | null; questions: number; askers: number };
 
 /**
  * The longest a topic label may be.
@@ -148,46 +164,6 @@ const QUOTATION_MIN_CHARS = 40;
 const QUOTATION_MIN_RATIO = 0.6;
 
 /**
- * The shortest question the raw-substring half of Direction B will act on.
- *
- * That half exists for one reason: `tokenise` cannot segment a script with no
- * inter-word separators, so a question glued into a label in Japanese, Chinese
- * or Thai survives the token-sequence check (fix round 3). But it is a
- * substring match with no word boundary — the mechanism this module
- * deliberately moved off everywhere else, because `"ai"` matches inside
- * `"email"` — and applied to a two-letter question it does not censor that
- * question's topic, it censors every label containing those two letters
- * anywhere. Measured against this module: one junk `"hi"` row deletes both
- * `"Hiring process"` and `"Shipping and delivery"`, `"api"` deletes `"Rapid
- * prototyping"`, `"test"` deletes `"Latest releases"`. Gap questions are
- * precisely where junk lives — they are by definition the ones that found
- * nothing in the documents — so without this threshold one person typing "hi"
- * at an agent takes a slice of the week's report with them, and the only
- * symptom is a shorter email.
- *
- * Five characters, measured on the normalised question: the same string the
- * `includes` call then searches for, so the length and the match cannot
- * disagree about what was measured.
- *
- * Deliberately a character count and not a token count. The Thai question in
- * the fix-round-3 tests tokenises to SEVEN fragments — Thai's combining vowel
- * marks are separators to `tokenise` and nothing of the kind to a reader — and
- * both its seam tokens are corrupted where the label glues onto it, so the
- * token sequence still does not match and this check is still the only thing
- * that catches it. A rule conditioned on the question being a single token
- * would have reopened exactly the leak round 3 closed. Every real
- * no-separator question is a long run of characters instead — the three in the
- * tests are 8, 10 and 31 — so a threshold far below them costs nothing this
- * half is for.
- *
- * Counted in UTF-16 units, like `QUOTATION_MIN_CHARS` beside it. For every
- * script in that evidence that is the character count exactly; where it is not
- * (an astral character counts two) it over-counts, which applies an absolute
- * check more often rather than less.
- */
-const RAW_SUBSTRING_MIN_CHARS = 5;
-
-/**
  * Split into word-ish tokens: runs of letters and digits, case-folded.
  * Punctuation, whitespace and everything else is a separator and is
  * discarded rather than preserved.
@@ -228,26 +204,48 @@ function containsTokenSequence(haystack: string[], needle: string[]): boolean {
 /**
  * Is `label` a quotation of one of `questions`, rather than a name for one?
  *
+ * **What a `true` here costs, and why that is the whole design.** It does not
+ * delete the gap. `enforceFloor` answers it by emitting the row with no label
+ * at all, which is the one thing that lets this function stop being tuned.
+ * For five fix rounds one boolean was asked to decide two separate questions
+ * — may this topic be reported, and may it be named — and because firing
+ * deleted the row, every adjustment traded an admin's missing gap against a
+ * colleague's leaked question. There is no setting that is right for both.
+ * Split, each half is easy: the floor above decides reporting, this decides
+ * naming, and this one can be as absolute as it likes because the worst a
+ * false positive now does is leave a topic nameless.
+ *
  * Two different events, deliberately never one expression again:
  *
- *   * Direction B — the label embeds a whole question. Absolute, no
- *     threshold: there is no length at which reproducing somebody's question
- *     verbatim stops being the disclosure. Checked two ways: as a token
- *     sequence, and — fix round 3 — as a raw substring on the normalised
- *     text. The token check alone misses a question glued onto a label with
- *     no separator at the seam: `tokenise` has no word/non-word transition
- *     to split on inside a run of Japanese, Chinese or Thai characters, so
- *     the whole glued run becomes ONE token, which is a superstring of the
- *     question's own token rather than a sequence containing it — exactly
- *     what `containsTokenSequence` exists to refuse. The raw-substring check
- *     restores what this guard did for B before tokenising replaced it, but
- *     only for B: it can only ever ADD a drop here, which is the safe
- *     direction for an absolute check, and it never reaches Direction A. Fix
- *     round 5: and only for a question of at least `RAW_SUBSTRING_MIN_CHARS`
- *     — see that constant for the junk two-letter question that was deleting
- *     a slice of the report through it. The *match* is still absolute; what
- *     has a threshold is which questions this one half of it looks at, and
- *     it is a threshold no real no-separator question comes near.
+ *   * Direction B — the label embeds a whole question. Absolute, and with no
+ *     threshold of any kind: there is no length at which reproducing
+ *     somebody's question verbatim stops being the disclosure. Checked two
+ *     ways: as a token sequence, and — fix round 3 — as a raw substring on
+ *     the normalised text. The token check alone misses a question glued onto
+ *     a label with no separator at the seam: `tokenise` has no word/non-word
+ *     transition to split on inside a run of Japanese, Chinese or Thai
+ *     characters, so the whole glued run becomes ONE token, which is a
+ *     superstring of the question's own token rather than a sequence
+ *     containing it — exactly what `containsTokenSequence` exists to refuse.
+ *     The raw-substring check restores what this guard did for B before
+ *     tokenising replaced it, but only for B: it can only ever ADD a refusal
+ *     here, which is the safe direction for an absolute check, and it never
+ *     reaches Direction A.
+ *
+ *     Fix round 5 put a five-character floor on the needle, because a match
+ *     deleted the row and a junk `"hi"` question therefore deleted every
+ *     label with those two letters anywhere in it. Fix round 6 took the floor
+ *     back out, and it is not coming back. Four characters in a script with
+ *     no inter-word separators is not a topic word — it is a complete
+ *     first-person sentence. `"我怀孕了"` is "I'm pregnant"; `"我要辞职"` is
+ *     "I want to resign"; the same length says as much in Japanese and
+ *     Korean. Measured: with the floor in place, a label wrapping any of
+ *     those reached the admin's inbox verbatim. The floor is gone and so is
+ *     the reason it existed — a false positive here now costs a topic's NAME
+ *     and not the topic, so this half needs no length, no script table and no
+ *     word-boundary argument to be safe in either direction. That is the
+ *     trade, stated plainly: a junk question can leave a real topic nameless,
+ *     and a nameless topic an admin can see beats a deleted one they cannot.
  *   * Direction A — a question embeds the label. Only a quotation once the
  *     shared run of words clears `QUOTATION_MIN_WORDS`, `QUOTATION_MIN_CHARS`
  *     or `QUOTATION_MIN_RATIO` — see that constant's comment for why those
@@ -272,12 +270,7 @@ function isQuotation(label: string, questions: DedupedQuestion[]): boolean {
     const normalisedQuestion = normaliseForComparison(q.question);
 
     if (containsTokenSequence(labelTokens, qTokens)) return true;
-    if (
-      normalisedQuestion.length >= RAW_SUBSTRING_MIN_CHARS &&
-      normalisedLabel.includes(normalisedQuestion)
-    ) {
-      return true;
-    }
+    if (normalisedLabel.includes(normalisedQuestion)) return true;
 
     if (!containsTokenSequence(qTokens, labelTokens)) return false;
     return (
@@ -311,7 +304,12 @@ function truncateLabel(label: string): string {
  *
  * Refuses seven things a model, or a caller, can hand it — each one a way a
  * disclosure or a broken report would reach an admin without anybody having
- * chosen it:
+ * chosen it. Every one of them is a drop but one. **The exception:** a label
+ * that quotes a question is withheld, and the row goes out with `label: null`
+ * rather than not going out at all. Reporting and naming are two decisions
+ * (see `isQuotation`), and a dropped row is also indistinguishable from a
+ * quiet week — so the refusal that fires on a judgement call is the one that
+ * keeps the fact and loses the name.
  *
  *   * a floor that is not a positive integer. `askerFloor` already answers
  *     `null` for exactly this input; refusing it again here closes the gap a
@@ -324,12 +322,14 @@ function truncateLabel(label: string): string {
  *   * a repeated member index — de-duplicated before counting, so a model
  *     repeating an index cannot inflate a gap's count and promote it.
  *   * a member index that is not in the list — a model counting past the end.
- *   * a label that quotes a question, per `isQuotation` — checked against
- *     every question the model saw (`deduped`), not just this cluster's own
- *     members, because a quoted question is the same disclosure whichever
- *     cluster it was filed under; and checked against the label both before
- *     and after truncation, because truncating first can cut a quote in half
- *     and let the surviving half through.
+ *   * a label that quotes a question, per `isQuotation` — the one refusal
+ *     that keeps the row. Checked against every question the model saw
+ *     (`deduped`), not just this cluster's own members, because a quoted
+ *     question is the same disclosure whichever cluster it was filed under;
+ *     and checked against the label both before and after truncation,
+ *     because truncating first can cut a quote in half and let the surviving
+ *     half through. The gap is emitted with `label: null` and the renderer
+ *     prints the refusal.
  *   * a label that is empty, whitespace, or longer than `MAX_LABEL_CHARS` —
  *     the last of these is truncated rather than dropped, since a long label
  *     is usually a correct label with an explanation glued on.
@@ -398,10 +398,31 @@ export function enforceFloor(
     // show it, against every question the model saw — not just this
     // cluster's members. See `enforceFloor`'s own comment for why each half
     // of this matters on its own.
-    if (isQuotation(fullLabel, deduped) || isQuotation(truncatedLabel, deduped)) continue;
+    //
+    // Fix round 6: emitted without a name, not dropped. Deliberately NOT a
+    // `continue` — everything above this line is, and that difference is the
+    // amendment. The floor has already decided this cluster may be reported;
+    // all that is in doubt here is whether the model's name for it may be
+    // printed, and the answer to that doubt should not take an admin's gap
+    // with it. `truncatedLabel` is computed and then thrown away on this
+    // path: it was needed for the check, never for the output.
+    if (isQuotation(fullLabel, deduped) || isQuotation(truncatedLabel, deduped)) {
+      gaps.push({ label: null, questions, askers: askers.size });
+      continue;
+    }
 
     gaps.push({ label: truncatedLabel, questions, askers: askers.size });
   }
 
-  return gaps.sort((a, b) => b.questions - a.questions || a.label.localeCompare(b.label));
+  // Named rows before unnamed ones at an equal count, then by label. The
+  // nulls have to be ordered explicitly rather than fed to `localeCompare`,
+  // and ordering them last keeps a report's list reading as topics first and
+  // refusals after. Total and input-independent, which is what lets the
+  // renderer promise a byte-identical report for byte-identical input.
+  return gaps.sort(
+    (a, b) =>
+      b.questions - a.questions ||
+      (a.label === null ? 1 : 0) - (b.label === null ? 1 : 0) ||
+      (a.label ?? "").localeCompare(b.label ?? ""),
+  );
 }

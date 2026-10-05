@@ -109,6 +109,46 @@ describe("summariseWithModel", () => {
     expect(messages.filter((m: any) => m.role === "system")).toHaveLength(1);
   });
 
+  // A series like "Somebody's first week" tells the model which morning it is
+  // on through this field rather than relying on memory or a second call —
+  // see `routine-templates.ts`'s `first-week` instruction, which picks a
+  // subject by the number this line gives it.
+  it("tells the model which run of how many this is", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Write today's note.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+      runPosition: { done: 2, total: 7 },
+    });
+
+    const systemMessage = createMock.mock.calls[0][0].messages.find(
+      (m: any) => m.role === "system",
+    );
+    // Third morning: two are done, this is the one being written.
+    expect(systemMessage.content).toContain("3 of 7");
+  });
+
+  it("says nothing about position for a routine that does not end", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Write today's note.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+    });
+
+    const systemMessage = createMock.mock.calls[0][0].messages.find(
+      (m: any) => m.role === "system",
+    );
+    expect(systemMessage.content).not.toMatch(/\d+ of \d+/);
+  });
+
   it("makes exactly one completion call for a batch of items, not one per item", async () => {
     const summarise = summariseWithModel(env);
     await summarise({

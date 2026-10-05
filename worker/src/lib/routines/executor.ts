@@ -145,6 +145,15 @@ export type SummariseInput = {
    * of the two answers and is the one a routine should have had first.
    */
   timezone?: string | null;
+  /**
+   * Where this run sits in a routine that ends, or absent for one that does not.
+   *
+   * `done` is how many have been delivered *before* this one, so the run being
+   * written is `done + 1`. Not material — `routineMaterial()` answers "what is
+   * this run working from", and for a scheduled prompt the answer is still
+   * nothing. This is context about the run itself.
+   */
+  runPosition?: { done: number; total: number };
 };
 
 /**
@@ -675,6 +684,12 @@ export async function runRoutine(
       // unless what came in matters.
       mayDecline: routine.source_kind !== "none" || trigger !== undefined,
       timezone: routine.timezone,
+      // Only for a routine that ends. A standing order has no position, and a
+      // line claiming one would be a fact the model invents a meaning for.
+      runPosition:
+        routine.ends_after_runs != null
+          ? { done: routine.runs_done, total: routine.ends_after_runs }
+          : undefined,
     };
 
     // The branch, and the whole of §D. A workspace with something for a tool

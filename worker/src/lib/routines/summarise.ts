@@ -83,6 +83,12 @@ export function summariseWithModel(env: RoutineEnv) {
             input.persona,
             "You are running a scheduled routine for this team.",
             whenAndWhere(new Date(), input.timezone),
+            ...(input.runPosition
+              ? [
+                  `This is run ${input.runPosition.done + 1} of ${input.runPosition.total}, ` +
+                    `and the last one will be ${input.runPosition.total}.`,
+                ]
+              : []),
           ]
             .filter(Boolean)
             .join("\n\n"),

@@ -119,3 +119,62 @@ describe("CreateRoutineDialog", () => {
     expect(await screen.findByText(/first run just takes a snapshot/i)).toBeInTheDocument();
   });
 });
+
+describe("opened from a link", () => {
+  it("opens on the named template, already filled in", async () => {
+    channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "me@example.com" }]);
+    const onConsumed = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CreateRoutineDialog
+          agentId="a1"
+          openTemplate="weekly-digest"
+          onTemplateConsumed={onConsumed}
+        />
+      </QueryClientProvider>,
+    );
+
+    // Straight to step 2, with the template's own name in the field.
+    expect(await screen.findByDisplayValue("Weekly digest")).toBeInTheDocument();
+    // And the request is taken back out of the URL exactly once.
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Review Focus 3. Somebody edits the URL, or a template is renamed after a
+   * link was shared. The dialog opens on step 1 — the normal thing — rather
+   * than crashing or landing on an empty step 2.
+   */
+  it("opens normally for a template id that does not exist", async () => {
+    channelsList.mockResolvedValue([]);
+    const onConsumed = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CreateRoutineDialog
+          agentId="a1"
+          openTemplate="no-such-template"
+          onTemplateConsumed={onConsumed}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/or start from one of these/)).toBeInTheDocument();
+    // Still consumed: the parameter is a request, and leaving it in the URL
+    // would retry this on every reopen.
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing special with no template named", async () => {
+    channelsList.mockResolvedValue([]);
+    const onConsumed = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CreateRoutineDialog agentId="a1" onTemplateConsumed={onConsumed} />
+      </QueryClientProvider>,
+    );
+    expect(onConsumed).not.toHaveBeenCalled();
+  });
+});

@@ -102,7 +102,12 @@ function StepLink({ step, agentId }: { step: FirstWeekStep; agentId: string }) {
       );
     case "routine":
       return (
-        <Link to="/agents/$agentId/routines" params={{ agentId }} className={className}>
+        <Link
+          to="/agents/$agentId/routines"
+          params={{ agentId }}
+          search={{ template: "first-week" }}
+          className={className}
+        >
           Set one up
         </Link>
       );

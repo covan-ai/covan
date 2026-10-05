@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link as RouterLink } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -22,7 +22,7 @@ import { useConnections } from "@/hooks/use-connections";
 import { SchedulePicker, scheduleError } from "@/components/routines/schedule-picker";
 import { TemplatePicker } from "@/components/routines/template-picker";
 import type { RoutineSourceKind, RoutineTriggerKind } from "@/lib/routines-api";
-import type { RoutineTemplate } from "@/lib/routine-templates";
+import { templateById, type RoutineTemplate } from "@/lib/routine-templates";
 
 /**
  * Says what a connection routine can and cannot see, in the units the person
@@ -51,7 +51,17 @@ const browserTimezone = () => {
   }
 };
 
-export function CreateRoutineDialog({ agentId }: { agentId: string }) {
+export function CreateRoutineDialog({
+  agentId,
+  openTemplate,
+  onTemplateConsumed,
+}: {
+  agentId: string;
+  /** A template id from the URL. Opens the dialog on it. */
+  openTemplate?: string;
+  /** Called once the request has been acted on, so the URL can be cleaned. */
+  onTemplateConsumed?: () => void;
+}) {
   const { data: channels = [] } = useDeliveryChannels();
   const createRoutine = useCreateRoutine();
   // A connection that has never finished setting itself up has no documents to
@@ -161,6 +171,40 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
     setStep(2);
   };
+
+  /**
+   * The URL is a request, and this consumes it.
+   *
+   * An effect, and deliberately not derived state — `_authed.app.tsx:79-93` has
+   * the long version of why, and both of its traps are waiting here. Deriving the
+   * open state from the search param means the dialog stays open until the
+   * router's update lands, TanStack does that in a transition, and closing
+   * visibly lags on the deep-linked path and only on that path. A
+   * `useState(!!openTemplate)` initialiser never sees a second press from the
+   * same screen.
+   *
+   * An unknown id still consumes the request: the parameter has been read and
+   * acted on, and leaving it in the URL would re-open this on every reopen.
+   * Opening on step 1 is the right answer — it is the screen somebody who typed
+   * a wrong URL wanted anyway.
+   */
+  useEffect(() => {
+    if (!openTemplate) return;
+    const template = templateById(openTemplate);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpen(true);
+    if (template) {
+      applyTemplate(template);
+    } else {
+      setChannelId(channels[0]?.id ?? "");
+    }
+    onTemplateConsumed?.();
+    // `channels` is read inside and deliberately not a dependency: it arrives a
+    // beat later, and re-running this on its arrival would reopen a dialog the
+    // person had closed. A template with no channel preselected is the same
+    // state "Set it up myself" produces, which the empty-channel branch handles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTemplate]);
 
   const skipToForm = () => {
     setChannelId(channels[0]?.id ?? "");

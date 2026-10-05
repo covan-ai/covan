@@ -192,35 +192,46 @@ function containsTokenSequence(haystack: string[], needle: string[]): boolean {
  *
  *   * Direction B — the label embeds a whole question. Absolute, no
  *     threshold: there is no length at which reproducing somebody's question
- *     verbatim stops being the disclosure.
+ *     verbatim stops being the disclosure. Checked two ways: as a token
+ *     sequence, and — fix round 3 — as a raw substring on the normalised
+ *     text. The token check alone misses a question glued onto a label with
+ *     no separator at the seam: `tokenise` has no word/non-word transition
+ *     to split on inside a run of Japanese, Chinese or Thai characters, so
+ *     the whole glued run becomes ONE token, which is a superstring of the
+ *     question's own token rather than a sequence containing it — exactly
+ *     what `containsTokenSequence` exists to refuse. The raw-substring check
+ *     restores what this guard did for B before tokenising replaced it, but
+ *     only for B: it can only ever ADD a drop here, which is the safe
+ *     direction for an absolute check, and it never reaches Direction A.
  *   * Direction A — a question embeds the label. Only a quotation once the
  *     shared run of words clears `QUOTATION_MIN_WORDS`, `QUOTATION_MIN_CHARS`
  *     or `QUOTATION_MIN_RATIO` — see that constant's comment for why those
- *     three and not a flat containment check.
+ *     three and not a flat containment check. Token sequence only, never
+ *     raw substring: that is what let a one-word label survive appearing
+ *     inside a longer, unrelated word (`"ai"` inside `"email"`), the defect
+ *     that split this rule from one expression into two in the first place.
  *
- * The word counts those thresholds read are lengths of the same token arrays
- * `containsTokenSequence` matched on, not a separately computed word count —
- * so the counting and the matching cannot disagree with each other about
- * what a "word" is.
+ * The word counts the Direction A thresholds read are lengths of the same
+ * token arrays `containsTokenSequence` matched on, not a separately computed
+ * word count — so the counting and the matching cannot disagree with each
+ * other about what a "word" is.
  */
 function isQuotation(label: string, questions: DedupedQuestion[]): boolean {
   const labelTokens = tokenise(label);
   if (labelTokens.length === 0) return false;
-  // Character length is measured on the normalised label text, not the
-  // token count — a separate, textual notion of "how long is this label",
-  // orthogonal to how many words it tokenises into.
-  const labelCharLength = normaliseForComparison(label).length;
+  const normalisedLabel = normaliseForComparison(label);
 
   return questions.some((q) => {
     const qTokens = tokenise(q.question);
     if (qTokens.length === 0) return false;
 
     if (containsTokenSequence(labelTokens, qTokens)) return true;
+    if (normalisedLabel.includes(normaliseForComparison(q.question))) return true;
 
     if (!containsTokenSequence(qTokens, labelTokens)) return false;
     return (
       labelTokens.length >= QUOTATION_MIN_WORDS ||
-      labelCharLength >= QUOTATION_MIN_CHARS ||
+      normalisedLabel.length >= QUOTATION_MIN_CHARS ||
       labelTokens.length / qTokens.length >= QUOTATION_MIN_RATIO
     );
   });
@@ -241,7 +252,7 @@ function truncateLabel(label: string): string {
 /**
  * Keep only the clusters that may be reported, and say how big each one is.
  *
- * Refuses six things a model, or a caller, can hand it — each one a way a
+ * Refuses seven things a model, or a caller, can hand it — each one a way a
  * disclosure or a broken report would reach an admin without anybody having
  * chosen it:
  *
@@ -265,6 +276,11 @@ function truncateLabel(label: string): string {
  *   * a label that is empty, whitespace, or longer than `MAX_LABEL_CHARS` —
  *     the last of these is truncated rather than dropped, since a long label
  *     is usually a correct label with an explanation glued on.
+ *   * a label with no letter or digit in it at all — "???!!!" or an emoji
+ *     string trims to something non-empty and tokenises to nothing, which
+ *     `isQuotation` would otherwise call "not a quotation" for lack of
+ *     anything to compare. Not a disclosure, but a blank-looking bullet in
+ *     the admin's email, which the renderer must never emit.
  *
  * Ordered by how many questions are behind the gap, so the thing most worth
  * writing down is first. That is `0053`'s ordering choice for its own pair of
@@ -297,6 +313,11 @@ export function enforceFloor(
 
     const fullLabel = cluster.label.trim();
     if (fullLabel === "") continue;
+    // A label can be non-empty and still carry no letter or digit — "???!!!"
+    // or an emoji string both trim to something, and `isQuotation` would
+    // call either "not a quotation" (there is nothing to compare), so this
+    // has to be its own refusal rather than falling out of that check.
+    if (tokenise(fullLabel).length === 0) continue;
 
     const truncatedLabel = truncateLabel(fullLabel);
 

@@ -249,6 +249,89 @@ describe("enforcing the floor on what the model returned", () => {
       });
     });
 
+    describe("fix round 3: direction B must catch scripts with no inter-word separators", () => {
+      // `tokenise` splits on runs of non-letter/non-digit characters, so a
+      // question glued directly onto a label — no space, no punctuation at
+      // the seam — tokenises as part of ONE run with whatever it is glued
+      // to. That run is a superstring of the question's own token, and
+      // `containsTokenSequence` correctly refuses to call a superstring a
+      // match. Gluing text straight onto a question with no separator is
+      // the ordinary way a label wraps one in Japanese, Chinese or Thai —
+      // unlike English, which needs a space or punctuation to glue anything
+      // at all, which is why English never hit this. Each case below is
+      // known-failing without the raw-substring disjunct added this round.
+      it("drops a label that wraps a Japanese question with no separator", () => {
+        const d: DedupedQuestion[] = [
+          { question: "経費精算はどうやるの", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(
+          enforceFloor(
+            [{ label: "経費精算はどうやるのという質問について", members: [0] }],
+            d,
+            3,
+          ),
+        ).toEqual([]);
+      });
+
+      it("drops a label that wraps a Chinese question with no separator", () => {
+        const d: DedupedQuestion[] = [
+          { question: "报销流程是怎样的", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(
+          enforceFloor([{ label: "关于报销流程是怎样的这个问题", members: [0] }], d, 3),
+        ).toEqual([]);
+      });
+
+      it("drops a label that wraps a Thai question with no separator", () => {
+        const d: DedupedQuestion[] = [
+          {
+            question: "คำถามเกี่ยวกับการเบิกค่าใช้จ่าย",
+            askerKeys: new Set([1, 2, 3]),
+            copies: 3,
+          },
+        ];
+        expect(
+          enforceFloor(
+            [{ label: "สรุปคำถามเกี่ยวกับการเบิกค่าใช้จ่ายทั้งหมด", members: [0] }],
+            d,
+            3,
+          ),
+        ).toEqual([]);
+      });
+
+      it("drops an English label that wraps a question with a separator (control)", () => {
+        // English cannot reproduce the bug above — a label cannot glue
+        // letters onto an English question without a space or punctuation —
+        // so this exists to show the token-sequence path and the
+        // raw-substring disjunct agree where both can fire.
+        const d: DedupedQuestion[] = [
+          { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([]);
+      });
+
+      it("does not let the raw-substring disjunct reach direction A's sub-word false positives", () => {
+        // The new disjunct is added only to direction B's branch, before the
+        // token-sequence check for direction A ever runs. If it leaked into
+        // direction A, a short label would again match raw inside a larger
+        // word — "ai" inside "email", "hr" inside "hrs" — which is the exact
+        // defect that justified moving off raw substrings originally.
+        const email: DedupedQuestion[] = [
+          { question: "can you forward that email", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(enforceFloor([{ label: "AI", members: [0] }], email, 3)).toEqual([
+          { label: "AI", questions: 3, askers: 3 },
+        ]);
+
+        const hrs: DedupedQuestion[] = [
+          { question: "the hrs are flexible this week", askerKeys: new Set([1, 2, 3]), copies: 3 },
+        ];
+        expect(enforceFloor([{ label: "HR", members: [0] }], hrs, 3)).toEqual([
+          { label: "HR", questions: 3, askers: 3 },
+        ]);
+      });
+    });
+
     it("drops a quotation at exactly the word-count threshold, keeps one word short", () => {
       const d: DedupedQuestion[] = [
         {
@@ -292,12 +375,14 @@ describe("enforcing the floor on what the model returned", () => {
     });
 
     describe("fix round 2: the same boundaries, with punctuation in the question", () => {
-      // Proves the word counts the thresholds read come from the same token
-      // arrays `containsTokenSequence` matched on. If counting instead split
-      // on raw whitespace while matching tokenised, punctuation would shift
-      // the two apart — e.g. "record," would count as one word but never
-      // equal the token "record" — and these boundaries would land in the
-      // wrong place.
+      // Proves the match fires through punctuation rather than being
+      // defeated by it, at each threshold's exact boundary. It does NOT by
+      // itself distinguish token-based counting from a whitespace split:
+      // these particular fixtures put exactly one space between each
+      // punctuation mark and the next word, so a whitespace split and
+      // `tokenise` land on the same word count either way. (Fix round 3,
+      // minor finding: this comment previously overclaimed what this block
+      // pins down.)
       it("word-count threshold still lands correctly with commas and a trailing '?'", () => {
         const q = "please note, aa bb cc dd, for the record, always?";
         const d: DedupedQuestion[] = [
@@ -389,6 +474,16 @@ describe("enforcing the floor on what the model returned", () => {
   it("drops an empty or whitespace label", () => {
     expect(enforceFloor([{ label: "", members: [0] }], deduped, 3)).toEqual([]);
     expect(enforceFloor([{ label: "   ", members: [0] }], deduped, 3)).toEqual([]);
+  });
+
+  it("drops a label with no letter or digit in it (fix round 3, minor)", () => {
+    // "???!!!" and an emoji string are both non-empty after trimming, so the
+    // empty-label check above does not catch them, and `isQuotation` calls
+    // either "not a quotation" — there is nothing in them to compare against
+    // a question. Without its own refusal, either survives as a blank-
+    // looking bullet in the admin's email.
+    expect(enforceFloor([{ label: "???!!!", members: [0] }], deduped, 3)).toEqual([]);
+    expect(enforceFloor([{ label: "😀😀", members: [0] }], deduped, 3)).toEqual([]);
   });
 
   it("truncates a label that ran away, keeping the prefix (fix round 1, finding 8)", () => {

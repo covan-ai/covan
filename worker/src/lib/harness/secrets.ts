@@ -119,10 +119,18 @@ export async function authHeaders(
  * `loadConnection` — to be allowed to have. Same order and same discipline as
  * everything else in this file: ask, then fetch.
  *
- * Both halves are returned together and both are required, because a call with
- * one of them missing is a call Composio would answer for the wrong account or
- * not at all. The row type is the reminder that the permission question is
- * already behind us.
+ * **Which halves are required depends on the shape of the row, and the row says
+ * which shape it is.** For a `composio` row both are, because a call missing
+ * one is a call Composio would answer for the wrong account or not at all. For
+ * a `composio_no_auth` row there is no account to name — the application needs
+ * no credential, so Composio holds nothing on its behalf and the operation
+ * executes on `user_id` alone (covan#253). Read off `auth_kind`, which 0072
+ * made the discriminator and which no client role may write, rather than
+ * inferred from a null: a managed row that has genuinely lost its account must
+ * stay the error it is, and the two are otherwise indistinguishable here.
+ *
+ * The row type is the reminder that the permission question is already behind
+ * us.
  */
 export async function composioAccount(
   env: ToolEnv,
@@ -137,7 +145,10 @@ export async function composioAccount(
   const connectedAccountId =
     typeof data.connected_account_id === "string" ? data.connected_account_id : "";
   const composioUserId = typeof data.composio_user_id === "string" ? data.composio_user_id : "";
-  if (!connectedAccountId || !composioUserId) return null;
+  if (!composioUserId) return null;
+  if (connection.auth_kind === "composio_no_auth")
+    return { connectedAccountId: "", composioUserId };
+  if (!connectedAccountId) return null;
   return { connectedAccountId, composioUserId };
 }
 

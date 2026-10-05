@@ -31,7 +31,13 @@ export type ToolConnection = {
   label: string;
   transport: ToolTransport;
   base_url: string;
-  auth_kind: "static_header" | "composio" | "unknown";
+  /**
+   * How the credential is held — and for a composio row, **load-bearing rather
+   * than descriptive** since 0072. `composio_no_auth` is the only thing telling
+   * `composioAccount` that a row naming no account is correct rather than
+   * broken (covan#253).
+   */
+  auth_kind: "static_header" | "composio" | "composio_no_auth" | "unknown";
   allowed_methods: string[];
   config: Record<string, unknown>;
   /**
@@ -79,8 +85,16 @@ function normalise(row: Record<string, unknown>): ToolConnection {
     // Read from the row rather than asserted, which it was until 0063 added a
     // second value. A hardcoded `static_header` on a Composio row would have
     // sent `authHeaders` looking for an envelope that does not exist.
+    // Every value spelled out, and missing one is not cosmetic: an unlisted
+    // `auth_kind` reads as `unknown`, `composioAccount` then takes the managed
+    // branch, and every call on an application that needs no credential fails
+    // with "needs to be reconnected" — which is impossible for that shape.
     auth_kind:
-      row.auth_kind === "static_header" || row.auth_kind === "composio" ? row.auth_kind : "unknown",
+      row.auth_kind === "static_header" ||
+      row.auth_kind === "composio" ||
+      row.auth_kind === "composio_no_auth"
+        ? row.auth_kind
+        : "unknown",
     allowed_methods: Array.isArray(row.allowed_methods) ? (row.allowed_methods as string[]) : [],
     config:
       row.config && typeof row.config === "object" ? (row.config as Record<string, unknown>) : {},

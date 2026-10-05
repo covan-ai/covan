@@ -84,10 +84,14 @@ export function summariseWithModel(env: RoutineEnv) {
             "You are running a scheduled routine for this team.",
             whenAndWhere(new Date(), input.timezone),
             ...(input.runPosition
-              ? [
-                  `This is run ${input.runPosition.done + 1} of ${input.runPosition.total}, ` +
-                    `and the last one will be ${input.runPosition.total}.`,
-                ]
+              ? [`This is run ${input.runPosition.done + 1} of ${input.runPosition.total}.`]
+              : []),
+            // Said once, plainly, rather than left for the model to work out
+            // by comparing the two numbers above — the curriculum's last
+            // subject ("anything the first six missed") only makes sense if
+            // the model knows this run will not be followed by another.
+            ...(input.runPosition && input.runPosition.done + 1 === input.runPosition.total
+              ? ["This is the last run in the series."]
               : []),
           ]
             .filter(Boolean)

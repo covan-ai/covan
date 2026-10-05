@@ -686,6 +686,15 @@ export async function runRoutine(
       timezone: routine.timezone,
       // Only for a routine that ends. A standing order has no position, and a
       // line claiming one would be a fact the model invents a meaning for.
+      //
+      // `!=`, not `!==`, deliberately: `ingest.ts` builds a routine row
+      // through a cast, so a select path that forgot this column yields
+      // `undefined` rather than `null` for it (see `output_bundle_id`'s
+      // comment above, on the same type, for the same optional-vs-nullable
+      // point). Loose equality degrades that to "unbounded" — no position
+      // at all — instead of `{ done, total: undefined }`, which would be a
+      // position claiming a number the model would have to invent a meaning
+      // for.
       runPosition:
         routine.ends_after_runs != null
           ? { done: routine.runs_done, total: routine.ends_after_runs }

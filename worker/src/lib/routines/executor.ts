@@ -80,6 +80,10 @@ export type RoutineRow = {
   output_bundle_id?: string | null;
   /** How many filed documents this routine keeps. 0056's default is 52. */
   output_retention?: number | null;
+  /** After how many delivered runs this routine ends itself. Null means never. */
+  ends_after_runs: number | null;
+  /** Delivered runs so far — incremented only where `finish` records `"ok"`. */
+  runs_done: number;
 };
 
 export type SummariseInput = {
@@ -1069,6 +1073,32 @@ async function finish(
   if (outcome.pause) {
     patch.status = "paused";
     patch.paused_reason = outcome.pause;
+  }
+
+  /**
+   * A series spends a morning only when it delivered one.
+   *
+   * Guarded on `status === "ok"` and not on "did this run at all", which is the
+   * whole content of 0072's `runs_done`: a week of a dead delivery channel would
+   * otherwise complete a seven-morning series that nobody ever read, and leave
+   * the routine saying "Finished".
+   *
+   * Deliberately NOT the rule the quota block above uses. That one is keyed on
+   * tokens having been spent, because a declined run costs real money and must
+   * be billed; this one is keyed on something having arrived, because a
+   * declined run delivered nothing. Two different questions about the same
+   * run, and the comment above says so for its own.
+   *
+   * Last, so a pause set by either branch above wins. A run that delivered and
+   * then found its reason to stop reads as stopped — "Finished" is a claim that
+   * the series ran its course, and that one did not.
+   */
+  if (routine.ends_after_runs !== null && outcome.status === "ok") {
+    const done = routine.runs_done + 1;
+    patch.runs_done = done;
+    if (done >= routine.ends_after_runs && patch.status === undefined) {
+      patch.status = "completed";
+    }
   }
 
   const { error: updateError } = await deps.db.from("routines").update(patch).eq("id", routine.id);

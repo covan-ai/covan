@@ -62,13 +62,7 @@ function RoutinesTab() {
           currentUserId={me?.user.id ?? null}
           memberNames={memberNames}
           routines={routines}
-          action={
-            <CreateRoutineDialog
-              agentId={agentId}
-              openTemplate={template}
-              onTemplateConsumed={clearTemplate}
-            />
-          }
+          action={<CreateRoutineDialog agentId={agentId} />}
         />
       )}
     </PageContainer>

@@ -336,6 +336,29 @@ describe("run_tool", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("runs an operation of an application that needs no credential", async () => {
+    // covan#253, the far end of it. `composioAccount` answers with an empty
+    // account id and a real identifier for a `composio_no_auth` row, and the
+    // request must then carry `user_id` and no account key at all.
+    composioAccount.mockResolvedValue({ connectedAccountId: "", composioUserId: "cu_open" });
+    const out = await runToolTool.run(
+      { ...CALL, slug: "HACKERNEWS_GET_LATEST_POSTS", arguments: {} },
+      ctxWith({
+        row: {
+          ...CONNECTION,
+          label: "Hacker News",
+          auth_kind: "composio_no_auth",
+          toolkit_slug: "hackernews",
+        },
+        approved: ["conn-1"],
+      }),
+    );
+    expect(out.kind).toBe("ok");
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(Object.keys(body)).not.toContain("connected_account_id");
+    expect(body.user_id).toBe("cu_open");
+  });
+
   it("runs an operation named exactly after its own application", async () => {
     // `COMPOSIO_SEARCH` on `composio_search` is not hypothetical — a toolkit
     // whose whole purpose is one operation often names it after itself, and the

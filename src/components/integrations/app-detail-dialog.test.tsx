@@ -213,6 +213,13 @@ describe("AppDetailDialog", () => {
     const card = within(screen.getByRole("dialog"));
     expect(card.getByText("No sign-in needed")).toBeInTheDocument();
     expect(card.getByRole("button", { name: /Connect/ })).toBeInTheDocument();
+    // And it says what pressing it will do, which for this kind is nothing
+    // visible. The button is otherwise identical to the two that hand the
+    // browser to a third party.
+    expect(card.getByText(/nothing to sign in to/i)).toBeInTheDocument();
+    expect(card.getByText(/no account and no key/i)).toBeInTheDocument();
+    // Never the credential copy: there is no page at Composio for this one.
+    expect(card.queryByText(/Connect opens a page at Composio/)).not.toBeInTheDocument();
   });
 
   it("offers an application whose key the person connecting supplies", async () => {

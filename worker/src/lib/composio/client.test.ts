@@ -6,6 +6,7 @@ import {
   executeTool,
   getConnectedAccount,
   authConfigPlanFor,
+  connectsWithoutAccount,
   getToolkit,
   listToolkitCategories,
   listToolkits,
@@ -314,6 +315,41 @@ describe("executeTool", () => {
     });
   });
 
+  it("leaves the account out entirely when the application needs none", async () => {
+    // Thirty-four applications execute on `user_id` alone — verified against
+    // the live API, which answers `successful: true` for exactly this body.
+    //
+    // **Absent, not null.** The assertion is on the KEYS, because
+    // `connected_account_id: null` would satisfy any check on the value and is
+    // the shape covan#172 was three times over: a published request carrying a
+    // field their own API rejects. An endpoint validating a discriminated union
+    // reads an explicit null as a wrong answer, not as no answer.
+    const fetchImpl = fetchReturning({ successful: true });
+    await executeTool(
+      ENV,
+      { slug: "HACKERNEWS_GET_LATEST_POSTS", userId: "cu_open", arguments: {} },
+      { fetchImpl: fetchImpl as never },
+    );
+    const body = JSON.parse(String((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(Object.keys(body)).not.toContain("connected_account_id");
+    expect(body).toEqual({ user_id: "cu_open", arguments: {} });
+  });
+
+  it("leaves it out for an empty account id too, which is what the row hands over", async () => {
+    // `composioAccount` returns `connectedAccountId: ""` for a no-auth row
+    // rather than omitting the field, so the two have to agree. If this ever
+    // sent `connected_account_id: ""` the call would be refused upstream with a
+    // message about an account that does not exist.
+    const fetchImpl = fetchReturning({ successful: true });
+    await executeTool(
+      ENV,
+      { slug: "HACKERNEWS_GET_USER", connectedAccountId: "", userId: "cu_open", arguments: {} },
+      { fetchImpl: fetchImpl as never },
+    );
+    const body = JSON.parse(String((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(Object.keys(body)).not.toContain("connected_account_id");
+  });
+
   const call = {
     slug: "GOOGLECALENDAR_EVENTS_LIST",
     connectedAccountId: "ca_1",
@@ -438,28 +474,41 @@ describe("createLink", () => {
     expect(calls[2].body).toMatchObject({ auth_config_id: "ac_new" });
   });
 
-  it("asks for a no-auth config when the application needs no sign-in", async () => {
-    // Thirty-five of the catalogue's applications want no credential at all.
-    // Asking Composio for a managed OAuth client for one of those is the 400
-    // that made them look unconnectable for as long as the flag went unread.
-    const { impl, calls } = sequenced([
-      [/auth_configs\?/, { items: [] }],
-      [/auth_configs$/, { auth_config: { id: "ac_open" } }],
-      [/connected_accounts\/link/, { connected_account_id: "ca_1" }],
+  /**
+   * There is no test here for connecting an application that needs no sign-in,
+   * and its absence is the point.
+   *
+   * There used to be one, asserting the body
+   * `{toolkit: {slug: "HACKERNEWS"}, auth_config: {type: "no_auth"}}` — a shape
+   * Composio rejects outright (*"Expected 'use_composio_managed_auth' |
+   * 'use_custom_auth'"*), as does the only other body it would accept here
+   * (*"Cannot create an auth config for toolkit "hackernews" because it does
+   * not require authentication"*). The test passed because the fetch was
+   * mocked, and all thirty-four of those applications 502'd in production.
+   *
+   * The fix was to stop coming here at all: such a toolkit has no auth config,
+   * no connected account and no link, so `AuthConfigPlan` has no member for one
+   * and this function cannot be called with it. `connectsWithoutAccount` and
+   * the connect route's own tests are where that path is checked now. Rewriting
+   * this as a success case is not possible and would not be desirable — the
+   * type is what makes the dead end unreachable.
+   */
+  it("still expects a page for every flow that gets this far", async () => {
+    // The exception that used to live in `needsRedirect` is gone with the plan
+    // kind that needed it, so an empty address is now unconditionally a
+    // failure. Worth pinning: re-introducing the exception as "not managed" or
+    // "has no scheme" is a silent bug — the route inserts a pending row, the
+    // browser is handed `{url: ""}` and does nothing at all, and no test fails.
+    const { impl } = sequenced([
+      [/auth_configs\?/, { items: [{ id: "ac_1", toolkit: { slug: "gmail" } }] }],
+      [/connected_accounts\/link/, { connected_account_id: "ca_1", redirect_url: "" }],
     ]);
     const out = await createLink(
       ENV,
-      { toolkit: "hackernews", userId: "cu_1", plan: { kind: "no_auth" } },
+      { toolkit: "gmail", userId: "cu_1", plan: { kind: "managed_oauth" } },
       { fetchImpl: impl as never },
     );
-
-    expect(calls[1].body).toEqual({
-      toolkit: { slug: "HACKERNEWS" },
-      auth_config: { type: "no_auth" },
-    });
-    // No consent screen to send anybody to, and that is success rather than
-    // the failure the original reading of an empty `redirect_url` made it.
-    expect(out).toMatchObject({ kind: "ok", connectedAccountId: "ca_1", redirectUrl: "" });
+    expect(out.kind).toBe("error");
   });
 
   it("still refuses a sign-in flow that came back with nowhere to go", async () => {
@@ -686,19 +735,10 @@ describe("createLink", () => {
     expect(out.kind === "error" && out.message).not.toContain("Composio's dashboard");
   });
 
-  it("names covan#253 when an application needs no sign-in, because that is the fix", async () => {
-    const impl = vi.fn(async (url: string) =>
-      /auth_configs\?/.test(url)
-        ? new Response(JSON.stringify({ items: [] }), { status: 200 })
-        : new Response("Invalid discriminator value", { status: 400 }),
-    );
-    const out = await createLink(
-      ENV,
-      { toolkit: "hackernews", userId: "cu_1", plan: { kind: "no_auth" } },
-      { fetchImpl: impl as never },
-    );
-    expect(out.kind === "error" && out.message).toContain("covan#253");
-  });
+  // The third sentence this used to have — the one naming covan#253 for an
+  // application that needs no sign-in — is gone with the branch that produced
+  // it. That sentence was an apology for a failure, and the failure is fixed:
+  // such an application no longer asks Composio for anything.
 
   it("refuses a link answer missing either half", async () => {
     // A link with no account id produces a row that cannot be polled and cannot
@@ -1036,6 +1076,48 @@ describe("connectKind", () => {
     expect(toolkit.connectKind).toBe("no_auth");
   });
 
+  /**
+   * `gemini`, the one toolkit that publishes `NO_AUTH` *and* a credential mode.
+   *
+   * Taken from its live detail record: an empty `NO_AUTH` mode beside an
+   * `API_KEY` mode wanting `generic_api_key` from whoever connects. While
+   * Connect was broken for the no-auth kind the ambiguity cost nothing. Once it
+   * works, calling this one no-auth means it connects **successfully** and then
+   * fails on every operation needing the key — at execute time, inside an agent
+   * turn, on a card that says "connected", for a step of eight and a billed
+   * call. And it cannot heal: a missing credential is not `Tool_ToolNotFound`,
+   * so nothing withdraws the slug and the next turn buys the same failure.
+   *
+   * So no-sign-in has to mean "needs nothing from anybody", not "mentions
+   * NO_AUTH". Thirty-four applications, not thirty-five.
+   */
+  it("does not call an application no-sign-in when it also takes a key", async () => {
+    const toolkit = await detail({
+      slug: "GEMINI",
+      name: "Gemini",
+      composio_managed_auth_schemes: [],
+      auth_config_details: [mode("NO_AUTH", [], []), mode("API_KEY", [], ["generic_api_key"])],
+    });
+    expect(toolkit.connectKind).toBe("user_credential");
+    expect(toolkit.credentialScheme).toBe("API_KEY");
+  });
+
+  it("still calls one no-sign-in when the other mode asks an operator, not the user", async () => {
+    // The narrowing must not go too far the other way. A second mode that
+    // needs something of whoever set Covan up is not a path a person can take,
+    // so it does not make the free one unavailable.
+    const toolkit = await detail({
+      slug: "SOMETHING",
+      name: "Something",
+      composio_managed_auth_schemes: [],
+      auth_config_details: [
+        mode("NO_AUTH", [], []),
+        mode("OAUTH2", ["client_id", "client_secret"], ["code"]),
+      ],
+    });
+    expect(toolkit.connectKind).toBe("no_auth");
+  });
+
   it("reads no-sign-in off the column too, which is all a list row carries", async () => {
     const out = await listToolkits(
       ENV,
@@ -1158,9 +1240,19 @@ describe("authConfigPlanFor", () => {
   it("reads the same two fields the card renders from, and no others", () => {
     // Not a tidiness point. If this consulted a third field there would be a
     // row whose button promises one thing and whose connect builds another.
-    expect(authConfigPlanFor(toolkit({ connectKind: "no_auth", managedAuth: true }))).toEqual({
-      kind: "no_auth",
-    });
+    //
+    // The no-sign-in case is the sharpest version: `managedAuth` is true on
+    // this fixture and must not drag the answer to `managed_oauth`. What it
+    // gets instead is null plus a yes from `connectsWithoutAccount` — the two
+    // questions the route asks in that order, because for this kind null means
+    // "nothing to build" rather than "refuse".
+    const open = toolkit({ connectKind: "no_auth", managedAuth: true });
+    expect(authConfigPlanFor(open)).toBeNull();
+    expect(connectsWithoutAccount(open)).toBe(true);
+    // And the other three kinds are not that question's business.
+    for (const kind of ["managed_oauth", "user_credential", "needs_setup"] as const) {
+      expect(connectsWithoutAccount(toolkit({ connectKind: kind })), kind).toBe(false);
+    }
     expect(
       authConfigPlanFor(toolkit({ connectKind: "managed_oauth", credentialScheme: "API_KEY" })),
     ).toEqual({ kind: "managed_oauth" });

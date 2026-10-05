@@ -646,7 +646,7 @@ Composio before the row goes, so does closing the account.
   Sheets, Jira, Salesforce, Stripe and Asana are all here. Press Connect, allow
   it at the provider, done.
 
-  **1279 need a credential you get from the application itself** — an API key
+  **1280 need a credential you get from the application itself** — an API key
   for most, a username and password for a few. Connect sends you to a page
   Composio hosts, which asks for exactly the fields that application needs and
   links to where they live. Covan never sees what you type: the credential is
@@ -654,8 +654,17 @@ Composio before the row goes, so does closing the account.
   expires about ten minutes after it opens, so have the key to hand before you
   press Connect.
 
-  **35 need nothing at all.** No sign-in, no key. These are currently broken
-  for an unrelated reason and the card says so.
+  **34 need nothing at all.** No sign-in, no key. Connect adds one without
+  leaving the page and without creating anything at Composio: such an
+  application has no account to hold, so its operations run on an identifier
+  alone and the row goes straight to connected. HackerNews, a web search, a
+  PDF writer, a weather lookup, Yelp.
+
+  Thirty-four rather than thirty-five, because `gemini` publishes both — no
+  sign-in *and* an API key — and the key is what most of its operations
+  actually need, so it is offered as a key application instead. Connecting it
+  as a free one would have produced something that said "connected" and failed
+  on first use.
 
   **The remaining 159 cannot be connected here yet** until somebody registers a
   client with that provider and pastes it into Composio's dashboard — 50

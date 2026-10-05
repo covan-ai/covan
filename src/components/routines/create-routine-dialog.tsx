@@ -62,6 +62,9 @@ export function CreateRoutineDialog({
   onTemplateConsumed?: () => void;
 }) {
   const { data: channels = [] } = useDeliveryChannels();
+  // The one xor the "Deliver to" field turns on, named once rather than
+  // repeated as `channels.length === 0` at every site that branches on it.
+  const needsNewChannel = channels.length === 0;
   const createRoutine = useCreateRoutine();
   // A connection that has never finished setting itself up has no documents to
   // report, so offering it here would create a routine that can only ever skip.
@@ -96,18 +99,30 @@ export function CreateRoutineDialog({
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
   const [timezone, setTimezone] = useState(browserTimezone());
   const [channelId, setChannelId] = useState("");
-  // Only relevant once `channels` is empty — see the "Deliver to" branch
-  // below. Seeded with the signed-in account's own address at every point
-  // that moves the dialog to step 2, the same way `channelId` is seeded from
-  // `channels` at each of those points rather than from one effect watching
-  // it — so a dialog reopened after a close re-seeds from whatever `me` is by
-  // then, instead of being stuck with whatever it saw once.
+  // Only relevant once `needsNewChannel` is true — see the "Deliver to" branch
+  // below. Raw user input, empty until they type. What the field shows and
+  // what `save()` sends is `resolvedDeliveryEmail` below, not this directly —
+  // see its comment for why.
   const [deliveryEmail, setDeliveryEmail] = useState("");
+  // Flips the moment the person edits the field by hand. Before that, the
+  // field shows `me`'s address live rather than a value captured once: a
+  // template opened straight from a link (`openTemplate`) renders step 2 on
+  // mount, often before `me` has resolved, and nothing afterwards would have
+  // re-seeded a value an effect or an entry handler had already written.
+  const [emailTouched, setEmailTouched] = useState(false);
   const [endsAfterRuns, setEndsAfterRuns] = useState<number | null>(null);
   const [fieldError, setFieldError] = useState<{
     field: "schedule" | "url";
     message: string;
   } | null>(null);
+
+  // What the field shows and what `save()` sends — the same expression, so
+  // the two can never disagree. Untouched, it tracks `me.user.email` on every
+  // render; touched, it is exactly what the person typed, including empty,
+  // so clearing it to write a different address is never put back.
+  const resolvedDeliveryEmail = emailTouched
+    ? deliveryEmail
+    : deliveryEmail || me?.user.email || "";
 
   const reset = () => {
     setStep(1);
@@ -122,6 +137,7 @@ export function CreateRoutineDialog({
     setTimezone(browserTimezone());
     setChannelId("");
     setDeliveryEmail("");
+    setEmailTouched(false);
     setEndsAfterRuns(null);
     setFieldError(null);
   };
@@ -146,13 +162,11 @@ export function CreateRoutineDialog({
       // preselects the first channel of a matching kind if one exists.
       const wanted = draft.channelKind === "slack" ? "slack_webhook" : "email";
       setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
-      setDeliveryEmail(me?.user.email ?? "");
     } catch {
       // 422 means the parser could not read the request. Trapping the user on
       // step one retrying prose helps nobody; the form is always reachable.
       toast.message("Couldn't read that one — fill it in below instead.");
       setChannelId(channels[0]?.id ?? "");
-      setDeliveryEmail(me?.user.email ?? "");
     } finally {
       setDrafting(false);
       setStep(2);
@@ -178,7 +192,6 @@ export function CreateRoutineDialog({
     setEndsAfterRuns(template.endsAfterRuns);
     const wanted = d.channelKind === "slack" ? "slack_webhook" : "email";
     setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
-    setDeliveryEmail(me?.user.email ?? "");
     setStep(2);
   };
 
@@ -207,7 +220,6 @@ export function CreateRoutineDialog({
       applyTemplate(template);
     } else {
       setChannelId(channels[0]?.id ?? "");
-      setDeliveryEmail(me?.user.email ?? "");
     }
     onTemplateConsumed?.();
     // `channels` is read inside and deliberately not a dependency: it arrives a
@@ -219,7 +231,6 @@ export function CreateRoutineDialog({
 
   const skipToForm = () => {
     setChannelId(channels[0]?.id ?? "");
-    setDeliveryEmail(me?.user.email ?? "");
     setStep(2);
   };
 
@@ -238,8 +249,8 @@ export function CreateRoutineDialog({
         sourceUrl: sourceKind === "rss" || sourceKind === "web" ? sourceUrl.trim() : null,
         connectionId: sourceKind === "connection" ? connectionId : null,
         instruction: instruction.trim(),
-        ...(channels.length === 0
-          ? { deliveryEmail: deliveryEmail.trim() }
+        ...(needsNewChannel
+          ? { deliveryEmail: resolvedDeliveryEmail.trim() }
           : { deliveryChannelId: channelId }),
         scheduleCron: scheduleCron.trim(),
         timezone,
@@ -272,7 +283,7 @@ export function CreateRoutineDialog({
   const canSave =
     name.trim() !== "" &&
     instruction.trim() !== "" &&
-    (channels.length === 0 ? deliveryEmail.trim() !== "" : channelId !== "") &&
+    (needsNewChannel ? resolvedDeliveryEmail.trim() !== "" : channelId !== "") &&
     // The picker emits "" while a number field is mid-edit, so this also covers
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
@@ -426,18 +437,20 @@ export function CreateRoutineDialog({
               </div>
 
               <div className="space-y-2">
-                <Label
-                  htmlFor={channels.length === 0 ? "routine-channel-email" : "routine-channel"}
-                >
+                <Label htmlFor={needsNewChannel ? "routine-channel-email" : "routine-channel"}>
                   Deliver to
                 </Label>
-                {channels.length === 0 ? (
+                {needsNewChannel ? (
                   <>
                     <Input
                       id="routine-channel-email"
                       type="email"
-                      value={deliveryEmail}
-                      onChange={(e) => setDeliveryEmail(e.target.value)}
+                      placeholder="you@company.com"
+                      value={resolvedDeliveryEmail}
+                      onChange={(e) => {
+                        setEmailTouched(true);
+                        setDeliveryEmail(e.target.value);
+                      }}
                     />
                     <p className="text-meta leading-[1.45] text-muted-foreground">
                       The result arrives here. You can add Slack or another address in Settings

@@ -1,19 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CreateRoutineDialog } from "./create-routine-dialog";
 
-const { draft, channelsList, me } = vi.hoisted(() => ({
+const { draft, channelsList, me, createRoutine } = vi.hoisted(() => ({
   draft: vi.fn(),
   channelsList: vi.fn(),
   me: vi.fn(),
+  createRoutine: vi.fn(),
 }));
 
 vi.mock("@/lib/api-client", () => ({
   api: {
     me,
-    routines: { draft, create: vi.fn() },
+    routines: { draft, create: createRoutine },
     deliveryChannels: { list: channelsList, create: vi.fn(), remove: vi.fn() },
   },
   ApiError: class ApiError extends Error {
@@ -47,6 +48,8 @@ describe("CreateRoutineDialog", () => {
     draft.mockReset();
     channelsList.mockReset();
     me.mockReset();
+    createRoutine.mockReset();
+    createRoutine.mockResolvedValue({});
     me.mockResolvedValue({
       user: { id: "u1", name: "Ada", email: "ada@example.com", avatarUrl: null },
       workspace: {
@@ -79,6 +82,64 @@ describe("CreateRoutineDialog", () => {
     // Pre-filled with the signed-in account's own address.
     expect(field).toHaveValue("me@example.com");
     expect(screen.queryByText(/open Settings/)).not.toBeInTheDocument();
+  });
+
+  it("disables Create once the pre-filled address is cleared, with no channel to fall back to", async () => {
+    channelsList.mockResolvedValue([]);
+    me.mockResolvedValue({
+      user: { id: "u1", email: "me@example.com" },
+      workspace: {},
+      members: [{ id: "u1", role: "admin" }],
+    });
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+    await user.clear(screen.getByLabelText(/deliver to/i));
+
+    expect(screen.getByRole("button", { name: /^Create routine$/i })).toBeDisabled();
+  });
+
+  it("sends an address rather than a channel id when there is no channel", async () => {
+    channelsList.mockResolvedValue([]);
+    me.mockResolvedValue({
+      user: { id: "u1", email: "me@example.com" },
+      workspace: {},
+      members: [{ id: "u1", role: "admin" }],
+    });
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
+
+    expect(createRoutine).toHaveBeenCalledTimes(1);
+    const payload = createRoutine.mock.calls[0][0];
+    expect(payload.deliveryEmail).toBe("me@example.com");
+    expect(payload).not.toHaveProperty("deliveryChannelId");
+  });
+
+  it("sends a channel id rather than an address when channels already exist", async () => {
+    channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0 }]);
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
+
+    expect(createRoutine).toHaveBeenCalledTimes(1);
+    const payload = createRoutine.mock.calls[0][0];
+    expect(payload.deliveryChannelId).toBe("c1");
+    expect(payload).not.toHaveProperty("deliveryEmail");
   });
 
   // A draft the parser cannot read must not trap the user on step one retrying
@@ -174,5 +235,37 @@ describe("opened from a link", () => {
       </QueryClientProvider>,
     );
     expect(onConsumed).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Finding 2 of the fix round. A templated deep link is exactly the cold
+   * load the task's own spec describes: `openTemplate`'s effect runs on
+   * mount and moves straight to step 2, often before `me` has resolved. The
+   * field must still end up filled once `me` does — not stuck with whatever
+   * it saw at the moment step 2 first rendered.
+   */
+  it("pre-fills the address once `me` resolves, even though step 2 rendered first", async () => {
+    channelsList.mockResolvedValue([]);
+    let resolveMe!: (value: unknown) => void;
+    me.mockImplementation(() => new Promise((resolve) => (resolveMe = resolve)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <CreateRoutineDialog agentId="a1" openTemplate="weekly-digest" />
+      </QueryClientProvider>,
+    );
+
+    // Step 2 is already showing, with `me` still unresolved.
+    const field = await screen.findByLabelText(/deliver to/i);
+    expect(field).toHaveValue("");
+
+    resolveMe({
+      user: { id: "u1", email: "me@example.com" },
+      workspace: {},
+      members: [{ id: "u1", role: "admin" }],
+    });
+
+    await waitFor(() => expect(field).toHaveValue("me@example.com"));
   });
 });

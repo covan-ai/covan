@@ -431,6 +431,13 @@ routines.post("/routines", async (c) => {
   if (!agent) return c.json({ error: "agent not found" }, 404);
 
   const user = c.get("user");
+  // The agent's workspace, not the caller's *active* one (`getActiveWorkspaceId`,
+  // which the standalone `POST /delivery-channels` uses below): a delivery
+  // channel belongs to a person, not a workspace — 0019 says so outright, and
+  // `routines_insert_own` only checks `dc.user_id = auth.uid()`, never a
+  // workspace match. `delivery_channels.workspace_id` is provenance nothing
+  // reads back; for a channel minted inside a routine, the agent's workspace
+  // is simply the more useful thing to have recorded, not a requirement.
   const workspaceId = agent.workspace_id as string;
 
   // A workspace that has never set a channel up cannot otherwise finish this
@@ -440,6 +447,12 @@ routines.post("/routines", async (c) => {
   // by the same `encryptSecret`, because this is a second caller of that path
   // and not a second path.
   let deliveryChannelId = body.deliveryChannelId;
+  // Set only when this request minted a new channel — the thing to undo if
+  // the routine insert below fails, so a schedule the parser can't read or a
+  // url the SSRF guard refuses doesn't leave an encrypted address nobody can
+  // reach, and correcting the field and resubmitting doesn't mint a second one
+  // on top of it.
+  let createdChannelId: string | undefined;
   if (body.deliveryEmail !== undefined) {
     const problem = channelSecretProblem("email", body.deliveryEmail, ownHostsFrom(c.env));
     if (problem) return c.json({ error: problem }, 400);
@@ -456,6 +469,7 @@ routines.post("/routines", async (c) => {
       .single();
     if (error) return c.json({ error: "could not set up that address" }, 500);
     deliveryChannelId = data.id as string;
+    createdChannelId = deliveryChannelId;
   }
 
   // The one insert site, shared with the tool an agent uses to propose a
@@ -484,7 +498,12 @@ routines.post("/routines", async (c) => {
     },
     ownHostsFrom(c.env),
   );
-  if (!created.ok) return c.json({ error: created.message }, created.status);
+  if (!created.ok) {
+    if (createdChannelId) {
+      await serviceClient(c.env).from("delivery_channels").delete().eq("id", createdChannelId);
+    }
+    return c.json({ error: created.message }, created.status);
+  }
   return c.json(mapRoutine(created.row), 201);
 });
 

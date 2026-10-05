@@ -30,7 +30,17 @@ export function useCreateRoutine() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateRoutineInput) => api.routines.create(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: routinesKey }),
+    // A create sent with `deliveryEmail` instead of `deliveryChannelId` wrote a
+    // new delivery_channels row on the way in — see routines.ts's inline
+    // channel creation — so the channel list is just as stale as the routine
+    // list afterwards. Without this, a dialog that stays mounted across
+    // creates (the page header's does) never learns the workspace now has a
+    // channel, and every routine made from a template writes another one.
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: routinesKey }),
+        qc.invalidateQueries({ queryKey: channelsKey }),
+      ]),
   });
 }
 

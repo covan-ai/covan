@@ -280,7 +280,11 @@ function truncateLabel(label: string): string {
  *     string trims to something non-empty and tokenises to nothing, which
  *     `isQuotation` would otherwise call "not a quotation" for lack of
  *     anything to compare. Not a disclosure, but a blank-looking bullet in
- *     the admin's email, which the renderer must never emit.
+ *     the admin's email, which the renderer must never emit. Asked of the
+ *     label *after* truncation, because that is the one the report prints:
+ *     a label whose only letters fall past `MAX_LABEL_CHARS` has them cut
+ *     off before anybody reads it, and the eighty characters that are left
+ *     are the punctuation.
  *
  * Ordered by how many questions are behind the gap, so the thing most worth
  * writing down is first. That is `0053`'s ordering choice for its own pair of
@@ -313,13 +317,25 @@ export function enforceFloor(
 
     const fullLabel = cluster.label.trim();
     if (fullLabel === "") continue;
+
+    const truncatedLabel = truncateLabel(fullLabel);
+
     // A label can be non-empty and still carry no letter or digit — "???!!!"
     // or an emoji string both trim to something, and `isQuotation` would
     // call either "not a quotation" (there is nothing to compare), so this
     // has to be its own refusal rather than falling out of that check.
-    if (tokenise(fullLabel).length === 0) continue;
-
-    const truncatedLabel = truncateLabel(fullLabel);
+    //
+    // Fix round 4: asked of `truncatedLabel`, which is the value this
+    // function pushes, and not of `fullLabel`, which it does not. A label
+    // whose only letters fall past `MAX_LABEL_CHARS` — eighty exclamation
+    // marks and then a topic — has tokens in the full string and none in the
+    // eighty characters an admin actually reads, so asking the full string
+    // passed it and the report printed a row of punctuation. Asking the
+    // emitted value is also strictly the stronger of the two: the truncated
+    // label is a prefix of the full one, so every letter or digit in the
+    // prefix is one in the whole, and nothing the full string would have
+    // refused gets through here.
+    if (tokenise(truncatedLabel).length === 0) continue;
 
     // Both the label as the model wrote it and the label as the report will
     // show it, against every question the model saw — not just this

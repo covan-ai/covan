@@ -486,6 +486,60 @@ describe("enforcing the floor on what the model returned", () => {
     expect(enforceFloor([{ label: "😀😀", members: [0] }], deduped, 3)).toEqual([]);
   });
 
+  describe("fix round 4: the no-letter refusal must judge the label that is emitted", () => {
+    // The refusal asked `tokenise(fullLabel).length === 0`, but the value
+    // pushed into `gaps` is `truncatedLabel`. A label whose only letters or
+    // digits fall past character 80 therefore satisfied the check on the
+    // strength of letters the admin never sees, and the report printed the
+    // eighty characters that remained — a bullet of pure punctuation.
+    it("drops a label whose only letters or digits fall past the truncation boundary", () => {
+      expect(
+        enforceFloor(
+          [{ label: "!".repeat(MAX_LABEL_CHARS) + "real topic words here", members: [0] }],
+          deduped,
+          3,
+        ),
+      ).toEqual([]);
+      // Code points, not UTF-16 units: eighty emoji fill the whole budget.
+      expect(
+        enforceFloor(
+          [{ label: "😀".repeat(MAX_LABEL_CHARS) + "payroll onboarding", members: [0] }],
+          deduped,
+          3,
+        ),
+      ).toEqual([]);
+    });
+
+    it("keeps a label whose letters fall inside the boundary (control)", () => {
+      // The same shape the other way round, so the new refusal cannot be
+      // passing by dropping every punctuation-heavy label: here the words are
+      // in the part that survives truncation, and the label is reported.
+      const label = "Expense policy" + "!".repeat(200);
+      const gaps = enforceFloor([{ label, members: [0] }], deduped, 3);
+      expect(gaps).toEqual([
+        {
+          label: "Expense policy" + "!".repeat(MAX_LABEL_CHARS - "Expense policy".length),
+          questions: 5,
+          askers: 3,
+        },
+      ]);
+    });
+
+    it("still catches a question hidden behind the punctuation as a quotation", () => {
+      // Why this finding was a Minor and not a disclosure: `isQuotation` runs
+      // on the untruncated label too (fix round 1, finding 1), so a question
+      // parked past character 80 was always dropped — what got through was
+      // only ever the punctuation, never anybody's words.
+      expect(
+        enforceFloor(
+          [{ label: "!".repeat(MAX_LABEL_CHARS) + "expense a flight", members: [0] }],
+          deduped,
+          3,
+        ),
+      ).toEqual([]);
+    });
+  });
+
   it("truncates a label that ran away, keeping the prefix (fix round 1, finding 8)", () => {
     // Fix round 1, finding 8: every character was "x" before, so a prefix, a
     // suffix and a middle slice of the same length were indistinguishable.

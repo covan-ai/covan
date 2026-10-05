@@ -414,8 +414,38 @@ export const runToolTool: AgentTool = {
     // Guard 2. Locally, before anything leaves the building: pairing a Slack
     // connection with a Gmail slug is a mistake, and finding out from
     // Composio's 400 would mean the request had already been made.
-    const toolkit = slug.split("_")[0]?.toLowerCase() ?? "";
-    if (!connection.toolkit_slug || connection.toolkit_slug !== toolkit) {
+    //
+    // THE CATALOGUE'S OWN ANSWER FIRST, THE SPELLING ONLY AS A FALLBACK. This
+    // read `slug.split("_")[0]`, which is strictly shorter than any slug
+    // containing an underscore — so for those toolkits the comparison could
+    // never be equal and every operation was refused here, locally, whatever
+    // Composio named it. `MICROSOFT_TEAMS_SEND_MESSAGE` gave `microsoft`, which
+    // is not `microsoft_teams`. **336 of the 1,402 connectable applications**
+    // (24%, counted against the live API 2026-10-05) — Microsoft Teams, Google
+    // Analytics, OneDrive, SharePoint, Google Maps, all ten Zoho apps — and it
+    // was live from the day connected apps shipped. covan#261.
+    //
+    // It also could not heal: the refusal is not a `404 Tool_ToolNotFound`, so
+    // the withdrawal below never ran and `recordUnavailableTool` never recorded
+    // it, and the model was offered the same operation again every turn. That
+    // is the loop covan#215's cache exists to end.
+    //
+    // Nothing was wrong with the rule, only with where it looked. `toolkitOf`
+    // in `composio/client.ts` has always read the catalogue's authoritative
+    // `toolkit` field and kept the prefix as a last resort, saying why: the
+    // prefix is "a convention rather than a promise". That value is already
+    // here — `operation` was loaded for guard 1 — so this asks it, and falls
+    // back to the convention with the `_` boundary kept. Strictly stronger than
+    // what it replaces: a Slack connection and a Gmail slug is still refused,
+    // and an exact slug match is now allowed for a toolkit whose single
+    // operation is named after it.
+    const expected = connection.toolkit_slug;
+    const named = operation?.toolkit;
+    const lowered = slug.toLowerCase();
+    const matches = named
+      ? named === expected
+      : lowered === expected || lowered.startsWith(`${expected}_`);
+    if (!expected || !matches) {
       return {
         kind: "error",
         message:

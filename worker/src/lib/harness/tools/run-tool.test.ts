@@ -231,6 +231,125 @@ describe("run_tool", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * An application whose slug has an underscore, which is a quarter of them.
+   *
+   * These three exist because this file's fixtures are the reason covan#261
+   * survived eleven days in production: every one of them is `gmail` or
+   * `googlecalendar`, and the guard above derived a toolkit with
+   * `slug.split("_")[0]`. That is strictly shorter than any slug containing an
+   * underscore, so the comparison could never be equal and **336 of the 1,402
+   * connectable applications** — Microsoft Teams, Google Analytics, OneDrive,
+   * SharePoint, every Zoho app — had every operation refused here, locally,
+   * with no request made and nothing recorded to stop the model trying again.
+   *
+   * One case per path through the new check, because they fail differently: the
+   * catalogue's own `toolkit` field when `find_tool` answered this turn, the
+   * spelling when it did not.
+   */
+  const TEAMS = {
+    ...CONNECTION,
+    id: "conn-1",
+    label: "Work Teams",
+    toolkit_slug: "microsoft_teams",
+  };
+  const TEAMS_CALL = { ...CALL, slug: "MICROSOFT_TEAMS_SEND_MESSAGE" };
+
+  it("runs an operation of an application whose slug has an underscore", async () => {
+    // The authoritative path: `find_tool` answered, so the catalogue's own
+    // `toolkit` is in hand and the spelling is never consulted.
+    const out = await runToolTool.run(
+      TEAMS_CALL,
+      ctxWith({
+        row: TEAMS,
+        approved: ["conn-1"],
+        offeredOperations: new Map([
+          [
+            TEAMS_CALL.slug,
+            {
+              slug: TEAMS_CALL.slug,
+              name: "Send message",
+              description: "Send a message.",
+              toolkit: "microsoft_teams",
+              required: [],
+              inputSchema: null,
+              destructive: null,
+            },
+          ],
+        ]),
+      }),
+    );
+    expect(out.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("falls back to the spelling, with the underscore boundary kept", async () => {
+    // No `offeredOperations` — the slug came from an earlier turn or a standing
+    // grant. The convention is all there is, and it has to be read as a prefix
+    // ending at a `_` rather than as everything before the first one.
+    const out = await runToolTool.run(TEAMS_CALL, ctxWith({ row: TEAMS, approved: ["conn-1"] }));
+    expect(out.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("still refuses a foreign slug that shares a prefix with the connection", async () => {
+    // The mistake guard 2 exists for, in the shape the fallback could plausibly
+    // let through: `microsoft` is a prefix of `microsoft_teams` by spelling and
+    // is a different application. Neither path may accept it.
+    const out = await runToolTool.run(
+      { ...CALL, slug: "MICROSOFT_OUTLOOK_SEND_MAIL" },
+      ctxWith({ row: TEAMS, approved: ["conn-1"] }),
+    );
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("not an operation of microsoft_teams");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("believes the catalogue over the spelling when the two disagree", async () => {
+    // The authoritative read is not a shortcut to the same answer, it is a
+    // different and better answer — so it must also be able to REFUSE a slug
+    // the spelling would have waved through. Without this, dropping the
+    // `operation?.toolkit` read would leave every test above still green.
+    const out = await runToolTool.run(
+      TEAMS_CALL,
+      ctxWith({
+        row: TEAMS,
+        approved: ["conn-1"],
+        offeredOperations: new Map([
+          [
+            TEAMS_CALL.slug,
+            {
+              slug: TEAMS_CALL.slug,
+              name: "Send message",
+              description: "Send a message.",
+              toolkit: "microsoft_outlook",
+              required: [],
+              inputSchema: null,
+              destructive: null,
+            },
+          ],
+        ]),
+      }),
+    );
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("not an operation of microsoft_teams");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("runs an operation named exactly after its own application", async () => {
+    // `COMPOSIO_SEARCH` on `composio_search` is not hypothetical — a toolkit
+    // whose whole purpose is one operation often names it after itself, and the
+    // old prefix split could not express "equal to" at all.
+    const out = await runToolTool.run(
+      { ...CALL, slug: "COMPOSIO_SEARCH" },
+      ctxWith({
+        row: { ...CONNECTION, label: "Web search", toolkit_slug: "composio_search" },
+        approved: ["conn-1"],
+      }),
+    );
+    expect(out.kind).toBe("ok");
+  });
+
   it("refuses a connection that has not finished connecting", async () => {
     const out = await runToolTool.run(
       CALL,

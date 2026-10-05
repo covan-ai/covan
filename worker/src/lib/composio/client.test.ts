@@ -5,6 +5,7 @@ import {
   createLink,
   executeTool,
   getConnectedAccount,
+  authConfigPlanFor,
   getToolkit,
   listToolkitCategories,
   listToolkits,
@@ -13,6 +14,7 @@ import {
   searchTools,
   statusOf,
   type ComposioEnv,
+  type ComposioToolkit,
 } from "./client";
 
 /**
@@ -705,6 +707,283 @@ describe("getToolkit", () => {
       fetchImpl: fetchReturning({ data: {} }) as never,
     });
     expect(out.kind).toBe("error");
+  });
+});
+
+/**
+ * What connecting an application requires, which is the question the Connect
+ * button asks and for a long time was answered by the wrong two fields.
+ *
+ * Every fixture below is a real response, trimmed — `fields` objects and modes
+ * copied from `/api/v3.1/toolkits/<slug>` on 2026-10-05. The classification
+ * turns entirely on whether a mode's required fields are asked of whoever set
+ * Covan up or of whoever is connecting, so a fixture with an invented `fields`
+ * shape would test nothing but itself.
+ */
+describe("connectKind", () => {
+  const detail = async (row: Record<string, unknown>) => {
+    const out = await getToolkit(ENV, "x", { fetchImpl: fetchReturning({ data: row }) as never });
+    if (out.kind !== "ok") throw new Error("fixture did not describe a toolkit");
+    return out.toolkit;
+  };
+  const mode = (
+    name: string,
+    creation: string[] | undefined,
+    initiation: string[] | undefined,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    mode: name,
+    ...extra,
+    fields: {
+      ...(creation
+        ? { auth_config_creation: { required: creation.map((f) => ({ name: f })) } }
+        : {}),
+      ...(initiation
+        ? { connected_account_initiation: { required: initiation.map((f) => ({ name: f })) } }
+        : {}),
+    },
+  });
+
+  it("says a key the user supplies, which is nine tenths of the catalogue", async () => {
+    const toolkit = await detail({
+      slug: "POSTHOG",
+      name: "PostHog",
+      composio_managed_auth_schemes: [],
+      auth_config_details: [mode("API_KEY", [], ["subdomain", "generic_api_key"])],
+    });
+    expect(toolkit).toMatchObject({
+      connectKind: "user_credential",
+      credentialScheme: "API_KEY",
+    });
+  });
+
+  it("names the scheme, because a key and a password are not the same request", async () => {
+    const toolkit = await detail({
+      slug: "MIXPANEL",
+      name: "Mixpanel",
+      auth_config_details: [mode("BASIC", [], ["username", "password"])],
+    });
+    expect(toolkit).toMatchObject({ connectKind: "user_credential", credentialScheme: "BASIC" });
+  });
+
+  it("prefers an API key over the other credentials an application offers", async () => {
+    // Datadog publishes three, and the one picked here becomes a durable auth
+    // config at Composio — so it must not depend on their array order.
+    const toolkit = await detail({
+      slug: "DATADOG",
+      name: "Datadog",
+      auth_config_details: [
+        mode("OAUTH2", ["client_id", "client_secret"], ["region"]),
+        mode("BEARER_TOKEN", [], ["token", "region", "bearer_token"]),
+        mode("API_KEY", [], ["region", "generic_api_key", "generic_id"]),
+      ],
+    });
+    expect(toolkit).toMatchObject({ connectKind: "user_credential", credentialScheme: "API_KEY" });
+  });
+
+  it("offers the consent screen when an application has both, so nobody hunts for a key", async () => {
+    const toolkit = await detail({
+      slug: "LINEAR",
+      name: "Linear",
+      composio_managed_auth_schemes: ["OAUTH2"],
+      auth_config_details: [
+        mode("OAUTH2", ["client_id", "client_secret"], []),
+        mode("API_KEY", [], ["generic_api_key"]),
+      ],
+    });
+    expect(toolkit).toMatchObject({ connectKind: "managed_oauth", credentialScheme: "" });
+  });
+
+  it("still says somebody must register a client, for the fifty that really need one", async () => {
+    const toolkit = await detail({
+      slug: "DOCUSIGN",
+      name: "DocuSign",
+      composio_managed_auth_schemes: [],
+      auth_config_details: [mode("OAUTH2", ["client_id", "client_secret", "full"], [])],
+    });
+    expect(toolkit.connectKind).toBe("needs_setup");
+  });
+
+  it("refuses a mode that requires nothing of anybody, which is every MCP toolkit", async () => {
+    // The ninety-five `DCR_OAUTH` toolkits require nothing at either stage.
+    // Classified on "needs nothing from an operator" alone, every one of them
+    // would be sent to a hosted page with no field on it.
+    const toolkit = await detail({
+      slug: "AHREFS_MCP",
+      name: "Ahrefs MCP",
+      auth_config_details: [mode("DCR_OAUTH", [], undefined)],
+    });
+    expect(toolkit.connectKind).toBe("needs_setup");
+  });
+
+  it("refuses an API key whose key belongs to whoever set Covan up", async () => {
+    // `lever` and `brex` both publish one. The rule is about which side of the
+    // setup line a required field falls on, not about the scheme's name.
+    const toolkit = await detail({
+      slug: "LEVER",
+      name: "Lever",
+      auth_config_details: [mode("API_KEY", ["full"], ["generic_api_key"])],
+    });
+    expect(toolkit.connectKind).toBe("needs_setup");
+  });
+
+  it("reads no-sign-in off the published mode, because the detail row has no such column", async () => {
+    // The thing that makes this necessary: `/api/v3.1/toolkits/<slug>` carries
+    // no `no_auth` field at all, so a row read on the connect path has it
+    // false whatever the truth. All thirty-five fail there for this reason.
+    const toolkit = await detail({
+      slug: "HACKERNEWS",
+      name: "HackerNews",
+      composio_managed_auth_schemes: [],
+      auth_config_details: [mode("NO_AUTH", [], [])],
+    });
+    expect(toolkit.connectKind).toBe("no_auth");
+  });
+
+  it("reads no-sign-in off the column too, which is all a list row carries", async () => {
+    const out = await listToolkits(
+      ENV,
+      {},
+      {
+        fetchImpl: fetchReturning({
+          items: [{ slug: "hackernews", name: "HackerNews", no_auth: true }],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.toolkits[0]?.connectKind).toBe("no_auth");
+  });
+
+  it("admits it cannot say, rather than refusing an application it never looked at", async () => {
+    // A catalogue list row proves managed OAuth and no-sign-in and is silent
+    // about the rest. Answering `needs_setup` here is how fourteen hundred
+    // applications came to be told to go and register an OAuth client.
+    const out = await listToolkits(
+      ENV,
+      {},
+      {
+        fetchImpl: fetchReturning({
+          items: [
+            { slug: "posthog", name: "PostHog", auth_schemes: ["API_KEY"], no_auth: false },
+            { slug: "gmail", name: "Gmail", composio_managed_auth_schemes: ["OAUTH2"] },
+          ],
+        }) as never,
+      },
+    );
+    expect(out.kind === "ok" && out.toolkits.map((t) => t.connectKind)).toEqual([
+      null,
+      "managed_oauth",
+    ]);
+  });
+
+  it("treats an unreadable requirement as unknown and refuses, never as none", async () => {
+    // "Nothing is required" and "we were not told what is required" are both
+    // falsy and mean opposite things. The first is an application anyone can
+    // connect; the second is one we know nothing about.
+    const toolkit = await detail({
+      slug: "OPAQUE",
+      name: "Opaque",
+      auth_config_details: [{ mode: "API_KEY" }],
+    });
+    expect(toolkit.connectKind).toBe("needs_setup");
+  });
+
+  it("counts an absent required list beside a present stage as empty", async () => {
+    // A JSON emitter dropping an empty array is a real thing, so this half has
+    // to be lenient while the half above stays strict.
+    const toolkit = await detail({
+      slug: "TERSE",
+      name: "Terse",
+      auth_config_details: [
+        {
+          mode: "API_KEY",
+          fields: {
+            auth_config_creation: {},
+            connected_account_initiation: { required: [{ name: "generic_api_key" }] },
+          },
+        },
+      ],
+    });
+    expect(toolkit).toMatchObject({ connectKind: "user_credential", credentialScheme: "API_KEY" });
+  });
+
+  it("keeps the scheme names a toolkit published when only its modes carry them", async () => {
+    // The tile's hint is built from `authSchemes`, which the detail endpoint
+    // does not publish. Read from one place only, a toolkit opened from the
+    // grid would lose the field the grid had.
+    const toolkit = await detail({
+      slug: "POSTHOG",
+      name: "PostHog",
+      auth_config_details: [mode("API_KEY", [], ["generic_api_key"])],
+    });
+    expect(toolkit.authSchemes).toEqual(["API_KEY"]);
+  });
+
+  it("carries a page where the credential can be got, when there is one", async () => {
+    const toolkit = await detail({
+      slug: "STRIPE",
+      name: "Stripe",
+      auth_config_details: [
+        mode("API_KEY", [], ["generic_api_key"], {
+          auth_hint_url: "https://dashboard.stripe.com/apikeys",
+        }),
+      ],
+    });
+    expect(toolkit.authHintUrl).toBe("https://dashboard.stripe.com/apikeys");
+  });
+
+  it("will not hand the browser an address a link should not hold", async () => {
+    for (const address of ["javascript:alert(1)", "http://example.com/keys", "not a url", ""]) {
+      const toolkit = await detail({
+        slug: "SHADY",
+        name: "Shady",
+        auth_config_details: [mode("API_KEY", [], ["generic_api_key"], { auth_hint_url: address })],
+      });
+      expect(toolkit.authHintUrl).toBe("");
+    }
+  });
+});
+
+describe("authConfigPlanFor", () => {
+  const toolkit = (over: Partial<ComposioToolkit>): ComposioToolkit => ({
+    slug: "x",
+    name: "X",
+    description: "",
+    authSchemes: [],
+    managedAuth: false,
+    noAuth: false,
+    connectKind: null,
+    credentialScheme: "",
+    authHintUrl: "",
+    logo: "",
+    categories: [],
+    ...over,
+  });
+
+  it("reads the same two fields the card renders from, and no others", () => {
+    // Not a tidiness point. If this consulted a third field there would be a
+    // row whose button promises one thing and whose connect builds another.
+    expect(authConfigPlanFor(toolkit({ connectKind: "no_auth", managedAuth: true }))).toEqual({
+      kind: "no_auth",
+    });
+    expect(
+      authConfigPlanFor(toolkit({ connectKind: "managed_oauth", credentialScheme: "API_KEY" })),
+    ).toEqual({ kind: "managed_oauth" });
+    expect(
+      authConfigPlanFor(toolkit({ connectKind: "user_credential", credentialScheme: "BASIC" })),
+    ).toEqual({ kind: "user_credential", scheme: "BASIC" });
+  });
+
+  it("has no plan for an application somebody must set up first", () => {
+    expect(authConfigPlanFor(toolkit({ connectKind: "needs_setup" }))).toBeNull();
+  });
+
+  it("has no plan for a row that could not say, so a caller cannot guess one", () => {
+    expect(authConfigPlanFor(toolkit({ connectKind: null, managedAuth: true }))).toBeNull();
+  });
+
+  it("refuses a credential plan with no scheme rather than posting a guess", () => {
+    // The guess would be a durable auth config of the wrong kind.
+    expect(authConfigPlanFor(toolkit({ connectKind: "user_credential" }))).toBeNull();
   });
 });
 

@@ -387,6 +387,8 @@ describe("createLink", () => {
   }
 
   const LINKED = { connected_account_id: "ca_1", redirect_url: "https://consent.test/x" };
+  /** What every test here used to mean by passing no plan at all. */
+  const MANAGED = { kind: "managed_oauth" } as const;
 
   it("reuses an auth config the provider already has", async () => {
     const { impl, calls } = sequenced([
@@ -395,7 +397,7 @@ describe("createLink", () => {
     ]);
     const out = await createLink(
       ENV,
-      { toolkit: "gmail", userId: "cu_1" },
+      { toolkit: "gmail", userId: "cu_1", plan: MANAGED },
       {
         fetchImpl: impl as never,
       },
@@ -422,7 +424,7 @@ describe("createLink", () => {
     ]);
     const out = await createLink(
       ENV,
-      { toolkit: "gmail", userId: "cu_1" },
+      { toolkit: "gmail", userId: "cu_1", plan: MANAGED },
       {
         fetchImpl: impl as never,
       },
@@ -447,7 +449,7 @@ describe("createLink", () => {
     ]);
     const out = await createLink(
       ENV,
-      { toolkit: "hackernews", userId: "cu_1", noAuth: true },
+      { toolkit: "hackernews", userId: "cu_1", plan: { kind: "no_auth" } },
       { fetchImpl: impl as never },
     );
 
@@ -467,7 +469,7 @@ describe("createLink", () => {
     ]);
     const out = await createLink(
       ENV,
-      { toolkit: "gmail", userId: "cu_1" },
+      { toolkit: "gmail", userId: "cu_1", plan: MANAGED },
       {
         fetchImpl: impl as never,
       },
@@ -483,7 +485,11 @@ describe("createLink", () => {
       [/auth_configs$/, { auth_config: { id: "ac_gmail" } }],
       [/connected_accounts\/link/, LINKED],
     ]);
-    await createLink(ENV, { toolkit: "gmail", userId: "cu_1" }, { fetchImpl: impl as never });
+    await createLink(
+      ENV,
+      { toolkit: "gmail", userId: "cu_1", plan: MANAGED },
+      { fetchImpl: impl as never },
+    );
     expect(calls[2].body).toMatchObject({ auth_config_id: "ac_gmail" });
   });
 
@@ -495,13 +501,203 @@ describe("createLink", () => {
     );
     const out = await createLink(
       ENV,
-      { toolkit: "obscure", userId: "cu_1" },
+      { toolkit: "obscure", userId: "cu_1", plan: MANAGED },
       {
         fetchImpl: impl as never,
       },
     );
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("Composio's dashboard");
+  });
+
+  it("asks for a credential config the person connecting fills in, never Covan", async () => {
+    // `credentials: {}` is the load-bearing emptiness: it says the credential
+    // arrives from whoever connects, at Composio. And `authScheme` is
+    // camelCase while the rest of this API is snake_case — sending
+    // `auth_scheme` here is a 400, which is how it was found.
+    const { impl, calls } = sequenced([
+      [/auth_configs\?/, { items: [] }],
+      [/auth_configs$/, { auth_config: { id: "ac_key", auth_scheme: "API_KEY" } }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "posthog", userId: "cu_1", plan: { kind: "user_credential", scheme: "API_KEY" } },
+      { fetchImpl: impl as never },
+    );
+
+    expect(calls[1].body).toEqual({
+      toolkit: { slug: "POSTHOG" },
+      auth_config: {
+        type: "use_custom_auth",
+        authScheme: "API_KEY",
+        credentials: {},
+        name: "covan:API_KEY",
+      },
+    });
+    expect(out).toMatchObject({ kind: "ok", redirectUrl: "https://consent.test/x" });
+  });
+
+  it("will not hand a credential request somebody's OAuth config", async () => {
+    // Linear legitimately has both. Matching on the slug alone would send a
+    // person after an API key to a consent screen, or hand the next managed
+    // connect the API-key config and break the dashboard escape hatch.
+    const { impl, calls } = sequenced([
+      [
+        /auth_configs\?/,
+        { items: [{ id: "ac_oauth", toolkit: { slug: "linear" }, is_composio_managed: true }] },
+      ],
+      [/auth_configs$/, { auth_config: { id: "ac_key", is_composio_managed: false } }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    await createLink(
+      ENV,
+      { toolkit: "linear", userId: "cu_1", plan: { kind: "user_credential", scheme: "API_KEY" } },
+      { fetchImpl: impl as never },
+    );
+    expect(calls[2].body).toMatchObject({ auth_config_id: "ac_key" });
+  });
+
+  it("will not hand a managed request the credential config either", async () => {
+    const { impl, calls } = sequenced([
+      [
+        /auth_configs\?/,
+        {
+          items: [
+            { id: "ac_key", toolkit: { slug: "linear" }, type: "custom", auth_scheme: "API_KEY" },
+          ],
+        },
+      ],
+      [/auth_configs$/, { auth_config: { id: "ac_oauth" } }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    await createLink(
+      ENV,
+      { toolkit: "linear", userId: "cu_1", plan: MANAGED },
+      { fetchImpl: impl as never },
+    );
+    expect(calls[2].body).toMatchObject({ auth_config_id: "ac_oauth" });
+  });
+
+  it("reuses a credential config by the name we wrote, when the scheme is not listed", async () => {
+    // `auth_scheme` is optional on list rows. Without the name as a second
+    // key, a project whose list omits it would create a fresh config on every
+    // connect, forever — unbounded, where the ceiling should be one.
+    const { impl, calls } = sequenced([
+      [
+        /auth_configs\?/,
+        { items: [{ id: "ac_mine", toolkit: { slug: "posthog" }, name: "covan:API_KEY" }] },
+      ],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    await createLink(
+      ENV,
+      { toolkit: "posthog", userId: "cu_1", plan: { kind: "user_credential", scheme: "API_KEY" } },
+      { fetchImpl: impl as never },
+    );
+    expect(calls[1].body).toMatchObject({ auth_config_id: "ac_mine" });
+  });
+
+  it("does not reuse a config Composio has switched off", async () => {
+    // The old filter read `is_disabled`, which is not on this shape — the list
+    // carries `status` — so a disabled config was reusable, because
+    // `undefined !== true`.
+    const { impl, calls } = sequenced([
+      [
+        /auth_configs\?/,
+        { items: [{ id: "ac_off", toolkit: { slug: "gmail" }, status: "DISABLED" }] },
+      ],
+      [/auth_configs$/, { auth_config: { id: "ac_new" } }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    await createLink(
+      ENV,
+      { toolkit: "gmail", userId: "cu_1", plan: MANAGED },
+      { fetchImpl: impl as never },
+    );
+    expect(calls[2].body).toMatchObject({ auth_config_id: "ac_new" });
+  });
+
+  it("still reuses a config that says nothing about which kind it is", async () => {
+    // Absent is no information, and no information has to mean today's
+    // behaviour or every project that omits the field starts duplicating.
+    const { impl, calls } = sequenced([
+      [/auth_configs\?/, { items: [{ id: "ac_plain", toolkit: { slug: "gmail" } }] }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    await createLink(
+      ENV,
+      { toolkit: "gmail", userId: "cu_1", plan: MANAGED },
+      { fetchImpl: impl as never },
+    );
+    expect(calls[1].body).toMatchObject({ auth_config_id: "ac_plain" });
+  });
+
+  it("refuses a config Composio made of the wrong kind, rather than binding to it", async () => {
+    // A wrong config is durable and silent: connections bind to it and the
+    // only symptom is somebody being asked for the wrong thing months later.
+    const { impl } = sequenced([
+      [/auth_configs\?/, { items: [] }],
+      [/auth_configs$/, { auth_config: { id: "ac_x", auth_scheme: "BASIC" } }],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "posthog", userId: "cu_1", plan: { kind: "user_credential", scheme: "API_KEY" } },
+      { fetchImpl: impl as never },
+    );
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("BASIC");
+  });
+
+  it("refuses a credential link with no page on it, in words somebody can act on", async () => {
+    // The trap this replaces: read as "an empty address is fine unless this is
+    // managed", a credential link with no page is success — the route inserts
+    // a pending row, the browser is told to navigate to "", nothing happens,
+    // and no error fires so there is no toast.
+    const { impl } = sequenced([
+      [
+        /auth_configs\?/,
+        { items: [{ id: "ac_1", toolkit: { slug: "posthog" }, auth_scheme: "API_KEY" }] },
+      ],
+      [/connected_accounts\/link/, { connected_account_id: "ca_1" }],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "posthog", userId: "cu_1", plan: { kind: "user_credential", scheme: "API_KEY" } },
+      { fetchImpl: impl as never },
+    );
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("no page to enter the credential on");
+  });
+
+  it("says the credential sign-in would not be set up, not that a client is missing", async () => {
+    const impl = vi.fn(async (url: string) =>
+      /auth_configs\?/.test(url)
+        ? new Response(JSON.stringify({ items: [] }), { status: 200 })
+        : new Response("nope", { status: 400 }),
+    );
+    const out = await createLink(
+      ENV,
+      { toolkit: "posthog", userId: "cu_1", plan: { kind: "user_credential", scheme: "API_KEY" } },
+      { fetchImpl: impl as never },
+    );
+    expect(out.kind === "error" && out.message).toContain("credential-based sign-in");
+    expect(out.kind === "error" && out.message).not.toContain("Composio's dashboard");
+  });
+
+  it("names covan#253 when an application needs no sign-in, because that is the fix", async () => {
+    const impl = vi.fn(async (url: string) =>
+      /auth_configs\?/.test(url)
+        ? new Response(JSON.stringify({ items: [] }), { status: 200 })
+        : new Response("Invalid discriminator value", { status: 400 }),
+    );
+    const out = await createLink(
+      ENV,
+      { toolkit: "hackernews", userId: "cu_1", plan: { kind: "no_auth" } },
+      { fetchImpl: impl as never },
+    );
+    expect(out.kind === "error" && out.message).toContain("covan#253");
   });
 
   it("refuses a link answer missing either half", async () => {
@@ -513,7 +709,7 @@ describe("createLink", () => {
     ]);
     const out = await createLink(
       ENV,
-      { toolkit: "gmail", userId: "cu_1" },
+      { toolkit: "gmail", userId: "cu_1", plan: MANAGED },
       {
         fetchImpl: impl as never,
       },

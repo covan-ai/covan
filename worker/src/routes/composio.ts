@@ -7,6 +7,7 @@ import { mapToolConnection, mapToolConnectionGrant } from "../lib/dto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import {
   allowedLogoUrl,
+  authConfigPlanFor,
   composioConfigured,
   createLink,
   getConnectedAccount,
@@ -274,6 +275,32 @@ composio.post("/composio/connect", async (c) => {
   const described = await getToolkit(c.env, toolkit);
   if (described.kind === "error") return c.json({ error: described.message }, 502);
 
+  /**
+   * Whether this application can be connected at all, decided here and not by
+   * whoever pressed the button.
+   *
+   * The first connectability gate this route has had. It reads the catalogue
+   * itself, exactly as the `noAuth` it replaces did and for the same reason —
+   * a request could otherwise pick — and it sits before `createLink` so a
+   * refusal creates nothing at Composio. Only a crafted request reaches it:
+   * the card asks the same question of the same field and offers no button
+   * when the answer is this one.
+   *
+   * 400 rather than 502, because nothing went wrong upstream. The sentence is
+   * the card's own.
+   */
+  const plan = authConfigPlanFor(described.toolkit);
+  if (!plan) {
+    return c.json(
+      {
+        error:
+          `${described.toolkit.name} cannot be connected until somebody sets it up in ` +
+          `Composio's dashboard first.`,
+      },
+      400,
+    );
+  }
+
   // The identity Composio executes on behalf of, chosen here and stored on the
   // row. Deliberately not `userId`: a Covan account uuid shipped to a third
   // party as a durable identifier is a thing this codebase does not do, and it
@@ -284,7 +311,7 @@ composio.post("/composio/connect", async (c) => {
   const link = await createLink(c.env, {
     toolkit,
     userId: composioUserId,
-    noAuth: described.toolkit.noAuth,
+    plan,
     // Where the person lands after the consent screen. The page reads the
     // query parameter, says one sentence and takes it out of the address bar —
     // `useGrantOutcome` in `_authed.integrations.tsx` already does exactly this

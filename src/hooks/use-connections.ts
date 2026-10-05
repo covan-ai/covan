@@ -175,10 +175,38 @@ export function useConnectComposio() {
       // send anybody to, and that is the whole flow: the row is already there
       // and `useComposioStatus` settles it. Navigating to "" would reload the
       // page onto itself and look like the connect button did nothing.
+      //
+      // Which is exactly why the other case must not reach here silently. A
+      // sign-in flow with no address is a bug upstream, and this line is where
+      // it would become invisible: the button would un-disable, nothing would
+      // happen, and no error would fire so there would be no toast.
       if (url) window.location.assign(url);
+      else if (input.noAuth !== true) {
+        throw new Error("That connection started but there is nowhere to finish it.");
+      }
     },
   });
 }
+
+/**
+ * How long the page keeps asking before it gives up — forty ticks of three
+ * seconds, about two minutes.
+ *
+ * Not a tidiness limit. Every tick is one request to `/api`, which sits behind
+ * a 120-a-minute budget keyed by IP, so an unbounded poll costs 20 of those a
+ * minute **per unfinished connection**. Six of them and the whole product
+ * starts answering 429 — chat, documents, everything — because somebody opened
+ * six applications and went to find their keys. Each tick is also one request
+ * to Composio against an allowance shared by every tool call on the
+ * deployment.
+ *
+ * Two minutes is long enough for a consent screen, which is the flow that
+ * finishes while the page watches. A credential typed into a provider's
+ * dashboard takes longer than any poll should last, and that one is settled by
+ * the worker instead — the status route fails a row that has been pending a
+ * quarter of an hour.
+ */
+const MAX_STATUS_POLLS = 40;
 
 /**
  * Ask whether a consent flow has finished.
@@ -200,7 +228,13 @@ export function useComposioStatus(id: string | null, pending: boolean) {
       return answer;
     },
     enabled: Boolean(id) && pending,
-    refetchInterval: pending ? 3_000 : false,
+    // Counted by the cache rather than by a counter of our own, which buys two
+    // things a `useRef` would not: the count belongs to the connection, since
+    // its id is in the key, and it survives the card unmounting and remounting
+    // as the grid re-renders — a counter that reset with the component would be
+    // no cap at all.
+    refetchInterval: (query) =>
+      pending && query.state.dataUpdateCount < MAX_STATUS_POLLS ? 3_000 : false,
   });
 }
 

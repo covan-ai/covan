@@ -89,12 +89,30 @@ export type AppStarter = {
 };
 
 /**
+ * How many of these an empty chat screen will show.
+ *
+ * Six is three rows in the two-column grid, which is a prompt rather than a
+ * directory. Uncapped, this was one chip per connected application: fine at
+ * two, and ten rows of *"What can you do with X?"* pushing the composer off
+ * the screen once connecting an application stopped meaning a consent screen
+ * somebody had to go and earn.
+ */
+const MAX_APP_STARTERS = 6;
+
+/**
  * The order is the caller's. `mergeConnectedApps` already sorted by slug so the
  * grid does not reshuffle when an unrelated app is connected, and sorting again
  * here would put one decision in two places and let them disagree.
+ *
+ * The one reordering done here is to put the applications we wrote a sentence
+ * for first, because the cap would otherwise be filled alphabetically and a
+ * screen of six generic questions is worth less than three specific ones.
+ * Stable within each group, so the grid still does not reshuffle.
  */
 export function appStartersFor(apps: readonly ConnectedApp[]): AppStarter[] {
-  return apps.map((app) => ({
+  const curated = apps.filter((app) => APP_STARTER[app.slug]);
+  const rest = apps.filter((app) => !APP_STARTER[app.slug]);
+  return [...curated, ...rest].slice(0, MAX_APP_STARTERS).map((app) => ({
     app,
     starter: APP_STARTER[app.slug] ?? `What can you do with ${app.name}?`,
   }));

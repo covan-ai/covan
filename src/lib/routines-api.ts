@@ -9,7 +9,7 @@
  * that — so what it sees is only ever as fresh as the connection's own
  * interval.
  */
-export type RoutineSourceKind = "rss" | "web" | "none" | "connection";
+export type RoutineSourceKind = "rss" | "web" | "none" | "connection" | "workspace";
 
 export type Routine = {
   id: string;

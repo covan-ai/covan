@@ -769,6 +769,79 @@ describe("enforcing the floor on what the model returned", () => {
     expect(enforceFloor([{ label: "Nothing", members: [99] }], deduped, 3)).toEqual([]);
   });
 
+  describe("fix round 1: the order is a function of the input and nothing else", () => {
+    // The comparator was rewritten by the round-6 amendment — a `null` label
+    // cannot be handed to `localeCompare` — and the comment beside it claimed
+    // determinism. A default collator does not provide it: it is scoped to
+    // the runtime's locale and ICU data, so the same two labels can order
+    // differently on two machines. The renderer's byte-identical promise
+    // rests on this function, so the ordering has to be the input's and not
+    // the host's.
+    const tie: DedupedQuestion[] = [
+      { question: "zzz one", askerKeys: new Set([1, 2, 3]), copies: 2 },
+      { question: "zzz two", askerKeys: new Set([1, 2, 3]), copies: 2 },
+    ];
+
+    it("breaks a tie between two labels without consulting a locale", () => {
+      // "apple" and "Banana" are the cheapest pair that separates the two
+      // rules: an English collator puts "apple" first (it ignores case to
+      // compare a against b), code-unit order puts "Banana" first ("B" is
+      // 66, "a" is 97). The assertion is not that this order reads better —
+      // it is that no collator is involved. Both labels tie at two
+      // questions, so the label is the only key left.
+      const gaps = enforceFloor(
+        [
+          { label: "apple", members: [0] },
+          { label: "Banana", members: [1] },
+        ],
+        tie,
+        3,
+      );
+      expect(gaps.map((g) => g.questions)).toEqual([2, 2]);
+      expect(gaps.map((g) => g.label)).toEqual(["Banana", "apple"]);
+    });
+
+    it("puts a named row before an unnamed one at the same question count", () => {
+      const d: DedupedQuestion[] = [
+        { question: "zzz one", askerKeys: new Set([1, 2, 3]), copies: 2 },
+        { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 2 },
+      ];
+      const gaps = enforceFloor(
+        [
+          // Quotes question 1, so it is withheld — and it is listed second
+          // even though the model sent it first.
+          { label: "FAQ: when is payday", members: [0] },
+          { label: "Zebras", members: [1] },
+        ],
+        d,
+        3,
+      );
+      expect(gaps.map((g) => g.label)).toEqual(["Zebras", null]);
+    });
+
+    it("keeps two rows that tie on every key in the order they arrived", () => {
+      // Both withheld, both two questions: nothing is left to order them by,
+      // so the input order stands. `Array.prototype.sort` is specified as
+      // stable, which is what makes that a guarantee rather than an accident.
+      const d: DedupedQuestion[] = [
+        { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 2 },
+        { question: "where is the handbook", askerKeys: new Set([1, 2, 3]), copies: 2 },
+      ];
+      const gaps = enforceFloor(
+        [
+          { label: "FAQ: when is payday", members: [0] },
+          { label: "FAQ: where is the handbook", members: [1] },
+        ],
+        d,
+        3,
+      );
+      expect(gaps).toEqual([
+        { label: null, questions: 2, askers: 3 },
+        { label: null, questions: 2, askers: 3 },
+      ]);
+    });
+  });
+
   it("orders by how many questions are behind the gap", () => {
     const gaps = enforceFloor(
       [

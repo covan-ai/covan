@@ -22,9 +22,14 @@ import type { Gap } from "./coverage-cluster";
  *
  * Which makes one promise this file has to keep: the same input renders the
  * same bytes. No date, no clock, no randomness, no rounding and no hedging
- * word — every sentence below is a function of the counts it was handed. The
- * ordering it prints in is `enforceFloor`'s, which is total for the same
- * reason.
+ * word — every sentence below is a function of the counts it was handed, and
+ * nothing in it reads the host it ran on.
+ *
+ * That promise is only as good as the order the rows arrive in, which is
+ * `enforceFloor`'s. Its comparator deliberately avoids a default collator for
+ * the same reason — see the note beside it — because a locale-scoped
+ * comparison would have made this report's wording stable and its row order
+ * dependent on which machine sent the email.
  */
 
 /** The window's grounding counts, in `0053`'s four buckets plus its denominator. */
@@ -106,25 +111,50 @@ export function renderCoverageReport(input: {
     );
   }
 
-  if (gaps.length > 0) {
+  // One pass, so the bullets and the count that explains them cannot
+  // disagree about which rows have no name.
+  //
+  // A label with nothing printable in it is treated exactly as `null`. That
+  // is unreachable from `enforceFloor`, which refuses an empty, whitespace or
+  // letterless label outright — so it can only arrive from a hand-built
+  // `Gap`. But this function is the last thing between a `Gap` and an admin's
+  // inbox, and `"  • — 3 questions, 3 people"` is precisely the bullet the
+  // withheld wording exists to prevent; a renderer that forbids it for `null`
+  // and not for `"   "` is only half a guard.
+  const rows = gaps.map((gap) => ({
+    name: gap.label !== null && gap.label.trim() !== "" ? gap.label : null,
+    questions: gap.questions,
+    askers: gap.askers,
+  }));
+
+  if (rows.length > 0) {
     lines.push("");
     lines.push("What came up most:");
-    for (const gap of gaps) {
+    for (const row of rows) {
       lines.push(
-        `  • ${gap.label ?? WITHHELD_TOPIC} — ${plural(gap.questions, "question", "questions")}, ` +
-          `${plural(gap.askers, "person", "people")}`,
+        `  • ${row.name ?? WITHHELD_TOPIC} — ${plural(row.questions, "question", "questions")}, ` +
+          `${plural(row.askers, "person", "people")}`,
       );
     }
 
     // Once for the report, not once per bullet: an explanation repeated down
     // a list stops being read, and this one is the half of the guard an admin
     // has to understand to trust the rest of it.
-    const unnamed = gaps.filter((gap) => gap.label === null).length;
+    //
+    // Neither form says which question the name reproduced, or whose: fix
+    // round 1, finding 1. `isQuotation` is scoped to every question the model
+    // saw rather than to the withheld cluster's own members, so the question
+    // that cost this row its name may belong to somebody who appears in no
+    // reported row at all — "one of the questions behind it" was a claim the
+    // guard contradicts, and the only sentence in this file that was not a
+    // function of its input. It also asserted exactly what the design's
+    // deniability depends on being unknowable.
+    const unnamed = rows.filter((row) => row.name === null).length;
     if (unnamed === 1) {
       lines.push("");
       lines.push(
         `One topic above is listed without a name. The name our clustering gave it ` +
-          `reproduced one of the questions behind it, so we withheld the name and kept the ` +
+          `reproduced a question somebody had typed, so we withheld the name and kept the ` +
           `topic: you are told what came up and how many people it came from, never what ` +
           `anybody typed. Nothing has been dropped from the list.`,
       );
@@ -142,14 +172,14 @@ export function renderCoverageReport(input: {
   if (withheld > 0) {
     lines.push("");
     lines.push(
-      gaps.length > 0
+      rows.length > 0
         ? `${plural(withheld, "other question", "other questions")} fell short too, ` +
             `but came from too few people to report.`
         : `${plural(withheld, "question", "questions")} fell short, but not enough ` +
             `different people asked about any one topic for it to be reported. Nothing ` +
             `here names anybody, which is why the bar is where it is.`,
     );
-  } else if (gaps.length === 0 && totals.fallback > 0) {
+  } else if (rows.length === 0 && totals.fallback > 0) {
     // Questions did find nothing, and yet there is neither a topic to list
     // nor a below-floor count to report. Saying so costs a line and saves an
     // admin from reading a one-sentence email as a broken feature.

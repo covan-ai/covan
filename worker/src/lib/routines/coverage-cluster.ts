@@ -414,15 +414,29 @@ export function enforceFloor(
     gaps.push({ label: truncatedLabel, questions, askers: askers.size });
   }
 
-  // Named rows before unnamed ones at an equal count, then by label. The
-  // nulls have to be ordered explicitly rather than fed to `localeCompare`,
-  // and ordering them last keeps a report's list reading as topics first and
-  // refusals after. Total and input-independent, which is what lets the
-  // renderer promise a byte-identical report for byte-identical input.
-  return gaps.sort(
-    (a, b) =>
-      b.questions - a.questions ||
-      (a.label === null ? 1 : 0) - (b.label === null ? 1 : 0) ||
-      (a.label ?? "").localeCompare(b.label ?? ""),
-  );
+  // `questions` descending, then named rows before unnamed ones — which
+  // keeps a report's list reading as topics first and refusals after — and
+  // then the labels in code-unit order.
+  //
+  // Deliberately not `localeCompare`. A collator with no locale argument is
+  // scoped to the host's locale and ICU data, so the same two labels can come
+  // out in a different order on two machines; the renderer's promise of a
+  // byte-identical report for byte-identical input rests on this comparator,
+  // and a promise that depends on where the worker ran is not one. The
+  // consequence is owned rather than hidden: `"Banana"` sorts before
+  // `"apple"`, because uppercase letters are lower code units. That is only
+  // ever a tie-break between gaps with the same question count.
+  //
+  // Not a total order, and it does not need to be: two rows that tie on all
+  // three keys keep the order they arrived in, which `Array.prototype.sort`
+  // guarantees by being specified as stable. The ordering is therefore a
+  // function of the input alone.
+  return gaps.sort((a, b) => {
+    if (a.questions !== b.questions) return b.questions - a.questions;
+    if (a.label === null || b.label === null) {
+      if (a.label === b.label) return 0;
+      return a.label === null ? 1 : -1;
+    }
+    return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+  });
 }

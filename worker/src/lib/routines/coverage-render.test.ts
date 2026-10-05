@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renderCoverageReport, type CoverageTotals } from "./coverage-render";
-import { MAX_LABEL_CHARS, type Gap } from "./coverage-cluster";
+import { enforceFloor, MAX_LABEL_CHARS, type DedupedQuestion, type Gap } from "./coverage-cluster";
 
 const totals: CoverageTotals = {
   days: 7,
@@ -181,6 +181,59 @@ describe("a topic the guard would not name", () => {
     });
     expect(text).not.toMatch(/without a name/i);
     expect(text).not.toMatch(/not naming/i);
+  });
+
+  /**
+   * Fix round 1, finding 1. The report must not say the quoted question came
+   * from the people in the row, because `isQuotation` is scoped to every
+   * question the model saw and not to this cluster's members — fix round 1,
+   * finding 2 of the guard, where a verbatim question in front of an admin
+   * was ruled the same disclosure whichever cluster the model filed it under.
+   *
+   * So the question that cost a row its name can belong to somebody who
+   * appears in no reported row at all. A locality claim would be the one
+   * sentence in the file that is not a function of its input, and it would
+   * assert in prose exactly what the guard's deniability depends on being
+   * unknowable.
+   */
+  it("does not claim the quoted question came from the people in the row", () => {
+    const deduped: DedupedQuestion[] = [
+      { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 3 },
+      { question: "i am pregnant what leave do i get", askerKeys: new Set([4]), copies: 1 },
+    ];
+    // Labelled over the payday cluster, in the words of a question only one
+    // person asked — a person below the floor, who is in no reported row.
+    const gaps = enforceFloor(
+      [{ label: "i am pregnant what leave do i get", members: [0] }],
+      deduped,
+      3,
+    );
+    expect(gaps).toEqual([{ label: null, questions: 3, askers: 3 }]);
+
+    const text = renderCoverageReport({ totals, gaps, withheld: 1 });
+    expect(text).not.toMatch(/behind it|behind them|behind those/i);
+    expect(text).toMatch(/somebody had typed/i);
+    expect(text).not.toContain("pregnant");
+  });
+
+  /**
+   * Fix round 1, finding 3. Unreachable from `enforceFloor`, which refuses an
+   * empty, whitespace or letterless label outright — so this is a hand-built
+   * `Gap`. The renderer is still the last thing between a `Gap` and an
+   * admin's inbox, and `"  • — 3 questions, 3 people"` is the exact bullet the
+   * withheld wording exists to prevent.
+   */
+  it("treats a label with nothing printable in it exactly as a withheld one", () => {
+    const text = renderCoverageReport({
+      totals,
+      gaps: [{ label: "   ", questions: 3, askers: 3 }],
+      withheld: 0,
+    });
+    expect(text).not.toMatch(/•\s*—/);
+    expect(text).toContain("• A topic we are not naming — 3 questions");
+    // Counted as a refusal too, so the bullet is explained rather than
+    // appearing without the sentence that makes sense of it.
+    expect(text).toMatch(/without a name/i);
   });
 
   it("is byte-identical for the same input with a withheld topic in it", () => {

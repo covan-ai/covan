@@ -121,19 +121,23 @@ const TRUNCATION_MARK = "\n…[truncated]";
 const MIN_USEFUL_EXCERPT = 200;
 
 /**
- * What two passages have to share before the second one is treated as text the
- * model has already been given.
+ * Normalise text for a containment or equality check — nothing more.
  *
- * Not a similarity measure — a containment check, on purpose. The duplicates
- * this catches are literal: a document attached to an agent through two bundles
- * is chunked and embedded once per bundle, so `match_chunks` returns both
- * copies of the same passage, and both were being paid for and both were
+ * Not a similarity measure — a containment check, on purpose. The first
+ * caller's duplicates are literal: a document attached to an agent through two
+ * bundles is chunked and embedded once per bundle, so `match_chunks` returns
+ * both copies of the same passage, and both were being paid for and both were
  * putting the same words in front of the model. Whitespace is normalised
  * because the two copies can differ in it and mean the same thing; nothing else
  * is, because "nearly the same passage" is a judgement this should not be
  * making on its own.
+ *
+ * Exported since 0074's coverage report, which asks the same question of a
+ * different pair of strings — is the second one literally the first — and
+ * must ask it the same way. Two copies of this would drift, and the copy that
+ * drifted would be the one standing in front of somebody's question.
  */
-function normaliseForComparison(text: string): string {
+export function normaliseForComparison(text: string): string {
   return text.replace(/\s+/g, " ").trim().toLowerCase();
 }
 

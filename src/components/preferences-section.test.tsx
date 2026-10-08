@@ -127,4 +127,34 @@ describe("the coverage opt-out in Preferences", () => {
     renderSection();
     expect(await screen.findByText(/never shows names or anybody.s question/i)).toBeInTheDocument();
   });
+
+  // The app switches workspaces without a reload, so the same `QueryClient`
+  // and the same mounted `PreferencesSection` carry over — only the `me`
+  // prop changes. A query key that did not name the workspace would reuse
+  // workspace A's cached `excluded: true` under workspace B's name, exactly
+  // the leak fix round 1 closes. `rerender` on one shared client is what
+  // makes that distinguishable from "it refetched and corrected itself a
+  // moment later" — the assertion below is checked with no `await`, right
+  // after the switch, before workspace B's own fetch could possibly resolve.
+  it("does not carry one workspace's exclusion into another's", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    preference.mockResolvedValueOnce({ excluded: true }); // workspace A's answer
+
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <PreferencesSection me={meFixture({ id: "ws-a" })} />
+      </QueryClientProvider>,
+    );
+    const toggleA = await screen.findByRole("switch", { name: SWITCH_NAME });
+    await waitFor(() => expect(toggleA).toBeChecked());
+
+    preference.mockResolvedValueOnce({ excluded: false }); // workspace B's own answer
+    rerender(
+      <QueryClientProvider client={client}>
+        <PreferencesSection me={meFixture({ id: "ws-b" })} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("switch", { name: SWITCH_NAME })).not.toBeChecked();
+  });
 });

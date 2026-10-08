@@ -117,7 +117,7 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
         </div>
 
         <NotificationToggles />
-        <CoverageOptOut />
+        <CoverageOptOut workspaceId={me?.workspace.id} />
       </SectionCard>
     </section>
   );
@@ -139,11 +139,23 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
  * "works while the report is off" — and this row is the second of the two
  * surfaces for the same guarantee. Only the notice itself is gated on
  * `enabled`, never this.
+ *
+ * **The query key carries `workspaceId`, the same way `CoverageNotice`'s
+ * does.** The app switches workspaces without a reload, and this value is
+ * consent-sensitive: an unscoped key would let a member who just switched
+ * briefly see the *previous* workspace's exclusion state rendered under the
+ * new workspace's name, until something else happened to evict it.
+ * `workspace-queries.ts` is the belt for that (`"coverage"` is on
+ * `WORKSPACE_SCOPED_QUERY_KEYS`, so a switch invalidates this too), and a
+ * workspace-scoped key is the suspenders — the two are not redundant, because
+ * the list invalidates by prefix on whatever key is live, and a key that
+ * never named the workspace in the first place is the thing that let the
+ * stale value survive long enough to render at all.
  */
-function CoverageOptOut() {
+function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
   const queryClient = useQueryClient();
   const { data } = useQuery({
-    queryKey: ["coverage", "preference"],
+    queryKey: ["coverage", "preference", workspaceId],
     queryFn: api.coverage.preference,
   });
   const [saving, setSaving] = useState(false);
@@ -152,14 +164,14 @@ function CoverageOptOut() {
     setSaving(true);
     try {
       await api.coverage.setPreference(excluded);
-      queryClient.setQueryData(["coverage", "preference"], { excluded });
+      queryClient.setQueryData(["coverage", "preference", workspaceId], { excluded });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to save";
       toast.error(message);
       // Same recovery as `NotificationToggles`: put the switch back where the
       // server actually left it rather than leaving it showing a setting that
       // was never accepted.
-      await queryClient.invalidateQueries({ queryKey: ["coverage", "preference"] });
+      await queryClient.invalidateQueries({ queryKey: ["coverage", "preference", workspaceId] });
     } finally {
       setSaving(false);
     }

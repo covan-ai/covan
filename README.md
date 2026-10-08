@@ -379,3 +379,8 @@ This is a source-available licence rather than an open-source one: the OSI has
 not approved the FSL, so calling Covan open source would be inaccurate. Want to
 host Covan for other people? That is what a commercial licence is for — write to
 efe@covan.app.
+
+Some files here started as copies of MIT-licensed work — shadcn/ui and
+prompt-kit — and their notices live in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md), which also says which files
+each one covers.

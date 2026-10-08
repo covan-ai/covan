@@ -33,7 +33,7 @@ type WorkspaceFacts = { gapReportEnabled: boolean; ownerIsAdmin: boolean; member
 export type CoverageDeps = {
   /** Facts the three run-time checks need, read under the service role. */
   readWorkspace: (workspaceId: string, ownerId: string) => Promise<WorkspaceFacts>;
-  /** `workspace_coverage` from 0053. The counts, which disclose nothing. */
+  /** `workspace_coverage_totals` from 0075. The counts, which disclose nothing. */
   readTotals: (workspaceId: string, days: number) => Promise<CoverageTotals>;
   /** `workspace_coverage_gaps` from 0075. */
   readGaps: (
@@ -48,8 +48,18 @@ export type CoverageDeps = {
    * third-party text — somebody else typed them — so they ride in the user
    * message and never in a system one, which is the argument `summarise.ts`
    * makes at length for a watched page and which applies with more force here.
+   *
+   * `weightedTokens` is optional because this type cannot require a caller to
+   * compute it — but `tokens` alone is not what the allowance is charged
+   * (fix round 1, finding B2/B3): a clustering call's completion share is
+   * weighted 5x everywhere else `weighTokens` is used, and `tokens` on its
+   * own has no cache/completion breakdown left to weight. The real binding
+   * sets it from `weighTokens(usage)`; a caller that does not is read as
+   * unweighted, same as before this field existed.
    */
-  cluster: (questions: string[]) => Promise<{ raw: unknown; model: string; tokens: number }>;
+  cluster: (
+    questions: string[],
+  ) => Promise<{ raw: unknown; model: string; tokens: number; weightedTokens?: number }>;
 };
 
 export type CoverageRunResult =
@@ -65,8 +75,8 @@ export type CoverageRunResult =
    * 1, finding 2 — this type used to have no field to carry them in, so that
    * comment was aspirational rather than true.
    */
-  | { kind: "skip"; note: string; model?: string; tokens?: number }
-  | { kind: "report"; summary: string; model: string; tokens: number };
+  | { kind: "skip"; note: string; model?: string; tokens?: number; weightedTokens?: number }
+  | { kind: "report"; summary: string; model: string; tokens: number; weightedTokens?: number };
 
 /**
  * The three conditions, re-asked on every run — and the facts, and the asker
@@ -234,6 +244,7 @@ export async function runCoverageReport(
       note: `no one topic came from ${floor} or more different people`,
       model: answer.model,
       tokens: answer.tokens,
+      weightedTokens: answer.weightedTokens,
     };
   }
 
@@ -254,5 +265,6 @@ export async function runCoverageReport(
     summary: renderCoverageReport({ totals, gaps, withheld }),
     model: answer.model,
     tokens: answer.tokens,
+    weightedTokens: answer.weightedTokens,
   };
 }

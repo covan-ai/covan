@@ -7,7 +7,13 @@ import { fetchSource, type FetchDeps, type SourceResult } from "./source";
 import { UpstreamError } from "./upstream-error";
 import { fetchConnectionItems } from "./connection-source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
-import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
+import {
+  claimItemKeys,
+  deliver,
+  releaseItemKeys,
+  type DeliveryChannel,
+  type DeliveryDeps,
+} from "./delivery";
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
 import type { CoverageRunInput, CoverageRunResult } from "./coverage-source";
@@ -494,10 +500,6 @@ export async function runRoutine(
       );
 
       if (result.kind === "pause") {
-        // None of this feature's three reasons is a repeated failure, so this
-        // does not read through `announcePause` — see `announceCoveragePause`
-        // for why that one's wording would be false here.
-        await announceCoveragePause(routine, deps, result.reason);
         await finish(routine, deps, startedAt, {
           status: "skipped",
           itemsNew: 0,
@@ -505,6 +507,16 @@ export async function runRoutine(
           error: result.reason,
           pause: result.reason,
         });
+        // Sent after `finish` commits, like `announceQuotaSkip` above and
+        // `announcePause` itself (called from inside `finish`) — fix round 1,
+        // finding B4. The pause must already be visible on the routine's page
+        // before the owner is told about it, and `notifyOwner` swallows its
+        // own errors, so there is nothing to lose by waiting for the write.
+        //
+        // None of this feature's three reasons is a repeated failure, so this
+        // does not read through `announcePause` — see `announceCoveragePause`
+        // for why that one's wording would be false here.
+        await announceCoveragePause(routine, deps, result.reason);
         return { status: "skipped", itemsNew: 0 };
       }
 
@@ -515,18 +527,18 @@ export async function runRoutine(
         // required rather than optional; the type does not say the two are
         // always set together, but `coverage-source.ts` guarantees they are.
         //
-        // Both outcome fields the quota block reads get the same number: one
-        // clustering call carries none of the prompt/cache/completion
-        // breakdown `weighTokens` would need to tell `tokens` and
-        // `weightedTokens` apart, so there is nothing truer to compute than
-        // the one real figure `coverage-source.ts` reports.
+        // `weightedTokens` is the real weighted figure now that
+        // `clusterQuestions` reports it (fix round 1, finding B2/B3) — the
+        // `?? result.tokens` fallback is only for a `coverage` dependency that
+        // has not been updated to send it, which would otherwise undercharge
+        // nothing truer than the raw count it already had.
         if (result.model !== undefined && result.tokens !== undefined) {
           await finish(routine, deps, startedAt, {
             status: "skipped",
             itemsNew: 0,
             error: result.note,
             tokens: result.tokens,
-            weightedTokens: result.tokens,
+            weightedTokens: result.weightedTokens ?? result.tokens,
             keys,
             modelCall: { model: result.model, modelOutcome: "answered" },
           });
@@ -541,20 +553,45 @@ export async function runRoutine(
         return { status: "skipped", itemsNew: 0 };
       }
 
-      // `result.kind === "report"`. Delivered the same way every other
-      // routine is — the same channel lookup, the same `deliver`, the same
-      // event — because nothing about sending a message is specific to this
-      // source; only how the text was produced is.
-      const { data: channel, error: channelError } = await deps.db
-        .from("delivery_channels")
-        .select("kind, secret_ciphertext")
-        .eq("id", routine.delivery_channel_id)
-        .eq("user_id", routine.user_id)
-        .maybeSingle();
-      if (channelError) {
-        throw new Error(`delivery channel lookup failed: ${channelError.message}`);
+      // `result.kind === "report"`. Claimed before delivering — fix round 1,
+      // finding A3. `claim_due_routines` reclaims a routine whose `claimed_at`
+      // is stale (0055:82), so a worker that dies between this and `finish`
+      // re-runs and would otherwise re-send; `runOneRoutine` bypasses claiming
+      // entirely by design, resting on exactly this backstop (see its own
+      // docstring). Every other kind gets a key before sending for the same
+      // reason — this is the "none" path's own key shape, just below
+      // (`:699-703` as of this writing): no cursor and no diff here either, so
+      // the run's identity is the trigger that produced it, not anything about
+      // what was read.
+      const reportKeysToClaim = trigger
+        ? [`hook:${trigger.eventId}`]
+        : deps.trigger === "manual"
+          ? [`manual:${routine.id}@${startedAt.toISOString()}`]
+          : [`slot:${routine.next_run_at}`];
+      claimedKeys = await claimItemKeys(deps.db, routine.id, reportKeysToClaim);
+      if (claimedKeys.length === 0) {
+        // Already sent for this slot. The clustering call was still made and
+        // paid for before this claim was ever checked, so it is still
+        // metered — same accounting as the post-call skip above.
+        await finish(routine, deps, startedAt, {
+          status: "skipped",
+          itemsNew: 0,
+          tokens: result.tokens,
+          weightedTokens: result.weightedTokens ?? result.tokens,
+          keys,
+          modelCall: { model: result.model, modelOutcome: "answered" },
+        });
+        return { status: "skipped", itemsNew: 0 };
       }
-      if (!channel) throw new Error("delivery channel missing");
+
+      // Delivered the same way every other routine is — the same channel
+      // lookup, the same `deliver`, the same event — because nothing about
+      // sending a message is specific to this source; only how the text was
+      // produced is. Fix round 1, finding A4: this used to be a second,
+      // uncommented copy of the ordinary path's lookup below; see
+      // `loadDeliveryChannel` for why that was a real cost and not just
+      // duplication.
+      const channel = await loadDeliveryChannel(deps, routine);
 
       await deliver(channel, { subject: routine.name, body: result.summary }, deps.deliveryDeps, {
         event: EVENT_DELIVERED,
@@ -573,7 +610,7 @@ export async function runRoutine(
         summary: result.summary,
         modelCall: { model: result.model, modelOutcome: "answered" },
         tokens: result.tokens,
-        weightedTokens: result.tokens,
+        weightedTokens: result.weightedTokens ?? result.tokens,
         keys,
       });
       return { status: "ok", itemsNew: 1 };
@@ -730,21 +767,12 @@ export async function runRoutine(
     }
 
     // Checked before summarising: a routine with a missing channel shouldn't
-    // pay for an LLM call it can never deliver.
-    //
-    // SCOPING: the service role bypasses RLS, so both lookups below are scoped
-    // explicitly from the routine row — the channel to its owner, the agent to
-    // the routine's workspace. Matching on id alone would make any tampered row
-    // a cross-tenant read.
-    const { data: channel, error: channelError } = await deps.db
-      .from("delivery_channels")
-      .select("kind, secret_ciphertext")
-      .eq("id", routine.delivery_channel_id)
-      .eq("user_id", routine.user_id)
-      .maybeSingle();
-
-    if (channelError) throw new Error(`delivery channel lookup failed: ${channelError.message}`);
-    if (!channel) throw new Error("delivery channel missing");
+    // pay for an LLM call it can never deliver. Scoping is `loadDeliveryChannel`'s
+    // own comment now (fix round 1, finding A4) — the agent lookup just below
+    // still needs its own: it is scoped to the routine's workspace rather than
+    // its owner, and matching on id alone would make any tampered row a
+    // cross-tenant read there too.
+    const channel = await loadDeliveryChannel(deps, routine);
 
     const { data: agent, error: agentError } = await deps.db
       .from("agents")
@@ -985,6 +1013,36 @@ export async function runRoutine(
 
     return { status: "failed", itemsNew: 0 };
   }
+}
+
+/**
+ * The delivery channel a run sends to.
+ *
+ * SCOPING: the service role bypasses RLS, so this lookup is scoped explicitly
+ * from the routine row rather than on id alone — matching on id alone would
+ * make any tampered row a cross-tenant read.
+ *
+ * Fix round 1, finding A4. Shared by the two paths that need a channel before
+ * sending — the ordinary summarise path and the workspace report path — which
+ * used to copy this query and both its guards byte for byte, with this
+ * comment attached to only one of the two copies. The two sites differ in
+ * what they do with the result next (one also reads an agent afterward),
+ * which is an argument for extracting the lookup alone, not for leaving it
+ * duplicated.
+ */
+async function loadDeliveryChannel(
+  deps: ExecutorDeps,
+  routine: RoutineRow,
+): Promise<DeliveryChannel> {
+  const { data: channel, error } = await deps.db
+    .from("delivery_channels")
+    .select("kind, secret_ciphertext")
+    .eq("id", routine.delivery_channel_id)
+    .eq("user_id", routine.user_id)
+    .maybeSingle();
+  if (error) throw new Error(`delivery channel lookup failed: ${error.message}`);
+  if (!channel) throw new Error("delivery channel missing");
+  return channel;
 }
 
 /**

@@ -2077,9 +2077,9 @@ describe("a routine that reads its own workspace", () => {
   const workspaceRoutine = (over: Partial<RoutineRow> = {}) =>
     routine({ source_kind: "workspace", source_config: { report: "coverage_gaps" }, ...over });
 
-  function depsForWorkspaceRun() {
+  function depsForWorkspaceRun(over: Parameters<typeof makeDb>[0] = {}) {
     fetchImpl = vi.fn();
-    const { db, updates, inserts } = makeDb();
+    const { db, updates, inserts } = makeDb(over);
     const deps = makeDeps(db) as any;
     return { deps, updates, inserts };
   }
@@ -2114,17 +2114,20 @@ describe("a routine that reads its own workspace", () => {
       summary: "x",
       model: "gpt-4.1-mini",
       tokens: 900,
+      // Deliberately not 900 — see `executor.test.ts:231-234`'s own comment
+      // on why an equal pair would pass whichever field `finish` read. Fix
+      // round 1, finding B2/B3: the weighted figure is now real, not a copy
+      // of `tokens`.
+      weightedTokens: 320,
     });
 
     await runRoutine(workspaceRoutine(), deps);
 
     const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    // `routine_runs.tokens` is the raw count that moved.
     expect(run).toMatchObject({ status: "ok", model: "gpt-4.1-mini", tokens: 900 });
-    // The owner's allowance is charged the same figure `routine_runs.tokens`
-    // shows: one clustering call carries none of the prompt/cache/completion
-    // breakdown `weighTokens` would need to tell the two apart. See the
-    // comment beside the executor's workspace branch.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 900 }]);
+    // The allowance is charged the weighted figure, not the raw one.
+    expect(recorded).toEqual([{ userId: "u1", tokens: 320 }]);
   });
 
   it("pauses the routine when the run says it may not continue", async () => {
@@ -2197,14 +2200,48 @@ describe("a routine that reads its own workspace", () => {
       note: "no one topic came from 3 or more different people",
       model: "gpt-4.1-mini",
       tokens: 640,
+      // Deliberately not 640 — see the comment on the test above.
+      weightedTokens: 230,
     });
 
     await runRoutine(workspaceRoutine(), deps);
 
     const run = inserts.find((i) => i.table === "routine_runs")!.values;
     expect(run).toMatchObject({ status: "skipped", model: "gpt-4.1-mini", tokens: 640 });
-    expect(recorded).toEqual([{ userId: "u1", tokens: 640 }]);
+    expect(recorded).toEqual([{ userId: "u1", tokens: 230 }]);
     expect(deliverCalls).toHaveLength(0);
+  });
+
+  /**
+   * Fix round 1, finding A3. The workspace branch used to claim no
+   * idempotency key before sending, so a worker that died between delivering
+   * and `finish` — reclaimed by `claim_due_routines` past its stale-claim
+   * window (0055:82) — or a manual run overlapping a scheduled one
+   * (`runOneRoutine` bypasses claiming by design) could deliver the same
+   * report twice. `claimWins: () => []` models the key having already been
+   * claimed by whichever run got there first.
+   */
+  it("delivers nothing a second time for the same slot", async () => {
+    const { deps, inserts } = depsForWorkspaceRun({ claimWins: () => [] });
+    deps.coverage = vi.fn().mockResolvedValue({
+      kind: "report",
+      summary: "Over the last 7 days…",
+      model: "gpt-4.1-mini",
+      tokens: 900,
+      weightedTokens: 320,
+    });
+
+    const out = await runRoutine(workspaceRoutine(), deps);
+
+    expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    expect(deliverCalls).toHaveLength(0);
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run.status).toBe("skipped");
+    // The clustering call already happened and was paid for by the time the
+    // claim came back empty, so it is still metered even though nothing is
+    // sent — same as the post-call skip above.
+    expect(run.tokens).toBe(900);
+    expect(recorded).toEqual([{ userId: "u1", tokens: 320 }]);
   });
 
   it("fails loudly rather than silently when no coverage dep is bound", async () => {

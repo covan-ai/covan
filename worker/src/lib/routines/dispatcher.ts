@@ -14,7 +14,7 @@ import { runRoutineWithTools } from "./agent-run";
 import { ownHostsFrom } from "./url-guard";
 import { deliveryDepsFrom } from "./delivery";
 import { fileRoutineOutput } from "./filing";
-import { entitlementsFor } from "../entitlements";
+import { entitlementsFor, weighTokens } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
 import { runCoverageReport, type CoverageDeps } from "./coverage-source";
 import { resolveModel } from "../models";
@@ -183,10 +183,25 @@ function executorDeps(
 export function coverageDeps(db: SupabaseClient, ownerId: string, env: RoutineEnv): CoverageDeps {
   return {
     readWorkspace: async (workspaceId, forOwnerId) => {
-      const [{ data: workspace }, { data: members }] = await Promise.all([
-        db.from("workspaces").select("gap_report_enabled").eq("id", workspaceId).single(),
-        db.from("workspace_members").select("user_id, role").eq("workspace_id", workspaceId),
-      ]);
+      const [{ data: workspace, error: workspaceError }, { data: members, error: membersError }] =
+        await Promise.all([
+          db.from("workspaces").select("gap_report_enabled").eq("id", workspaceId).single(),
+          db.from("workspace_members").select("user_id, role").eq("workspace_id", workspaceId),
+        ]);
+      // postgrest-js resolves { data, error }; it does not throw — see
+      // `executor.ts`'s membership lookup for the same convention stated at
+      // length. Fix round 1, finding A1: a swallowed error here used to read
+      // as "the report is turned off" or "the owner is no longer an admin",
+      // and the routine paused on a false premise with nothing logged, forever
+      // (`claim_due_routines` only selects `status = 'active'`). A thrown
+      // error is a failed run instead: recorded, backed off, retried next
+      // tick — what a transient read deserves.
+      if (workspaceError) {
+        throw new Error(`workspace read failed: ${workspaceError.message}`);
+      }
+      if (membersError) {
+        throw new Error(`workspace members read failed: ${membersError.message}`);
+      }
       return {
         gapReportEnabled: workspace?.gap_report_enabled === true,
         ownerIsAdmin: (members ?? []).some(
@@ -196,11 +211,22 @@ export function coverageDeps(db: SupabaseClient, ownerId: string, env: RoutineEn
       };
     },
     readTotals: async (workspaceId, days) => {
-      const { data } = await db.rpc("workspace_coverage_totals", {
+      const { data, error } = await db.rpc("workspace_coverage_totals", {
         p_workspace_id: workspaceId,
         p_user_id: ownerId,
         p_days: days,
       });
+      // Fix round 1, finding A2. This read only ever runs on the report path,
+      // after the clustering call already spent money. A swallowed error used
+      // to fall through to every count reading zero, and
+      // `renderCoverageReport` turns zero answers into "no answer recorded
+      // what grounded it, so there is no coverage to report" — printed
+      // directly above the real gap topics `readGaps` found moments earlier.
+      // A thrown error is a failed run instead of a report that contradicts
+      // itself.
+      if (error) {
+        throw new Error(`workspace_coverage_totals failed: ${error.message}`);
+      }
       const row = (data ?? [])[0];
       return {
         days,
@@ -272,7 +298,7 @@ const CLUSTER_INSTRUCTION =
 export async function clusterQuestions(
   questions: string[],
   env: RoutineEnv,
-): Promise<{ raw: unknown; model: string; tokens: number }> {
+): Promise<{ raw: unknown; model: string; tokens: number; weightedTokens: number }> {
   const model = resolveModel("gpt-4.1-mini", env);
   const { text, usage } = await complete(env, {
     model,
@@ -294,7 +320,13 @@ export async function clusterQuestions(
     console.error("coverage clustering reply was not JSON", err);
   }
 
-  return { raw, model, tokens: totalTokens(usage) };
+  // What the allowance is actually charged, as against what moved — same
+  // `usage` breakdown, two different functions, the same pattern
+  // `summarise.ts` uses. Fix round 1, finding B2/B3: this call's completion
+  // share used to go unweighted (charged at `TOKEN_WEIGHTS.fresh`, 1x,
+  // instead of `TOKEN_WEIGHTS.completion`, 5x) because nothing threaded the
+  // real breakdown past `tokens` — see `weighTokens`.
+  return { raw, model, tokens: totalTokens(usage), weightedTokens: weighTokens(usage) };
 }
 
 /**

@@ -4,6 +4,10 @@ import { runDueRoutines, runOneRoutine, clusterQuestions, coverageDeps } from ".
 import { parseClusters } from "./coverage-source";
 
 const createMock = vi.fn();
+// What each `new OpenAI(...)` construction was handed — specifically its
+// `apiKey` — so item B7's test can tell the house env and a run's resolved
+// env apart without a mock that merely records the completion call shape.
+const openAIConstructions: Array<{ apiKey?: string }> = [];
 
 // Stub the OpenAI SDK, the same way `summarise.test.ts` does, and for the
 // same reason: `clusterQuestions` below is the one place on this branch that
@@ -14,6 +18,9 @@ const createMock = vi.fn();
 vi.mock("openai", () => ({
   default: class {
     chat = { completions: { create: createMock } };
+    constructor(opts: { apiKey?: string }) {
+      openAIConstructions.push(opts);
+    }
   },
 }));
 
@@ -270,6 +277,77 @@ describe("a workspace routine gets the gap report bound to its real dependencies
     const deps = runRoutine.mock.calls[0][1];
     expect(typeof deps.coverage).toBe("function");
   });
+
+  /**
+   * Fix round 1, finding B7. `coverage`'s second argument is the run's
+   * resolved env — the one that may carry an owner's own key — not the
+   * dispatcher's own `env` closed over at construction. `expect.anything()`
+   * on the second argument (as the test above uses) passes whichever one
+   * reaches `coverageDeps`, so it cannot catch a regression that swaps
+   * `runEnv` for `env` in the one-line closure in `executorDeps`. BYOK
+   * billing is the entire reason that second argument exists, so this pins
+   * it on a key that actually distinguishes the two: the `OPENAI_API_KEY`
+   * the clustering call's OpenAI client is constructed with.
+   *
+   * Drives the real `coverageDeps`/`runCoverageReport` pipeline far enough to
+   * reach the one model call — `readWorkspace` reporting the report on and
+   * the caller an admin, `readGaps` returning three distinct askers (the
+   * floor for a 3-member workspace) — and lets the model's reply fail the
+   * floor (`{clusters: []}`), so `readTotals` is never needed.
+   */
+  it("pays the clustering call with the run's resolved env, not the dispatcher's own", async () => {
+    openAIConstructions.length = 0;
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ clusters: [] }) } }],
+      usage: { prompt_tokens: 5, completion_tokens: 2 },
+    });
+    const db = {
+      rpc: vi.fn(async (name: string) => {
+        if (name === "workspace_coverage_gaps") {
+          return {
+            data: [
+              { question: "Q1", asker_key: 0 },
+              { question: "Q2", asker_key: 1 },
+              { question: "Q3", asker_key: 2 },
+            ],
+            error: null,
+          };
+        }
+        return { data: [], error: null };
+      }),
+      from: (table: string) =>
+        table === "workspaces"
+          ? {
+              select: () => ({
+                eq: () => ({
+                  single: async () => ({ data: { gap_report_enabled: true }, error: null }),
+                }),
+              }),
+            }
+          : {
+              select: () => ({
+                eq: async () => ({
+                  data: [
+                    { user_id: "owner-1", role: "admin" },
+                    { user_id: "m2", role: "member" },
+                    { user_id: "m3", role: "member" },
+                  ],
+                  error: null,
+                }),
+              }),
+            },
+    };
+    const runRoutine = vi.fn().mockResolvedValue({ status: "ok", itemsNew: 0 });
+
+    await runOneRoutine(env, dueRow("r1") as any, { db: db as any, runRoutine });
+
+    const deps = runRoutine.mock.calls[0][1];
+    const runEnv = { ...env, OPENAI_API_KEY: "sk-run-env-key" };
+
+    await deps.coverage({ workspaceId: "ws-1", ownerId: "owner-1", days: 7 }, runEnv);
+
+    expect(openAIConstructions.at(-1)).toMatchObject({ apiKey: "sk-run-env-key" });
+  });
 });
 
 /**
@@ -326,15 +404,100 @@ describe("coverageDeps", () => {
   });
 
   it("reads an admin-check refusal from workspace_coverage_gaps as an empty list, not a thrown error", async () => {
+    // `readGaps` logs this refusal on purpose (it is the one error this
+    // function is designed to swallow) — fix round 1, finding B5: silence it
+    // the way the rest of the repo does, and prove it still happened.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // One call, one mocked resolution: `readGaps` alone makes exactly one rpc
+    // call. A second queued `mockResolvedValueOnce` here (meant for a
+    // `readTotals` call this test never makes) would silently absorb this
+    // one, leaving the refusal never reached — the bug the `error` spy above
+    // exists to catch, which is why this test is pinned to call only
+    // `readGaps`.
     const rpc = vi
       .fn()
-      .mockResolvedValueOnce({ data: [], error: null })
       .mockResolvedValueOnce({ data: null, error: { code: "42501", message: "not an admin" } });
     const deps = coverageDeps({ rpc } as any, "owner-1", { OPENAI_API_KEY: "sk-test" } as any);
 
     const gaps = await deps.readGaps("ws-1", 7);
 
     expect(gaps).toEqual([]);
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  /**
+   * Fix round 1, finding A1. `readWorkspace` used to destructure neither
+   * read's `error`, so a failed one left `gapReportEnabled`/`ownerIsAdmin`
+   * false by default — a transient database error read as "the report is
+   * turned off" or "the owner is no longer an admin", and the routine paused
+   * on that false premise with nothing logged, forever (`claim_due_routines`
+   * only selects `status = 'active'`, 0055:77). A thrown error here becomes a
+   * failed run instead — recorded, backed off, retried next tick.
+   */
+  describe("readWorkspace", () => {
+    function dbFor(opts: {
+      workspace?: { gap_report_enabled: boolean } | null;
+      workspaceError?: { message: string };
+      members?: Array<{ user_id: string; role: string }>;
+      membersError?: { message: string };
+    }) {
+      return {
+        from: (table: string) =>
+          table === "workspaces"
+            ? {
+                select: () => ({
+                  eq: () => ({
+                    single: async () => ({
+                      data: opts.workspace ?? null,
+                      error: opts.workspaceError ?? null,
+                    }),
+                  }),
+                }),
+              }
+            : {
+                select: () => ({
+                  eq: async () => ({
+                    data: opts.members ?? [],
+                    error: opts.membersError ?? null,
+                  }),
+                }),
+              },
+      };
+    }
+
+    it("throws on a failed workspace read, rather than reading it as 'turned off'", async () => {
+      const db = dbFor({ workspaceError: { message: "connection reset" } });
+      const deps = coverageDeps(db as any, "owner-1", { OPENAI_API_KEY: "sk-test" } as any);
+
+      await expect(deps.readWorkspace("ws-1", "owner-1")).rejects.toThrow(/connection reset/);
+    });
+
+    it("throws on a failed membership read, rather than reading it as 'no longer an admin'", async () => {
+      const db = dbFor({
+        workspace: { gap_report_enabled: true },
+        membersError: { message: "statement timeout" },
+      });
+      const deps = coverageDeps(db as any, "owner-1", { OPENAI_API_KEY: "sk-test" } as any);
+
+      await expect(deps.readWorkspace("ws-1", "owner-1")).rejects.toThrow(/statement timeout/);
+    });
+  });
+
+  /**
+   * Fix round 1, finding A2. `readTotals` only ever runs on the report path,
+   * after the clustering call already spent money. A swallowed error used to
+   * fall through to every count reading zero, which `renderCoverageReport`
+   * turns into "no answer recorded what grounded it, so there is no coverage
+   * to report" — printed directly above the real gap topics `readGaps` found
+   * moments earlier. A thrown error is a failed run instead of a report that
+   * contradicts itself.
+   */
+  it("throws on a failed workspace_coverage_totals read, rather than reporting zero answers", async () => {
+    const rpc = vi.fn().mockResolvedValueOnce({ data: null, error: { message: "db timeout" } });
+    const deps = coverageDeps({ rpc } as any, "owner-1", { OPENAI_API_KEY: "sk-test" } as any);
+
+    await expect(deps.readTotals("ws-1", 7)).rejects.toThrow(/db timeout/);
   });
 });
 
@@ -398,9 +561,20 @@ describe("clusterQuestions", () => {
     ]);
     expect(result.model).toBe("gpt-4.1-mini");
     expect(result.tokens).toBe(160);
+    // Fix round 1, finding B2/B3. 120 prompt + 40 completion, weighted via
+    // `weighTokens`: 120 fresh (×1) + 40 completion (×5) = 320 — not 160,
+    // which is what the unweighted figure used to be charged as.
+    expect(result.weightedTokens).toBe(320);
   });
 
-  it("would have parsed to nothing had the prompt asked for a bare array, as the brief's did", async () => {
+  // Fix round 1, finding B6. This test's old name — "would have parsed to
+  // nothing had the prompt asked for a bare array, as the brief's did" —
+  // claimed a counterfactual about the *prompt* that nothing here checks: the
+  // prompt sent is not inspected, and no change to `CLUSTER_INSTRUCTION`
+  // could make this test fail. What it actually pins is the parser half of
+  // the old bug's failure mode — a JSON object that is not keyed `clusters`
+  // parses to nothing, silently, and the tokens are still spent.
+  it("parses to nothing, silently, when the reply is a JSON object not keyed `clusters`", async () => {
     // What `response_format: {type:"json_object"}` actually forces a model to
     // send when its instruction says "array": some object, not necessarily
     // one with a `clusters` key at all. This is the reply shape the bug would
@@ -422,6 +596,10 @@ describe("clusterQuestions", () => {
   });
 
   it("does not throw when the reply is not JSON at all", async () => {
+    // Fix round 1, finding B5: this path logs on purpose
+    // (`console.error("coverage clustering reply was not JSON", ...)`) —
+    // silence it the repo's own way, and prove it still happened.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     createMock.mockResolvedValue({
       choices: [{ message: { content: "sorry, I can't do that" } }],
       usage: { prompt_tokens: 20, completion_tokens: 8 },
@@ -431,5 +609,7 @@ describe("clusterQuestions", () => {
 
     expect(parseClusters(result.raw)).toEqual([]);
     expect(result.tokens).toBe(28);
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 });

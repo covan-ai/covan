@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { runDueRoutines, runDueConnections } = vi.hoisted(() => ({
+const { runDueRoutines, runDueConnections, pollDueBrowserTasks } = vi.hoisted(() => ({
   runDueRoutines: vi.fn(),
   runDueConnections: vi.fn(),
+  pollDueBrowserTasks: vi.fn(),
 }));
 vi.mock("./routines/dispatcher", () => ({ runDueRoutines }));
 vi.mock("./connections/dispatcher", () => ({ runDueConnections }));
+vi.mock("./browser/poller", () => ({ pollDueBrowserTasks }));
 
 import { runScheduledWork } from "./background";
 
@@ -34,6 +36,8 @@ describe("runScheduledWork", () => {
     runDueRoutines.mockReset();
     runDueConnections.mockReset();
     runDueConnections.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    pollDueBrowserTasks.mockReset();
+    pollDueBrowserTasks.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
   });
 
   // The whole point of the sequencing: a busy routine tick has already spent
@@ -41,6 +45,37 @@ describe("runScheduledWork", () => {
   // would die partway through rather than not start.
   it("leaves the connections alone on a tick that had routines to run", async () => {
     runDueRoutines.mockResolvedValue({ claimed: 2, ok: 2, failed: 0 });
+
+    await runScheduledWork(withStore);
+
+    expect(runDueConnections).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A browser task is polled before the connections and after the routines,
+   * and it obeys the same `claimed > 0` rule. The cost of that order is
+   * recorded in `background.ts` rather than hidden: a deployment whose
+   * routines fill every tick never reaches the poller.
+   */
+  it("does not poll a browser task on a tick that had routines to run", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(withStore);
+
+    expect(pollDueBrowserTasks).not.toHaveBeenCalled();
+  });
+
+  it("polls browser tasks on a tick with no routines due", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+
+    await runScheduledWork(withStore);
+
+    expect(pollDueBrowserTasks).toHaveBeenCalledWith(withStore);
+  });
+
+  it("leaves the connections alone on a tick that had a browser task to poll", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    pollDueBrowserTasks.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
 
     await runScheduledWork(withStore);
 

@@ -1614,22 +1614,70 @@ describe("the read", () => {
     expect(absurd.error, absurd.error?.message).toBeNull();
     expect(negative.error, negative.error?.message).toBeNull();
 
-    // Compared as SETS, not as sequences, and the reason is worth recording:
-    // the function's final `select ... from sub` carries no ORDER BY, so the
-    // row order it returns is whatever the plan produced and genuinely varies
-    // between two calls on identical data — this test caught it doing so. That
-    // is a cost rather than a defect, and a small one: the worker dedupes
-    // before the model call, `enforceFloor` sorts its own output, and
-    // `coverage-render.ts` renders from that — so the delivered report is
-    // byte-stable either way. What varies is the prompt's member numbering,
-    // which costs a prompt-cache hit on a weekly job whose cache has long
-    // since expired.
+    // Compared as SETS, not as sequences — deliberately, not because the
+    // order is unspecified. Round 2 added `order by sub.text` to the
+    // function's final select (0075:627), so two calls on identical data now
+    // return the rows in the same order; "returns the same rows in the same
+    // order every call, ascending by question text" below is the test that
+    // pins that guarantee. This test is about the CLAMP — whether
+    // 10,000,000 and 365 read the same rows, and whether -40 and 1 do — not
+    // about order, so it strips order out of both sides rather than leaning
+    // on a second invariant to pass. The paragraph that used to justify an
+    // unordered read is no longer why the comparison is by set, but it is
+    // still worth keeping on record: it is why the old nondeterminism, while
+    // it lasted, was a cost rather than a defect. The worker dedupes before
+    // the model call, `enforceFloor` sorts its own output, and
+    // `coverage-render.ts` renders from that — so the delivered report was
+    // byte-stable either way. What varied was only the prompt's member
+    // numbering, a prompt-cache hit missed on a weekly job.
     expect(questionsFrom(absurd.data).sort()).toEqual(questionsFrom(maximum.data).sort());
     // And the bottom of the clamp, which is the other half of `greatest`.
     expect(questionsFrom(negative.data).sort()).toEqual(questionsFrom(one.data).sort());
     // Not vacuous: a window that excludes everything would make both sides
     // equal and empty.
     expect(questionsFrom(absurd.data).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * THE GUARANTEE ROUND 2 ADDED, PINNED.
+   *
+   * `order by sub.text` (0075:627) turned the read's row order from
+   * "whatever the plan produced" into a promise: two calls on identical data
+   * return the same rows in the same order, ascending by question text.
+   * Nothing asserted that until now — the clamp test above compares both
+   * sides as SETS for exactly this reason, so the suite could not tell the
+   * ORDER BY apart from its absence. This is the test that can.
+   *
+   * Compared on TEXT ONLY, never `asker_key`. `v_salt` (declared :431, used
+   * in the salted `dense_rank` at :625) is drawn fresh per call, so the same
+   * person's asker key differs between the two calls below by design — see
+   * "does not rank the asker keys by user id" above. An ordering assertion
+   * that touched `asker_key` would be comparing two independent random draws
+   * and would prove nothing about row order.
+   *
+   * Why this is not vacuous: without the final ORDER BY, the only thing
+   * fixing the output's order would be the window function's own internal
+   * sort — `dense_rank() over (order by md5(sub.asker::text || v_salt))` —
+   * and that sort key is salted fresh per call. So deleting `order by
+   * sub.text` would not just make the order "arbitrary but repeatable"; it
+   * would make the order track a value that is redrawn every call, grouping
+   * rows by asker and reshuffling those groups each time. The five questions
+   * surviving in this window span three askers (the admin asks two, the
+   * member asks two, the second member asks one), so that reshuffling is
+   * visible rather than a coincidence of a single asker: most pairs of calls
+   * would disagree with each other, and the ones that happened to agree would
+   * still almost never land on the plain alphabetical order asserted below.
+   */
+  it("returns the same rows in the same order every call, ascending by question text", async () => {
+    const first = questionsFrom((await readGaps()).data);
+    const second = questionsFrom((await readGaps()).data);
+
+    // Not vacuous: fewer than two distinct questions would make any order
+    // trivially "sorted".
+    expect(first.length).toBeGreaterThan(1);
+
+    expect(second).toEqual(first);
+    expect(first).toEqual([...first].sort());
   });
 
   /**

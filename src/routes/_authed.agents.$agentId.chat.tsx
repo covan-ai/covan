@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { Textarea } from "@/components/ui/textarea";
 import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
 import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
@@ -39,13 +38,18 @@ import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
 import { LiveAnswer } from "@/components/chat/live-answer";
+import {
+  PromptInput,
+  PromptInputAction,
+  PromptInputActions,
+  PromptInputTextarea,
+} from "@/components/prompt-kit/prompt-input";
 import { ConnectedStarters } from "@/components/chat/connected-starters";
 import { HeaderAction } from "@/components/chat/turn-actions";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { runToolProposal } from "@/lib/connections-api";
 import { isAdminRole } from "@/lib/roles";
-import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { useStableCallback } from "@/lib/use-stable-callback";
@@ -353,9 +357,17 @@ function ChatTab() {
   }, [activeId, active?.visibility, queryClient]);
 
   const [input, setInput] = useState("");
-  // `max-h-44` on the composer below was unreachable until this: nothing grew
-  // the box, so its minimum was its only height. See `use-auto-grow.ts`.
-  const composerRef = useAutoGrow<HTMLTextAreaElement>(input);
+  /*
+   * `useAutoGrow` used to be here and is not any more.
+   *
+   * It was added because `max-h-44` on the composer was unreachable — nothing
+   * grew the box, so its minimum was its only height. `PromptInputTextarea`
+   * does the same job by the same method (collapse to `auto`, then read
+   * `scrollHeight`, in a layout effect so the collapsed state is never
+   * painted) and owns the element's ref, so running both would be two effects
+   * writing one `style.height`. The hook stays in the repository: `edit-turn`
+   * uses it, and its header is still the argument against `field-sizing`.
+   */
   // Enter means something different on a phone, where it is the newline key
   // and the send button is already under your thumb.
   const isMobile = useIsMobile();
@@ -1698,13 +1710,32 @@ function ChatTab() {
               ))}
             </div>
           )}
-          <div className="rounded-3xl border border-border bg-popover transition-colors duration-200">
+          {/*
+            `PromptInput` rather than a div and a `Textarea`, for the autosize
+            and for the actions row having one grammar instead of four
+            hand-written buttons.
+
+            NO `onSubmit` IS PASSED, deliberately. This composer owns Enter and
+            the copy's header says what that costs upstream: prompt-kit binds
+            Enter-without-shift to submit, and both of the behaviours below work
+            by letting the key through untouched — the IME needs its Enter to
+            accept a candidate, the phone needs its newline — so neither calls
+            `preventDefault()` and upstream would have submitted on their
+            behalf. With no `onSubmit` there is nothing to run ahead of us.
+
+            It mounts its own `TooltipProvider`. There is no other one in
+            `src/`, so nothing nests.
+          */}
+          <PromptInput
+            value={input}
+            onValueChange={setInput}
+            // What `max-h-44` meant: eleven rem, then scroll.
+            maxHeight={176}
+            className="border-border p-0 transition-colors duration-200"
+          >
             <ChatReceipts uploads={uploads} />
             <ChatReportReceipt reports={reports} />
-            <Textarea
-              ref={composerRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+            <PromptInputTextarea
               onPaste={(e) => {
                 // A file on the clipboard is an upload; text on the clipboard is
                 // just typing, and must fall through untouched.
@@ -1761,10 +1792,9 @@ function ChatTab() {
                 }
               }}
               placeholder={`Message ${agent.name}`}
-              rows={1}
-              className="max-h-44 min-h-[48px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pt-3.5 text-base shadow-none focus-visible:ring-0"
+              className="min-h-[48px] overflow-y-auto px-4 pt-3.5 text-base"
             />
-            <div className="flex items-center justify-between px-3 pb-2.5">
+            <PromptInputActions className="justify-between px-3 pb-2.5">
               <div className="flex items-center gap-1">
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
                 <ChatReport reports={reports} canWrite={canWrite} />
@@ -1776,26 +1806,37 @@ function ChatTab() {
                   over a composer with nothing to stop — and pressing it cut
                   off the answer in the tab you had just left. */}
               {replyingIn === active?.id ? (
-                <button
-                  onClick={stop}
-                  aria-label="Stop generating"
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
-                >
-                  <Square className="h-3.5 w-3.5 fill-current" />
-                </button>
+                <PromptInputAction tooltip="Stop generating">
+                  <button
+                    onClick={stop}
+                    aria-label="Stop generating"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
+                  >
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </button>
+                </PromptInputAction>
               ) : (
-                <button
-                  onClick={send}
-                  disabled={!input.trim() || busy}
-                  aria-label="Send message"
-                  title={busy ? "Waiting for the current reply to finish" : undefined}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                /* A real tooltip rather than `title`, which never appears on a
+                   touch screen — and this is the one control on the row whose
+                   `title` was carrying something a reader needs ("waiting for
+                   the current reply to finish", on a button that looks broken
+                   until you know that). The three to the left of it are their
+                   own components and keep their own `aria-label`s. */
+                <PromptInputAction
+                  tooltip={busy ? "Waiting for the current reply to finish" : "Send message"}
                 >
-                  <ArrowUp className="h-4 w-4" />
-                </button>
+                  <button
+                    onClick={send}
+                    disabled={!input.trim() || busy}
+                    aria-label="Send message"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </button>
+                </PromptInputAction>
               )}
-            </div>
-          </div>
+            </PromptInputActions>
+          </PromptInput>
           {/* What the header used to say twice over, said once, here, where
               it is read before you type rather than every time you look up. */}
           <p className="mt-2 flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted-foreground">

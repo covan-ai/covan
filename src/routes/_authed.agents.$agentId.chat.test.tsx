@@ -465,6 +465,20 @@ describe("what Enter means", () => {
   });
 });
 
+describe("the composer's actions", () => {
+  it("says what the send button is waiting for, where a touch screen can see it", async () => {
+    // It said it in a `title`, which never appears on a touch screen at all —
+    // on a phone the button simply looked broken while a reply ran. There was
+    // no tooltip on this row before the composer was rebuilt.
+    await renderChat();
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "and per seat?");
+
+    await userEvent.hover(screen.getByLabelText("Send message"));
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message");
+  });
+});
+
 describe("the keys beside Enter", () => {
   const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
 

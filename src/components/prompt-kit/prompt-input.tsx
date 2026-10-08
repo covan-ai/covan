@@ -37,6 +37,14 @@ import React, { createContext, useContext, useLayoutEffect, useRef, useState } f
  *    (!e.defaultPrevented)`. A caller that wants Enter for itself calls
  *    `preventDefault()` and is obeyed.
  *
+ *    AND the submit is conditional on there being an `onSubmit` at all, which
+ *    is the other half of the same fix. Inverting the order is not enough on
+ *    its own: both behaviours above work by letting the key through
+ *    UNTOUCHED — the IME needs its Enter, the phone needs its newline — so
+ *    neither calls `preventDefault()`, and upstream would have called it for
+ *    them a line later. A composer that owns Enter outright passes no
+ *    `onSubmit` and keeps every key it did not ask about.
+ *
  * `rounded-3xl` is KEPT. It resolves to `--radius-3xl: 20px` here — the
  * floating-panel step of this system's radius ladder — not Tailwind's 24px.
  *
@@ -191,10 +199,10 @@ function PromptInputTextarea({
    */
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     onKeyDown?.(e);
-    if (e.defaultPrevented) return;
+    if (e.defaultPrevented || !onSubmit) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      onSubmit?.();
+      onSubmit();
     }
   };
 

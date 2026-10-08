@@ -358,6 +358,21 @@ function withCitations(answer: string, sources: Array<{ name: string }>): string
   return `${answer}\n\n_From: ${sources.map((s) => s.name).join(", ")}_`;
 }
 
+/** Whether this account is, right now, a member of the installed workspace. */
+async function stillAMember(
+  installation: InstallationRow,
+  userId: string,
+  deps: HandleDeps,
+): Promise<boolean> {
+  const { data: membership } = await deps.db
+    .from("workspace_members")
+    .select("user_id")
+    .eq("workspace_id", installation.workspace_id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return Boolean(membership);
+}
+
 /**
  * Which Covan account this Slack user is, or null.
  *
@@ -365,6 +380,15 @@ function withCitations(answer: string, sources: Array<{ name: string }>): string
  * every message. The match is by email, and it is deliberately strict: an
  * address Slack reports that belongs to no member of *this* workspace resolves
  * to nobody, rather than to whoever happens to have it elsewhere.
+ *
+ * What is cached is *who*, never *whether they may ask*. The mapping is
+ * permanent and membership is revocable, so the workspace check runs on every
+ * message — after the cache read as well as before the write. Without it a
+ * remembered asker kept being answered with this workspace's knowledge after
+ * being removed from it, which is finding 3 of the 2026-10-08 audit. This path
+ * holds the service role (`routes/slack.ts:327`), so RLS is not the backstop
+ * here; `lib/routines/executor.ts:390` and `lib/connections/sync.ts:281`
+ * re-read membership before every run for the same reason.
  */
 async function resolveIdentity(
   installation: InstallationRow,
@@ -378,7 +402,16 @@ async function resolveIdentity(
     .eq("installation_id", installation.id)
     .eq("slack_user_id", slackUserId)
     .maybeSingle();
-  if (known?.user_id) return known.user_id as string;
+  if (known?.user_id) {
+    const remembered = known.user_id as string;
+    if (await stillAMember(installation, remembered, deps)) return remembered;
+    // The row is left where it is, deliberately. Returning null is the whole
+    // of the refusal, and deleting the mapping would mean that re-adding
+    // somebody resolves them again by the email path — a second lookup, a
+    // second chance for an address to have moved on, and a different answer
+    // than the one they had before they left.
+    return null;
+  }
 
   const email = await lookupEmail(deps.fetchImpl, botToken, slackUserId);
   if (!email) return null;
@@ -393,13 +426,7 @@ async function resolveIdentity(
   // Being in Covan is not enough — they have to be in *this* workspace, or a
   // stranger with a matching address would be answered with this team's
   // knowledge.
-  const { data: membership } = await deps.db
-    .from("workspace_members")
-    .select("user_id")
-    .eq("workspace_id", installation.workspace_id)
-    .eq("user_id", profile.id)
-    .maybeSingle();
-  if (!membership) return null;
+  if (!(await stillAMember(installation, profile.id as string, deps))) return null;
 
   await deps.db.from("slack_identities").insert({
     installation_id: installation.id,

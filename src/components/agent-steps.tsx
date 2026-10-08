@@ -291,9 +291,23 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function ProposalRows({ proposal, nested }: { proposal: unknown; nested?: boolean }): ReactNode {
   if (!isPlainObject(proposal)) return null;
   const rows = Object.entries(proposal).filter(
-    // `kind` is how the worker tags the proposal for itself. The card already
-    // names the tool above, so printing it again is a row that says nothing.
-    ([key, value]) => key !== "kind" && value !== null && value !== undefined && value !== "",
+    // `kind` and `operation` are what the worker keeps in here for itself:
+    // `kind` tags the proposal, and the card already names the tool above; and
+    // `operation` is the catalogue row `run_tool` carries across the pause so
+    // the call somebody approved can still be checked against its own schema
+    // (see its proposal in the worker). A JSON Schema printed as a row would
+    // be most of this card, on the one surface where every line has to earn
+    // its place, and neither is something anybody is being asked about.
+    //
+    // Only at the top level, which is where the worker writes them. Below it
+    // the keys belong to the far end — `arguments.operation` is an ordinary
+    // parameter name — and hiding one of those would hide what is about to be
+    // done on the one screen that exists to show it.
+    ([key, value]) =>
+      (nested || (key !== "kind" && key !== "operation")) &&
+      value !== null &&
+      value !== undefined &&
+      value !== "",
   );
   if (rows.length === 0) return null;
   return (

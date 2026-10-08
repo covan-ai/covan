@@ -412,6 +412,9 @@ export const CONNECT_ERRORS: Record<string, string> = {
   not_a_member: "You are no longer a member of that workspace.",
   read_only: "Your role in this workspace is read-only, so you cannot connect a source.",
   admin_only: "Only a workspace admin can install the Slack app.",
+  team_taken:
+    "That Slack workspace is already connected to a different Covan workspace. " +
+    "An admin there has to remove the installation before it can be connected here.",
   bundle_gone: "The bundle you were connecting to no longer exists.",
   grant_failed: "The provider refused the grant. Try connecting again.",
   exchange_failed: "We could not complete the exchange with the provider. Try again.",

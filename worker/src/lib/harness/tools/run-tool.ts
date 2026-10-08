@@ -457,13 +457,40 @@ export const runToolTool: AgentTool = {
     }
 
     // Guard 3. Three ways to be allowed, in the order that costs least.
+    //
     // How far the connection's own approval reaches. Everywhere, except onto a
     // destructive operation nobody has approved yet — see `approvedSlugs`. A
     // standing grant still wins, because that is per-slug consent given
     // deliberately on the Integrations page.
+    //
+    // AND ONLY ONTO AN OPERATION THIS TURN ACTUALLY DESCRIBED. `destructive`
+    // comes from `offeredOperations`, which only `find_tool` fills and which
+    // `buildToolContext` builds empty — so it is empty on every resumed turn,
+    // every scheduled run (`lib/routines/agent-run.ts`), and every turn that
+    // reaches for a slug out of its own transcript rather than searching again
+    // (`find-tool.ts`'s cross-turn recall answers with slugs and returns before
+    // anything describes them). On all of those `operation` is undefined, and
+    // `destructive !== true` then said
+    // "harmless" about GOOGLECALENDAR_CLEAR_CALENDAR and GMAIL_SEND_EMAIL
+    // alike: the narrowing that #201 added was unreachable in exactly the turn
+    // shapes where nobody had read a card.
+    //
+    // An empty map is not a bug in itself — it honestly means "nothing
+    // described this slug to me" — so the fix is to stop reading it as
+    // "nothing dangerous here". Unknown now falls back to the per-slug record
+    // of what was actually approved, which is what `approvedSlugs` already is.
+    // Described keeps `!== true`, so `destructive: null` — a real answer for an
+    // operation Composio annotates with none of MCP's hints — is tolerated
+    // exactly as before and the card count on the working path is unchanged.
+    // And `approvedSlugs` still covers the slug on its own either way, which is
+    // #201's other half: repeating the destructive call somebody just approved
+    // must stay free, and that has nothing to do with whether this turn also
+    // happens to hold its catalogue row.
+    const described = ctx.offeredOperations?.has(slug) === true;
+    const approvedSlug = (ctx.approvedSlugs ?? []).includes(slug);
     const coveredByConnection =
       (ctx.approvedConnections ?? []).includes(connection.id) &&
-      (operation?.destructive !== true || (ctx.approvedSlugs ?? []).includes(slug));
+      (approvedSlug || (described && operation?.destructive !== true));
 
     const approved =
       ctx.confirmed === true || coveredByConnection || (await alwaysAllowed(ctx, connection, slug));
@@ -499,6 +526,19 @@ export const runToolTool: AgentTool = {
           // sentences two and three reach the person too.
           does: operation?.description?.trim() || undefined,
           arguments: callArgs,
+          // And the catalogue row itself, for the second half of this turn
+          // rather than for the person — `agent-steps.tsx` skips this key the
+          // way it skips `kind`.
+          //
+          // `paused_turns.proposal` is written verbatim and is the only thing
+          // that crosses the pause, so without this everything the first half
+          // learned about the operation is gone by the time somebody's yes is
+          // acted on: `routes/chat.ts` builds the resumed context with an empty
+          // `offeredOperations`, which left the one call a person had
+          // explicitly approved running with its schema unchecked (guard 1) and
+          // its toolkit matched by spelling alone (guard 2). Neither field is a
+          // secret and the column is already in 0060's `authenticated` grant.
+          operation,
         },
       };
     }

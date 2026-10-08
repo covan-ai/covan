@@ -12,6 +12,7 @@ import { writeSteps } from "../lib/harness/turn";
 import { priorOfferings, priorSearches } from "../lib/harness/offerings";
 import type { MessageOutcome, TurnUsage } from "../lib/harness/usage";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
+import type { ComposioTool } from "../lib/composio/client";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
 
 /**
@@ -49,6 +50,29 @@ export const CUT_SHORT =
   "This turn stopped before it could answer. What it had already done is below.";
 
 /**
+ * The catalogue row carried in an approved `run_tool` proposal, as the map
+ * `ToolContext.offeredOperations` is.
+ *
+ * Read defensively because the column is `jsonb` and because the shape is only
+ * ever as good as the turn that wrote it: a row with no slug has no key, and
+ * one with no toolkit cannot answer the check it exists for. Either way the
+ * answer is an empty map rather than a half-filled entry — an operation
+ * assembled out of guesses would have the approved call checked against
+ * fiction, which is worse than checking it against nothing.
+ */
+function approvedOperation(proposal: unknown): Map<string, ComposioTool> {
+  const empty = new Map<string, ComposioTool>();
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return empty;
+  const row = proposal as Record<string, unknown>;
+  if (row.kind !== "run_tool") return empty;
+  const operation = row.operation;
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) return empty;
+  const candidate = operation as Record<string, unknown>;
+  if (typeof candidate.slug !== "string" || typeof candidate.toolkit !== "string") return empty;
+  return new Map([[candidate.slug, candidate as unknown as ComposioTool]]);
+}
+
+/**
  * What a tool is told about who is asking, built once so neither route can
  * leave a field out.
  *
@@ -79,6 +103,16 @@ export async function buildToolContext(input: {
    * standing permission.
    */
   confirmed?: boolean;
+  /**
+   * The proposal of the call a person has just approved, as `paused_turns`
+   * stored it.
+   *
+   * Only the resume path passes one, and it is read for one thing: the
+   * catalogue row `run_tool` carried across the pause. See
+   * `offeredOperations` below for why the turn would otherwise know nothing
+   * about the operation it is about to run.
+   */
+  approvedProposal?: unknown;
 }): Promise<ToolContext> {
   // Two independent reads of the same table, both on the critical path of every
   // turn, so they overlap rather than queue. Neither can fail the turn: each
@@ -121,7 +155,16 @@ export async function buildToolContext(input: {
     // And the operations behind those slugs, so `run_tool` can refuse a call
     // whose arguments contradict one, and so the approval card can say what the
     // operation does. Same lifetime and same provenance as the set above.
-    offeredOperations: new Map(),
+    //
+    // Empty except on the resume path, where it holds exactly one: the
+    // operation the half that asked had in hand. Nothing else can put it back
+    // — only `find_tool` fills this map, and the second half of a turn has no
+    // reason to search again — so without the seed the one call in the product
+    // somebody explicitly approved was the least checked one in it: arguments
+    // never compared against the schema, and the toolkit matched by the slug's
+    // spelling rather than by the catalogue's own answer. It is also what the
+    // narrowed gate in `run_tool` reads to tell "described" from "unknown".
+    offeredOperations: approvedOperation(input.approvedProposal),
     // And the questions those slugs were the answers to, so a search this
     // conversation has already paid for is recognised rather than bought again.
     // The set above is what `run_tool` may run; this is which search offered

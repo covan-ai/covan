@@ -206,8 +206,14 @@ function FileTab({
   // derived from the blob and nothing else, so storing it in state would be a
   // second copy of a fact React already has — and a render that sets state is a
   // render that happens twice.
+  //
+  // `slice` is what re-types it, and it is not belt-and-braces: a `blob:`
+  // document runs in the creating page's origin, and this app's only CSP is
+  // `frame-ancestors 'none'` — measured, that does not restrict script in an
+  // inherited `blob:` context. So the only type this iframe may ever commit is
+  // the one this branch exists for, whatever type the response carried.
   const objectUrl = useMemo(
-    () => (blob && isPdf ? URL.createObjectURL(blob) : null),
+    () => (blob && isPdf ? URL.createObjectURL(blob.slice(0, blob.size, "application/pdf")) : null),
     [blob, isPdf],
   );
   useEffect(() => {

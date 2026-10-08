@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { chunkText, embedTexts } from "../lib/embeddings";
-import { EXCERPT_LIMIT, extractDocumentText } from "../lib/extract";
+import { contentTypeFor, EXCERPT_LIMIT, extractDocumentText } from "../lib/extract";
 import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
@@ -202,11 +202,22 @@ documents.get("/documents/:id/download", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  const contentType = obj.contentType || "application/octet-stream";
+  // Derived from the row's own name, not from `obj.contentType`. Upload used to
+  // store the type the uploader claimed and this line handed it back, so a
+  // `.pdf` uploaded as `text/html` came back as `text/html` — and the preview
+  // dialog turns those bytes into a `blob:` document, which runs on the app's
+  // own origin where the session token is readable. Reading the name instead
+  // means every object already in the store is served safely too, with no
+  // backfill: the name is the part of the row the server decided.
+  const contentType = contentTypeFor(row.name);
   const encodedName = encodeURIComponent(row.name);
   return new Response(obj.body, {
     headers: {
       "Content-Type": contentType,
+      // The header is the last word on the type: without this a browser is
+      // free to sniff the bytes and reach its own conclusion, which is the
+      // same hole one layer down.
+      "X-Content-Type-Options": "nosniff",
       "Content-Disposition": `attachment; filename*=UTF-8''${encodedName}`,
     },
   });

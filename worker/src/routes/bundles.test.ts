@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -191,6 +191,95 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
     for (const row of inserted.rows ?? []) {
       expect((row as { context?: string }).context).toBe("notes.md");
     }
+  });
+});
+
+describe("POST /bundles/:id/documents/upload — the type the store records", () => {
+  /**
+   * What the fs store wrote beside the object. The content type is the whole
+   * subject here and the filesystem cannot carry it, so the sidecar is where
+   * the answer is — and reading it back is reading what R2's
+   * `httpMetadata.contentType` would have been.
+   */
+  async function storedContentType(root: string, bundleId = "bundle-1"): Promise<string> {
+    const dir = join(root, bundleId);
+    const meta = (await readdir(dir)).find((f) => f.endsWith(".meta.json"));
+    if (!meta) throw new Error(`nothing was stored under ${dir}`);
+    return JSON.parse(await readFile(join(dir, meta), "utf8")).contentType;
+  }
+
+  /** Enough of the caller's client for an upload to run all the way through. */
+  function storingDb() {
+    return {
+      from(table: string) {
+        if (table === "knowledge_bundles") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { id: "bundle-1", workspace_id: "ws-1" },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "documents") {
+          return {
+            insert: () => ({
+              select: () => ({
+                single: async () => ({
+                  data: { id: "doc-1", name: "evil.pdf", size: 13 },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "document_chunks") return { insert: async () => ({ error: null }) };
+        throw new Error(`storingDb: unexpected table "${table}"`);
+      },
+    };
+  }
+
+  it("records the extension's type, not the one the uploader claimed", async () => {
+    // The uploader's own `file.type` used to be stored verbatim and handed
+    // straight back on download. The extension is the only thing upload ever
+    // validated, so a `.pdf` could arrive typed `text/html` — and the preview
+    // dialog turns a `text/html` blob into a document on this app's origin,
+    // where the session token is readable. The extension is now what the type
+    // is derived from.
+    const root = await mkdtemp(join(tmpdir(), "covan-upload-mime-"));
+    roots.push(root);
+    // A db that lets the insert succeed: a failed insert rolls the store write
+    // back, and then there would be no sidecar left to read.
+    const app = appWithDb(storingDb());
+
+    const form = new FormData();
+    form.append("file", new File(["%PDF-1.7 ..."], "evil.pdf", { type: "text/html" }));
+    // The byte-level gate cannot see a PDF (`extractDocumentText` returns ""
+    // for one), so this field is what gets the upload past `hasIndexableText`
+    // without the real bytes ever being read. That is the attack's own step.
+    form.append("text", "quarterly report notes");
+
+    const res = await app.request(
+      "/bundles/bundle-1/documents/upload",
+      { method: "POST", body: form },
+      { DOCS_DIR: root, OPENAI_API_KEY: "test-key" } as never,
+    );
+
+    expect(res.status).toBe(201);
+    expect(await storedContentType(root)).toBe("application/pdf");
+  });
+
+  it("falls back to octet-stream rather than guessing, for a name it cannot read", async () => {
+    // Not reachable through upload — the extension allowlist refuses it — but
+    // the map is shared with the download path, which serves rows four other
+    // writers created. A name with no extension must not inherit a type.
+    const { contentTypeFor } = await import("../lib/extract");
+    expect(contentTypeFor("notes")).toBe("application/octet-stream");
+    expect(contentTypeFor("archive.zip")).toBe("application/octet-stream");
+    expect(contentTypeFor("README.MD")).toBe("text/markdown");
   });
 });
 

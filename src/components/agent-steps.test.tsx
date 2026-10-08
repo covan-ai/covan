@@ -254,6 +254,76 @@ describe("the confirmation card", () => {
   });
 
   /**
+   * The proposal is two things at once: what the person is asked, and what the
+   * resumed turn reads back.
+   *
+   * `run_tool` carries the operation's catalogue row across the pause so the
+   * call somebody approved can still be checked against its schema — see the
+   * proposal in `worker/src/lib/harness/tools/run-tool.ts`. A JSON Schema
+   * printed as a row would be most of this card, on the one surface where
+   * every line has to be worth reading, and it answers nothing anybody is
+   * being asked.
+   */
+  it("does not print the fields the worker carries for itself", () => {
+    render(
+      <ConfirmCard
+        pending={{
+          id: "p4",
+          tool: "run_tool",
+          summary: "Run GMAIL_SEND_EMAIL on Ana's Gmail?",
+          proposal: {
+            kind: "run_tool",
+            slug: "GMAIL_SEND_EMAIL",
+            operation: {
+              slug: "GMAIL_SEND_EMAIL",
+              destructive: false,
+              inputSchema: {
+                type: "object",
+                properties: { recipient_email: { type: "string" } },
+              },
+            },
+          },
+        }}
+        busy={false}
+        onAnswer={() => {}}
+      />,
+    );
+
+    // Once, as the slug row. The carried row holds the slug again, so a card
+    // that opened it up would print the operation twice as well as its schema.
+    expect(screen.getAllByText("GMAIL_SEND_EMAIL")).toHaveLength(1);
+    expect(screen.queryByText("operation")).not.toBeInTheDocument();
+    expect(screen.queryByText("input schema")).not.toBeInTheDocument();
+    expect(screen.queryByText("destructive")).not.toBeInTheDocument();
+  });
+
+  it("still prints an argument the application itself calls operation", () => {
+    // The skip above is about the one key the worker owns, at the top level
+    // where it writes it. `arguments` is whatever the far end calls things, and
+    // a Composio operation with a parameter named `operation` is ordinary — a
+    // card that hid it would be hiding what is about to be done, which is the
+    // one thing this screen exists to show.
+    render(
+      <ConfirmCard
+        pending={{
+          id: "p5",
+          tool: "run_tool",
+          summary: "Run SHEETS_BATCH_UPDATE on Orders?",
+          proposal: {
+            kind: "run_tool",
+            slug: "SHEETS_BATCH_UPDATE",
+            arguments: { operation: "deleteSheet", sheet_id: "7" },
+          },
+        }}
+        busy={false}
+        onAnswer={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("deleteSheet")).toBeInTheDocument();
+  });
+
+  /**
    * The third action, and where it sits.
    *
    * It is a prop rather than something the card works out, because working it

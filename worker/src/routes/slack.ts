@@ -226,6 +226,29 @@ slackPublic.get("/slack/callback", async (c) => {
     return fail("exchange_failed");
   }
 
+  // Whose Slack workspace this is, which is not the same question as who the
+  // installer is. `team_id` is globally unique (0044) and the upsert below
+  // conflicts on it, so without this read an admin of ANY Covan workspace could
+  // run the install against a Slack team another tenant already held and
+  // re-point that row — bot token, agent and all — at their own workspace. The
+  // state names the installer's workspace and that is the only thing the two
+  // checks above compare it against; neither of them can see this.
+  //
+  // Read with the service role on purpose: the holder is usually a workspace
+  // the caller cannot see, and a check that could only see rows the caller is
+  // allowed to read would answer "nobody holds it" for exactly the case this
+  // is about.
+  const { data: holder } = await admin
+    .from("slack_installations")
+    .select("workspace_id")
+    .eq("team_id", install.teamId)
+    .maybeSingle();
+  // Re-installing from the workspace that already holds the team is the
+  // ordinary case and goes on to the upsert. Another workspace is refused, and
+  // refused without naming which one: the holder is a tenant the caller has no
+  // business learning about.
+  if (holder && holder.workspace_id !== state.workspaceId) return fail("team_taken");
+
   // Which agent answers, before anybody has been asked. The oldest one is the
   // workspace's first and usually its main; the alternative is an app that is
   // installed and refuses every question until somebody visits a settings page
@@ -252,7 +275,9 @@ slackPublic.get("/slack/callback", async (c) => {
     // Re-installing is the ordinary way to fix a revoked token or add a scope,
     // and Slack issues a new bot token each time. Conflicting on the team keeps
     // one row per Slack workspace and refreshes the credential in place, so the
-    // threads already linked to this installation keep working.
+    // threads already linked to this installation keep working. What makes that
+    // safe is the holder check above: without it, conflicting on `team_id`
+    // means any caller who reaches here can refresh a row that is not theirs.
     { onConflict: "team_id" },
   );
   if (error) {

@@ -353,12 +353,16 @@ export const api = {
     /**
      * The file itself, for rendering it in place.
      *
-     * The same endpoint `download` uses. Its `Content-Disposition: attachment`
-     * does not get in the way, because fetching the response as a blob and
-     * making an object URL of it is the caller's own decision about what to do
-     * with the bytes — the header only ever addressed a browser navigating
-     * straight to the URL, which is not something this client can do anyway:
-     * the route needs a bearer token.
+     * The same endpoint `download` uses, and fetching it as a blob is what
+     * discards its `Content-Disposition: attachment` — the header only ever
+     * addressed a browser navigating straight to the URL, which this client
+     * cannot do anyway (the route needs a bearer token). So the type is the
+     * only protection the bytes arrive with, and it is no longer the type
+     * whoever uploaded them chose: the server derives it from the document's
+     * own name (`worker/src/lib/extract.ts`, `contentTypeFor`) and says
+     * `nosniff`. Callers that make an object URL of the blob must still pin
+     * the type themselves — a `blob:` document runs in this origin — which is
+     * why `document-preview-dialog.tsx` re-slices before it frames one.
      */
     bytes: fetchDocumentBytes,
     download: async (id: string, name: string): Promise<void> => {

@@ -105,6 +105,13 @@ export function hasPayload(part: ToolPart): boolean {
 function returnedLabel(status: ToolPart["status"]): string {
   if (status === "failed") return "What went wrong";
   if (status === "refused") return "Why it was not allowed";
+  // A `pending` step has not returned anything: the harness stores the
+  // PROPOSAL's summary in `result_excerpt` for one, so the text here is the
+  // question somebody is being asked. "Returned" over it is the screen saying
+  // something untrue about what happened, on the one surface where the thing
+  // being approved is an email about to be sent. A confirmation nobody ever
+  // answers stays `pending` in the stored transcript, so this is reachable.
+  if (status === "pending") return "What it is asking";
   return "Returned";
 }
 
@@ -146,7 +153,7 @@ function Tool({ part, trigger, defaultOpen = false, className }: ToolProps) {
           )}
         />
       </CollapsibleTrigger>
-      <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+      <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none">
         <div className="mt-1.5 mb-2 flex min-w-0 flex-col gap-2.5 border-l border-hairline pl-3">
           {sent && <Block title="Sent" body={sent} />}
           {/* No empty Returned block. A step recorded before 0060 and a step

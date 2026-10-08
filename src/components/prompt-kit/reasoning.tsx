@@ -36,6 +36,17 @@ import { cn } from "@/lib/utils";
  *    survive: open while reasoning arrives, closed once it stops, and a reader
  *    who folded it by hand is not overruled.
  *
+ * 5. `inert` WHILE SHUT, and `motion-reduce:transition-none`. Both are about
+ *    the fold being a `grid` rather than the `<details>` it replaced: a
+ *    browser makes a closed `<details>`'s content unfocusable and still, and
+ *    a zero-height grid row keeps its children mounted, focusable and
+ *    animated. Without `inert`, a keyboard reader tabs onto an invisible link
+ *    inside the reasoning — `markdown.tsx` renders one as a real `<a href>` —
+ *    announced by nothing, its focus ring clipped by `overflow-hidden`. And
+ *    this fold opens and closes BY ITSELF, which is the kind of motion
+ *    `prefers-reduced-motion` is most for; `styles.css` enumerates every other
+ *    animation in the app for it.
+ *
  * 4. THE HEIGHT IS ANIMATED IN CSS. Upstream measures the content with a
  *    `ResizeObserver`, writes `style.maxHeight` imperatively, and reads
  *    `contentRef.current?.scrollHeight` during render for the initial value —
@@ -155,15 +166,19 @@ function ReasoningContent({
   return (
     // EDIT 4. Two grid rows and a transition between `0fr` and `1fr`: the
     // fold measures itself, so there is nothing to observe and nothing to
-    // write back. `aria-hidden` while shut, because a collapsed row is still
-    // in the accessibility tree and reasoning nobody opened should not be
-    // read out in the middle of the answer.
+    // write back.
+    //
+    // EDIT 5. `inert` and `aria-hidden` while shut — the children stay mounted
+    // at zero height, so without `inert` a link in the reasoning is still a
+    // tab stop. `inert` is what takes it out of the tab order; `aria-hidden`
+    // says the same thing to a reader that is not tabbing.
     <div
       className={cn(
-        "grid transition-[grid-template-rows] duration-150 ease-out",
+        "grid transition-[grid-template-rows] duration-150 ease-out motion-reduce:transition-none",
         isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         className,
       )}
+      inert={!isOpen}
       aria-hidden={!isOpen}
       {...props}
     >

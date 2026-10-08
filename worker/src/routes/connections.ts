@@ -665,6 +665,10 @@ async function loadForCaller(
  * (`lib/connections/google-drive.ts:189-197`) and is not bounded by the folder
  * the connection was configured for.
  *
+ * That "every handler" is a claim, so `connection-permission.static.test.ts`
+ * holds it: a handler here that reaches the grant without naming this function
+ * fails that test.
+ *
  * `writes` is for `PATCH`, where the granted columns are both the change the
  * caller asked for and the probe. Everywhere else the write is `status` back to
  * the value it already holds.

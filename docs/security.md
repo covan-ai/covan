@@ -175,6 +175,18 @@ in Covan hands the connection back to Composio and deletes the row; it does not
 and cannot invalidate a key the provider issued. Rotate it at the provider if
 that is what you need.
 
+**A browser is a second subprocessor, and what goes to it is different in
+kind.** Set `BROWSER_USE_API_KEY` and an agent can hand a web task to
+browser-use: what leaves here is the task sentence a person wrote and approved,
+and what that provider sees is whatever the page it opens shows it. No
+credential goes with it — the provider accepts a field for one and this build
+never fills it in, so a browser task cannot sign in to anything, which is the
+boundary stated as code rather than as a promise. The key is the deployment's,
+not a member's: nobody is asked to pay a third party to use the feature, and a
+task is metered against the allowance they already have. Unset the variable and
+the tool does not exist. The public list for covan.app is on the
+[subprocessor page](https://covan.app/subprocessors).
+
 Every human action in this is still an ordinary policy, because every one of
 them is a person changing a row: members see grants, anyone who can write may
 create one or take one away, and only an admin may promote a **destructive**

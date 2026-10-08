@@ -694,12 +694,67 @@ Composio before the row goes, so does closing the account.
   A self-hosted deployment with no allowance configured is unmetered, as it is
   for everything else.
 
+### A real browser
+
+The three roads above all end at an API. A great deal of what a team actually
+works on has none: a pricing page rendered by JavaScript, a supplier portal
+with one login and no integration, a table that exists only as HTML.
+`http_request` reaches an API; it cannot open a page.
+
+Set `BROWSER_USE_API_KEY` and an agent gets one more tool, `browse`. You give
+it one instruction in plain language — _"read the pricing tiers off
+example.com and list them"_ — and a real browser somewhere else carries it
+out. The browser and the agent loop driving it are
+[browser-use](https://browser-use.com); what Covan does is hand the sentence
+over, wait outside the conversation, and bring the answer back.
+
+**The answer does not arrive in the same reply, and the agent will tell you
+so.** A browser task takes minutes, and a chat turn that waited minutes would
+spend its whole step budget watching a page load. So the turn ends as soon as
+the work is handed over — "I've started that, I'll come back to you" — and the
+answer appears later as a new message in the same conversation. The poller runs
+every five minutes, so "a few minutes" is the honest figure and a result can sit
+finished for up to five of them before anybody is told. If you have a delivery
+channel set up, you also get a nudge through it.
+
+**It costs about a seventh of a month's allowance per task**, and the person
+asking pays nothing extra to anybody. There is no per-member key and no second
+bill: the deployment holds one key, and a task is metered at 137,000 tokens
+against the same allowance a chat turn spends — so roughly seven browser tasks
+in a 1M month, fewer mixed with ordinary chat. That number is provisional and
+derived from browser-use's own published figure of 17c per solved task; what
+each task really cost is recorded, so it can be corrected from invoices rather
+than from a blog post.
+
+**Public pages only, and that is enforced rather than promised.** browser-use
+accepts a field for credentials. This build never fills it in, so a browser
+task cannot sign in to anything — if a page asks it to log in, it comes back
+and says so. Giving an agent a password is the most valuable half of this
+feature and the most dangerous, and it is deferred deliberately: it needs its
+own design, not a paragraph here.
+
+**You are shown the sentence, word for word, before anything runs.** Every
+browser task goes through the same approval card `send_email` and a connected
+app use, and the card prints the instruction untruncated. That is not a style
+choice. With an API call there is an origin to inspect, a method to check and a
+path to read; with a browser there is none of that — the sentence is the entire
+description of what is about to happen, so it is shown whole or the card is
+lying about what it is approving. The estimated cost and your remaining tasks
+are on the card too.
+
 ### What an agent cannot do with a service
 
 - **It cannot reach anywhere you did not name.** Origin-locked, redirects
   refused, and the same SSRF guard every outbound request in Covan goes
   through — loopback, RFC1918, link-local and cloud metadata addresses are
   refused at call time, not only when you set the connection up.
+  **`browse` is the exception, and it is a real one:** a browser task points at
+  the open web by design, so there is no origin to lock and this guard does not
+  apply to it. What stands in its place is narrower in a different direction —
+  one human sentence per task, shown to you whole and approved by you before
+  anything runs, no credentials of any kind, and nothing the browser reads is
+  ever executed. If that trade is not one you want, leave
+  `BROWSER_USE_API_KEY` unset and the tool does not exist.
 - **It cannot choose a method you did not allow**, and it is told not to try
   another one.
 - **It cannot send mail to an address** — through `send_email`, which takes one
@@ -722,6 +777,15 @@ worth saying what bounds it now: an origin you chose, methods you allowed,
 read-only by default, delivery only to your own channels, and a person's yes in
 front of anything that changes the world. On a scheduled run there is nobody to
 ask, so anything needing approval is recorded and does not happen.
+
+A browser widens that radius more than anything else here, because a web page
+can contain text addressed to the agent reading it, and this is not a solved
+problem anywhere in the industry. It is worth saying plainly rather than
+reassuringly. What bounds it is structural and not clever: a task is scoped by
+one sentence a person wrote and approved, the browser holds no credential of
+any kind and cannot sign in, whatever comes back is treated as data and never
+executed, and `browse` is not offered to a scheduled run at all — there is
+nobody there to approve one and nowhere for the answer to arrive.
 
 ## Where the credentials live
 

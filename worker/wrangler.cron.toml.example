@@ -30,6 +30,18 @@
 #                           agent that works when you ask it and not overnight.
 #                           That is the one difference nobody can debug, and it
 #                           is why the two lists have to match.
+#   BROWSER_USE_API_KEY  <- REQUIRED here if the API Worker has it, and this is
+#                           the one entry on this list where THIS Worker does
+#                           the work. A chat turn only hands a browser task
+#                           over; what polls it, decides it has finished, and
+#                           writes the answer back into the conversation is the
+#                           tick in this Worker. Set there and not here and
+#                           every task starts, charges somebody's allowance,
+#                           and is never heard from again — the only sign is one
+#                           warning line per idle tick in `wrangler tail`, which
+#                           is deliberately there because nothing in the
+#                           database would explain it.
+#   BROWSER_USE_BASE_URL <- the same rule, if you set one.
 #
 # Not set here, deliberately: SUPABASE_ANON_KEY. This Worker only ever uses the
 # service role, so a user-scoped key would be a credential with no caller.

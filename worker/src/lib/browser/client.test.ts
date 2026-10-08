@@ -54,16 +54,21 @@ describe("createTask", () => {
     const result = await createTask(ENV, { task: "get the pricing table" });
     expect(result.kind).toBe("error");
     expect((result as { status: number }).status).toBe(429);
-    expect((result as { message: string }).message).toContain("Too many concurrent active sessions");
+    expect((result as { message: string }).message).toContain(
+      "Too many concurrent active sessions",
+    );
   });
 
   it("honours BROWSER_USE_BASE_URL so a self-hoster can point it elsewhere", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ id: "t", sessionId: "s" }), { status: 202 }),
     );
-    await createTask({ ...ENV, BROWSER_USE_BASE_URL: "https://bu.internal/api/v2" }, {
-      task: "x".repeat(12),
-    });
+    await createTask(
+      { ...ENV, BROWSER_USE_BASE_URL: "https://bu.internal/api/v2" },
+      {
+        task: "x".repeat(12),
+      },
+    );
     expect(fetchMock.mock.calls[0][0]).toBe("https://bu.internal/api/v2/tasks");
   });
 });

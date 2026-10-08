@@ -465,6 +465,20 @@ describe("what Enter means", () => {
   });
 });
 
+describe("the composer's actions", () => {
+  it("says what the send button is waiting for, where a touch screen can see it", async () => {
+    // It said it in a `title`, which never appears on a touch screen at all —
+    // on a phone the button simply looked broken while a reply ran. There was
+    // no tooltip on this row before the composer was rebuilt.
+    await renderChat();
+    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "and per seat?");
+
+    await userEvent.hover(screen.getByLabelText("Send message"));
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message");
+  });
+});
+
 describe("the keys beside Enter", () => {
   const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
 
@@ -825,7 +839,7 @@ describe("an answer that stopped at a ceiling", () => {
 });
 
 describe("the pause before an answer", () => {
-  it("shows what the model is working through, folded away", async () => {
+  it("shows what the model is working through, open while it works", async () => {
     // On a reasoning model at a real effort there is a long silence before the
     // first word, and a silence is indistinguishable from a product that has
     // stopped working.
@@ -848,13 +862,20 @@ describe("the pause before an answer", () => {
     const { container } = await renderChat();
     await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
 
-    const block = await waitFor(() => {
-      const el = container.querySelector("details");
-      expect(el).toBeInTheDocument();
-      return el as HTMLDetailsElement;
+    // This asserted a CLOSED `<details>` until the reasoning block arrived:
+    // the reader got the word "Thinking" and nothing else, with no sign of
+    // whether it was still happening. §2 of the design overturns that — it is
+    // open while the reasoning arrives and folds itself the moment it stops.
+    const fold = await waitFor(() => {
+      const el = screen.getByRole("button", { name: /Thinking/ });
+      expect(el).toHaveAttribute("aria-expanded", "true");
+      return el;
     });
-    expect(block.open).toBe(false);
-    expect(block).toHaveTextContent("The handbook says forty — check the volume rule.");
+
+    // The trigger and the reasoning are siblings inside the block.
+    expect(fold.parentElement).toHaveTextContent(
+      "The handbook says forty — check the volume rule.",
+    );
     // And the typing dots have nothing left to say once the model is saying it.
     expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
   });

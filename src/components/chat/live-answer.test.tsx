@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { LiveAnswer } from "./live-answer";
 
 /**
@@ -65,10 +66,48 @@ describe("LiveAnswer", () => {
     expect(text.indexOf("leave policy")).toBeLessThan(text.indexOf("According to the handbook"));
   });
 
-  it("keeps the model's reasoning folded shut", () => {
+  /**
+   * This assertion was the opposite one until the reasoning block arrived: the
+   * fold was closed while the model worked and a reader got the word
+   * "Thinking" and nothing else — no duration, no sense of whether it was
+   * still happening, no reason to open it. §2 of the design overturns that
+   * deliberately. What is still true is that it does not stay open: it folds
+   * itself once the reasoning stops, so nobody scrolls past it to read the
+   * reply.
+   */
+  it("is open while the model is still reasoning", () => {
     render(<LiveAnswer {...base} thinkingText="The question is about accrual." />);
     expect(screen.getByText("Thinking")).toBeInTheDocument();
-    expect(screen.queryByRole("group")).not.toHaveAttribute("open");
+    expect(screen.getByText(/about accrual/)).toBeVisible();
+  });
+
+  it("folds itself shut once the reasoning has stopped, and says how long it took", () => {
+    render(
+      <LiveAnswer
+        {...base}
+        thinkingText="The question is about accrual."
+        thinkingMs={2400}
+        streamText="You accrue 1.67 days a month."
+      />,
+    );
+    expect(screen.getByText("Thought for 2.4s")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Thought for 2.4s/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("does not overrule a reader who opened it", async () => {
+    const { rerender } = render(
+      <LiveAnswer {...base} thinkingText="Working through accrual." thinkingMs={900} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Thought for 0.9s/ }));
+
+    rerender(<LiveAnswer {...base} thinkingText="Working through accrual." thinkingMs={900} />);
+    expect(screen.getByRole("button", { name: /Thought for 0.9s/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("draws no reasoning block when the model published none", () => {

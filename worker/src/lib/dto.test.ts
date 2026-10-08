@@ -459,3 +459,49 @@ describe("mapConnection", () => {
     expect(mapConnection({ ...row, user_id: null }).userId).toBeNull();
   });
 });
+
+/**
+ * What a tool call sent and what came back.
+ *
+ * `message_steps.result_excerpt` has been stored since 0060 — trimmed by the
+ * worker to a length that can be read on every transcript load, which is the
+ * only reason it is trimmed at all — and `mapSteps` never read it. The screen
+ * has been saying less than it knew since that migration shipped.
+ */
+describe("mapMessage steps", () => {
+  const reply = (steps: unknown[]) => ({
+    id: "m1",
+    role: "assistant",
+    content: "Twenty days.",
+    created_at: "2026-10-08T09:00:00Z",
+    message_steps: steps,
+  });
+
+  const stored = (over: Record<string, unknown> = {}) => ({
+    step_index: 0,
+    tool: "query_database",
+    status: "ok",
+    request: { sql: "select count(*) from orders" },
+    duration_ms: 1200,
+    result_excerpt: "41 orders.",
+    ...over,
+  });
+
+  it("carries the stored result excerpt to the browser", () => {
+    const [step] = mapMessage(reply([stored()])).steps!;
+    expect(step.resultExcerpt).toBe("41 orders.");
+  });
+
+  it("says null rather than an empty string for a step recorded before 0060", () => {
+    // Null and "" are different answers and the panel renders them
+    // differently: one draws no Returned block at all, the other draws an
+    // empty one.
+    const [step] = mapMessage(reply([stored({ result_excerpt: undefined })])).steps!;
+    expect(step.resultExcerpt).toBeNull();
+  });
+
+  it("says null for an excerpt that arrived as something other than a string", () => {
+    const [step] = mapMessage(reply([stored({ result_excerpt: 404 })])).steps!;
+    expect(step.resultExcerpt).toBeNull();
+  });
+});

@@ -36,6 +36,27 @@ export type AgentStepView = {
    * was none.
    */
   durationMs?: number | null;
+  /**
+   * What the tool was handed, and the first part of what it gave back — the
+   * two blocks the panel under a settled row opens onto.
+   *
+   * `request` is arbitrary jsonb and `resultExcerpt` is up to 2,000
+   * characters, so both are rendered inside their own scroll; neither is
+   * trusted to be short. 0060's header records that `request` is never
+   * anything a person typed and never a credential — a tool is handed a
+   * connection id and the secret is resolved on the worker — which is what
+   * makes it safe to print as it stands.
+   *
+   * Both OPTIONAL, because a live row has neither and that absence is the
+   * whole mechanism by which it is not expandable: `HarnessEvent`'s `step`
+   * variant carries no payload, so there is nothing for a reader to open and
+   * no decision to make about it. Required fields would have made every row in
+   * every test about something else — duration, motion, the two ambers —
+   * declare that it has no payload, which is a sentence none of them are
+   * about. `toStepViews` always writes both, so every STORED row has them.
+   */
+  request?: unknown;
+  resultExcerpt?: string | null;
 };
 
 const WORDS: Record<AgentStepView["status"], string> = {
@@ -157,6 +178,7 @@ export function toStepViews(
     status: "ok" | "failed" | "refused" | "pending";
     request: unknown;
     durationMs?: number | null;
+    resultExcerpt?: string | null;
   }>,
 ): AgentStepView[] {
   return steps.map((step) => {
@@ -173,6 +195,12 @@ export function toStepViews(
       tool: step.tool,
       status: step.status,
       durationMs: step.durationMs,
+      // Carried, not consumed. The label above is built out of `request` and
+      // for three migrations that was the only use anything made of it: the
+      // object went into an 80-character line and the line was all that
+      // reached the screen.
+      request: step.request,
+      resultExcerpt: step.resultExcerpt ?? null,
       label: oneLine
         ? `${step.tool} · ${oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine}`
         : step.tool,

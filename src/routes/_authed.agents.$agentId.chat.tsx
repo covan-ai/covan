@@ -718,6 +718,16 @@ function ChatTab() {
                 ? (event.status as AgentStepView["status"])
                 : "running",
               label: event.label ?? event.tool ?? "",
+              // Spelled out rather than left off, because this is the one
+              // place the absence is a decision. `HarnessEvent`'s `step`
+              // variant carries `{ index, tool, status, label }` and widening
+              // it would put every tool call's arguments and result into the
+              // SSE stream of every open browser on every turn, to buy the few
+              // seconds between a call starting and the turn settling. Deferred
+              // deliberately; the payload arrives with the stored transcript.
+              // This is also what makes a live row not expandable.
+              request: undefined,
+              resultExcerpt: null,
             };
             /**
              * The dots mean "something is happening and we cannot say what".

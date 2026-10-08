@@ -314,3 +314,33 @@ describe("the confirmation card", () => {
     expect(screen.getByText("Send it?")).toBeInTheDocument();
   });
 });
+
+/**
+ * The payload, carried rather than discarded.
+ *
+ * `toStepViews` built its one-line label out of `request` and then dropped
+ * both `request` and `resultExcerpt` on the floor, so the panel in §1 of the
+ * design had nothing to open onto. The label is unchanged — it is kept
+ * byte-identical with `labelFor` in the worker's harness loop — and the two
+ * fields now travel beside it.
+ */
+describe("toStepViews payloads", () => {
+  it("carries the request through, not only the label built from it", () => {
+    const view = toStepViews([step()])[0];
+    expect(view.request).toEqual({ sql: "select count(*) from orders" });
+  });
+
+  it("carries the result excerpt through", () => {
+    const view = toStepViews([step({ resultExcerpt: "41 orders." })])[0];
+    expect(view.resultExcerpt).toBe("41 orders.");
+  });
+
+  it("reports no excerpt as null, for a step stored before 0060", () => {
+    expect(toStepViews([step()])[0].resultExcerpt).toBeNull();
+  });
+
+  it("still builds the same label it always did", () => {
+    const view = toStepViews([step({ resultExcerpt: "41 orders." })])[0];
+    expect(view.label).toBe("query_database · select count(*) from orders");
+  });
+});

@@ -2245,6 +2245,78 @@ describe("POST /chat/confirm/:id", () => {
     expect(handed?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  /**
+   * What the resumed half knows about the call a person just approved.
+   *
+   * Nothing, until this. `buildToolContext` builds `offeredOperations` empty —
+   * only `find_tool` fills it, and the second half of a turn has no reason to
+   * search again — so the operation the first half had in hand was gone by the
+   * time the yes was acted on: the approved call ran with its arguments
+   * unchecked against the schema (guard 1) and its toolkit matched by spelling
+   * alone (guard 2). `run_tool` now carries the catalogue row in the proposal,
+   * which `paused_turns` stores verbatim, and this is the other end of it.
+   */
+  it("hands the approved call back the operation the first half described", async () => {
+    const operation = {
+      slug: "GMAIL_SEND_EMAIL",
+      name: "Send email",
+      description: "Send an email.",
+      toolkit: "gmail",
+      required: ["recipient_email"],
+      inputSchema: { type: "object", required: ["recipient_email"] },
+      destructive: false,
+    };
+    parked = {
+      ...PARKED,
+      tool: "run_tool",
+      tool_call: { id: "call_1", name: "run_tool", arguments: "{}" },
+      proposal: { kind: "run_tool", slug: operation.slug, operation },
+    };
+    let handed: { offeredOperations?: Map<string, unknown> } | undefined;
+    approvedTool = {
+      name: "run_tool",
+      description: "run_tool",
+      input: { type: "object", properties: {} },
+      destructive: true,
+      isConfigured: () => true,
+      run: async (_args: unknown, ctx: { offeredOperations?: Map<string, unknown> }) => {
+        handed = ctx;
+        return { kind: "ok", content: "sent" };
+      },
+    };
+    const { app } = appWith({ question: "mail ana" });
+    answersWith(streamOf("Sent."));
+
+    await (await confirm(app, true)).text();
+
+    expect(handed?.offeredOperations?.get(operation.slug)).toEqual(operation);
+  });
+
+  it("invents nothing for a pause that described no operation", async () => {
+    // Every other tool's proposal, and `run_tool`'s own when the slug came
+    // from an earlier turn. A half-filled row here would be worse than an
+    // empty map: the guards would check the approved call against fiction.
+    parked = PARKED;
+    let handed: { offeredOperations?: Map<string, unknown> } | undefined;
+    approvedTool = {
+      name: "schedule_job",
+      description: "schedule_job",
+      input: { type: "object", properties: {} },
+      destructive: true,
+      isConfigured: () => true,
+      run: async (_args: unknown, ctx: { offeredOperations?: Map<string, unknown> }) => {
+        handed = ctx;
+        return { kind: "ok", content: "scheduled" };
+      },
+    };
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf("Scheduled."));
+
+    await (await confirm(app, true)).text();
+
+    expect(handed?.offeredOperations?.size).toBe(0);
+  });
+
   it("says the resumed half was cut off, so it gets its Continue button too", async () => {
     // The same 4096-token cap applies to the second half of a reply, and
     // without this event it stops mid-thought with nothing saying so.

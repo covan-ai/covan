@@ -125,10 +125,12 @@ export type ComposioResult<T> = ({ kind: "ok" } & T) | ComposioError;
  *
  * `destructive` comes from MCP's tool annotation hints, which Composio does
  * carry — see `destructiveOf`. It is still `null` for operations annotated with
- * none of them, and that is a real answer rather than a failure. Nothing in the
- * permission model branches on it: it is shown to the person reading an
- * approval card, where "this one deletes things" is worth a line, and the model
- * is built to be correct without it.
+ * none of them, and that is a real answer rather than a failure. It is shown to
+ * the person reading an approval card, where "this one deletes things" is worth
+ * a line, and since #201 it also narrows one thing: a connection's turn-long
+ * approval does not reach an operation marked `true` (`run_tool`'s guard 3).
+ * Narrows, never grants — `false` and `null` buy an operation nothing that the
+ * connection's approval did not already buy it.
  */
 export type ComposioTool = {
   slug: string;
@@ -448,11 +450,20 @@ function toolkitOf(row: Record<string, unknown>, slug: string): string {
  * distinction worth drawing. `null` is still a real answer: plenty of
  * operations carry none of the four.
  *
- * **Nothing in the permission model branches on this, deliberately.** A read at
- * a third party can pull private content into a turn as easily as a write can
- * change something, so "it only reads" is not a reason to skip asking. What
- * this buys is a line on the approval card, where knowing an operation deletes
- * things is worth having before you press the button.
+ * **It never says an operation is safe, and the permission model is built that
+ * way.** A read at a third party can pull private content into a turn as easily
+ * as a write can change something, so "it only reads" is not a reason to skip
+ * asking: every first call on a connection is asked about whatever this
+ * returns. What it buys is a line on the approval card, where knowing an
+ * operation deletes things is worth having before you press the button — and
+ * one narrowing in `run_tool`'s guard 3, where `true` holds back the turn-long
+ * approval a connection has already been given (#201).
+ *
+ * So `null` is read as "not known to be destructive", never as "harmless". The
+ * distinction is load-bearing: when there is no row at all — a resumed turn, a
+ * scheduled run, a slug recalled from an earlier turn — guard 3 asks the person
+ * again rather than reading the absence as a `false`. That direction is the
+ * whole of finding 2 in the 2026-10-08 audit.
  */
 function destructiveOf(row: Record<string, unknown>): boolean | null {
   if (typeof row.is_destructive === "boolean") return row.is_destructive;

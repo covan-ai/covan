@@ -1045,6 +1045,10 @@ chat.post("/chat/confirm/:id", async (c) => {
     sessionId: pause.sessionId,
     runtimeLimit,
     confirmed: true,
+    // And what the half that asked knew about the operation, which is the only
+    // thing that crosses the pause: `run_tool` writes the catalogue row into
+    // the proposal and this is where it is read back.
+    approvedProposal: pause.proposal,
   });
 
   const stream = new ReadableStream({

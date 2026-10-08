@@ -102,6 +102,12 @@ export type ToolContext = {
    *
    * So the unit is the connection and the scope is the turn. One yes covers
    * that service until the turn ends; a different service asks again.
+   *
+   * Two things it does not cover, both in `run_tool`'s guard 3: an operation
+   * this turn described as `destructive` (see `approvedSlugs`), and an
+   * operation this turn knows nothing about at all — where "nothing about it"
+   * is the honest state of every resumed turn and every scheduled run, and
+   * reading it as harmless is what the 2026-10-08 audit found.
    */
   approvedConnections?: string[];
   /**
@@ -190,10 +196,23 @@ export type ToolContext = {
    * type it wanted — all of it checkable against a schema this turn already had
    * in hand and then dropped on the floor.
    *
-   * Absent means no check, which is the same shape as an empty `offeredSlugs`: a
-   * slug can legitimately arrive from an earlier turn or a standing grant, and
-   * refusing what cannot be verified would break working behaviour to prevent a
-   * mistake that has not happened.
+   * Absent means no ARGUMENT check, which is the same shape as an empty
+   * `offeredSlugs`: a slug can legitimately arrive from an earlier turn or a
+   * standing grant, and refusing arguments that cannot be verified would break
+   * working behaviour to prevent a mistake that has not happened.
+   *
+   * ABSENT DOES NOT MEAN NO PERMISSION CHECK, and reading it that way was
+   * finding 2 of the 2026-10-08 audit. The map is built empty and only
+   * `find_tool` fills it, so it is empty on every resumed turn, every scheduled
+   * run and every turn that reaches for a slug out of its own transcript — and
+   * on those `run_tool` used to read a missing `destructive` as "not
+   * destructive" and let the connection's turn-long approval cover anything.
+   * Now the gate asks whether this map describes the slug at all: described
+   * narrows on `destructive`, undescribed falls back to `approvedSlugs`, the
+   * record of what a person actually approved. The one exception is the resume
+   * path, where `routes/chat-turn.ts` seeds it from the stored proposal so the
+   * approved call is checked against the operation the half that asked had in
+   * hand.
    *
    * It carries the whole `ComposioTool` rather than the schema alone because the
    * approval card needs the other two fields. On 2026-09-26 somebody asked for a

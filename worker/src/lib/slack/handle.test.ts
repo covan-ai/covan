@@ -372,6 +372,21 @@ describe("answering in a thread", () => {
     expect(fake.callsTo("slack_identities").some((c) => c.op === "insert")).toBe(false);
   });
 
+  // The other half of the same question, and the one the cache used to skip.
+  // `slack_identities` remembers who somebody is; it cannot remember whether
+  // they may still ask, because membership is revocable and the mapping is not.
+  it("refuses a remembered asker who has since left the workspace", async () => {
+    const fake = db({ identity: true, member: false });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(create).not.toHaveBeenCalled();
+    expect(posted().text).toMatch(/don't know who you are/i);
+    // And the mapping stays: see the comment in `resolveIdentity` for why
+    // forgetting them is the worse of the two answers.
+    expect(fake.callsTo("slack_identities").some((c) => c.op === "delete")).toBe(false);
+  });
+
   it("spends nothing once the asker's allowance is used up", async () => {
     const fake = db({ identity: true });
     const spent = {

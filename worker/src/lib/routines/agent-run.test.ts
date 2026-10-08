@@ -140,6 +140,28 @@ describe("runRoutineWithTools", () => {
     expect(system).toContain("Times mean UTC");
   });
 
+  it("gives the agent its retrieved documents as data, not as instructions", async () => {
+    // Finding 8 of the 2026-10-08 audit, and the sharpest case of it: four
+    // lines below where this block was attached as `system`, this same function
+    // explains that a webhook payload is "text somebody outside this workspace
+    // chose, and a system message is the wrong place for anything a stranger
+    // wrote" — while a document body, which arrives the same way through sync,
+    // went into exactly that place. This path also has tools.
+    await runRoutineWithTools(env, db)(
+      { ...input, ragBlock: "Excerpt from Pricing.md: our Pro tier is $29." },
+      env,
+    );
+
+    const messages = runAgentTurn.mock.calls[0][0].request.messages as {
+      role: string;
+      content: string;
+    }[];
+    const at = messages.findIndex((m) => m.content.includes("our Pro tier is $29"));
+    expect(messages[at]?.role).toBe("user");
+    // The persona stays the only system message.
+    expect(messages.filter((m) => m.role === "system")).toHaveLength(1);
+  });
+
   it("resolves every id from the routine rather than letting the model send one", async () => {
     await runRoutineWithTools(env, db)(input, env);
     expect(runAgentTurn.mock.calls[0][0].ctx).toMatchObject({

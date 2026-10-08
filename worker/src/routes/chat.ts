@@ -278,12 +278,21 @@ chat.post("/chat/stream", async (c) => {
   // Assemble so the stable prefix (persona + prior turns) is byte-identical
   // turn-over-turn and cacheable; the volatile RAG block rides just before the
   // latest user turn, where it grounds the answer without breaking that prefix.
+  //
+  // `user`, not `system` — finding 8 of the 2026-10-08 audit. The block is
+  // document text that reached this workspace through Notion, Drive or Slack
+  // sync, or from any member's upload, and `system` is the one role a model is
+  // trained to read as the operator speaking. Its position is unchanged, so the
+  // cacheable prefix in front of it is byte-identical either way; only the role
+  // on this one message moved. `lib/rag.ts` carries the rest of the reasoning,
+  // and `lib/routines/agent-run.ts` had already settled the same question for
+  // webhook payloads.
   const priorTurns = history.slice(0, -1);
   const latestTurn = history[history.length - 1];
   const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
-    ...(ragBlock ? [{ role: "system" as const, content: ragBlock }] : []),
+    ...(ragBlock ? [{ role: "user" as const, content: ragBlock }] : []),
     ...(latestTurn ? [latestTurn] : []),
     // On a continuation `latestTurn` is the cut-off answer, and this is the
     // turn that asks for the rest of it. See `CONTINUE_INSTRUCTION` for why it

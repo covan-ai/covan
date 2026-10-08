@@ -510,7 +510,7 @@ function sentMessages(): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
 function knowledgeBlock(): string | undefined {
   return sentMessages()
     .map((m) => (typeof m.content === "string" ? m.content : ""))
-    .find((c) => c.startsWith("The team has shared the following knowledge"));
+    .find((c) => c.startsWith("The following is material retrieved"));
 }
 
 /** The value 0039 stores alongside the reply. */
@@ -616,6 +616,36 @@ describe("citations", () => {
     await ask(app);
     expect(citedNames()).toEqual([]);
     expect(serviceInsert.mock.calls[0][0].sources).toBeNull();
+  });
+});
+
+describe("retrieved material in the prompt", () => {
+  it("hands it over as data rather than as the system's own words", async () => {
+    // Finding 8 of the 2026-10-08 audit. The block went out as a `system`
+    // message, which is the one role the model is trained to treat as the
+    // operator speaking — and its content is a document body that reached this
+    // workspace through Notion, Drive or Slack sync, or from any member's
+    // upload. `lib/routines/agent-run.ts` had already settled this for webhook
+    // payloads four lines from where it then attached this block as `system`.
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      documents: [HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    await ask(app);
+
+    const msgs = sentMessages();
+    const at = msgs.findIndex(
+      (m) => typeof m.content === "string" && m.content.includes("Vacation is 20 days."),
+    );
+    expect(msgs[at]?.role).toBe("user");
+    // And in the same place as before: immediately before the question it
+    // grounds, so the prefix the prompt cache reads back — persona, manifest,
+    // prior turns — is byte-identical turn over turn. See the assembly comment
+    // in `routes/chat.ts`.
+    expect(at).toBe(msgs.length - 2);
   });
 });
 

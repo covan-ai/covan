@@ -114,9 +114,12 @@ describe("the eval case set", () => {
       role: "user",
       content: withRag!.question,
     });
-    // The retrieved block is the last system message and sits immediately
-    // before the question, never folded into the persona.
-    const ragIndex = messages.findIndex((m, i) => i > 0 && m.role === "system");
+    // The retrieved block sits immediately before the question, never folded
+    // into the persona — and goes as a `user` message, because it is quoted
+    // document text rather than the operator's own words. Found by content
+    // rather than by role for that reason.
+    const ragIndex = messages.findIndex((m) => m.content === withRag!.ragBlock);
+    expect(messages[ragIndex].role).toBe("user");
     expect(ragIndex).toBe(messages.length - 2);
   });
 

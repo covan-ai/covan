@@ -50,7 +50,10 @@ export function buildMessages(kase: EvalCase): CompletionMessage[] {
   return [
     { role: "system", content: systemPrefix },
     ...kase.history,
-    ...(kase.ragBlock ? [{ role: "system" as const, content: kase.ragBlock }] : []),
+    // `user`, as `routes/chat.ts` sends it since finding 8 of the 2026-10-08
+    // audit. An eval that assembles the prompt differently from production is
+    // measuring a prompt no workspace gets.
+    ...(kase.ragBlock ? [{ role: "user" as const, content: kase.ragBlock }] : []),
     { role: "user", content: kase.question },
   ];
 }

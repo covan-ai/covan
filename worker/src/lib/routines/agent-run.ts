@@ -97,7 +97,12 @@ export function runRoutineWithTools(
           .filter(Boolean)
           .join("\n\n"),
       },
-      ...(input.ragBlock ? [{ role: "system" as const, content: input.ragBlock }] : []),
+      // `user`, for the same reason the webhook payload below is: a document
+      // body arrives here through Notion, Drive or Slack sync, so it is also
+      // text somebody outside this workspace chose. Until the 2026-10-08 audit
+      // this line said `system` — four lines above the comment stating the
+      // opposite rule.
+      ...(input.ragBlock ? [{ role: "user" as const, content: input.ragBlock }] : []),
       // The material rides in the user message with the instruction, for the
       // reason `summarise.ts` gives at length: a webhook payload is text
       // somebody outside this workspace chose, and a system message is the

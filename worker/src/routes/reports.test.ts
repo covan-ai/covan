@@ -161,6 +161,22 @@ describe("POST /sessions/:id/report", () => {
     expect(system?.content).toContain(REPORT_INSTRUCTIONS);
   });
 
+  it("sends the retrieved material as data, not as the system's own words", async () => {
+    // Finding 8 of the 2026-10-08 audit. The audit named three assembly sites;
+    // this is a fourth with the same shape, and a report is the surface whose
+    // output gets read by people who were not in the room when it was written.
+    await post(appWith().app, ask);
+
+    const messages = completionCreate.mock.calls[0][0].messages as {
+      role: string;
+      content: string;
+    }[];
+    const at = messages.findIndex((m) => m.content.includes("Revenue was up 12%."));
+    expect(messages[at]?.role).toBe("user");
+    // Still immediately before the instruction it grounds.
+    expect(at).toBe(messages.length - 2);
+  });
+
   it("saves the report under the title the model gave it", async () => {
     const { app, fake } = appWith();
 

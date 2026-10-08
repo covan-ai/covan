@@ -222,13 +222,15 @@ export async function handleSlackEvent(
 
   // Same assembly as the chat route: the stable prefix and prior turns first so
   // OpenAI's automatic prompt cache can discount them, with the volatile
-  // retrieved block riding immediately before the latest question.
+  // retrieved block riding immediately before the latest question — as a `user`
+  // message, because it is quoted document text rather than this server's own
+  // words. See `routes/chat.ts` and `lib/rag.ts`.
   const priorTurns = history.slice(0, -1);
   const latestTurn = history[history.length - 1];
   const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
-    ...(retrieval.ragBlock ? [{ role: "system" as const, content: retrieval.ragBlock }] : []),
+    ...(retrieval.ragBlock ? [{ role: "user" as const, content: retrieval.ragBlock }] : []),
     ...(latestTurn ? [latestTurn] : []),
   ];
 

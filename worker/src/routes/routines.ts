@@ -370,7 +370,7 @@ const createSchema = z
     /** Bounded here as well as by 0056's CHECK, so the refusal names the field. */
     outputRetention: z.number().int().min(1).max(520).optional(),
     /**
-     * A series' length, decided once at creation (0072) — `updateSchema` below
+     * A series' length, decided once at creation (0073) — `updateSchema` below
      * does not get this, the same way it does not get `sourceKind`. Null or
      * omitted means it runs until somebody stops it.
      */

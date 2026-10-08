@@ -598,7 +598,7 @@ describe("POST /routines, creating a delivery channel inline", () => {
     expect(inserted("routines")).toHaveLength(0);
   });
 
-  // 0072 bounds a series at 1–365 delivered runs — a year is not a series, and
+  // 0073 bounds a series at 1–365 delivered runs — a year is not a series, and
   // 0 is not a bound at all. Caught by `createSchema` itself, before anything
   // is written, unlike the cron check above: no channel is minted and nothing
   // needs rolling back.

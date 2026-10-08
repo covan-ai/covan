@@ -1104,7 +1104,7 @@ async function finish(
    * A series spends a morning only when it delivered one.
    *
    * Guarded on `status === "ok"` and not on "did this run at all", which is the
-   * whole content of 0072's `runs_done`: a week of a dead delivery channel would
+   * whole content of 0073's `runs_done`: a week of a dead delivery channel would
    * otherwise complete a seven-morning series that nobody ever read, and leave
    * the routine saying "Finished".
    *

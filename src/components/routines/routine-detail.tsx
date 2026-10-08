@@ -251,7 +251,7 @@ export function RoutineDetail({
             {/* A completed routine has nothing to pause and nothing to resume
                 into: `ends_after_runs` ran its course, and "Resume" would read
                 as an invitation to restart a finished series — exactly what
-                0072's header argues a status distinct from `paused` is for.
+                0073's header argues a status distinct from `paused` is for.
                 Starting over means a new routine from the template, not this
                 button. */}
             {routine.status !== "completed" && (

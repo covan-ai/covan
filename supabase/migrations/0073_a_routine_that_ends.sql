@@ -1,4 +1,4 @@
--- 0072 — a routine that ends
+-- 0073 — a routine that ends
 --
 -- `routines` has carried `status` since 0012 and nothing else: a routine is
 -- `active` or it is `paused`, and there has never been a way for one to be
@@ -65,7 +65,7 @@ alter table public.routines
 
 comment on column public.routines.ends_after_runs is
   'After how many DELIVERED runs this routine sets itself to completed. Null '
-  'means it runs until somebody stops it, which is every routine before 0072.';
+  'means it runs until somebody stops it, which is every routine before 0073.';
 
 comment on column public.routines.runs_done is
   'Delivered runs so far. Incremented only where routine_runs.status is ok - a '

@@ -69,7 +69,7 @@ const routine = (over: Partial<RoutineRow> = {}): RoutineRow => ({
   next_run_at: "2026-08-14T10:00:00.000Z",
   cursor: null,
   consecutive_failures: 0,
-  // Null and 0 — 0072's default for every row that existed before it, and the
+  // Null and 0 — 0073's default for every row that existed before it, and the
   // value every test above this one implicitly wants: a routine that never
   // ends.
   ends_after_runs: null,
@@ -1996,7 +1996,7 @@ describe("a routine that ends", () => {
     expect(saved.values.runs_done).toBeUndefined();
   });
 
-  // The headline case 0072's own header is written around: "a week of a dead
+  // The headline case 0073's own header is written around: "a week of a dead
   // delivery channel would otherwise complete a seven-morning series that
   // nobody ever read." An `rss` source that has not moved never reaches
   // `summarise` at all — `result.status === "unchanged"` skips straight to

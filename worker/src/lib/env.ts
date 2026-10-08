@@ -14,6 +14,9 @@ const REQUIRED = [
   "DOCS_DIR",
 ] as const;
 
+/** `.env.docker.example:101`, character for character. */
+const DEMO_JWT_SECRET = "your-super-secret-jwt-token-with-at-least-32-characters-long";
+
 /**
  * The values `.env.docker.example` ships. That file is tracked in a public
  * repository and the quickstart copies it verbatim, so every one of these is
@@ -24,13 +27,45 @@ const REQUIRED = [
  * They are correct for a laptop and catastrophic anywhere else, which is why
  * the check below keys off the origin rather than off a NODE_ENV nobody sets.
  */
-const PUBLISHED_DEFAULTS: Partial<Record<(typeof REQUIRED)[number], string>> = {
+/**
+ * Keyed on plain strings rather than on `REQUIRED`, which is finding 9 of the
+ * 2026-10-08 audit. The signing key is optional — absent means API keys are off
+ * — so it is not in `REQUIRED`, and the old type made the one published default
+ * that *is* a signing key impossible to list. The guard below reads
+ * `source[k]`, which is the raw environment, so a key here only has to be a
+ * name an operator can set.
+ */
+const PUBLISHED_DEFAULTS: Record<string, string> = {
   SUPABASE_ANON_KEY:
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJhbm9uIiwKICAgICJpc3MiOiAic3VwYWJhc2UtZGVtbyIsCiAgICAiaWF0IjogMTY0MTc2OTIwMCwKICAgICJleHAiOiAxNzk5NTM1NjAwCn0.dc_X5iR_VP_qT0zsiyj_I_OZ2T9FtRU2BBNWN8Bu4GE",
   SUPABASE_SERVICE_ROLE_KEY:
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q",
   ROUTINE_SECRET_KEY: "Y292YW4tbG9jYWwtZGV2LXJvdXRpbmUta2V5LTAwMDE=",
+  // Both spellings of the signing key, because `loadEnv` accepts both (see
+  // SUPABASE_JWT_SECRET at the foot of this file) and the shipped file sets the
+  // self-hosted one. This is the value API keys are signed and verified with,
+  // so holding the published default means anybody who can read GitHub can mint
+  // a token for any account on the stack. `docker/check-secrets.sh` catches the
+  // `JWT_SECRET` spelling too, but only when the stack is brought up through
+  // docker-compose; the published image's entrypoint is `bun run src/node.ts`,
+  // which runs this function and nothing else.
+  JWT_SECRET: DEMO_JWT_SECRET,
+  SUPABASE_JWT_SECRET: DEMO_JWT_SECRET,
 };
+
+/**
+ * The shortest key worth calling a signing key.
+ *
+ * Same reasoning as `ROUTINE_SECRET_KEY`'s byte check, and the same reason for
+ * checking it here: a key too short to sign with does not announce itself. API
+ * keys mint and verify perfectly well against a guessable secret, and the first
+ * person to notice is not the operator. 32 is what Supabase itself requires of
+ * the same value.
+ *
+ * It does not subsume the published-default check above: the value
+ * `.env.docker.example` ships is 60 characters long. Two different failures.
+ */
+const JWT_SECRET_MIN_CHARS = 32;
 
 /** A stack whose frontend is on localhost is a laptop, not a deployment. */
 function servesLocalhostOnly(allowedOrigin: string): boolean {
@@ -70,10 +105,17 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
       .filter(([k, v]) => source[k] === v)
       .map(([k]) => k);
     if (published.length > 0) {
+      // Worded for one as well as for several: with the signing key now on the
+      // list, one offender is the likely case, and "JWT_SECRET still hold the
+      // values" reads like a bug in the thing that is refusing to start.
+      const several = published.length > 1;
       throw new Error(
-        `Refusing to start: ${published.join(", ")} still hold the values from ` +
-          `.env.docker.example. That file is in a public repository, so these are ` +
-          `not secrets. Regenerate them — see docs/self-hosting.md — or set ` +
+        `Refusing to start: ${published.join(", ")} still ` +
+          `${several ? "hold the values" : "holds the value"} from ` +
+          `.env.docker.example. That file is in a public repository, so ` +
+          `${several ? "these are" : "this is"} not ` +
+          `${several ? "secrets" : "a secret"}. Regenerate ` +
+          `${several ? "them" : "it"} — see docs/self-hosting.md — or set ` +
           `ALLOWED_ORIGIN to a localhost URL if this really is a local stack.`,
       );
     }
@@ -88,6 +130,17 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
       `ROUTINE_SECRET_KEY must be base64 that decodes to 16, 24 or 32 bytes ` +
         `(got ${keyBytes < 0 ? "invalid base64" : `${keyBytes} bytes`}). ` +
         `Generate one with: openssl rand -base64 32`,
+    );
+  }
+
+  // Resolved once, here, because the guard above and the check below and the
+  // binding at the foot of this function all have to mean the same value.
+  const jwtSecret = source.SUPABASE_JWT_SECRET || source.JWT_SECRET;
+  if (jwtSecret && jwtSecret.length < JWT_SECRET_MIN_CHARS) {
+    throw new Error(
+      `SUPABASE_JWT_SECRET (or JWT_SECRET) is ${jwtSecret.length} characters; ` +
+        `it must be at least ${JWT_SECRET_MIN_CHARS}. It is what API keys are signed ` +
+        `with, and a short one is guessable. Generate one with: openssl rand -base64 32`,
     );
   }
 
@@ -168,7 +221,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // same .env. Accepting both means docker-compose gets API keys without the
     // operator having to copy a value they already set once. Absent means the
     // feature is simply off — see routes/api-keys.ts.
-    SUPABASE_JWT_SECRET: source.SUPABASE_JWT_SECRET || source.JWT_SECRET,
+    SUPABASE_JWT_SECRET: jwtSecret,
     // Optional on purpose: absent means the defaults in lib/ratelimit, so a
     // stack that was never configured is still bounded. `0` turns a tier off.
     RATE_LIMIT_STANDARD_PER_MINUTE: source.RATE_LIMIT_STANDARD_PER_MINUTE,

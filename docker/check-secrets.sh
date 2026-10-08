@@ -4,10 +4,20 @@
 #
 # worker/src/lib/env.ts's loadEnv already does this for covan-api: at boot, if
 # ALLOWED_ORIGIN is not localhost-only, it refuses to start on a handful of
-# published defaults. But JWT_SECRET and POSTGRES_PASSWORD are consumed by
-# Kong, GoTrue, PostgREST and Postgres — none of which run loadEnv, so that
-# guard never sees them. This script is the equivalent check for the rest of
-# the stack, wired in docker-compose.yml as a `secrets-check` service that
+# published defaults. POSTGRES_PASSWORD and SECRET_KEY_BASE never reach it —
+# they are consumed by Postgres and Realtime, which do not run loadEnv — so
+# this script is the equivalent check for the rest of the stack.
+#
+# JWT_SECRET is NOT in that category, and the comment here used to say it was.
+# loadEnv reads it as the secret API keys are signed with (it accepts either
+# spelling), so covan-api refuses the published value at boot in its own right
+# — since finding 9 of the 2026-10-08 audit, which is the finding this wrong
+# comment is most of the reason for. It stays checked here as well because
+# GoTrue, PostgREST and Kong consume it too and start long before covan-api
+# does: a stack that is going to refuse should refuse before it has a database
+# listening with a published password.
+#
+# Wired in docker-compose.yml as a `secrets-check` service that
 # `db` depends on with `condition: service_completed_successfully`. Every
 # other service descends from `db` (auth, rest, realtime directly; kong from
 # auth+rest; migrate from db+auth; covan-api from migrate+kong; covan-web from
@@ -17,10 +27,12 @@
 # PUBLISHED_DEFAULTS — same semantics, same literals, so an operator only has
 # to satisfy one set of rules to clear both checks.
 #
-# Deliberately NOT duplicated here: ROUTINE_SECRET_KEY's base64-length check.
-# covan-api already fails on that at boot, and re-deriving byte lengths from
-# base64 in POSIX sh would just be a worse copy of a check that already
-# exists. This script only covers the values that never reach loadEnv at all.
+# Deliberately NOT duplicated here: ROUTINE_SECRET_KEY's base64-length check,
+# and JWT_SECRET's 32-character minimum. covan-api already fails on both at
+# boot, and re-deriving byte lengths from base64 in POSIX sh would just be a
+# worse copy of a check that already exists. What this script adds over
+# loadEnv is reach (the values no TypeScript ever sees) and timing (it runs
+# before the database does), not a second opinion on the same literals.
 #
 # POSIX sh, not bash: this runs in postgres:17.6-alpine, which has no bash.
 set -eu

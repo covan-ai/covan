@@ -108,8 +108,23 @@ function PromptInput({
     onValueChange?.(newValue);
   };
 
+  /**
+   * EDIT 6. Clicking the composer's PADDING focuses the textarea. Clicking a
+   * control inside it does not.
+   *
+   * Upstream focuses on any click anywhere in the container, and only
+   * `PromptInputAction` stops propagation — which wraps send and stop alone.
+   * Everything else this composer holds (attach, report, mic, a receipt's
+   * dismiss, and the bundle popover that renders inline inside this container
+   * rather than in a portal) would therefore raise the virtual keyboard over
+   * the content on a phone, on every tap. That is the mobile half of failure
+   * mode #5 arriving by the back door.
+   */
   const handleClick: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    if (!disabled) textareaRef.current?.focus();
+    const onAControl = (e.target as HTMLElement).closest(
+      "button, a, input, select, textarea, [role='button'], [role='menuitem']",
+    );
+    if (!disabled && !onAControl) textareaRef.current?.focus();
     onClick?.(e);
   };
 
@@ -251,8 +266,18 @@ function PromptInputAction({
 
   return (
     <Tooltip {...props}>
+      {/*
+        EDIT 7. The trigger is a SPAN AROUND the child, not the child itself.
+        Upstream passes `asChild`, which makes the control the trigger — and a
+        disabled control receives no pointer events in any browser, so Radix
+        never fires on it. The send button is disabled in exactly the state
+        whose tooltip is worth reading ("waiting for the current reply to
+        finish"), so with `asChild` that sentence can never appear. The
+        `title` attribute it replaced did appear there, because browser chrome
+        draws it rather than the page.
+      */}
       <TooltipTrigger asChild disabled={disabled} onClick={(event) => event.stopPropagation()}>
-        {children}
+        <span className="inline-flex">{children}</span>
       </TooltipTrigger>
       <TooltipContent side={side} className={className}>
         {tooltip}

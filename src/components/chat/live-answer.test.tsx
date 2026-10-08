@@ -115,6 +115,48 @@ describe("LiveAnswer", () => {
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
   });
 
+  it("takes the folded reasoning out of the tab order, not just out of sight", async () => {
+    /*
+     * The block this replaced was a `<details>`, and a browser makes a closed
+     * `<details>`'s content unfocusable for free. A `grid-template-rows: 0fr`
+     * fold does not: its children stay mounted at zero height. Reasoning
+     * routinely contains a link — the model reasoning about a URL it was
+     * handed — and `markdown.tsx` renders one as a real `<a href>`. Without
+     * this, a keyboard user tabs onto an invisible anchor inside an
+     * `aria-hidden` subtree: nothing is announced, the focus ring is clipped
+     * by `overflow-hidden`, and Enter opens a URL they never saw.
+     */
+    const { container } = render(
+      <LiveAnswer
+        {...base}
+        thinkingText="Checking [the handbook](https://example.com/handbook)."
+        thinkingMs={900}
+      />,
+    );
+    const trigger = () => screen.getByRole("button", { name: /Thought for 0.9s/ });
+
+    // Mounted — the fold is a zero-height grid row, not a removed subtree —
+    // and out of reach all the same.
+    expect(container.querySelector("a[href]")).toBeInTheDocument();
+    expect(trigger().nextElementSibling).toHaveAttribute("inert");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+
+    // And it comes back the moment somebody opens it.
+    await userEvent.click(trigger());
+    expect(trigger().nextElementSibling).not.toHaveAttribute("inert");
+    expect(screen.getByRole("link", { name: "the handbook" })).toBeInTheDocument();
+  });
+
+  it("does not animate the fold for a reader who asked for less movement", () => {
+    // `styles.css` enumerates every animation in the app for
+    // `prefers-reduced-motion`, and this fold opens and closes BY ITSELF — it
+    // is unrequested motion, which is the kind that setting is most for.
+    render(<LiveAnswer {...base} thinkingText="Working through accrual." />);
+    expect(screen.getByRole("button", { name: /Thinking/ }).nextElementSibling).toHaveClass(
+      "motion-reduce:transition-none",
+    );
+  });
+
   it("hides the dots from a screen reader rather than labelling them", () => {
     // They carried an `aria-label` on a bare `<div>` once, which is a string
     // most screen readers have nowhere to put. The words live in the status

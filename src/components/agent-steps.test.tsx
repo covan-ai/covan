@@ -414,6 +414,38 @@ describe("the tool panel", () => {
     expect(screen.getByText("Why it was not allowed")).toBeInTheDocument();
   });
 
+  it("does not call a question somebody is being asked a result", async () => {
+    /*
+     * `loop.ts` stores a confirmation pause as `status: "pending"` with the
+     * PROPOSAL's summary in `result_excerpt` — the question, not a result. A
+     * confirmation nobody ever answers stays `pending` in the stored
+     * transcript, so "Returned" over that text is the screen stating something
+     * untrue about what happened, on the one surface where somebody is being
+     * asked to approve sending something.
+     */
+    render(
+      <StepTrail
+        steps={[
+          settled({
+            status: "pending",
+            resultExcerpt: "Send an email to ana@example.com about the Q3 numbers?",
+          }),
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button"));
+    expect(screen.getByText(/about the Q3 numbers/)).toBeInTheDocument();
+    expect(screen.queryByText("Returned")).not.toBeInTheDocument();
+    expect(screen.getByText("What it is asking")).toBeInTheDocument();
+  });
+
+  it("does not animate the panel for a reader who asked for less movement", () => {
+    const { container } = render(<StepTrail steps={[settled()]} />);
+    expect(container.querySelector("[data-state]")).toBeInTheDocument();
+    expect(container.innerHTML).toContain("motion-reduce:animate-none");
+  });
+
   it("leaves a running row alone, because a live step carries no payload", () => {
     // `HarnessEvent`'s `step` variant is `{ index, tool, status, label }`.
     // Widening it would put every tool call's arguments into the SSE stream of

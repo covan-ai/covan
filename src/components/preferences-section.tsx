@@ -117,8 +117,70 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
         </div>
 
         <NotificationToggles />
+        <CoverageOptOut />
       </SectionCard>
     </section>
+  );
+}
+
+/**
+ * The half `CoverageNotice` cannot offer.
+ *
+ * That notice (`coverage-notice.tsx`) is a one-shot thing: it is told once,
+ * dismissed, and gone — which is exactly right for telling somebody, and
+ * exactly wrong for a decision somebody should be able to revisit. This is
+ * the other door into the same two routes Task 14 shipped
+ * (`api.coverage.preference` / `setPreference`), reachable whether or not
+ * anybody has ever seen the notice, and in both directions: it is the only
+ * place a member who already excluded themselves can come back in.
+ *
+ * **Not gated on `gapReportEnabled`.** A member must be able to opt out
+ * before the report is switched on — the notice's own test proves the route
+ * "works while the report is off" — and this row is the second of the two
+ * surfaces for the same guarantee. Only the notice itself is gated on
+ * `enabled`, never this.
+ */
+function CoverageOptOut() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["coverage", "preference"],
+    queryFn: api.coverage.preference,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const setExcluded = async (excluded: boolean) => {
+    setSaving(true);
+    try {
+      await api.coverage.setPreference(excluded);
+      queryClient.setQueryData(["coverage", "preference"], { excluded });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Failed to save";
+      toast.error(message);
+      // Same recovery as `NotificationToggles`: put the switch back where the
+      // server actually left it rather than leaving it showing a setting that
+      // was never accepted.
+      await queryClient.invalidateQueries({ queryKey: ["coverage", "preference"] });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-4 border-t border-hairline pt-5">
+      <div className="min-w-0">
+        <div className="text-sm">Exclude my questions from the coverage report</div>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          A weekly report of topics nothing covered — it never shows names or anybody&rsquo;s
+          question.
+        </p>
+      </div>
+      <Switch
+        checked={data ? data.excluded : false}
+        onCheckedChange={setExcluded}
+        disabled={!data || saving}
+        aria-label="Exclude my questions from the coverage report"
+      />
+    </div>
   );
 }
 

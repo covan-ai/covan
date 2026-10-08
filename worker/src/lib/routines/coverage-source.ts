@@ -93,48 +93,44 @@ export type CoverageRunResult =
  * (`lib/routines/dispatcher.ts:22,198`), and a routine that spends two where
  * one would do is a routine that fits fewer of itself into a tick.
  *
- * One flat result, not a `{reason:string;facts}|{reason:null;facts}` union —
- * fix round 1, finding on the signature. With `facts` (and now `floor`)
- * identical in shape across every branch, that union carried no information
- * a plain `reason: string | null` did not; it was two members differing only
- * in a nullable field's type, with nothing to discriminate on. `floor` stays
- * `number | null` rather than asserted non-null here: `reason === null`
- * implies `floor !== null` by this function's own control flow, but nothing
- * about the two fields' *types* says so, and that implication is the caller's
- * to check, not this function's to assert away.
+ * A discriminated union, not the flat `{ reason: string | null; facts;
+ * floor: number | null }` of fix round 1 — fix round 2. That shape let
+ * `reason` and `floor` go nullable independently, with nothing in the type
+ * connecting them, so the caller needed a runtime check (a `throw`, in the
+ * version this replaces) to recover the invariant that `reason === null`
+ * implies `floor !== null`. Here `floor` exists only on the branch where
+ * `reason` is `null`, so that implication IS the type: narrowing on `reason`
+ * narrows `floor` for free, and there is no value of this type a caller can
+ * hold where `reason` is `null` and `floor` is not a `number`.
  */
 async function stoppedBy(
   input: CoverageRunInput,
   deps: CoverageDeps,
-): Promise<{ reason: string | null; facts: WorkspaceFacts; floor: number | null }> {
+): Promise<
+  { reason: string; facts: WorkspaceFacts } | { reason: null; facts: WorkspaceFacts; floor: number }
+> {
   const facts = await deps.readWorkspace(input.workspaceId, input.ownerId);
-  const floor = askerFloor(facts.memberCount);
 
   if (!facts.gapReportEnabled) {
-    return {
-      reason: "the coverage report is no longer on for this workspace",
-      facts,
-      floor,
-    };
+    return { reason: "the coverage report is no longer on for this workspace", facts };
   }
   if (!facts.ownerIsAdmin) {
     return {
       reason:
         "this report reads across the workspace's conversations, and its owner is no longer an admin",
       facts,
-      floor,
     };
   }
   // Review Focus 1, and not a condition 0074 can guard. A workspace that shrank
   // to two people cannot have a topic reported without identifying who asked —
   // `askerFloor` answers null — so the routine stops and says so, rather than
   // skipping every week forever.
+  const floor = askerFloor(facts.memberCount);
   if (floor === null) {
     return {
       reason:
         "a workspace needs at least three people before a topic can be reported without identifying who asked",
       facts,
-      floor,
     };
   }
   return { reason: null, facts, floor };
@@ -192,16 +188,10 @@ export async function runCoverageReport(
   const stopped = await stoppedBy(input, deps);
   if (stopped.reason !== null) return { kind: "pause", reason: stopped.reason };
 
-  if (stopped.floor === null) {
-    // Unreachable by `stoppedBy`'s own control flow: a null `reason` is only
-    // ever returned once `askerFloor` on the same facts has already answered
-    // non-null — the branch above pauses otherwise. Thrown rather than
-    // asserted away, so that if this invariant is ever broken by a future
-    // change on either side, the failure is loud instead of a silently wrong
-    // floor. Comment-held invariants have rotted three separate times on this
-    // branch; this one checks itself instead of asking to be trusted.
-    throw new Error("stoppedBy returned no pause reason but no asker floor");
-  }
+  // No assertion and no runtime check: fix round 2. `stopped.reason === null`
+  // is exactly the union member `stoppedBy` types as carrying `floor:
+  // number`, so the line above already narrowed `stopped.floor` to `number`
+  // — there is no third case left to throw on.
   const floor = stopped.floor;
 
   const rows = await deps.readGaps(input.workspaceId, input.days);

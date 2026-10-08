@@ -84,10 +84,10 @@ export function renderCoverageReport(input: {
    *
    * A different fact from a gap with no label, and the report keeps them
    * apart. This number names nobody and carries no topic — it is the one
-   * thing that tells an admin an empty report means "the questions were too
-   * scattered" rather than "your documents are complete". A nameless gap is
-   * the opposite: a topic that cleared the floor, listed with its counts,
-   * whose name we would not print.
+   * thing that tells an admin an empty report means "the questions did not
+   * come together into something reportable" rather than "your documents
+   * are complete". A nameless gap is the opposite: a topic that cleared the
+   * floor, listed with its counts, whose name we would not print.
    */
   withheld: number;
 }): string {
@@ -180,20 +180,23 @@ export function renderCoverageReport(input: {
   if (withheld > 0) {
     lines.push("");
     lines.push(
-      // Fix round 1, finding 3. The old wording named one specific cause —
-      // "too few people" — for a count that can also include a question the
-      // model never clustered at all, or a cluster refused outright on label
-      // grounds; in each of those a below-floor asker count is not why it
-      // went unreported, so saying so is a claim the data does not support.
-      // "Too scattered" holds regardless of which of the three it was, and
-      // it is the word this file's own `withheld` docblock already used for
-      // what this number is FOR — the sentence now matches the field it
-      // explains.
+      // Fix round 2. "Too scattered" was fix round 1's wording, and it is
+      // still one claim standing in for three causes. A question lands here
+      // when it was never put in any surviving cluster at all, when its
+      // cluster formed but had too few distinct askers
+      // (`coverage-cluster.ts:441`), OR when its cluster CLEARED the floor
+      // and was dropped anyway because its label turned out to be unusable
+      // (`:444`, `:463` — both refusals run after the floor check, not
+      // before it). "Too scattered" is true of the first two and false of
+      // the third: that cluster's questions did add up to a topic, with
+      // enough distinct people behind it. The wording below asserts only
+      // what holds for all three — not why these questions are missing,
+      // only that none of them ended up as a topic above.
       rows.length > 0
-        ? `${plural(withheld, "other question", "other questions")} were too scattered ` +
-            `to add up to a topic worth reporting.`
-        : `${plural(withheld, "question", "questions")} were too scattered to add up to ` +
-            `a topic worth reporting. Nothing here names anybody, which is why the bar is ` +
+        ? `${plural(withheld, "other question", "other questions")} did not come ` +
+            `together into a topic we could report.`
+        : `${plural(withheld, "question", "questions")} did not come together into a ` +
+            `topic we could report. Nothing here names anybody, which is why the bar is ` +
             `where it is.`,
     );
   } else if (rows.length === 0 && totals.fallback > 0) {

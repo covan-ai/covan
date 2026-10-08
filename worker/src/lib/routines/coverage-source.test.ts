@@ -228,7 +228,7 @@ describe("the report", () => {
     expect(result.summary).toContain("Widgets — 15 questions, 5 people");
     // The number this test exists for: 7, not 0 and not 10.
     expect(result.summary).toContain(
-      "7 other questions were too scattered to add up to a topic worth reporting.",
+      "7 other questions did not come together into a topic we could report.",
     );
   });
 });

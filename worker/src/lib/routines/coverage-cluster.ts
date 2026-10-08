@@ -373,8 +373,15 @@ export type FloorResult = {
    *
    * A label withheld as a quotation (`label: null`) still counts its members
    * as covered — the row survived the floor and was pushed; only its name
-   * was withheld. Dropped clusters (below the floor, or refused on label
-   * grounds before a `Gap` was ever built for them) contribute nothing.
+   * was withheld. Everything else contributes nothing, for any of three
+   * reasons, not only the one below the floor: a question the model never
+   * put in any cluster at all, a cluster that had too few distinct askers,
+   * and a cluster refused outright on label grounds (empty, unreadable, or
+   * nothing but punctuation) before a `Gap` was ever built for it. Fix round
+   * 1, finding 3: `coverage-render.ts`'s rendered sentence for `withheld`
+   * used to name only the floor as the cause, and `coverage-source.test.ts`'s
+   * duplicates-and-shortfall case has seven withheld questions that were
+   * never clustered at all — the floor was never the reason for those seven.
    *
    * `deduped.length - coveredCount` is a count of distinct questions that no
    * surviving gap covers — Task 12's `withheld`, and `coverage-render.ts`'s

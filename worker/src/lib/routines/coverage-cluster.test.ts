@@ -3,6 +3,7 @@ import {
   askerFloor,
   dedupeQuestions,
   enforceFloor,
+  enforceFloorWithCoverage,
   MAX_LABEL_CHARS,
   type DedupedQuestion,
 } from "./coverage-cluster";
@@ -114,6 +115,30 @@ describe("enforcing the floor on what the model returned", () => {
   it("emits a label that is one of the questions without a name", () => {
     const gaps = enforceFloor([{ label: "Expense a flight", members: [0] }], deduped, 3);
     expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
+  });
+
+  /**
+   * Fix round 1's covering test. `enforceFloorWithCoverage`'s own docblock
+   * promises that a cluster withheld as a quotation (`label: null`) still
+   * counts its members as covered — the row survived the floor and was
+   * pushed, only its name was withheld. Nothing called this function
+   * directly before this test: `coverage-cluster.test.ts` only ever exercised
+   * it through `enforceFloor`, which discards `coveredCount`, and
+   * `coverage-source.test.ts` only ever reached `coveredCount` through a
+   * named-label cluster. Moving `covered.add` below the `isQuotation` check
+   * in `enforceFloorWithCoverage` would keep every one of those tests green
+   * while silently excluding a quoted-but-covered question from
+   * `coveredCount` — which would overcount `withheld` by exactly that many,
+   * the number fix round 1's finding 3 is about.
+   */
+  it("counts a quoted cluster's members as covered even though its name is withheld", () => {
+    const { gaps, coveredCount } = enforceFloorWithCoverage(
+      [{ label: "Expense a flight", members: [0] }],
+      deduped,
+      3,
+    );
+    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
+    expect(coveredCount).toBe(1);
   });
 
   // Fix round 1, finding 3: a single short word is no longer dropped just

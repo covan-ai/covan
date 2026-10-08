@@ -95,6 +95,20 @@ describe("what costs nothing", () => {
     expect(deps.cluster).not.toHaveBeenCalled();
   });
 
+  /**
+   * Fix round 1, finding 2, the half that rots silently if dropped. Both
+   * skips above are reached before `deps.cluster` is ever called, so there is
+   * nothing to report having spent — `model` and `tokens` must stay unset
+   * rather than default to some invented value.
+   */
+  it("reports no model or tokens on a pre-call skip", async () => {
+    const deps = depsFor({ gaps: [] });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({ kind: "skip" });
+    expect(result).not.toHaveProperty("model");
+    expect(result).not.toHaveProperty("tokens");
+  });
+
   it("makes exactly one model call when it does report", async () => {
     const deps = depsFor();
     const result = await runCoverageReport(input, deps);
@@ -145,6 +159,20 @@ describe("the report", () => {
     const deps = depsFor({ clusters: [{ label: "Expenses", members: [0] }] });
     const result = await runCoverageReport(input, deps);
     expect(result).toMatchObject({ kind: "skip" });
+  });
+
+  /**
+   * Fix round 1, finding 2, the other half. This skip follows the model
+   * call — clustering already ran and was paid for, even though nothing
+   * survived the floor. The executor's quota block is keyed on tokens spent,
+   * not on `kind`, so a post-call skip that reports neither meters a
+   * scattered week as free; this is the test that fails if those fields are
+   * ever dropped again.
+   */
+  it("reports the model and tokens spent on a post-call skip", async () => {
+    const deps = depsFor({ clusters: [{ label: "Expenses", members: [0] }] });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({ kind: "skip", model: "gpt-4.1-mini", tokens: 900 });
   });
 
   /**
@@ -200,20 +228,49 @@ describe("the report", () => {
     expect(result.summary).toContain("Widgets — 15 questions, 5 people");
     // The number this test exists for: 7, not 0 and not 10.
     expect(result.summary).toContain(
-      "7 other questions fell short too, but came from too few people to report.",
+      "7 other questions were too scattered to add up to a topic worth reporting.",
     );
   });
 });
 
 describe("what the model sent back is parsed, not trusted", () => {
-  it("reads the shape it asked for", () => {
+  /**
+   * Fix round 1, finding 1. A bare top-level array was never what the model
+   * actually sends: `completion.ts`'s `extractJsonObject` docblock (:314-324)
+   * says OpenAI's `json_object` response format guarantees a top-level
+   * *object*, and the Anthropic path extracts one too. The real reply is an
+   * object wrapping the array under a `clusters` key.
+   */
+  it("reads the shape the model actually sends: an object wrapping the array", () => {
+    expect(parseClusters({ clusters: [{ label: "A", members: [0, 1] }] })).toEqual([
+      { label: "A", members: [0, 1] },
+    ]);
+  });
+
+  // A bare array still works too — it costs one line, and a caller may hand
+  // the array over already unwrapped.
+  it("reads a bare array as well", () => {
     expect(parseClusters([{ label: "A", members: [0, 1] }])).toEqual([
       { label: "A", members: [0, 1] },
     ]);
   });
 
   it("answers nothing for anything else", () => {
-    for (const junk of [null, undefined, 42, "clusters", {}, [1, 2], [{ label: 5 }]]) {
+    for (const junk of [
+      null,
+      undefined,
+      42,
+      "clusters",
+      {},
+      [1, 2],
+      [{ label: 5 }],
+      // An object is now a recognised wrapper, so it needs its own junk: no
+      // `clusters` key, and a `clusters` that is not an array, are both
+      // still nothing.
+      { clusters: "not an array" },
+      { clusters: null },
+      { topics: [{ label: "A", members: [0] }] },
+    ]) {
       expect(parseClusters(junk), String(junk)).toEqual([]);
     }
   });

@@ -72,7 +72,15 @@ export function renderCoverageReport(input: {
   totals: CoverageTotals;
   gaps: Gap[];
   /**
-   * Deduped questions that fell short of the FLOOR, so were not reported.
+   * Deduped questions that no surviving gap covers.
+   *
+   * Fix round 1, finding 3: not only "fell short of the floor". A question
+   * lands here for any of three reasons — the model never put it in any
+   * cluster at all, its cluster had too few distinct askers, or its cluster's
+   * label was refused outright (empty, unreadable, or nothing but
+   * punctuation) before a `Gap` was ever built for it. The floor is one of
+   * three ways in, not the whole of it, and the sentence this number drives
+   * must hold for all three.
    *
    * A different fact from a gap with no label, and the report keeps them
    * apart. This number names nobody and carries no topic — it is the one
@@ -172,12 +180,21 @@ export function renderCoverageReport(input: {
   if (withheld > 0) {
     lines.push("");
     lines.push(
+      // Fix round 1, finding 3. The old wording named one specific cause —
+      // "too few people" — for a count that can also include a question the
+      // model never clustered at all, or a cluster refused outright on label
+      // grounds; in each of those a below-floor asker count is not why it
+      // went unreported, so saying so is a claim the data does not support.
+      // "Too scattered" holds regardless of which of the three it was, and
+      // it is the word this file's own `withheld` docblock already used for
+      // what this number is FOR — the sentence now matches the field it
+      // explains.
       rows.length > 0
-        ? `${plural(withheld, "other question", "other questions")} fell short too, ` +
-            `but came from too few people to report.`
-        : `${plural(withheld, "question", "questions")} fell short, but not enough ` +
-            `different people asked about any one topic for it to be reported. Nothing ` +
-            `here names anybody, which is why the bar is where it is.`,
+        ? `${plural(withheld, "other question", "other questions")} were too scattered ` +
+            `to add up to a topic worth reporting.`
+        : `${plural(withheld, "question", "questions")} were too scattered to add up to ` +
+            `a topic worth reporting. Nothing here names anybody, which is why the bar is ` +
+            `where it is.`,
     );
   } else if (rows.length === 0 && totals.fallback > 0) {
     // Questions did find nothing, and yet there is neither a topic to list

@@ -47,7 +47,7 @@ describe("the rendered report", () => {
    */
   it("explains an empty report rather than looking broken", () => {
     const text = renderCoverageReport({ totals, gaps: [], withheld: 9 });
-    expect(text).toMatch(/not enough|too few/i);
+    expect(text).toMatch(/scattered/i);
     expect(text).toContain("9");
   });
 
@@ -57,7 +57,7 @@ describe("the rendered report", () => {
       gaps: [{ label: "Expenses", questions: 7, askers: 4 }],
       withheld: 0,
     });
-    expect(text).not.toMatch(/too few people/i);
+    expect(text).not.toMatch(/scattered/i);
   });
 
   /**
@@ -247,36 +247,39 @@ describe("a topic the guard would not name", () => {
 });
 
 /**
- * `withheld` is the count of topics that fell BELOW THE FLOOR, and it is a
- * different fact from a topic whose name was refused. Below-floor topics are
- * counted and never listed — the count names nobody and carries no label; a
+ * `withheld` is the count of distinct questions no surviving gap covers —
+ * never clustered at all, clustered below the floor, or clustered but
+ * refused on label grounds — and it is a different fact from a topic whose
+ * name was refused. Fix round 1, finding 3: this used to say "fell BELOW THE
+ * FLOOR", which is only one of the three. Withheld questions are counted and
+ * never listed — the count names nobody and carries no label; a
  * nameless-but-present topic is listed with its counts. The report must not
  * blur the two, because they tell an admin opposite things: one says the
  * questions were too scattered to report, the other says a topic is there and
  * we would not print what it was called.
  */
-describe("the below-floor count and the withheld name are different facts", () => {
-  it("counts below-floor topics and lists nameless ones in the same report", () => {
+describe("the withheld count and the withheld name are different facts", () => {
+  it("counts withheld questions and lists nameless topics in the same report", () => {
     const text = renderCoverageReport({
       totals,
       gaps: [{ label: null, questions: 4, askers: 3 }],
       withheld: 6,
     });
-    // The below-floor count is reported as a number of questions...
+    // The withheld count is reported as a number of questions...
     expect(text).toContain("6");
-    expect(text).toMatch(/too few people|not enough/i);
+    expect(text).toMatch(/scattered/i);
     // ...and the nameless topic is still a listed row with its own counts.
     expect(text).toContain("4 questions");
     expect(text).toMatch(/not naming/i);
   });
 
-  it("says nothing at all about the floor when nothing fell below it", () => {
+  it("says nothing at all about scattered questions when none were withheld", () => {
     const text = renderCoverageReport({
       totals,
       gaps: [{ label: "Expenses", questions: 7, askers: 4 }],
       withheld: 0,
     });
-    expect(text).not.toMatch(/fell short/i);
+    expect(text).not.toMatch(/scattered/i);
   });
 });
 

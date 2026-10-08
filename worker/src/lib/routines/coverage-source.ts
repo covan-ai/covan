@@ -55,15 +55,25 @@ export type CoverageDeps = {
 export type CoverageRunResult =
   /** Something that will not fix itself on the next tick. */
   | { kind: "pause"; reason: string }
-  /** Nothing to say this week, and nothing was spent finding that out. */
-  | { kind: "skip"; note: string }
+  /**
+   * Nothing to say this week. `model` and `tokens` are unset when nothing was
+   * spent finding that out — the empty-read skip and the too-few-askers skip,
+   * both before `deps.cluster` is ever called. The one skip that follows the
+   * model call (every cluster fell short of the floor) sets both: the call
+   * was made and paid for even though there is nothing to report, and the
+   * executor's quota block is keyed on tokens spent, not on `kind`. Fix round
+   * 1, finding 2 — this type used to have no field to carry them in, so that
+   * comment was aspirational rather than true.
+   */
+  | { kind: "skip"; note: string; model?: string; tokens?: number }
   | { kind: "report"; summary: string; model: string; tokens: number };
 
 /**
- * The three conditions, re-asked on every run — and the facts they were
- * answered from, so the caller need not read the workspace a second time to
- * get the one more fact (`memberCount`, for the floor) that surviving this
- * check does not by itself disclose.
+ * The three conditions, re-asked on every run — and the facts, and the asker
+ * floor, they were answered from. The caller needs both: `facts` so it need
+ * not read the workspace a second time, and `floor` so it need not re-derive
+ * from `facts.memberCount` what this function already called `askerFloor` to
+ * get.
  *
  * The executor runs under the service role and bypasses RLS entirely, so
  * 0074's policy cannot catch any of these: it guards creation, and all three of
@@ -82,35 +92,56 @@ export type CoverageRunResult =
  * Worker a read is a subrequest against a ceiling of fifty
  * (`lib/routines/dispatcher.ts:22,198`), and a routine that spends two where
  * one would do is a routine that fits fewer of itself into a tick.
+ *
+ * One flat result, not a `{reason:string;facts}|{reason:null;facts}` union —
+ * fix round 1, finding on the signature. With `facts` (and now `floor`)
+ * identical in shape across every branch, that union carried no information
+ * a plain `reason: string | null` did not; it was two members differing only
+ * in a nullable field's type, with nothing to discriminate on. `floor` stays
+ * `number | null` rather than asserted non-null here: `reason === null`
+ * implies `floor !== null` by this function's own control flow, but nothing
+ * about the two fields' *types* says so, and that implication is the caller's
+ * to check, not this function's to assert away.
  */
 async function stoppedBy(
   input: CoverageRunInput,
   deps: CoverageDeps,
-): Promise<{ reason: string; facts: WorkspaceFacts } | { reason: null; facts: WorkspaceFacts }> {
+): Promise<{ reason: string | null; facts: WorkspaceFacts; floor: number | null }> {
   const facts = await deps.readWorkspace(input.workspaceId, input.ownerId);
+  const floor = askerFloor(facts.memberCount);
 
   if (!facts.gapReportEnabled) {
-    return { reason: "the coverage report is no longer on for this workspace", facts };
+    return {
+      reason: "the coverage report is no longer on for this workspace",
+      facts,
+      floor,
+    };
   }
   if (!facts.ownerIsAdmin) {
     return {
       reason:
         "this report reads across the workspace's conversations, and its owner is no longer an admin",
       facts,
+      floor,
     };
   }
   // Review Focus 1, and not a condition 0074 can guard. A workspace that shrank
   // to two people cannot have a topic reported without identifying who asked —
   // `askerFloor` answers null — so the routine stops and says so, rather than
   // skipping every week forever.
-  if (askerFloor(facts.memberCount) === null) {
+  if (floor === null) {
     return {
       reason:
         "a workspace needs at least three people before a topic can be reported without identifying who asked",
       facts,
+      floor,
     };
   }
-  return { reason: null, facts };
+  return { reason: null, facts, floor };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -120,12 +151,27 @@ async function stoppedBy(
  * Everything unrecognisable becomes nothing, which costs a report and cannot
  * cost a disclosure — and `enforceFloor` is behind this anyway, so a cluster
  * that survives parsing still has to survive the floor.
+ *
+ * Fix round 1, finding 1. `completion.ts`'s `extractJsonObject` docblock
+ * (:314-324) says what a reply actually is: OpenAI's `response_format:
+ * {type:"json_object"}` guarantees a top-level JSON *object*, and the
+ * Anthropic path extracts one too — never a bare top-level array. So the
+ * shape this must read is an object wrapping the array under a `clusters`
+ * key, `{"clusters": [...]}`. A bare array is still accepted — it costs one
+ * line, and a caller may hand the array over already unwrapped — but it was
+ * never going to be what the model's own reply looks like. The prompt that
+ * names the `clusters` key is Task 13's, not this file's.
  */
 export function parseClusters(raw: unknown): RawCluster[] {
-  if (!Array.isArray(raw)) return [];
+  const list = Array.isArray(raw)
+    ? raw
+    : isRecord(raw) && Array.isArray(raw.clusters)
+      ? raw.clusters
+      : null;
+  if (list === null) return [];
 
   const clusters: RawCluster[] = [];
-  for (const entry of raw) {
+  for (const entry of list) {
     if (typeof entry !== "object" || entry === null) continue;
     const { label, members } = entry as { label?: unknown; members?: unknown };
     if (typeof label !== "string") continue;
@@ -146,9 +192,17 @@ export async function runCoverageReport(
   const stopped = await stoppedBy(input, deps);
   if (stopped.reason !== null) return { kind: "pause", reason: stopped.reason };
 
-  // Non-null: `stoppedBy` returned a null reason, which is exactly the case
-  // where it is.
-  const floor = askerFloor(stopped.facts.memberCount)!;
+  if (stopped.floor === null) {
+    // Unreachable by `stoppedBy`'s own control flow: a null `reason` is only
+    // ever returned once `askerFloor` on the same facts has already answered
+    // non-null — the branch above pauses otherwise. Thrown rather than
+    // asserted away, so that if this invariant is ever broken by a future
+    // change on either side, the failure is loud instead of a silently wrong
+    // floor. Comment-held invariants have rotted three separate times on this
+    // branch; this one checks itself instead of asking to be trusted.
+    throw new Error("stoppedBy returned no pause reason but no asker floor");
+  }
+  const floor = stopped.floor;
 
   const rows = await deps.readGaps(input.workspaceId, input.days);
   if (rows.length === 0) {
@@ -182,10 +236,14 @@ export async function runCoverageReport(
     // The call was made and nothing cleared the floor. A skip, not a report:
     // "here is nothing" every week is the shape that reads as broken. The
     // tokens are still reported, because they were still spent — the executor's
-    // quota block is keyed on that and not on the status, deliberately.
+    // quota block is keyed on that and not on the status, deliberately. (Fix
+    // round 1, finding 2: that was only ever true of this comment, not of the
+    // type, until `model`/`tokens` were added to the "skip" variant above.)
     return {
       kind: "skip",
       note: `no one topic came from ${floor} or more different people`,
+      model: answer.model,
+      tokens: answer.tokens,
     };
   }
 

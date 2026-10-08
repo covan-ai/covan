@@ -346,23 +346,84 @@ function truncateLabel(label: string): string {
  * Ordered by how many questions are behind the gap, so the thing most worth
  * writing down is first. That is `0053`'s ordering choice for its own pair of
  * functions, made again here.
+ *
+ * A thin wrapper over `enforceFloorWithCoverage` — see that function for the
+ * loop. Kept as its own export, with this exact signature, so that every
+ * caller and this file's own suite see no change: a `Gap[]` in, a `Gap[]`
+ * out, same as before Task 12 added the function beside it.
  */
 export function enforceFloor(
   clusters: RawCluster[],
   deduped: DedupedQuestion[],
   floor: number | null,
 ): Gap[] {
-  if (floor === null || !Number.isInteger(floor) || floor < 1) return [];
+  return enforceFloorWithCoverage(clusters, deduped, floor).gaps;
+}
+
+/** `enforceFloor`'s `Gap[]`, plus how much of `deduped` it accounts for. */
+export type FloorResult = {
+  gaps: Gap[];
+  /**
+   * How many of `deduped`'s DISTINCT questions belong to a cluster that
+   * survived — i.e. that this call actually pushed into `gaps`. Never a
+   * count of copies (that is `Gap.questions`, a sum) and never a count of
+   * gaps: a `Gap` can bundle several deduped questions, and this counts the
+   * questions, once each, regardless of how many gaps they ended up under or
+   * how many times any one of them was asked.
+   *
+   * A label withheld as a quotation (`label: null`) still counts its members
+   * as covered — the row survived the floor and was pushed; only its name
+   * was withheld. Dropped clusters (below the floor, or refused on label
+   * grounds before a `Gap` was ever built for them) contribute nothing.
+   *
+   * `deduped.length - coveredCount` is a count of distinct questions that no
+   * surviving gap covers — Task 12's `withheld`, and `coverage-render.ts`'s
+   * docblock for the field of the same name. That subtraction has to be done
+   * against THIS number and not against `Σ Gap.questions`: the latter counts
+   * copies, so one repeated question inside a surviving cluster can make it
+   * exceed `deduped.length` and send the subtraction negative — exactly the
+   * defect Task 12's brief shipped and this export exists to avoid, by
+   * handing back a count that is already in the right unit.
+   */
+  coveredCount: number;
+};
+
+/**
+ * `enforceFloor`'s own loop, read twice over rather than walked twice.
+ *
+ * Exists because the question "how many distinct questions does this NOT
+ * cover" can only be answered correctly by the same resolution that decides
+ * which clusters survive — member de-duplication, the range filter, and the
+ * floor and label refusals all have to agree with `enforceFloor` about which
+ * clusters counted, or the two numbers drift the moment one side's rules
+ * change and the other's do not. So this is the one place that walk happens;
+ * `enforceFloor` above is now a view onto it, and `coverage-source.ts` calls
+ * this directly rather than re-deriving coverage from `Gap[]` alone, which
+ * carries no member indices to re-derive it from.
+ */
+export function enforceFloorWithCoverage(
+  clusters: RawCluster[],
+  deduped: DedupedQuestion[],
+  floor: number | null,
+): FloorResult {
+  if (floor === null || !Number.isInteger(floor) || floor < 1) {
+    return { gaps: [], coveredCount: 0 };
+  }
 
   const gaps: Gap[] = [];
+  const covered = new Set<number>();
 
   for (const cluster of clusters) {
     // De-duplicated before the range filter: a model repeating an index must
     // not get to count that question's askers and copies more than once.
-    const members = [...new Set(cluster.members)]
-      .filter((i) => Number.isInteger(i) && i >= 0 && i < deduped.length)
-      .map((i) => deduped[i]);
-    if (members.length === 0) continue;
+    // Indices are kept alongside the resolved rows — rather than mapped away
+    // immediately, as the single-return version of this loop once did —
+    // because `covered` below needs them and `Gap` does not carry them.
+    const memberIndices = [...new Set(cluster.members)].filter(
+      (i) => Number.isInteger(i) && i >= 0 && i < deduped.length,
+    );
+    if (memberIndices.length === 0) continue;
+    const members = memberIndices.map((i) => deduped[i]);
 
     const askers = new Set<number>();
     let questions = 0;
@@ -393,6 +454,11 @@ export function enforceFloor(
     // prefix is one in the whole, and nothing the full string would have
     // refused gets through here.
     if (tokenise(truncatedLabel).length === 0) continue;
+
+    // Everything past this line survives — named or not — so its members are
+    // covered either way. Set before the naming decision below, which only
+    // ever changes what a surviving row is called, never whether it counts.
+    for (const i of memberIndices) covered.add(i);
 
     // Both the label as the model wrote it and the label as the report will
     // show it, against every question the model saw — not just this
@@ -431,7 +497,7 @@ export function enforceFloor(
   // three keys keep the order they arrived in, which `Array.prototype.sort`
   // guarantees by being specified as stable. The ordering is therefore a
   // function of the input alone.
-  return gaps.sort((a, b) => {
+  gaps.sort((a, b) => {
     if (a.questions !== b.questions) return b.questions - a.questions;
     if (a.label === null || b.label === null) {
       if (a.label === b.label) return 0;
@@ -439,4 +505,6 @@ export function enforceFloor(
     }
     return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
   });
+
+  return { gaps, coveredCount: covered.size };
 }

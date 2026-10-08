@@ -377,10 +377,12 @@ create policy "coverage_opt_outs_select_self"
 -- Five properties are structural rather than conventions the caller is asked to
 -- respect:
 --
---   * IT NEVER RETURNS A USER ID. The asker is a `dense_rank()` over user id,
---     scoped to this call — an integer that lets the worker count distinct
---     askers for the floor and carries nothing else. It is not a pseudonym that
---     survives to the next call: the ranking depends on which users appear.
+--   * IT NEVER RETURNS A USER ID. The asker is a `dense_rank()` over a key
+--     salted fresh per call (`v_salt`), scoped to this call — an integer that
+--     lets the worker count distinct askers for the floor and carries nothing
+--     else. Non-persistent because of the salt, not because of which users
+--     happen to show up in a given call — see the salted `dense_rank` near the
+--     end of this function for the full account.
 --   * IT TRUNCATES IN SQL. `left(..., 120)` means the full text of a question
 --     never crosses the database boundary.
 --   * IT EXCLUDES OPTED-OUT MEMBERS, and does so by filtering at read time
@@ -408,7 +410,13 @@ create function public.workspace_coverage_gaps(
 )
 returns table (question text, asker_key int)
 language plpgsql
-stable
+-- VOLATILE, not stable: `v_salt` below draws `gen_random_uuid()`, so two
+-- calls in the same statement or transaction can legitimately return
+-- different asker keys for the same person. `stable` promises the opposite
+-- of that for the life of a statement, and the salt is what makes the
+-- promise false. (`workspace_coverage_totals` draws no salt and stays
+-- `stable`.)
+volatile
 security definer
 set search_path = pg_catalog, public
 as $$
@@ -605,9 +613,18 @@ begin
   -- of who happens to be allowed to look at it. The salt is per call, which the
   -- ranking already was — `v_salt` is drawn once per invocation, so keys stay
   -- stable within one result set and carry nothing between two.
+  -- ORDER BY sub.text — not by anything asker-derived, which is salted per
+  -- call above and would just move this same instability around rather than
+  -- remove it. Without an ORDER BY here, `coverage-cluster.ts`'s sort is
+  -- stable but not total: two gaps tied on question count and both
+  -- `label: null` keep arrival order, so the same two topics could render as
+  -- different lines call to call. This is what makes that comparator's own
+  -- promise — "the ordering is therefore a function of the input alone" —
+  -- actually true.
   select sub.text,
          (dense_rank() over (order by md5(sub.asker::text || v_salt)))::int
-    from sub;
+    from sub
+   order by sub.text;
 end;
 $$;
 
@@ -626,13 +643,20 @@ comment on function public.workspace_coverage_gaps(uuid, uuid, int) is
 --
 -- **THE TWO BUCKET DEFINITIONS MUST STAY IN STEP**, which is a narrower claim
 -- than the one this comment made in its first draft and the only one that is
--- true. The five `count(*) filter (...)` expressions, the denominator and the
--- window are the same here as in `public.workspace_coverage` (0053) and a
--- change to any of them belongs in both. The WHERE clause is deliberately NOT
--- the same, and the differences are named below so nobody has to diff two
--- files to find them. `tests/rls/coverage-gaps.test.ts` asserts the equality
--- that does hold and the one delta that does not, rather than a blanket
--- "identical".
+-- true. The five `count(*) filter (...)` expressions and the denominator are
+-- the same here as in `public.workspace_coverage` (0053), and a change to
+-- either belongs in both.
+--
+-- THE WINDOW IS THE SAME ONLY WHEN BOTH ARE GIVEN THE SAME `p_days` — NOT A
+-- GUARANTEE ABOUT THE DEFAULT CALL. The defaults differ: `coalesce(p_days, 7)`
+-- here, `coalesce(p_days, 30)` in 0053. `tests/rls/coverage-gaps.test.ts`'s
+-- cross-check always passes `7` explicitly to both, so it cannot catch a
+-- drift in either clamp.
+--
+-- The WHERE clause is deliberately NOT the same, and the differences are
+-- named below so nobody has to diff two files to find them.
+-- `tests/rls/coverage-gaps.test.ts` asserts the equality that does hold and
+-- the one delta that does not, rather than a blanket "identical".
 --
 -- The duplication is deliberate and its reason is in this migration's header:
 -- 0053's function is what the live coverage screen calls, and replacing it to

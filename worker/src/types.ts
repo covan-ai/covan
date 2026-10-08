@@ -102,6 +102,23 @@ export type RoutineEnv = {
    * of `OPENAI_BASE_URL`, for a proxy or a self-hosted Composio in front of it.
    */
   COMPOSIO_BASE_URL?: string;
+  /**
+   * browser-use's API key, and the switch that makes the `browse` tool exist.
+   *
+   * On `RoutineEnv` rather than `Bindings` for `COMPOSIO_API_KEY`'s reason,
+   * and more sharply: the cron Worker is the thing that POLLS a browser task,
+   * so a key set only on the API Worker creates tasks nothing ever finishes.
+   * It is a DEPLOYMENT secret — Covan pays for the browser, the person asking
+   * never does — which is the whole economic shape of the feature.
+   *
+   * Optional, and its absence is a supported configuration: unset means
+   * `browse` is offered to no model and the Integrations page names the
+   * variable. On Cloudflare: `wrangler secret put BROWSER_USE_API_KEY`, on
+   * BOTH Workers.
+   */
+  BROWSER_USE_API_KEY?: string;
+  /** A proxy, or a self-hosted browser-use, in front of api.browser-use.com. Their framework is MIT. */
+  BROWSER_USE_BASE_URL?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   RESEND_API_KEY: string;

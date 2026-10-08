@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConfirmCard, SettledSteps, StepTrail, toStepViews } from "./agent-steps";
+import {
+  ConfirmCard,
+  SettledSteps,
+  StepTrail,
+  toStepViews,
+  type AgentStepView,
+} from "./agent-steps";
 
 /**
  * What an answer did, and the card that stops it doing something nobody
@@ -342,5 +348,85 @@ describe("toStepViews payloads", () => {
   it("still builds the same label it always did", () => {
     const view = toStepViews([step({ resultExcerpt: "41 orders." })])[0];
     expect(view.label).toBe("query_database · select count(*) from orders");
+  });
+});
+
+/**
+ * The panel under a settled row.
+ *
+ * `message_steps` has held both halves of this since 0060 — the arguments the
+ * tool was handed and the first part of what it gave back — and the trail drew
+ * an 80-character label and threw the rest away. For a step that failed or was
+ * refused, this panel is the only place on the screen where the reason is
+ * readable at all.
+ */
+describe("the tool panel", () => {
+  const settled = (over: Partial<AgentStepView> = {}): AgentStepView => ({
+    index: 0,
+    tool: "query_database",
+    status: "ok",
+    label: "query_database · select count(*) from orders",
+    request: { sql: "select count(*) from orders" },
+    resultExcerpt: "41 orders.",
+    ...over,
+  });
+
+  it("opens a row that carries a payload, and closes it again", async () => {
+    render(<StepTrail steps={[settled()]} />);
+    const row = screen.getByRole("button");
+
+    expect(screen.queryByText("Sent")).not.toBeInTheDocument();
+
+    await userEvent.click(row);
+    expect(screen.getByText("Sent")).toBeInTheDocument();
+    expect(screen.getByText("Returned")).toBeInTheDocument();
+    expect(screen.getByText(/41 orders\./)).toBeInTheDocument();
+
+    await userEvent.click(row);
+    expect(screen.queryByText("Sent")).not.toBeInTheDocument();
+  });
+
+  it("draws Sent alone for a step stored before the excerpt was", async () => {
+    // An empty Returned block would say the tool returned nothing, which is a
+    // different claim from not having recorded what it returned.
+    render(<StepTrail steps={[settled({ resultExcerpt: null })]} />);
+
+    await userEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("Sent")).toBeInTheDocument();
+    expect(screen.queryByText("Returned")).not.toBeInTheDocument();
+  });
+
+  it("puts a refusal's reason somewhere a person can reach it", async () => {
+    render(
+      <StepTrail
+        steps={[
+          settled({
+            status: "refused",
+            resultExcerpt: "Sending mail from this connection needs an approval.",
+          }),
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button"));
+    expect(screen.getByText(/needs an approval/)).toBeInTheDocument();
+    // Not under a heading that reads as routine output.
+    expect(screen.getByText("Why it was not allowed")).toBeInTheDocument();
+  });
+
+  it("leaves a running row alone, because a live step carries no payload", () => {
+    // `HarnessEvent`'s `step` variant is `{ index, tool, status, label }`.
+    // Widening it would put every tool call's arguments into the SSE stream of
+    // every open browser on every turn, to buy the seconds before it settles.
+    render(<StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("leaves a settled row alone when there is nothing behind it", () => {
+    // `mapSteps` writes `request: {}` for a row that stored none, and every
+    // row written before 0060 has no excerpt. A fold onto nothing is worse
+    // than no fold.
+    render(<StepTrail steps={[settled({ request: {}, resultExcerpt: null })]} />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Check, Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Disclosure } from "@/components/section-card";
+import { Tool, hasPayload, type ToolPart } from "@/components/prompt-kit/tool";
 import { cn } from "@/lib/utils";
 
 /**
@@ -93,6 +94,39 @@ function Mark({ status }: { status: AgentStepView["status"] }) {
   return <span className="h-2 w-2 shrink-0 rounded-[2px] bg-accent-orange" />;
 }
 
+/** The row itself: a mark, what it was pointed at, and how it ended. */
+function Row({ step }: { step: AgentStepView }) {
+  return (
+    <>
+      <Mark status={step.status} />
+      <span className="min-w-0 truncate">{step.label || step.tool}</span>
+      <span className="shrink-0 text-muted-foreground/70">{WORDS[step.status]}</span>
+    </>
+  );
+}
+
+/**
+ * What a settled row can be opened onto, or null when there is nothing.
+ *
+ * A RUNNING row is null by construction rather than by a check on its
+ * contents: `HarnessEvent`'s `step` variant carries `{ index, tool, status,
+ * label }` and no payload, so there is nothing to open, and widening that
+ * event would put every tool call's arguments and result into the SSE stream
+ * of every open browser on every turn to buy the seconds before the turn
+ * settles. Deferred deliberately — see the design, §1.
+ */
+function toolPart(step: AgentStepView): ToolPart | null {
+  if (step.status === "running") return null;
+  const part: ToolPart = {
+    tool: step.tool,
+    status: step.status,
+    request: step.request,
+    resultExcerpt: step.resultExcerpt,
+    durationMs: step.durationMs,
+  };
+  return hasPayload(part) ? part : null;
+}
+
 /**
  * The trail itself.
  *
@@ -100,21 +134,34 @@ function Mark({ status }: { status: AgentStepView["status"] }) {
  * did it look at" and a count cannot answer it. Capped in height rather than
  * in number: eight steps is the budget, eight rows is a paragraph, and hiding
  * the middle of a short list to save four lines would cost more than it saved.
+ *
+ * A row that has a payload behind it becomes a trigger and opens beneath
+ * itself. A row that does not stays a plain `<li>` — which is every live row,
+ * and every row written before 0060 — so the trail does not offer a fold onto
+ * nothing. The two kinds sit in one list and read as one sequence, which is
+ * why the mark, the label and the ending word are a fragment shared between
+ * them rather than two copies of a row.
  */
 export function StepTrail({ steps, className }: { steps: AgentStepView[]; className?: string }) {
   if (steps.length === 0) return null;
   return (
     <ol className={cn("flex flex-col gap-1", className)}>
-      {steps.map((step) => (
-        <li
-          key={step.index}
-          className="step-arrive flex items-center gap-2 text-xs leading-[1.45] text-muted-foreground"
-        >
-          <Mark status={step.status} />
-          <span className="min-w-0 truncate">{step.label || step.tool}</span>
-          <span className="shrink-0 text-muted-foreground/70">{WORDS[step.status]}</span>
-        </li>
-      ))}
+      {steps.map((step) => {
+        const part = toolPart(step);
+        return (
+          <li
+            key={step.index}
+            className={cn(
+              "step-arrive min-w-0 text-xs leading-[1.45] text-muted-foreground",
+              // The expandable row lays itself out inside the trigger, because
+              // the panel below it is a sibling of the row and not of the mark.
+              !part && "flex items-center gap-2",
+            )}
+          >
+            {part ? <Tool part={part} trigger={<Row step={step} />} /> : <Row step={step} />}
+          </li>
+        );
+      })}
     </ol>
   );
 }

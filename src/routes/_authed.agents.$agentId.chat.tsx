@@ -387,6 +387,16 @@ function ChatTab() {
    * indistinguishable from a product that has stopped working.
    */
   const [thinkingText, setThinkingText] = useState("");
+  /**
+   * How long the model reasoned for on this turn, once it has stopped.
+   *
+   * Null while it is still reasoning, which is what makes the fold in
+   * `LiveAnswer` open. The clock lives here rather than in the component
+   * because this is where the events are: the window runs from the first
+   * `thinking` event to the first `delta` after it, and neither of those is
+   * visible from a prop.
+   */
+  const [thinkingMs, setThinkingMs] = useState<number | null>(null);
   // The session whose revealed text is waiting for the server's copy to arrive.
   // Separate from `replyingIn` because the two end at different moments: the
   // composer is handed back the instant a stream stops, while the text that was
@@ -582,6 +592,7 @@ function ChatTab() {
     setThinking(!opts.continuing);
     setStreamText("");
     setThinkingText("");
+    setThinkingMs(null);
     setLiveSteps([]);
     // Answering one question does not leave the previous one on screen.
     setPendingConfirm(null);
@@ -596,6 +607,23 @@ function ChatTab() {
     streamAbort.current = controller;
     let partial = "";
     let reasoning = "";
+    /*
+     * Local to this stream, for the same reason `ranLong` above is: the reply
+     * they belong to has no id until `done`.
+     *
+     * THE TWO `Date.now()` READS BELOW CARRY A DISABLE, and this is the reason
+     * for it rather than a shrug. `react-hooks/purity` treats every line of
+     * `streamReply` as render code — a bare `const at = Date.now()` anywhere in
+     * this function is reported, while the identical call in `submit` thirty
+     * lines down is not — and this function is an SSE reader driven by a
+     * `for await` over a response body, which runs long after render and only
+     * ever from an event handler. The two reads are also the only way either
+     * end of the reasoning window is observable: it opens on the first
+     * `thinking` event and closes on the first `delta` after it, and nothing
+     * else on the wire marks either moment.
+     */
+    let reasoningStart: number | null = null;
+    let reasoningDone = false;
 
     try {
       const token = await getAccessToken();
@@ -702,12 +730,24 @@ function ChatTab() {
 
           if (event.type === "delta" && typeof event.text === "string") {
             setThinking(false);
+            // The first answer token is the moment the model stopped
+            // reasoning, which is the only moment either end of this window is
+            // observable. Once, per turn: a tool turn reasons again on later
+            // passes and re-timing it would replace a duration somebody is
+            // reading with a shorter one.
+            if (reasoningStart !== null && !reasoningDone) {
+              reasoningDone = true;
+              // eslint-disable-next-line react-hooks/purity
+              setThinkingMs(Date.now() - reasoningStart);
+            }
             partial += event.text;
             setStreamText(partial);
           } else if (event.type === "thinking" && typeof event.text === "string") {
             // The dots stand for "something is happening and we cannot say
             // what". Once the model is saying what, they have nothing to add.
             setThinking(false);
+            // eslint-disable-next-line react-hooks/purity
+            if (reasoningStart === null) reasoningStart = Date.now();
             reasoning += event.text;
             setThinkingText(reasoning);
           } else if (event.type === "step" && typeof event.index === "number") {
@@ -1571,6 +1611,7 @@ function ChatTab() {
                     className="mt-5"
                     streamText={streamText}
                     thinkingText={thinkingText}
+                    thinkingMs={thinkingMs}
                     thinking={thinking}
                     steps={liveSteps}
                     streaming={replyingIn === active?.id}

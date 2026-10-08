@@ -62,8 +62,7 @@ export type TaskStatus = {
 };
 
 export type BrowserResult<T> =
-  | { kind: "ok"; value: T }
-  | { kind: "error"; status: number; message: string };
+  { kind: "ok"; value: T } | { kind: "error"; status: number; message: string };
 
 export function hasBrowserKey(env: BrowserEnv): boolean {
   return Boolean(env.BROWSER_USE_API_KEY);

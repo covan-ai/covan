@@ -8,6 +8,7 @@ import { searchDocumentsTool } from "./tools/search-documents";
 import { describeConnectionTool } from "./tools/describe-connection";
 import { queryDatabaseTool } from "./tools/query-database";
 import { httpRequestTool } from "./tools/http-request";
+import { browseTool } from "./tools/browse";
 import { sendEmailTool } from "./tools/send-email";
 import { scheduleJobTool } from "./tools/schedule-job";
 import { findToolTool } from "./tools/find-tool";
@@ -291,6 +292,7 @@ export const TOOLS: AgentTool[] = [
   describeConnectionTool,
   queryDatabaseTool,
   httpRequestTool,
+  browseTool,
   findToolTool,
   runToolTool,
   sendEmailTool,

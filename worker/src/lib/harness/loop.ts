@@ -555,7 +555,7 @@ export async function runWithTimeout(
  */
 function labelFor(tool: string, args: unknown): string {
   const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-  const first = ["query", "sql", "path", "instruction", "summary", "slug", "connectionId"]
+  const first = ["query", "sql", "path", "instruction", "task", "summary", "slug", "connectionId"]
     .map((key) => record[key])
     .find((v) => typeof v === "string" && v.trim().length > 0) as string | undefined;
   if (!first) return tool;

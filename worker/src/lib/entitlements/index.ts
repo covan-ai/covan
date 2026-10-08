@@ -194,6 +194,38 @@ export const COMPOSIO_CALL_TOKENS = 1_000;
  */
 export const COMPOSIO_SEARCH_TOKENS = 100;
 
+/**
+ * What one browser task costs, in chat tokens.
+ *
+ * An ABSOLUTE price for one event, like `COMPOSIO_CALL_TOKENS` above — but
+ * **derived at a different rate, and the difference is the whole point.**
+ *
+ * That constant's comment converts dollars to tokens at $4.00 per million,
+ * which is the LIST blended rate. Covan's REALIZED rate is about $1.24 per
+ * million, because prompt caching works and most of a turn's input is cached.
+ * A browser task is none of that: it is uncached money leaving the building
+ * for a third party. Priced at the list rate it would be under-charged by
+ * 3.2x — a person spending their whole allowance on browsing would cost
+ * $4.00 against a ceiling the quota believes is $1.24, and the per-user
+ * ceiling would silently triple (21 users: $26/month becomes ~$84).
+ *
+ * So the rate here is the realized one: $0.17 / $0.00000124 ~= 137,000. That
+ * holds the ceiling at $1.24/user/month and buys roughly seven browser tasks
+ * a month, or fewer mixed with chat.
+ *
+ * **Provisional.** 17c is browser-use's own published figure — 17c per solved
+ * task at 82% on their 106-task benchmark — and it is not Covan's workload.
+ * `browser_tasks.cost_usd` records what was really charged, read back from
+ * the provider's own status endpoint, so this is re-derivable from invoices
+ * after the first twenty production tasks rather than from a blog post.
+ * Shipping without that re-derivation is how a ceiling moves without anybody
+ * deciding to move it.
+ *
+ * The same 3.2x gap applies to `COMPOSIO_CALL_TOKENS` itself (1,000 should be
+ * ~3,226). Smaller stakes, its own issue.
+ */
+export const BROWSER_TASK_TOKENS = 137_000;
+
 export const unlimitedEntitlements: Entitlements = {
   async check() {
     return { allowed: true };

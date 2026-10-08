@@ -27,13 +27,35 @@ one.
   check in the API.
 - **Knowledge bundles.** Group documents by subject and attach or detach them
   from an agent, instead of one undifferentiated pile.
-- **Grounded answers.** Retrieval over your documents — `pgvector`, with a
-  similarity floor so an off-topic question doesn't drag in the nearest
-  irrelevant passage — and the documents that grounded a reply are stored with
-  it, so citations survive a reload.
+- **Grounded answers.** Retrieval over your documents on two arms: `pgvector`
+  for meaning, with a similarity floor so an off-topic question doesn't drag in
+  the nearest irrelevant passage, and a Postgres full-text arm for the verbatim
+  strings an embedding is nearly blind to — a contract number, an acronym, an
+  error code. The documents that grounded a reply are stored with it, so
+  citations survive a reload.
+- **Reports the agent writes.** Say what a write-up should cover — from the chat
+  composer, or `/report write up the quarter for the board` — and it is written
+  against the conversation and the bundles attached to it. What comes back is an
+  ordinary markdown document that downloads, moves and exports like an upload,
+  in a bundle of its own so what the agent produced stays separable from the
+  sources it was given.
+- **Sources that stay in sync.** Point a bundle at a Notion database or a
+  Google Drive folder and it reconciles on a schedule — additions, edits and
+  withdrawals — instead of leaving somebody to re-upload; and an agent can be
+  asked from Slack without opening the web app. Each of the three is an OAuth
+  app you register once ([`docs/integrations.md`](docs/integrations.md)).
+- **Services and apps it can call.** An agent can also go and look while it is
+  answering: a Postgres, read-only by the transaction rather than by trust; any
+  REST API you hold a token for; and, with `COMPOSIO_API_KEY`, the roughly 1,500
+  applications Composio describes — Gmail, Slack, Linear among them — connected
+  by signing in at the application, or on a page Composio hosts for the ones
+  that want a key of their own, rather than by a form here. The first
+  time an agent acts on one in a conversation you are shown the operation and
+  every argument and it waits for a yes; anything that changes data at the far
+  end asks again, every time.
 - **Routines.** Scheduled work that runs while nobody is watching: point one at
-  an RSS feed or a page, say what to do with it, and get the result by email or
-  Slack.
+  an RSS feed, a web page or a synced bundle, say what to do with what is new,
+  and get the result by email or Slack.
 - **Collaborative sessions.** Bring the team into one conversation, or one
   brainstorm board, when the question is shared.
 - **Take it with you.** One button in Settings downloads the whole workspace
@@ -42,9 +64,11 @@ one.
   hostage" should be checkable by the team, not only by whoever runs the
   server ([`docs/export.md`](docs/export.md)).
 - **Pick the model per agent.** OpenAI's GPT-4o, GPT-4.1 and GPT-5 families
-  out of the box; add `ANTHROPIC_API_KEY` and Claude Sonnet 4.6, Sonnet 4.5 and
-  Haiku 4.5 join the picker. Leave that key unset and nothing reaches
-  Anthropic — the models are not offered, not accepted, and not resolved.
+  out of the box; add `ANTHROPIC_API_KEY` and Claude Opus 5, Sonnet 5, Opus 4.8,
+  Sonnet 4.6, Sonnet 4.5 and Haiku 4.5 join the picker. Leave that key unset and
+  nothing reaches Anthropic — the models are not offered, not accepted, and not
+  resolved. Temperature and, where the model has one, how hard it thinks before
+  it answers are per agent too.
 - **Bring your own endpoint.** Set `OPENAI_BASE_URL` and completions go to
   Ollama, vLLM, LiteLLM or OpenRouter instead of OpenAI. Set
   `EMBEDDING_BASE_URL` and your documents go there too — a separate variable,
@@ -62,24 +86,7 @@ Every figure in that answer is in the uploaded document, and the chip under it
 says which one. That is the whole difference between this and a chat window: not
 that it answers, but that you can check it.
 
-### How this differs from `qm`
-
-[`yc-software/qm`](https://github.com/yc-software/qm) (MIT) is the obvious
-alternative and a good project. It describes itself as a multiplayer agent
-_harness_ for work: an isolated agent workspace per employee, shared channels
-and projects, Slack and web, and a pluggable choice of model. If your team is
-mostly engineers, that is very likely what you want, and it is better to say so
-than to pretend the comparison isn't there.
-
-Covan is not a harness. It is one agent that knows what your team wrote down,
-and a small surface around it — upload, ask, schedule. The bet is that a
-five-person agency, a clinic, or a finance team does not want to operate agent
-infrastructure; it wants a colleague who has read everything. That is why the
-whole product is one `docker compose up` and one API key, and why the only
-interface is a web app: there is no CLI, and nobody has to be the person who
-runs it.
-
-### Status
+## Status
 
 Covan runs, and it was extracted from a working private product rather than
 written as a demo. It is nonetheless young as an open-source project: the API is
@@ -159,9 +166,11 @@ See [`docs/architecture.md`](docs/architecture.md) for detail.
 | [Routines](docs/routines.md)           | Scheduled work, what it can reach, and what it does with the secret you give it |
 | [Integrations](docs/integrations.md)   | Syncing a bundle from Notion or Drive, and asking an agent from Slack           |
 | [Your team](docs/team.md)              | Invitations, what a role actually gates, shared sessions, deletion              |
+| [The API](docs/api.md)                 | Reaching Covan from a script or another service, and what a key can do          |
 | [Taking it with you](docs/export.md)   | Exporting a workspace, and putting it back into a Covan you run                 |
 | [Self-hosting](docs/self-hosting.md)   | Running it on your own machine, and deploying it somewhere real                 |
 | [Architecture](docs/architecture.md)   | How a request reaches a row, and the two seams that serve both runtimes         |
+| [Security](docs/security.md)           | Where authorization lives, what a secret is at rest, and what self-hosting owes |
 
 ## Repository layout
 
@@ -170,6 +179,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detail.
 | `src/`                 | TanStack Start frontend — file-based routes, shadcn/ui     |
 | `worker/`              | Hono API; `src/index.ts` is the Worker, `src/node.ts` Node |
 | `supabase/migrations/` | Numbered SQL, applied in order                             |
+| `tests/rls/`           | Policy tests, driven against a real Postgres, not read     |
 | `docker/`              | Compose support files (Kong config, DB init hooks)         |
 | `docs/`                | The documentation above, in markdown                       |
 
@@ -209,6 +219,13 @@ bun run dry            # wrangler deploy --dry-run
 You still need backing services for `bun run dev`. The simplest way to get them
 is `docker compose up db auth rest realtime kong migrate` and point `.env` and
 `worker/.dev.vars` at `http://localhost:8000`.
+
+Because authorization lives in the database, the policies have a suite of their
+own: `bun run test:rls` drives a real Postgres with real users and real tokens,
+and `bun run check:rls` is the second-long static guard that catches a new table
+nobody enabled row level security on. The suite needs the stack above and a
+handful of variables pointed at it — [`CONTRIBUTING.md`](CONTRIBUTING.md) spells
+them out, and they are the same ones CI uses.
 
 `AGENTS.md` is the short version of the rules that matter here; `DESIGN.md` is
 the binding visual contract for new UI.

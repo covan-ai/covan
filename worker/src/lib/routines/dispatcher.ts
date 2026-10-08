@@ -16,6 +16,9 @@ import { deliveryDepsFrom } from "./delivery";
 import { fileRoutineOutput } from "./filing";
 import { entitlementsFor } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
+import { runCoverageReport, type CoverageDeps } from "./coverage-source";
+import { resolveModel } from "../models";
+import { complete, totalTokens } from "../completion";
 
 /**
  * How many routines one tick may run, bounded by the Workers **Free** plan's
@@ -139,8 +142,159 @@ function executorDeps(
     file: canFileDocuments(env)
       ? (input, runEnv) => fileRoutineOutput(db, { ...env, ...runEnv }, input)
       : undefined,
+    // The gap report (0074), end to end. `coverageDeps` is rebuilt per call
+    // rather than once per tick, because it closes over `input.ownerId` —
+    // `readTotals` and `readGaps` both need `p_user_id` on the wire (see the
+    // function below for why) and neither has it in its own `CoverageDeps`
+    // signature, which is `(workspaceId, days)` for both. `runEnv` for the
+    // same reason `file` takes it: clustering is a paid call, and it goes to
+    // whichever key is answering this run.
+    coverage: (input, runEnv) => runCoverageReport(input, coverageDeps(db, input.ownerId, runEnv)),
     now: () => new Date(),
   };
+}
+
+/**
+ * Asks the model to group a workspace's unanswered questions into topics —
+ * the one model call `coverage-source.ts`'s header promises, bound to its
+ * real dependencies.
+ *
+ * `readWorkspace` reads two ordinary tables under the service role, so it has
+ * no `auth.uid()` to answer to. `readTotals` and `readGaps` are RPCs instead,
+ * and that is where the two reads 0075 added differ from 0053's pair they
+ * sit beside: `workspace_coverage` (0053) checks `is_workspace_admin`, which
+ * asks `auth.uid()` — null for this service-role caller, always, on every
+ * scheduled run — so it would refuse every call with 42501. 0075's
+ * `workspace_coverage_totals` and `workspace_coverage_gaps` exist because of
+ * exactly that dead end: both take `p_user_id` explicitly instead, check that
+ * id is an admin, and are granted to `service_role` only. `p_user_id` here is
+ * `ownerId` — `runCoverageReport` re-checks admin status itself through
+ * `readWorkspace` before either RPC is ever reached, so this is not a second,
+ * looser gate; it is the same one the two functions insist on asking for
+ * themselves.
+ *
+ * Exported for `dispatcher.test.ts` alone, alongside `clusterQuestions` below
+ * — both are plain functions with no state of their own, and the alternative
+ * for testing them — proving the RPC names, the `p_user_id` wiring, and the
+ * clustering prompt's contract with `parseClusters` only through a full
+ * `runOneRoutine` pass — would mean faking the executor's membership check,
+ * quota check and channel lookup just to reach code that touches none of them.
+ */
+export function coverageDeps(db: SupabaseClient, ownerId: string, env: RoutineEnv): CoverageDeps {
+  return {
+    readWorkspace: async (workspaceId, forOwnerId) => {
+      const [{ data: workspace }, { data: members }] = await Promise.all([
+        db.from("workspaces").select("gap_report_enabled").eq("id", workspaceId).single(),
+        db.from("workspace_members").select("user_id, role").eq("workspace_id", workspaceId),
+      ]);
+      return {
+        gapReportEnabled: workspace?.gap_report_enabled === true,
+        ownerIsAdmin: (members ?? []).some(
+          (m: { user_id: string; role: string }) => m.user_id === forOwnerId && m.role === "admin",
+        ),
+        memberCount: (members ?? []).length,
+      };
+    },
+    readTotals: async (workspaceId, days) => {
+      const { data } = await db.rpc("workspace_coverage_totals", {
+        p_workspace_id: workspaceId,
+        p_user_id: ownerId,
+        p_days: days,
+      });
+      const row = (data ?? [])[0];
+      return {
+        days,
+        answers: Number(row?.answers ?? 0),
+        covered: Number(row?.covered ?? 0),
+        fallback: Number(row?.fallback ?? 0),
+        ungrounded: Number(row?.ungrounded ?? 0),
+        unrecorded: Number(row?.unrecorded ?? 0),
+      };
+    },
+    readGaps: async (workspaceId, days) => {
+      const { data, error } = await db.rpc("workspace_coverage_gaps", {
+        p_workspace_id: workspaceId,
+        p_user_id: ownerId,
+        p_days: days,
+      });
+      // The function raises 42501 when the switch is off, the owner is no
+      // longer an admin, or (service-role aside) the caller asked about
+      // somebody else. Reached through the service role it should not be —
+      // `stoppedBy` already re-checked both conditions moments earlier — so an
+      // empty read is the safe reading of an error here: it produces a skip,
+      // never a report built on a failed query.
+      if (error) {
+        console.error("workspace_coverage_gaps failed", error);
+        return [];
+      }
+      return data ?? [];
+    },
+    cluster: (questions) => clusterQuestions(questions, env),
+  };
+}
+
+/**
+ * The instruction half of the clustering call's contract. The parser half —
+ * `parseClusters` in `coverage-source.ts` — accepts a bare array OR an object
+ * of this exact shape, because `completion.ts`'s `extractJsonObject` (:314-324)
+ * documents that neither provider this build talks to can be made to answer
+ * with a bare top-level array: OpenAI's `response_format: {type:"json_object"}`
+ * guarantees an object, and the Anthropic path extracts `{...}` out of
+ * whatever came back. Naming `clusters` here is what makes the two halves
+ * agree — asking for an array this call cannot receive would mean every
+ * reply parses to nothing, forever, with no error anywhere to say so.
+ */
+const CLUSTER_INSTRUCTION =
+  "Group the questions below into at most eight topics, by the area of work each " +
+  'is about. Respond with a JSON object of the shape {"clusters": [{"label": ' +
+  'string, "members": number[]}]} — one top-level object with a single key, ' +
+  '"clusters", never a bare array. `members` are the zero-based indices of the ' +
+  "questions in that topic. A label is two to six words naming the area — never " +
+  "a question, never a quotation, and never anybody's wording. Leave a question " +
+  "out rather than forcing it into a topic it does not belong to.";
+
+/**
+ * The one model call this feature ever makes.
+ *
+ * `gpt-4.1-mini` rather than whatever an agent's own settings say, because
+ * this call has no agent behind it — grouping questions by area is shaping,
+ * not thinking, the same category `titleModelFor`'s header names for a
+ * session title or a persona draft. `resolveModel` rather than the bare
+ * literal, so an operator's `OPENAI_MODEL` override still wins the way it
+ * does everywhere else a model is picked.
+ *
+ * The questions ride in the user message, never the system one — third-party
+ * text, written by colleagues, and `summarise.ts` makes this argument at
+ * length for a watched page. It applies with more force here, since these are
+ * sentences people typed expecting nobody outside their own question to read
+ * them literally.
+ */
+export async function clusterQuestions(
+  questions: string[],
+  env: RoutineEnv,
+): Promise<{ raw: unknown; model: string; tokens: number }> {
+  const model = resolveModel("gpt-4.1-mini", env);
+  const { text, usage } = await complete(env, {
+    model,
+    json: true,
+    messages: [
+      { role: "system", content: CLUSTER_INSTRUCTION },
+      { role: "user", content: questions.map((q, i) => `${i}. ${q}`).join("\n") },
+    ],
+  });
+
+  // Never thrown past this point: an unparsable reply is a cluster list of
+  // zero, which `enforceFloorWithCoverage` turns into a skip, not a crashed
+  // run. The call was still made and still spent, which is why `tokens` below
+  // is read off `usage` regardless of whether `text` parsed.
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    console.error("coverage clustering reply was not JSON", err);
+  }
+
+  return { raw, model, tokens: totalTokens(usage) };
 }
 
 /**

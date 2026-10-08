@@ -1,6 +1,21 @@
 // worker/src/lib/routines/dispatcher.test.ts
-import { describe, it, expect, vi } from "vitest";
-import { runDueRoutines, runOneRoutine } from "./dispatcher";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { runDueRoutines, runOneRoutine, clusterQuestions, coverageDeps } from "./dispatcher";
+import { parseClusters } from "./coverage-source";
+
+const createMock = vi.fn();
+
+// Stub the OpenAI SDK, the same way `summarise.test.ts` does, and for the
+// same reason: `clusterQuestions` below is the one place on this branch that
+// spends money on this feature's behalf, so the call shape — and the reply
+// shape coming back — matter more than they would on an ordinary unit test.
+// vi.mock is hoisted above imports by vitest, so this applies before
+// `lib/completion` constructs its `new OpenAI(...)` client.
+vi.mock("openai", () => ({
+  default: class {
+    chat = { completions: { create: createMock } };
+  },
+}));
 
 const env = {
   SUPABASE_URL: "https://x.supabase.co",
@@ -242,5 +257,179 @@ describe("filing is wired only where it can work", () => {
   it("hands one over on Cloudflare once the bucket is bound", async () => {
     const DOCS = { put: vi.fn(), get: vi.fn(), delete: vi.fn() };
     expect(typeof (await depsFor({ DOCS })).file).toBe("function");
+  });
+});
+
+describe("a workspace routine gets the gap report bound to its real dependencies", () => {
+  it("hands the executor a coverage dependency", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [dueRow("r1")], error: null });
+    const runRoutine = vi.fn().mockResolvedValue({ status: "ok", itemsNew: 0 });
+
+    await runDueRoutines(env, { db: dbWith(rpc) as any, runRoutine });
+
+    const deps = runRoutine.mock.calls[0][1];
+    expect(typeof deps.coverage).toBe("function");
+  });
+});
+
+/**
+ * `coverageDeps`'s two RPC reads, in isolation from the executor that calls
+ * them — see the export's own comment in `dispatcher.ts` for why.
+ *
+ * This is the regression that reading 0075's migration caught and the brief
+ * did not: its illustrative `readTotals` called `workspace_coverage` (0053)
+ * with just `p_workspace_id`/`p_days`. That function asks `is_workspace_admin`,
+ * which reads `auth.uid()` — null for every service-role caller, always — so
+ * every scheduled run would have raised 42501 on its first read, forever.
+ * 0075 exists because of exactly that dead end: `workspace_coverage_totals`
+ * and `workspace_coverage_gaps` take `p_user_id` explicitly instead, and are
+ * granted to `service_role` only. Both assertions below are pinned on the
+ * function NAME as well as the params, so a reviewer who only diffs the
+ * params would still see the regression this guards.
+ */
+describe("coverageDeps", () => {
+  it("asks workspace_coverage_totals and workspace_coverage_gaps for the owner by id", async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [{ answers: 10, covered: 7, fallback: 1, ungrounded: 1, unrecorded: 1 }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ question: "Can I expense a conference?", asker_key: 0 }],
+        error: null,
+      });
+    const deps = coverageDeps({ rpc } as any, "owner-1", { OPENAI_API_KEY: "sk-test" } as any);
+
+    const totals = await deps.readTotals("ws-1", 7);
+    const gaps = await deps.readGaps("ws-1", 7);
+
+    expect(rpc).toHaveBeenNthCalledWith(1, "workspace_coverage_totals", {
+      p_workspace_id: "ws-1",
+      p_user_id: "owner-1",
+      p_days: 7,
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "workspace_coverage_gaps", {
+      p_workspace_id: "ws-1",
+      p_user_id: "owner-1",
+      p_days: 7,
+    });
+    expect(totals).toEqual({
+      days: 7,
+      answers: 10,
+      covered: 7,
+      fallback: 1,
+      ungrounded: 1,
+      unrecorded: 1,
+    });
+    expect(gaps).toEqual([{ question: "Can I expense a conference?", asker_key: 0 }]);
+  });
+
+  it("reads an admin-check refusal from workspace_coverage_gaps as an empty list, not a thrown error", async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [], error: null })
+      .mockResolvedValueOnce({ data: null, error: { code: "42501", message: "not an admin" } });
+    const deps = coverageDeps({ rpc } as any, "owner-1", { OPENAI_API_KEY: "sk-test" } as any);
+
+    const gaps = await deps.readGaps("ws-1", 7);
+
+    expect(gaps).toEqual([]);
+  });
+});
+
+/**
+ * The prompt-to-parser contract, end to end — the gap Task 12's review found:
+ * the brief's own prompt asked for a bare JSON array, which neither provider
+ * this build talks to can ever send back. OpenAI's `response_format:
+ * {type:"json_object"}` guarantees a top-level object every time, so a prompt
+ * that asked for an array would have every reply parse to nothing, forever,
+ * with no error anywhere to say so — the clustering call would still be paid
+ * for every week.
+ *
+ * `parseClusters` is imported unmocked from `coverage-source.ts`: the point is
+ * that the REAL prompt and the REAL parser agree, not that each independently
+ * does what it claims to.
+ */
+describe("clusterQuestions", () => {
+  beforeEach(() => createMock.mockReset());
+
+  it("asks for an object keyed `clusters`, and the realistic reply survives parseClusters", async () => {
+    // A realistic reply body: this is exactly the string shape
+    // `response_format: {type:"json_object"}` guarantees OpenAI will send —
+    // a top-level object, never a bare array.
+    createMock.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              clusters: [
+                { label: "Expense policy", members: [0, 2] },
+                { label: "PTO rollover", members: [1] },
+              ],
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 120, completion_tokens: 40 },
+    });
+
+    const result = await clusterQuestions(
+      ["Can I expense a conference?", "Does PTO roll over to next year?", "What's the per-diem?"],
+      { OPENAI_API_KEY: "sk-test" } as any,
+    );
+
+    const sent = createMock.mock.calls[0][0];
+    expect(sent.response_format).toEqual({ type: "json_object" });
+    const systemMessage = sent.messages.find((m: any) => m.role === "system").content;
+    // Names the exact key `parseClusters` reads — the fix for the brief's own
+    // bug, which asked for a bare array instead.
+    expect(systemMessage).toContain('"clusters"');
+    const userMessage = sent.messages.find((m: any) => m.role === "user").content;
+    // Third-party text rides in the user message, never the system one.
+    expect(userMessage).toContain("Can I expense a conference?");
+    expect(userMessage).toContain("Does PTO roll over to next year?");
+
+    // And the parser half — Task 12's own code, unmocked — reads it back.
+    const clusters = parseClusters(result.raw);
+    expect(clusters).toEqual([
+      { label: "Expense policy", members: [0, 2] },
+      { label: "PTO rollover", members: [1] },
+    ]);
+    expect(result.model).toBe("gpt-4.1-mini");
+    expect(result.tokens).toBe(160);
+  });
+
+  it("would have parsed to nothing had the prompt asked for a bare array, as the brief's did", async () => {
+    // What `response_format: {type:"json_object"}` actually forces a model to
+    // send when its instruction says "array": some object, not necessarily
+    // one with a `clusters` key at all. This is the reply shape the bug would
+    // have produced — unpredictable, and never the bare array the old prompt
+    // asked for.
+    createMock.mockResolvedValue({
+      choices: [
+        { message: { content: JSON.stringify({ result: [{ label: "x", members: [0] }] }) } },
+      ],
+      usage: { prompt_tokens: 50, completion_tokens: 10 },
+    });
+
+    const result = await clusterQuestions(["one question"], { OPENAI_API_KEY: "sk-test" } as any);
+
+    // Paid for and silently empty — exactly the failure mode the review
+    // flagged: no error anywhere, and no gaps ever reported again.
+    expect(parseClusters(result.raw)).toEqual([]);
+    expect(result.tokens).toBe(60);
+  });
+
+  it("does not throw when the reply is not JSON at all", async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "sorry, I can't do that" } }],
+      usage: { prompt_tokens: 20, completion_tokens: 8 },
+    });
+
+    const result = await clusterQuestions(["one question"], { OPENAI_API_KEY: "sk-test" } as any);
+
+    expect(parseClusters(result.raw)).toEqual([]);
+    expect(result.tokens).toBe(28);
   });
 });

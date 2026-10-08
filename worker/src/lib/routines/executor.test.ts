@@ -2068,3 +2068,152 @@ describe("a routine that ends", () => {
     expect(saved.values.runs_done).toBeUndefined();
   });
 });
+
+describe("a routine that reads its own workspace", () => {
+  // `source_config.report` names which report — only `coverage_gaps` exists
+  // today (0074) — and nothing here reads it; the executor hands the whole
+  // input off to `deps.coverage` and lets the dispatcher's real binding care
+  // which report that is.
+  const workspaceRoutine = (over: Partial<RoutineRow> = {}) =>
+    routine({ source_kind: "workspace", source_config: { report: "coverage_gaps" }, ...over });
+
+  function depsForWorkspaceRun() {
+    fetchImpl = vi.fn();
+    const { db, updates, inserts } = makeDb();
+    const deps = makeDeps(db) as any;
+    return { deps, updates, inserts };
+  }
+
+  it("delivers the rendered report and makes no summarise call", async () => {
+    const { deps, inserts } = depsForWorkspaceRun();
+    deps.coverage = vi.fn().mockResolvedValue({
+      kind: "report",
+      summary: "Over the last 7 days…",
+      model: "gpt-4.1-mini",
+      tokens: 900,
+    });
+
+    const out = await runRoutine(workspaceRoutine(), deps);
+
+    expect(out).toEqual({ status: "ok", itemsNew: 1 });
+    expect(summarise).not.toHaveBeenCalled();
+    expect(deps.coverage).toHaveBeenCalledWith(
+      { workspaceId: "w1", ownerId: "u1", days: 7 },
+      expect.anything(),
+    );
+    expect(deliverCalls).toHaveLength(1);
+    expect(JSON.parse(deliverCalls[0].init.body).text).toContain("Over the last 7 days");
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run.status).toBe("ok");
+  });
+
+  it("records the clustering call as the run's model call", async () => {
+    const { deps, inserts } = depsForWorkspaceRun();
+    deps.coverage = vi.fn().mockResolvedValue({
+      kind: "report",
+      summary: "x",
+      model: "gpt-4.1-mini",
+      tokens: 900,
+    });
+
+    await runRoutine(workspaceRoutine(), deps);
+
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run).toMatchObject({ status: "ok", model: "gpt-4.1-mini", tokens: 900 });
+    // The owner's allowance is charged the same figure `routine_runs.tokens`
+    // shows: one clustering call carries none of the prompt/cache/completion
+    // breakdown `weighTokens` would need to tell the two apart. See the
+    // comment beside the executor's workspace branch.
+    expect(recorded).toEqual([{ userId: "u1", tokens: 900 }]);
+  });
+
+  it("pauses the routine when the run says it may not continue", async () => {
+    const { deps, updates } = depsForWorkspaceRun();
+    deps.coverage = vi.fn().mockResolvedValue({
+      kind: "pause",
+      // The real string `coverage-source.ts` returns today, not the brief's
+      // "no longer turned on" — Task 12 changed it because the brief's own
+      // assertion regex did not match the brief's own string.
+      reason: "the coverage report is no longer on for this workspace",
+    });
+
+    await runRoutine(workspaceRoutine(), deps);
+
+    const saved = updates.find((u) => u.table === "routines")!;
+    expect(saved.values).toMatchObject({
+      status: "paused",
+      paused_reason: "the coverage report is no longer on for this workspace",
+    });
+  });
+
+  /**
+   * Item 3 of the review. `announcePause`'s own wording — "paused after
+   * repeated failures" — is false for all three of this feature's reasons,
+   * so the notice this pause actually sends has to come from somewhere else.
+   * Asserted on the notice `deliver()` actually sent, not on which function
+   * got called, because the thing that matters is what lands in the owner's
+   * inbox.
+   */
+  it("tells the owner honestly why it stopped, not that it failed repeatedly", async () => {
+    const { deps } = depsForWorkspaceRun();
+    const reason =
+      "a workspace needs at least three people before a topic can be reported " +
+      "without identifying who asked";
+    deps.coverage = vi.fn().mockResolvedValue({ kind: "pause", reason });
+
+    await runRoutine(workspaceRoutine(), deps);
+
+    expect(deliverCalls).toHaveLength(1);
+    const body = deliverCalls[0].init.body as string;
+    expect(body).not.toMatch(/repeated failures/);
+    expect(body).toContain(reason);
+  });
+
+  it("skips without delivering when there is nothing to report", async () => {
+    const { deps, inserts } = depsForWorkspaceRun();
+    deps.coverage = vi.fn().mockResolvedValue({ kind: "skip", note: "nothing fell short" });
+
+    await runRoutine(workspaceRoutine(), deps);
+
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run.status).toBe("skipped");
+    // The pre-call skip: nothing was spent finding out there was nothing to
+    // report, and this must stay metered as nothing.
+    expect(run.tokens).toBe(0);
+    expect(deliverCalls).toHaveLength(0);
+    expect(recorded).toEqual([]);
+  });
+
+  /**
+   * Item 2 of the review. This is the skip that follows the clustering call —
+   * every cluster fell short of the floor — and it is the one the brief's own
+   * Step 3 code left unmetered. `coverage-source.ts` reports what it spent;
+   * this run must bill it, the same as a declined summarise run does.
+   */
+  it("meters a skip that followed the clustering call, not one that came before it", async () => {
+    const { deps, inserts } = depsForWorkspaceRun();
+    deps.coverage = vi.fn().mockResolvedValue({
+      kind: "skip",
+      note: "no one topic came from 3 or more different people",
+      model: "gpt-4.1-mini",
+      tokens: 640,
+    });
+
+    await runRoutine(workspaceRoutine(), deps);
+
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run).toMatchObject({ status: "skipped", model: "gpt-4.1-mini", tokens: 640 });
+    expect(recorded).toEqual([{ userId: "u1", tokens: 640 }]);
+    expect(deliverCalls).toHaveLength(0);
+  });
+
+  it("fails loudly rather than silently when no coverage dep is bound", async () => {
+    const { deps, inserts } = depsForWorkspaceRun();
+    deps.coverage = undefined;
+
+    await runRoutine(workspaceRoutine(), deps);
+
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run.status).toBe("failed");
+  });
+});

@@ -37,6 +37,7 @@ import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
+import { Button } from "@/components/ui/button";
 import { LiveAnswer } from "@/components/chat/live-answer";
 import {
   PromptInput,
@@ -1450,13 +1451,16 @@ function ChatTab() {
                 </h4>
                 <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
                   {starters.map((s) => (
-                    <button
+                    <Button
                       key={s}
+                      variant="outline"
                       onClick={() => void submit(s)}
-                      className="rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
+                      // A starter is a sentence, not a label: it wraps, it is
+                      // left-aligned, and it is as tall as it needs to be.
+                      className="h-auto justify-start whitespace-normal bg-surface px-4 py-3 text-left hover:bg-surface-hover"
                     >
                       {s}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -1483,14 +1487,15 @@ function ChatTab() {
               */}
               {hasEarlier && (
                 <div className="mb-11 flex justify-center">
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => void loadEarlier()}
                     disabled={loadingEarlier}
-                    className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+                    className="font-medium text-muted-foreground"
                   >
                     {loadingEarlier ? "Loading…" : "Load earlier messages"}
-                  </button>
+                  </Button>
                 </div>
               )}
               {searchQuery !== "" && messages.length === 0 && (
@@ -1680,14 +1685,15 @@ function ChatTab() {
             reader who needs it. Hidden on an empty conversation, where there
             is no end to go back to. */}
         {adrift && !isEmpty && (
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="icon"
             onClick={jumpToEnd}
             aria-label="Jump to the latest message"
-            className="absolute -top-5 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-md border border-border bg-popover text-muted-foreground transition-colors duration-200 hover:text-foreground"
+            className="absolute -top-5 left-1/2 z-10 -translate-x-1/2 bg-popover text-muted-foreground hover:text-foreground"
           >
             <ArrowDown className="h-4 w-4" />
-          </button>
+          </Button>
         )}
         <div className="mx-auto max-w-3xl">
           {quota && quota.level !== "fine" && (
@@ -1699,14 +1705,15 @@ function ChatTab() {
           {followUps.length > 0 && !busy && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {followUps.map((q) => (
-                <button
+                <Button
                   key={q}
-                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => void submit(q)}
-                  className="rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground"
+                  className="bg-popover text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
                   {q}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -1807,13 +1814,14 @@ function ChatTab() {
                   off the answer in the tab you had just left. */}
               {replyingIn === active?.id ? (
                 <PromptInputAction tooltip="Stop generating">
-                  <button
+                  <Button
+                    size="icon"
                     onClick={stop}
                     aria-label="Stop generating"
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
+                    className="shrink-0"
                   >
                     <Square className="h-3.5 w-3.5 fill-current" />
-                  </button>
+                  </Button>
                 </PromptInputAction>
               ) : (
                 /* A real tooltip rather than `title`, which never appears on a
@@ -1825,14 +1833,15 @@ function ChatTab() {
                 <PromptInputAction
                   tooltip={busy ? "Waiting for the current reply to finish" : "Send message"}
                 >
-                  <button
+                  <Button
+                    size="icon"
                     onClick={send}
                     disabled={!input.trim() || busy}
                     aria-label="Send message"
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="shrink-0"
                   >
                     <ArrowUp className="h-4 w-4" />
-                  </button>
+                  </Button>
                 </PromptInputAction>
               )}
             </PromptInputActions>
@@ -1881,21 +1890,23 @@ function ChatTab() {
                 <FileText className="h-4 w-4 text-muted-foreground" /> Report preview
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={reports.download}
-                  className="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="font-medium text-muted-foreground"
                 >
                   Download
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={reports.dismiss}
-                  className="rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   aria-label="Close preview"
+                  className="font-medium text-muted-foreground"
                 >
                   Close
-                </button>
+                </Button>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
@@ -1931,14 +1942,15 @@ function ChatTab() {
             </div>
             {/* Secondary on purpose: the composer's send is this view's one
                 primary action (DESIGN.md §2). */}
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => suggestMutation.mutate(active.id)}
               disabled={suggestMutation.isPending}
-              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-40"
+              className="font-medium"
             >
               {suggestMutation.isPending ? "Extracting…" : "Extract ideas"}
-            </button>
+            </Button>
           </div>
           {suggestions.length > 0 && (
             <div className="border-b border-border bg-muted/30 p-2">
@@ -1955,8 +1967,9 @@ function ChatTab() {
                       <div className="truncate text-sm font-medium">{s.title}</div>
                       {s.detail && <div className="text-xs text-muted-foreground">{s.detail}</div>}
                     </div>
-                    <button
-                      type="button"
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() =>
                         addIdeaMutation.mutate({
                           id: s.id,
@@ -1965,10 +1978,10 @@ function ChatTab() {
                           detail: s.detail,
                         })
                       }
-                      className="shrink-0 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-secondary"
+                      className="shrink-0 font-medium hover:bg-secondary"
                     >
                       Add to board
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>

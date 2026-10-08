@@ -26,16 +26,19 @@ import {
 const USER = { id: "user-1", email: "admin@example.com" };
 const WORKSPACE = "ws-1";
 
-function appWith(spec: FakeDbSpec) {
+/** `apiKeyId` pretends the caller arrived with a key rather than a session. */
+function appWith(spec: FakeDbSpec & { apiKeyId?: string }) {
+  const { apiKeyId, ...rest } = spec;
   const fake = fakeDb({
-    ...spec,
-    tables: { ...activeWorkspaceTables(USER.id, WORKSPACE), ...spec.tables },
+    ...rest,
+    tables: { ...activeWorkspaceTables(USER.id, WORKSPACE), ...rest.tables },
   });
 
   const app = new Hono<AppEnv>();
   app.use("/*", async (c, next) => {
     c.set("user", USER as never);
     c.set("db", fake.db as never);
+    if (apiKeyId) c.set("apiKeyId", apiKeyId);
     await next();
   });
   app.route("/", workspace);
@@ -517,6 +520,29 @@ describe("PATCH /workspace/members/:userId", () => {
     const { app } = appWith({});
 
     expect((await json(app, "PATCH", "/workspace/members/user-2", body)).status).toBe(400);
+  });
+
+  it("refuses an API key, which may not decide what somebody may do", async () => {
+    const { app, calls } = appWith({
+      apiKeyId: "key-1",
+      tables: {
+        workspace_members: {
+          select: () => ({ data: { workspace_id: WORKSPACE }, error: null }),
+          update: () => ({ data: [{ user_id: "user-2", role: "admin" }], error: null }),
+        },
+      },
+    });
+
+    const res = await json(app, "PATCH", "/workspace/members/user-2", { role: "admin" });
+
+    expect(res.status).toBe(403);
+    // Promoting somebody to admin with a key is the same leak as minting a
+    // key: a credential that cannot be revoked by revoking the one that made
+    // it.
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: expect.stringMatching(/api keys cannot/i),
+    });
+    expect(calls.some((c) => c.table === "workspace_members" && c.op === "update")).toBe(false);
   });
 });
 

@@ -52,7 +52,7 @@ export function WorkspaceCoverageSection() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["coverage", "workspace", days],
-    queryFn: () => api.coverage(days),
+    queryFn: () => api.coverage.workspace(days),
   });
 
   // No spinner on a switch: `keepPreviousData` is not in use here, so the only

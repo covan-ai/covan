@@ -121,8 +121,12 @@ const WORKSPACE_ID = "ws-1";
  * chainable. Seeding `active_workspace_id` with a workspace the user is a
  * member of makes that helper return on its first check, so the fallback path
  * never runs here.
+ *
+ * `gapReportEnabled` defaults to `false` — the column's own default — and only
+ * the "GET /me workspace" tests below pass anything else; every onboarding
+ * test keeps its original, unparameterised call.
  */
-function fakeReadDb(onboardingRow: OnboardingRow | null) {
+function fakeReadDb(onboardingRow: OnboardingRow | null, gapReportEnabled = false) {
   const db = {
     from(table: string) {
       switch (table) {
@@ -156,6 +160,7 @@ function fakeReadDb(onboardingRow: OnboardingRow | null) {
                     name: "Alice's Workspace",
                     slug: "alice-1",
                     default_model: null,
+                    gap_report_enabled: gapReportEnabled,
                   },
                   error: null,
                 }),
@@ -238,5 +243,23 @@ describe("GET /me onboarding state", () => {
       teamSize: null,
       referralSource: null,
     });
+  });
+});
+
+describe("GET /me workspace", () => {
+  it("carries the coverage report's switch", async () => {
+    const res = await appWithDb(fakeReadDb(null, true)).request("/me");
+    const body = (await res.json()) as MeDTO;
+
+    expect(body.workspace.gapReportEnabled).toBe(true);
+  });
+
+  // The column's own default (0075) — a workspace that has never touched the
+  // switch must not be reported as having turned the report on.
+  it("defaults to false", async () => {
+    const res = await appWithDb(fakeReadDb(null, false)).request("/me");
+    const body = (await res.json()) as MeDTO;
+
+    expect(body.workspace.gapReportEnabled).toBe(false);
   });
 });

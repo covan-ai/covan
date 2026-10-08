@@ -360,6 +360,8 @@ export type MeDTO = {
     slug: string;
     /** Model new agents start on. `null` means the interface picks. */
     defaultModel: string | null;
+    /** Whether this workspace has turned the coverage gap report on. */
+    gapReportEnabled: boolean;
   };
   members: Array<{
     id: string;

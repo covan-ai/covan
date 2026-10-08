@@ -36,7 +36,7 @@ me.get("/me", async (c) => {
 
   const { data: workspace, error: workspaceError } = await db
     .from("workspaces")
-    .select("id,name,slug,default_model")
+    .select("id,name,slug,default_model,gap_report_enabled")
     .eq("id", workspaceId)
     .single();
 
@@ -130,6 +130,7 @@ me.get("/me", async (c) => {
       name: workspace.name as string,
       slug: workspace.slug as string,
       defaultModel: (workspace.default_model as string | null) ?? null,
+      gapReportEnabled: workspace.gap_report_enabled === true,
     },
     members,
     models: availableModels(c.env),

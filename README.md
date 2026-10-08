@@ -4,9 +4,10 @@
 
 # Covan
 
-**One agent your team trains together.** Everyone talks to it privately —
-isolated by row level security, not by a check in the API. It acts in your apps
-too, and asks a person before the first call.
+### Knows your work. Does your work.
+
+One agent your whole team teaches, and a chat with it that belongs to each
+person alone.
 
 [![CI](https://github.com/covan-ai/covan/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/covan-ai/covan/actions/workflows/ci.yml)
 [![Licence FSL-1.1-ALv2](https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue)](LICENSE)

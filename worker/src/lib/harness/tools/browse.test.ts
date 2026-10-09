@@ -101,18 +101,36 @@ import { browseTool, BROWSER_TASK_TOKENS } from "./browse";
  * principle: any touch of it from this tool fails the test by name. The write
  * goes through `lib/browser/tasks.ts` and the service role.
  */
-function refusingDb(): ToolContext["db"] {
-  return new Proxy(
-    {},
-    {
-      get(_t, prop) {
-        throw new Error(
-          `browse must not reach the database through ctx.db (touched .${String(prop)}) — ` +
-            "browser_tasks refuses every client write (0073). Use recordBrowserTask.",
-        );
-      },
+/**
+ * @param cookieDomains what `browser_profiles` answers with, for the one read
+ * this tool is allowed to make through the caller's own client.
+ */
+function refusingDb(cookieDomains: string[] | null = null): ToolContext["db"] {
+  return {
+    from(table: string) {
+      // The one legitimate read: 0077 grants `authenticated` a select on
+      // `cookie_domains` and withholds `provider_profile_id`, so the card's
+      // "signed in to…" row comes through the policy that permits it rather
+      // than past it.
+      if (table === "browser_profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: cookieDomains === null ? null : { cookie_domains: cookieDomains },
+                  error: null,
+                }),
+            }),
+          }),
+        };
+      }
+      throw new Error(
+        `browse must not reach ${table} through ctx.db — browser_tasks refuses every ` +
+          "client write (0073). Use recordBrowserTask.",
+      );
     },
-  ) as unknown as ToolContext["db"];
+  } as unknown as ToolContext["db"];
 }
 
 function ctxWith(over: Partial<ToolContext> = {}): ToolContext {
@@ -128,6 +146,10 @@ function ctxWith(over: Partial<ToolContext> = {}): ToolContext {
 }
 
 beforeEach(() => {
+  // Reset to the ordinary case — no jar — so a test that sets one cannot leak
+  // it into the next.
+  profileFor.mockReset();
+  profileFor.mockResolvedValue(null);
   recordBrowserTask.mockReset();
   recordBrowserTask.mockResolvedValue("bt-1");
   createTask.mockReset();
@@ -320,5 +342,57 @@ describe("availability", () => {
 
   it("is destructive, because it acts in the world under instruction", () => {
     expect(browseTool.destructive).toBe(true);
+  });
+});
+
+/**
+ * The with-a-jar path, which shipped with no coverage at all.
+ *
+ * `profileFor` was mocked to answer null always, so neither the forwarding of
+ * the profile to the provider nor `signedInTo` on the approval card was ever
+ * exercised — and `signedInTo` is the consent affordance for the biggest risk
+ * this feature adds. Somebody approving "check the FT front page" needs to see
+ * that the browser is signed in to their mail.
+ */
+describe("a person who has taken over a browser before", () => {
+  const JAR = { id: "prof-1", providerProfileId: "prov-1", proxyCountryCode: "de" };
+
+  it("tells them which sites the browser is signed in to, before they approve", async () => {
+    profileFor.mockResolvedValue(JAR);
+    const ctx = ctxWith({ db: refusingDb(["mail.google.com", "portal.example.com"]) });
+
+    const result = await browseTool.run({ task: "read my invoices on the portal" }, ctx);
+
+    expect(result.kind).toBe("needs_confirmation");
+    const proposal = (result as { proposal: Record<string, unknown> }).proposal;
+    // `ProposalRows` iterates Object.entries and skips only `kind`, so this
+    // renders with no frontend change — the same free ride `cost` takes.
+    expect(String(proposal.signedInTo)).toContain("mail.google.com");
+    expect(String(proposal.signedInTo)).toContain("portal.example.com");
+  });
+
+  it("says nothing about sign-ins when the jar is empty", async () => {
+    profileFor.mockResolvedValue(JAR);
+    const ctx = ctxWith({ db: refusingDb([]) });
+
+    const result = await browseTool.run({ task: "read a public page please" }, ctx);
+
+    // An empty jar is a row, not a fact worth a line on the card.
+    expect((result as { proposal: Record<string, unknown> }).proposal.signedInTo).toBeUndefined();
+  });
+
+  it("attaches the jar and its pinned egress to the provider request", async () => {
+    profileFor.mockResolvedValue(JAR);
+    createTask.mockResolvedValue({ kind: "ok", value: { id: "t-1", sessionId: "s-1" } });
+    const ctx = ctxWith({ confirmed: true, db: refusingDb(["mail.google.com"]) });
+
+    await browseTool.run({ task: "read my invoices on the portal" }, ctx);
+
+    const input = createTask.mock.calls[0][1];
+    expect(input).toMatchObject({ profileId: "prov-1", proxyCountryCode: "de" });
+    // Permanent, and the reason the jar can be a credential at all: Covan
+    // never receives one, so it has none to send.
+    expect(input).not.toHaveProperty("secrets");
+    expect(input).not.toHaveProperty("opVaultId");
   });
 });

@@ -201,3 +201,14 @@ describe("createTask with a profile", () => {
     expect((without as { message: string }).message).toContain("task too short");
   });
 });
+
+describe("a provider that stops reporting its limit", () => {
+  it("answers null rather than zero, so a refusal is not silent and permanent", async () => {
+    // Zero was the first version: the caller tests `active >= limit - 2`, so
+    // `0 >= -2` is true and a renamed field would refuse every takeover for
+    // ever, indistinguishable from a genuinely full pool.
+    fetchMock.mockResolvedValue(ok({ activeSessionCount: 3 }));
+    const r = await accountHeadroom(ENV);
+    expect(r).toEqual({ kind: "ok", value: { active: 3, limit: null } });
+  });
+});

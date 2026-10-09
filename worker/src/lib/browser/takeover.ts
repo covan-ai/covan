@@ -690,6 +690,23 @@ export async function openTakeover(
       message: "could not tell whether a browser is free to rent right now. Try again shortly.",
     };
   }
+  /**
+   * A limit the provider did not report is not a limit of zero.
+   *
+   * `accountHeadroom` answers null rather than 0 for exactly this: `0` would
+   * make the comparison below `active >= -2`, true always, so a renamed field
+   * at the provider would refuse every takeover for ever and look like a
+   * permanently full pool. Treated as the 502 it is — the same answer as a
+   * failed read, because that is what it is.
+   */
+  if (headroom.value.limit === null) {
+    console.error("browser-use answered no concurrency limit", headroom.value.active);
+    return {
+      kind: "error",
+      status: 502,
+      message: "could not tell whether a browser is free to rent right now. Try again shortly.",
+    };
+  }
   if (headroom.value.active >= headroom.value.limit - POOL_RESERVE) {
     return {
       kind: "error",
@@ -757,8 +774,15 @@ export async function openTakeover(
      * another. Stopped here, best effort, before the refusal goes back.
      */
     const stopped = await stopBrowser(env, browser.value.id);
-    if (stopped.kind === "error") {
-      console.error("could not stop a browser whose takeover row failed", stopped.status);
+    // A 200 is not a stop — the provider can answer it with `status: "active"`,
+    // which is why every other stop in this file settles on the status word.
+    // Here there is nothing left to retry with, so an unconfirmed stop is
+    // logged as what it is rather than as a success.
+    if (stopped.kind === "error" || stopped.value.status !== "stopped") {
+      console.error(
+        "could not stop a browser whose takeover row failed",
+        stopped.kind === "error" ? stopped.status : stopped.value.status,
+      );
     }
     // `code` and `message`, never the object: PostgREST passes Postgres'
     // `DETAIL` through as `details`, and a CHECK violation's detail is
@@ -1107,7 +1131,8 @@ export async function closeTakeover(
       cookieDomains: [],
       message:
         "that sign-in didn't stick — the browser closed with no cookies saved, so the task " +
-        "was not run again. Opening another browser and signing in fully will.",
+        "was not run again. Ask again and it will start a fresh task, which can be taken " +
+        "over in turn.",
     };
   }
 
@@ -1144,9 +1169,24 @@ export async function closeTakeover(
   };
 }
 
+/**
+ * **Why this does not offer another takeover of the same task.**
+ *
+ * `browser_takeovers.browser_task_id` is unique (0077), which spec §2 argues
+ * for as the half of "one retry per original, ever" that the database can
+ * enforce. The consequence it also has is that a takeover which ends without a
+ * re-run is final for that task: there is no second attempt to offer, however
+ * the first one failed.
+ *
+ * So the sentences here must not advise one. Asking the agent again starts a
+ * fresh task, which gets its own takeover — that is the route back, and it is
+ * the only one. Saying "try taking over again" would be advice the schema
+ * refuses to let anybody follow.
+ */
 const CLOSE_FAILED =
-  "the browser could not be closed cleanly, so your sign-in may not be saved yet and the task " +
-  "was not run again. This is retried automatically within a few minutes.";
+  "the browser could not be closed cleanly, so your sign-in may not be saved and the task " +
+  "was not run again. The browser is stopped shortly either way; ask again to start a fresh " +
+  "task if you need it.";
 
 /**
  * Run the original task once more, with the jar attached, for free.

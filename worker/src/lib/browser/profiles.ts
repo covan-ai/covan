@@ -38,7 +38,7 @@ export type ProviderBrowser = {
 };
 /** Just enough to say "stopped yet?" without touching a URL. */
 export type BrowserStatus = { id: string; status: "active" | "stopped" };
-export type BrowserHeadroom = { active: number; limit: number };
+export type BrowserHeadroom = { active: number; limit: number | null };
 
 function domainsOf(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((d): d is string => typeof d === "string") : [];
@@ -225,9 +225,21 @@ export function accountHeadroom(
 ): Promise<BrowserResult<BrowserHeadroom>> {
   return send(env, "/billing/account", { method: "GET", redactBody: true }, opts, (body) => {
     const row = (body ?? {}) as Record<string, unknown>;
+    /**
+     * `limit` is **null** when the provider did not answer one, not zero.
+     *
+     * Zero was the first version and it fails in the worst direction: the
+     * caller's test is `active >= limit - POOL_RESERVE`, so `0 >= -2` is true
+     * and a renamed field at the provider would make every takeover answer
+     * "every browser this deployment can spare is busy" — for ever, with
+     * nothing in the logs distinguishing it from a genuinely full pool.
+     * Null makes "could not read the limit" a thing the caller must decide
+     * about rather than a silent refusal.
+     */
+    const limit = Number(row.concurrentSessionLimit);
     return {
       active: Number(row.activeSessionCount ?? 0),
-      limit: Number(row.concurrentSessionLimit ?? 0),
+      limit: Number.isFinite(limit) && limit > 0 ? limit : null,
     };
   });
 }

@@ -182,7 +182,23 @@ describe("a reloaded tab", () => {
    * would lock somebody out of their own signed-in browser for the rest of the
    * window — and the waiting is what destroys the login.
    */
+  /**
+   * `GET /browser/takeovers/current` is per-PERSON, so it answers the same row
+   * in every conversation. Rendering it wherever it was found put the panel in
+   * all of them, and pressing done in the wrong one re-ran the task into a
+   * conversation nobody was looking at.
+   */
+  it("does not show a takeover that belongs to another conversation", async () => {
+    browserTasks.mockResolvedValue({ tasks: [] });
+    current.mockResolvedValue({ takeover: LIVE });
+    renderCard();
+
+    await waitFor(() => expect(browserTasks).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /done, i've signed in/i })).toBeNull();
+  });
+
   it("recovers the open takeover from the server", async () => {
+    browserTasks.mockResolvedValue({ tasks: [task()] });
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
 
@@ -193,6 +209,7 @@ describe("a reloaded tab", () => {
 
 describe("pressing done", () => {
   it("reports which sites the sign-in reached", async () => {
+    browserTasks.mockResolvedValue({ tasks: [task()] });
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /done, i've signed in/i }));
@@ -203,6 +220,7 @@ describe("pressing done", () => {
   });
 
   it("does not resurrect the takeover from a stale server answer", async () => {
+    browserTasks.mockResolvedValue({ tasks: [task()] });
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /done, i've signed in/i }));
@@ -217,6 +235,7 @@ describe("pressing done", () => {
 
 describe("the live URL", () => {
   it("is never rendered as plain text, only as the link's address", async () => {
+    browserTasks.mockResolvedValue({ tasks: [task()] });
     current.mockResolvedValue({ takeover: LIVE });
     const { container } = renderCard();
 

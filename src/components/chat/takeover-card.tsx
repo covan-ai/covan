@@ -81,8 +81,24 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
     staleTime: 0,
   });
 
-  const fromServer =
-    current?.takeover && current.takeover.id !== closedId ? current.takeover : null;
+  /**
+   * The open takeover, but only if it belongs to the conversation on screen.
+   *
+   * `GET /browser/takeovers/current` is per-PERSON, not per-session — holding
+   * one at a time is a property of the person. Rendering it wherever it was
+   * found was wrong in a way that matters: the panel appeared in every
+   * conversation at once, and pressing done in the wrong one re-ran the task
+   * into a conversation nobody was looking at.
+   *
+   * A takeover opened from settings carries no task, so it belongs to no
+   * conversation and is shown in none — which is correct until there is a
+   * settings screen to show it on.
+   */
+  const tasks = tasksFor(data);
+  const standing = current?.takeover;
+  const belongsHere =
+    !!standing?.browserTaskId && tasks.some((t) => t.id === standing.browserTaskId);
+  const fromServer = standing && belongsHere && standing.id !== closedId ? standing : null;
   const takeover = minted ?? fromServer;
 
   // Only while something is actually counting down.
@@ -152,7 +168,6 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const tasks = data?.tasks ?? [];
   const offer = tasks.find((t) => offerable(t, tasks));
   if (takeover) {
     const left = remaining(takeover.expiresAt, now);
@@ -217,6 +232,11 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
       </Button>
     </div>
   );
+}
+
+/** This conversation's tasks, or none while they are still loading. */
+function tasksFor(data: { tasks: BrowserTask[] } | undefined): BrowserTask[] {
+  return data?.tasks ?? [];
 }
 
 /**

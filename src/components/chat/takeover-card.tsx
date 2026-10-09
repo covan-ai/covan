@@ -152,7 +152,8 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const offer = (data?.tasks ?? []).find(offerable);
+  const tasks = data?.tasks ?? [];
+  const offer = tasks.find((t) => offerable(t, tasks));
   if (takeover) {
     const left = remaining(takeover.expiresAt, now);
     return (
@@ -221,11 +222,25 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
 /**
  * Whether to offer a takeover for this task.
  *
- * The same predicate `routes/browser.ts` enforces, so the card never shows a
- * button that would answer 409. `retryOf == null` is the one that bounds the
- * operator's money: without it, a retry that fails at a second wall is
- * offerable again and the loop is free browser tasks forever.
+ * The same four conditions `routes/browser.ts` enforces, so the card never
+ * shows a button that would answer 409.
+ *
+ * `retryOf == null` bounds the operator's money: without it, a retry that
+ * fails at a second wall is offerable again and the loop is free browser tasks
+ * forever.
+ *
+ * **The fourth condition is about a different row**, and leaving it out is why
+ * this card used to offer "That needed a sign-in" for ever — including after a
+ * takeover had already succeeded. The successor names its original in
+ * `retryOf`, so it is answered by looking across the list rather than at the
+ * task in hand. The list is this conversation's, newest first, which is where
+ * any successor of a task in it would be.
  */
-function offerable(task: BrowserTask): boolean {
-  return task.status === "failed" && !!task.output && task.retryOf == null;
+function offerable(task: BrowserTask, all: BrowserTask[]): boolean {
+  return (
+    task.status === "failed" &&
+    !!task.output &&
+    task.retryOf == null &&
+    !all.some((other) => other.retryOf === task.id)
+  );
 }

@@ -99,6 +99,23 @@ describe("which tasks are offered", () => {
     expect(await screen.findByRole("button", { name: /sign in myself/i })).toBeTruthy();
   });
 
+  /**
+   * The ordinary happy path, and the one this card used to get wrong for ever:
+   * after a takeover and a SUCCESSFUL retry the original row is still `failed`,
+   * still has `output` and still has `retryOf: null`, so without looking across
+   * the list the card kept offering "That needed a sign-in" — and clicking it
+   * rented a real browser before the insert failed on the unique index.
+   */
+  it("offers nothing once a successor exists", async () => {
+    browserTasks.mockResolvedValue({
+      tasks: [task({ id: "task-2", retryOf: "task-1", status: "running", output: null }), task()],
+    });
+    renderCard();
+
+    await waitFor(() => expect(browserTasks).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /sign in myself/i })).toBeNull();
+  });
+
   it.each([
     ["a task that finished", task({ status: "finished" })],
     // Nothing to sign into: it never reached a page.

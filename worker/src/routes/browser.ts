@@ -125,11 +125,42 @@ browser.post("/browser/takeovers", async (c) => {
     }
     if (!data) return c.json({ error: "no such browser task" }, 404);
 
-    // The offerable predicate, enforced rather than only rendered. Task 5's
-    // GET below decides what the card shows; this decides what may happen.
+    // The offerable predicate, enforced rather than only rendered. The GET
+    // below decides what the card shows; this decides what may happen.
     if (!offerable(data)) {
       return c.json({ error: "that browser task cannot be taken over" }, 409);
     }
+
+    /**
+     * Has this task already had its one retry?
+     *
+     * Spec §3's fourth condition, and it cannot be answered from the row
+     * itself — the successor is a *different* row, naming this one in
+     * `retry_of`. So it is a query, and it runs **before** `openTakeover`
+     * spends anything: 0077's unique index on `browser_takeovers
+     * .browser_task_id` would refuse the insert anyway, but by then a real
+     * browser has been rented and the provider bills a minute minimum. The
+     * index is the guarantee; this is the part that does not cost money.
+     *
+     * Through the caller's own client, so a successor they cannot see does not
+     * count against them.
+     */
+    const { data: successor, error: successorError } = await db
+      .from("browser_tasks")
+      .select("id")
+      .eq("retry_of", browserTaskId)
+      .limit(1)
+      .maybeSingle();
+    if (successorError) {
+      console.error("could not look for a browser task's successor", {
+        code: successorError.code,
+      });
+      return c.json({ error: "failed to load that browser task" }, 500);
+    }
+    if (successor) {
+      return c.json({ error: "that browser task has already been tried again" }, 409);
+    }
+
     workspaceId = String(data.workspace_id);
   } else {
     // No task named: a takeover opened from settings, to sign in ahead of
@@ -149,7 +180,18 @@ browser.post("/browser/takeovers", async (c) => {
     userId: user.id,
     workspaceId,
     browserTaskId,
-    label: user.email ?? undefined,
+    /**
+     * A constant, and never the person's email.
+     *
+     * `openTakeover`'s own docblock calls this "a label, not an identity:
+     * whatever is passed leaves this deployment", and spec §4 recorded the
+     * pseudonymous user id as the WHOLE concession to the subprocessor — so
+     * that it would be a decision rather than an accident. Sending an email
+     * address here would have been the accident, and nothing in
+     * `docs/security.md` or `docs/integrations.md` discloses one leaving.
+     * `userId` already buys the reconciliation §4 argued for.
+     */
+    label: "covan",
     proxyCountryCode: egressCountry(c),
   });
 
@@ -272,8 +314,12 @@ browser.post("/browser/takeovers/:id/close", async (c) => {
  *   is offerable again, and the loop is three HTTP calls per free browser
  *   task that `affordable()` never sees. 0077 makes the same thing a database
  *   fact with a unique index; this is the good error message in front of it.
- * - no successor yet, which the unique index also enforces and which is
- *   checked here so the card does not offer a button that would 409.
+ * The spec's fourth condition — **no successor yet** — is deliberately NOT
+ * here, because it cannot be: the successor is a different row naming this one
+ * in `retry_of`, so answering it needs a query rather than a predicate over
+ * these three fields. `POST /browser/takeovers` makes that query before it
+ * spends anything, and `GET /sessions/:id/browser-tasks`'s caller has every
+ * row it needs to answer it client-side. Both do.
  */
 function offerable(row: { status?: unknown; output?: unknown; retry_of?: unknown }): boolean {
   return (

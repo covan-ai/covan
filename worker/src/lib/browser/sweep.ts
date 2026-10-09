@@ -130,7 +130,7 @@ async function sweepOne(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): Pro
   if (!row.provider_session_id) {
     // Nothing to stop, so nothing to wait for. Marked rather than left,
     // because a row that can never be settled would be claimed forever.
-    await settle(row, deps, { stopped: true });
+    await settle(row, deps);
     console.error("a takeover row named no provider session", row.id);
     return true;
   }
@@ -171,40 +171,64 @@ async function sweepOne(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): Pro
     return false;
   }
 
-  await settle(row, deps, { stopped: true });
+  await settle(row, deps);
   await refreshJar(row, env, deps);
   return true;
 }
 
 /**
- * Mark the row finished, and only on a confirmed stop.
+ * Record a confirmed stop, in the shape the row's own arm calls for.
  *
- * `expired` is written **here and only here**, which is load-bearing:
- * `claim_due_browser_takeovers` has an arm for `open` past `expires_at` and an
- * arm for `closed` with no `provider_stopped_at`, and **none** for `expired`.
- * So `expired` means "the provider confirmed the stop" and nothing else. A row
- * marked `expired` after a refused stop would sit outside both arms with its
- * browser still running.
+ * `claim_due_browser_takeovers` hands out rows from **two** arms and they want
+ * different endings, which is the thing this function originally got wrong:
  *
- * Conditional on `status = 'open'` for a second reason, and a live one:
- * `closeTakeover` claims with `id + user_id + status = 'open'` and does not
- * read `claimed_at`, so the route can win this row out from under a sweep that
- * is mid-sequence. If it did, it has already written `closed` and started the
- * re-run; overwriting that with `expired` would lose the person's own close.
- * Whoever got there first keeps it.
+ * - `status = 'open'` and past `expires_at` — somebody walked away without
+ *   pressing done. Nobody has closed this, so the sweep does: `expired`, with
+ *   the timestamps.
+ * - `status = 'closed'` with no `provider_stopped_at` — the person DID press
+ *   done, and the provider refused the stop at the time. The close is already
+ *   recorded and must not be overwritten; the only thing missing is the
+ *   confirmation that the browser is now really stopped. So `closed` stays and
+ *   only `provider_stopped_at` is written.
+ *
+ * **Writing `expired` for both was a silent dead loop.** The update was
+ * guarded on `.eq("status", "open")`, so for an arm-two row it matched zero
+ * rows — no error, no failure count, `provider_stopped_at` still null — and
+ * the row re-entered the claim set on the next tick, forever. Three of them
+ * permanently fill `BATCH_SIZE` and genuinely abandoned browsers stop being
+ * swept, which is the login loss this file exists to prevent.
+ *
+ * And the guard itself stays, narrowed to each arm's own status, for a second
+ * and live reason: `closeTakeover` claims with `id + user_id + status = 'open'`
+ * and does not read `claimed_at`, so the route can win a row out from under a
+ * sweep that is mid-sequence. If it did, it has already written `closed` and
+ * started the re-run, and `expired` over the top would lose the person's own
+ * close. Whoever got there first keeps it.
+ *
+ * `expired` is still written in exactly one branch of one function, and only
+ * behind a provider-confirmed stop — `claim_due_browser_takeovers` has no arm
+ * for `expired`, so a row marked that way after a refused stop would sit
+ * outside both arms with its browser still running.
  */
-async function settle(
-  row: TakeoverRow,
-  deps: SweepDeps,
-  outcome: { stopped: true },
-): Promise<void> {
+async function settle(row: TakeoverRow, deps: SweepDeps): Promise<void> {
   const stamp = deps.now().toISOString();
+
+  if (row.status === "closed") {
+    const { error } = await deps.db
+      .from("browser_takeovers")
+      .update({ provider_stopped_at: stamp, claimed_at: null })
+      .eq("id", row.id)
+      .eq("status", "closed");
+    if (error) console.error("could not confirm a swept takeover's stop", row.id, problem(error));
+    return;
+  }
+
   const { error } = await deps.db
     .from("browser_takeovers")
     .update({
       status: "expired",
       closed_at: stamp,
-      provider_stopped_at: outcome.stopped ? stamp : null,
+      provider_stopped_at: stamp,
       claimed_at: null,
     })
     .eq("id", row.id)

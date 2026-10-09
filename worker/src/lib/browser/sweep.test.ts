@@ -190,6 +190,54 @@ describe("an abandoned takeover", () => {
   });
 });
 
+/**
+ * The claim's SECOND arm, which had no fixture at all and could not be settled.
+ *
+ * A row reaches it when the person DID press done and the provider refused the
+ * stop at the time: `closed`, with `provider_stopped_at` still null. Writing
+ * `expired` here would overwrite their own close; writing nothing — which is
+ * what a guard on `status = 'open'` does — leaves the row claimable forever and
+ * eventually starves the batch.
+ */
+describe("a close whose stop the provider refused at the time", () => {
+  it("records only the stop confirmation, leaving the person's own close intact", async () => {
+    const { db, updates } = fakeDb({
+      claim: { data: [row({ status: "closed" })], error: null },
+    });
+    const result = await sweepAbandonedTakeovers(ENV, deps(db));
+
+    expect(result).toEqual({ claimed: 1, ok: 1, failed: 0 });
+
+    const settled = updates.find((u) => u.table === "browser_takeovers");
+    // `closed` stays: they pressed done, and that is a different fact from
+    // having walked away.
+    expect(settled?.patch).toEqual({
+      provider_stopped_at: "2026-10-10T12:00:00.000Z",
+      claimed_at: null,
+    });
+    expect(settled?.filters).toEqual([
+      ["id", "t-1"],
+      ["status", "closed"],
+    ]);
+  });
+
+  it("writes something, so the row cannot re-enter the claim set forever", async () => {
+    const { db, updates } = fakeDb({
+      claim: { data: [row({ status: "closed" })], error: null },
+    });
+    await sweepAbandonedTakeovers(ENV, deps(db));
+
+    // The regression this pins: guarded on `status = 'open'`, the update
+    // matched zero rows — no error, no failure count — and the row came back
+    // on every tick for ever.
+    const touched = updates.filter((u) => u.table === "browser_takeovers");
+    expect(touched).toHaveLength(1);
+    expect(touched[0].patch.provider_stopped_at).toBeTruthy();
+    // And never `expired`, which has no arm in the claim predicate.
+    expect(touched[0].patch.status).toBeUndefined();
+  });
+});
+
 describe("a stop the provider did not perform", () => {
   it("releases the claim and writes no status, when the request errors", async () => {
     stopBrowser.mockResolvedValue({ kind: "error", status: 502, message: "bad gateway" });

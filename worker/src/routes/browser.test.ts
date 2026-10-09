@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { AppEnv } from "../types";
-import { activeWorkspaceTables, fakeDb, type FakeDbSpec } from "../test-support/fake-db";
+import {
+  activeWorkspaceTables,
+  fakeDb,
+  type FakeDbSpec,
+  type QueryContext,
+} from "../test-support/fake-db";
 import { browser, offerable } from "./browser";
 import * as takeover from "../lib/browser/takeover";
 import * as profiles from "../lib/browser/profiles";
@@ -25,9 +30,21 @@ const FAILED_TASK = {
   retry_of: null,
 };
 
-/** One row (or none) out of a select, in the shape `fakeDb` wants. */
+/**
+ * One row (or none) out of a select, in the shape `fakeDb` wants.
+ *
+ * Filter-aware on `retry_of`, because the route makes two reads of
+ * `browser_tasks`: the task itself, and then a look for a row naming it as the
+ * one it replaces. Answering the second with the task would read as "already
+ * tried again" and 409 every request.
+ */
 function selects(row: Record<string, unknown> | null) {
-  return { select: () => ({ data: row, error: null }) };
+  return {
+    select: (ctx: QueryContext) => {
+      const successorLookup = ctx.filters.some((f) => f.column === "retry_of");
+      return { data: successorLookup ? null : row, error: null };
+    },
+  };
 }
 
 function appWith(spec: FakeDbSpec & { apiKeyId?: string; country?: string } = {}) {
@@ -100,7 +117,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("the offerable predicate", () => {
-  it("offers a failed task that said something and has no successor", () => {
+  it("offers a failed task that said something", () => {
     expect(offerable(FAILED_TASK)).toBe(true);
   });
 
@@ -165,6 +182,36 @@ describe("POST /browser/takeovers", () => {
     });
 
     expect(status).toBe(404);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The condition the predicate cannot answer, because the successor is a
+   * different row. It runs BEFORE openTakeover, so the refusal costs nothing —
+   * 0077's unique index would refuse the insert anyway, but by then a real
+   * browser has been rented and the provider bills a minute minimum.
+   */
+  it("409s a task that already has a successor, before spending anything", async () => {
+    let call = 0;
+    const fixture = appWith({
+      tables: {
+        browser_tasks: {
+          select: () => {
+            call += 1;
+            // The route reads the task, then looks for its successor.
+            return call === 1
+              ? { data: FAILED_TASK, error: null }
+              : { data: { id: "task-2" }, error: null };
+          },
+        },
+      },
+    });
+    const { status, body } = await json(fixture, "POST", "/browser/takeovers", {
+      browserTaskId: "task-1",
+    });
+
+    expect(status).toBe(409);
+    expect(String(body.error)).toContain("already been tried again");
     expect(open).not.toHaveBeenCalled();
   });
 

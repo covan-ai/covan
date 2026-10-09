@@ -47,6 +47,24 @@ vi.mock("../../browser/tasks", () => ({
     recordBrowserTask(env, input),
 }));
 
+/**
+ * Mocked because the real one builds a service-role client, and the point of
+ * these tests is the tool's own decisions rather than Supabase's constructor.
+ * Null is the ordinary case — somebody who has never taken over a browser has
+ * no cookie jar — and it is also the case that must stay byte-identical to the
+ * request this tool made before takeovers existed.
+ */
+const profileFor = vi.hoisted(() =>
+  vi.fn(
+    async (): Promise<{
+      id: string;
+      providerProfileId: string;
+      proxyCountryCode: string | null;
+    } | null> => null,
+  ),
+);
+vi.mock("../../browser/takeover", () => ({ profileFor }));
+
 const affordable = vi.fn(async (_ctx: ToolContext): Promise<ToolResult | null> => null);
 const spend = vi.fn(async (_ctx: ToolContext, _tokens: number): Promise<void> => {});
 vi.mock("../spend", async (importOriginal) => {

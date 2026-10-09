@@ -238,9 +238,7 @@ describe("pressing done", () => {
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /done, i've signed in/i }));
 
-    await waitFor(() =>
-      expect(toastCalls.some((t) => t.includes("trying again now"))).toBe(true),
-    );
+    await waitFor(() => expect(toastCalls.some((t) => t.includes("trying again now"))).toBe(true));
     expect(toastCalls.some((t) => t.includes("portal.example.com"))).toBe(false);
     expect(toastCalls.some((t) => /signed in to/i.test(t))).toBe(false);
   });
@@ -292,5 +290,30 @@ describe("what it asks for", () => {
     renderCard();
 
     await waitFor(() => expect(current).toHaveBeenCalled());
+  });
+});
+
+describe("what the offer promises", () => {
+  /**
+   * Added after the first real run. A hand-performed LinkedIn sign-in saved
+   * correctly, attached to the re-run correctly, ran from another address in
+   * the same country, and LinkedIn asked for the password again. The person
+   * deciding whether to go and sign in is the one who should know that before
+   * they spend the time, not after.
+   */
+  it("does not promise the second attempt gets in", async () => {
+    browserTasks.mockResolvedValue({ tasks: [task()] });
+    const { container } = renderCard();
+
+    await screen.findByRole("button", { name: /sign in myself/i });
+    expect(container.textContent).toMatch(/tie a sign-in to one network address/i);
+  });
+
+  it("still says the second attempt is free, because it is", async () => {
+    browserTasks.mockResolvedValue({ tasks: [task()] });
+    const { container } = renderCard();
+
+    await screen.findByRole("button", { name: /sign in myself/i });
+    expect(container.textContent).toMatch(/no charge for the second attempt/i);
   });
 });

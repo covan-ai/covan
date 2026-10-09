@@ -238,10 +238,18 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
       <p className="font-medium">That needed a sign-in</p>
+      {/* The last sentence was added after the first real run, and it is there
+          because the alternative is wasting somebody's time. A hand-performed
+          LinkedIn sign-in saved correctly, attached correctly, and ran again
+          from a different address in the same country — and LinkedIn asked for
+          the password again. Sites that bind a session to one IP defeat this,
+          and the person deciding whether to go and sign in is the one who
+          should know that before they do it rather than after. */}
       <p className="mt-1 text-muted-foreground">
         The browser could not get past a login. You can sign in yourself in a new tab, and the task
         will run again — no charge for the second attempt. You type your password at the site; Covan
-        never receives it.
+        never receives it. Some sites tie a sign-in to one network address and will ask again
+        anyway; LinkedIn is one of them.
       </p>
       <Button
         className="mt-3"

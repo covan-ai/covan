@@ -741,6 +741,21 @@ so one sign-in at LinkedIn left seven domains, five of them ad-tech. It is on
 deletes the profile at the provider. Closing your account deletes it too; you
 should not have to do the second to get the first.
 
+**The second attempt is not guaranteed to get in, and the reason is not
+Covan's.** A sign-in is saved as cookies, and a cookie jar is only as portable
+as the site allows. Covan pins the egress country so the second attempt arrives
+from where the first one did — that is what `proxy_country_code` on the profile
+is for — but a residential proxy gives a different address in that country each
+time, and some sites bind a session to one address. Measured on 2026-10-09: a
+LinkedIn sign-in performed by hand through a Turkish residential IP was saved
+correctly, attached to the re-run correctly, ran from another Turkish
+residential IP, and LinkedIn asked for the password again. The provider's API
+cannot currently fix this — a custom sticky proxy can be given to a browser you
+drive, but not to a task's session — so the honest statement is that this works
+for sites that do not pin a session to an address, and LinkedIn is not one of
+them. Nothing is charged for the attempt either way, and the offer is not made
+a second time.
+
 **You are shown the sentence, word for word, before anything runs.** Every
 browser task goes through the same approval card `send_email` and a connected
 app use, and the card prints the instruction untruncated. That is not a style

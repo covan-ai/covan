@@ -190,7 +190,12 @@ and press done. What persists is a *profile* held at browser-use — cookies and
 session state, never in Covan's database — and it belongs to one person rather
 than to a workspace, because a login is a property of a person and not of a
 room they are in. Covan stores an opaque reference to that profile and the list
-of domains it holds, nothing else. **Settings → Browser sign-ins** names those
+of domains it holds, nothing else — a list longer than the places you signed in
+to, because a page drops cookies for other companies as it loads. Whether the
+saved sign-in still works on the second attempt is the site's decision rather
+than ours: Covan pins the egress country, and a site that binds a session to a
+single address will ask again (measured on LinkedIn). **Settings → Browser
+sign-ins** names those
 domains and forgets them on one click, and closing your account deletes the
 profile at the provider as well — the first because stopping Covan from holding
 a login should not cost somebody their account, the second because erasure has

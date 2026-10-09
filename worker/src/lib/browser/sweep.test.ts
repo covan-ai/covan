@@ -127,7 +127,10 @@ describe("an idle tick", () => {
 
     expect(result).toEqual({ claimed: 0, ok: 0, failed: 0 });
     expect(rpcCalls).toEqual([
-      { fn: "claim_due_browser_takeovers", args: { p_limit: BATCH_SIZE } },
+      {
+        fn: "claim_due_browser_takeovers",
+        args: { p_limit: BATCH_SIZE, p_stale_after: "15 minutes" },
+      },
     ]);
     expect(updates).toEqual([]);
     expect(stopBrowser).not.toHaveBeenCalled();

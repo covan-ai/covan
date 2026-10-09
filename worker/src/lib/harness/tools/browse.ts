@@ -118,8 +118,10 @@ export const browseTool: AgentTool = {
     "site with no API, follow a few links and report back. You give ONE instruction in plain " +
     "language and a real browser carries it out elsewhere. This does not answer you now — it " +
     "starts the work and comes back with the answer as a new message in a few minutes, so say " +
-    "that you have started it and do not wait or ask again. Public pages only: it cannot sign " +
-    "in to anything. Use http_request instead when the thing you want has an API.",
+    "that you have started it and do not wait or ask again. The browser may carry sign-ins the " +
+    "person performed themselves, in their own hands, in an earlier takeover; it can never be " +
+    "given a password and cannot sign in to anything on its own. Use http_request instead when " +
+    "the thing you want has an API.",
   input: {
     type: "object",
     properties: {

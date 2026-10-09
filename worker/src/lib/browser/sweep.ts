@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
 import { hasBrowserKey } from "./client";
-import { getProfile, stopBrowser } from "./profiles";
+import { getProfile, stopBrowser, TAKEOVER_PROVIDER_MINUTES } from "./profiles";
 
 /**
  * One tick of the abandoned-takeover sweep.
@@ -99,7 +99,14 @@ export async function sweepAbandonedTakeovers(
   const db = overrides.db ?? serviceClient(env);
   const now = overrides.now ?? (() => new Date());
 
-  const { data, error } = await db.rpc("claim_due_browser_takeovers", { p_limit: BATCH_SIZE });
+  const { data, error } = await db.rpc("claim_due_browser_takeovers", {
+    p_limit: BATCH_SIZE,
+    // Passed rather than left to the SQL default, so the TypeScript constant is
+    // the single source of truth and the default is a fallback nothing relies
+    // on. 0077's own comment promises this; without it the two numbers agree
+    // only by coincidence.
+    p_stale_after: `${TAKEOVER_PROVIDER_MINUTES} minutes`,
+  });
   // Thrown rather than returned, so a tick that cannot claim is a loud failure
   // instead of a quiet success. `poller.ts:121` does the same.
   if (error) throw new Error(`claim_due_browser_takeovers failed: ${error.message}`);

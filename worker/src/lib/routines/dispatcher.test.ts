@@ -403,27 +403,24 @@ describe("coverageDeps", () => {
     expect(gaps).toEqual([{ question: "Can I expense a conference?", asker_key: 0 }]);
   });
 
-  it("reads an admin-check refusal from workspace_coverage_gaps as an empty list, not a thrown error", async () => {
-    // `readGaps` logs this refusal on purpose (it is the one error this
-    // function is designed to swallow) — fix round 1, finding B5: silence it
-    // the way the rest of the repo does, and prove it still happened.
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    // One call, one mocked resolution: `readGaps` alone makes exactly one rpc
-    // call. A second queued `mockResolvedValueOnce` here (meant for a
-    // `readTotals` call this test never makes) would silently absorb this
-    // one, leaving the refusal never reached — the bug the `error` spy above
-    // exists to catch, which is why this test is pinned to call only
-    // `readGaps`.
+  /**
+   * This fix wave, finding A3. `readGaps` used to swallow this into an empty
+   * list — "fix round 1, finding B5" below is the test this replaces, which
+   * asserted exactly that and spied on `console.error` to prove the swallow
+   * still happened. The siblings right below (`readWorkspace`, `readTotals`)
+   * already throw for the identical reason; this was the one the brief told
+   * to swallow, without anybody noticing that argument applied to all three.
+   * An empty `readGaps` becomes `kind: "skip"` in `runCoverageReport` with
+   * the note "every answer in this window found something close" — a run
+   * recorded as having found nothing to report when it never read anything.
+   */
+  it("throws on a failed workspace_coverage_gaps read, rather than reading it as 'nothing to report'", async () => {
     const rpc = vi
       .fn()
       .mockResolvedValueOnce({ data: null, error: { code: "42501", message: "not an admin" } });
     const deps = coverageDeps({ rpc } as any, "owner-1", { OPENAI_API_KEY: "sk-test" } as any);
 
-    const gaps = await deps.readGaps("ws-1", 7);
-
-    expect(gaps).toEqual([]);
-    expect(error).toHaveBeenCalled();
-    error.mockRestore();
+    await expect(deps.readGaps("ws-1", 7)).rejects.toThrow(/not an admin/);
   });
 
   /**

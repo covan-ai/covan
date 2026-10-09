@@ -243,15 +243,19 @@ export function coverageDeps(db: SupabaseClient, ownerId: string, env: RoutineEn
         p_user_id: ownerId,
         p_days: days,
       });
-      // The function raises 42501 when the switch is off, the owner is no
-      // longer an admin, or (service-role aside) the caller asked about
-      // somebody else. Reached through the service role it should not be —
-      // `stoppedBy` already re-checked both conditions moments earlier — so an
-      // empty read is the safe reading of an error here: it produces a skip,
-      // never a report built on a failed query.
+      // This fix wave, finding A3 — and the brief's own miss, not this
+      // function's: `readWorkspace` and `readTotals` beside it both throw,
+      // each for an argument that applies here too and more. An empty read
+      // used to be "the safe reading of an error", but `runCoverageReport`
+      // (coverage-source.ts) turns an empty `readGaps` into `kind: "skip"`
+      // with the note "every answer in this window found something close" —
+      // a run recorded as having found nothing to report when it never
+      // managed to read anything. A thrown error also avoids building a
+      // report on a failed query, and — the reason that actually carries —
+      // gets the run recorded as failed, backed off and retried next tick,
+      // instead of a false all-clear with no failure count and no retry.
       if (error) {
-        console.error("workspace_coverage_gaps failed", error);
-        return [];
+        throw new Error(`workspace_coverage_gaps failed: ${error.message}`);
       }
       return data ?? [];
     },

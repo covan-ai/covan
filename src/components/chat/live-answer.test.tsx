@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { LiveAnswer } from "./live-answer";
 
 /**
@@ -65,15 +66,95 @@ describe("LiveAnswer", () => {
     expect(text.indexOf("leave policy")).toBeLessThan(text.indexOf("According to the handbook"));
   });
 
-  it("keeps the model's reasoning folded shut", () => {
+  /**
+   * This assertion was the opposite one until the reasoning block arrived: the
+   * fold was closed while the model worked and a reader got the word
+   * "Thinking" and nothing else — no duration, no sense of whether it was
+   * still happening, no reason to open it. §2 of the design overturns that
+   * deliberately. What is still true is that it does not stay open: it folds
+   * itself once the reasoning stops, so nobody scrolls past it to read the
+   * reply.
+   */
+  it("is open while the model is still reasoning", () => {
     render(<LiveAnswer {...base} thinkingText="The question is about accrual." />);
     expect(screen.getByText("Thinking")).toBeInTheDocument();
-    expect(screen.queryByRole("group")).not.toHaveAttribute("open");
+    expect(screen.getByText(/about accrual/)).toBeVisible();
+  });
+
+  it("folds itself shut once the reasoning has stopped, and says how long it took", () => {
+    render(
+      <LiveAnswer
+        {...base}
+        thinkingText="The question is about accrual."
+        thinkingMs={2400}
+        streamText="You accrue 1.67 days a month."
+      />,
+    );
+    expect(screen.getByText("Thought for 2.4s")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Thought for 2.4s/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("does not overrule a reader who opened it", async () => {
+    const { rerender } = render(
+      <LiveAnswer {...base} thinkingText="Working through accrual." thinkingMs={900} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Thought for 0.9s/ }));
+
+    rerender(<LiveAnswer {...base} thinkingText="Working through accrual." thinkingMs={900} />);
+    expect(screen.getByRole("button", { name: /Thought for 0.9s/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("draws no reasoning block when the model published none", () => {
     render(<LiveAnswer {...base} thinkingText="" streamText="An answer" />);
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+  });
+
+  it("takes the folded reasoning out of the tab order, not just out of sight", async () => {
+    /*
+     * The block this replaced was a `<details>`, and a browser makes a closed
+     * `<details>`'s content unfocusable for free. A `grid-template-rows: 0fr`
+     * fold does not: its children stay mounted at zero height. Reasoning
+     * routinely contains a link — the model reasoning about a URL it was
+     * handed — and `markdown.tsx` renders one as a real `<a href>`. Without
+     * this, a keyboard user tabs onto an invisible anchor inside an
+     * `aria-hidden` subtree: nothing is announced, the focus ring is clipped
+     * by `overflow-hidden`, and Enter opens a URL they never saw.
+     */
+    const { container } = render(
+      <LiveAnswer
+        {...base}
+        thinkingText="Checking [the handbook](https://example.com/handbook)."
+        thinkingMs={900}
+      />,
+    );
+    const trigger = () => screen.getByRole("button", { name: /Thought for 0.9s/ });
+
+    // Mounted — the fold is a zero-height grid row, not a removed subtree —
+    // and out of reach all the same.
+    expect(container.querySelector("a[href]")).toBeInTheDocument();
+    expect(trigger().nextElementSibling).toHaveAttribute("inert");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+
+    // And it comes back the moment somebody opens it.
+    await userEvent.click(trigger());
+    expect(trigger().nextElementSibling).not.toHaveAttribute("inert");
+    expect(screen.getByRole("link", { name: "the handbook" })).toBeInTheDocument();
+  });
+
+  it("does not animate the fold for a reader who asked for less movement", () => {
+    // `styles.css` enumerates every animation in the app for
+    // `prefers-reduced-motion`, and this fold opens and closes BY ITSELF — it
+    // is unrequested motion, which is the kind that setting is most for.
+    render(<LiveAnswer {...base} thinkingText="Working through accrual." />);
+    expect(screen.getByRole("button", { name: /Thinking/ }).nextElementSibling).toHaveClass(
+      "motion-reduce:transition-none",
+    );
   });
 
   it("hides the dots from a screen reader rather than labelling them", () => {

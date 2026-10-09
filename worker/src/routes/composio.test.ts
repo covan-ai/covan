@@ -317,20 +317,57 @@ describe("POST /composio/connect", () => {
     expect(link.callbackUrl).toBe("https://app.example.com/integrations?connected=gmail");
   });
 
-  it("asks the catalogue how this connects, rather than the browser", async () => {
-    // What gets built at Composio is decided from the catalogue. Taken from
-    // the request body it would be a request choosing, so it is read here even
-    // though the page that sent the request already knew the answer.
+  /**
+   * An application that needs no sign-in, which is connected by writing a row
+   * and making no request at all.
+   *
+   * covan#253. Thirty-four of them, and every one 502'd here: Composio refuses
+   * to make an auth config for a toolkit that needs no authentication and
+   * refuses a link without a config, so there was no body that worked. Their
+   * operations execute on `composio_user_id` alone.
+   *
+   * It still carries the claim this test was written for — that what gets built
+   * is decided by the catalogue and not by the request — and in a stronger
+   * form: the lie in the body now fails to change the row's *shape*, not merely
+   * the argument passed onward.
+   */
+  it("connects an application that needs no sign-in without asking Composio", async () => {
     getToolkit.mockResolvedValueOnce({
       kind: "ok",
       toolkit: { slug: "hackernews", name: "Hacker News", connectKind: "no_auth", logo: "" },
     });
-    await call(appWith(), "POST", "/composio/connect", {
+    const { status, body } = await call(appWith(), "POST", "/composio/connect", {
       toolkit: "hackernews",
       // A lie, and it must not survive.
       noAuth: false,
     });
-    expect((createLink.mock.calls[0][1] as { plan: unknown }).plan).toEqual({ kind: "no_auth" });
+
+    expect(status).toBe(201);
+    // Nothing was created at Composio, because there is nothing it could make.
+    expect(createLink).not.toHaveBeenCalled();
+    // No page to send anybody to, which the browser is told by an empty
+    // address rather than by an error.
+    expect((body as { url: string }).url).toBe("");
+    // The row 0072 allows, and only that shape: no account, an identifier to
+    // execute on, and born active because nothing is pending.
+    expect(inserted?.auth_kind).toBe("composio_no_auth");
+    expect(inserted?.connected_account_id).toBeNull();
+    expect(inserted?.status).toBe("active");
+    expect(typeof inserted?.composio_user_id).toBe("string");
+    expect(String(inserted?.composio_user_id).length).toBeGreaterThan(0);
+  });
+
+  it("still asks the catalogue how a signed-in application connects, not the browser", async () => {
+    // The other half of the same claim, on a kind that does reach Composio.
+    getToolkit.mockResolvedValueOnce({
+      kind: "ok",
+      toolkit: { slug: "gmail", name: "Gmail", connectKind: "managed_oauth", logo: "" },
+    });
+    await call(appWith(), "POST", "/composio/connect", { toolkit: "gmail", noAuth: true });
+    expect((createLink.mock.calls[0][1] as { plan: unknown }).plan).toEqual({
+      kind: "managed_oauth",
+    });
+    expect(inserted?.auth_kind).toBe("composio");
   });
 
   it("takes the credential scheme from the catalogue too, never from the request", async () => {

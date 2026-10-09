@@ -418,9 +418,18 @@ not change when a service is added.**
 | Layer                 | What is in it                                                                                             | What a new service costs                  |
 | --------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | Core                  | `completion.ts` types, `harness/loop.ts`, the registry, the budget, `message_steps`, the SSE frames       | nothing                                   |
-| Tools                 | `search_documents`, `describe_connection`, `query_database`, `http_request`, `send_email`, `schedule_job` | nothing                                   |
+| Tools                 | `search_documents`, `describe_connection`, `query_database`, `http_request`, `browse`, `send_email`, `schedule_job` | nothing                                   |
 | Credential            | a `tool_connections` row: transport, base URL, auth, allowed methods                                      | **one row**                               |
 | Transport / auth kind | `http`, `sql`, `composio`; `static_header`, `composio`                                                    | code, once, only for a genuinely new kind |
+
+`browse` is the one tool in that row that does not fit the shape, and it is
+worth naming rather than discovering: it has no `tool_connections` row at all,
+because it points at the open web rather than at a tenant's service — and its
+answer does not arrive in the turn that called it. It hands the work to
+browser-use, the turn ends, and the cron Worker writes the result back into the
+conversation as a new assistant message minutes later. Everything about that
+lives in `lib/browser/`; nothing in the loop or the registry had to learn about
+waiting.
 
 So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
 function installed on it. The `composio` transport is the same shape with the

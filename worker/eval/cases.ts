@@ -26,14 +26,8 @@
  * (eight searches, five of them empty).
  */
 
-/** The framing `lib/rag.ts` puts around retrieved passages, verbatim. */
 import { NO_PASSAGE_MATCHED } from "../src/lib/harness/tools/search-documents";
-
-const RAG_HEADER =
-  "The team has shared the following knowledge. Use it to ground your answers. " +
-  "Answer naturally in your own words — do not cite, quote, or mention the document " +
-  "names, filenames, or that these documents were provided; the interface shows " +
-  "sources separately:\n\n";
+import { buildContextBlock } from "../src/lib/rag";
 
 /**
  * What `search_documents` says when retrieval comes back empty.
@@ -53,14 +47,21 @@ export const NO_ROWS = "The query ran and matched no rows.";
 /**
  * A `search_documents` hit, framed the way the real tool frames one.
  *
- * `buildContextBlock` joins passages with `---`, prefixes each with its
- * document name, and the tool appends the source list. Reproduced here rather
- * than approximated, because a format the model never sees in production is a
- * format this eval has no business measuring it against.
+ * Built by `buildContextBlock` itself, for the reason stated under
+ * `NO_PASSAGE` below: the header and the per-document delimiters used to be
+ * copied here under a comment calling them verbatim, and nothing held the copy
+ * to the original. The 2026-10-08 audit rewrote both — the header now says the
+ * material is data rather than the team's knowledge, and each document is
+ * wrapped in a `<document>` element — and this file would have gone on
+ * measuring the model against framing production had stopped sending.
+ *
+ * The tool appends the source list, so that part stays here.
  */
 function passages(...docs: Array<{ name: string; text: string }>): string {
-  const body = docs.map((d) => `Document: ${d.name}\n${d.text.trim()}`).join("\n\n---\n\n");
-  return `${RAG_HEADER}${body}\n\nFrom: ${docs.map((d) => d.name).join(", ")}`;
+  const { text } = buildContextBlock(
+    docs.map((d) => ({ documentName: d.name, content: d.text.trim() })),
+  );
+  return `${text}\n\nFrom: ${docs.map((d) => d.name).join(", ")}`;
 }
 
 /** Rows back from `query_database`, which returns the target's JSON verbatim. */

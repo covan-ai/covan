@@ -125,10 +125,12 @@ export type ComposioResult<T> = ({ kind: "ok" } & T) | ComposioError;
  *
  * `destructive` comes from MCP's tool annotation hints, which Composio does
  * carry — see `destructiveOf`. It is still `null` for operations annotated with
- * none of them, and that is a real answer rather than a failure. Nothing in the
- * permission model branches on it: it is shown to the person reading an
- * approval card, where "this one deletes things" is worth a line, and the model
- * is built to be correct without it.
+ * none of them, and that is a real answer rather than a failure. It is shown to
+ * the person reading an approval card, where "this one deletes things" is worth
+ * a line, and since #201 it also narrows one thing: a connection's turn-long
+ * approval does not reach an operation marked `true` (`run_tool`'s guard 3).
+ * Narrows, never grants — `false` and `null` buy an operation nothing that the
+ * connection's approval did not already buy it.
  */
 export type ComposioTool = {
   slug: string;
@@ -165,8 +167,16 @@ export type ComposioConnectKind = "no_auth" | "managed_oauth" | "user_credential
  * promised and what gets built: the page cannot offer a button whose plan the
  * worker would refuse, because both are reading one value.
  */
+/**
+ * **There is no `no_auth` member, and its absence is the fix for covan#253.**
+ * Such a toolkit has no auth config, no connected account and no link — so a
+ * plan for one is not a plan Composio can execute, and this type saying so
+ * makes the dead end unrepresentable rather than a branch somebody has to
+ * remember. The route asks `connectsWithoutAccount` first and never reaches
+ * `createLink` for one.
+ */
 export type AuthConfigPlan =
-  { kind: "no_auth" } | { kind: "managed_oauth" } | { kind: "user_credential"; scheme: string };
+  { kind: "managed_oauth" } | { kind: "user_credential"; scheme: string };
 
 /** One application, as the catalogue lists it. */
 export type ComposioToolkit = {
@@ -195,9 +205,12 @@ export type ComposioToolkit = {
    * predicate that works on either row. Measured 2026-10-05: the two name the
    * same thirty-five toolkits, so the union invents nothing.
    *
-   * None of those thirty-five can be connected today regardless — Composio
-   * refuses to make any auth config for a toolkit that needs none, and refuses
-   * a link without one. That is its own fix and its own migration.
+   * Thirty-four of those are connectable since covan#253 and 0072 — they get a
+   * `composio_no_auth` row and no Composio artifact at all. The thirty-fifth is
+   * `gemini`, which also publishes an API-key mode and is offered as a
+   * credential application instead, because that is what most of its operations
+   * need. `connectKind` is where that distinction lives; this column cannot
+   * make it, which is one more reason not to gate on it.
    */
   noAuth: boolean;
   /**
@@ -437,11 +450,20 @@ function toolkitOf(row: Record<string, unknown>, slug: string): string {
  * distinction worth drawing. `null` is still a real answer: plenty of
  * operations carry none of the four.
  *
- * **Nothing in the permission model branches on this, deliberately.** A read at
- * a third party can pull private content into a turn as easily as a write can
- * change something, so "it only reads" is not a reason to skip asking. What
- * this buys is a line on the approval card, where knowing an operation deletes
- * things is worth having before you press the button.
+ * **It never says an operation is safe, and the permission model is built that
+ * way.** A read at a third party can pull private content into a turn as easily
+ * as a write can change something, so "it only reads" is not a reason to skip
+ * asking: every first call on a connection is asked about whatever this
+ * returns. What it buys is a line on the approval card, where knowing an
+ * operation deletes things is worth having before you press the button — and
+ * one narrowing in `run_tool`'s guard 3, where `true` holds back the turn-long
+ * approval a connection has already been given (#201).
+ *
+ * So `null` is read as "not known to be destructive", never as "harmless". The
+ * distinction is load-bearing: when there is no row at all — a resumed turn, a
+ * scheduled run, a slug recalled from an earlier turn — guard 3 asks the person
+ * again rather than reading the absence as a `false`. That direction is the
+ * whole of finding 2 in the 2026-10-08 audit.
  */
 function destructiveOf(row: Record<string, unknown>): boolean | null {
   if (typeof row.is_destructive === "boolean") return row.is_destructive;
@@ -884,16 +906,33 @@ function connectKindOf(
   modes: Record<string, unknown>[] | null,
 ): { kind: ComposioConnectKind | null; scheme: string; hintUrl: string } {
   const none = { scheme: "", hintUrl: "" };
+  const managed = row.composio_managed_auth_schemes;
+  const managedAuth = Array.isArray(managed) && managed.length > 0;
+
   // Two spellings of one fact, and each path carries only one of them. The
   // list row has a `no_auth` column; the detail row has no such column and
-  // publishes a `NO_AUTH` mode instead. Reading only the column — which is
-  // what the connect route does — is why all thirty-five of these fail there.
-  const noAuth =
+  // publishes a `NO_AUTH` mode instead. Reading only the column is why all
+  // thirty-five of these used to fail at the connect route.
+  //
+  // **NO_AUTH only counts when it is the toolkit's whole story**, and that
+  // clause is not tidiness. `gemini` publishes `NO_AUTH` *and* an `API_KEY`
+  // mode asking the user for `generic_api_key`. While Connect was broken for
+  // this kind the ambiguity cost nothing; once it works, calling gemini
+  // no-auth means it connects successfully and then fails on every operation
+  // that needs the key — at execute time, inside an agent turn, on a card that
+  // says "connected", for a step of eight and a billed Composio call. And it
+  // cannot heal: a missing credential is not `Tool_ToolNotFound`, so nothing
+  // withdraws the slug. That is covan#258's defect, introduced on purpose.
+  //
+  // Narrowed here rather than by reordering the questions below, because the
+  // order is load-bearing for its own reasons and moving it would trade this
+  // bug for a different one. So: thirty-four applications, not thirty-five.
+  const declaresNoAuth =
     row.no_auth === true || (modes ?? []).some((m) => text(m.mode).toUpperCase() === "NO_AUTH");
-  if (noAuth) return { kind: "no_auth", ...none };
+  const alsoNeedsSomething = managedAuth || (modes !== null && credentialModeOf(modes) !== null);
+  if (declaresNoAuth && !alsoNeedsSomething) return { kind: "no_auth", ...none };
 
-  const managed = row.composio_managed_auth_schemes;
-  if (Array.isArray(managed) && managed.length > 0) return { kind: "managed_oauth", ...none };
+  if (managedAuth) return { kind: "managed_oauth", ...none };
 
   // A list row. It has already told us everything it can and the answer is not
   // in it; saying `needs_setup` here would be inventing one.
@@ -953,14 +992,17 @@ function toToolkit(row: Record<string, unknown>): ComposioToolkit | null {
  * if this function consulted a third, there would be a row somewhere whose
  * button promises one thing and whose connect builds another.
  *
- * Null for `needs_setup` and for a row that could not say. A caller holding
- * null has no business calling Composio: it should refuse, in the same words
- * the card used.
+ * Null now means two different things, and the caller has to tell them apart
+ * before it gets here. For `needs_setup`, or for a row that could not say, null
+ * means *refuse* — in the same words the card used. For **no sign-in** it means
+ * *there is nothing to build*: ask `connectsWithoutAccount` first, because an
+ * application that needs no credential needs no config, no account and no link,
+ * and reading this function's null as a refusal would 502 all thirty-four of
+ * them. That is covan#253, and the two questions are deliberately separate
+ * functions so that one cannot be mistaken for the other.
  */
 export function authConfigPlanFor(toolkit: ComposioToolkit): AuthConfigPlan | null {
   switch (toolkit.connectKind) {
-    case "no_auth":
-      return { kind: "no_auth" };
     case "managed_oauth":
       return { kind: "managed_oauth" };
     case "user_credential":
@@ -974,6 +1016,27 @@ export function authConfigPlanFor(toolkit: ComposioToolkit): AuthConfigPlan | nu
     default:
       return null;
   }
+}
+
+/**
+ * Whether this application is connected by writing a row and nothing else.
+ *
+ * Thirty-four of them are. A `NO_AUTH` toolkit has no credential, so Composio
+ * has nothing to hold on its behalf: it refuses to make an auth config for one
+ * (*"it does not require authentication… use its tools directly without
+ * creating a connected account"*) and refuses a link without a config, and its
+ * operations execute on `user_id` alone — verified against the live API
+ * 2026-10-05. So connecting one means inserting a `composio_no_auth` row and
+ * making no request at all. 0072 is what lets such a row exist.
+ *
+ * A separate function from `authConfigPlanFor` rather than a fourth plan kind,
+ * and it reads the same single field, so the identity that guarantee rests on
+ * is intact: both the card's sentence and the worker's route are decided by
+ * `connectKind` and nothing else. What it buys is that "nothing to build" and
+ * "refuse" stop sharing a return value.
+ */
+export function connectsWithoutAccount(toolkit: ComposioToolkit): boolean {
+  return toolkit.connectKind === "no_auth";
 }
 
 /**
@@ -1054,7 +1117,16 @@ export async function executeTool(
   env: ComposioEnv,
   call: {
     slug: string;
-    connectedAccountId: string;
+    /**
+     * Absent for an application that needs no credential, where there is no
+     * account to name — thirty-four of them (covan#253). **Omitted from the
+     * body rather than sent as null**: the live API answers `successful: true`
+     * for `{user_id, arguments}` alone, and covan#172 was three published
+     * request shapes their own API rejected, two of them for sending a key it
+     * did not want. An explicit null to an endpoint that validates a
+     * discriminated union is the same mistake with a different spelling.
+     */
+    connectedAccountId?: string;
     userId: string;
     arguments: Record<string, unknown>;
   },
@@ -1066,7 +1138,7 @@ export async function executeTool(
     {
       method: "POST",
       body: {
-        connected_account_id: call.connectedAccountId,
+        ...(call.connectedAccountId ? { connected_account_id: call.connectedAccountId } : {}),
         user_id: call.userId,
         arguments: call.arguments,
       },
@@ -1129,11 +1201,12 @@ function customConfig(row: Record<string, unknown>): boolean | null {
  * hand a *managed* request the API-key config and quietly break the
  * dashboard escape hatch this file documents two functions down.
  *
- * Three asymmetries, each deliberate:
- *
- * **No sign-in keeps the loose match.** Such a toolkit has exactly one
- * possible kind of config, so "any enabled one" is still correct, and keeping
- * it loose is what stops the thirty-five from making a config per connect.
+ * Two asymmetries, each deliberate. There used to be a third, a loose "any
+ * enabled config will do" for an application needing no sign-in, justified by
+ * such a toolkit having exactly one possible kind of config. That premise was
+ * false — `gemini` publishes a credential mode too — and the case is gone
+ * anyway: an application that needs no credential has no auth config to match
+ * against and never reaches this function (covan#253).
  *
  * **Managed refuses only an explicit custom.** Absent is no information, and
  * no information has to mean today's behaviour or every project that omits the
@@ -1158,8 +1231,6 @@ function reusableConfig(row: Record<string, unknown>, slug: string, plan: AuthCo
 
   const custom = customConfig(row);
   switch (plan.kind) {
-    case "no_auth":
-      return true;
     case "managed_oauth":
       return custom !== true;
     case "user_credential":
@@ -1200,12 +1271,6 @@ function configName(scheme: string): string {
  */
 function createBodyFor(plan: AuthConfigPlan): Record<string, unknown> {
   switch (plan.kind) {
-    case "no_auth":
-      // Kept as it was, and it does not work: Composio refuses to make any
-      // config for a toolkit that needs none, and refuses a link without one.
-      // Changing it here would be inventing a shape for a flow that needs a
-      // migration first — covan#253 — so the failure stays one failure.
-      return { type: "no_auth" };
     case "managed_oauth":
       return { type: "use_composio_managed_auth" };
     case "user_credential":
@@ -1325,16 +1390,12 @@ async function authConfigFor(
       kind: "error",
       status: made.status,
       message:
-        plan.kind === "no_auth"
-          ? `${slug} needs no sign-in, and Composio will not make a connection for an ` +
-            `application that needs none — so there is nothing here to connect. This is ` +
-            `covan#253 and it affects every one of the thirty-five like it. (${made.message})`
-          : plan.kind === "user_credential"
-            ? `Composio would not set up a credential-based sign-in for ${slug}. ` +
-              `(${made.message})`
-            : `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
-              `application for it in Composio's dashboard before it can be connected here. ` +
-              `(${made.message})`,
+        plan.kind === "user_credential"
+          ? `Composio would not set up a credential-based sign-in for ${slug}. ` +
+            `(${made.message})`
+          : `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
+            `application for it in Composio's dashboard before it can be connected here. ` +
+            `(${made.message})`,
     };
   }
 
@@ -1395,24 +1456,24 @@ export async function createLink(
   const connectedAccountId = row ? text(row.id) || text(row.connected_account_id) : "";
 
   /**
-   * Whether a page is part of this flow at all.
+   * A page is part of every flow that gets this far, and an empty address is
+   * therefore a failure rather than a case to allow.
    *
-   * Keyed on no-sign-in **specifically**, and the specificity is the point. An
-   * application that needs no sign-in has nowhere to send anybody and comes
-   * back with an account and an empty address, which is success. Everything
-   * else — a consent screen or a page that collects a credential — is a
-   * redirect, and an empty one is a failure.
+   * This used to carry an exception for the one kind that legitimately comes
+   * back with nowhere to go. It no longer needs one: an application that needs
+   * no sign-in has no auth config and no link, so it never reaches this
+   * function — the type of `link.plan` now says so (covan#253).
    *
-   * Written as "not managed", or as "has no scheme", this line would accept a
-   * credential link with no page as success, and the result would be silent:
-   * the route inserts a pending row, answers `{url: ""}`, and the browser's
-   * `if (url) window.location.assign(url)` does nothing whatever. The button
-   * un-disables, a ghost row appears above the grid, the application vanishes
-   * from the catalogue because it now counts as connected, and no error fires
-   * so there is no toast. Every test still passes.
+   * Keep the warning, because it is the whole reason the exception was written
+   * narrowly rather than as "not managed" or "has no scheme". Either of those
+   * would accept a credential link with no page as success, and the result is
+   * silent: the route inserts a pending row, answers `{url: ""}`, and the
+   * browser's `if (url) window.location.assign(url)` does nothing whatever. The
+   * button un-disables, a ghost row appears above the grid, the application
+   * vanishes from the catalogue because it now counts as connected, and no
+   * error fires so there is no toast. Every test still passes.
    */
-  const needsRedirect = link.plan.kind !== "no_auth";
-  if (!connectedAccountId || (needsRedirect && !redirectUrl)) {
+  if (!connectedAccountId || !redirectUrl) {
     return {
       kind: "error",
       status: 502,

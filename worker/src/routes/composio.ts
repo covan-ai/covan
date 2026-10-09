@@ -10,6 +10,7 @@ import {
   allowedLogoUrl,
   authConfigPlanFor,
   composioConfigured,
+  connectsWithoutAccount,
   createLink,
   getConnectedAccount,
   getToolkit,
@@ -290,8 +291,34 @@ composio.post("/composio/connect", async (c) => {
    * 400 rather than 502, because nothing went wrong upstream. The sentence is
    * the card's own.
    */
-  const plan = authConfigPlanFor(described.toolkit);
-  if (!plan) {
+  /**
+   * The thirty-four that are connected by writing a row and nothing else.
+   *
+   * Asked **before** the plan, because for these two questions one null means
+   * "nothing to build" and the other means "refuse", and reading the first as
+   * the second is covan#253: Composio will not make an auth config for an
+   * application that needs no authentication, and will not make a link without
+   * a config, so every one of them 502'd here. Their operations execute on
+   * `composio_user_id` alone.
+   */
+  const noAccountNeeded = connectsWithoutAccount(described.toolkit);
+
+  /**
+   * Whether this application can be connected at all, decided here and not by
+   * whoever pressed the button.
+   *
+   * The first connectability gate this route has had. It reads the catalogue
+   * itself, exactly as the `noAuth` it replaces did and for the same reason —
+   * a request could otherwise pick — and it sits before `createLink` so a
+   * refusal creates nothing at Composio. Only a crafted request reaches it:
+   * the card asks the same question of the same field and offers no button
+   * when the answer is this one.
+   *
+   * 400 rather than 502, because nothing went wrong upstream. The sentence is
+   * the card's own.
+   */
+  const plan = noAccountNeeded ? null : authConfigPlanFor(described.toolkit);
+  if (!plan && !noAccountNeeded) {
     return c.json(
       {
         error:
@@ -309,16 +336,22 @@ composio.post("/composio/connect", async (c) => {
   // turn and by a 3am routine, which resolve to different people.
   const composioUserId = crypto.randomUUID();
 
-  const link = await createLink(c.env, {
-    toolkit,
-    userId: composioUserId,
-    plan,
-    // Where the person lands after the consent screen. The page reads the
-    // query parameter, says one sentence and takes it out of the address bar —
-    // `useGrantOutcome` in `_authed.integrations.tsx` already does exactly this
-    // for Notion and Drive.
-    callbackUrl: `${frontendOrigin(c.env)}/integrations?connected=${encodeURIComponent(toolkit)}`,
-  });
+  // Nothing is created at Composio for an application that needs no
+  // credential — there is no auth config to make, no account to create and no
+  // page to send anybody to. `link` stands in for all three so the insert
+  // below stays one piece of code with one shape.
+  const link = plan
+    ? await createLink(c.env, {
+        toolkit,
+        userId: composioUserId,
+        plan,
+        // Where the person lands after the consent screen. The page reads the
+        // query parameter, says one sentence and takes it out of the address
+        // bar — `useGrantOutcome` in `_authed.integrations.tsx` already does
+        // exactly this for Notion and Drive.
+        callbackUrl: `${frontendOrigin(c.env)}/integrations?connected=${encodeURIComponent(toolkit)}`,
+      })
+    : ({ kind: "ok", redirectUrl: "", connectedAccountId: "" } as const);
   if (link.kind === "error") return c.json({ error: link.message }, 502);
 
   /**
@@ -370,7 +403,12 @@ composio.post("/composio/connect", async (c) => {
       // No per-row address on this transport, and the column is NOT NULL. 0063's
       // banner argues the duplication rather than widening the check.
       base_url: (c.env.COMPOSIO_BASE_URL || COMPOSIO_BASE).replace(/\/+$/, ""),
-      auth_kind: "composio",
+      // Which of the two shapes 0072 allows. `composio_no_auth` says the row
+      // names no account because the application needs none, and the check
+      // constraint then requires that it names none — the two shapes are each
+      // constrained positively, so this value is a description and not a
+      // licence.
+      auth_kind: noAccountNeeded ? "composio_no_auth" : "composio",
       // Meaningless here, as it is for `sql` and `supabase`: the method is
       // Composio's business. Said explicitly so the row reads sensibly.
       allowed_methods: ["GET"],
@@ -381,12 +419,20 @@ composio.post("/composio/connect", async (c) => {
       config: described.toolkit.logo ? { logo: described.toolkit.logo } : {},
       secret_ciphertext: null,
       toolkit_slug: toolkit,
-      connected_account_id: link.connectedAccountId,
+      // Null rather than an empty string for the no-account shape: 0072's check
+      // asks `connected_account_id is null`, and `''` is not null.
+      connected_account_id: link.connectedAccountId || null,
       composio_user_id: composioUserId,
       // A row exists from the moment somebody is sent to a consent screen, so
       // there is something to poll and something to clean up if they walk away.
       // `listConnections` hides it from the model until it is active.
-      status: "pending",
+      //
+      // **Born active when there is nowhere to go.** Nothing is pending for an
+      // application that needs no credential — there is no consent screen to
+      // come back from and no account whose status could later change — so a
+      // `pending` row here would poll forty times for an answer that cannot
+      // arrive, show "Finishing…" for two minutes, and then be failed as stale.
+      status: noAccountNeeded ? "active" : "pending",
       created_by: userId,
     })
     .select(CONNECTION_COLUMNS)

@@ -24,6 +24,14 @@ workers_dev = true
 #   SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_SIGNING_SECRET
 #   COMPOSIO_API_KEY — connected apps. Set it on the CRON WORKER TOO, or a
 #     scheduled run and a chat turn disagree about what exists.
+#   BROWSER_USE_API_KEY — the `browse` tool, which drives a real browser for
+#     the pages http_request cannot reach. SET IT ON THE CRON WORKER TOO: that
+#     Worker is what polls a running task, so a key set only here starts tasks
+#     whose answers never arrive. Covan pays browser-use, not the person
+#     asking, and a task is metered at 137,000 tokens against the same
+#     allowance a chat turn spends. See docs/integrations.md.
+#   BROWSER_USE_BASE_URL — a proxy or a self-hosted browser-use in front of
+#     api.browser-use.com.
 # -----------------------------------------------------------------------------
 
 [vars]

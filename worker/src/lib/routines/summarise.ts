@@ -99,14 +99,21 @@ export function summariseWithModel(env: RoutineEnv) {
         },
         // The grounding block gets its own message rather than being folded
         // into the persona, which is how `routes/chat.ts` assembles it and for
-        // the same two reasons: the persona is the agent's standing identity
-        // and this is one run's material, and keeping retrieved text in a
-        // separate message is what stops a passage that happens to read like an
-        // instruction from being read as one.
+        // the same reason: the persona is the agent's standing identity and this
+        // is one run's material.
+        //
+        // And a `user` message, which is the half this comment used to get
+        // wrong. It claimed that a separate message "stops a passage that
+        // happens to read like an instruction from being read as one" — a
+        // separate *system* message does no such thing, and the paragraph below
+        // says so about a webhook payload in the same breath. Finding 8 of the
+        // 2026-10-08 audit; `lib/rag.ts` carries the rest.
         //
         // Nothing is sent when retrieval found nothing, so an agent with no
         // documents gets exactly the prompt it got before this existed.
-        ...(input.ragBlock ? [{ role: "system" as const, content: input.ragBlock }] : []),
+        ...(input.ragBlock
+          ? [{ role: "user" as const, content: input.ragBlock, volatile: true as const }]
+          : []),
         ...(input.mayDecline ? [{ role: "system" as const, content: DECISION_INSTRUCTION }] : []),
         // The material rides in the user message with the instruction, which
         // matters most when the material arrived from outside: a webhook

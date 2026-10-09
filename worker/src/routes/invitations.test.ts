@@ -27,9 +27,10 @@ const WORKSPACE = "ws-1";
 const CREATED_AT = "2026-08-01T09:00:00.000Z";
 
 /** `user` overrides the caller — only the incoming-invitations case needs it,
-    to check an address whose capitals survived signup. */
-function appWith(spec: FakeDbSpec & { user?: { id: string; email: string } }) {
-  const { user = USER, ...dbSpec } = spec;
+    to check an address whose capitals survived signup. `apiKeyId` pretends the
+    caller arrived with a key rather than a session. */
+function appWith(spec: FakeDbSpec & { user?: { id: string; email: string }; apiKeyId?: string }) {
+  const { user = USER, apiKeyId, ...dbSpec } = spec;
   const fake = fakeDb({
     ...dbSpec,
     tables: { ...activeWorkspaceTables(user.id, WORKSPACE), ...dbSpec.tables },
@@ -39,6 +40,7 @@ function appWith(spec: FakeDbSpec & { user?: { id: string; email: string } }) {
   app.use("/*", async (c, next) => {
     c.set("user", user as never);
     c.set("db", fake.db as never);
+    if (apiKeyId) c.set("apiKeyId", apiKeyId);
     await next();
   });
   app.route("/", invitations);
@@ -198,6 +200,29 @@ describe("POST /invitations", () => {
       role: "member",
       invited_by: USER.id,
     });
+  });
+
+  it("refuses an API key, which may not put a new person in the workspace", async () => {
+    const { app, calls } = appWith({
+      apiKeyId: "key-1",
+      tables: {
+        invitations: { insert: () => ({ data: [created], error: null }) },
+      },
+    });
+
+    const res = await json(app, "POST", "/invitations", {
+      email: "new@example.com",
+      role: "admin",
+    });
+
+    expect(res.status).toBe(403);
+    // A key is a way to become the person who owns it, and RLS would let an
+    // admin's key invite an admin — which is a second credential nothing
+    // revokes, in somebody else's hands.
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: expect.stringMatching(/api keys cannot/i),
+    });
+    expect(calls.some((c) => c.table === "invitations")).toBe(false);
   });
 
   it("lowercases the address so the same person cannot be invited twice", async () => {

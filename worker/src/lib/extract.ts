@@ -10,6 +10,49 @@ function extOf(name: string): string {
 }
 
 /**
+ * The extensions an upload may carry, and the type each one is served as.
+ *
+ * One table, deliberately. The allowlist used to live in `routes/bundles.ts`
+ * with nothing mapping it to a content type, so upload stored the type the
+ * *uploader* claimed and download handed that value straight back. A `.pdf`
+ * typed `text/html` therefore came back as a `text/html` response, and the
+ * preview dialog makes a `blob:` document of the bytes — which runs on this
+ * app's own origin, where the session token is readable. The extension is the
+ * only thing upload ever validated, so the extension is what the type is
+ * derived from, at both ends. Keeping the two lists apart is what let them
+ * disagree, so `ALLOWED_EXT` is now the keys of this map rather than a second
+ * list beside it.
+ */
+const TYPE_BY_EXT: Record<string, string> = {
+  md: "text/markdown",
+  markdown: "text/markdown",
+  txt: "text/plain",
+  csv: "text/csv",
+  json: "application/json",
+  pdf: "application/pdf",
+};
+
+/** The extensions an upload may carry. Moved from `routes/bundles.ts`. */
+export const ALLOWED_EXT: Set<string> = new Set(Object.keys(TYPE_BY_EXT));
+
+/**
+ * The content type a document of this name is stored and served as.
+ *
+ * Never the client's `file.type`, and never the type recorded in the store
+ * either — an object written before this existed already carries whatever its
+ * uploader chose, and the row's own name is the one thing about it the server
+ * decided. An extension this does not know lands as `application/octet-stream`
+ * rather than as a guess: documents are written by four writers and one of them
+ * (Drive's readable-MIME branch) keeps a name with no extension at all. That
+ * costs nothing a reader sees, because every download also carries
+ * `Content-Disposition: attachment`; a wrong type would cost a document on this
+ * origin.
+ */
+export function contentTypeFor(name: string): string {
+  return TYPE_BY_EXT[extOf(name)] ?? "application/octet-stream";
+}
+
+/**
  * Decode indexable UTF-8 text from an uploaded file's bytes. Returns "" for
  * PDFs (their text is supplied by the client) and for anything undecodable.
  */

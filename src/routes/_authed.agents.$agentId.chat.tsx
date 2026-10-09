@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { Textarea } from "@/components/ui/textarea";
 import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
 import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
@@ -38,14 +37,20 @@ import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
+import { Button } from "@/components/ui/button";
 import { LiveAnswer } from "@/components/chat/live-answer";
+import {
+  PromptInput,
+  PromptInputAction,
+  PromptInputActions,
+  PromptInputTextarea,
+} from "@/components/prompt-kit/prompt-input";
 import { ConnectedStarters } from "@/components/chat/connected-starters";
 import { HeaderAction } from "@/components/chat/turn-actions";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { runToolProposal } from "@/lib/connections-api";
 import { isAdminRole } from "@/lib/roles";
-import { useAutoGrow } from "@/lib/use-auto-grow";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { useStableCallback } from "@/lib/use-stable-callback";
@@ -353,9 +358,17 @@ function ChatTab() {
   }, [activeId, active?.visibility, queryClient]);
 
   const [input, setInput] = useState("");
-  // `max-h-44` on the composer below was unreachable until this: nothing grew
-  // the box, so its minimum was its only height. See `use-auto-grow.ts`.
-  const composerRef = useAutoGrow<HTMLTextAreaElement>(input);
+  /*
+   * `useAutoGrow` used to be here and is not any more.
+   *
+   * It was added because `max-h-44` on the composer was unreachable — nothing
+   * grew the box, so its minimum was its only height. `PromptInputTextarea`
+   * does the same job by the same method (collapse to `auto`, then read
+   * `scrollHeight`, in a layout effect so the collapsed state is never
+   * painted) and owns the element's ref, so running both would be two effects
+   * writing one `style.height`. The hook stays in the repository: `edit-turn`
+   * uses it, and its header is still the argument against `field-sizing`.
+   */
   // Enter means something different on a phone, where it is the newline key
   // and the send button is already under your thumb.
   const isMobile = useIsMobile();
@@ -387,6 +400,16 @@ function ChatTab() {
    * indistinguishable from a product that has stopped working.
    */
   const [thinkingText, setThinkingText] = useState("");
+  /**
+   * How long the model reasoned for on this turn, once it has stopped.
+   *
+   * Null while it is still reasoning, which is what makes the fold in
+   * `LiveAnswer` open. The clock lives here rather than in the component
+   * because this is where the events are: the window runs from the first
+   * `thinking` event to the first `delta` after it, and neither of those is
+   * visible from a prop.
+   */
+  const [thinkingMs, setThinkingMs] = useState<number | null>(null);
   // The session whose revealed text is waiting for the server's copy to arrive.
   // Separate from `replyingIn` because the two end at different moments: the
   // composer is handed back the instant a stream stops, while the text that was
@@ -582,6 +605,7 @@ function ChatTab() {
     setThinking(!opts.continuing);
     setStreamText("");
     setThinkingText("");
+    setThinkingMs(null);
     setLiveSteps([]);
     // Answering one question does not leave the previous one on screen.
     setPendingConfirm(null);
@@ -596,6 +620,23 @@ function ChatTab() {
     streamAbort.current = controller;
     let partial = "";
     let reasoning = "";
+    /*
+     * Local to this stream, for the same reason `ranLong` above is: the reply
+     * they belong to has no id until `done`.
+     *
+     * THE TWO `Date.now()` READS BELOW CARRY A DISABLE, and this is the reason
+     * for it rather than a shrug. `react-hooks/purity` treats every line of
+     * `streamReply` as render code — a bare `const at = Date.now()` anywhere in
+     * this function is reported, while the identical call in `submit` thirty
+     * lines down is not — and this function is an SSE reader driven by a
+     * `for await` over a response body, which runs long after render and only
+     * ever from an event handler. The two reads are also the only way either
+     * end of the reasoning window is observable: it opens on the first
+     * `thinking` event and closes on the first `delta` after it, and nothing
+     * else on the wire marks either moment.
+     */
+    let reasoningStart: number | null = null;
+    let reasoningDone = false;
 
     try {
       const token = await getAccessToken();
@@ -702,12 +743,24 @@ function ChatTab() {
 
           if (event.type === "delta" && typeof event.text === "string") {
             setThinking(false);
+            // The first answer token is the moment the model stopped
+            // reasoning, which is the only moment either end of this window is
+            // observable. Once, per turn: a tool turn reasons again on later
+            // passes and re-timing it would replace a duration somebody is
+            // reading with a shorter one.
+            if (reasoningStart !== null && !reasoningDone) {
+              reasoningDone = true;
+              // eslint-disable-next-line react-hooks/purity
+              setThinkingMs(Date.now() - reasoningStart);
+            }
             partial += event.text;
             setStreamText(partial);
           } else if (event.type === "thinking" && typeof event.text === "string") {
             // The dots stand for "something is happening and we cannot say
             // what". Once the model is saying what, they have nothing to add.
             setThinking(false);
+            // eslint-disable-next-line react-hooks/purity
+            if (reasoningStart === null) reasoningStart = Date.now();
             reasoning += event.text;
             setThinkingText(reasoning);
           } else if (event.type === "step" && typeof event.index === "number") {
@@ -718,6 +771,16 @@ function ChatTab() {
                 ? (event.status as AgentStepView["status"])
                 : "running",
               label: event.label ?? event.tool ?? "",
+              // Spelled out rather than left off, because this is the one
+              // place the absence is a decision. `HarnessEvent`'s `step`
+              // variant carries `{ index, tool, status, label }` and widening
+              // it would put every tool call's arguments and result into the
+              // SSE stream of every open browser on every turn, to buy the few
+              // seconds between a call starting and the turn settling. Deferred
+              // deliberately; the payload arrives with the stored transcript.
+              // This is also what makes a live row not expandable.
+              request: undefined,
+              resultExcerpt: null,
             };
             /**
              * The dots mean "something is happening and we cannot say what".
@@ -1388,13 +1451,16 @@ function ChatTab() {
                 </h4>
                 <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
                   {starters.map((s) => (
-                    <button
+                    <Button
                       key={s}
+                      variant="outline"
                       onClick={() => void submit(s)}
-                      className="rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm transition-colors duration-200 hover:bg-surface-hover"
+                      // A starter is a sentence, not a label: it wraps, it is
+                      // left-aligned, and it is as tall as it needs to be.
+                      className="h-auto justify-start whitespace-normal bg-surface px-4 py-3 text-left hover:bg-surface-hover"
                     >
                       {s}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -1421,14 +1487,15 @@ function ChatTab() {
               */}
               {hasEarlier && (
                 <div className="mb-11 flex justify-center">
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => void loadEarlier()}
                     disabled={loadingEarlier}
-                    className="rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+                    className="font-medium text-muted-foreground"
                   >
                     {loadingEarlier ? "Loading…" : "Load earlier messages"}
-                  </button>
+                  </Button>
                 </div>
               )}
               {searchQuery !== "" && messages.length === 0 && (
@@ -1561,6 +1628,7 @@ function ChatTab() {
                     className="mt-5"
                     streamText={streamText}
                     thinkingText={thinkingText}
+                    thinkingMs={thinkingMs}
                     thinking={thinking}
                     steps={liveSteps}
                     streaming={replyingIn === active?.id}
@@ -1617,14 +1685,15 @@ function ChatTab() {
             reader who needs it. Hidden on an empty conversation, where there
             is no end to go back to. */}
         {adrift && !isEmpty && (
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="icon"
             onClick={jumpToEnd}
             aria-label="Jump to the latest message"
-            className="absolute -top-5 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-md border border-border bg-popover text-muted-foreground transition-colors duration-200 hover:text-foreground"
+            className="absolute -top-5 left-1/2 z-10 -translate-x-1/2 bg-popover text-muted-foreground hover:text-foreground"
           >
             <ArrowDown className="h-4 w-4" />
-          </button>
+          </Button>
         )}
         <div className="mx-auto max-w-3xl">
           {quota && quota.level !== "fine" && (
@@ -1636,24 +1705,44 @@ function ChatTab() {
           {followUps.length > 0 && !busy && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {followUps.map((q) => (
-                <button
+                <Button
                   key={q}
-                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => void submit(q)}
-                  className="rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground"
+                  className="bg-popover text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
                   {q}
-                </button>
+                </Button>
               ))}
             </div>
           )}
-          <div className="rounded-3xl border border-border bg-popover transition-colors duration-200">
+          {/*
+            `PromptInput` rather than a div and a `Textarea`, for the autosize
+            and for the actions row having one grammar instead of four
+            hand-written buttons.
+
+            NO `onSubmit` IS PASSED, deliberately. This composer owns Enter and
+            the copy's header says what that costs upstream: prompt-kit binds
+            Enter-without-shift to submit, and both of the behaviours below work
+            by letting the key through untouched — the IME needs its Enter to
+            accept a candidate, the phone needs its newline — so neither calls
+            `preventDefault()` and upstream would have submitted on their
+            behalf. With no `onSubmit` there is nothing to run ahead of us.
+
+            It mounts its own `TooltipProvider`. There is no other one in
+            `src/`, so nothing nests.
+          */}
+          <PromptInput
+            value={input}
+            onValueChange={setInput}
+            // What `max-h-44` meant: eleven rem, then scroll.
+            maxHeight={176}
+            className="border-border p-0 transition-colors duration-200"
+          >
             <ChatReceipts uploads={uploads} />
             <ChatReportReceipt reports={reports} />
-            <Textarea
-              ref={composerRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+            <PromptInputTextarea
               onPaste={(e) => {
                 // A file on the clipboard is an upload; text on the clipboard is
                 // just typing, and must fall through untouched.
@@ -1710,10 +1799,9 @@ function ChatTab() {
                 }
               }}
               placeholder={`Message ${agent.name}`}
-              rows={1}
-              className="max-h-44 min-h-[48px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pt-3.5 text-base shadow-none focus-visible:ring-0"
+              className="min-h-[48px] overflow-y-auto px-4 pt-3.5 text-base"
             />
-            <div className="flex items-center justify-between px-3 pb-2.5">
+            <PromptInputActions className="justify-between px-3 pb-2.5">
               <div className="flex items-center gap-1">
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
                 <ChatReport reports={reports} canWrite={canWrite} />
@@ -1725,26 +1813,39 @@ function ChatTab() {
                   over a composer with nothing to stop — and pressing it cut
                   off the answer in the tab you had just left. */}
               {replyingIn === active?.id ? (
-                <button
-                  onClick={stop}
-                  aria-label="Stop generating"
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90"
-                >
-                  <Square className="h-3.5 w-3.5 fill-current" />
-                </button>
+                <PromptInputAction tooltip="Stop generating">
+                  <Button
+                    size="icon"
+                    onClick={stop}
+                    aria-label="Stop generating"
+                    className="shrink-0"
+                  >
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </Button>
+                </PromptInputAction>
               ) : (
-                <button
-                  onClick={send}
-                  disabled={!input.trim() || busy}
-                  aria-label="Send message"
-                  title={busy ? "Waiting for the current reply to finish" : undefined}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-foreground text-background transition-opacity duration-200 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                /* A real tooltip rather than `title`, which never appears on a
+                   touch screen — and this is the one control on the row whose
+                   `title` was carrying something a reader needs ("waiting for
+                   the current reply to finish", on a button that looks broken
+                   until you know that). The three to the left of it are their
+                   own components and keep their own `aria-label`s. */
+                <PromptInputAction
+                  tooltip={busy ? "Waiting for the current reply to finish" : "Send message"}
                 >
-                  <ArrowUp className="h-4 w-4" />
-                </button>
+                  <Button
+                    size="icon"
+                    onClick={send}
+                    disabled={!input.trim() || busy}
+                    aria-label="Send message"
+                    className="shrink-0"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </Button>
+                </PromptInputAction>
               )}
-            </div>
-          </div>
+            </PromptInputActions>
+          </PromptInput>
           {/* What the header used to say twice over, said once, here, where
               it is read before you type rather than every time you look up. */}
           <p className="mt-2 flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted-foreground">
@@ -1789,21 +1890,23 @@ function ChatTab() {
                 <FileText className="h-4 w-4 text-muted-foreground" /> Report preview
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={reports.download}
-                  className="rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="font-medium text-muted-foreground"
                 >
                   Download
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={reports.dismiss}
-                  className="rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   aria-label="Close preview"
+                  className="font-medium text-muted-foreground"
                 >
                   Close
-                </button>
+                </Button>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
@@ -1839,14 +1942,15 @@ function ChatTab() {
             </div>
             {/* Secondary on purpose: the composer's send is this view's one
                 primary action (DESIGN.md §2). */}
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => suggestMutation.mutate(active.id)}
               disabled={suggestMutation.isPending}
-              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-40"
+              className="font-medium"
             >
               {suggestMutation.isPending ? "Extracting…" : "Extract ideas"}
-            </button>
+            </Button>
           </div>
           {suggestions.length > 0 && (
             <div className="border-b border-border bg-muted/30 p-2">
@@ -1863,8 +1967,9 @@ function ChatTab() {
                       <div className="truncate text-sm font-medium">{s.title}</div>
                       {s.detail && <div className="text-xs text-muted-foreground">{s.detail}</div>}
                     </div>
-                    <button
-                      type="button"
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() =>
                         addIdeaMutation.mutate({
                           id: s.id,
@@ -1873,10 +1978,10 @@ function ChatTab() {
                           detail: s.detail,
                         })
                       }
-                      className="shrink-0 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-secondary"
+                      className="shrink-0 font-medium hover:bg-secondary"
                     >
                       Add to board
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>

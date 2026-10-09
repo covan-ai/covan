@@ -510,7 +510,7 @@ function sentMessages(): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
 function knowledgeBlock(): string | undefined {
   return sentMessages()
     .map((m) => (typeof m.content === "string" ? m.content : ""))
-    .find((c) => c.startsWith("The team has shared the following knowledge"));
+    .find((c) => c.startsWith("The following is material retrieved"));
 }
 
 /** The value 0039 stores alongside the reply. */
@@ -616,6 +616,41 @@ describe("citations", () => {
     await ask(app);
     expect(citedNames()).toEqual([]);
     expect(serviceInsert.mock.calls[0][0].sources).toBeNull();
+  });
+});
+
+describe("retrieved material in the prompt", () => {
+  it("hands it over as data rather than as the system's own words", async () => {
+    // Finding 8 of the 2026-10-08 audit. The block went out as a `system`
+    // message, which is the one role the model is trained to treat as the
+    // operator speaking — and its content is a document body that reached this
+    // workspace through Notion, Drive or Slack sync, or from any member's
+    // upload. `lib/routines/agent-run.ts` had already settled this for webhook
+    // payloads four lines from where it then attached this block as `system`.
+    const { app } = appWith({
+      question: "How many vacation days do I get?",
+      documents: [HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    await ask(app);
+
+    const msgs = sentMessages();
+    const at = msgs.findIndex(
+      (m) => typeof m.content === "string" && m.content.includes("Vacation is 20 days."),
+    );
+    expect(msgs[at]?.role).toBe("user");
+    // `volatile` is not asserted here and cannot be: this reads the OpenAI
+    // call, and `toOpenAIMessages` keeps role and content alone because that
+    // provider's cache is positional. The flag is pinned where it is read —
+    // `lib/completion.test.ts` — and across the assembly sites by
+    // `prompt-cache.static.test.ts`.
+    // And in the same place as before: immediately before the question it
+    // grounds, so the prefix the prompt cache reads back — persona, manifest,
+    // prior turns — is byte-identical turn over turn. See the assembly comment
+    // in `routes/chat.ts`.
+    expect(at).toBe(msgs.length - 2);
   });
 });
 
@@ -2243,6 +2278,78 @@ describe("POST /chat/confirm/:id", () => {
     await (await confirm(app, true)).text();
 
     expect(handed?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  /**
+   * What the resumed half knows about the call a person just approved.
+   *
+   * Nothing, until this. `buildToolContext` builds `offeredOperations` empty —
+   * only `find_tool` fills it, and the second half of a turn has no reason to
+   * search again — so the operation the first half had in hand was gone by the
+   * time the yes was acted on: the approved call ran with its arguments
+   * unchecked against the schema (guard 1) and its toolkit matched by spelling
+   * alone (guard 2). `run_tool` now carries the catalogue row in the proposal,
+   * which `paused_turns` stores verbatim, and this is the other end of it.
+   */
+  it("hands the approved call back the operation the first half described", async () => {
+    const operation = {
+      slug: "GMAIL_SEND_EMAIL",
+      name: "Send email",
+      description: "Send an email.",
+      toolkit: "gmail",
+      required: ["recipient_email"],
+      inputSchema: { type: "object", required: ["recipient_email"] },
+      destructive: false,
+    };
+    parked = {
+      ...PARKED,
+      tool: "run_tool",
+      tool_call: { id: "call_1", name: "run_tool", arguments: "{}" },
+      proposal: { kind: "run_tool", slug: operation.slug, operation },
+    };
+    let handed: { offeredOperations?: Map<string, unknown> } | undefined;
+    approvedTool = {
+      name: "run_tool",
+      description: "run_tool",
+      input: { type: "object", properties: {} },
+      destructive: true,
+      isConfigured: () => true,
+      run: async (_args: unknown, ctx: { offeredOperations?: Map<string, unknown> }) => {
+        handed = ctx;
+        return { kind: "ok", content: "sent" };
+      },
+    };
+    const { app } = appWith({ question: "mail ana" });
+    answersWith(streamOf("Sent."));
+
+    await (await confirm(app, true)).text();
+
+    expect(handed?.offeredOperations?.get(operation.slug)).toEqual(operation);
+  });
+
+  it("invents nothing for a pause that described no operation", async () => {
+    // Every other tool's proposal, and `run_tool`'s own when the slug came
+    // from an earlier turn. A half-filled row here would be worse than an
+    // empty map: the guards would check the approved call against fiction.
+    parked = PARKED;
+    let handed: { offeredOperations?: Map<string, unknown> } | undefined;
+    approvedTool = {
+      name: "schedule_job",
+      description: "schedule_job",
+      input: { type: "object", properties: {} },
+      destructive: true,
+      isConfigured: () => true,
+      run: async (_args: unknown, ctx: { offeredOperations?: Map<string, unknown> }) => {
+        handed = ctx;
+        return { kind: "ok", content: "scheduled" };
+      },
+    };
+    const { app } = appWith({ question: "every monday" });
+    answersWith(streamOf("Scheduled."));
+
+    await (await confirm(app, true)).text();
+
+    expect(handed?.offeredOperations?.size).toBe(0);
   });
 
   it("says the resumed half was cut off, so it gets its Continue button too", async () => {

@@ -2,6 +2,7 @@ import { memo } from "react";
 import { Copy, RefreshCw, ThumbsDown, ThumbsUp, Volume2, VolumeX } from "lucide-react";
 import type { Message } from "@/lib/agents-store";
 import { AgentAvatar } from "@/components/avatars";
+import { Button } from "@/components/ui/button";
 import type { FeedbackKind } from "@/lib/api-client";
 import { Markdown } from "@/components/markdown";
 import { SourceChip } from "@/components/source-chip";
@@ -174,14 +175,14 @@ export const AnswerTurn = memo(function AnswerTurn({
         {truncated && (
           <div className="mt-3 flex items-center gap-2">
             <span className="text-xs text-muted-foreground">This answer hit its length limit.</span>
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => onContinue(message.id)}
               disabled={busy}
-              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
             >
               Continue
-            </button>
+            </Button>
           </div>
         )}
 
@@ -201,14 +202,9 @@ export const AnswerTurn = memo(function AnswerTurn({
                     "This turn reached how much this deployment can do in one go."
                   : "This turn used every tool call it is allowed."}
             </span>
-            <button
-              type="button"
-              onClick={onKeepGoing}
-              disabled={busy}
-              className="rounded-md border border-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:opacity-40"
-            >
+            <Button variant="outline" size="sm" onClick={onKeepGoing} disabled={busy}>
               Keep going
-            </button>
+            </Button>
           </div>
         )}
 

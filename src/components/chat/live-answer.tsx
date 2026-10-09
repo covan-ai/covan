@@ -1,5 +1,5 @@
 import { Markdown } from "@/components/markdown";
-import { Disclosure } from "@/components/section-card";
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/prompt-kit/reasoning";
 import { StepTrail, type AgentStepView } from "@/components/agent-steps";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 export function LiveAnswer({
   streamText,
   thinkingText,
+  thinkingMs,
   thinking,
   steps,
   streaming,
@@ -29,6 +30,22 @@ export function LiveAnswer({
   streamText: string;
   /** The model's own reasoning, when it published any. */
   thinkingText: string;
+  /**
+   * How long the model reasoned for, or null while it still is.
+   *
+   * The clock is kept in the route, because that is where the events are: the
+   * window runs from the first `thinking` event to the first `delta` after it.
+   * Null is therefore two things at once and both are the same thing here —
+   * reasoning has not finished — which is what the fold reads to decide
+   * whether to be open.
+   *
+   * The settled label is a DURATION AND NOTHING ELSE. `SettledSteps` sits
+   * directly beneath this and already prints "3 steps · 2.4s"; a reasoning
+   * token count beside that is a second family of numbers saying something a
+   * reader did not ask, and `MessageDTO.reasoningTokens` is null on every
+   * Anthropic reply in any case.
+   */
+  thinkingMs?: number | null;
   /** Something is happening right now, so the dots belong on screen. */
   thinking: boolean;
   steps: AgentStepView[];
@@ -41,6 +58,11 @@ export function LiveAnswer({
   streaming: boolean;
   className?: string;
 }) {
+  // Still arriving, as against having arrived. `thinkingMs` is set by the
+  // route the moment the first answer token lands, which is the moment the
+  // model stopped reasoning for this pass.
+  const reasoningLive = streaming && thinkingMs === null;
+
   return (
     // Outside the log, and silent. The words arrive here one token at a time;
     // a screen reader is told *that* a reply is coming by the status line
@@ -49,14 +71,24 @@ export function LiveAnswer({
     <div className={cn("flex flex-col gap-2", className)} aria-live="off">
       <div className="min-w-0" data-turn="answer">
         {/* What the model is working through, while it works through it.
-            Folded, and closed by default: this is context for a pause, not the
-            answer — somebody who wants to know why an answer came out the way
-            it did can open it, and everybody else should not have to scroll
-            past it to read the reply. */}
+            OPEN while it is still working through it, and folded the moment it
+            stops. This was a closed `Disclosure` labelled "Thinking", which
+            gave a reader the word and nothing else: no duration, no sign of
+            whether it was still happening, no reason to open it. Open-while-
+            streaming is the whole reason this block came from prompt-kit
+            rather than being written here — and it leaves a reader who folded
+            or unfolded it by hand alone afterwards. */}
         {thinkingText && (
-          <Disclosure label="Thinking" className="mb-3">
-            <Markdown content={thinkingText} className="text-xs" />
-          </Disclosure>
+          <Reasoning className="mb-3" isStreaming={reasoningLive}>
+            <ReasoningTrigger className="text-xs text-muted-foreground hover:text-foreground">
+              {thinkingMs === null || thinkingMs === undefined
+                ? "Thinking"
+                : `Thought for ${(thinkingMs / 1000).toFixed(1)}s`}
+            </ReasoningTrigger>
+            <ReasoningContent className="mt-1.5">
+              <Markdown content={thinkingText} className="text-xs" />
+            </ReasoningContent>
+          </Reasoning>
         )}
 
         {/* Between the reasoning and the answer, which is where they happen. A

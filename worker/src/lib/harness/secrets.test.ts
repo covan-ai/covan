@@ -37,7 +37,7 @@ vi.mock("../supabase", () => ({
   }),
 }));
 
-const { authHeaders } = await import("./secrets");
+const { authHeaders, composioAccount } = await import("./secrets");
 
 const ENV = { ROUTINE_SECRET_KEY: KEY } as ToolEnv;
 
@@ -92,5 +92,66 @@ describe("authHeaders", () => {
     await expect(authHeaders(ENV, connection({ transport: "composio" }))).rejects.toThrow(
       /COMPOSIO_API_KEY/,
     );
+  });
+});
+
+/**
+ * Which Composio account a connection executes against, and the branch that
+ * decides whether a row naming none is correct or broken.
+ *
+ * Untested until covan#253, which is why it could be written as "both halves
+ * are always required" without anybody noticing that thirty-four applications
+ * have only one half to give. The discriminator is `auth_kind`, not the
+ * nullness of the column: a managed row that has genuinely lost its account has
+ * to stay the error it is, and from in here the two rows look identical.
+ */
+describe("composioAccount", () => {
+  it("returns both halves for a row whose credential is a grant at Composio", async () => {
+    rows.tool_connections = { connected_account_id: "ca_1", composio_user_id: "cu_1" };
+    const out = await composioAccount(
+      ENV,
+      connection({ transport: "composio", auth_kind: "composio" }),
+    );
+    expect(out).toEqual({ connectedAccountId: "ca_1", composioUserId: "cu_1" });
+  });
+
+  it("returns the identifier alone for an application that needs no credential", async () => {
+    // The empty string rather than an omitted field, because `executeTool`
+    // treats both the same and one shape is easier to reason about than two.
+    rows.tool_connections = { connected_account_id: null, composio_user_id: "cu_open" };
+    const out = await composioAccount(
+      ENV,
+      connection({ transport: "composio", auth_kind: "composio_no_auth" }),
+    );
+    expect(out).toEqual({ connectedAccountId: "", composioUserId: "cu_open" });
+  });
+
+  it("still refuses a managed row that has lost its account", async () => {
+    // Byte-identical row to the case above, differing only in `auth_kind` —
+    // which is the whole argument for reading that column rather than the null.
+    rows.tool_connections = { connected_account_id: null, composio_user_id: "cu_1" };
+    const out = await composioAccount(
+      ENV,
+      connection({ transport: "composio", auth_kind: "composio" }),
+    );
+    expect(out).toBeNull();
+  });
+
+  it("refuses a no-credential row with no identifier either", async () => {
+    // `composio_user_id` is the whole of what such a row executes on. 0072's
+    // check forbids the shape, so this is belt over braces — but the braces are
+    // in another repository's database as far as this file knows.
+    rows.tool_connections = { connected_account_id: null, composio_user_id: null };
+    const out = await composioAccount(
+      ENV,
+      connection({ transport: "composio", auth_kind: "composio_no_auth" }),
+    );
+    expect(out).toBeNull();
+  });
+
+  it("reads the two withheld columns with the service role, by id", async () => {
+    rows.tool_connections = { connected_account_id: "ca_1", composio_user_id: "cu_1" };
+    await composioAccount(ENV, connection({ transport: "composio", auth_kind: "composio" }));
+    expect(reads).toEqual([{ table: "tool_connections", column: "id", id: "conn-1" }]);
   });
 });

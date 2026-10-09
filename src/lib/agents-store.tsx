@@ -123,9 +123,16 @@ export type Message = {
    * tool it ran, in the order it ran them.
    *
    * Absent on every reply that ran no tool, which is most of them and all of
-   * them written before the harness existed. The result of each step is
-   * deliberately not here: it is already in the answer above it, and sending
-   * both would put every tool's whole output into every transcript load.
+   * them written before the harness existed.
+   *
+   * `resultExcerpt` is the FIRST PART of what the tool returned, not the whole
+   * of it — capped at 2,000 characters by the worker that stored it (0060),
+   * which is what makes it cheap enough to send with every transcript. The
+   * paragraph that used to sit here said the result was deliberately left out
+   * because it was already in the answer above; that was true of the whole
+   * result and never true of the excerpt, which was being trimmed for this
+   * journey and then not taking it. A step that failed or was refused has its
+   * reason here and nowhere else on the screen.
    */
   steps?: {
     index: number;
@@ -133,6 +140,7 @@ export type Message = {
     status: "ok" | "failed" | "refused" | "pending";
     request: unknown;
     durationMs: number | null;
+    resultExcerpt: string | null;
   }[];
   promptTokens?: number | null;
   completionTokens?: number | null;

@@ -69,10 +69,10 @@ describe("summariseWithModel", () => {
   });
 
   // A routine is meant to be the same colleague as the one in the chat window.
-  // It was not: chat put the agent's retrieved documents in their own system
-  // message and this path had none at all, so the agent that could quote the
-  // handbook when asked had forgotten it by the time it wrote the digest.
-  it("carries what the agent knows in its own system message, as chat does", async () => {
+  // It was not: chat put the agent's retrieved documents in their own message
+  // and this path had none at all, so the agent that could quote the handbook
+  // when asked had forgotten it by the time it wrote the digest.
+  it("carries what the agent knows in its own message, as chat does", async () => {
     const summarise = summariseWithModel(env);
     await summarise({
       persona: "You are Ada.",
@@ -84,13 +84,18 @@ describe("summariseWithModel", () => {
     });
 
     const messages = createMock.mock.calls[0][0].messages;
-    const systemMessages = messages.filter((m: any) => m.role === "system");
 
-    // Two, not one concatenated block: the persona is the agent's standing
-    // identity and the excerpts are this run's material, and merging them
-    // invites the model to read retrieved text as instructions.
-    expect(systemMessages).toHaveLength(2);
-    expect(systemMessages[1].content).toContain("our Pro tier is $29");
+    // Its own message, not folded into the persona: the persona is the agent's
+    // standing identity and the excerpts are this run's material.
+    const at = messages.findIndex((m: any) => m.content.includes("our Pro tier is $29"));
+    expect(at).toBeGreaterThan(-1);
+    // And a `user` message, not a `system` one — finding 8 of the 2026-10-08
+    // audit. The comment four lines below where this block was attached already
+    // said a system message is the wrong place for anything a stranger wrote;
+    // a Notion page reaching this workspace through sync is that. So the
+    // persona is the only system message left.
+    expect(messages[at].role).toBe("user");
+    expect(messages.filter((m: any) => m.role === "system")).toHaveLength(1);
     // Before the user turn it grounds, same as `routes/chat.ts` assembles it.
     expect(messages[messages.length - 1].role).toBe("user");
   });

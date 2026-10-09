@@ -237,6 +237,21 @@ export type MessageStepDTO = {
   status: "ok" | "failed" | "refused" | "pending";
   request: unknown;
   durationMs: number | null;
+  /**
+   * The first part of what the tool returned, or null for a step recorded
+   * before 0060 and for one that has not returned yet.
+   *
+   * The worker trims this on the way in (`MAX_STEP_EXCERPT_CHARS`, 2,000) and
+   * 0060's own header says why: so that it can be read on every transcript
+   * load without the whole of a tool's output travelling with it. It was
+   * trimmed for that purpose and then never sent, which is the narrowest
+   * possible version of a screen saying less than it knows.
+   *
+   * Null rather than "" when there is none. The two are different answers to
+   * the screen: one draws no Returned block at all, the other draws an empty
+   * one.
+   */
+  resultExcerpt: string | null;
 };
 
 export type MessageDTO = {
@@ -605,6 +620,7 @@ function mapSteps(value: unknown): MessageStepDTO[] {
       status,
       request: row.request ?? {},
       durationMs: typeof row.duration_ms === "number" ? row.duration_ms : null,
+      resultExcerpt: typeof row.result_excerpt === "string" ? row.result_excerpt : null,
     });
   }
   return out.sort((a, b) => a.index - b.index);

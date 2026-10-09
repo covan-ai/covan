@@ -5,6 +5,7 @@ import { toEpochMs } from "../lib/dto";
 import type { ApiKeyDTO } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { generateApiKey } from "../lib/api-keys";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 const apiKeys = new Hono<AppEnv>();
 
@@ -26,25 +27,6 @@ const createKeySchema = z.object({
  */
 function keysAreAvailable(c: { env: { SUPABASE_JWT_SECRET?: string } }): boolean {
   return !!c.env.SUPABASE_JWT_SECRET;
-}
-
-/**
- * What a key may not do: make another one.
- *
- * Everything else a key can reach is reached as its owner, and RLS decides —
- * that is the whole design. This is the one place where acting as the owner is
- * not enough, because a key that can mint keys cannot be revoked: the moment one
- * leaks it writes successors, and revoking the original leaves every one of them
- * working. The same goes for revocation itself, which a leaked key would
- * otherwise use to take down the keys somebody was still relying on.
- *
- * So both writes require a session. This is a deliberate second permission
- * system, and it is exactly one rule wide.
- */
-function refuseIfKeyAuthenticated(c: { get: (k: "apiKeyId") => string | undefined }) {
-  return c.get("apiKeyId")
-    ? ({ error: "api keys cannot manage api keys — sign in to do this" } as const)
-    : null;
 }
 
 function mapKey(row: Record<string, unknown>): ApiKeyDTO {
@@ -86,7 +68,7 @@ apiKeys.post("/api-keys", async (c) => {
     return c.json({ error: "api keys are not enabled on this deployment" }, 501);
   }
 
-  const refusal = refuseIfKeyAuthenticated(c);
+  const refusal = refuseIfKeyAuthenticated(c, "manage api keys");
   if (refusal) return c.json(refusal, 403);
 
   const parsed = createKeySchema.safeParse(await c.req.json().catch(() => ({})));
@@ -128,7 +110,7 @@ apiKeys.post("/api-keys", async (c) => {
 // when it stopped, and 0033's trigger makes the change one-way so a revocation
 // cannot be replayed back into a working key.
 apiKeys.delete("/api-keys/:id", async (c) => {
-  const refusal = refuseIfKeyAuthenticated(c);
+  const refusal = refuseIfKeyAuthenticated(c, "manage api keys");
   if (refusal) return c.json(refusal, 403);
 
   const db = c.get("db");

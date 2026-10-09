@@ -154,9 +154,14 @@ describe("toAnthropicMessages", () => {
     // question that repeats, so there is nothing to mark. `worthCaching` in
     // `anthropicParams` still marks the system block, which is now the persona
     // and therefore worth marking.
+    //
+    // The shape is the one the five assembly sites actually send since the
+    // 2026-10-08 audit moved the block to `user`: a marked turn, not a second
+    // system message. Written the old way this test passed while production
+    // marked the block itself.
     const { cacheIndex } = toAnthropicMessages([
       { role: "system", content: "You are Ada." },
-      { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+      { role: "user", content: "KNOWLEDGE: the handbook says Tuesdays.", volatile: true },
       { role: "user", content: "What does the handbook say?" },
     ]);
 
@@ -200,7 +205,7 @@ describe("toAnthropicMessages", () => {
       { role: "system", content: "You are Ada." },
       { role: "user", content: "What does the handbook say?" },
       { role: "assistant", content: "Tuesdays." },
-      { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+      { role: "user", content: "KNOWLEDGE: the handbook says Tuesdays.", volatile: true },
       { role: "user", content: "And Wednesdays?" },
     ]);
 
@@ -213,6 +218,22 @@ describe("toAnthropicMessages", () => {
       { role: "user", content: "Hello" },
       { role: "assistant", content: "Hi." },
       { role: "user", content: "How are you?" },
+    ]);
+
+    expect(cacheIndex).toBe(1);
+  });
+
+  it("still treats a later system message as the volatile tail", () => {
+    // Nothing in this repo sends one any more, but the adapter has to keep
+    // answering the same way: a system turn it cannot deliver as one is
+    // material that did not come from the conversation, and the prefix in
+    // front of it is what repeats.
+    const { cacheIndex } = toAnthropicMessages([
+      { role: "system", content: "You are Ada." },
+      { role: "user", content: "What does the handbook say?" },
+      { role: "assistant", content: "Tuesdays." },
+      { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+      { role: "user", content: "And Wednesdays?" },
     ]);
 
     expect(cacheIndex).toBe(1);
@@ -428,7 +449,11 @@ describe("complete, on Anthropic", () => {
         { role: "system", content: "You are Ada." },
         { role: "user", content: "What does the handbook say?" },
         { role: "assistant", content: "Tuesdays." },
-        { role: "system", content: "KNOWLEDGE: the handbook says Tuesdays." },
+        {
+          role: "user",
+          content: "KNOWLEDGE: the handbook says Tuesdays.",
+          volatile: true,
+        },
         { role: "user", content: "And Wednesdays?" },
       ],
     });

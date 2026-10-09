@@ -182,7 +182,7 @@ describe("the expensive rate limit", () => {
     const spend = readFileSync(join(SRC, "lib", "harness", "spend.ts"), "utf8");
     expect(spend).toContain("entitlementsFor(ctx.env).check(ctx.userId)");
     expect(spend).toContain("entitlementsFor(ctx.env).record(ctx.userId");
-    for (const tool of ["run-tool.ts", "find-tool.ts"]) {
+    for (const tool of ["run-tool.ts", "find-tool.ts", "browse.ts"]) {
       const src = readFileSync(join(SRC, "lib", "harness", "tools", tool), "utf8");
       expect(src, `${tool} must check the allowance before it spends`).toContain("affordable(ctx)");
       expect(src, `${tool} must record what it spent`).toContain("spend(ctx,");

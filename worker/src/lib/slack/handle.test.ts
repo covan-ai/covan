@@ -309,6 +309,31 @@ describe("answering in a thread", () => {
     expect(posted().text).toContain("Twenty days a");
   });
 
+  it("sends what it retrieved as data, not as its own instructions", async () => {
+    // Finding 8 of the 2026-10-08 audit. This path assembles the same way the
+    // chat route does, and it had the same defect: the retrieved block rode as
+    // a `system` message. On Slack the material is likelier still to have been
+    // written by somebody outside the workspace — a synced channel is a feed.
+    const fake = db({ identity: true });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    // `create` is declared with no parameters, so the recorded call has to be
+    // told what it was.
+    const [request] = create.mock.calls[0] as unknown as [
+      { messages: { role: string; content: string }[] },
+    ];
+    const messages = request.messages;
+    const at = messages.findIndex((m) => m.content.includes("Twenty days."));
+    expect(messages[at]?.role).toBe("user");
+    // And it is still its own message behind the persona, which is what the
+    // prompt cache reads back. (This fixture's fake `messages` table returns no
+    // rows, so the re-read history is empty and there is no question turn after
+    // it — the role is the whole of what this test is about.)
+    expect(messages[0].role).toBe("system");
+    expect(messages[0].content).not.toContain("Twenty days.");
+  });
+
   it("treats a direct message as a private conversation", async () => {
     const fake = db({ identity: true });
 
@@ -370,6 +395,21 @@ describe("answering in a thread", () => {
 
     expect(create).not.toHaveBeenCalled();
     expect(fake.callsTo("slack_identities").some((c) => c.op === "insert")).toBe(false);
+  });
+
+  // The other half of the same question, and the one the cache used to skip.
+  // `slack_identities` remembers who somebody is; it cannot remember whether
+  // they may still ask, because membership is revocable and the mapping is not.
+  it("refuses a remembered asker who has since left the workspace", async () => {
+    const fake = db({ identity: true, member: false });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(create).not.toHaveBeenCalled();
+    expect(posted().text).toMatch(/don't know who you are/i);
+    // And the mapping stays: see the comment in `resolveIdentity` for why
+    // forgetting them is the worse of the two answers.
+    expect(fake.callsTo("slack_identities").some((c) => c.op === "delete")).toBe(false);
   });
 
   it("spends nothing once the asker's allowance is used up", async () => {

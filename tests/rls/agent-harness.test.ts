@@ -452,6 +452,14 @@ describe("a composio connection", () => {
     expect(error?.code).toBe("23514");
   });
 
+  /**
+   * **This is the test that proves 0072 narrowed the rule rather than dropping
+   * it.** It has always inserted `auth_kind: "composio"` explicitly, so it
+   * takes the managed arm and is still refused — a connection whose credential
+   * is a grant at Composio must name that grant. Had 0072 appended a bare
+   * `or connected_account_id is null`, this test would have had to be deleted,
+   * which is exactly the signal that would have been the wrong shape.
+   */
   it("refuses an active composio row that names no account", async () => {
     const { error } = await serviceClient().from("tool_connections").insert({
       workspace_id: owner.workspaceId,
@@ -461,6 +469,28 @@ describe("a composio connection", () => {
       auth_kind: "composio",
       secret_ciphertext: null,
       toolkit_slug: "gmail",
+      status: "active",
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("refuses a composio row claiming to carry its own header", async () => {
+    // 0072 states the composio arm's own vocabulary — `auth_kind in
+    // ('composio', 'composio_no_auth')` — rather than leaving it to whatever
+    // the inner branch happens to tolerate. A `static_header` smuggled onto a
+    // composio row used to pass the shape check and then confuse `authHeaders`,
+    // which reads `transport` and would have sent the deployment key anyway.
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Pretend Gmail",
+      transport: "composio",
+      base_url: "https://backend.composio.dev",
+      auth_kind: "static_header",
+      secret_ciphertext: null,
+      toolkit_slug: "gmail",
+      connected_account_id: "ca_test_3",
+      composio_user_id: "cu_test_3",
       status: "active",
       created_by: owner.id,
     });
@@ -480,6 +510,90 @@ describe("a composio connection", () => {
       created_by: owner.id,
     });
     expect(error).toBeNull();
+  });
+
+  /**
+   * The third kind of row, and the only one that holds no credential anywhere.
+   *
+   * 0072, covan#253. Thirty-four applications need no sign-in at all, and
+   * Composio refuses to make an auth config or a link for one — so the correct
+   * row is active with no `connected_account_id`, which this table forbade
+   * until now. What makes that a scoped widening rather than a hole is that
+   * both shapes are constrained POSITIVELY: the relaxation applies only to a
+   * row that declares itself no-auth, and `auth_kind` is a value no client can
+   * write. These four are each one half of that sentence.
+   */
+  it("allows an active composio row with no account when it needs none", async () => {
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Hacker News",
+      transport: "composio",
+      base_url: "https://backend.composio.dev",
+      auth_kind: "composio_no_auth",
+      secret_ciphertext: null,
+      toolkit_slug: "hackernews",
+      composio_user_id: "cu_open_1",
+      status: "active",
+      created_by: owner.id,
+    });
+    expect(error).toBeNull();
+  });
+
+  it("refuses a no-auth row that names an account anyway", async () => {
+    // The shape is positively constrained in both directions, so a row cannot
+    // claim to need nothing and carry an address at the same time. Without
+    // this the kind would be a licence rather than a description.
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Confused Hacker News",
+      transport: "composio",
+      base_url: "https://backend.composio.dev",
+      auth_kind: "composio_no_auth",
+      secret_ciphertext: null,
+      toolkit_slug: "hackernews",
+      composio_user_id: "cu_open_2",
+      connected_account_id: "ca_should_not_be_here",
+      status: "active",
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  it("refuses a no-auth row with no identifier of any kind", async () => {
+    // `composio_user_id` is the whole of what such a row executes on, so a row
+    // without one is a connection nothing can be called through.
+    const { error } = await serviceClient().from("tool_connections").insert({
+      workspace_id: owner.workspaceId,
+      label: "Anonymous Hacker News",
+      transport: "composio",
+      base_url: "https://backend.composio.dev",
+      auth_kind: "composio_no_auth",
+      secret_ciphertext: null,
+      toolkit_slug: "hackernews",
+      status: "active",
+      created_by: owner.id,
+    });
+    expect(error?.code).toBe("23514");
+  });
+
+  /**
+   * The sentence the whole of 0072's safety argument rests on, and it had no
+   * test until now.
+   *
+   * The no-auth kind is only safe because a member cannot claim it. If
+   * `auth_kind` were ever added to 0059's update grant — alongside `label`,
+   * `allowed_methods` and `config` — any member could relabel their own
+   * managed row `composio_no_auth` through PostgREST with the anon key, making
+   * an account-less row legal and then, through a second write, a row that
+   * executes on an identifier of their choosing. It is refused rather than
+   * matching no row: as far as a client is concerned the column is read-only.
+   */
+  it("cannot be relabelled no-auth by a client", async () => {
+    const { error } = await owner.db
+      .from("tool_connections")
+      .update({ auth_kind: "composio_no_auth" })
+      .eq("id", appId);
+    expect(error).not.toBeNull();
   });
 
   /**

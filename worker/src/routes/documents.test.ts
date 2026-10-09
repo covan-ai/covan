@@ -414,3 +414,84 @@ describe("GET /documents/:id/preview", () => {
     expect(res.status).toBe(500);
   });
 });
+
+/**
+ * The download, which until now had no test at all.
+ *
+ * It is the second half of the stored-XSS finding: upload recorded the type the
+ * uploader chose and this route handed it back, so a `.pdf` whose stored type
+ * said `text/html` became a `text/html` response — and the preview dialog makes
+ * a `blob:` document of it, on this app's own origin, where the session token
+ * lives. The fix cannot be only at upload, because objects stored before it
+ * already carry the attacker's type: the type served here is derived from the
+ * document row's own name instead, so every object already in the store is
+ * served safely from the moment this deploys.
+ */
+function downloadApp(
+  row: { name: string; r2_key: string | null } | null,
+  stored: { contentType?: string } = {},
+) {
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("db", {
+      from(table: string) {
+        if (table !== "documents") throw new Error(`downloadApp: unexpected table "${table}"`);
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }),
+          }),
+        };
+      },
+    } as never);
+    // Same shape as the delete tests: c.env is undefined in this harness, and
+    // the presence of DOCS is what picks the R2 store.
+    c.env = {
+      DOCS: {
+        get: async () => ({
+          body: new Response("%PDF-1.7 or not").body,
+          httpMetadata: { contentType: stored.contentType },
+          arrayBuffer: async () => new ArrayBuffer(0),
+        }),
+      },
+    } as never;
+    await next();
+  });
+  app.route("/", documents);
+  return app;
+}
+
+describe("GET /documents/:id/download", () => {
+  const get = (app: Hono<AppEnv>) => app.request("/documents/d1/download");
+
+  it("serves the type the document's name implies, not the one stored with the bytes", async () => {
+    // The legacy-object case: this row was uploaded before the fix, so R2
+    // already holds `text/html` against it.
+    const res = await get(
+      downloadApp({ name: "q3-report.pdf", r2_key: "b1/k" }, { contentType: "text/html" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+  });
+
+  it("tells the browser not to sniff, so the bytes cannot argue with the header", async () => {
+    const res = await get(
+      downloadApp({ name: "q3-report.pdf", r2_key: "b1/k" }, { contentType: "text/html" }),
+    );
+
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("still names the file in the disposition it always did", async () => {
+    const res = await get(downloadApp({ name: "rapor çıktısı.md", r2_key: "b1/k" }));
+
+    expect(res.headers.get("content-type")).toBe("text/markdown");
+    expect(decodeURIComponent(res.headers.get("content-disposition") ?? "")).toBe(
+      "attachment; filename*=UTF-8''rapor çıktısı.md",
+    );
+  });
+
+  it("404s for a document the caller cannot see", async () => {
+    expect((await get(downloadApp(null))).status).toBe(404);
+  });
+});

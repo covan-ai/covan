@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
-import { decryptSecret } from "../lib/secret-box";
+import { decryptSecret, encryptSecret } from "../lib/secret-box";
 
 /**
  * The two halves of §6a that are route code: replacing a grant in place, and
@@ -37,6 +37,10 @@ vi.mock("../lib/connections/registry", () => ({
   providerAvailability: () => [],
 }));
 
+/** Drive itself, which one of the tests below is about never reaching. */
+const { listFolders } = vi.hoisted(() => ({ listFolders: vi.fn() }));
+vi.mock("../lib/connections/google-drive", () => ({ listFolders }));
+
 const { connections, connectionsPublic } = await import("./connections");
 const { signState } = await import("../lib/connections/oauth-state");
 
@@ -64,7 +68,10 @@ const CONNECTION = {
 
 beforeEach(() => {
   serviceFrom.mockReset();
+  listFolders.mockReset();
+  listFolders.mockResolvedValue([{ id: "folder-2", name: "Policies" }]);
   fakeProvider.isConfigured.mockReturnValue(true);
+  fakeProvider.refresh.mockResolvedValue({ accessToken: "stored-token" });
   fakeProvider.exchangeCode.mockResolvedValue({
     accountLabel: "bob@example.com",
     config: {},
@@ -330,5 +337,47 @@ describe("PATCH /connections/:id, resuming", () => {
     expect(callerWrite?.values).not.toHaveProperty("paused_reason");
     const update = calls.find((c) => c.table === "connections" && c.op === "update")!;
     expect(update.values).toMatchObject({ paused_reason: null, paused_code: null });
+  });
+});
+
+describe("GET /connections/:id/folders", () => {
+  /** The stored grant, as `tokenFor` expects to find it. */
+  const storedGrant = async () => ({
+    connections: {
+      secret_ciphertext: await encryptSecret(JSON.stringify({ accessToken: "stored-token" }), KEY),
+    },
+  });
+
+  it("refuses a caller the policy would not let change the connection", async () => {
+    serviceDb(await storedGrant());
+    const { request } = appWith({
+      tables: {
+        connections: {
+          select: () => ({ data: CONNECTION, error: null }),
+          // No row back: the policy refused. A viewer, or a member who is not
+          // the grant holder on a connection that still has one.
+          update: () => ({ data: null, error: null }),
+        },
+      },
+    });
+
+    const res = await request("GET", "/connections/conn-1/folders");
+
+    expect(res.status).toBe(403);
+    // The whole of the finding: this route decrypts somebody else's Drive
+    // token and lists whatever `?parent` names, so a refusal that arrives
+    // after the listing is not a refusal.
+    expect(listFolders).not.toHaveBeenCalled();
+  });
+
+  it("lists folders for a caller the policy admits, and asks the database first", async () => {
+    serviceDb(await storedGrant());
+    const { request, fake } = appWith({ tables: callerTables() });
+
+    const res = await request("GET", "/connections/conn-1/folders");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{ id: "folder-2", name: "Policies" }]);
+    expect(fake.callsTo("connections").some((c) => c.op === "update")).toBe(true);
   });
 });

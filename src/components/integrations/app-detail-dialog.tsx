@@ -161,6 +161,19 @@ export function AppDetailDialog({
                       </>
                     ) : null}
                   </p>
+                ) : kind === "no_auth" ? (
+                  // The one kind where pressing Connect opens nothing at all.
+                  // Said out loud because the button is otherwise identical to
+                  // the two that hand the browser to a third party, and a
+                  // person who expects a consent screen and gets a row is
+                  // entitled to wonder whether it worked.
+                  <p className="text-meta leading-[1.45] text-muted-foreground">
+                    <strong className="font-medium text-foreground">
+                      There is nothing to sign in to.
+                    </strong>{" "}
+                    {toolkit.name} needs no account and no key, so Connect adds it here and nothing
+                    leaves this page. Your agents can call it straight away.
+                  </p>
                 ) : null}
                 <div className="flex justify-end">
                   <Button

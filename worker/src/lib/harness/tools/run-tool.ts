@@ -414,8 +414,38 @@ export const runToolTool: AgentTool = {
     // Guard 2. Locally, before anything leaves the building: pairing a Slack
     // connection with a Gmail slug is a mistake, and finding out from
     // Composio's 400 would mean the request had already been made.
-    const toolkit = slug.split("_")[0]?.toLowerCase() ?? "";
-    if (!connection.toolkit_slug || connection.toolkit_slug !== toolkit) {
+    //
+    // THE CATALOGUE'S OWN ANSWER FIRST, THE SPELLING ONLY AS A FALLBACK. This
+    // read `slug.split("_")[0]`, which is strictly shorter than any slug
+    // containing an underscore — so for those toolkits the comparison could
+    // never be equal and every operation was refused here, locally, whatever
+    // Composio named it. `MICROSOFT_TEAMS_SEND_MESSAGE` gave `microsoft`, which
+    // is not `microsoft_teams`. **336 of the 1,402 connectable applications**
+    // (24%, counted against the live API 2026-10-05) — Microsoft Teams, Google
+    // Analytics, OneDrive, SharePoint, Google Maps, all ten Zoho apps — and it
+    // was live from the day connected apps shipped. covan#261.
+    //
+    // It also could not heal: the refusal is not a `404 Tool_ToolNotFound`, so
+    // the withdrawal below never ran and `recordUnavailableTool` never recorded
+    // it, and the model was offered the same operation again every turn. That
+    // is the loop covan#215's cache exists to end.
+    //
+    // Nothing was wrong with the rule, only with where it looked. `toolkitOf`
+    // in `composio/client.ts` has always read the catalogue's authoritative
+    // `toolkit` field and kept the prefix as a last resort, saying why: the
+    // prefix is "a convention rather than a promise". That value is already
+    // here — `operation` was loaded for guard 1 — so this asks it, and falls
+    // back to the convention with the `_` boundary kept. Strictly stronger than
+    // what it replaces: a Slack connection and a Gmail slug is still refused,
+    // and an exact slug match is now allowed for a toolkit whose single
+    // operation is named after it.
+    const expected = connection.toolkit_slug;
+    const named = operation?.toolkit;
+    const lowered = slug.toLowerCase();
+    const matches = named
+      ? named === expected
+      : lowered === expected || lowered.startsWith(`${expected}_`);
+    if (!expected || !matches) {
       return {
         kind: "error",
         message:
@@ -427,13 +457,40 @@ export const runToolTool: AgentTool = {
     }
 
     // Guard 3. Three ways to be allowed, in the order that costs least.
+    //
     // How far the connection's own approval reaches. Everywhere, except onto a
     // destructive operation nobody has approved yet — see `approvedSlugs`. A
     // standing grant still wins, because that is per-slug consent given
     // deliberately on the Integrations page.
+    //
+    // AND ONLY ONTO AN OPERATION THIS TURN ACTUALLY DESCRIBED. `destructive`
+    // comes from `offeredOperations`, which only `find_tool` fills and which
+    // `buildToolContext` builds empty — so it is empty on every resumed turn,
+    // every scheduled run (`lib/routines/agent-run.ts`), and every turn that
+    // reaches for a slug out of its own transcript rather than searching again
+    // (`find-tool.ts`'s cross-turn recall answers with slugs and returns before
+    // anything describes them). On all of those `operation` is undefined, and
+    // `destructive !== true` then said
+    // "harmless" about GOOGLECALENDAR_CLEAR_CALENDAR and GMAIL_SEND_EMAIL
+    // alike: the narrowing that #201 added was unreachable in exactly the turn
+    // shapes where nobody had read a card.
+    //
+    // An empty map is not a bug in itself — it honestly means "nothing
+    // described this slug to me" — so the fix is to stop reading it as
+    // "nothing dangerous here". Unknown now falls back to the per-slug record
+    // of what was actually approved, which is what `approvedSlugs` already is.
+    // Described keeps `!== true`, so `destructive: null` — a real answer for an
+    // operation Composio annotates with none of MCP's hints — is tolerated
+    // exactly as before and the card count on the working path is unchanged.
+    // And `approvedSlugs` still covers the slug on its own either way, which is
+    // #201's other half: repeating the destructive call somebody just approved
+    // must stay free, and that has nothing to do with whether this turn also
+    // happens to hold its catalogue row.
+    const described = ctx.offeredOperations?.has(slug) === true;
+    const approvedSlug = (ctx.approvedSlugs ?? []).includes(slug);
     const coveredByConnection =
       (ctx.approvedConnections ?? []).includes(connection.id) &&
-      (operation?.destructive !== true || (ctx.approvedSlugs ?? []).includes(slug));
+      (approvedSlug || (described && operation?.destructive !== true));
 
     const approved =
       ctx.confirmed === true || coveredByConnection || (await alwaysAllowed(ctx, connection, slug));
@@ -469,6 +526,19 @@ export const runToolTool: AgentTool = {
           // sentences two and three reach the person too.
           does: operation?.description?.trim() || undefined,
           arguments: callArgs,
+          // And the catalogue row itself, for the second half of this turn
+          // rather than for the person — `agent-steps.tsx` skips this key the
+          // way it skips `kind`.
+          //
+          // `paused_turns.proposal` is written verbatim and is the only thing
+          // that crosses the pause, so without this everything the first half
+          // learned about the operation is gone by the time somebody's yes is
+          // acted on: `routes/chat.ts` builds the resumed context with an empty
+          // `offeredOperations`, which left the one call a person had
+          // explicitly approved running with its schema unchecked (guard 1) and
+          // its toolkit matched by spelling alone (guard 2). Neither field is a
+          // secret and the column is already in 0060's `authenticated` grant.
+          operation,
         },
       };
     }

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Check, Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Disclosure } from "@/components/section-card";
+import { Tool, hasPayload, type ToolPart } from "@/components/prompt-kit/tool";
 import { cn } from "@/lib/utils";
 
 /**
@@ -36,6 +37,27 @@ export type AgentStepView = {
    * was none.
    */
   durationMs?: number | null;
+  /**
+   * What the tool was handed, and the first part of what it gave back — the
+   * two blocks the panel under a settled row opens onto.
+   *
+   * `request` is arbitrary jsonb and `resultExcerpt` is up to 2,000
+   * characters, so both are rendered inside their own scroll; neither is
+   * trusted to be short. 0060's header records that `request` is never
+   * anything a person typed and never a credential — a tool is handed a
+   * connection id and the secret is resolved on the worker — which is what
+   * makes it safe to print as it stands.
+   *
+   * Both OPTIONAL, because a live row has neither and that absence is the
+   * whole mechanism by which it is not expandable: `HarnessEvent`'s `step`
+   * variant carries no payload, so there is nothing for a reader to open and
+   * no decision to make about it. Required fields would have made every row in
+   * every test about something else — duration, motion, the two ambers —
+   * declare that it has no payload, which is a sentence none of them are
+   * about. `toStepViews` always writes both, so every STORED row has them.
+   */
+  request?: unknown;
+  resultExcerpt?: string | null;
 };
 
 const WORDS: Record<AgentStepView["status"], string> = {
@@ -72,6 +94,39 @@ function Mark({ status }: { status: AgentStepView["status"] }) {
   return <span className="h-2 w-2 shrink-0 rounded-[2px] bg-accent-orange" />;
 }
 
+/** The row itself: a mark, what it was pointed at, and how it ended. */
+function Row({ step }: { step: AgentStepView }) {
+  return (
+    <>
+      <Mark status={step.status} />
+      <span className="min-w-0 truncate">{step.label || step.tool}</span>
+      <span className="shrink-0 text-muted-foreground/70">{WORDS[step.status]}</span>
+    </>
+  );
+}
+
+/**
+ * What a settled row can be opened onto, or null when there is nothing.
+ *
+ * A RUNNING row is null by construction rather than by a check on its
+ * contents: `HarnessEvent`'s `step` variant carries `{ index, tool, status,
+ * label }` and no payload, so there is nothing to open, and widening that
+ * event would put every tool call's arguments and result into the SSE stream
+ * of every open browser on every turn to buy the seconds before the turn
+ * settles. Deferred deliberately — see the design, §1.
+ */
+function toolPart(step: AgentStepView): ToolPart | null {
+  if (step.status === "running") return null;
+  const part: ToolPart = {
+    tool: step.tool,
+    status: step.status,
+    request: step.request,
+    resultExcerpt: step.resultExcerpt,
+    durationMs: step.durationMs,
+  };
+  return hasPayload(part) ? part : null;
+}
+
 /**
  * The trail itself.
  *
@@ -79,21 +134,34 @@ function Mark({ status }: { status: AgentStepView["status"] }) {
  * did it look at" and a count cannot answer it. Capped in height rather than
  * in number: eight steps is the budget, eight rows is a paragraph, and hiding
  * the middle of a short list to save four lines would cost more than it saved.
+ *
+ * A row that has a payload behind it becomes a trigger and opens beneath
+ * itself. A row that does not stays a plain `<li>` — which is every live row,
+ * and every row written before 0060 — so the trail does not offer a fold onto
+ * nothing. The two kinds sit in one list and read as one sequence, which is
+ * why the mark, the label and the ending word are a fragment shared between
+ * them rather than two copies of a row.
  */
 export function StepTrail({ steps, className }: { steps: AgentStepView[]; className?: string }) {
   if (steps.length === 0) return null;
   return (
     <ol className={cn("flex flex-col gap-1", className)}>
-      {steps.map((step) => (
-        <li
-          key={step.index}
-          className="step-arrive flex items-center gap-2 text-xs leading-[1.45] text-muted-foreground"
-        >
-          <Mark status={step.status} />
-          <span className="min-w-0 truncate">{step.label || step.tool}</span>
-          <span className="shrink-0 text-muted-foreground/70">{WORDS[step.status]}</span>
-        </li>
-      ))}
+      {steps.map((step) => {
+        const part = toolPart(step);
+        return (
+          <li
+            key={step.index}
+            className={cn(
+              "step-arrive min-w-0 text-xs leading-[1.45] text-muted-foreground",
+              // The expandable row lays itself out inside the trigger, because
+              // the panel below it is a sibling of the row and not of the mark.
+              !part && "flex items-center gap-2",
+            )}
+          >
+            {part ? <Tool part={part} trigger={<Row step={step} />} /> : <Row step={step} />}
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -157,6 +225,7 @@ export function toStepViews(
     status: "ok" | "failed" | "refused" | "pending";
     request: unknown;
     durationMs?: number | null;
+    resultExcerpt?: string | null;
   }>,
 ): AgentStepView[] {
   return steps.map((step) => {
@@ -173,6 +242,12 @@ export function toStepViews(
       tool: step.tool,
       status: step.status,
       durationMs: step.durationMs,
+      // Carried, not consumed. The label above is built out of `request` and
+      // for three migrations that was the only use anything made of it: the
+      // object went into an 80-character line and the line was all that
+      // reached the screen.
+      request: step.request,
+      resultExcerpt: step.resultExcerpt ?? null,
       label: oneLine
         ? `${step.tool} · ${oneLine.length > 80 ? `${oneLine.slice(0, 80)}…` : oneLine}`
         : step.tool,
@@ -216,9 +291,23 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function ProposalRows({ proposal, nested }: { proposal: unknown; nested?: boolean }): ReactNode {
   if (!isPlainObject(proposal)) return null;
   const rows = Object.entries(proposal).filter(
-    // `kind` is how the worker tags the proposal for itself. The card already
-    // names the tool above, so printing it again is a row that says nothing.
-    ([key, value]) => key !== "kind" && value !== null && value !== undefined && value !== "",
+    // `kind` and `operation` are what the worker keeps in here for itself:
+    // `kind` tags the proposal, and the card already names the tool above; and
+    // `operation` is the catalogue row `run_tool` carries across the pause so
+    // the call somebody approved can still be checked against its own schema
+    // (see its proposal in the worker). A JSON Schema printed as a row would
+    // be most of this card, on the one surface where every line has to earn
+    // its place, and neither is something anybody is being asked about.
+    //
+    // Only at the top level, which is where the worker writes them. Below it
+    // the keys belong to the far end — `arguments.operation` is an ordinary
+    // parameter name — and hiding one of those would hide what is about to be
+    // done on the one screen that exists to show it.
+    ([key, value]) =>
+      (nested || (key !== "kind" && key !== "operation")) &&
+      value !== null &&
+      value !== undefined &&
+      value !== "",
   );
   if (rows.length === 0) return null;
   return (

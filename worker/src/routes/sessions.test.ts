@@ -193,6 +193,18 @@ describe("GET /sessions/:id/messages", () => {
     expect(fake.callsTo("messages")[0].limit).toBe(5);
   });
 
+  it("asks the database for what each tool call returned", async () => {
+    // `result_excerpt` is stored by the worker specifically so it can be read
+    // on a transcript load (0060), and the embed listed every other column of
+    // `message_steps` except that one — so the field existed, was trimmed for
+    // this purpose, and never left the database.
+    const { app, fake } = withTranscript([]);
+
+    await app.request("/sessions/session-1/messages");
+
+    expect(fake.callsTo("messages")[0].columns).toContain("result_excerpt");
+  });
+
   it("refuses a limit past what the endpoint will serve", async () => {
     const { app } = withTranscript([]);
 

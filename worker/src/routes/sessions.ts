@@ -206,7 +206,12 @@ sessions.get("/sessions/:id/messages", async (c) => {
       // alternative is a second round trip per transcript for a table that is
       // empty for most messages, and `message_steps_read` (0060) gates it on
       // exactly the message each row hangs off.
-      "*, sender:profiles(id,name,avatar_url), prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens, message_steps(step_index,tool,status,request,duration_ms)",
+      //
+      // The embed names its columns, so a column left off it does not arrive
+      // however carefully the mapper reads it — which is how `result_excerpt`
+      // managed to be stored, trimmed for this exact read, and never sent.
+      // Capped at 2,000 characters per step by the worker that wrote it.
+      "*, sender:profiles(id,name,avatar_url), prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens, message_steps(step_index,tool,status,request,duration_ms,result_excerpt)",
     )
     .eq("session_id", id)
     // Superseded replies are earlier takes on an answer that is already here.

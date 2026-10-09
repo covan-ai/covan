@@ -153,6 +153,8 @@ describe("loadEnv", () => {
 const DEMO_SERVICE_ROLE =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyAgCiAgICAicm9sZSI6ICJzZXJ2aWNlX3JvbGUiLAogICAgImlzcyI6ICJzdXBhYmFzZS1kZW1vIiwKICAgICJpYXQiOiAxNjQxNzY5MjAwLAogICAgImV4cCI6IDE3OTk1MzU2MDAKfQ.DaYlNEoUrrEn2Ig7tqibS-PHK5vgusbcbo7X36XVt4Q";
 const DEMO_ROUTINE_KEY = "Y292YW4tbG9jYWwtZGV2LXJvdXRpbmUta2V5LTAwMDE=";
+/** `.env.docker.example:101`, character for character. */
+const DEMO_JWT_SECRET = "your-super-secret-jwt-token-with-at-least-32-characters-long";
 
 describe("published default secrets", () => {
   it("refuses to start with the demo service-role key on a non-local origin", () => {
@@ -191,6 +193,35 @@ describe("published default secrets", () => {
     );
   });
 
+  // Finding 9 of the 2026-10-08 audit. `PUBLISHED_DEFAULTS` was typed on
+  // `REQUIRED`, and the signing key is optional — so the one published default
+  // that signs API keys was the one the guard could not name. The published
+  // image runs `bun run src/node.ts` directly, and the only check that did
+  // cover it is a compose-only service.
+  it("refuses to start with the published signing key, spelled JWT_SECRET", () => {
+    expect(() =>
+      loadEnv(
+        valid({
+          ALLOWED_ORIGIN: "https://covan.example.com",
+          JWT_SECRET: DEMO_JWT_SECRET,
+        }),
+      ),
+    ).toThrow(/JWT_SECRET/);
+  });
+
+  // Both spellings, because `loadEnv` accepts both and an operator who copied
+  // the Cloudflare name into a self-hosted .env is in exactly as much trouble.
+  it("refuses to start with the published signing key, spelled SUPABASE_JWT_SECRET", () => {
+    expect(() =>
+      loadEnv(
+        valid({
+          ALLOWED_ORIGIN: "https://covan.example.com",
+          SUPABASE_JWT_SECRET: DEMO_JWT_SECRET,
+        }),
+      ),
+    ).toThrow(/SUPABASE_JWT_SECRET/);
+  });
+
   it("allows the demo values on localhost, which is what they are for", () => {
     expect(() =>
       loadEnv(
@@ -220,5 +251,35 @@ describe("ROUTINE_SECRET_KEY shape", () => {
   it("accepts a freshly generated 32-byte key", () => {
     const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
     expect(() => loadEnv(valid({ ROUTINE_SECRET_KEY: key }))).not.toThrow();
+  });
+});
+
+describe("SUPABASE_JWT_SECRET shape", () => {
+  // The same reasoning as the routine key above: a signing key that is too
+  // short to sign with does not announce itself. It surfaces as API keys that
+  // mint and verify perfectly well against a secret an attacker can guess, and
+  // the first person to notice is not us. HS256 keys below 32 characters are
+  // what Supabase itself refuses.
+  //
+  // It does not replace the published-default check: the value
+  // `.env.docker.example` ships is 60 characters long, so length says nothing
+  // about it. Two different failures, two checks.
+  it("rejects a signing key too short to sign with", () => {
+    expect(() => loadEnv(valid({ SUPABASE_JWT_SECRET: "short-secret" }))).toThrow(
+      /SUPABASE_JWT_SECRET/,
+    );
+  });
+
+  it("rejects a short key under the self-hosted spelling too", () => {
+    expect(() => loadEnv(valid({ JWT_SECRET: "short-secret" }))).toThrow(/JWT_SECRET/);
+  });
+
+  it("accepts a 32-character key", () => {
+    expect(() => loadEnv(valid({ SUPABASE_JWT_SECRET: "a".repeat(32) }))).not.toThrow();
+  });
+
+  it("stays optional — absent means API keys are simply off", () => {
+    expect(() => loadEnv(valid())).not.toThrow();
+    expect(loadEnv(valid()).SUPABASE_JWT_SECRET).toBeUndefined();
   });
 });

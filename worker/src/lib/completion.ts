@@ -67,9 +67,18 @@ export type ToolSpec = {
  * What the union buys is that the two new shapes cannot be written wrong —
  * a `tool` turn without the id of the call it answers is a type error here
  * rather than a 400 from the provider.
+ *
+ * `volatile` marks a turn whose content is different every time — retrieved
+ * excerpts, chosen for this one question — so `toAnthropicMessages` knows where
+ * the repeating prefix ends. It used to infer that from the role, because a
+ * mid-conversation `system` message could only be retrieval; the 2026-10-08
+ * audit moved the block to `user` so a document cannot speak as the operator,
+ * and inference by role stopped working silently. The flag is the thing that
+ * was actually meant all along, and it is ignored by every other path: OpenAI's
+ * cache is positional and fills itself.
  */
 export type CompletionMessage =
-  | { role: "system" | "user"; content: string }
+  | { role: "system" | "user"; content: string; volatile?: true }
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
   | { role: "tool"; content: string; toolCallId: string };
 
@@ -459,12 +468,17 @@ function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompl
  * - **The system prompt is a field, not a turn.** The first system message
  *   becomes `system`, which is also where it belongs for caching: that block is
  *   byte-identical turn over turn.
- * - **Every later system message has nowhere to go.** `routes/chat.ts` puts the
- *   retrieved-knowledge block in one, just before the newest question, so the
- *   stable prefix in front of it stays cacheable. Mid-conversation system turns
- *   exist on Anthropic's newest models and on none of the ones offered here, so
- *   it is delivered as a user turn instead — same position, same effect on the
- *   answer, and consecutive user turns are merged by the API.
+ * - **Every later system message has nowhere to go.** Mid-conversation system
+ *   turns exist on Anthropic's newest models and on none of the ones offered
+ *   here, so one is delivered as a user turn instead — same position, same
+ *   effect on the answer, and consecutive user turns are merged by the API.
+ *
+ *   `routes/chat.ts` used to put the retrieved-knowledge block in such a
+ *   message, and this function read that role as "the repeating prefix ends
+ *   here". It no longer does: finding 8 of the 2026-10-08 audit moved the block
+ *   to a `user` turn, so what marks the boundary is `volatile` on the message
+ *   rather than the role it arrives with. Both are honoured, because a later
+ *   system message is still material from outside the conversation.
  *
  *   The *first* and not "the leading ones", which is what this did until
  *   2026-09-29 and is the whole reason the retrieved block leaked into the
@@ -590,11 +604,17 @@ export function toAnthropicMessages(messages: CompletionMessage[]): {
     }
 
     if (!content) continue;
+    // The retrieved block comes through here now, and it is the boundary: the
+    // turns in front of it repeat next time and it does not. Marking it instead
+    // would cache this one question's excerpts, which is the 2026-09-28 bill
+    // described below — written at the 1.25x premium into an entry nothing can
+    // read back.
+    if (message.volatile && stableThrough === null) stableThrough = out.length - 1;
     out.push({ role: "user", content });
   }
 
-  // No retrieved block on this turn, so the volatile tail is the question alone
-  // and everything before it is the history that repeats.
+  // Nothing volatile on this turn, so the tail is the question alone and
+  // everything before it is the history that repeats.
   if (stableThrough === null) stableThrough = out.length - 2;
 
   return {

@@ -278,12 +278,28 @@ chat.post("/chat/stream", async (c) => {
   // Assemble so the stable prefix (persona + prior turns) is byte-identical
   // turn-over-turn and cacheable; the volatile RAG block rides just before the
   // latest user turn, where it grounds the answer without breaking that prefix.
+  //
+  // `user`, not `system` — finding 8 of the 2026-10-08 audit. The block is
+  // document text that reached this workspace through Notion, Drive or Slack
+  // sync, or from any member's upload, and `system` is the one role a model is
+  // trained to read as the operator speaking. `lib/rag.ts` carries the rest of
+  // the reasoning, and `lib/routines/agent-run.ts` had already settled the same
+  // question for webhook payloads.
+  //
+  // `volatile` is what the role used to say by implication. Position alone is
+  // enough for OpenAI, whose prefix cache fills itself, but Anthropic's
+  // breakpoint is placed by hand and `toAnthropicMessages` found it by looking
+  // for a mid-conversation `system` message. Moving the block without the flag
+  // left that search finding nothing and the breakpoint falling onto the block
+  // itself, which caches one question's excerpts at a premium nothing can read
+  // back. Dropping the flag costs money rather than correctness, which is why
+  // `prompt-cache.static.test.ts` watches every site that builds one.
   const priorTurns = history.slice(0, -1);
   const latestTurn = history[history.length - 1];
   const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
-    ...(ragBlock ? [{ role: "system" as const, content: ragBlock }] : []),
+    ...(ragBlock ? [{ role: "user" as const, content: ragBlock, volatile: true as const }] : []),
     ...(latestTurn ? [latestTurn] : []),
     // On a continuation `latestTurn` is the cut-off answer, and this is the
     // turn that asks for the rest of it. See `CONTINUE_INSTRUCTION` for why it
@@ -1045,6 +1061,10 @@ chat.post("/chat/confirm/:id", async (c) => {
     sessionId: pause.sessionId,
     runtimeLimit,
     confirmed: true,
+    // And what the half that asked knew about the operation, which is the only
+    // thing that crosses the pause: `run_tool` writes the catalogue row into
+    // the proposal and this is where it is read back.
+    approvedProposal: pause.proposal,
   });
 
   const stream = new ReadableStream({

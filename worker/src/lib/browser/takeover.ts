@@ -904,6 +904,31 @@ export async function openTakeover(
         message: "every browser this deployment can run is busy. Try again in a few minutes.",
       };
     }
+    /**
+     * 402 is the operator's bill, and saying so is the whole point.
+     *
+     * `ensureProfile` already answers the provider's 402 with a sentence that
+     * names whose problem it is; this branch did not, so a deployment whose
+     * browser-use balance had run out told the person "could not open a
+     * browser for you" — true, useless, and indistinguishable from a bug in
+     * Covan, while the operator got a status code in a log.
+     *
+     * The provider's own 402 rather than a balance threshold of ours.
+     * `accountHeadroom` reads the same response and could carry
+     * `totalCreditsBalanceUsd`, but refusing at a number we guessed would
+     * refuse takeovers that would have worked — a browser is half a cent, and
+     * the provider is the only thing that knows what is left.
+     */
+    if (browser.status === 402) {
+      console.error("browser-use refused a browser for payment", browser.status);
+      return {
+        kind: "error",
+        status: 402,
+        message:
+          "this deployment has run out of browser credit, so a sign-in cannot be opened right " +
+          "now. Whoever runs it has to top it up.",
+      };
+    }
     console.error("browser-use would not rent a browser", browser.status);
     return {
       kind: "error",

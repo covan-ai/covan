@@ -1317,3 +1317,52 @@ describe("a country the provider has no proxy in", () => {
     expect(createBrowser).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Running out of credit at the provider, named rather than generalised.
+ *
+ * `ensureProfile` already answers the provider's 402 with a sentence that says
+ * whose problem it is; renting the browser did not, so a deployment whose
+ * browser-use balance had run out told the person "could not open a browser
+ * for you" — true, useless, and indistinguishable from a bug in Covan. The
+ * operator reading the logs got a status code.
+ *
+ * The provider's own 402 is the signal rather than a balance threshold of ours:
+ * it knows when it is out, and refusing at a number we guessed would refuse
+ * takeovers that would have worked.
+ */
+describe("a deployment that has run out of browser credit", () => {
+  it("says so, rather than answering the generic failure", async () => {
+    createBrowser.mockResolvedValue({
+      kind: "error",
+      status: 402,
+      message: "402 Payment Required",
+    });
+    const s = store({ profiles: [profileRow()] });
+
+    const r = await openTakeover(
+      ENV,
+      { userId: "user-1", workspaceId: "ws-1", browserTaskId: "bt-1" },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "error", status: 402 });
+    expect((r as { message: string }).message).toMatch(/whoever runs it/i);
+    // Nothing was rented, so nothing was written.
+    expect(s.takeovers).toEqual([]);
+  });
+
+  /** Not retried unpinned: a 402 is not a country the provider has no proxy in. */
+  it("does not mistake it for a bad country", async () => {
+    createBrowser.mockResolvedValue({ kind: "error", status: 402, message: "402" });
+    const s = store({ profiles: [profileRow({ proxy_country_code: "de" })] });
+
+    await openTakeover(
+      ENV,
+      { userId: "user-1", workspaceId: "ws-1", browserTaskId: "bt-1" },
+      s.deps,
+    );
+
+    expect(createBrowser).toHaveBeenCalledTimes(1);
+  });
+});

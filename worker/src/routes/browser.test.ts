@@ -497,3 +497,24 @@ describe("the browser profile", () => {
     expect(body.error).toBe("a browser of yours is open right now");
   });
 });
+
+/**
+ * The status is the module's, not a constant here. The cast on that line is a
+ * type assertion for Hono's literal union and does nothing at runtime, which
+ * is easy to misread as a clamp — so 402, the one a person can do nothing
+ * about and the operator can, is pinned.
+ */
+it("passes a 402 through, so the operator's bill is not reported as a bug", async () => {
+  open.mockResolvedValue({
+    kind: "error",
+    status: 402,
+    message: "this deployment has run out of browser credit",
+  });
+  const fixture = appWith({ tables: { browser_tasks: selects(FAILED_TASK) } });
+  const { status, body } = await json(fixture, "POST", "/browser/takeovers", {
+    browserTaskId: "task-1",
+  });
+
+  expect(status).toBe(402);
+  expect(body.error).toMatch(/run out of browser credit/);
+});

@@ -292,4 +292,40 @@ describe("RoutineDetail", () => {
       expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     });
   });
+
+  /**
+   * A4. Both controls' own PATCH is refused for `source_kind = 'workspace'`
+   * — sharing by `routines_workspace_source_private_check` (0075), filing by
+   * `routine_workspace_source_is_permitted` (0074/0075) — and both refusals
+   * surface as the same 400 naming neither cause. Offering either control to
+   * the owner of a workspace routine invites exactly the PATCH that gets
+   * refused; this is the regression test for hiding them.
+   */
+  describe("a workspace-sourced routine", () => {
+    const workspaceRoutine: Routine = { ...routine, sourceKind: "workspace", sourceUrl: null };
+
+    it("offers no sharing control, even to the owner", () => {
+      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
+      expect(
+        screen.queryByRole("switch", { name: /share with the workspace/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("offers no filing card", () => {
+      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
+      expect(screen.queryByText("Keep a copy")).not.toBeInTheDocument();
+    });
+
+    it("says why, in place of the two controls it removed", () => {
+      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
+      expect(screen.getByText(/never shared and never filed/i)).toBeInTheDocument();
+    });
+
+    it("keeps both controls for every other source kind", () => {
+      render(<RoutineDetail {...props} />);
+      expect(screen.getByRole("switch", { name: /share with the workspace/i })).toBeInTheDocument();
+      expect(screen.getByText("Keep a copy")).toBeInTheDocument();
+      expect(screen.queryByText(/never shared and never filed/i)).not.toBeInTheDocument();
+    });
+  });
 });

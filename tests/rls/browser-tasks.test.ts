@@ -128,6 +128,58 @@ describe("browser_tasks", () => {
     expect(error).not.toBeNull();
   });
 
+  /**
+   * The grant that forces `browse` through the service role, pinned — because
+   * on 2026-10-09 the tool wrote through the caller's client instead and
+   * production answered `42501 permission denied` after the task had already
+   * been created at browser-use.
+   *
+   * The refusal test above says a client cannot invent a row. This says the
+   * same thing one level down, where the reason lives: there is no INSERT
+   * grant and no INSERT policy, so no amount of policy-writing makes the
+   * caller's client work. `lib/browser/tasks.ts` is the answer and
+   * `browse.test.ts` has a tripwire for anyone who forgets it.
+   */
+  it("gives authenticated no way to insert at all, by grant and not only by policy", async () => {
+    const [{ insert_grant, insert_columns, insert_policies }] = (await sql()`
+      select
+        (select count(*) from information_schema.table_privileges
+          where table_name = 'browser_tasks' and grantee = 'authenticated'
+            and privilege_type = 'INSERT')::int as insert_grant,
+        (select count(*) from information_schema.column_privileges
+          where table_name = 'browser_tasks' and grantee = 'authenticated'
+            and privilege_type = 'INSERT')::int as insert_columns,
+        (select count(*) from pg_policies
+          where tablename = 'browser_tasks' and cmd in ('INSERT', 'ALL'))::int as insert_policies
+    `) as unknown as { insert_grant: number; insert_columns: number; insert_policies: number }[];
+    expect(insert_grant).toBe(0);
+    expect(insert_columns).toBe(0);
+    expect(insert_policies).toBe(0);
+  });
+
+  /** The other half, which nothing asserted before: the worker CAN record one. */
+  it("lets the worker record one, which is the only road in", async () => {
+    const service = serviceClient();
+    const { data, error } = await service
+      .from("browser_tasks")
+      .insert({
+        workspace_id: owner.workspaceId,
+        agent_id: seeded.agentId,
+        user_id: owner.id,
+        session_id: seeded.sessionId,
+        provider_task_id: "bu-service-role-probe",
+        task: "prove the service role is the road in",
+      })
+      .select("id, status")
+      .single();
+    expect(error).toBeNull();
+    expect(data?.status).toBe("queued");
+    await service
+      .from("browser_tasks")
+      .delete()
+      .eq("id", data?.id as string);
+  });
+
   it("refuses a status nothing in the code writes", async () => {
     const { error } = await serviceClient()
       .from("browser_tasks")

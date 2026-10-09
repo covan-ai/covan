@@ -1,4 +1,5 @@
 import { createTask, hasBrowserKey } from "../../browser/client";
+import { recordBrowserTask } from "../../browser/tasks";
 import { BROWSER_TASK_TOKENS, entitlementsFor } from "../../entitlements";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
@@ -172,27 +173,28 @@ export const browseTool: AgentTool = {
     /**
      * The row is written BEFORE the charge, and that order is the point: a
      * task at the provider that nothing in this database knows about is money
-     * spent on work whose answer can never be delivered. If the insert fails
+     * spent on work whose answer can never be delivered. If the write fails
      * the honest thing is to say so and charge nothing — the browser will run
      * and nobody will read it, which is bad, but charging for it as well
      * would be worse.
+     *
+     * **Through the service role, not `ctx.db`.** `0073` gives
+     * `browser_tasks` no write grant for any client role, so the first
+     * version of this — an insert through the caller's own client — answered
+     * `42501 permission denied` after the task had already been created at
+     * browser-use. `lib/browser/tasks.ts` carries the argument for why the
+     * grant stays shut rather than being relaxed.
      */
-    const { data, error } = await ctx.db
-      .from("browser_tasks")
-      .insert({
-        workspace_id: ctx.workspaceId,
-        agent_id: ctx.agentId,
-        user_id: ctx.userId,
-        session_id: ctx.sessionId,
-        provider_task_id: created.value.id,
-        task,
-        status: "queued",
-      })
-      .select("id")
-      .single();
+    const recorded = await recordBrowserTask(ctx.env, {
+      workspaceId: ctx.workspaceId,
+      agentId: ctx.agentId,
+      userId: ctx.userId,
+      sessionId: ctx.sessionId,
+      providerTaskId: created.value.id,
+      task,
+    });
 
-    if (error || !data) {
-      console.error("started a browser task but could not record it", error);
+    if (!recorded) {
       return {
         kind: "error",
         message:

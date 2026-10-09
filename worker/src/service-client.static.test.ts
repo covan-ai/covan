@@ -47,6 +47,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the same exemption as the routine dispatcher, one floor up: a sync is claimed by a cron tick with no caller, so there is no JWT for RLS to resolve. What it may touch is bounded by hand in lib/connections/sync.ts, to the workspace and bundle that came out of claim_due_connections rather than out of anything a caller sent",
   ],
   [
+    "lib/browser/tasks.ts",
+    "the one write `browse` makes, and it has to reach past RLS because 0073 gives browser_tasks no write grant to any client role — a client that could insert could name an arbitrary provider_task_id, and one deployment-wide BROWSER_USE_API_KEY means that id addresses somebody's running browser, whose output the poller would then deliver into the fabricator's conversation. Same shape and same reason as savePausedTurn in lib/harness/turn.ts. It decides nothing: every id it writes comes from ToolContext, which the route resolved from the authenticated request before the tool ran",
+  ],
+  [
     "lib/browser/poller.ts",
     "the same exemption as the two dispatchers above, with two more of its own. A browser task is polled by a cron tick with no caller, so there is no JWT for RLS to resolve, and what the poll may touch is bounded by hand to the row that came out of claim_due_browser_tasks rather than to anything a caller sent. The first of its own is a column: browser_tasks.provider_task_id is readable by no client role at all (0073), for connected_account_id's reason — one deployment-wide BROWSER_USE_API_KEY means that id is the boundary between two tenants at the provider — so the poll could not be made with a user client even if there were one to make it with. The second is what it writes when a task ends: the answer goes into `messages` as an assistant row, which 0009_lock_assistant_messages deliberately forbids the authenticated caller from writing, which is routes/chat.ts's entry above arriving by a different road",
   ],

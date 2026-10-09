@@ -29,6 +29,24 @@ vi.mock("../../browser/client", async (importOriginal) => {
   };
 });
 
+const recordBrowserTask = vi.fn(
+  async (
+    _env: unknown,
+    _input: {
+      workspaceId: string;
+      agentId: string;
+      userId: string;
+      sessionId: string;
+      providerTaskId: string;
+      task: string;
+    },
+  ): Promise<string | null> => "bt-1",
+);
+vi.mock("../../browser/tasks", () => ({
+  recordBrowserTask: (env: unknown, input: Parameters<typeof recordBrowserTask>[1]) =>
+    recordBrowserTask(env, input),
+}));
+
 const affordable = vi.fn(async (_ctx: ToolContext): Promise<ToolResult | null> => null);
 const spend = vi.fn(async (_ctx: ToolContext, _tokens: number): Promise<void> => {});
 vi.mock("../spend", async (importOriginal) => {
@@ -52,20 +70,36 @@ vi.mock("../../entitlements", async (importOriginal) => {
 
 import { browseTool, BROWSER_TASK_TOKENS } from "./browse";
 
-const inserted: Record<string, unknown>[] = [];
+/**
+ * `ctx.db` is a TRIPWIRE, and it is the guard for the defect of 2026-10-09.
+ *
+ * `browse` wrote its row through the caller's own client. `0073` gives
+ * `browser_tasks` no write grant to any client role, so production answered
+ * `42501 permission denied` — after the task had already been created at
+ * browser-use, so the money was spent on an answer that could never arrive.
+ *
+ * The unit tests did not catch it because `ctx.db` was a mock, and a mock has
+ * no grants with which to refuse anything. So the mock now refuses on
+ * principle: any touch of it from this tool fails the test by name. The write
+ * goes through `lib/browser/tasks.ts` and the service role.
+ */
+function refusingDb(): ToolContext["db"] {
+  return new Proxy(
+    {},
+    {
+      get(_t, prop) {
+        throw new Error(
+          `browse must not reach the database through ctx.db (touched .${String(prop)}) — ` +
+            "browser_tasks refuses every client write (0073). Use recordBrowserTask.",
+        );
+      },
+    },
+  ) as unknown as ToolContext["db"];
+}
 
 function ctxWith(over: Partial<ToolContext> = {}): ToolContext {
   return {
-    db: {
-      from: () => ({
-        insert: (row: Record<string, unknown>) => {
-          inserted.push(row);
-          return {
-            select: () => ({ single: async () => ({ data: { id: "bt-1" }, error: null }) }),
-          };
-        },
-      }),
-    } as unknown as ToolContext["db"],
+    db: refusingDb(),
     env: { BROWSER_USE_API_KEY: "bu_test" } as ToolEnv,
     workspaceId: "ws-1",
     agentId: "agent-1",
@@ -76,7 +110,8 @@ function ctxWith(over: Partial<ToolContext> = {}): ToolContext {
 }
 
 beforeEach(() => {
-  inserted.length = 0;
+  recordBrowserTask.mockReset();
+  recordBrowserTask.mockResolvedValue("bt-1");
   createTask.mockReset();
   affordable.mockReset();
   affordable.mockResolvedValue(null);
@@ -155,15 +190,25 @@ describe("once approved", () => {
 
   it("records the handoff with the session the answer has to go back to", async () => {
     await browseTool.run({ task: TASK }, ctx());
-    expect(inserted[0]).toMatchObject({
-      workspace_id: "ws-1",
-      agent_id: "agent-1",
-      user_id: "user-1",
-      session_id: "sess-1",
-      provider_task_id: "bu-1",
+    expect(recordBrowserTask).toHaveBeenCalledTimes(1);
+    expect(recordBrowserTask.mock.calls[0][1]).toEqual({
+      workspaceId: "ws-1",
+      agentId: "agent-1",
+      userId: "user-1",
+      sessionId: "sess-1",
+      providerTaskId: "bu-1",
       task: TASK,
-      status: "queued",
     });
+  });
+
+  /**
+   * The 2026-10-09 defect, pinned. Writing through the caller's client is a
+   * `42501` in production and a silent pass against a mock, so the mock
+   * refuses and this says why.
+   */
+  it("does not write through the caller's own client, which browser_tasks refuses", async () => {
+    const result = await browseTool.run({ task: TASK }, ctx());
+    expect(result.kind).toBe("ok");
   });
 
   it("charges the allowance once, after the provider accepted the task", async () => {
@@ -195,7 +240,7 @@ describe("once approved", () => {
     expect(result.kind).toBe("error");
     expect((result as { message: string }).message).toMatch(/busy|again/i);
     expect(spend).not.toHaveBeenCalled();
-    expect(inserted).toHaveLength(0);
+    expect(recordBrowserTask).not.toHaveBeenCalled();
   });
 
   it("does not charge when the provider could not be reached at all", async () => {
@@ -215,20 +260,10 @@ describe("once approved", () => {
   });
 
   it("does not charge when the handoff could not be recorded, because nothing will ever poll it", async () => {
-    const broken = ctxWith({
-      confirmed: true,
-      db: {
-        from: () => ({
-          insert: () => ({
-            select: () => ({
-              single: async () => ({ data: null, error: { message: "insert failed" } }),
-            }),
-          }),
-        }),
-      } as unknown as ToolContext["db"],
-    });
-    const result = await browseTool.run({ task: TASK }, broken);
+    recordBrowserTask.mockResolvedValue(null);
+    const result = await browseTool.run({ task: TASK }, ctx());
     expect(result.kind).toBe("error");
+    expect((result as { message: string }).message).toMatch(/could not be recorded/i);
     expect(spend).not.toHaveBeenCalled();
   });
 });

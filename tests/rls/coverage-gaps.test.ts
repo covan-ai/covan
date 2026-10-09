@@ -9,7 +9,7 @@
  * privilege is in question, never as the service role, which bypasses row level
  * security entirely and would prove nothing.
  *
- * Two halves, and 0074 is only the first:
+ * Two halves, and 0075 is only the first:
  *
  *   - who may create one at all (`is_workspace_admin`), and
  *   - that such a routine may never file its report into a knowledge bundle,
@@ -21,11 +21,11 @@
  * under the service role, so if the column is set, the document gets written.
  *
  * The rest of this file is a regression test for the SIX guards 0056's two
- * policies already carried, because 0074 drops and recreates both and a guard
+ * policies already carried, because 0075 drops and recreates both and a guard
  * that failed to be copied forward fails nothing — the policy still exists,
  * still has its name, and still refuses the obvious things.
  *
- * 0075 then adds the data side of the feature and three corrections to 0074,
+ * 0076 then adds the data side of the feature and three corrections to 0075,
  * all of which are exercised here too:
  *
  *   - `coverage_opt_outs`, whose SELECT is self-only INCLUDING FOR ADMINS;
@@ -33,8 +33,8 @@
  *     owner's user id explicitly because the caller that runs the report is the
  *     service role and `auth.uid()` is null for it — and the escalation that
  *     shape would open if a signed-in caller could name somebody else;
- *   - two CHECK constraints on 0074's row (the report name, and that such a
- *     routine may never be `shared`), and 0074's guard inverted to an
+ *   - two CHECK constraints on 0075's row (the report name, and that such a
+ *     routine may never be `shared`), and 0075's guard inverted to an
  *     allow-list.
  */
 
@@ -64,7 +64,7 @@ const RLS_REFUSED = "42501";
 /**
  * `check_violation` — what a table CHECK refusal arrives as.
  *
- * 0075's two additions to 0074's row are CHECK constraints rather than policy
+ * 0076's two additions to 0075's row are CHECK constraints rather than policy
  * clauses, which is the point of them: a CHECK needs no policy rewrite and it
  * binds the service role, which a policy does not. So they refuse with a
  * different code, and asserting it is what distinguishes "the constraint
@@ -123,7 +123,7 @@ const DELETED_QUESTION = "what is the wifi password in the old office?";
 /**
  * Asked by the MEMBER, in a SHARED session the ADMIN owns.
  *
- * The case the first draft of 0075 got wrong: it credited the session owner, so
+ * The case the first draft of 0076 got wrong: it credited the session owner, so
  * this question was attributed to the admin — which took the member's opt-out
  * out of the picture and let one person's questions clear a floor meant to count
  * three people.
@@ -285,7 +285,7 @@ async function seedConnection(user: TestUser, bundleId: string): Promise<string>
   return data.id as string;
 }
 
-/** A routine that reads the workspace's own data — the thing 0074 is about. */
+/** A routine that reads the workspace's own data — the thing 0075 is about. */
 const workspaceRoutine = (
   user: TestUser,
   workspaceId: string,
@@ -310,7 +310,7 @@ const workspaceRoutine = (
  * An ordinary routine, for the carried-forward guards.
  *
  * Deliberately NOT a workspace-source one: each guard below has to be shown
- * refusing on its own, and a `workspace` kind would let 0074 do the refusing
+ * refusing on its own, and a `workspace` kind would let 0075 do the refusing
  * and hide a clause that went missing.
  */
 const ordinaryRoutine = (
@@ -530,7 +530,7 @@ describe("who may point a routine at the workspace's own data", () => {
     expect(error!.code).toBe(RLS_REFUSED);
   });
 
-  // The second half of 0074, and the half with no run-time backstop: the
+  // The second half of 0075, and the half with no run-time backstop: the
   // executor files with the service role, so a set column is a written
   // document. A coverage report is a document about what the team does not
   // know, and 0056's header refuses the identical shape when it refuses to let
@@ -547,7 +547,7 @@ describe("who may point a routine at the workspace's own data", () => {
   });
 
   // The guard did not become a blanket refusal: a plain member may still create
-  // an ordinary routine, which is every routine that existed before 0074.
+  // an ordinary routine, which is every routine that existed before 0075.
   it("still lets a plain member create an ordinary routine", async () => {
     const { error } = await member.db
       .from("routines")
@@ -572,7 +572,7 @@ describe("who may point a routine at the workspace's own data", () => {
 /**
  * The six clauses 0056's WITH CHECK carried, each shown still refusing.
  *
- * 0074 drops and recreates both policies, so this is the only thing that proves
+ * 0075 drops and recreates both policies, so this is the only thing that proves
  * the rewrite carried them. `worker/src/routine-policy.static.test.ts` catches a
  * clause whose *name* disappeared; this catches one that is present and no
  * longer refuses.
@@ -721,7 +721,7 @@ describe("the guards 0056 already carried, on INSERT", () => {
  * the trigger and never reaches the policy. 0047 and 0056 both say in as many
  * words that they wrote the clause anyway, because a trigger is one
  * `drop trigger` away from being removed by somebody solving a different
- * problem — which is exactly why 0074 carries it forward unexercised, and why
+ * problem — which is exactly why 0075 carries it forward unexercised, and why
  * the static test rather than this file is what keeps it there.
  */
 describe("the guards 0056 already carried, on UPDATE", () => {
@@ -817,7 +817,7 @@ describe("the guards 0056 already carried, on UPDATE", () => {
 });
 
 /**
- * The two shape guards 0075 adds to 0074's row.
+ * The two shape guards 0076 adds to 0075's row.
  *
  * Both are CHECK constraints rather than policy clauses, so both bind the
  * service role as well — which is why they arrive as `23514` and not `42501`.
@@ -827,7 +827,7 @@ describe("the guards 0056 already carried, on UPDATE", () => {
  */
 describe("what a workspace-source routine must say and must not be", () => {
   it("refuses one whose source_config does not say which report", async () => {
-    // The column default. 0074's header says `source_config` names the report
+    // The column default. 0075's header says `source_config` names the report
     // and nothing refused `{}` — and 0027's immutability trigger means such a
     // routine can never be repaired, only deleted and made again.
     const { error } = await admin.db.from("routines").insert(
@@ -852,7 +852,7 @@ describe("what a workspace-source routine must say and must not be", () => {
   });
 
   /**
-   * 0074 promises the second report needs no constraint change. A pattern
+   * 0075 promises the second report needs no constraint change. A pattern
    * rather than an enumeration is what keeps that promise, and this is the test
    * that would go red the day somebody replaced it with `in ('coverage_gaps')`.
    */
@@ -914,10 +914,10 @@ describe("what a workspace-source routine must say and must not be", () => {
 });
 
 /**
- * 0074's guard as an allow-list, which is 0075's third correction to it.
+ * 0075's guard as an allow-list, which is 0076's third correction to it.
  *
  * The body was `p_source_kind <> 'workspace' or (...)`, so an undefined future
- * kind answered TRUE — the same default-open shape 0074's own header criticises
+ * kind answered TRUE — the same default-open shape 0075's own header criticises
  * in 0047's `routine_source_is_visible`, three paragraphs before repeating it.
  *
  * Observable BOTH through the table and by calling the function, and the table
@@ -930,7 +930,7 @@ describe("what a workspace-source routine must say and must not be", () => {
  * directly, with a throwaway table carrying a policy and a constraint that a
  * single row violated at once, which came back `42501`. So an unknown kind
  * inserted by an admin returns `42501` under the allow-list and `23514` under
- * 0074's deny-list, and the error code alone tells the two bodies apart.
+ * 0075's deny-list, and the error code alone tells the two bodies apart.
  *
  * The function is still called directly as well, because it answers three
  * questions the table cannot ask separately, and because it is callable by
@@ -944,7 +944,7 @@ describe("the source-kind allow-list", () => {
    *
    * `42501` is the policy — the allow-list refusing a kind nobody has decided
    * about. `23514` would mean the policy let it through and the vocabulary
-   * constraint caught it instead, which is exactly what 0074's deny-list did
+   * constraint caught it instead, which is exactly what 0075's deny-list did
    * and what a future `source_kind` would walk past.
    */
   it("refuses a kind nobody has decided about, at the policy", async () => {
@@ -1144,7 +1144,7 @@ describe("the opt-out nobody can read", () => {
   });
 
   /**
-   * A regression test for the trap 0075's header describes, so that a later
+   * A regression test for the trap 0076's header describes, so that a later
    * "simplification" onto `workspace_members` is a red test rather than a quiet
    * privilege escalation.
    */
@@ -1171,7 +1171,7 @@ describe("the opt-out nobody can read", () => {
  * `workspace_coverage_gaps` and `workspace_coverage_totals` take the owner's
  * user id explicitly, because the caller that actually runs the report is the
  * service role and `auth.uid()` is null for it — measured, not assumed, and the
- * reason is in 0075's header at length.
+ * reason is in 0076's header at length.
  *
  * **EXECUTE IS GRANTED TO `service_role` ONLY**, so every answering test below
  * goes through `serviceClient()`. That is not a convenience, it is the caller
@@ -1180,7 +1180,7 @@ describe("the opt-out nobody can read", () => {
  * straight out of PostgREST: no clustering, no topic label, and no
  * distinct-asker floor, because `askerFloor()` lives in
  * `lib/routines/coverage-cluster.ts` and is not a boundary for a caller that
- * never goes through the worker. 0075's header claims "no question ever reaches
+ * never goes through the worker. 0076's header claims "no question ever reaches
  * an admin"; the grant is what makes that true.
  *
  * So the refusals come in two layers and both are tested: the GRANT, which
@@ -1230,7 +1230,7 @@ describe("the read", () => {
    * `alter default privileges ... grant execute on functions to anon, ...`, so
    * the grant is held BY NAME and `revoke ... from public` does not reach it.
    *
-   * Reproduced against the first draft of 0075 with nothing but the anon key, a
+   * Reproduced against the first draft of 0076 with nothing but the anon key, a
    * workspace id and an admin's user id — all three of which any plain member
    * has, since `workspace_members_select_fellow_members` hands over `user_id`
    * and `role`. It answered with a result. So this is not a hygiene test: it is
@@ -1363,7 +1363,7 @@ describe("the read", () => {
   /**
    * The switch, and the whole of its safety: the stranger is an admin of their
    * own workspace and has never turned the report on, which is the state every
-   * workspace that existed before 0075 is in after the deploy.
+   * workspace that existed before 0076 is in after the deploy.
    */
   it("refuses a workspace that has not turned it on", async () => {
     const { error } = await serviceClient().rpc("workspace_coverage_gaps", {
@@ -1616,7 +1616,7 @@ describe("the read", () => {
 
     // Compared as SETS, not as sequences — deliberately, not because the
     // order is unspecified. Round 2 added `order by sub.text` to the
-    // function's final select (0075:627), so two calls on identical data now
+    // function's final select (0076:627), so two calls on identical data now
     // return the rows in the same order; "returns the same rows in the same
     // order every call, ascending by question text" below is the test that
     // pins that guarantee. This test is about the CLAMP — whether
@@ -1641,7 +1641,7 @@ describe("the read", () => {
   /**
    * THE GUARANTEE ROUND 2 ADDED, PINNED.
    *
-   * `order by sub.text` (0075:627) turned the read's row order from
+   * `order by sub.text` (0076:627) turned the read's row order from
    * "whatever the plan produced" into a promise: two calls on identical data
    * return the same rows in the same order, ascending by question text.
    * Nothing asserted that until now — the clamp test above compares both
@@ -1792,7 +1792,7 @@ describe("the totals, in step with 0053", () => {
    * The duplication, checked rather than promised — and checked in the one
    * shape that is actually true.
    *
-   * 0075 says the two functions' BUCKET DEFINITIONS must stay in step, which is
+   * 0076 says the two functions' BUCKET DEFINITIONS must stay in step, which is
    * narrower than "identical" and is the whole claim: the five
    * `count(*) filter (...)` expressions, the denominator and the window are the
    * same, and the WHERE clause deliberately is not. So this asserts equality on
@@ -1834,12 +1834,12 @@ describe("the totals, in step with 0053", () => {
  * Who may turn the report on.
  *
  * `beforeAll` flips `gap_report_enabled` with the service role, so without this
- * the WRITE side of what 0075's header calls "the whole of its safety" is never
+ * the WRITE side of what 0076's header calls "the whole of its safety" is never
  * exercised by an unprivileged caller. It does hold — `workspaces_update_admin`
  * (0001) is admin-only on both its USING and its WITH CHECK — but it holds by a
  * policy this migration does not own, on a column this migration adds, to a
  * table whose row-level UPDATE cannot tell one column from another. That is the
- * exact trap 0075 spends a paragraph on for `workspace_members`; here it lands
+ * exact trap 0076 spends a paragraph on for `workspace_members`; here it lands
  * on the right side, and nothing was checking that it had.
  */
 describe("who may turn the report on", () => {
@@ -1898,7 +1898,7 @@ describe("who may turn the report on", () => {
 });
 
 /**
- * 0074 on UPDATE, which is where it is most reachable.
+ * 0075 on UPDATE, which is where it is most reachable.
  *
  * `source_kind` cannot be changed after creation, so the interesting updates
  * are the two that leave it alone: adding an output bundle to a routine that
@@ -1909,7 +1909,7 @@ describe("who may turn the report on", () => {
  * promotes the member and demotes the admin, so everything above it that says
  * "the admin" would be talking about a plain member.
  */
-describe("0074 on UPDATE", () => {
+describe("0075 on UPDATE", () => {
   it("refuses adding an output bundle to a workspace-source routine", async () => {
     const { error } = await admin.db
       .from("routines")
@@ -1917,7 +1917,7 @@ describe("0074 on UPDATE", () => {
       .eq("id", workspaceRoutineId);
 
     // 0056's clause would allow this: the bundle is in the routine's own
-    // workspace and the admin can see it. 0074 is the only thing refusing.
+    // workspace and the admin can see it. 0075 is the only thing refusing.
     expect(error).not.toBeNull();
     expect(error!.code).toBe(RLS_REFUSED);
   });
@@ -1952,7 +1952,7 @@ describe("0074 on UPDATE", () => {
 
       // Every other clause passes: they own the row, they are still a member,
       // the agent and channel are unchanged and there is no output bundle. The
-      // refusal is 0074's and nothing else's.
+      // refusal is 0075's and nothing else's.
       expect(error).not.toBeNull();
       expect(error!.code).toBe(RLS_REFUSED);
     });

@@ -295,8 +295,8 @@ describe("RoutineDetail", () => {
 
   /**
    * A4. Both controls' own PATCH is refused for `source_kind = 'workspace'`
-   * — sharing by `routines_workspace_source_private_check` (0075), filing by
-   * `routine_workspace_source_is_permitted` (0074/0075) — and both refusals
+   * — sharing by `routines_workspace_source_private_check` (0076), filing by
+   * `routine_workspace_source_is_permitted` (0075/0076) — and both refusals
    * surface as the same 400 naming neither cause. Offering either control to
    * the owner of a workspace routine invites exactly the PATCH that gets
    * refused; this is the regression test for hiding them.

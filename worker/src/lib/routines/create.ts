@@ -59,7 +59,7 @@ export type RoutineInsertRow = Parameters<typeof mapRoutine>[0];
  * `executor.ts`'s `RoutineRow.source_config` types `report?: string`, but
  * nothing branches on it at run time — the workspace path dispatches on
  * `source_kind` alone and calls `deps.coverage(...)` unconditionally. So
- * today the only consumer of this value is 0075's
+ * today the only consumer of this value is 0076's
  * `routines_workspace_config_check`, which just needs *a* snake_case slug to
  * be present. There is exactly one report, so widening the template, the
  * client type and `createSchema` to carry a field that names it would buy

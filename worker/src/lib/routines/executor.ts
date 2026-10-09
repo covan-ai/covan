@@ -71,7 +71,7 @@ export type RoutineRow = {
   source_kind: "rss" | "web" | "none" | "connection" | "workspace";
   /**
    * `url` for rss and web, `connectionId` for connection, `report` for
-   * workspace (0074 — the only value today is `coverage_gaps`), empty for
+   * workspace (0075 — the only value today is `coverage_gaps`), empty for
    * none.
    */
   source_config: { url?: string; connectionId?: string; report?: string };
@@ -475,7 +475,7 @@ export async function runRoutine(
       return { status: "skipped", itemsNew: 0 };
     }
 
-    // A `workspace` routine (0074) reads its own workspace, so none of the
+    // A `workspace` routine (0075) reads its own workspace, so none of the
     // fetch, diff, cursor or item machinery below applies to it — and its
     // summary is rendered in code rather than written by a model, so neither
     // does the summarise branch further down. It returns here, through
@@ -1290,7 +1290,7 @@ async function finish(
    * A series spends a morning only when it delivered one.
    *
    * Guarded on `status === "ok"` and not on "did this run at all", which is the
-   * whole content of 0073's `runs_done`: a week of a dead delivery channel would
+   * whole content of 0074's `runs_done`: a week of a dead delivery channel would
    * otherwise complete a seven-morning series that nobody ever read, and leave
    * the routine saying "Finished".
    *

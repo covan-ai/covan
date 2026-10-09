@@ -63,7 +63,7 @@
 -- yesterday. `lib/routines/coverage-source.ts` WILL re-ask both on every run
 -- and pause the routine with a reason — it is not written yet, and this
 -- sentence is a requirement on it rather than a description of it. The
--- functions it will call are in 0075: `workspace_coverage_gaps` and
+-- functions it will call are in 0076: `workspace_coverage_gaps` and
 -- `workspace_coverage_totals` raise 42501 when the owner is no longer an admin
 -- or the workspace has turned the report off, which is the refusal the pause
 -- will be built on. This guard is about creation — and about
@@ -150,7 +150,7 @@ comment on function public.routine_workspace_source_is_permitted(text, uuid, uui
 -- EVERY CLAUSE BELOW WAS ALREADY THERE EXCEPT THE LAST. In order: 0012's owner,
 -- membership, agent-in-workspace and channel-ownership checks; 0047's
 -- `routine_source_is_visible`; 0056's output-bundle workspace match; and
--- 0074's. The UPDATE policy additionally keeps its USING clause, without which
+-- 0075's. The UPDATE policy additionally keeps its USING clause, without which
 -- anyone could update any row they could also satisfy the WITH CHECK for.
 --
 -- `routine-policy.static.test.ts` fails if any of the first five went missing —
@@ -187,7 +187,7 @@ create policy "routines_insert_own"
           and b.workspace_id = routines.workspace_id
       )
     )
-    -- 0074. And may only read its own workspace's data if the caller is an
+    -- 0075. And may only read its own workspace's data if the caller is an
     -- admin of it, and then only if it files nothing.
     and public.routine_workspace_source_is_permitted(
       routines.source_kind, routines.workspace_id, routines.output_bundle_id
@@ -226,7 +226,7 @@ create policy "routines_update_own"
           and b.workspace_id = routines.workspace_id
       )
     )
-    -- 0074, and very much reachable on this policy for the same reason 0056's
+    -- 0075, and very much reachable on this policy for the same reason 0056's
     -- clause is. `source_kind` cannot be changed after creation, so this is not
     -- about repointing a routine at the workspace's data; it is about the two
     -- updates that leave the source alone. Adding an output bundle to a routine
@@ -235,7 +235,7 @@ create policy "routines_update_own"
     -- thing that refuses it. And an admin who is demoted cannot be stopped from
     -- owning the routine they already made, but can be stopped from editing it;
     -- the run-time check in coverage-source.ts, once that file exists, is what
-    -- will pause it — on the 42501 that 0075's two read functions raise for an
+    -- will pause it — on the 42501 that 0076's two read functions raise for an
     -- owner who is no longer an admin.
     and public.routine_workspace_source_is_permitted(
       routines.source_kind, routines.workspace_id, routines.output_bundle_id

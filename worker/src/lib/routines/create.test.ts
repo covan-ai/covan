@@ -40,7 +40,7 @@ describe('createRoutine, sourceKind "workspace"', () => {
     const inserted = callsTo("routines")[0].values!;
     expect(inserted.source_kind).toBe("workspace");
 
-    // 0075's `routines_workspace_config_check`:
+    // 0076's `routines_workspace_config_check`:
     //   coalesce(source_config ->> 'report', '') ~ '^[a-z][a-z0-9_]{0,63}$'
     // Matched against the real pattern, not just equality, so a value the
     // database CHECK would itself refuse fails here too, not only on a live run.
@@ -48,7 +48,7 @@ describe('createRoutine, sourceKind "workspace"', () => {
     expect(report).toBe("coverage_gaps");
     expect(String(report)).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
 
-    // 0075's other CHECK on this kind — output_bundle_id must be null — and
+    // 0076's other CHECK on this kind — output_bundle_id must be null — and
     // visibility is left for the column's own `private` default rather than
     // set here, so both are satisfied without this function knowing why.
     expect(inserted.output_bundle_id).toBeNull();

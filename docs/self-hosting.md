@@ -630,7 +630,7 @@ create.
 > [CLI docs](https://supabase.com/docs/guides/deployment/database-migrations) if
 > `db push` reports drift.
 
-**Finish this step fully before step 5.** `0073`, `0074` and `0075` add the
+**Finish this step fully before step 5.** `0074`, `0075` and `0076` add the
 coverage-gap report, and `GET /me` — the call every authenticated page makes on
 load — now selects `gap_report_enabled` off `workspaces`, one of the columns
 they add. PostgREST fails the whole request when a selected column does not

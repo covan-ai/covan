@@ -803,7 +803,7 @@ export function mapRoutine(row: {
     // 0056 still has the default behind it, and reporting 0 here would put "0
     // kept" in front of somebody whose routine keeps a year of them.
     outputRetention: row.output_retention ?? 52,
-    // Null for every row before 0073, which is the same "no column yet" case
+    // Null for every row before 0074, which is the same "no column yet" case
     // `outputRetention` above falls back on.
     endsAfterRuns: row.ends_after_runs ?? null,
     runsDone: row.runs_done ?? 0,

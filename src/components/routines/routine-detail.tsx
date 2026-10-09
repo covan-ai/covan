@@ -251,7 +251,7 @@ export function RoutineDetail({
             {/* A completed routine has nothing to pause and nothing to resume
                 into: `ends_after_runs` ran its course, and "Resume" would read
                 as an invitation to restart a finished series — exactly what
-                0073's header argues a status distinct from `paused` is for.
+                0074's header argues a status distinct from `paused` is for.
                 Starting over means a new routine from the template, not this
                 button. */}
             {routine.status !== "completed" && (
@@ -308,7 +308,7 @@ export function RoutineDetail({
           {/* Owner only. RLS refuses a teammate's update, so a switch here would
               produce an error they have no way to act on. And never for a
               `workspace` routine, owner included: `routines_workspace_source_
-              private_check` (0075) refuses the PATCH outright — sharing would
+              private_check` (0076) refuses the PATCH outright — sharing would
               put every delivered report in front of the whole workspace,
               which is the exact population the floor above keeps it from
               identifying anyone to. Same shape as hiding Pause/Resume on a
@@ -359,7 +359,7 @@ export function RoutineDetail({
           control to somebody whose PATCH will be refused produces an error
           they cannot act on. And never for a `workspace` routine, for the
           same reason as the Sharing field above: `routine_workspace_source_
-          is_permitted` (0074/0075) refuses any output bundle on this source
+          is_permitted` (0075/0076) refuses any output bundle on this source
           kind, because a coverage report filed as a document is "what the
           team does not know" rather than knowledge, and every agent in the
           workspace would otherwise retrieve and quote it back as if it were. */}

@@ -14,7 +14,7 @@ import type { Routine } from "@/lib/routines-api";
  * destroys trust in this feature, so the reason travels with the label
  * wherever the status is shown.
  *
- * A routine that ran its course (0073) reads "Finished", not "Completed" — the
+ * A routine that ran its course (0074) reads "Finished", not "Completed" — the
  * past tense is what tells it apart from a task list, and from the quiet
  * "Paused" beside it.
  */

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 /**
  * Told once, with the choice in front of them.
  *
- * `coverage_opt_outs` (0075) lets any member exclude themselves from the
+ * `coverage_opt_outs` (0076) lets any member exclude themselves from the
  * coverage report, and a control nobody knows about is not a control — without
  * this, that sentence is true only of people who go looking in Settings. It is
  * one of the three things standing in for the per-asker consent step 0053 asked

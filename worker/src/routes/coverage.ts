@@ -228,7 +228,7 @@ coverage.put("/coverage/preference", async (c) => {
   }
 
   if (parsed.data.excluded) {
-    // `coverage_opt_outs` (0075) grants INSERT but no UPDATE at all — there is
+    // `coverage_opt_outs` (0076) grants INSERT but no UPDATE at all — there is
     // nothing to update, the row either exists or it does not — so a repeat
     // opt-out has to be absorbed as a no-op rather than resolved by an
     // upsert's UPDATE path. `ignoreDuplicates` asks PostgREST for `ON
@@ -245,7 +245,7 @@ coverage.put("/coverage/preference", async (c) => {
     }
   } else {
     // Taking it back is a DELETE rather than an update to `false`: presence is
-    // the fact this table records (0075's own comment on the table), so there
+    // the fact this table records (0076's own comment on the table), so there
     // is no column to clear.
     const { error } = await db
       .from("coverage_opt_outs")
@@ -264,7 +264,7 @@ coverage.put("/coverage/preference", async (c) => {
 /**
  * GET /coverage/preference — the caller's own opt-out, never anybody else's.
  *
- * `coverage_opt_outs_select_self` (0075) is self-only including for admins, so
+ * `coverage_opt_outs_select_self` (0076) is self-only including for admins, so
  * this would answer the same even without the `user_id` filter below; the
  * filter is here anyway so the query says in plain SQL what the policy
  * already guarantees.

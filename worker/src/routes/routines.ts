@@ -335,7 +335,7 @@ const createSchema = z
     // `workspace` needs neither `sourceUrl` nor `connectionId` below — it reads
     // its own workspace, resolved server-side (see `createRoutine`'s
     // `sourceConfigFor`). Whether the caller may actually use it is
-    // `routine_workspace_source_is_permitted` (0075), not this schema.
+    // `routine_workspace_source_is_permitted` (0076), not this schema.
     sourceKind: z.enum(["rss", "web", "none", "connection", "workspace"]),
     sourceUrl: z.string().nullable().optional(),
     /** Required for `connection`, ignored otherwise. */
@@ -374,7 +374,7 @@ const createSchema = z
     /** Bounded here as well as by 0056's CHECK, so the refusal names the field. */
     outputRetention: z.number().int().min(1).max(520).optional(),
     /**
-     * A series' length, decided once at creation (0073) — `updateSchema` below
+     * A series' length, decided once at creation (0074) — `updateSchema` below
      * does not get this, the same way it does not get `sourceKind`. Null or
      * omitted means it runs until somebody stops it.
      */

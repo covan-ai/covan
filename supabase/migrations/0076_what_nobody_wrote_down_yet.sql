@@ -1,5 +1,5 @@
 -- =========================================================================
--- 0075 — what nobody wrote down yet
+-- 0076 — what nobody wrote down yet
 --
 -- 0039 recorded how every reply was grounded. 0053 read those counts — by
 -- agent, by window, admin-only — and stopped there, deliberately, with a ruling
@@ -171,18 +171,18 @@ alter table public.workspaces
 
 comment on column public.workspaces.gap_report_enabled is
   'Whether this workspace has turned the coverage gap report on. False for '
-  'every workspace that existed before 0075, and the reads below refuse to '
+  'every workspace that existed before 0076, and the reads below refuse to '
   'return anything while it is false.';
 
--- ---- two guards that belong in 0074 --------------------------------------
+-- ---- two guards that belong in 0075 --------------------------------------
 --
--- Both are here only because 0074 is already applied to the local database and
--- an applied migration does not get edited. Conceptually they are 0074's: they
+-- Both are here only because 0075 is already applied to the local database and
+-- an applied migration does not get edited. Conceptually they are 0075's: they
 -- are about the row that migration's `source_kind` introduced.
 
 -- (1) `source_config` has to say WHICH report.
 --
--- 0074's own header says `source_config` names the report and the next task
+-- 0075's own header says `source_config` names the report and the next task
 -- constructs `{"report": "coverage_gaps"}` — but nothing refuses `{}`, which is
 -- the column default. A routine created with no report key is permanently
 -- broken rather than temporarily wrong: 0027's
@@ -199,7 +199,7 @@ comment on column public.workspaces.gap_report_enabled is
 -- security does not. (`->>` on a JSON array or scalar also yields NULL, so a
 -- `source_config` that is not an object is refused rather than raising.)
 --
--- A pattern rather than an `in ('coverage_gaps')` list, deliberately: 0074
+-- A pattern rather than an `in ('coverage_gaps')` list, deliberately: 0075
 -- promises that the second report — `{"report": "stale_documents"}` — needs no
 -- constraint change, no policy rewrite and no migration, and an enumeration
 -- here would break that promise on the day it is collected. The pattern is
@@ -222,12 +222,12 @@ alter table public.routines
 -- coverage report readable by every plain member of the workspace — which is
 -- the exact population this whole design keeps the report away from. Nothing
 -- else refuses it: `visibility` is a column the edit dialog changes, and
--- 0074's guard never looks at it.
+-- 0075's guard never looks at it.
 --
 -- DELIBERATELY A CHECK AND NOT A POLICY CLAUSE. A fourth argument to
 -- `routine_workspace_source_is_permitted` would mean dropping and recreating
 -- that function and then both policies on `routines` again — the riskiest
--- operation in this phase, and the one 0074's header counts five previous
+-- operation in this phase, and the one 0075's header counts five previous
 -- hand-copies of. A CHECK needs no policy rewrite, cannot lose a clause
 -- somebody carried forward wrong, and binds the service role as well, which a
 -- policy does not.
@@ -238,7 +238,7 @@ alter table public.routines
 
 -- ---- (3) the guard, inverted to an allow-list ----------------------------
 --
--- 0074 wrote the body as `p_source_kind <> 'workspace' or (...)`, which answers
+-- 0075 wrote the body as `p_source_kind <> 'workspace' or (...)`, which answers
 -- TRUE for any kind it has never heard of — the same default-open shape its own
 -- header criticises in 0047's `routine_source_is_visible` two paragraphs
 -- earlier. A `source_kind` added in 0085 by somebody solving a different
@@ -262,7 +262,7 @@ create or replace function public.routine_workspace_source_is_permitted(
 language sql
 stable
 -- Still deliberately NOT security definer, and still with no `set search_path`,
--- for the two reasons 0074 gives at length: a policy helper must ask as the
+-- for the two reasons 0075 gives at length: a policy helper must ask as the
 -- caller, and a function with a SET clause cannot be inlined by the planner,
 -- which inside a per-row policy expression is a cost paid for nothing.
 as $$
@@ -314,7 +314,7 @@ comment on table public.coverage_opt_outs is
   'One row per member who has excluded themselves from their workspace''s '
   'coverage gap report. Presence is the fact; SELECT is self-only, including '
   'for admins, so nobody can learn who excluded themselves. Deliberately not a '
-  'column on workspace_members — see 0075''s header.';
+  'column on workspace_members — see 0076''s header.';
 
 alter table public.coverage_opt_outs enable row level security;
 
@@ -470,7 +470,7 @@ begin
   end if;
 
   -- The switch is checked HERE and not only in the application, for the reason
-  -- the whole of 0074 is about: the route is one caller of several.
+  -- the whole of 0075 is about: the route is one caller of several.
   if not exists (
     select 1 from public.workspaces w
      where w.id = p_workspace_id and w.gap_report_enabled
@@ -632,7 +632,7 @@ comment on function public.workspace_coverage_gaps(uuid, uuid, int) is
   'The questions in a window that found nothing close in the workspace''s own '
   'documents, truncated to 120 characters, with an opaque per-call asker key '
   'and never a user id. `p_user_id` must be an admin of the workspace, and a '
-  'caller with a session may only name themselves — see 0075''s header. '
+  'caller with a session may only name themselves — see 0076''s header. '
   'Refuses while workspaces.gap_report_enabled is false.';
 
 -- ---- the totals ----------------------------------------------------------
@@ -708,7 +708,7 @@ declare
   v_since timestamptz := now() - make_interval(days => v_days);
 begin
   -- The same two guards as `workspace_coverage_gaps`, for the same reasons. See
-  -- that function and 0075's header; they are deliberately written out again
+  -- that function and 0076's header; they are deliberately written out again
   -- rather than factored into a helper, because a definer helper answering "is
   -- this person an admin of that workspace" would be a probe anybody with a
   -- login could run.
@@ -732,7 +732,7 @@ begin
   end if;
 
   -- Gated by the switch as well, unlike 0053's, so that "the whole thing is off
-  -- until a workspace turns it on" is true of every read 0075 adds rather than
+  -- until a workspace turns it on" is true of every read 0076 adds rather than
   -- of most of them. 0053's function stays ungated; the coverage screen is a
   -- different feature and turning the report off must not empty it.
   if not exists (

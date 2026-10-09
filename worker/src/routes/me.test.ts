@@ -254,7 +254,7 @@ describe("GET /me workspace", () => {
     expect(body.workspace.gapReportEnabled).toBe(true);
   });
 
-  // The column's own default (0075) — a workspace that has never touched the
+  // The column's own default (0076) — a workspace that has never touched the
   // switch must not be reported as having turned the report on.
   it("defaults to false", async () => {
     const res = await appWithDb(fakeReadDb(null, false)).request("/me");

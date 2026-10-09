@@ -194,7 +194,7 @@ const MIN_USEFUL_EXCERPT = 200;
  * is, because "nearly the same passage" is a judgement this should not be
  * making on its own.
  *
- * Exported since 0075's coverage report, which asks the same question of a
+ * Exported since 0076's coverage report, which asks the same question of a
  * different pair of strings — is the second one literally the first — and
  * must ask it the same way. Two copies of this would drift, and the copy that
  * drifted would be the one standing in front of somebody's question.

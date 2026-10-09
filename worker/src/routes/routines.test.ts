@@ -598,7 +598,7 @@ describe("POST /routines, creating a delivery channel inline", () => {
     expect(inserted("routines")).toHaveLength(0);
   });
 
-  // 0073 bounds a series at 1–365 delivered runs — a year is not a series, and
+  // 0074 bounds a series at 1–365 delivered runs — a year is not a series, and
   // 0 is not a bound at all. Caught by `createSchema` itself, before anything
   // is written, unlike the cron check above: no channel is minted and nothing
   // needs rolling back.
@@ -649,7 +649,7 @@ describe("POST /routines, creating a delivery channel inline", () => {
       expect(row.source_kind).toBe("workspace");
       // (d): the slug is decided in `createRoutine`, not sent by this request
       // — `ROUTINE_BODY` carries no report field at all. Matched against
-      // 0075's own pattern, not just equality.
+      // 0076's own pattern, not just equality.
       const config = row.source_config as Record<string, unknown>;
       expect(config.report).toBe("coverage_gaps");
       expect(String(config.report)).toMatch(/^[a-z][a-z0-9_]{0,63}$/);

@@ -53,7 +53,7 @@ export type RoutineTemplate = {
 
   /**
    * Null runs until somebody stops it. A number ends the routine itself after
-   * that many *delivered* runs — see 0073 for why a failed run does not count.
+   * that many *delivered* runs — see 0074 for why a failed run does not count.
    */
   endsAfterRuns: number | null;
 };
@@ -105,7 +105,7 @@ export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
       scheduleCron: "0 9 * * *",
       channelKind: "email",
       // The curriculum, and the whole reason this series varies. The engine
-      // tells the model which morning it is (0073 + executor's run position);
+      // tells the model which morning it is (0074 + executor's run position);
       // these seven subjects are the six KNOWLEDGE_TEMPLATES plus a closing
       // one, so a team that filled in the six files the product already
       // suggests gets a week that walks through them in an order somebody

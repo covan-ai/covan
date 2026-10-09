@@ -46,7 +46,7 @@ import { complete, totalTokens } from "../completion";
  * Free at all; `docs/routines.md` says so rather than leaving it to be
  * discovered.
  *
- * A `workspace` routine (0074) never reaches the fetch above — it has no url
+ * A `workspace` routine (0075) never reaches the fetch above — it has no url
  * and no connection — but spends about the same dozen a different way: the
  * membership check, `readWorkspace`'s two parallel reads (workspace row,
  * members), `readGaps`, the clustering call in its place, `readTotals` on the
@@ -152,7 +152,7 @@ function executorDeps(
     file: canFileDocuments(env)
       ? (input, runEnv) => fileRoutineOutput(db, { ...env, ...runEnv }, input)
       : undefined,
-    // The gap report (0074), end to end. `coverageDeps` is rebuilt per call
+    // The gap report (0075), end to end. `coverageDeps` is rebuilt per call
     // rather than once per tick, because it closes over `input.ownerId` —
     // `readTotals` and `readGaps` both need `p_user_id` on the wire (see the
     // function below for why) and neither has it in its own `CoverageDeps`
@@ -171,10 +171,10 @@ function executorDeps(
  *
  * `readWorkspace` reads two ordinary tables under the service role, so it has
  * no `auth.uid()` to answer to. `readTotals` and `readGaps` are RPCs instead,
- * and that is where the two reads 0075 added differ from 0053's pair they
+ * and that is where the two reads 0076 added differ from 0053's pair they
  * sit beside: `workspace_coverage` (0053) checks `is_workspace_admin`, which
  * asks `auth.uid()` — null for this service-role caller, always, on every
- * scheduled run — so it would refuse every call with 42501. 0075's
+ * scheduled run — so it would refuse every call with 42501. 0076's
  * `workspace_coverage_totals` and `workspace_coverage_gaps` exist because of
  * exactly that dead end: both take `p_user_id` explicitly instead, check that
  * id is an admin, and are granted to `service_role` only. `p_user_id` here is

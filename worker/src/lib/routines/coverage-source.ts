@@ -9,7 +9,7 @@ import { renderCoverageReport, type CoverageTotals } from "./coverage-render";
 /**
  * A coverage run, end to end.
  *
- * The first `source_kind = 'workspace'` report (0074), and the shape every
+ * The first `source_kind = 'workspace'` report (0075), and the shape every
  * later one follows: read the workspace's own data, decide in our code what may
  * be said about it, and spend a model call only where language is genuinely
  * needed.
@@ -33,9 +33,9 @@ type WorkspaceFacts = { gapReportEnabled: boolean; ownerIsAdmin: boolean; member
 export type CoverageDeps = {
   /** Facts the three run-time checks need, read under the service role. */
   readWorkspace: (workspaceId: string, ownerId: string) => Promise<WorkspaceFacts>;
-  /** `workspace_coverage_totals` from 0075. The counts, which disclose nothing. */
+  /** `workspace_coverage_totals` from 0076. The counts, which disclose nothing. */
   readTotals: (workspaceId: string, days: number) => Promise<CoverageTotals>;
-  /** `workspace_coverage_gaps` from 0075. */
+  /** `workspace_coverage_gaps` from 0076. */
   readGaps: (
     workspaceId: string,
     days: number,
@@ -86,7 +86,7 @@ export type CoverageRunResult =
  * get.
  *
  * The executor runs under the service role and bypasses RLS entirely, so
- * 0074's policy cannot catch any of these: it guards creation, and all three of
+ * 0075's policy cannot catch any of these: it guards creation, and all three of
  * these are things that were true then and are not now.
  *
  * All three PAUSE rather than skip. None fixes itself on the next tick, and a
@@ -131,7 +131,7 @@ async function stoppedBy(
       facts,
     };
   }
-  // Review Focus 1, and not a condition 0074 can guard. A workspace that shrank
+  // Review Focus 1, and not a condition 0075 can guard. A workspace that shrank
   // to two people cannot have a topic reported without identifying who asked —
   // `askerFloor` answers null — so the routine stops and says so, rather than
   // skipping every week forever.

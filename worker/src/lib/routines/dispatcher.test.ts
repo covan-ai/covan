@@ -354,12 +354,12 @@ describe("a workspace routine gets the gap report bound to its real dependencies
  * `coverageDeps`'s two RPC reads, in isolation from the executor that calls
  * them — see the export's own comment in `dispatcher.ts` for why.
  *
- * This is the regression that reading 0075's migration caught and the brief
+ * This is the regression that reading 0076's migration caught and the brief
  * did not: its illustrative `readTotals` called `workspace_coverage` (0053)
  * with just `p_workspace_id`/`p_days`. That function asks `is_workspace_admin`,
  * which reads `auth.uid()` — null for every service-role caller, always — so
  * every scheduled run would have raised 42501 on its first read, forever.
- * 0075 exists because of exactly that dead end: `workspace_coverage_totals`
+ * 0076 exists because of exactly that dead end: `workspace_coverage_totals`
  * and `workspace_coverage_gaps` take `p_user_id` explicitly instead, and are
  * granted to `service_role` only. Both assertions below are pinned on the
  * function NAME as well as the params, so a reviewer who only diffs the

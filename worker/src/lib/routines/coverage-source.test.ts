@@ -51,6 +51,7 @@ describe("the three conditions that stop the routine", () => {
     expect(result).toMatchObject({ kind: "pause" });
     expect(result).toHaveProperty("reason", expect.stringMatching(/turned off|no longer on/i));
     expect(deps.cluster).not.toHaveBeenCalled();
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 
   it("pauses when the owner is no longer an admin", async () => {
@@ -58,6 +59,7 @@ describe("the three conditions that stop the routine", () => {
     const result = await runCoverageReport(input, deps);
     expect(result).toMatchObject({ kind: "pause" });
     expect(deps.cluster).not.toHaveBeenCalled();
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 
   /**
@@ -72,6 +74,7 @@ describe("the three conditions that stop the routine", () => {
     expect(result).toMatchObject({ kind: "pause" });
     expect(result).toHaveProperty("reason", expect.stringMatching(/people|members/i));
     expect(deps.cluster).not.toHaveBeenCalled();
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 });
 
@@ -81,6 +84,7 @@ describe("what costs nothing", () => {
     const result = await runCoverageReport(input, deps);
     expect(result).toMatchObject({ kind: "skip" });
     expect(deps.cluster).not.toHaveBeenCalled();
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 
   it("skips without a model call when too few people asked at all", async () => {
@@ -93,6 +97,7 @@ describe("what costs nothing", () => {
     const result = await runCoverageReport(input, deps);
     expect(result).toMatchObject({ kind: "skip" });
     expect(deps.cluster).not.toHaveBeenCalled();
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 
   /**
@@ -107,6 +112,7 @@ describe("what costs nothing", () => {
     expect(result).toMatchObject({ kind: "skip" });
     expect(result).not.toHaveProperty("model");
     expect(result).not.toHaveProperty("tokens");
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 
   it("makes exactly one model call when it does report", async () => {
@@ -159,6 +165,7 @@ describe("the report", () => {
     const deps = depsFor({ clusters: [{ label: "Expenses", members: [0] }] });
     const result = await runCoverageReport(input, deps);
     expect(result).toMatchObject({ kind: "skip" });
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 
   /**
@@ -173,6 +180,7 @@ describe("the report", () => {
     const deps = depsFor({ clusters: [{ label: "Expenses", members: [0] }] });
     const result = await runCoverageReport(input, deps);
     expect(result).toMatchObject({ kind: "skip", model: "gpt-4.1-mini", tokens: 900 });
+    expect(deps.readTotals).not.toHaveBeenCalled();
   });
 
   /**

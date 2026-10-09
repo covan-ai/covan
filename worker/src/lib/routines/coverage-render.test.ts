@@ -212,7 +212,16 @@ describe("a topic the guard would not name", () => {
 
     const text = renderCoverageReport({ totals, gaps, withheld: 1 });
     expect(text).not.toMatch(/behind it|behind them|behind those/i);
-    expect(text).toMatch(/somebody had typed/i);
+    // Fix wave B5: the exact sentence, not a keyword — this file promises
+    // byte-stability, and a regex match on one phrase would stay green
+    // through a reword that reintroduced the locality claim this guard was
+    // written to remove.
+    expect(text).toContain(
+      "One topic above is listed without a name. The name our clustering gave it " +
+        "reproduced a question somebody had typed, so we withheld the name and kept the " +
+        "topic: you are told what came up and how many people it came from, never what " +
+        "anybody typed. Nothing has been dropped from the list.",
+    );
     expect(text).not.toContain("pregnant");
   });
 

@@ -351,6 +351,13 @@ function truncateLabel(label: string): string {
  * loop. Kept as its own export, with this exact signature, so that every
  * caller and this file's own suite see no change: a `Gap[]` in, a `Gap[]`
  * out, same as before Task 12 added the function beside it.
+ *
+ * NO PRODUCTION CALLER AS OF THIS FIX WAVE — `coverage-source.ts` calls
+ * `enforceFloorWithCoverage` directly, for `coveredCount`. This export now
+ * exists for its own ~80-assertion suite alone, which is why it is worth
+ * saying here rather than leaving the next reader to assume "every caller"
+ * above still means what it did: giving this wrapper behaviour of its own
+ * would validate a path nothing in production walks.
  */
 export function enforceFloor(
   clusters: RawCluster[],

@@ -46,6 +46,16 @@ import { complete, totalTokens } from "../completion";
  * Free at all; `docs/routines.md` says so rather than leaving it to be
  * discovered.
  *
+ * A `workspace` routine (0074) never reaches the fetch above — it has no url
+ * and no connection — but spends about the same dozen a different way: the
+ * membership check, `readWorkspace`'s two parallel reads (workspace row,
+ * members), `readGaps`, the clustering call in its place, `readTotals` on the
+ * one outcome that reaches it, the delivery claim, the channel read (no
+ * agent read — its summary is rendered in code, never written by a model),
+ * the delivery itself, and the two bookkeeping writes. The review that found
+ * this gap counted it at about 12 against the same ceiling, so `BATCH_SIZE`
+ * below did not need to change for it — this paragraph was the part missing.
+ *
  * This is also why a scheduled run keeps the old eight-step budget while chat
  * moved to sixteen (`SCHEDULED_MAX_STEPS` in `lib/harness/budget.ts`). The
  * arithmetic above is already generous about a tool-using routine; letting one

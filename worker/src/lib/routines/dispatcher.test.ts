@@ -546,9 +546,17 @@ describe("clusterQuestions", () => {
     // bug, which asked for a bare array instead.
     expect(systemMessage).toContain('"clusters"');
     const userMessage = sent.messages.find((m: any) => m.role === "user").content;
-    // Third-party text rides in the user message, never the system one.
+    // Third-party text rides in the user message, never the system one. Fix
+    // wave B1: this only ever asserted the first half — a question moved into
+    // the system prompt would still contain it in the user message too (the
+    // dedup loop does not remove it from one just because it is in the
+    // other), so this suite stayed green under exactly that regression until
+    // the negative half below was added. `summarise.test.ts:155` is the shape
+    // this copies.
     expect(userMessage).toContain("Can I expense a conference?");
     expect(userMessage).toContain("Does PTO roll over to next year?");
+    expect(systemMessage).not.toContain("Can I expense a conference?");
+    expect(systemMessage).not.toContain("Does PTO roll over to next year?");
 
     // And the parser half — Task 12's own code, unmocked — reads it back.
     const clusters = parseClusters(result.raw);

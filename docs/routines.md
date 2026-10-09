@@ -347,6 +347,11 @@ keystrokes, a reply that was regenerated is not counted twice, and a session
 somebody deleted is not read at all: a deletion that left the text of a question
 reachable here would be cosmetic.
 
+That seven days is fixed, not derived from the routine's own schedule. The
+template runs weekly, so the window and the cadence agree today — but an owner
+who edits the schedule to run daily gets a daily email of the same rolling
+seven-day window, not a one-day slice of it.
+
 ### What it never contains
 
 No name and no question text ever reaches an admin. That is four separate

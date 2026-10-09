@@ -77,13 +77,14 @@ export type TemplateFacts = {
 };
 
 /**
- * Below this, the coverage report is not offered at all.
+ * The floor once a workspace has enough people to need one.
  *
  * Three, and not configurable, because of what the floor is for: it protects
  * members from each other. With two people, *any* reported topic tells one of
  * them about the other, and no floor can fix that — k-anonymity is impossible
  * at n=2. So a two-person workspace is told here, once, rather than receiving
- * an empty report every week forever.
+ * an empty report every week forever. The template gate below blocks exactly
+ * that one case — `memberCount === 2` — and nothing below it.
  *
  * A workspace of one is the other direction and is handled in the engine, not
  * here: there is nobody to protect from, so the floor is one and every gap is
@@ -172,6 +173,17 @@ export function templateById(id: string): RoutineTemplate | undefined {
   return ROUTINE_TEMPLATES.find((t) => t.id === id);
 }
 
+/**
+ * No existing exhaustiveness idiom was found elsewhere in this codebase (no
+ * `assertNever`, no `: never` default) — this is the standard TypeScript
+ * shape, added here because `noImplicitReturns` is off and a switch over a
+ * union with no default silently returns `undefined` for a case nobody
+ * added, which `unmetRequirements` would then treat as "not blocked".
+ */
+function assertNever(value: never): never {
+  throw new Error(`Unhandled TemplateRequirement: ${String(value)}`);
+}
+
 /** Which of a template's requirements these facts do not satisfy, in order. */
 export function unmetRequirements(
   template: RoutineTemplate,
@@ -186,7 +198,13 @@ export function unmetRequirements(
       case "gapReport":
         return !facts.gapReportEnabled;
       case "enoughPeople":
-        return facts.memberCount < GAP_REPORT_MIN_MEMBERS;
+        // Only the two-member case: see the module docblock and
+        // `askerFloor` (worker/src/lib/routines/coverage-cluster.ts) — a
+        // workspace of one has nobody to protect from and the engine's floor
+        // for it is already 1.
+        return facts.memberCount === 2;
+      default:
+        return assertNever(r);
     }
   });
 }
@@ -207,6 +225,8 @@ export function requirementReason(requirement: TemplateRequirement): string {
     case "gapReport":
       return "An admin has to turn the coverage report on in Settings before a routine can read it.";
     case "enoughPeople":
-      return `This needs at least ${GAP_REPORT_MIN_MEMBERS} people in the workspace: with fewer, a report cannot name a topic without identifying who asked about it.`;
+      return "Not available for a workspace of exactly two — any topic the report named would tell one of you about the other, and no setting changes that. One person alone is fine: there is nobody to protect from.";
+    default:
+      return assertNever(requirement);
   }
 }

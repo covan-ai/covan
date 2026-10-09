@@ -101,14 +101,30 @@ describe("what a screen's facts leave unmet", () => {
     expect(unmet).toContain("gapReport");
   });
 
-  it("refuses the report below the floor's member count", () => {
-    for (const memberCount of [1, 2]) {
-      const unmet = unmetRequirements(templateById("gap-report")!, {
-        ...ready,
-        memberCount,
-      });
-      expect(unmet, `${memberCount} members`).toContain("enoughPeople");
-    }
+  it("refuses the report for a workspace of exactly two", () => {
+    const unmet = unmetRequirements(templateById("gap-report")!, {
+      ...ready,
+      memberCount: 2,
+    });
+    expect(unmet).toContain("enoughPeople");
+  });
+
+  /**
+   * A1. The gate used to block this alongside two — `memberCount < 3` — which
+   * contradicted `askerFloor`'s own `1 -> 1` branch (the engine already
+   * allows a solo workspace), the docs, and this file's own three-lines-above
+   * comment on `GAP_REPORT_MIN_MEMBERS`. This is the regression test for that:
+   * it fails the moment "below the floor" creeps back in as the condition.
+   */
+  it("allows the report for a workspace of one — there is nobody to protect from", () => {
+    const unmet = unmetRequirements(templateById("gap-report")!, {
+      ...ready,
+      memberCount: 1,
+    });
+    expect(unmet).not.toContain("enoughPeople");
+  });
+
+  it("allows the report once the workspace reaches the floor", () => {
     expect(
       unmetRequirements(templateById("gap-report")!, {
         ...ready,
@@ -118,11 +134,11 @@ describe("what a screen's facts leave unmet", () => {
   });
 
   /**
-   * The cases above only prove the floor is above 2 — both loop over `[1, 2]`
-   * and re-derive the "at floor" input from this same constant, so neither
-   * notices the floor being silently raised. The worker keeps its own copy of
-   * this number (`src/` cannot import from `worker/src/`), and a literal-drift
-   * test on each side is the only thing that catches the two disagreeing.
+   * The cases above only prove the gate blocks exactly two. The floor itself
+   * — what `askerFloor` uses once a workspace reaches 3 or more — is a
+   * separate number this pins directly. The worker keeps its own copy of it
+   * (`src/` cannot import from `worker/src/`), and a literal-drift test on
+   * each side is the only thing that catches the two disagreeing.
    */
   it("pins the floor at 3, so the worker's matching copy cannot drift unnoticed", () => {
     expect(GAP_REPORT_MIN_MEMBERS).toBe(3);

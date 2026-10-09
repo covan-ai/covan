@@ -250,7 +250,7 @@ describe("WorkspaceCoverageSection", () => {
       renderWith(response());
       expect(
         screen.getByText(
-          /needs at least three people in the workspace.*cannot be reported without identifying who asked/i,
+          /unavailable only for a workspace of exactly two.*identify the other person/i,
         ),
       ).toBeInTheDocument();
     });

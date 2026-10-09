@@ -112,8 +112,8 @@ export function WorkspaceCoverageSection({ gapReportEnabled }: { gapReportEnable
         <div className="min-w-0">
           <div className="text-sm font-medium">Weekly coverage report</div>
           <p className="mt-1 text-meta leading-[1.45] text-muted-foreground">
-            Needs at least three people in the workspace — with fewer, a topic cannot be reported
-            without identifying who asked.
+            Unavailable only for a workspace of exactly two — a reported topic would otherwise
+            identify the other person. Fine alone, and fine again from three people up.
           </p>
         </div>
         <Switch

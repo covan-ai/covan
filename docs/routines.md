@@ -49,7 +49,8 @@ same editable form, with nothing fetched and nothing billed on the way.
   team has written down. Needs one document on this agent.
 - **What nobody wrote down** — weekly, the topics your team asked about that no
   document covered. Needs you to be an admin, needs the coverage report switched
-  on for the workspace, and needs at least three people in it. See
+  on for the workspace, and is unavailable only for a workspace of exactly two —
+  it works alone and it works again from three people up. See
   [The coverage report](#the-coverage-report).
 - **Weekly digest of a feed** — point it at a feed or a page; once a week, what
   changed. Needs nothing, and arrives with the URL blank, because that is the

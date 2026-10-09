@@ -1366,3 +1366,115 @@ describe("a deployment that has run out of browser credit", () => {
     expect(createBrowser).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * The provider writes the jar AFTER it reports the browser stopped, and the
+ * gap is seconds.
+ *
+ * Measured on the first real run, 2026-10-09:
+ *
+ *     browser finishedAt  18:10:16.413
+ *     profile  updatedAt  18:10:19.521   <- 3.1 seconds later
+ *     Covan's  getProfile 18:10:16.4     <- at the stop, three seconds early
+ *
+ * The stop-confirmation guard did its job — it waited for `status: "stopped"`
+ * — and that turned out not to be the question. "Stopped" and "the jar is
+ * written" are different moments, so a sign-in that worked perfectly read back
+ * as an empty jar and the person was told *"that sign-in didn't stick"* while
+ * `cookieDomains` at the provider already named linkedin.com. The free re-run
+ * they were promised did not happen either.
+ *
+ * So there is a third state the code did not model: the read SUCCEEDED and the
+ * jar is not written yet. `null` was "the provider would not say" and `[]` was
+ * "there is genuinely nothing"; this is neither.
+ */
+describe("the jar is written after the stop, not with it", () => {
+  it("keeps asking until the provider has written it", async () => {
+    getProfile
+      .mockResolvedValueOnce({ kind: "ok", value: { id: "bu-profile", cookieDomains: [] } })
+      .mockResolvedValueOnce({ kind: "ok", value: { id: "bu-profile", cookieDomains: [] } })
+      .mockResolvedValue({
+        kind: "ok",
+        value: { id: "bu-profile", cookieDomains: ["linkedin.com"] },
+      });
+    const s = store({
+      takeovers: [openRow()],
+      profiles: [profileRow({ cookie_domains: [] })],
+      tasks: [taskRow()],
+    });
+
+    const r = await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "ok", cookieDomains: ["linkedin.com"] });
+    expect((r as { retriedTaskId: string | null }).retriedTaskId).toBe("bt-2");
+    expect(getProfile).toHaveBeenCalledTimes(3);
+    expect(s.profiles[0].cookie_domains).toEqual(["linkedin.com"]);
+  });
+
+  /**
+   * A browser somebody opened and signed into nothing in. Still answered, and
+   * still told the truth — the waiting is bounded, and a few seconds before
+   * saying "it didn't work" is the right trade against saying it when it did.
+   */
+  it("gives up and reports an empty jar when it really is empty", async () => {
+    getProfile.mockResolvedValue({ kind: "ok", value: { id: "bu-profile", cookieDomains: [] } });
+    const s = store({
+      takeovers: [openRow()],
+      profiles: [profileRow({ cookie_domains: [] })],
+      tasks: [taskRow()],
+    });
+
+    const r = await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "ok", retriedTaskId: null, cookieDomains: [] });
+    expect((r as { message: string }).message).toMatch(/didn't stick/);
+    expect(getProfile.mock.calls.length).toBeGreaterThan(1);
+    // Bounded, and the sleeps are the deps' so a test never really waits.
+    expect(sleep).toHaveBeenCalled();
+  });
+
+  it("stops asking the moment it has an answer", async () => {
+    getProfile.mockResolvedValue({
+      kind: "ok",
+      value: { id: "bu-profile", cookieDomains: ["linkedin.com"] },
+    });
+    const s = store({
+      takeovers: [openRow()],
+      profiles: [profileRow({ cookie_domains: [] })],
+      tasks: [taskRow()],
+    });
+
+    await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    expect(getProfile).toHaveBeenCalledTimes(1);
+  });
+
+  /** A read the provider refused is still "would not say", and not retried forever. */
+  it("does not treat a refused read as an unwritten jar", async () => {
+    getProfile.mockResolvedValue({ kind: "error", status: 500, message: "500" });
+    const s = store({ takeovers: [openRow()], profiles: [profileRow()], tasks: [taskRow()] });
+
+    const r = await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    // Null is not an empty jar: the browser stopped cleanly, so the cookies
+    // were persisted whatever this read answered. The re-run goes ahead.
+    expect((r as { retriedTaskId: string | null }).retriedTaskId).toBe("bt-2");
+    expect(getProfile).toHaveBeenCalledTimes(1);
+  });
+});

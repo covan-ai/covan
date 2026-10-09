@@ -111,6 +111,35 @@ const POOL_RESERVE = 2;
 const SETTLE_ATTEMPTS = 5;
 const SETTLE_DELAY_MS = 1_000;
 
+/**
+ * How long to wait for the provider to WRITE the jar, which is not the same
+ * moment as the browser stopping.
+ *
+ * Measured on the first real run, 2026-10-09:
+ *
+ *     browser finishedAt  18:10:16.413
+ *     profile  updatedAt  18:10:19.521   <- 3.1 seconds later
+ *     Covan's  getProfile 18:10:16.4     <- at the stop, three seconds early
+ *
+ * The stop-confirmation guard above did exactly what it was written to do, and
+ * that turned out not to be the question: it waits for `status: "stopped"`,
+ * and the provider persists the profile some seconds after saying so. A
+ * sign-in that worked perfectly read back as an empty jar, so the person was
+ * told *"that sign-in didn't stick"* while `cookieDomains` at the provider
+ * already named the site — and the free re-run they were promised did not
+ * happen.
+ *
+ * Eight attempts rather than `SETTLE_ATTEMPTS`'s five, and the asymmetry is
+ * deliberate: the two failures are not equally bad. Waiting too long on a
+ * browser nobody signed into costs a few seconds before an answer that is
+ * already "it did not work". Not waiting long enough tells somebody their
+ * sign-in failed when it succeeded, and silently withholds the retry the
+ * feature exists to give them. 3.1 seconds is one sample, so the margin is
+ * generous on purpose.
+ */
+const JAR_ATTEMPTS = 8;
+const JAR_DELAY_MS = 1_000;
+
 /** A person's jar, as the rest of the worker needs it: our id, theirs, the pinned egress. */
 export type TakeoverProfile = {
   id: string;
@@ -998,6 +1027,44 @@ export async function openTakeover(
 }
 
 /**
+ * The jar, once the provider has actually written it.
+ *
+ * Three outcomes, and the middle one is the state the first version did not
+ * have a name for:
+ *
+ * - **a list with something in it** — written, and the answer.
+ * - **an empty list, every time we asked** — a browser somebody opened and
+ *   signed into nothing in. Genuinely empty, and `closeTakeover` is right to
+ *   say the sign-in did not stick.
+ * - **null** — the provider would not say. NOT an empty jar: the browser
+ *   stopped cleanly, so the cookies were persisted whatever this read
+ *   answered, and the re-run goes ahead. One attempt only, because a refused
+ *   read is a refused read and asking eight times would turn a provider
+ *   outage into an eight-second request.
+ *
+ * Only the empty-list case waits, because only the empty-list case is
+ * ambiguous. See `JAR_ATTEMPTS` for why its margin is generous.
+ */
+async function settledJar(
+  env: RoutineEnv,
+  deps: TakeoverDeps,
+  providerProfileId: string,
+): Promise<string[] | null> {
+  for (let attempt = 0; attempt < JAR_ATTEMPTS; attempt += 1) {
+    const read = await getProfile(env, providerProfileId);
+    if (read.kind === "error") {
+      console.error("stopped a takeover but could not read the jar back", read.status);
+      return null;
+    }
+    if (read.value.cookieDomains.length > 0) return read.value.cookieDomains;
+    // Nothing yet. Not slept after the last attempt, so the caller is not held
+    // for a second that buys no further read.
+    if (attempt < JAR_ATTEMPTS - 1) await deps.sleep(JAR_DELAY_MS);
+  }
+  return [];
+}
+
+/**
  * The moment the record becomes true, written once for both close paths.
  *
  * The stop is what saved the jar — *"profile state is only saved when the
@@ -1059,8 +1126,7 @@ async function recordStop(
   if (stopError)
     console.error("could not record a takeover's stop", takeoverId, problem(stopError));
 
-  const refreshed = await getProfile(env, providerProfileId);
-  const cookieDomains = refreshed.kind === "ok" ? refreshed.value.cookieDomains : null;
+  const cookieDomains = await settledJar(env, deps, providerProfileId);
   if (cookieDomains) {
     const { error } = await db
       .from("browser_profiles")
@@ -1068,8 +1134,6 @@ async function recordStop(
       .eq("id", profileRow.id)
       .eq("user_id", userId);
     if (error) console.error("could not record a refreshed cookie jar", takeoverId, problem(error));
-  } else if (refreshed.kind === "error") {
-    console.error("stopped a takeover but could not read the jar back", refreshed.status);
   }
 
   return {

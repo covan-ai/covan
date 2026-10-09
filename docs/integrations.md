@@ -733,10 +733,13 @@ browser task *can* do is carry a sign-in you performed yourself: when a task
 stops at a login wall, you are offered a real browser in a new tab, you sign in
 at the site — Covan sees nothing of it — and the task runs again, once, free.
 The cookies stay at the provider in a profile that belongs to you and no one
-else. Covan stores the list of sites you are signed in to and nothing more,
-because that is all it has — and that list is on **Settings → Browser
-sign-ins**, where one click deletes the profile at the provider. Closing your
-account deletes it too; you should not have to do the second to get the first.
+else. Covan stores the list of domains that profile holds cookies for and
+nothing more, because that is all it has. **That list is longer than the places
+you signed in to**: most pages drop cookies for other companies as they load,
+so one sign-in at LinkedIn left seven domains, five of them ad-tech. It is on
+**Settings → Browser sign-ins**, labelled for what it is, and one click there
+deletes the profile at the provider. Closing your account deletes it too; you
+should not have to do the second to get the first.
 
 **You are shown the sentence, word for word, before anything runs.** Every
 browser task goes through the same approval card `send_email` and a connected

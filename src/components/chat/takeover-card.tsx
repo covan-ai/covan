@@ -173,11 +173,20 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
       setMinted(null);
       setClosedId(id);
       tabRef.current?.close();
-      toast.success(
-        result.signedInTo.length > 0
-          ? `Signed in to ${result.signedInTo.join(", ")}. ${result.message}`
-          : result.message,
-      );
+      /**
+       * The server's own sentence, and no list.
+       *
+       * This used to read `Signed in to ${domains.join(", ")}` — and the first
+       * real run returned seven domains for one LinkedIn sign-in, five of them
+       * ad-tech the page had dropped. A toast saying "Signed in to
+       * facebook.com, demdex.net, 33across.com" after somebody logged into
+       * LinkedIn is false and alarming in the same breath.
+       *
+       * The message answers the only question a toast is for — did it work —
+       * and the domain list, correctly labelled, lives on the account screen
+       * where there is room to say what it is.
+       */
+      toast.success(result.message);
       await queryClient.invalidateQueries({ queryKey: ["browser-tasks", sessionId] });
       await queryClient.invalidateQueries({ queryKey: ["messages"] });
     },

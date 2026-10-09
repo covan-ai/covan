@@ -39,7 +39,7 @@ function renderSection() {
 beforeEach(() => {
   vi.clearAllMocks();
   profile.mockResolvedValue({
-    profile: { signedInTo: ["portal.example.com"], createdAt: null, lastUsedAt: null },
+    profile: { cookieDomains: ["portal.example.com"], createdAt: null, lastUsedAt: null },
   });
   forget.mockResolvedValue({ forgotten: ["portal.example.com"] });
 });
@@ -71,7 +71,7 @@ describe("BrowserSignInsSection", () => {
   /** A profile exists but nothing has been saved into it yet — a real state. */
   it("distinguishes an empty jar from no jar", async () => {
     profile.mockResolvedValue({
-      profile: { signedInTo: [], createdAt: null, lastUsedAt: null },
+      profile: { cookieDomains: [], createdAt: null, lastUsedAt: null },
     });
     renderSection();
 

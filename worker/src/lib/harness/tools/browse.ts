@@ -41,11 +41,23 @@ const MIN_TASK_CHARS = 10;
 export { BROWSER_TASK_TOKENS };
 
 /**
- * What the card says this browser is already signed into, or nothing.
+ * What the card says this browser carries, or nothing.
  *
  * One human sentence, for `allowanceNote`'s reason: the card renders fields
- * as rows, and a row reading `signedInTo: ["mail.google.com"]` is a row that
- * tells nobody what it means.
+ * as rows, and a row reading `cookieDomains: ["mail.google.com"]` is a row
+ * that tells nobody what it means.
+ *
+ * **It does not say "signed in to", and that correction came from the first
+ * real run.** A single hand-performed LinkedIn sign-in left the provider
+ * reporting seven domains: `linkedin.com` and `linkedin-ei.com`, and then
+ * `facebook.com`, `google.com`, `demdex.net`, `33across.com` and
+ * `protechts.net` — ad-tech cookies a page drops while loading. "This browser
+ * is signed in to facebook.com" was false, alarming, and read like a
+ * confession that Covan was holding somebody's Facebook session.
+ *
+ * The truncation made it worse: at four names and "and 3 more", the one domain
+ * the person had actually signed into was the one cut off. So the count leads
+ * now, and the sentence says what the list is.
  *
  * Read through the caller's own client on purpose, even though the profile
  * was just resolved with the service role. `browser_profiles` grants
@@ -54,10 +66,7 @@ export { BROWSER_TASK_TOKENS };
  * show, through the policy that says it may. Null when there is no jar or
  * nothing in it, which is the ordinary case and not worth a row.
  */
-async function signedInNote(
-  ctx: ToolContext,
-  profile: { id: string } | null,
-): Promise<string | null> {
+async function jarNote(ctx: ToolContext, profile: { id: string } | null): Promise<string | null> {
   if (!profile) return null;
   try {
     const { data } = await ctx.db
@@ -69,10 +78,9 @@ async function signedInNote(
       ? (data.cookie_domains as unknown[]).filter((d): d is string => typeof d === "string")
       : [];
     if (domains.length === 0) return null;
-    const shown = domains.slice(0, 4).join(", ");
-    return domains.length > 4
-      ? `this browser is signed in to ${shown} and ${domains.length - 4} more`
-      : `this browser is signed in to ${shown}`;
+    const shown = domains.slice(0, 5).join(", ");
+    const sites = domains.length === 1 ? "1 site" : `${domains.length} sites`;
+    return domains.length > 5 ? `${sites}, including ${shown}` : `${sites}: ${shown}`;
   } catch {
     // A card that cannot say this is better than a turn that fails over it.
     return null;
@@ -197,9 +205,11 @@ export const browseTool: AgentTool = {
        *
        * `cookie_domains` is the provider's own list and the whole of what
        * Covan can say about somebody's logins, because Covan holds none of
-       * them.
+       * them. Named `cookies` rather than `signedInTo`: the key IS the row's
+       * label, and the list is cookie domains — most of which a page dropped
+       * rather than a person signed into. See `jarNote`.
        */
-      const signedInTo = await signedInNote(ctx, profile);
+      const cookies = await jarNote(ctx, profile);
       return {
         kind: "needs_confirmation",
         summary: "Use a browser to do this?",
@@ -209,7 +219,7 @@ export const browseTool: AgentTool = {
           // description of what is being authorised.
           task,
           ...(cost ? { cost } : {}),
-          ...(signedInTo ? { signedInTo } : {}),
+          ...(cookies ? { cookies } : {}),
         },
       };
     }

@@ -79,7 +79,7 @@ beforeEach(() => {
   takeOver.mockResolvedValue(LIVE);
   close.mockResolvedValue({
     retriedTaskId: "task-2",
-    signedInTo: ["portal.example.com"],
+    cookieDomains: ["portal.example.com"],
     message: "trying again now",
   });
   opened = { location: { replace: vi.fn() }, closed: false, opener: {}, close: vi.fn() };
@@ -223,15 +223,26 @@ describe("a reloaded tab", () => {
 });
 
 describe("pressing done", () => {
-  it("reports which sites the sign-in reached", async () => {
+  /**
+   * The toast says whether it worked, and nothing about domains.
+   *
+   * It used to list them, and the first real run returned seven for one
+   * LinkedIn sign-in — five of them ad-tech the page had dropped. "Signed in
+   * to facebook.com, demdex.net, 33across.com" after somebody logged into
+   * LinkedIn is false and frightening at once. The list, correctly labelled,
+   * is on the account screen where there is room to say what it is.
+   */
+  it("reports whether it worked, without naming domains it cannot explain", async () => {
     browserTasks.mockResolvedValue({ tasks: [task()] });
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /done, i've signed in/i }));
 
     await waitFor(() =>
-      expect(toastCalls.some((t) => t.includes("portal.example.com"))).toBe(true),
+      expect(toastCalls.some((t) => t.includes("trying again now"))).toBe(true),
     );
+    expect(toastCalls.some((t) => t.includes("portal.example.com"))).toBe(false);
+    expect(toastCalls.some((t) => /signed in to/i.test(t))).toBe(false);
   });
 
   it("does not resurrect the takeover from a stale server answer", async () => {

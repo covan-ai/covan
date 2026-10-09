@@ -260,7 +260,7 @@ async function release(row: TakeoverRow, deps: SweepDeps): Promise<void> {
 async function refreshJar(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): Promise<void> {
   const { data, error: readError } = await deps.db
     .from("browser_profiles")
-    .select("provider_profile_id")
+    .select("provider_profile_id, cookie_domains")
     .eq("id", row.profile_id)
     .maybeSingle();
   if (readError || !data?.provider_profile_id) {
@@ -273,6 +273,32 @@ async function refreshJar(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): P
   });
   if (refreshed.kind === "error") {
     console.error("swept a takeover but could not read the jar back", row.id, refreshed.status);
+    return;
+  }
+
+  /**
+   * An empty answer over a non-empty column is dropped, and that is the one
+   * judgement in this function.
+   *
+   * The provider writes the profile SOME SECONDS AFTER reporting the browser
+   * stopped — 3.1s, measured on the first real run — so an empty list here is
+   * usually "not written yet" rather than "nothing saved".
+   * `takeover.ts`'s `JAR_ATTEMPTS` waits it out, because a person is on the
+   * other end of that request and the answer decides whether their task runs
+   * again. Nobody is waiting on this one, and holding a cron tick for it would
+   * be spending the tick's budget on a column that is display-only.
+   *
+   * So the sweep declines instead. Writing the empty list is worse than
+   * leaving the column alone: it replaces a correct list of somebody's
+   * sign-ins with "none", so the settings screen says nothing has been saved
+   * while the jar at the provider still holds it, and the forget control
+   * offers nothing to forget. A jar does not empty itself — the only thing
+   * that empties one is `forgetProfile`, which deletes the row outright — so
+   * the stale list is the more truthful of the two.
+   */
+  const held = Array.isArray(data.cookie_domains) ? data.cookie_domains : [];
+  if (refreshed.value.cookieDomains.length === 0 && held.length > 0) {
+    console.log("swept a takeover before its jar was written; keeping what we had", row.id);
     return;
   }
 

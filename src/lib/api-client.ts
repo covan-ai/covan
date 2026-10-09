@@ -1169,8 +1169,12 @@ export type BrowserTask = {
 };
 
 export type BrowserProfile = {
-  /** The sites this person signed into themselves, in their own hands. */
-  signedInTo: string[];
+  /**
+   * The domains the provider holds cookies for — NOT a list of sign-ins. One
+   * hand-performed LinkedIn login left seven, five of them ad-tech domains a
+   * page dropped while loading. See `browse.ts`'s `jarNote`.
+   */
+  cookieDomains: string[];
   createdAt: string | null;
   lastUsedAt: string | null;
 };
@@ -1185,8 +1189,8 @@ export type Takeover = {
 
 export type CloseTakeover = {
   retriedTaskId: string | null;
-  /** The sites the jar now holds, which is the whole of what Covan can say about somebody's logins. */
-  signedInTo: string[];
+  /** The domains the jar now holds cookies for. Not sign-ins: see `BrowserProfile`. */
+  cookieDomains: string[];
   message: string;
 };
 

@@ -31,7 +31,7 @@ type Update = { table: string; patch: Record<string, unknown>; filters: [string,
  */
 function fakeDb(opts: {
   claim?: { data: Row[] | null; error: { message: string } | null };
-  profileRow?: { provider_profile_id: string } | null;
+  profileRow?: { provider_profile_id: string; cookie_domains?: unknown } | null;
   updateError?: { code: string; message: string } | null;
 }) {
   const updates: Update[] = [];
@@ -65,7 +65,9 @@ function fakeDb(opts: {
             maybeSingle: () =>
               Promise.resolve({
                 data:
-                  opts.profileRow === undefined ? { provider_profile_id: "p-1" } : opts.profileRow,
+                  opts.profileRow === undefined
+                    ? { provider_profile_id: "p-1", cookie_domains: [] }
+                    : opts.profileRow,
                 error: null,
               }),
           }),
@@ -326,5 +328,81 @@ describe("a Postgres error", () => {
     expect(logged).toContain("23514");
     // provider_session_id must never reach a log line.
     expect(logged).not.toContain("s-1");
+  });
+});
+
+/**
+ * The same lag `takeover.ts`'s `JAR_ATTEMPTS` is about, arriving where nobody
+ * is waiting — so the answer is different.
+ *
+ * The provider writes the profile some seconds after reporting the browser
+ * stopped (measured at 3.1s on 2026-10-09), and a cron tick must not be held
+ * for that: this read is display-only, and the next close rewrites the column
+ * anyway. But writing the empty list it reads too early is worse than leaving
+ * the column alone — it replaces a correct list of somebody's sign-ins with
+ * "none", so the settings screen says no sign-ins have been saved while the
+ * jar at the provider still holds them, and the forget control reports nothing
+ * to forget.
+ *
+ * A jar does not empty itself. The only thing that empties one is
+ * `forgetProfile`, which deletes the row outright.
+ */
+
+/**
+ * The same lag `takeover.ts`'s `JAR_ATTEMPTS` is about, arriving where nobody
+ * is waiting — so the answer is different.
+ *
+ * The provider writes the profile some seconds after reporting the browser
+ * stopped (3.1s, measured 2026-10-09), and a cron tick must not be held for
+ * that: this read is display-only and the next close rewrites the column
+ * anyway. But WRITING the empty list it read too early is worse than leaving
+ * the column alone — it replaces a correct list of somebody's sign-ins with
+ * "none", so the settings screen says nothing has been saved while the jar at
+ * the provider still holds it, and the forget control reports nothing to
+ * forget.
+ *
+ * A jar does not empty itself. The only thing that empties one is
+ * `forgetProfile`, which deletes the row outright.
+ */
+describe("the jar read the sweep does not trust", () => {
+  it("does not replace a list of sign-ins with an empty one", async () => {
+    const { db, updates } = fakeDb({
+      claim: { data: [row()], error: null },
+      profileRow: { provider_profile_id: "p-1", cookie_domains: ["linkedin.com"] },
+    });
+    getProfile.mockResolvedValue({ kind: "ok", value: { id: "p-1", cookieDomains: [] } });
+
+    await sweepAbandonedTakeovers(ENV, deps(db));
+
+    expect(updates.some((u) => u.table === "browser_profiles")).toBe(false);
+  });
+
+  it("still writes an empty one when there was nothing there before", async () => {
+    const { db, updates } = fakeDb({
+      claim: { data: [row()], error: null },
+      profileRow: { provider_profile_id: "p-1", cookie_domains: [] },
+    });
+    getProfile.mockResolvedValue({ kind: "ok", value: { id: "p-1", cookieDomains: [] } });
+
+    await sweepAbandonedTakeovers(ENV, deps(db));
+
+    const jar = updates.find((u) => u.table === "browser_profiles");
+    expect(jar?.patch).toMatchObject({ cookie_domains: [] });
+  });
+
+  it("writes what the provider says when it says something", async () => {
+    const { db, updates } = fakeDb({
+      claim: { data: [row()], error: null },
+      profileRow: { provider_profile_id: "p-1", cookie_domains: ["old.example"] },
+    });
+    getProfile.mockResolvedValue({
+      kind: "ok",
+      value: { id: "p-1", cookieDomains: ["linkedin.com", "old.example"] },
+    });
+
+    await sweepAbandonedTakeovers(ENV, deps(db));
+
+    const jar = updates.find((u) => u.table === "browser_profiles");
+    expect(jar?.patch).toMatchObject({ cookie_domains: ["linkedin.com", "old.example"] });
   });
 });

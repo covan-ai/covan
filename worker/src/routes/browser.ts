@@ -314,7 +314,7 @@ browser.post("/browser/takeovers/:id/close", async (c) => {
 
   return c.json({
     retriedTaskId: closed.retriedTaskId,
-    signedInTo: closed.cookieDomains,
+    cookieDomains: closed.cookieDomains,
     message: closed.message,
   });
 });
@@ -356,7 +356,7 @@ browser.get("/browser/profile", async (c) => {
 
   return c.json({
     profile: {
-      signedInTo: Array.isArray(data.cookie_domains)
+      cookieDomains: Array.isArray(data.cookie_domains)
         ? data.cookie_domains.filter((d: unknown): d is string => typeof d === "string")
         : [],
       createdAt: data.created_at ? String(data.created_at) : null,

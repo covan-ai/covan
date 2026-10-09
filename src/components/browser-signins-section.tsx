@@ -69,7 +69,7 @@ export function BrowserSignInsSection() {
   // Nothing held is not an empty state to apologise for — it is the ordinary
   // one, and a section about forgetting logins that do not exist is noise on a
   // page that already has eight of them.
-  const sites = data?.profile?.signedInTo ?? [];
+  const sites = data?.profile?.cookieDomains ?? [];
   if (isLoading || !data?.profile) return null;
 
   const reset = (next: boolean) => {
@@ -90,7 +90,17 @@ export function BrowserSignInsSection() {
 
         {sites.length > 0 ? (
           <div>
-            <p className="text-sm leading-[1.5] text-muted-foreground">Signed in to:</p>
+            {/* NOT "signed in to", which is what this said until the first real
+                run: one hand-performed LinkedIn sign-in left seven domains, and
+                five of them — facebook.com, google.com, demdex.net,
+                33across.com, protechts.net — were ad-tech cookies the page
+                dropped on the way. Telling somebody they are signed in to
+                Facebook because they logged into LinkedIn is false, and
+                frightening in a way the truth is not. */}
+            <p className="text-sm leading-[1.5] text-muted-foreground">
+              Cookies are held for these sites. Most pages drop cookies for other companies as they
+              load, so this list is longer than the places you actually signed in to:
+            </p>
             <ul className="mt-2 space-y-1">
               {sites.map((site) => (
                 <li key={site} className="font-mono text-sm text-foreground">

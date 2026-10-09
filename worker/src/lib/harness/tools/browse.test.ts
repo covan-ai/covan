@@ -349,8 +349,8 @@ describe("availability", () => {
  * The with-a-jar path, which shipped with no coverage at all.
  *
  * `profileFor` was mocked to answer null always, so neither the forwarding of
- * the profile to the provider nor `signedInTo` on the approval card was ever
- * exercised — and `signedInTo` is the consent affordance for the biggest risk
+ * the profile to the provider nor the cookie row on the approval card was ever
+ * exercised — and that row is the consent affordance for the biggest risk
  * this feature adds. Somebody approving "check the FT front page" needs to see
  * that the browser is signed in to their mail.
  */
@@ -367,8 +367,8 @@ describe("a person who has taken over a browser before", () => {
     const proposal = (result as { proposal: Record<string, unknown> }).proposal;
     // `ProposalRows` iterates Object.entries and skips only `kind`, so this
     // renders with no frontend change — the same free ride `cost` takes.
-    expect(String(proposal.signedInTo)).toContain("mail.google.com");
-    expect(String(proposal.signedInTo)).toContain("portal.example.com");
+    expect(String(proposal.cookies)).toContain("mail.google.com");
+    expect(String(proposal.cookies)).toContain("portal.example.com");
   });
 
   it("says nothing about sign-ins when the jar is empty", async () => {
@@ -378,7 +378,7 @@ describe("a person who has taken over a browser before", () => {
     const result = await browseTool.run({ task: "read a public page please" }, ctx);
 
     // An empty jar is a row, not a fact worth a line on the card.
-    expect((result as { proposal: Record<string, unknown> }).proposal.signedInTo).toBeUndefined();
+    expect((result as { proposal: Record<string, unknown> }).proposal.cookies).toBeUndefined();
   });
 
   it("attaches the jar and its pinned egress to the provider request", async () => {
@@ -394,5 +394,64 @@ describe("a person who has taken over a browser before", () => {
     // never receives one, so it has none to send.
     expect(input).not.toHaveProperty("secrets");
     expect(input).not.toHaveProperty("opVaultId");
+  });
+});
+
+/**
+ * The row must not claim a sign-in it cannot know about.
+ *
+ * The first real run returned seven domains for ONE hand-performed LinkedIn
+ * login: `linkedin.com`, `linkedin-ei.com`, and then `facebook.com`,
+ * `google.com`, `demdex.net`, `33across.com`, `protechts.net` — ad-tech
+ * cookies the page dropped while loading. The card said "this browser is
+ * signed in to facebook.com, protechts.net, google.com, 33across.com and 3
+ * more", which was false, alarming, and truncated away the only domain the
+ * person had actually signed into.
+ */
+
+/**
+ * The row must not claim a sign-in it cannot know about.
+ *
+ * The first real run returned SEVEN domains for ONE hand-performed LinkedIn
+ * login: `linkedin.com`, `linkedin-ei.com`, and then `facebook.com`,
+ * `google.com`, `demdex.net`, `33across.com`, `protechts.net` — ad-tech
+ * cookies the page dropped while loading. The card said *"this browser is
+ * signed in to facebook.com, protechts.net, google.com, 33across.com and 3
+ * more"*: false, alarming in a way the truth is not, and truncated away the
+ * one domain the person had actually signed into.
+ */
+describe("what the approval card claims about the jar", () => {
+  const JAR = { id: "prof-1", providerProfileId: "prov-1", proxyCountryCode: "de" };
+
+  it("never says signed in, because it cannot know which of them is one", async () => {
+    profileFor.mockResolvedValue(JAR);
+    const ctx = ctxWith({
+      db: refusingDb([
+        "linkedin.com",
+        "linkedin-ei.com",
+        "facebook.com",
+        "google.com",
+        "demdex.net",
+        "33across.com",
+        "protechts.net",
+      ]),
+    });
+
+    const result = await browseTool.run({ task: "read my linkedin notifications" }, ctx);
+    const row = String((result as { proposal: Record<string, unknown> }).proposal.cookies ?? "");
+
+    expect(row).not.toMatch(/signed in/i);
+    // The count leads, so the truncation can no longer hide the one that matters.
+    expect(row).toMatch(/^7 sites/);
+  });
+
+  it("names them all when there are few enough to name", async () => {
+    profileFor.mockResolvedValue(JAR);
+    const ctx = ctxWith({ db: refusingDb(["portal.example.com"]) });
+
+    const result = await browseTool.run({ task: "read my invoices on the portal" }, ctx);
+    const row = String((result as { proposal: Record<string, unknown> }).proposal.cookies ?? "");
+
+    expect(row).toBe("1 site: portal.example.com");
   });
 });

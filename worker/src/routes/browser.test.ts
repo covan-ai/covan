@@ -387,7 +387,7 @@ describe("every route refuses an API key", () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({
       retriedTaskId: "task-2",
-      signedInTo: ["portal.example.com"],
+      cookieDomains: ["portal.example.com"],
     });
   });
 
@@ -442,7 +442,7 @@ describe("the browser profile", () => {
 
     expect(status).toBe(200);
     expect(body.profile).toMatchObject({
-      signedInTo: ["portal.example.com", "mail.example.com"],
+      cookieDomains: ["portal.example.com", "mail.example.com"],
     });
   });
 

@@ -16,6 +16,20 @@ vi.mock("../lib/supabase", () => ({
 }));
 vi.mock("../lib/docstore", () => ({ getDocStore: () => ({ delete: storeDelete }) }));
 
+/** Which provider profiles were handed back, and whether the provider refused. */
+const deletedProfiles: string[] = [];
+let profileDeleteFails = false;
+vi.mock("../lib/browser/profiles", () => ({
+  deleteProfile: (_env: unknown, id: string) => {
+    deletedProfiles.push(id);
+    return Promise.resolve(
+      profileDeleteFails
+        ? { kind: "error" as const, status: 500, message: "boom" }
+        : { kind: "ok" as const, value: null },
+    );
+  },
+}));
+
 /**
  * The service-role client, which this route uses for four different shapes:
  * three `select().in()` reads — two for the storage keys, one for the Composio
@@ -34,6 +48,8 @@ function serviceTables(spec: {
   deleteError?: { message: string };
   onDelete?: (table: string, id: string) => void;
   readError?: boolean;
+  /** The row `browser_profiles` answers with, or null for somebody who never took over a browser. */
+  browserProfile?: { provider_profile_id: string } | null;
 }) {
   return (table: string) => {
     const result =
@@ -43,7 +59,12 @@ function serviceTables(spec: {
           ? { data: spec.documents ?? [], error: spec.readError ? { message: "boom" } : null }
           : table === "tool_connections"
             ? { data: spec.connections ?? [], error: null }
-            : { data: null, error: spec.deleteError ?? null };
+            : table === "browser_profiles"
+              ? {
+                  data: spec.browserProfile === undefined ? null : spec.browserProfile,
+                  error: null,
+                }
+              : { data: null, error: spec.deleteError ?? null };
 
     let deleting = false;
     const link = {
@@ -57,6 +78,9 @@ function serviceTables(spec: {
         if (deleting) spec.onDelete?.(table, value);
         return link;
       },
+      // The browser-profile read is the one `maybeSingle` call the erasure
+      // path makes — it wants one row or none, not a list.
+      maybeSingle: () => Promise.resolve(result),
       then: (resolve: (value: unknown) => unknown) => Promise.resolve(result).then(resolve),
     };
     return link;
@@ -129,6 +153,8 @@ async function close(app: Hono<AppEnv>) {
 }
 
 beforeEach(() => {
+  deletedProfiles.length = 0;
+  profileDeleteFails = false;
   vi.clearAllMocks();
   deleteUser.mockResolvedValue({ data: null, error: null });
   storeDelete.mockResolvedValue(undefined);
@@ -345,7 +371,39 @@ describe("DELETE /account", () => {
     const { status } = await close(app);
 
     expect(status).toBe(200);
-    expect(serviceFrom).not.toHaveBeenCalled();
+    // One service-role read even with nothing to delete, and it is the right
+    // one: a person can have taken over a browser without owning a workspace,
+    // and that cookie jar still has to be handed back.
+    expect(serviceFrom.mock.calls.map((c) => c[0])).toEqual(["browser_profiles"]);
+    expect(deleteUser).toHaveBeenCalledWith(USER.id);
+  });
+
+  it("deletes the browser profile of a closing account", async () => {
+    serviceFrom.mockImplementation(
+      serviceTables({ browserProfile: { provider_profile_id: "prov-1" } }),
+    );
+    const app = appWith({ members: [] });
+    const { status } = await close(app);
+
+    expect(status).toBe(200);
+    // Read before the cascade can take the row with it: browser_profiles
+    // cascades from auth.users, and a cascade runs no code, so the jar of live
+    // session cookies would otherwise be left at the provider with nothing in
+    // this database able to name it.
+    expect(deletedProfiles).toEqual(["prov-1"]);
+  });
+
+  it("still closes the account when the provider will not delete the profile", async () => {
+    profileDeleteFails = true;
+    serviceFrom.mockImplementation(
+      serviceTables({ browserProfile: { provider_profile_id: "prov-1" } }),
+    );
+    const app = appWith({ members: [] });
+    const { status } = await close(app);
+
+    // The same judgement revokeConnectedAccounts makes one line up: refusing
+    // to close an account over a third party's 500 is the worse outcome.
+    expect(status).toBe(200);
     expect(deleteUser).toHaveBeenCalledWith(USER.id);
   });
 

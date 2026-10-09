@@ -373,6 +373,18 @@ services:
       SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
       SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      # Connected apps, through Composio. Empty means the tool does not exist
+      # — `connectableApps` answers nothing and the Connected apps screen says
+      # so rather than erroring. These were documented in
+      # .env.docker.example and never passed through here, so this stack could
+      # not reach either provider however the operator configured it.
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+      COMPOSIO_BASE_URL: ${COMPOSIO_BASE_URL:-}
+      # The browser tool, and the takeover that recovers a login wall. Empty
+      # means `browse` is not offered at all; no password is ever handed to it
+      # either way, because the provider's `secrets` field is never populated.
+      BROWSER_USE_API_KEY: ${BROWSER_USE_API_KEY:-}
+      BROWSER_USE_BASE_URL: ${BROWSER_USE_BASE_URL:-}
       PORT: 8787
       ROUTINE_TICK_MS: ${ROUTINE_TICK_MS:-60000}
     volumes:

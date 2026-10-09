@@ -3,6 +3,7 @@ import { canSyncConnections } from "./../types";
 import { runDueRoutines } from "./routines/dispatcher";
 import { runDueConnections } from "./connections/dispatcher";
 import { pollDueBrowserTasks } from "./browser/poller";
+import { sweepAbandonedTakeovers } from "./browser/sweep";
 import { PROVIDERS } from "./connections/registry";
 
 /**
@@ -33,6 +34,24 @@ import { PROVIDERS } from "./connections/registry";
 export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   const routines = await runDueRoutines(env);
   if (routines.claimed > 0) return;
+
+  /**
+   * Abandoned takeovers first, and the order is the whole point.
+   *
+   * This file is strictly either/or — each stage returns if it claimed
+   * anything, for the subrequest arithmetic above. A sweep placed last would
+   * never run on a deployment with steady routines or a browser-task backlog,
+   * which is precisely the busy deployment where takeovers happen.
+   *
+   * And what it protects is not tidiness. A takeover's provider session saves
+   * the cookie jar only when something stops it explicitly — browser-use:
+   * *"if a session is left open or times out, changes may not be persisted"* —
+   * so a person who closed the tab instead of pressing done loses the login
+   * they just performed unless this runs. An idle tick costs one subrequest:
+   * the claim, answering nothing.
+   */
+  const takeovers = await sweepAbandonedTakeovers(env);
+  if (takeovers.claimed > 0) return;
 
   /**
    * Browser tasks, between routines and connections.

@@ -193,6 +193,15 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // anywhere, while the Cloudflare build works fine.
     COMPOSIO_API_KEY: source.COMPOSIO_API_KEY,
     COMPOSIO_BASE_URL: source.COMPOSIO_BASE_URL,
+    // The browser tool, and the takeover that recovers a login wall. Omitted
+    // here until 2026-10-09, which is the failure the comment above describes
+    // happening to the very next variable somebody added: `browse` reported
+    // itself unconfigured on every Docker and Node self-host, with no error
+    // anywhere, while the Cloudflare build worked fine. `docker-compose.yml`
+    // was not passing it through either, so there were two independent
+    // reasons and fixing one would have changed nothing.
+    BROWSER_USE_API_KEY: source.BROWSER_USE_API_KEY,
+    BROWSER_USE_BASE_URL: source.BROWSER_USE_BASE_URL,
     // Where a message from the quota wall goes, defaulting in `routes/support.ts`
     // to efe@covan.app. Forwarded for a sharper reason than the one above: that
     // route is mounted unconditionally, so without this an operator's own users

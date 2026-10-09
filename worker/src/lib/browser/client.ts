@@ -108,13 +108,16 @@ function parseCost(raw: unknown): number | null {
 }
 
 function baseOf(env: BrowserEnv): string {
-  return (env.BROWSER_USE_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  // `||` rather than `??`, matching `composio/client.ts:271`: an empty
+  // string is not an override, and `docker-compose.yml` sets one when the
+  // operator has not. `??` kept it and made every request relative.
+  return (env.BROWSER_USE_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
 }
 
-async function send<T>(
+export async function send<T>(
   env: BrowserEnv,
   path: string,
-  init: { method: string; body?: unknown },
+  init: { method: string; body?: unknown; redactBody?: boolean },
   opts: { signal?: AbortSignal } | undefined,
   parse: (body: unknown) => T,
 ): Promise<BrowserResult<T>> {
@@ -156,13 +159,31 @@ async function send<T>(
 
   const text = await res.text().catch(() => "");
   if (!res.ok) {
-    // The body is returned on a failure as well as a success, for
-    // `http_request`'s reason: a provider that says *why* tells the caller
-    // how to fix it, where "400 Bad Request" tells it nothing.
+    /**
+     * The body is returned on a failure as well as a success, for
+     * `http_request`'s reason: a provider that says *why* tells the caller how
+     * to fix it, where "400 Bad Request" tells it nothing.
+     *
+     * **Except when the request carried a provider id**, and then it is
+     * withheld — because this message does not stop here. `browse.ts` wraps it,
+     * `loop.ts:1020` turns it into `error: ${result.message}`, and
+     * `loop.ts:1028` writes that to `message_steps.result_excerpt`, which
+     * `0060:104` grants `authenticated` a select on for EVERY column, gated
+     * only on whether the message is visible. In a shared session that is every
+     * member of the workspace. A validation error that echoes the submitted
+     * `sessionSettings` would hand them `provider_profile_id` — the column the
+     * grants in 0077 exist to withhold, leaked by the error path instead.
+     *
+     * Conditional rather than always, because on a call that carries no id
+     * there is nothing to protect and the provider's sentence is the whole
+     * diagnostic value.
+     */
     return {
       kind: "error",
       status: res.status,
-      message: `${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2_000)}` : ""}`,
+      message: init.redactBody
+        ? `${res.status} ${res.statusText}`
+        : `${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2_000)}` : ""}`,
     };
   }
 
@@ -184,20 +205,42 @@ async function send<T>(
  * not when the browser has finished — that is the whole point of the design.
  *
  * **`secrets` and `opVaultId` are deliberately never populated.** The
- * provider accepts both, and v1 of this feature does not: a browser agent
- * that can log in needs credentials, and that is its own design with its own
- * consent story. Leaving the fields out is what makes "public web only"
- * enforced rather than documented.
+ * provider accepts both, and this build does not: Covan never receives a
+ * credential, full stop. But that is no longer the whole boundary — a
+ * profile is a credential too, one that arrived through `sessionSettings`
+ * instead of `secrets`, because the person typed it into a browser Covan
+ * rented rather than into Covan. See `profiles.ts` and the spec it implements.
  */
 export function createTask(
   env: BrowserEnv,
-  input: { task: string },
+  input: { task: string; profileId?: string; proxyCountryCode?: string | null },
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<CreatedTask>> {
   return send(
     env,
     "/tasks",
-    { method: "POST", body: { task: input.task, maxSteps: BROWSER_MAX_STEPS } },
+    {
+      method: "POST",
+      body: {
+        task: input.task,
+        maxSteps: BROWSER_MAX_STEPS,
+        // `sessionSettings` configures the session the provider auto-creates.
+        // Omitted entirely when there is no profile, so a public-web task is
+        // byte-for-byte the request it was before this feature existed.
+        ...(input.profileId
+          ? {
+              sessionSettings: {
+                profileId: input.profileId,
+                ...(input.proxyCountryCode === undefined
+                  ? {}
+                  : { proxyCountryCode: input.proxyCountryCode }),
+              },
+            }
+          : {}),
+      },
+      // Only when the request named a profile. See `send`.
+      redactBody: Boolean(input.profileId),
+    },
     opts,
     (body) => {
       const row = (body ?? {}) as Record<string, unknown>;

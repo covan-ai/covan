@@ -6,6 +6,7 @@ import { entitlementsMiddleware } from "./middleware/entitlements";
 import { rateLimit } from "./middleware/ratelimit";
 import { runScheduledWork } from "./lib/background";
 import { agents } from "./routes/agents";
+import { browser } from "./routes/browser";
 import { favorites } from "./routes/favorites";
 import { sessions } from "./routes/sessions";
 import { ideas } from "./routes/ideas";
@@ -149,8 +150,14 @@ api.use("/routines/:id/run", rateLimit("expensive"));
 // The most expensive of the lot per call: a report is capped at 4096 output
 // tokens where a chat reply is capped at 1536, and output is the dear side.
 api.use("/sessions/:id/report", rateLimit("expensive"));
+// Not a model call, and dearer than one anyway: this rents a real browser for
+// fifteen minutes and makes four provider calls doing it, billed to the
+// operator by the minute with a minute as the floor. The §4 headroom check
+// bounds the shared concurrency pool, not the money.
+api.use("/browser/takeovers", rateLimit("expensive"));
 
 api.route("/", agents);
+api.route("/", browser);
 api.route("/", favorites);
 api.route("/", sessions);
 api.route("/", ideas);

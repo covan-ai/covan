@@ -38,6 +38,7 @@ import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
 import { Button } from "@/components/ui/button";
+import { TakeoverCard } from "@/components/chat/takeover-card";
 import { LiveAnswer } from "@/components/chat/live-answer";
 import {
   PromptInput,
@@ -1657,6 +1658,14 @@ function ChatTab() {
               }
             />
           )}
+
+          {/*
+            The offer to sign in yourself, when a browser task stopped at a
+            login wall. A table read rather than a stream event, because the
+            approval card above does not survive a reload and this has to —
+            see the card's own note.
+          */}
+          {active?.id && <TakeoverCard sessionId={active.id} />}
 
           {/*
             What the conversation is doing, for somebody who cannot see it.

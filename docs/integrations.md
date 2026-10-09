@@ -726,12 +726,35 @@ derived from browser-use's own published figure of 17c per solved task; what
 each task really cost is recorded, so it can be corrected from invoices rather
 than from a blog post.
 
-**Public pages only, and that is enforced rather than promised.** browser-use
-accepts a field for credentials. This build never fills it in, so a browser
-task cannot sign in to anything — if a page asks it to log in, it comes back
-and says so. Giving an agent a password is the most valuable half of this
-feature and the most dangerous, and it is deferred deliberately: it needs its
-own design, not a paragraph here.
+**No password is ever given to an agent, and that is enforced rather than
+promised.** browser-use accepts a field for credentials and this build never
+fills it in, so nothing you type into Covan can be handed to a browser. What a
+browser task *can* do is carry a sign-in you performed yourself: when a task
+stops at a login wall, you are offered a real browser in a new tab, you sign in
+at the site — Covan sees nothing of it — and the task runs again, once, free.
+The cookies stay at the provider in a profile that belongs to you and no one
+else. Covan stores the list of domains that profile holds cookies for and
+nothing more, because that is all it has. **That list is longer than the places
+you signed in to**: most pages drop cookies for other companies as they load,
+so one sign-in at LinkedIn left seven domains, five of them ad-tech. It is on
+**Settings → Browser sign-ins**, labelled for what it is, and one click there
+deletes the profile at the provider. Closing your account deletes it too; you
+should not have to do the second to get the first.
+
+**The second attempt is not guaranteed to get in, and the reason is not
+Covan's.** A sign-in is saved as cookies, and a cookie jar is only as portable
+as the site allows. Covan pins the egress country so the second attempt arrives
+from where the first one did — that is what `proxy_country_code` on the profile
+is for — but a residential proxy gives a different address in that country each
+time, and some sites bind a session to one address. Measured on 2026-10-09: a
+LinkedIn sign-in performed by hand through a Turkish residential IP was saved
+correctly, attached to the re-run correctly, ran from another Turkish
+residential IP, and LinkedIn asked for the password again. The provider's API
+cannot currently fix this — a custom sticky proxy can be given to a browser you
+drive, but not to a task's session — so the honest statement is that this works
+for sites that do not pin a session to an address, and LinkedIn is not one of
+them. Nothing is charged for the attempt either way, and the offer is not made
+a second time.
 
 **You are shown the sentence, word for word, before anything runs.** Every
 browser task goes through the same approval card `send_email` and a connected
@@ -782,10 +805,23 @@ A browser widens that radius more than anything else here, because a web page
 can contain text addressed to the agent reading it, and this is not a solved
 problem anywhere in the industry. It is worth saying plainly rather than
 reassuringly. What bounds it is structural and not clever: a task is scoped by
-one sentence a person wrote and approved, the browser holds no credential of
-any kind and cannot sign in, whatever comes back is treated as data and never
-executed, and `browse` is not offered to a scheduled run at all — there is
-nobody there to approve one and nowhere for the answer to arrive.
+one sentence a person wrote and approved, whatever comes back is treated as
+data and never executed, and `browse` is not offered to a scheduled run at all
+— there is nobody there to approve one and nowhere for the answer to arrive.
+
+The sign-in story makes this sharper rather than softer, and it is worth being
+blunt about which way. Before it, a prompt-injected task had little to steal; a
+browser carrying your live cookies has plenty. What stands between them: the
+approval card names the sites the browser is signed in to, so "check the FT
+front page" cannot quietly mean "inside my signed-in session" without you
+seeing it; the profile follows one person rather than a workspace, so a
+colleague's injected task cannot reach your jar; and a task may be retried
+after a takeover exactly once, ever, so a loop cannot be spun up.
+
+**What is missing is a domain allow-list**, and it is the real answer rather
+than one of these. A task should be able to say "this one may only touch
+`portal.example.com`", and today it cannot. Until it can, the sentence on the
+card is doing work that a constraint should be doing.
 
 ## Where the credentials live
 

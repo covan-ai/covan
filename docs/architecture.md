@@ -431,6 +431,17 @@ conversation as a new assistant message minutes later. Everything about that
 lives in `lib/browser/`; nothing in the loop or the registry had to learn about
 waiting.
 
+It is also **the one tool whose answer can require a person mid-flight.** A
+task that stops at a login wall is offered back to its owner: a route mints a
+real browser at the provider, hands over its address in a response body and
+nowhere else, and the person signs in in their own tab. Pressing done stops the
+provider session — which is the only thing that saves the cookie jar — and
+re-runs the original task once. A cron sweep stops the browsers of people who
+closed the tab instead, so an abandoned sign-in is saved rather than lost.
+`browser_profiles` and `browser_takeovers` hold that; both withhold their
+provider ids from every client role, for the reason `connected_account_id`
+has one.
+
 So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
 function installed on it. The `composio` transport is the same shape with the
 credential column empty: the row names an application and an account held at

@@ -13,6 +13,7 @@ import { PreferencesSection } from "@/components/preferences-section";
 import { ApiKeysSection } from "@/components/api-keys-section";
 import { ExportWorkspaceSection } from "@/components/export-workspace-section";
 import { RecentlyDeletedSection } from "@/components/recently-deleted-section";
+import { BrowserSignInsSection } from "@/components/browser-signins-section";
 import { CloseAccountSection } from "@/components/close-account-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -275,6 +276,12 @@ function SettingsPage() {
             refuses them anyway, and a section that only ever 403s is worse than
             no section. */}
         <RecentlyDeletedSection canWrite={canWrite} />
+
+        {/* Above the account section, because it is the cheap version of the
+            same request: a person who wants Covan to stop holding a login
+            should find that before they find the door that also takes their
+            conversations with it. Renders nothing when no jar is held. */}
+        <BrowserSignInsSection />
 
         {/* Last on the page, under everything it would destroy. Not gated on a
             role: erasure is the caller's own right and an admin has no say in

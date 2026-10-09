@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { mapChatSession, mapMessage } from "../lib/dto";
+import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 
 const sessions = new Hono<AppEnv>();
@@ -266,6 +266,50 @@ sessions.get("/sessions/:id/messages", async (c) => {
       },
     ),
   );
+});
+
+/**
+ * GET /sessions/:id/browser-tasks — what the takeover card reads.
+ *
+ * A card and not an SSE event, for the reason §3 gives: `ConfirmCard` is
+ * driven only by a `confirm` event into in-memory state and does not survive a
+ * reload, and a takeover offer has to survive one. So it comes from a table.
+ *
+ * The session is read first, through the caller's own client, so RLS answers
+ * "not yours" as 404 — the same shape `ideas.ts` uses against `chat_sessions`.
+ * Then the tasks, whose own policy narrows them again to this caller.
+ *
+ * **The select names columns** because `select("*")` on `browser_tasks`
+ * answers 42501 for the whole row: `provider_task_id` is granted to no client
+ * role, one deployment-wide key making it a tenant boundary (0073).
+ */
+sessions.get("/sessions/:id/browser-tasks", async (c) => {
+  const db = c.get("db");
+  const id = c.req.param("id");
+
+  const { data: session, error: sessionError } = await db
+    .from("chat_sessions")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  if (sessionError) {
+    return c.json({ error: "failed to load that conversation" }, 500);
+  }
+  if (!session) return c.json({ error: "no such conversation" }, 404);
+
+  const { data, error } = await db
+    .from("browser_tasks")
+    .select(BROWSER_TASK_COLUMNS)
+    .eq("session_id", id)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) {
+    return c.json({ error: "failed to load browser tasks" }, 500);
+  }
+
+  return c.json({
+    tasks: (data ?? []).map((row) => mapBrowserTask(row as Record<string, unknown>)),
+  });
 });
 
 export { sessions };

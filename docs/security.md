@@ -178,10 +178,28 @@ that is what you need.
 **A browser is a second subprocessor, and what goes to it is different in
 kind.** Set `BROWSER_USE_API_KEY` and an agent can hand a web task to
 browser-use: what leaves here is the task sentence a person wrote and approved,
-and what that provider sees is whatever the page it opens shows it. No
-credential goes with it — the provider accepts a field for one and this build
-never fills it in, so a browser task cannot sign in to anything, which is the
-boundary stated as code rather than as a promise. The key is the deployment's,
+and what that provider sees is whatever the page it opens shows it. No credential
+goes with it — the provider accepts a field for one and this build never fills
+it in, which is the boundary stated as code rather than as a promise: nothing
+typed into Covan can be handed to a browser.
+
+A browser task can nonetheless act inside a site you are signed in to, because
+you can sign in yourself. When a task stops at a login wall, Covan rents a
+browser and hands you its address; you sign in at the site, in your own tab,
+and press done. What persists is a *profile* held at browser-use — cookies and
+session state, never in Covan's database — and it belongs to one person rather
+than to a workspace, because a login is a property of a person and not of a
+room they are in. Covan stores an opaque reference to that profile and the list
+of domains it holds, nothing else — a list longer than the places you signed in
+to, because a page drops cookies for other companies as it loads. Whether the
+saved sign-in still works on the second attempt is the site's decision rather
+than ours: Covan pins the egress country, and a site that binds a session to a
+single address will ask again (measured on LinkedIn). **Settings → Browser
+sign-ins** names those
+domains and forgets them on one click, and closing your account deletes the
+profile at the provider as well — the first because stopping Covan from holding
+a login should not cost somebody their account, the second because erasure has
+to be complete. The key is the deployment's,
 not a member's: nobody is asked to pay a third party to use the feature, and a
 task is metered against the allowance they already have. Unset the variable and
 the tool does not exist. The public list for covan.app is on the

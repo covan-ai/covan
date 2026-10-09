@@ -5,6 +5,7 @@ import { getDocStore } from "../lib/docstore";
 import { accountClosedEmail } from "../lib/emails/closed";
 import { notify } from "../lib/emails/send";
 import { connectedAccountsIn, revokeConnectedAccounts } from "../lib/composio/revoke";
+import { deleteProfile } from "../lib/browser/profiles";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 /**
@@ -203,11 +204,48 @@ account.delete("/account", async (c) => {
   // enumerate them by. See `lib/composio/revoke.ts`.
   const connectedAccounts = await connectedAccountsIn(admin, deletable);
 
+  /**
+   * The browser profile, read before the cascade can take the row with it.
+   *
+   * `browser_profiles.user_id` cascades from `auth.users`, so
+   * `admin.auth.admin.deleteUser` below drops this row — and a cascade runs no
+   * code, so browser-use would keep a jar of live session cookies that nothing
+   * left in this database can name. Worse than the Composio case above,
+   * because those are revocable grants and this is a bag of cookies for sites
+   * the person is still signed into.
+   *
+   * Collected now for the same reason the object keys and the connected
+   * accounts are: afterwards there is nothing left to enumerate it by.
+   */
+  const { data: profileRow } = await admin
+    .from("browser_profiles")
+    .select("provider_profile_id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const providerProfileId =
+    typeof profileRow?.provider_profile_id === "string" ? profileRow.provider_profile_id : null;
+
   // Handed back before the rows go, and best-effort: a grant Composio refuses
   // to revoke is logged and the account still closes, because refusing to close
   // an account over a third party's 500 is the worse outcome — the same
   // judgement the document-store delete below already makes.
   await revokeConnectedAccounts(c.env, connectedAccounts);
+
+  /**
+   * Best-effort, and for the same judgement the line above makes: refusing to
+   * close an account over a third party's 500 is the worse outcome. Logged
+   * with the status rather than the body, because the body would name the
+   * profile id — which is the one thing 0077 withholds from every client role.
+   */
+  if (providerProfileId) {
+    const forgotten = await deleteProfile(c.env, providerProfileId);
+    if (forgotten.kind === "error") {
+      console.error(
+        "closing an account but could not delete its browser profile",
+        forgotten.status,
+      );
+    }
+  }
 
   // Deleted before the user, and one at a time. Before, because the trigger
   // refuses the membership row while the workspace is still standing, and the

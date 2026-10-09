@@ -1,5 +1,6 @@
 import { createTask, hasBrowserKey } from "../../browser/client";
 import { recordBrowserTask } from "../../browser/tasks";
+import { profileFor } from "../../browser/takeover";
 import { BROWSER_TASK_TOKENS, entitlementsFor } from "../../entitlements";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
@@ -40,6 +41,53 @@ const MIN_TASK_CHARS = 10;
 export { BROWSER_TASK_TOKENS };
 
 /**
+ * What the card says this browser carries, or nothing.
+ *
+ * One human sentence, for `allowanceNote`'s reason: the card renders fields
+ * as rows, and a row reading `cookieDomains: ["mail.google.com"]` is a row
+ * that tells nobody what it means.
+ *
+ * **It does not say "signed in to", and that correction came from the first
+ * real run.** A single hand-performed LinkedIn sign-in left the provider
+ * reporting seven domains: `linkedin.com` and `linkedin-ei.com`, and then
+ * `facebook.com`, `google.com`, `demdex.net`, `33across.com` and
+ * `protechts.net` — ad-tech cookies a page drops while loading. "This browser
+ * is signed in to facebook.com" was false, alarming, and read like a
+ * confession that Covan was holding somebody's Facebook session.
+ *
+ * The truncation made it worse: at four names and "and 3 more", the one domain
+ * the person had actually signed into was the one cut off. So the count leads
+ * now, and the sentence says what the list is.
+ *
+ * Read through the caller's own client on purpose, even though the profile
+ * was just resolved with the service role. `browser_profiles` grants
+ * `authenticated` a select on `cookie_domains` and withholds
+ * `provider_profile_id` (0077) — so this reads the one column a screen may
+ * show, through the policy that says it may. Null when there is no jar or
+ * nothing in it, which is the ordinary case and not worth a row.
+ */
+async function jarNote(ctx: ToolContext, profile: { id: string } | null): Promise<string | null> {
+  if (!profile) return null;
+  try {
+    const { data } = await ctx.db
+      .from("browser_profiles")
+      .select("cookie_domains")
+      .eq("id", profile.id)
+      .maybeSingle();
+    const domains = Array.isArray(data?.cookie_domains)
+      ? (data.cookie_domains as unknown[]).filter((d): d is string => typeof d === "string")
+      : [];
+    if (domains.length === 0) return null;
+    const shown = domains.slice(0, 5).join(", ");
+    const sites = domains.length === 1 ? "1 site" : `${domains.length} sites`;
+    return domains.length > 5 ? `${sites}, including ${shown}` : `${sites}: ${shown}`;
+  } catch {
+    // A card that cannot say this is better than a turn that fails over it.
+    return null;
+  }
+}
+
+/**
  * What the card says a task costs, or nothing at all.
  *
  * Returned as one human sentence rather than a number, because the proposal
@@ -78,8 +126,10 @@ export const browseTool: AgentTool = {
     "site with no API, follow a few links and report back. You give ONE instruction in plain " +
     "language and a real browser carries it out elsewhere. This does not answer you now — it " +
     "starts the work and comes back with the answer as a new message in a few minutes, so say " +
-    "that you have started it and do not wait or ask again. Public pages only: it cannot sign " +
-    "in to anything. Use http_request instead when the thing you want has an API.",
+    "that you have started it and do not wait or ask again. The browser may carry sign-ins the " +
+    "person performed themselves, in their own hands, in an earlier takeover; it can never be " +
+    "given a password and cannot sign in to anything on its own. Use http_request instead when " +
+    "the thing you want has an API.",
   input: {
     type: "object",
     properties: {
@@ -126,8 +176,40 @@ export const browseTool: AgentTool = {
       };
     }
 
+    /**
+     * Whose cookie jar this browser will carry, resolved from `ctx.userId`.
+     *
+     * **Not threaded through `ToolContext`.** Adding a field there would mean
+     * a profile query on every chat turn, for a feature most turns never
+     * touch. The id still derives from `ctx` — the route resolved it from the
+     * authenticated request before the tool ran — and the model never sees it
+     * or names it. Same shape and same reason as the `recordBrowserTask`
+     * call below.
+     *
+     * Null is the ordinary case: somebody who has never taken over a browser
+     * has no jar, the request carries no `sessionSettings`, and the task runs
+     * against the public web exactly as it did before this existed.
+     */
+    const profile = await profileFor(ctx.env, ctx.userId);
+
     if (ctx.confirmed !== true) {
       const cost = await allowanceNote(ctx);
+      /**
+       * Which sites this browser is signed into, on the card.
+       *
+       * Without it somebody approves "check the FT front page" and an
+       * arbitrary page gets 25 steps *inside their signed-in session*, with
+       * the card saying nothing about that. `ProposalRows` iterates
+       * `Object.entries(proposal)` and skips only `kind`, so this renders
+       * with no frontend change — the same free ride `cost` already takes.
+       *
+       * `cookie_domains` is the provider's own list and the whole of what
+       * Covan can say about somebody's logins, because Covan holds none of
+       * them. Named `cookies` rather than `signedInTo`: the key IS the row's
+       * label, and the list is cookie domains — most of which a page dropped
+       * rather than a person signed into. See `jarNote`.
+       */
+      const cookies = await jarNote(ctx, profile);
       return {
         kind: "needs_confirmation",
         summary: "Use a browser to do this?",
@@ -137,6 +219,7 @@ export const browseTool: AgentTool = {
           // description of what is being authorised.
           task,
           ...(cost ? { cost } : {}),
+          ...(cookies ? { cookies } : {}),
         },
       };
     }
@@ -147,7 +230,18 @@ export const browseTool: AgentTool = {
     const refused = await affordable(ctx);
     if (refused) return refused;
 
-    const created = await createTask(ctx.env, { task }, { signal: ctx.signal });
+    const created = await createTask(
+      ctx.env,
+      {
+        task,
+        // Omitted entirely when there is no jar, so a public-web task is
+        // byte-for-byte the request it was before this feature existed.
+        ...(profile
+          ? { profileId: profile.providerProfileId, proxyCountryCode: profile.proxyCountryCode }
+          : {}),
+      },
+      { signal: ctx.signal },
+    );
 
     if (created.kind === "error") {
       // 429 is the concurrency pool, which is account-wide and shared across

@@ -24,6 +24,23 @@ import { describe, it, expect } from "vitest";
  */
 const SPENDING_IMPORTS = ["../lib/completion", "transcribeAudio"];
 
+/**
+ * Paths behind the expensive tier that buy something other than a completion.
+ *
+ * The walk below finds endpoints by the seam every completion goes through,
+ * which is the right net for model spend and blind to every other kind. This
+ * is the list of the others, so the equality assertion stays an equality
+ * rather than being loosened to a superset — a superset would stop noticing
+ * the seventh model endpoint, which is the whole point of the file.
+ *
+ * Each entry is a claim that the path spends the operator's money per call
+ * without asking a model anything.
+ */
+const EXPENSIVE_WITHOUT_A_MODEL: Record<string, string> = {
+  "/browser/takeovers":
+    "rents a real browser at browser-use for fifteen minutes and makes four provider calls doing it, billed to the operator by the minute with one minute as the floor. No completion is bought, so SPENDING_IMPORTS cannot see it, and the §4 headroom check bounds the shared concurrency pool rather than the bill.",
+};
+
 const SRC = import.meta.dirname;
 const ROUTES = join(SRC, "routes");
 
@@ -137,11 +154,23 @@ const PAID_ENDPOINTS: Record<string, string[]> = {
 describe("the expensive rate limit", () => {
   it("covers every endpoint that buys a completion or a transcription", () => {
     const mounted = expensivePaths();
-    const paid = Object.values(PAID_ENDPOINTS).flat();
+    const paid = [
+      ...Object.values(PAID_ENDPOINTS).flat(),
+      ...Object.keys(EXPENSIVE_WITHOUT_A_MODEL),
+    ];
 
     expect(paid).not.toEqual([]);
     expect(mounted.slice().sort()).toEqual(paid.slice().sort());
   });
+
+  it.each(Object.keys(EXPENSIVE_WITHOUT_A_MODEL))(
+    "still spends without a model, so it still needs the tier: %s",
+    (path) => {
+      // An exemption outliving its reason is how a list like this rots.
+      expect(expensivePaths()).toContain(path);
+      expect(EXPENSIVE_WITHOUT_A_MODEL[path].length).toBeGreaterThan(30);
+    },
+  );
 
   it("still bounds the one endpoint that spends outside the map", () => {
     // If the identity check or the allowance check ever leaves

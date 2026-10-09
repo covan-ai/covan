@@ -50,6 +50,8 @@ const ASKS = ["refuseIfKeyAuthenticated(", 'c.get("apiKeyId")'];
  * is written once, in the helper's docblock.
  */
 const ACTS_BEYOND_THE_KEY: Record<string, string> = {
+  "routes/browser.ts":
+    "mints a live browser URL carrying the owner's own signed-in cookies, and browser-use documents that URL as full control of that browser — so it is access that outlives the key by the whole session, and revoking the key does not touch it",
   "routes/api-keys.ts":
     "mints and revokes keys: a key that writes successors cannot be revoked, and a leaked one can take down the keys somebody still relies on",
   "routes/account.ts":

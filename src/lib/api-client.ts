@@ -479,6 +479,15 @@ export const api = {
       request("PATCH", `/sessions/${id}`, { visibility }),
     rename: (id: string, title: string): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, { title }),
+    /**
+     * The browser tasks of one conversation, newest first.
+     *
+     * A table read rather than an SSE event, and that is the point: the
+     * approval card is driven only by a `confirm` event into in-memory state
+     * and does not survive a reload, while a takeover offer has to.
+     */
+    browserTasks: (id: string): Promise<{ tasks: BrowserTask[] }> =>
+      request("GET", `/sessions/${id}/browser-tasks`),
   },
   messages: {
     create: (input: { sessionId: string; role: "user"; content: string }): Promise<Message> =>
@@ -806,6 +815,44 @@ export const api = {
       request("POST", "/api-keys", { name }),
     revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/api-keys/${id}`),
   },
+  browser: {
+    /**
+     * Mint a live browser for its owner.
+     *
+     * The `liveUrl` comes back here and nowhere else. browser-use is explicit
+     * about what it is — *"Treat the URL as a credential: anyone with it can
+     * interact with the active browser"* — so it is never stored, never put
+     * in a query cache that outlives the tab, and never logged.
+     */
+    takeOver: (browserTaskId: string): Promise<Takeover> =>
+      request("POST", "/browser/takeovers", { browserTaskId }),
+    /** What a reloaded tab asks, so a reload does not lock somebody out of their own browser. */
+    current: (): Promise<{ takeover: Takeover | null }> =>
+      request("GET", "/browser/takeovers/current"),
+    /**
+     * Done signing in.
+     *
+     * Closing is what stops the provider session, and stopping is the only
+     * thing that saves the cookie jar — so this is the step that makes the
+     * sign-in persist, not a tidy-up. It can take a few seconds.
+     */
+    close: (id: string): Promise<CloseTakeover> =>
+      request("POST", `/browser/takeovers/${id}/close`),
+    /**
+     * Which sites the jar is signed into, which is the whole of what Covan can
+     * say about somebody's logins: the cookies themselves are held by the
+     * provider and the address of them is readable by no client role at all.
+     */
+    profile: (): Promise<{ profile: BrowserProfile | null }> => request("GET", "/browser/profile"),
+    /**
+     * Forget every sign-in, without closing the account.
+     *
+     * Destructive and not undoable — the jar is deleted at the provider, so the
+     * next task behind a login starts from nothing again. Refused while a
+     * browser is open, because stopping that browser is what saves the jar.
+     */
+    forget: (): Promise<{ forgotten: string[] }> => request("DELETE", "/browser/profile"),
+  },
   providerKeys: {
     get: (): Promise<ProviderKeyHints> => request("GET", "/workspace/provider-keys"),
     /** Admin only; 403 otherwise, 501 on a deployment with no `PROVIDER_KEY_SECRET`. */
@@ -1126,6 +1173,45 @@ export type ApiKey = {
  * Two different sentences, and the section renders nothing for the first.
  */
 export type ApiKeyList = { available: boolean; keys: ApiKey[] };
+
+/** One browser task, as the takeover card reads it. Mirrors the worker's `BrowserTaskDTO`. */
+export type BrowserTask = {
+  id: string;
+  task: string;
+  status: "queued" | "running" | "finished" | "failed" | "stopped";
+  output: string | null;
+  error: string | null;
+  /** Set when a takeover already produced a second attempt. One retry per original, ever. */
+  retryOf: string | null;
+  createdAt: number;
+  finishedAt: number | null;
+};
+
+export type BrowserProfile = {
+  /**
+   * The domains the provider holds cookies for — NOT a list of sign-ins. One
+   * hand-performed LinkedIn login left seven, five of them ad-tech domains a
+   * page dropped while loading. See `browse.ts`'s `jarNote`.
+   */
+  cookieDomains: string[];
+  createdAt: string | null;
+  lastUsedAt: string | null;
+};
+
+export type Takeover = {
+  id: string;
+  browserTaskId?: string | null;
+  /** A credential. Held in component state for the life of the tab and nowhere else. */
+  liveUrl: string | null;
+  expiresAt: string;
+};
+
+export type CloseTakeover = {
+  retriedTaskId: string | null;
+  /** The domains the jar now holds cookies for. Not sign-ins: see `BrowserProfile`. */
+  cookieDomains: string[];
+  message: string;
+};
 
 /**
  * What the workspace's own provider keys look like from here — hints, never

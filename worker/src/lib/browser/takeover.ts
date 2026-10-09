@@ -860,12 +860,39 @@ export async function openTakeover(
   );
   if (profile.kind === "error") return profile;
 
-  const browser = await createBrowser(env, {
+  /**
+   * The egress pin, and the one case where it is dropped rather than obeyed.
+   *
+   * `proxyCountryCode` is a 240-value enum at browser-use, and it is NOT the
+   * ISO 3166-1 list `CF-IPCountry` draws from: five codes a real visitor
+   * sends are absent — `gb` (the provider spells the United Kingdom `uk`,
+   * handled where the header is read), and `cn`, `ax`, `io`, `um`, where
+   * there is simply no proxy to be had.
+   *
+   * The pin is a nice-to-have: §1 wants the egress to be where the person
+   * actually is, so a sign-in's risk signals look ordinary to the site. It is
+   * never worth failing a takeover over — and an unhandled 422 here fails
+   * every takeover from a whole country at a time, with "could not open a
+   * browser for you" as the only symptom.
+   *
+   * So a 422 with a country pinned is retried once without one, which is both
+   * the right behaviour and the one that cannot drift: it holds for whatever
+   * the provider's list says next year, where a copy of the list here would
+   * go stale in both directions. Retried only on a 422 and only once — with
+   * the country gone the remaining fields are two constants of ours and a
+   * profile id from our own row, so a second refusal is a real one.
+   */
+  let browser = await createBrowser(env, {
     profileId: profile.value.providerProfileId,
     ...(profile.value.proxyCountryCode === null
       ? {}
       : { proxyCountryCode: profile.value.proxyCountryCode }),
   });
+
+  if (browser.kind === "error" && browser.status === 422 && profile.value.proxyCountryCode) {
+    console.warn("browser-use has no proxy in this person's country; opening unpinned");
+    browser = await createBrowser(env, { profileId: profile.value.providerProfileId });
+  }
 
   if (browser.kind === "error") {
     // 429 here is the shared pool rather than a bug, and `browse` already

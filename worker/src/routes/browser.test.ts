@@ -234,6 +234,20 @@ describe("POST /browser/takeovers", () => {
     expect(open.mock.calls[0][1]).toMatchObject({ proxyCountryCode: "de" });
   });
 
+  /**
+   * browser-use spells the United Kingdom `uk`; `CF-IPCountry` says `GB`.
+   * Sent unmapped it is a 422 on every takeover from the UK — a whole country
+   * unable to sign in to anything, with "could not open a browser for you" as
+   * the only symptom, and nothing in a test suite that mocks the provider
+   * would ever have shown it.
+   */
+  it("spells the United Kingdom the way the provider does", async () => {
+    const fixture = appWith({ tables: { browser_tasks: selects(FAILED_TASK) }, country: "GB" });
+    await json(fixture, "POST", "/browser/takeovers", { browserTaskId: "task-1" });
+
+    expect(open.mock.calls[0][1]).toMatchObject({ proxyCountryCode: "uk" });
+  });
+
   it.each(["XX", "T1"])("pins nothing when Cloudflare answers %s", async (code) => {
     const fixture = appWith({ tables: { browser_tasks: selects(FAILED_TASK) }, country: code });
     await json(fixture, "POST", "/browser/takeovers", { browserTaskId: "task-1" });

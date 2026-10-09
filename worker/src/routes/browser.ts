@@ -75,14 +75,28 @@ const browser = new Hono<AppEnv>();
  * `T1` and `XX` are Cloudflare's own answers for Tor and for "could not tell",
  * and neither is a country to pin anything to. Null then, which leaves the
  * provider to choose — no worse than the unpinned behaviour this replaces.
+ *
+ * **Lowercased, and `gb` rewritten.** browser-use's `proxyCountryCode` is a
+ * 240-value lowercase enum, and it is not quite ISO 3166-1: the United
+ * Kingdom is spelled `uk` there, where `CF-IPCountry` says `GB`. Sent
+ * unmapped it is a 422 on every takeover from the UK — a whole country
+ * unable to sign in to anything, with "could not open a browser for you" as
+ * the only symptom. The provider's four other absences (`cn`, `ax`, `io`,
+ * `um`) are not aliases but countries it has no proxy in at all, so there is
+ * nothing to rewrite them to; `openTakeover` drops the pin and opens unpinned
+ * when the provider refuses one, which also covers whatever that list says
+ * next year.
  */
+const PROVIDER_SPELLING: Record<string, string> = { gb: "uk" };
+
 function egressCountry(c: {
   req: { header: (name: string) => string | undefined };
 }): string | null {
   const raw = c.req.header("CF-IPCountry");
   if (!raw || raw === "XX" || raw === "T1") return null;
   const code = raw.trim().toLowerCase();
-  return /^[a-z]{2}$/.test(code) ? code : null;
+  if (!/^[a-z]{2}$/.test(code)) return null;
+  return PROVIDER_SPELLING[code] ?? code;
 }
 
 /**

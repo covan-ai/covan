@@ -1229,3 +1229,91 @@ describe("forgetProfile", () => {
     expect(s.profiles).toHaveLength(1);
   });
 });
+
+/**
+ * The egress pin, and the two ways it can be a country the provider has no
+ * proxy in.
+ *
+ * `proxyCountryCode` is a 240-value enum at browser-use, and five codes
+ * Cloudflare's `CF-IPCountry` really returns are not in it: `gb`, `cn`, `ax`,
+ * `io` and `um`. The pin is a nice-to-have — it makes a sign-in's risk signals
+ * look ordinary to the site — so it is never worth failing a takeover over,
+ * which is what an unhandled 422 here does for a whole country at a time.
+ */
+describe("a country the provider has no proxy in", () => {
+  it("retries unpinned when the provider refuses the country, rather than failing the takeover", async () => {
+    createBrowser
+      .mockResolvedValueOnce({ kind: "error", status: 422, message: "422 Unprocessable Entity" })
+      .mockResolvedValueOnce({
+        kind: "ok",
+        value: { id: "bu-session", status: "active", liveUrl: LIVE_URL, timeoutAt: null },
+      });
+    const s = store({ profiles: [profileRow({ proxy_country_code: "cn" })] });
+
+    const r = await openTakeover(
+      ENV,
+      { userId: "user-1", workspaceId: "ws-1", browserTaskId: "bt-1" },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "ok", liveUrl: LIVE_URL });
+    expect(createBrowser).toHaveBeenCalledTimes(2);
+    expect(createBrowser.mock.calls[0][1]).toMatchObject({ proxyCountryCode: "cn" });
+    expect(createBrowser.mock.calls[1][1]).not.toHaveProperty("proxyCountryCode");
+  });
+
+  /**
+   * One retry, not a loop: with the country gone the only fields left are our
+   * own constants and a profile id from our own row, so a second 422 is a real
+   * refusal and asking again would be asking the same question.
+   */
+  it("does not retry a second time when the unpinned attempt is refused too", async () => {
+    createBrowser.mockResolvedValue({
+      kind: "error",
+      status: 422,
+      message: "422 Unprocessable Entity",
+    });
+    const s = store({ profiles: [profileRow({ proxy_country_code: "cn" })] });
+
+    const r = await openTakeover(
+      ENV,
+      { userId: "user-1", workspaceId: "ws-1", browserTaskId: "bt-1" },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "error", status: 502 });
+    expect(createBrowser).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry when nothing was pinned in the first place", async () => {
+    createBrowser.mockResolvedValue({
+      kind: "error",
+      status: 422,
+      message: "422 Unprocessable Entity",
+    });
+    const s = store({ profiles: [profileRow({ proxy_country_code: null })] });
+
+    await openTakeover(
+      ENV,
+      { userId: "user-1", workspaceId: "ws-1", browserTaskId: "bt-1" },
+      s.deps,
+    );
+
+    expect(createBrowser).toHaveBeenCalledTimes(1);
+  });
+
+  /** A busy pool is not a bad country, and retrying it would waste the answer. */
+  it("does not retry a 429", async () => {
+    createBrowser.mockResolvedValue({ kind: "error", status: 429, message: "429" });
+    const s = store({ profiles: [profileRow({ proxy_country_code: "de" })] });
+
+    const r = await openTakeover(
+      ENV,
+      { userId: "user-1", workspaceId: "ws-1", browserTaskId: "bt-1" },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "error", status: 429 });
+    expect(createBrowser).toHaveBeenCalledTimes(1);
+  });
+});

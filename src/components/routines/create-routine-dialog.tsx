@@ -99,6 +99,21 @@ export function CreateRoutineDialog({
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
   const [timezone, setTimezone] = useState(browserTimezone());
   const [channelId, setChannelId] = useState("");
+  // Flips the moment the person picks a channel by hand, for the same reason
+  // `emailTouched` below exists: a template opened straight from a link
+  // (`openTemplate`) renders step 2 on mount, often before `useDeliveryChannels`
+  // has resolved, so `channels` is `[]` and whatever `applyTemplate` computed
+  // from it is stale by the time the real list arrives. `channelId` alone
+  // cannot tell "the person has not touched this" apart from "nothing resolved
+  // yet", which is why `resolvedChannelId` below reads this flag rather than
+  // `channelId === ""`.
+  const [channelTouched, setChannelTouched] = useState(false);
+  // The channel kind a template or a drafted routine asked for (`d.channelKind`
+  // / `draft.channelKind`), kept rather than resolved once — the channel it
+  // names may not exist in `channels` yet at the moment it is set. `null` for
+  // "Set it up myself", which has no preference and takes whichever channel is
+  // first, same as before this existed.
+  const [wantedChannelKind, setWantedChannelKind] = useState<"email" | "slack" | null>(null);
   // Only relevant once `needsNewChannel` is true — see the "Deliver to" branch
   // below. Raw user input, empty until they type. What the field shows and
   // what `save()` sends is `resolvedDeliveryEmail` below, not this directly —
@@ -124,6 +139,28 @@ export function CreateRoutineDialog({
     ? deliveryEmail
     : deliveryEmail || me?.user.email || "";
 
+  // The channel id a wanted kind resolves to against the LIVE list, or the
+  // first channel if there is no wanted kind (or no match for it) — the same
+  // fallback `skipToForm` and the unknown-template branch below compute by
+  // hand. Kept as a function rather than inlined so `applyTemplate`, `runDraft`
+  // and `resolvedChannelId` all do the lookup the same way.
+  const channelFor = (kind: "email" | "slack" | null) => {
+    if (kind) {
+      const wantedKind = kind === "slack" ? "slack_webhook" : "email";
+      const match = channels.find((c) => c.kind === wantedKind);
+      if (match) return match.id;
+    }
+    return channels[0]?.id ?? "";
+  };
+
+  // What the Select shows and what `save()` sends — the same shape as
+  // `resolvedDeliveryEmail` above and for the same reason: untouched, it
+  // re-resolves `wantedChannelKind` against the live `channels` list on every
+  // render, so a channel that was `[]` when a template applied is not stuck on
+  // the empty string once `useDeliveryChannels` actually answers. Touched, it
+  // is exactly what the person picked, which `channelFor` never overrides.
+  const resolvedChannelId = channelTouched ? channelId : channelFor(wantedChannelKind);
+
   const reset = () => {
     setStep(1);
     setProse("");
@@ -136,6 +173,8 @@ export function CreateRoutineDialog({
     setScheduleCron("0 * * * *");
     setTimezone(browserTimezone());
     setChannelId("");
+    setChannelTouched(false);
+    setWantedChannelKind(null);
     setDeliveryEmail("");
     setEmailTouched(false);
     setEndsAfterRuns(null);
@@ -158,15 +197,18 @@ export function CreateRoutineDialog({
       // The draft calls it `cron`; the create endpoint calls it `scheduleCron`.
       setScheduleCron(draft.cron);
       setTimezone(draft.timezone);
-      // channelKind is only a hint — the draft cannot know channel ids, so it
-      // preselects the first channel of a matching kind if one exists.
-      const wanted = draft.channelKind === "slack" ? "slack_webhook" : "email";
-      setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
+      // channelKind is only a hint — the draft cannot know channel ids.
+      // Recording the preference is all this does; `resolvedChannelId`
+      // resolves it against the live `channels` list on every render, so it
+      // need not have arrived yet.
+      setWantedChannelKind(draft.channelKind);
+      setChannelTouched(false);
     } catch {
       // 422 means the parser could not read the request. Trapping the user on
       // step one retrying prose helps nobody; the form is always reachable.
       toast.message("Couldn't read that one — fill it in below instead.");
-      setChannelId(channels[0]?.id ?? "");
+      setWantedChannelKind(null);
+      setChannelTouched(false);
     } finally {
       setDrafting(false);
       setStep(2);
@@ -190,8 +232,11 @@ export function CreateRoutineDialog({
     setScheduleCron(d.scheduleCron);
     setTimezone(browserTimezone());
     setEndsAfterRuns(template.endsAfterRuns);
-    const wanted = d.channelKind === "slack" ? "slack_webhook" : "email";
-    setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
+    // Recording the preference, not resolving it — see `resolvedChannelId`'s
+    // comment for why this is what fixes the deep-linked case `channels`
+    // being `[]` on mount used to break.
+    setWantedChannelKind(d.channelKind);
+    setChannelTouched(false);
     setStep(2);
   };
 
@@ -219,18 +264,28 @@ export function CreateRoutineDialog({
     if (template) {
       applyTemplate(template);
     } else {
-      setChannelId(channels[0]?.id ?? "");
+      setWantedChannelKind(null);
+      setChannelTouched(false);
     }
     onTemplateConsumed?.();
-    // `channels` is read inside and deliberately not a dependency: it arrives a
-    // beat later, and re-running this on its arrival would reopen a dialog the
-    // person had closed. A template with no channel preselected is the same
-    // state "Set it up myself" produces, which the empty-channel branch handles.
+    // `channels` is deliberately not a dependency: it arrives a beat later,
+    // and re-running this on its arrival would reopen a dialog the person had
+    // closed. That used to be unsafe for a different reason — the comment
+    // here used to claim the result was "the same state 'Set it up myself'
+    // produces, which the empty-channel branch handles." It was not:
+    // `skipToForm` runs on a click, long after `channels` has loaded, so that
+    // path does preselect; and the empty-channel branch only covers
+    // `channels.length === 0`, which on a workspace with a channel already
+    // is exactly the case this was not. The actual fix is
+    // `wantedChannelKind` + `resolvedChannelId` above: this effect only ever
+    // records a preference, never resolves a channel id itself, so it has
+    // nothing that `channels` arriving later could make stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openTemplate]);
 
   const skipToForm = () => {
-    setChannelId(channels[0]?.id ?? "");
+    setWantedChannelKind(null);
+    setChannelTouched(false);
     setStep(2);
   };
 
@@ -251,7 +306,7 @@ export function CreateRoutineDialog({
         instruction: instruction.trim(),
         ...(needsNewChannel
           ? { deliveryEmail: resolvedDeliveryEmail.trim() }
-          : { deliveryChannelId: channelId }),
+          : { deliveryChannelId: resolvedChannelId }),
         scheduleCron: scheduleCron.trim(),
         timezone,
         endsAfterRuns,
@@ -283,7 +338,7 @@ export function CreateRoutineDialog({
   const canSave =
     name.trim() !== "" &&
     instruction.trim() !== "" &&
-    (needsNewChannel ? resolvedDeliveryEmail.trim() !== "" : channelId !== "") &&
+    (needsNewChannel ? resolvedDeliveryEmail.trim() !== "" : resolvedChannelId !== "") &&
     // The picker emits "" while a number field is mid-edit, so this also covers
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
@@ -339,7 +394,19 @@ export function CreateRoutineDialog({
                 <Input id="routine-name" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
 
-              {connections.length > 0 && (
+              {/* Hidden rather than disabled for `workspace`: its items are
+                  "Scheduled task" and "A connected source", a choice between
+                  two kinds a person can set up from scratch on this screen.
+                  `workspace` is neither - it only ever arrives from the
+                  gap-report template, with no field here for a person to have
+                  chosen it by hand - so a disabled item for it would offer a
+                  third option to a control that is not where that option is
+                  made, rather than explaining why the real two are grayed out.
+                  Hiding the whole control also removes the actual bug:
+                  without it, the trigger showed blank (no item's value is
+                  "workspace") and picking either real item silently converted
+                  the routine away from the one kind that cannot change back. */}
+              {connections.length > 0 && sourceKind !== "workspace" && (
                 <div className="space-y-2">
                   <Label htmlFor="routine-source">Source</Label>
                   <Select
@@ -464,7 +531,13 @@ export function CreateRoutineDialog({
                     </p>
                   </>
                 ) : (
-                  <Select value={channelId} onValueChange={setChannelId}>
+                  <Select
+                    value={resolvedChannelId}
+                    onValueChange={(v) => {
+                      setChannelTouched(true);
+                      setChannelId(v);
+                    }}
+                  >
                     <SelectTrigger id="routine-channel">
                       <SelectValue placeholder="Pick a channel" />
                     </SelectTrigger>

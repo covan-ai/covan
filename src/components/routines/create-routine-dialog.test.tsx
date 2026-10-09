@@ -201,6 +201,45 @@ describe("opened from a link", () => {
   });
 
   /**
+   * A2. `applyTemplate` used to compute `channelId` against `channels`
+   * directly, which is `[]` at this exact moment — `useDeliveryChannels` has
+   * not resolved yet on a deep-linked open — so `channelId` landed `""` and
+   * nothing re-seeded it once the real list arrived a beat later. Create
+   * stayed disabled until the person opened the dropdown and picked the only
+   * item by hand. `resolvedChannelId` fixes this by re-resolving the wanted
+   * channel kind against the live list on every render; this is the
+   * regression test for it.
+   *
+   * `gap-report`, not `weekly-digest` (the brief's suggested target, right
+   * above): `weekly-digest`'s Create is disabled for an unrelated,
+   * pre-existing reason this fix wave is not touching — there is no URL
+   * input anywhere in this dialog for `sourceKind: "rss"` (removed in
+   * b4f4521, two days before the templates were added in d30ce94), so its
+   * Create cannot be enabled through this UI at all, with or without this
+   * fix. `gap-report`'s `workspace` source needs no url — which is also why
+   * the next test below exists for it already, with zero channels and the
+   * email path. This one gives it one channel instead, which is the only
+   * way to reach the Select this fix is about.
+   */
+  it("selects the one channel immediately for a template opened from a link", async () => {
+    channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "me@example.com" }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CreateRoutineDialog agentId="a1" openTemplate="gap-report" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByDisplayValue("Coverage gaps")).toBeInTheDocument();
+    // `channels` resolves on its own tick, a beat after the name field above
+    // — the exact gap this fix closes — so this waits for it rather than
+    // asserting the instant the name appears.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Create routine$/i })).not.toBeDisabled(),
+    );
+  });
+
+  /**
    * Task 17's blocker (a). `canSave`'s source check used to fall through to
    * the url branch for every `sourceKind` it did not name explicitly, so a
    * `workspace` routine — which has no url field on screen at all — landed on

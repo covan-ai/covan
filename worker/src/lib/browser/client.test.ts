@@ -30,10 +30,17 @@ describe("createTask", () => {
   });
 
   /**
-   * The whole of "v1 is public web only", as a line of code rather than a
+   * "Covan never receives a credential", as a line of code rather than a
    * sentence in a doc. The provider accepts `secrets` and `opVaultId`; this
-   * build never populates either, so there is nothing for a web page's
-   * instructions to steal.
+   * build never populates either, so there is nothing a web page's
+   * instructions could make it hand over.
+   *
+   * It used to read "the whole of v1 is public web only", and that stopped
+   * being true the moment `sessionSettings` could name a profile: a browser
+   * task CAN now act inside a site somebody is signed in to. What did not
+   * change is where the sign-in came from — a person's own hands, in their own
+   * tab, at the site — so these two fields stay empty for ever and this is
+   * still the assertion that says so.
    */
   it("never sends credentials", async () => {
     fetchMock.mockResolvedValue(

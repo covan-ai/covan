@@ -67,7 +67,21 @@ export async function recordBrowserTask(
     .single();
 
   if (error || !data) {
-    console.error("started a browser task but could not record it", error);
+    /**
+     * The code and the message, never the error object.
+     *
+     * PostgREST hands Postgres' `DETAIL` back as `details`, and a NOT NULL or
+     * CHECK violation's detail is `Failing row contains (…)` — every column of
+     * the row that failed. The row being inserted here carries
+     * `provider_task_id`, which under one deployment-wide
+     * `BROWSER_USE_API_KEY` is the boundary between two tenants at the
+     * provider rather than a label. `lib/browser/takeover.ts` writes the same
+     * rule down at length and has a test that reads its own source for it.
+     */
+    console.error("started a browser task but could not record it", {
+      code: error?.code,
+      message: error?.message,
+    });
     return null;
   }
   return String(data.id);

@@ -189,11 +189,26 @@ describe("a reloaded tab", () => {
    * conversation nobody was looking at.
    */
   it("does not show a takeover that belongs to another conversation", async () => {
-    browserTasks.mockResolvedValue({ tasks: [] });
+    // This conversation HAS a browser task — otherwise the query would be
+    // skipped and the absence of the panel would prove nothing — but it is a
+    // different task from the one the standing takeover names.
+    browserTasks.mockResolvedValue({ tasks: [task({ id: "task-9" })] });
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
 
-    await waitFor(() => expect(browserTasks).toHaveBeenCalled());
+    /**
+     * Waited on the OFFER, not on the query having been called.
+     *
+     * `waitFor(() => expect(current).toHaveBeenCalled())` resolves the moment
+     * the request goes out — before its answer lands and before React has
+     * rendered anything with it — so a `queryByRole` after it asserts against
+     * a screen the takeover could not have reached yet. It passed with the
+     * scoping check deleted. This task is offerable, so the offer card is
+     * proof that both answers arrived AND that the panel lost: had the
+     * takeover been accepted, the early `if (takeover)` return would have
+     * replaced this button rather than sat beside it.
+     */
+    expect(await screen.findByRole("button", { name: /sign in myself/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /done, i've signed in/i })).toBeNull();
   });
 
@@ -243,5 +258,28 @@ describe("the live URL", () => {
     // A credential: anyone with it can drive that browser. It may be an href
     // and nothing else — not body text somebody screenshots into a ticket.
     expect(container.textContent ?? "").not.toContain("secret-address");
+  });
+});
+
+describe("what it asks for", () => {
+  /**
+   * Two requests per chat open that could not produce anything: `belongsHere`
+   * discards a standing takeover whose task is not in this conversation, so an
+   * empty list makes the answer irrelevant whatever it is. On a deployment
+   * with no `BROWSER_USE_API_KEY` that is every chat open there will ever be.
+   */
+  it("does not ask for a takeover in a conversation with no browser tasks", async () => {
+    browserTasks.mockResolvedValue({ tasks: [] });
+    renderCard();
+
+    await waitFor(() => expect(browserTasks).toHaveBeenCalled());
+    expect(current).not.toHaveBeenCalled();
+  });
+
+  it("asks once the conversation has one", async () => {
+    browserTasks.mockResolvedValue({ tasks: [task()] });
+    renderCard();
+
+    await waitFor(() => expect(current).toHaveBeenCalled());
   });
 });

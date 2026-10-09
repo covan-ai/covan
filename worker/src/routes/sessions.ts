@@ -268,8 +268,6 @@ sessions.get("/sessions/:id/messages", async (c) => {
   );
 });
 
-export { sessions };
-
 /**
  * GET /sessions/:id/browser-tasks — what the takeover card reads.
  *
@@ -313,3 +311,5 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
     tasks: (data ?? []).map((row) => mapBrowserTask(row as Record<string, unknown>)),
   });
 });
+
+export { sessions };

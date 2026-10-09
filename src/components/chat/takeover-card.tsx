@@ -61,6 +61,11 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
     queryFn: () => api.sessions.browserTasks(sessionId),
     enabled: !!sessionId,
   });
+  /**
+   * This conversation's browser tasks, read before the takeover query because
+   * it is what decides whether that query can produce anything at all.
+   */
+  const tasks = tasksFor(data);
 
   /**
    * The reload recovery, and the likeliest day-one failure without it.
@@ -74,7 +79,19 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
   const { data: current } = useQuery({
     queryKey: ["browser-takeover-current"],
     queryFn: () => api.browser.current(),
-    enabled: !minted,
+    /**
+     * Not asked until this conversation has a browser task in it, and that is
+     * a correctness-preserving saving rather than a guess.
+     *
+     * `belongsHere` below discards any standing takeover whose
+     * `browserTaskId` is not one of these rows — so with an empty list this
+     * request could not produce a rendered card however it answered. Which
+     * makes it one request per chat open that buys nothing: on a deployment
+     * with no `BROWSER_USE_API_KEY` that is every chat open there will ever
+     * be, and on one with a key it is still every conversation that never
+     * used the tool.
+     */
+    enabled: !minted && tasks.length > 0,
     // Not cached across mounts: the URL inside it is a credential, and a stale
     // one points at a browser that has already been stopped.
     gcTime: 0,
@@ -94,7 +111,6 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
    * conversation and is shown in none — which is correct until there is a
    * settings screen to show it on.
    */
-  const tasks = tasksFor(data);
   const standing = current?.takeover;
   const belongsHere =
     !!standing?.browserTaskId && tasks.some((t) => t.id === standing.browserTaskId);

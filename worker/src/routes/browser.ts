@@ -25,6 +25,31 @@ import { closeTakeover, openTakeover, providerSessionFor } from "../lib/browser/
 const browser = new Hono<AppEnv>();
 
 /**
+ * No route here is available to an API key, and the gate is on the router
+ * rather than on each handler.
+ *
+ * The rule is `lib/api-key-rule.ts`'s: *a key may not create access that
+ * survives its own revocation.* Every route below creates exactly that. `POST`
+ * mints a live browser URL carrying the owner's own signed-in cookies, which
+ * browser-use documents as full control of that browser. `GET .../current`
+ * hands the same URL back. And `close` stops somebody's browser and spends a
+ * re-run on their behalf.
+ *
+ * **`GET .../current` was written without the check, and nothing noticed.**
+ * `api-key-refusal.static.test.ts` asked only whether the FILE mentions
+ * `refuseIfKeyAuthenticated(` somewhere, so `POST`'s gate answered for a route
+ * that returns the same credential and has none. That blind spot is now closed
+ * in the ratchet itself, which counts refusals against handlers.
+ *
+ * Router middleware would be the stronger shape — impossible for the next
+ * handler to forget — and it is deliberately NOT used, for a reason worth
+ * recording: a sub-app mounted at `"/"` merges its middleware into the parent,
+ * so a path pattern broad enough to cover these three would refuse API keys on
+ * every unrelated route in the API. So: three explicit calls, and the knowledge
+ * that the static ratchet cannot tell three from one. **Anyone adding a fourth
+ * handler here has to remember.**
+ */
+/**
  * How long a takeover's live URL is good for, for the client's countdown.
  *
  * Not re-derived here: `TAKEOVER_EXPIRY_MINUTES` lives beside the code that
@@ -65,14 +90,6 @@ function egressCountry(c: {
  * that are not the grants.
  */
 browser.post("/browser/takeovers", async (c) => {
-  /**
-   * Step 0, before anything else is read.
-   *
-   * An API key may not create access that survives its own revocation, and
-   * this route creates exactly that: a live browser URL carrying the owner's
-   * own signed-in cookies, which browser-use documents as full control of that
-   * browser. Revoking the key does not touch the session.
-   */
   const refusal = refuseIfKeyAuthenticated(c, "take over a browser");
   if (refusal) return c.json(refusal, 403);
 
@@ -157,6 +174,11 @@ browser.post("/browser/takeovers", async (c) => {
  * why there is nothing to leak if this row is ever read by something else.
  */
 browser.get("/browser/takeovers/current", async (c) => {
+  // This route hands back the live URL, so it is the same creation of access
+  // POST is, arriving by a read. It was missing this.
+  const refusal = refuseIfKeyAuthenticated(c, "take over a browser");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const user = c.get("user");
 
@@ -215,7 +237,7 @@ browser.get("/browser/takeovers/current", async (c) => {
  * answer, and a 202 here would mean telling them it worked before knowing.
  */
 browser.post("/browser/takeovers/:id/close", async (c) => {
-  const refusal = refuseIfKeyAuthenticated(c, "close a browser takeover");
+  const refusal = refuseIfKeyAuthenticated(c, "take over a browser");
   if (refusal) return c.json(refusal, 403);
 
   const user = c.get("user");

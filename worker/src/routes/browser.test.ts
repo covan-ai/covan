@@ -287,6 +287,37 @@ describe("POST /browser/takeovers/:id/close", () => {
     expect(status).toBe(403);
     expect(close).not.toHaveBeenCalled();
   });
+});
+
+/**
+ * The gate is on the router, not on each handler, and this is the case that
+ * made that necessary: `GET .../current` returns the same live URL `POST`
+ * mints, and the static ratchet cannot tell one handler from another — it only
+ * asks whether the FILE refuses a key somewhere.
+ */
+describe("every route refuses an API key", () => {
+  it("refuses the read that hands back a live URL", async () => {
+    const fixture = appWith({
+      apiKeyId: "key-1",
+      tables: {
+        browser_takeovers: selects({
+          id: "to-1",
+          user_id: USER.id,
+          browser_task_id: "task-1",
+          status: "open",
+          expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+        }),
+      },
+    });
+    const { status, body } = await json(fixture, "GET", "/browser/takeovers/current");
+
+    expect(status).toBe(403);
+    // The point: a key must not be able to read a credential whose access
+    // outlives the key's own revocation.
+    expect(JSON.stringify(body)).not.toContain("live.browser-use.com");
+    expect(session).not.toHaveBeenCalled();
+    expect(liveUrl).not.toHaveBeenCalled();
+  });
 
   it("closes, and reports what the sign-in reached", async () => {
     const fixture = appWith({});

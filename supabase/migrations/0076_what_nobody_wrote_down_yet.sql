@@ -1,0 +1,815 @@
+-- =========================================================================
+-- 0076 — what nobody wrote down yet
+--
+-- 0039 recorded how every reply was grounded. 0053 read those counts — by
+-- agent, by window, admin-only — and stopped there, deliberately, with a ruling
+-- in its header: the counts disclose nothing and could ship, and "the questions
+-- behind them are a separate feature with a consent step in front of it: the
+-- person who asked decides whether their question joins the team's gap list."
+--
+-- This is that feature, and it does NOT have that consent step. The reason is
+-- written down here because this migration overrides a decision somebody made
+-- carefully.
+--
+-- 0053 was right about the thing it was looking at: a list of verbatim
+-- questions is a list of what colleagues typed in private rooms. Per-asker
+-- consent is the right answer to THAT feature. It is the wrong answer to this
+-- one, and the reason is about the report rather than about privacy — a gap
+-- list whose contents are a function of who clicked yes has an unknowable
+-- sampling bias, and "what should we write down next" is answered WRONGLY by a
+-- biased sample rather than partially. It would also put another question in
+-- front of somebody mid-conversation.
+--
+-- What replaces it does the same work structurally, in three parts:
+--
+--   1. No question ever reaches an admin. What reaches them is a topic label
+--      over a group of at least N, and the floor and the containment check run
+--      in our code on what the model returned — `lib/routines/coverage-cluster.ts`
+--      — not as a request inside a prompt.
+--   2. Any member can exclude themselves, retroactively, and NOBODY can see who
+--      did. That is the SELECT policy below and it is a feature, not an
+--      oversight.
+--   3. The whole thing is off until a workspace turns it on, so no existing
+--      workspace starts producing a report because of a deploy.
+--
+-- =========================================================================
+-- THE CALLER, AND WHY BOTH READS TAKE A USER ID
+-- =========================================================================
+--
+-- The plan for this migration had both reads call `is_workspace_admin`, the
+-- way 0053's pair do. THAT FUNCTION CAN NEVER PASS FOR THE CALLER THAT RUNS
+-- THE REPORT, and the feature would not have worked once.
+--
+-- `is_workspace_admin` (0003) asks `wm.user_id = auth.uid()`, and `auth.uid()`
+-- reads `request.jwt.claim.sub` out of a session setting PostgREST fills in
+-- from the caller's JWT. The routines engine runs under the SERVICE ROLE —
+-- `worker/src/lib/routines/dispatcher.ts` builds its client as
+-- `overrides.db ?? serviceClient(env)` on all three entry points — and a
+-- service-role JWT carries no `sub`. Measured on the local stack: with the
+-- service-role key, `auth.uid()` is null and `request.jwt.claims` is
+-- `{"role":"service_role",...}` with no `sub` in it. So `is_workspace_admin`
+-- is false and the function raises 42501 on every scheduled run.
+--
+-- A routine has no user session to borrow. It runs on a cron, hours after
+-- anybody signed in, and `userClient(env, token)` has no token to be handed.
+-- The plan half-noticed this: 0053's grant comment, copied into the plan,
+-- observes that `auth.uid()` is null for an anonymous caller and treats that as
+-- a defence — without noticing it is equally true of the `service_role` the
+-- very next line grants EXECUTE to.
+--
+-- So both reads take the owner's user id explicitly:
+--
+--     workspace_coverage_gaps(p_workspace_id, p_user_id, p_days)
+--     workspace_coverage_totals(p_workspace_id, p_user_id, p_days)
+--
+-- and each checks that **`p_user_id`** is an admin of `p_workspace_id`.
+--
+-- One alternative was found and rejected rather than missed: a definer wrapper
+-- could `set_config('request.jwt.claim.sub', p_user_id::text, true)` and then
+-- call 0053's function, which would pass. That is forging an identity rather
+-- than checking one — the forged GUC is visible to every policy evaluated
+-- later in the same transaction, so a function that wanted to read one table
+-- as somebody would silently read all of them as that somebody. An explicit
+-- argument that the function validates is the same capability with a blast
+-- radius of one call. Minting a user JWT in the worker was also ruled out: the
+-- hosted project signs with ES256 through JWKS, so there is no shared secret to
+-- mint with, and `SUPABASE_JWT_SECRET` is optional and verify-only.
+--
+-- ---- the escalation guard "act as this user" needs ------------------------
+--
+-- A SECURITY DEFINER function that takes a user id is an impersonation
+-- primitive if nothing stops a caller naming somebody else. The plan granted
+-- EXECUTE to `authenticated`, which is reachable with the anon key that ships
+-- in the browser bundle plus any password — so without a guard, any signed-in
+-- member could read their workspace's gap list by passing an admin's id.
+--
+-- Closed twice over, and the outer of the two is the one that holds today:
+--
+--   * EXECUTE IS GRANTED TO `service_role` ONLY. There is no caller left that
+--     has an `auth.uid()`, and nothing in the product wanted one — the grant
+--     block at the bottom of this file has the whole argument, including why
+--     `authenticated` holding it would have made this header's own claim that
+--     "no question ever reaches an admin" false.
+--   * and inside each function, for the day somebody widens that grant:
+--
+--         if auth.uid() is not null and p_user_id is distinct from auth.uid()
+--
+--     A caller with a session may therefore only ever ask about THEMSELVES —
+--     the argument becomes a restatement of who they already are. That branch
+--     is unreachable as shipped and is kept on purpose, because the grant on
+--     these two functions has already been wrong once.
+--
+-- A caller with no session (`auth.uid()` null) is the service role, which
+-- already bypasses RLS on every table these functions read, so letting it name
+-- the routine's owner grants it nothing it did not have.
+--
+-- `is distinct from`, not `<>`, so a null `p_user_id` from a signed-in caller
+-- is refused there rather than falling through to the admin check.
+--
+-- ---- `anon` ALSO HAS A NULL auth.uid(), AND THE OBVIOUS GRANT DOES NOT ------
+-- ---- KEEP IT OUT -----------------------------------------------------------
+--
+-- 0053's grant block revokes PUBLIC and grants `authenticated, service_role`,
+-- and the plan copied it here. MEASURED ON THIS STACK, THAT LEAVES `anon` WITH
+-- EXECUTE. Supabase ships
+-- `alter default privileges ... grant execute on functions to anon,
+-- authenticated, service_role`, so a newly created function is granted to
+-- `anon` BY NAME rather than through PUBLIC — and `revoke ... from public` does
+-- not touch a grant held by name. `select has_function_privilege('anon', ...)`
+-- answers true for 0053's two functions to this day.
+--
+-- For 0053 that is untidy and not a hole: its guard is
+-- `is_workspace_admin(p_workspace_id)`, which is false for a null
+-- `auth.uid()`, so an anonymous caller is refused by the body. THESE TWO
+-- FUNCTIONS DO NOT REFUSE A NULL `auth.uid()` — that is how the service role
+-- gets in — so for them the grant was the entire boundary, and it was not
+-- holding. Reproduced before this was written: with nothing but the anon key
+-- (which ships in the browser bundle), a workspace id and an admin's user id,
+-- `POST /rest/v1/rpc/workspace_coverage_gaps` returned a result rather than an
+-- error. Both of those ids are readable by any plain member of the workspace —
+-- `workspace_members_select_fellow_members` (0001) hands over `user_id` and
+-- `role` — so this was the escalation guard above being walked around by
+-- dropping the Authorization header.
+--
+-- Closed twice, on purpose, because the thing that went wrong here was a grant
+-- nobody looked at:
+--
+--   1. `revoke execute ... from anon` BY NAME, at the bottom of this file. This
+--      is the boundary: Postgres checks it before the body runs.
+--   2. A second condition in the body — when there is no `auth.uid()`, the
+--      JWT's own `role` claim must be `service_role`. `auth.role()` reads the
+--      same verified claims `auth.uid()` does, so it is no weaker a source. It
+--      costs three lines and it means a future `grant execute ... to anon`,
+--      or another `alter default privileges` arriving with a Supabase upgrade,
+--      is a feature that does not work rather than a disclosure.
+--
+-- The cost of (2) is owned: a caller with no `request.jwt.claims` at all — a
+-- `psql` session, a maintenance script — is refused too, and the message says
+-- so rather than leaving somebody to guess.
+--
+-- ---- why 0053's `workspace_coverage` is not reused for the totals ---------
+--
+-- The plan said to reuse it. It has the same `auth.uid()` problem, so reusing
+-- it means fixing it — which means replacing a shipped function that the live
+-- coverage screen depends on (`worker/src/routes/coverage.ts` calls it on every
+-- load of that screen), inside the same migration that adds a
+-- privacy-sensitive read. Duplicating about twenty lines of aggregation is the
+-- cheaper risk of the two.
+--
+-- `workspace_coverage_totals` below is therefore 0053's aggregation restated
+-- under the new caller model and NOTHING ELSE. **The two must stay in step.**
+-- A change to the buckets in either one belongs in both, and the comment on
+-- each says so.
+-- =========================================================================
+
+-- ---- the switch ----------------------------------------------------------
+-- 0014's precedent for a workspace-level setting. Default false is the whole of
+-- its safety.
+
+alter table public.workspaces
+  add column if not exists gap_report_enabled boolean not null default false;
+
+comment on column public.workspaces.gap_report_enabled is
+  'Whether this workspace has turned the coverage gap report on. False for '
+  'every workspace that existed before 0076, and the reads below refuse to '
+  'return anything while it is false.';
+
+-- ---- two guards that belong in 0075 --------------------------------------
+--
+-- Both are here only because 0075 is already applied to the local database and
+-- an applied migration does not get edited. Conceptually they are 0075's: they
+-- are about the row that migration's `source_kind` introduced.
+
+-- (1) `source_config` has to say WHICH report.
+--
+-- 0075's own header says `source_config` names the report and the next task
+-- constructs `{"report": "coverage_gaps"}` — but nothing refuses `{}`, which is
+-- the column default. A routine created with no report key is permanently
+-- broken rather than temporarily wrong: 0027's
+-- `trg_routines_source_config_immutable` refuses every update to
+-- `source_config`, so the only repair is to delete the routine and make it
+-- again.
+--
+-- `routines_connection_config_check` (0047) is the precedent — a shape guard
+-- for the kind its migration introduced, written as a CHECK rather than a
+-- policy clause because the executor and the service role are callers too.
+-- Same `coalesce`, and for 0047's reason: `->>` on a missing key yields NULL,
+-- `NULL ~ ...` is NULL, and a CHECK only refuses FALSE, so without the
+-- `coalesce` a `{}` config passes the one guard that applies when row level
+-- security does not. (`->>` on a JSON array or scalar also yields NULL, so a
+-- `source_config` that is not an object is refused rather than raising.)
+--
+-- A pattern rather than an `in ('coverage_gaps')` list, deliberately: 0075
+-- promises that the second report — `{"report": "stale_documents"}` — needs no
+-- constraint change, no policy rewrite and no migration, and an enumeration
+-- here would break that promise on the day it is collected. The pattern is
+-- what a report name is: a snake_case identifier, bounded, so a config
+-- carrying forty kilobytes of junk under the `report` key is still refused.
+alter table public.routines drop constraint if exists routines_workspace_config_check;
+alter table public.routines
+  add constraint routines_workspace_config_check
+  check (
+    source_kind <> 'workspace'
+    or coalesce(source_config ->> 'report', '') ~ '^[a-z][a-z0-9_]{0,63}$'
+  );
+
+-- (2) A routine that reads its own workspace must be PRIVATE.
+--
+-- `routine_runs_select_visible` (0012) admits
+-- `r.visibility = 'shared' and is_workspace_member(r.workspace_id)`, and
+-- `routine_runs.summary` is where the delivered report is kept (0056). So an
+-- admin flipping one of these routines to `shared` makes every delivered
+-- coverage report readable by every plain member of the workspace — which is
+-- the exact population this whole design keeps the report away from. Nothing
+-- else refuses it: `visibility` is a column the edit dialog changes, and
+-- 0075's guard never looks at it.
+--
+-- DELIBERATELY A CHECK AND NOT A POLICY CLAUSE. A fourth argument to
+-- `routine_workspace_source_is_permitted` would mean dropping and recreating
+-- that function and then both policies on `routines` again — the riskiest
+-- operation in this phase, and the one 0075's header counts five previous
+-- hand-copies of. A CHECK needs no policy rewrite, cannot lose a clause
+-- somebody carried forward wrong, and binds the service role as well, which a
+-- policy does not.
+alter table public.routines drop constraint if exists routines_workspace_source_private_check;
+alter table public.routines
+  add constraint routines_workspace_source_private_check
+  check (source_kind <> 'workspace' or visibility = 'private');
+
+-- ---- (3) the guard, inverted to an allow-list ----------------------------
+--
+-- 0075 wrote the body as `p_source_kind <> 'workspace' or (...)`, which answers
+-- TRUE for any kind it has never heard of — the same default-open shape its own
+-- header criticises in 0047's `routine_source_is_visible` two paragraphs
+-- earlier. A `source_kind` added in 0085 by somebody solving a different
+-- problem would sail through the one gate on this table that is about
+-- privilege, and nothing would fail.
+--
+-- Inverted, a new kind is refused until somebody decides about it: adding a
+-- kind to `routines_source_kind_check` and forgetting this list produces a
+-- feature that does not work, which is a bug report. Forgetting it the other
+-- way round produces a privilege hole, which is not.
+--
+-- Safe with `create or replace` on the SAME SIGNATURE: both policies reference
+-- the function by name and stay valid, so neither is touched here. The body is
+-- the only thing that changes, and `routine-policy.static.test.ts` reads policy
+-- text rather than function bodies, so it is unaffected.
+create or replace function public.routine_workspace_source_is_permitted(
+  p_source_kind text,
+  p_workspace_id uuid,
+  p_output_bundle_id uuid
+) returns boolean
+language sql
+stable
+-- Still deliberately NOT security definer, and still with no `set search_path`,
+-- for the two reasons 0075 gives at length: a policy helper must ask as the
+-- caller, and a function with a SET clause cannot be inlined by the planner,
+-- which inside a per-row policy expression is a cost paid for nothing.
+as $$
+  select p_source_kind in ('rss', 'web', 'none', 'connection')
+      or (p_source_kind = 'workspace'
+          and public.is_workspace_admin(p_workspace_id)
+          and p_output_bundle_id is null);
+$$;
+
+comment on function public.routine_workspace_source_is_permitted(text, uuid, uuid) is
+  'True for the source kinds that need no privilege (rss, web, none, '
+  'connection); true for ''workspace'' only when the caller is an admin of it '
+  'and the routine would file nothing as a document; FALSE for any kind not '
+  'named — an allow-list, so a source kind added later is refused until '
+  'somebody decides about it. Runs as the caller; must not become SECURITY '
+  'DEFINER.';
+
+-- ---- the opt-out, and why it is a table ----------------------------------
+--
+-- THE OBVIOUS MOVE IS A COLUMN ON `workspace_members` AND IT OPENS A PRIVILEGE
+-- ESCALATION. Worth the paragraph, because the obvious move is what a later
+-- refactor will reach for, and reaching for it is not a simplification.
+--
+-- UPDATE on that table is admin-only (`workspace_members_update_admin`, 0003),
+-- which uses `is_workspace_admin(workspace_id)` for both its USING and its
+-- WITH CHECK — so a member cannot set their own flag, which defeats the point.
+-- Adding a policy that lets them update their own row would also let them send
+-- `role: 'admin'` in the same request, because A ROW-LEVEL POLICY CANNOT TELL
+-- ONE COLUMN FROM ANOTHER and `authenticated` holds a table-level UPDATE there
+-- from 0023 with no column list. The only fix within that table is
+-- column-level grants, which means re-cutting the grants on the table where
+-- role changes live.
+--
+-- A separate table needs none of that. Presence is the fact, which is
+-- `routine_deliveries`' shape (0012) and needs no boolean.
+--
+-- `tests/rls/coverage-gaps.test.ts` keeps a live regression test for the
+-- escalation itself, so that a later move back onto `workspace_members` is a
+-- red test rather than a quiet privilege grant.
+
+create table if not exists public.coverage_opt_outs (
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (workspace_id, user_id)
+);
+
+comment on table public.coverage_opt_outs is
+  'One row per member who has excluded themselves from their workspace''s '
+  'coverage gap report. Presence is the fact; SELECT is self-only, including '
+  'for admins, so nobody can learn who excluded themselves. Deliberately not a '
+  'column on workspace_members — see 0076''s header.';
+
+alter table public.coverage_opt_outs enable row level security;
+
+-- Grants named rather than inherited, which is 0023's closing instruction: from
+-- there on a migration that adds a table grants for it, because a grant written
+-- down beats an inherited one nobody re-reads.
+--
+-- NO UPDATE FOR ANYBODY: there is nothing to update — the row exists or it does
+-- not — and granting it to `authenticated` would be a column nobody guarded,
+-- since no UPDATE policy exists to narrow it.
+--
+-- **`service_role` IS IN THE REVOKE LIST, and the first draft of this block
+-- left it out.** Supabase's `alter default privileges` gives a new table
+-- `service_role=arwdDxtm`, so the comment above was claiming "named rather than
+-- inherited" while the most privileged of the three roles held everything by
+-- inheritance — exactly the shape the paragraph argues against, and the shape
+-- of a known open issue on `user_usage` in the cloud tree. Named here instead,
+-- and named as the same three: the service role has no more business updating
+-- a row with nothing in it than anybody else does. Nothing needs its SELECT
+-- today either — the read below is SECURITY DEFINER and runs with the owner's
+-- privileges, not the caller's — but an account-deletion or export path is the
+-- sort of thing that would, so it is granted rather than withheld and the
+-- UPDATE is the part being withheld on purpose.
+revoke all on public.coverage_opt_outs from anon, authenticated, service_role;
+grant select, insert, delete on public.coverage_opt_outs
+  to authenticated, service_role;
+
+drop policy if exists "coverage_opt_outs_insert_self" on public.coverage_opt_outs;
+create policy "coverage_opt_outs_insert_self"
+  on public.coverage_opt_outs for insert
+  with check (
+    user_id = auth.uid()
+    and public.is_workspace_member(workspace_id)
+  );
+
+drop policy if exists "coverage_opt_outs_delete_self" on public.coverage_opt_outs;
+create policy "coverage_opt_outs_delete_self"
+  on public.coverage_opt_outs for delete
+  using (user_id = auth.uid());
+
+-- SELF ONLY, INCLUDING FOR ADMINS, AND THAT IS THE POINT.
+--
+-- An admin who could list the opt-outs would learn which individuals chose to
+-- hide something — a sharper signal about a person than anything the report
+-- itself carries, and one nobody opted into by declining to opt in. The floor
+-- is counted inside the definer function below, which can see every row and
+-- returns only an opaque integer per asker.
+drop policy if exists "coverage_opt_outs_select_self" on public.coverage_opt_outs;
+create policy "coverage_opt_outs_select_self"
+  on public.coverage_opt_outs for select
+  using (user_id = auth.uid());
+
+-- ---- the read ------------------------------------------------------------
+--
+-- SECURITY DEFINER, the shape 0053's pair uses and for the reason its header
+-- gives: a workspace's answers live mostly in sessions the caller cannot see,
+-- because chats are private by default (0008), so an admin's own RLS view of
+-- `messages` excludes exactly the traffic being asked about.
+--
+-- Five properties are structural rather than conventions the caller is asked to
+-- respect:
+--
+--   * IT NEVER RETURNS A USER ID. The asker is a `dense_rank()` over a key
+--     salted fresh per call (`v_salt`), scoped to this call — an integer that
+--     lets the worker count distinct askers for the floor and carries nothing
+--     else. Non-persistent because of the salt, not because of which users
+--     happen to show up in a given call — see the salted `dense_rank` near the
+--     end of this function for the full account.
+--   * IT TRUNCATES IN SQL. `left(..., 120)` means the full text of a question
+--     never crosses the database boundary.
+--   * IT EXCLUDES OPTED-OUT MEMBERS, and does so by filtering at read time
+--     rather than by stamping each answer when it was written — which is what
+--     makes an opt-out RETROACTIVE. A control that only applied going forward
+--     would ask somebody to have decided before they knew the feature existed.
+--   * IT READS `grounding = 'documents'` ONLY. `'none'` is a setup problem
+--     rather than a coverage one — 0053 counts them apart on purpose — so it is
+--     reported as its own line by `coverage-render.ts` and never clustered.
+--   * IT DROPS ONE-CHARACTER QUESTIONS, which is not tidiness. See the filter.
+--
+-- Idempotent, because CI does not apply migrations and this is hand-applied and
+-- may well be pasted twice. Dropped by exact signature, the shape 0032 and 0053
+-- use — including the two-argument signature the plan specified, so a database
+-- where that version was pasted before this correction does not keep a function
+-- nobody can call successfully.
+
+drop function if exists public.workspace_coverage_gaps(uuid, int);
+drop function if exists public.workspace_coverage_gaps(uuid, uuid, int);
+
+create function public.workspace_coverage_gaps(
+  p_workspace_id uuid,
+  p_user_id uuid,
+  p_days int default 7
+)
+returns table (question text, asker_key int)
+language plpgsql
+-- VOLATILE, not stable: `v_salt` below draws `gen_random_uuid()`, so two
+-- calls in the same statement or transaction can legitimately return
+-- different asker keys for the same person. `stable` promises the opposite
+-- of that for the life of a statement, and the salt is what makes the
+-- promise false. (`workspace_coverage_totals` draws no salt and stays
+-- `stable`.)
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  -- Clamped here as well as in the caller, which is 0053's rule: a function
+  -- that reads across every private session in a workspace does not take an
+  -- unbounded integer from any of them, and an API key is a caller too.
+  v_days int := greatest(1, least(coalesce(p_days, 7), 365));
+  v_since timestamptz := now() - make_interval(days => v_days);
+  -- Per call, and drawn before anything is read. See the salted `dense_rank`
+  -- at the bottom of this function for what it is for.
+  v_salt text := gen_random_uuid()::text;
+begin
+  -- The escalation guard. A caller with a session may only ask about
+  -- themselves; a caller with none has to be the service role. See the header
+  -- for why this is the shape — and for the measurement showing that revoking
+  -- PUBLIC does NOT keep `anon` out of a function on this stack, which is why
+  -- the second half of this is here and not left to the grant alone.
+  --
+  -- THE FIRST BRANCH IS UNREACHABLE AS SHIPPED AND STAYS ANYWAY. EXECUTE goes
+  -- to `service_role` only, so there is no caller left that has an
+  -- `auth.uid()`; it is kept for the same reason the `anon` backstop below it
+  -- is kept, which is that the grant was wrong once already. If somebody
+  -- widens EXECUTE to `authenticated` — the shape the plan shipped with, and
+  -- the one 0053 uses — this line is what stops that from also handing every
+  -- signed-in member an impersonation primitive.
+  if auth.uid() is not null then
+    if p_user_id is distinct from auth.uid() then
+      raise exception 'may only ask about yourself' using errcode = '42501';
+    end if;
+  elsif coalesce(auth.role(), '') <> 'service_role' then
+    raise exception
+      'a caller with no session may only ask on behalf of the routine runner'
+      using errcode = '42501';
+  end if;
+
+  -- `is_workspace_admin` asks about `auth.uid()` and cannot be used here; this
+  -- is the same question asked about `p_user_id`. Inline rather than a new
+  -- `is_workspace_admin_of(uuid, uuid)` helper on purpose: such a helper
+  -- granted to `authenticated` would be a probe for "is this person an admin
+  -- of that workspace" answerable by anybody with a login, which neither this
+  -- feature nor anything else needs. Six duplicated lines beat a new
+  -- disclosure surface.
+  if not exists (
+    select 1 from public.workspace_members wm
+     where wm.workspace_id = p_workspace_id
+       and wm.user_id = p_user_id
+       and wm.role = 'admin'
+  ) then
+    raise exception 'not an admin of this workspace' using errcode = '42501';
+  end if;
+
+  -- The switch is checked HERE and not only in the application, for the reason
+  -- the whole of 0075 is about: the route is one caller of several.
+  if not exists (
+    select 1 from public.workspaces w
+     where w.id = p_workspace_id and w.gap_report_enabled
+  ) then
+    raise exception 'the coverage report is not enabled for this workspace'
+      using errcode = '42501';
+  end if;
+
+  return query
+  with sub as (
+    -- THE ASKER IS WHO SENT THE QUESTION, NOT WHOSE SESSION IT WAS IN. The
+    -- first draft of this used `s.user_id`, and that was wrong in two ways at
+    -- once, because `messages_insert_user_self` (0018) admits a member posting
+    -- a user row into a COLLEAGUE'S SHARED SESSION with their own `sender_id`:
+    --
+    --   * the opt-out stopped applying. Filtering on the session owner means a
+    --     member who excluded themselves is still reported for anything they
+    --     asked in somebody else's room — and a member cannot delete a session
+    --     they do not own either, so NEITHER of their two redaction routes
+    --     reached it. That is the only consent control in a feature that
+    --     deliberately ships without a consent step.
+    --   * the floor stopped counting people. One person asking the same thing
+    --     in three colleagues' shared sessions produced three distinct asker
+    --     keys and cleared `askerFloor()`'s three, so a topic ONE identifiable
+    --     person raised would be reported as if three had.
+    --     `coverage-cluster.ts` says a dedupe that kept one asker key per
+    --     question "would silently lower the floor"; attributing by owner broke
+    --     the same invariant in the same direction.
+    --
+    -- `coalesce` and not a bare `q.sender_id`: the column is `ON DELETE SET
+    -- NULL` to `profiles`, so a departed member's questions keep their rows
+    -- with a null sender. Falling back to the session owner groups those under
+    -- one key rather than letting every one of them rank as its own asker,
+    -- which would inflate the floor exactly the way the bug above did. It is
+    -- set on every user row that any surface writes (`routes/messages.ts`,
+    -- `lib/slack/handle.ts`) and null on assistant rows by construction.
+    select coalesce(q.sender_id, s.user_id) as asker,
+           left(btrim(q.content), 120) as text
+      from public.messages m
+      join public.chat_sessions s on s.id = m.session_id
+      -- The question this reply answered: the last user message before it in
+      -- the same session. A lateral rather than a window function because the
+      -- outer query is already filtered to assistant rows and this needs the
+      -- row that is NOT in that set.
+      join lateral (
+        select m2.content, m2.sender_id
+          from public.messages m2
+         where m2.session_id = m.session_id
+           and m2.role = 'user'
+           -- STRICTLY BEFORE, not `<=`, and the difference is a wrong question
+           -- rather than a missing one. `created_at` defaults to `now()`, which
+           -- is the transaction's timestamp — so a user row and an assistant row
+           -- written in ONE statement carry the identical value, and with `<=`
+           -- plus `order by created_at desc` the tie is broken arbitrarily.
+           -- Measured: four rows inserted in one statement sent both assistant
+           -- replies back attached to the FIRST question, duplicating it and
+           -- losing the second entirely.
+           --
+           -- `<` answers nothing in that case, which is the same ruling the
+           -- one-character filter below makes: an older question the reply did
+           -- not answer is worse than no row. The real chat path writes the two
+           -- in separate transactions, so this costs nothing there.
+           and m2.created_at < m.created_at
+           -- A regenerated reply's superseded question is not a second gap.
+           and m2.superseded_at is null
+         order by m2.created_at desc
+         limit 1
+      ) q on true
+     where s.workspace_id = p_workspace_id
+       -- A session somebody deleted is invisible to everyone through RLS
+       -- (`chat_sessions_select_owner_or_shared` is `deleted_at is null` with
+       -- no branch admitting an admin, and 0040's header says so in as many
+       -- words). A definer function reading past RLS has to carry that clause
+       -- itself or the deletion is cosmetic — and here the thing it would
+       -- resurrect is the TEXT of a question, which is the one thing this
+       -- feature exists to keep away from an admin. 0053's pair does not carry
+       -- it; they return counts, where the stake is a number being one too
+       -- high. The totals function below stays in step with 0053 rather than
+       -- with this.
+       and s.deleted_at is null
+       and m.role = 'assistant'
+       and m.grounding = 'documents'
+       -- A REGENERATED REPLY IS NOT A SECOND GAP. 0050 supersedes the old
+       -- assistant row rather than deleting it, and the old row keeps its
+       -- `grounding` — so without this, one question asked once and answered
+       -- twice arrives as two rows, consuming two of the 150 and counting
+       -- twice in the report's `questions` figure after the worker's dedupe
+       -- adds up `copies`. `idx_messages_session_visible` is partial on
+       -- `superseded_at is null`, so the clause is also the one the planner
+       -- wants: it is what makes that index usable for the lateral.
+       and m.superseded_at is null
+       and m.created_at >= v_since
+       -- A ONE-CHARACTER QUESTION IS A STRAY KEYSTROKE, AND EXCLUDING IT IS
+       -- LOAD-BEARING. `isQuotation`'s Direction B in
+       -- `lib/routines/coverage-cluster.ts` is unconditional and, since fix
+       -- round 6, has no length floor on the needle — by design, because four
+       -- characters in a script with no inter-word separators is a whole
+       -- first-person sentence. The cost is that a one-character question
+       -- matches as a raw substring of almost every label: measured over the
+       -- thirteen realistic label/question pairs that file's comments cite, a
+       -- single vowel in the gap list unnames 8 to 11 of them. So the admin
+       -- loses most of the week's topic NAMES because somebody's finger hit a
+       -- key. Filtered here rather than in the worker so it also does not
+       -- occupy one of the 150 rows below.
+       --
+       -- On the trimmed length, and the emitted text is trimmed by the same
+       -- function, so what is measured is what is returned. Filtered in the
+       -- OUTER query rather than inside the lateral: inside it, the lateral
+       -- would reach further back and return an older question that this reply
+       -- did not answer, which is worse than returning nothing.
+       and length(btrim(q.content)) > 1
+       -- On the SENDER, matching the asker above. See the note there: joining
+       -- this on the session owner is what made the opt-out depend on whose
+       -- room the question was typed in.
+       and not exists (
+         select 1 from public.coverage_opt_outs o
+          where o.workspace_id = p_workspace_id
+            and o.user_id = coalesce(q.sender_id, s.user_id)
+       )
+     order by m.created_at desc
+     -- 150, and the bound is a cost decision as much as a safety one. At 120
+     -- characters each that is 18,000 — under `MAX_MATERIAL_CHARS = 20_000` in
+     -- `lib/routines/material.ts`, so the price of this prompt is the one that
+     -- file has already measured. The worker dedupes before the model call, so
+     -- in practice it is usually far fewer.
+     limit 150
+  )
+  -- SALTED, so the key is opaque on its own terms and not merely because of a
+  -- grant somewhere else.
+  --
+  -- `dense_rank() over (order by sub.asker)` is monotone in `user_id`, and
+  -- `workspace_members_select_fellow_members` (0001) lets any member read every
+  -- member's `user_id` — so key 1 is the lowest-uuid asker present, key 2 the
+  -- next, and a reader holding the member list can name them. Probed and
+  -- confirmed on the unsalted version.
+  --
+  -- That read is now service-role-only, so nothing but the worker ever sees a
+  -- key; this is defence in depth. It is here because the comment above
+  -- promises an opaque integer and a promise should be true of the value, not
+  -- of who happens to be allowed to look at it. The salt is per call, which the
+  -- ranking already was — `v_salt` is drawn once per invocation, so keys stay
+  -- stable within one result set and carry nothing between two.
+  -- ORDER BY sub.text — not by anything asker-derived, which is salted per
+  -- call above and would just move this same instability around rather than
+  -- remove it. Without an ORDER BY here, `coverage-cluster.ts`'s sort is
+  -- stable but not total: two gaps tied on question count and both
+  -- `label: null` keep arrival order, so the same two topics could render as
+  -- different lines call to call. This is what makes that comparator's own
+  -- promise — "the ordering is therefore a function of the input alone" —
+  -- actually true.
+  select sub.text,
+         (dense_rank() over (order by md5(sub.asker::text || v_salt)))::int
+    from sub
+   order by sub.text;
+end;
+$$;
+
+comment on function public.workspace_coverage_gaps(uuid, uuid, int) is
+  'The questions in a window that found nothing close in the workspace''s own '
+  'documents, truncated to 120 characters, with an opaque per-call asker key '
+  'and never a user id. `p_user_id` must be an admin of the workspace, and a '
+  'caller with a session may only name themselves — see 0076''s header. '
+  'Refuses while workspaces.gap_report_enabled is false.';
+
+-- ---- the totals ----------------------------------------------------------
+--
+-- 0053's `workspace_coverage` aggregation, restated under the caller model
+-- above, plus the soft-delete filter. The return shape is identical on purpose,
+-- so the worker reads one row type whichever function produced it.
+--
+-- **THE TWO BUCKET DEFINITIONS MUST STAY IN STEP**, which is a narrower claim
+-- than the one this comment made in its first draft and the only one that is
+-- true. The five `count(*) filter (...)` expressions and the denominator are
+-- the same here as in `public.workspace_coverage` (0053), and a change to
+-- either belongs in both.
+--
+-- THE WINDOW IS THE SAME ONLY WHEN BOTH ARE GIVEN THE SAME `p_days` — NOT A
+-- GUARANTEE ABOUT THE DEFAULT CALL. The defaults differ: `coalesce(p_days, 7)`
+-- here, `coalesce(p_days, 30)` in 0053. `tests/rls/coverage-gaps.test.ts`'s
+-- cross-check always passes `7` explicitly to both, so it cannot catch a
+-- drift in either clamp.
+--
+-- The WHERE clause is deliberately NOT the same, and the differences are
+-- named below so nobody has to diff two files to find them.
+-- `tests/rls/coverage-gaps.test.ts` asserts the equality that does hold and
+-- the one delta that does not, rather than a blanket "identical".
+--
+-- The duplication is deliberate and its reason is in this migration's header:
+-- 0053's function is what the live coverage screen calls, and replacing it to
+-- fix its caller model inside this migration is a bigger risk than twenty
+-- copied lines.
+--
+-- ---- the two deliberate differences from 0053 ----------------------------
+--
+--   * `s.deleted_at is null`, WHICH 0053 DOES NOT HAVE. A soft-deleted session
+--     is invisible to everyone through RLS (0040), and a definer function has
+--     to carry that clause itself or the deletion is cosmetic. 0053 not having
+--     it is a defect in 0053 — recorded as a follow-up beyond this phase,
+--     deliberately not fixed here, because that function is on the live
+--     coverage screen's path and this migration is not the place to change what
+--     that screen reports.
+--   * NOT filtered by `coverage_opt_outs`, which the gap read above IS. The
+--     opt-out is about a member's QUESTIONS joining the gap list — the sentence
+--     somebody typed — not about the denominator it is measured against, and
+--     0053's own argument is that a count cannot identify anybody.
+--
+-- Those two are not the whole of why the totals can outrun the gap list: a
+-- one-character question and an assistant reply with no user row before it are
+-- both counted here and both absent there. Narrowing that gap further is a
+-- question about what the report should SAY, which belongs with the renderer
+-- rather than with a filter here.
+
+drop function if exists public.workspace_coverage_totals(uuid, int);
+drop function if exists public.workspace_coverage_totals(uuid, uuid, int);
+
+create function public.workspace_coverage_totals(
+  p_workspace_id uuid,
+  p_user_id uuid,
+  p_days int default 7
+)
+returns table (
+  answers bigint,
+  covered bigint,
+  fallback bigint,
+  ungrounded bigint,
+  unrecorded bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_days int := greatest(1, least(coalesce(p_days, 7), 365));
+  v_since timestamptz := now() - make_interval(days => v_days);
+begin
+  -- The same two guards as `workspace_coverage_gaps`, for the same reasons. See
+  -- that function and 0076's header; they are deliberately written out again
+  -- rather than factored into a helper, because a definer helper answering "is
+  -- this person an admin of that workspace" would be a probe anybody with a
+  -- login could run.
+  if auth.uid() is not null then
+    if p_user_id is distinct from auth.uid() then
+      raise exception 'may only ask about yourself' using errcode = '42501';
+    end if;
+  elsif coalesce(auth.role(), '') <> 'service_role' then
+    raise exception
+      'a caller with no session may only ask on behalf of the routine runner'
+      using errcode = '42501';
+  end if;
+
+  if not exists (
+    select 1 from public.workspace_members wm
+     where wm.workspace_id = p_workspace_id
+       and wm.user_id = p_user_id
+       and wm.role = 'admin'
+  ) then
+    raise exception 'not an admin of this workspace' using errcode = '42501';
+  end if;
+
+  -- Gated by the switch as well, unlike 0053's, so that "the whole thing is off
+  -- until a workspace turns it on" is true of every read 0076 adds rather than
+  -- of most of them. 0053's function stays ungated; the coverage screen is a
+  -- different feature and turning the report off must not empty it.
+  if not exists (
+    select 1 from public.workspaces w
+     where w.id = p_workspace_id and w.gap_report_enabled
+  ) then
+    raise exception 'the coverage report is not enabled for this workspace'
+      using errcode = '42501';
+  end if;
+
+  return query
+  select count(*) filter (where m.grounding is not null),
+         count(*) filter (where m.grounding = 'chunks'),
+         count(*) filter (where m.grounding = 'documents'),
+         count(*) filter (where m.grounding = 'none'),
+         count(*) filter (where m.grounding is null)
+  from public.messages m
+  join public.chat_sessions s on s.id = m.session_id
+  where s.workspace_id = p_workspace_id
+    -- The one filter 0053 does not have. See the note above this function.
+    and s.deleted_at is null
+    and m.role = 'assistant'
+    and m.created_at >= v_since;
+end;
+$$;
+
+comment on function public.workspace_coverage_totals(uuid, uuid, int) is
+  'The grounding counts for a window, in 0053''s four buckets plus its '
+  'denominator, for the coverage gap report. Same bucket definitions as '
+  'public.workspace_coverage — THOSE MUST STAY IN STEP — but it also excludes '
+  'soft-deleted sessions, which 0053 does not. Service-role only: `p_user_id` '
+  'must be an admin of the workspace, and it refuses while '
+  'workspaces.gap_report_enabled is false.';
+
+-- ---- who may execute -----------------------------------------------------
+--
+-- **`service_role` ONLY. NOT `authenticated`, WHICH IS WHERE THE PLAN AND
+-- 0053's SHAPE BOTH PUT IT.**
+--
+-- `authenticated` with EXECUTE means an admin naming themselves gets the raw
+-- truncated questions straight out of PostgREST: no clustering, no topic label,
+-- and critically NO DISTINCT-ASKER FLOOR, because `askerFloor()` lives in
+-- `lib/routines/coverage-cluster.ts` and is not a boundary for a caller that
+-- never goes through the worker. This migration's own header says at the top
+-- that "no question ever reaches an admin", and a grant to `authenticated`
+-- makes that sentence false — one `POST /rest/v1/rpc/workspace_coverage_gaps`
+-- with the anon key and an admin's password returns up to 150 of them.
+--
+-- Nothing needs it. Neither function is called from `worker/src` or `src` at
+-- all: the coverage screen uses 0053's pair, and the only intended caller is
+-- the routines engine, which is service-role. So the narrow grant costs no
+-- feature, and the first branch of the escalation guard inside each function
+-- becomes unreachable — kept deliberately, and labelled there, because the
+-- grant on these functions has already been wrong once.
+--
+-- ---- and `revoke ... from public` IS NOT ENOUGH --------------------------
+--
+-- A new function grants EXECUTE to PUBLIC by default, which on a SECURITY
+-- DEFINER function reading across other people's sessions is not a default to
+-- leave in place. But Supabase also ships
+-- `alter default privileges ... grant execute on functions to anon,
+-- authenticated, service_role`, so both of those hold EXECUTE on a new
+-- function BY NAME — a grant `revoke ... from public` cannot reach. Verified by
+-- reproducing an anonymous read of a gap list with nothing but the public anon
+-- key before these lines were added, and verified again afterwards;
+-- `tests/rls/coverage-gaps.test.ts` keeps the regression, in behaviour and in
+-- the catalog.
+--
+-- So all three are revoked by name. 0053's pair is left alone: untidy there,
+-- but its own guard refuses a null `auth.uid()` and an admin may legitimately
+-- read its counts, so there is nothing to fix inside the migration that adds
+-- this read.
+revoke execute on function public.workspace_coverage_gaps(uuid, uuid, int)
+  from public, anon, authenticated;
+revoke execute on function public.workspace_coverage_totals(uuid, uuid, int)
+  from public, anon, authenticated;
+grant execute on function public.workspace_coverage_gaps(uuid, uuid, int)
+  to service_role;
+grant execute on function public.workspace_coverage_totals(uuid, uuid, int)
+  to service_role;

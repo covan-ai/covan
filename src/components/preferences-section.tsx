@@ -117,8 +117,82 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
         </div>
 
         <NotificationToggles />
+        <CoverageOptOut workspaceId={me?.workspace.id} />
       </SectionCard>
     </section>
+  );
+}
+
+/**
+ * The half `CoverageNotice` cannot offer.
+ *
+ * That notice (`coverage-notice.tsx`) is a one-shot thing: it is told once,
+ * dismissed, and gone — which is exactly right for telling somebody, and
+ * exactly wrong for a decision somebody should be able to revisit. This is
+ * the other door into the same two routes Task 14 shipped
+ * (`api.coverage.preference` / `setPreference`), reachable whether or not
+ * anybody has ever seen the notice, and in both directions: it is the only
+ * place a member who already excluded themselves can come back in.
+ *
+ * **Not gated on `gapReportEnabled`.** A member must be able to opt out
+ * before the report is switched on — the notice's own test proves the route
+ * "works while the report is off" — and this row is the second of the two
+ * surfaces for the same guarantee. Only the notice itself is gated on
+ * `enabled`, never this.
+ *
+ * **The query key carries `workspaceId`, the same way `CoverageNotice`'s
+ * does.** The app switches workspaces without a reload, and this value is
+ * consent-sensitive: an unscoped key would let a member who just switched
+ * briefly see the *previous* workspace's exclusion state rendered under the
+ * new workspace's name, until something else happened to evict it.
+ * `workspace-queries.ts` is the belt for that (`"coverage"` is on
+ * `WORKSPACE_SCOPED_QUERY_KEYS`, so a switch invalidates this too), and a
+ * workspace-scoped key is the suspenders — the two are not redundant, because
+ * the list invalidates by prefix on whatever key is live, and a key that
+ * never named the workspace in the first place is the thing that let the
+ * stale value survive long enough to render at all.
+ */
+function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["coverage", "preference", workspaceId],
+    queryFn: api.coverage.preference,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const setExcluded = async (excluded: boolean) => {
+    setSaving(true);
+    try {
+      await api.coverage.setPreference(excluded);
+      queryClient.setQueryData(["coverage", "preference", workspaceId], { excluded });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Failed to save";
+      toast.error(message);
+      // Same recovery as `NotificationToggles`: put the switch back where the
+      // server actually left it rather than leaving it showing a setting that
+      // was never accepted.
+      await queryClient.invalidateQueries({ queryKey: ["coverage", "preference", workspaceId] });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-4 border-t border-hairline pt-5">
+      <div className="min-w-0">
+        <div className="text-sm">Exclude my questions from the coverage report</div>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          A weekly report of topics nothing covered — it never shows names or anybody&rsquo;s
+          question.
+        </p>
+      </div>
+      <Switch
+        checked={data ? data.excluded : false}
+        onCheckedChange={setExcluded}
+        disabled={!data || saving}
+        aria-label="Exclude my questions from the coverage report"
+      />
+    </div>
   );
 }
 

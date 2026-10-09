@@ -256,15 +256,32 @@ whoever administers the database.
 ## Routine
 
 A routine is a standing order attached to an agent: a source (an RSS feed, a web
-page, a connected Notion or Drive source, or nothing at all), an instruction in
-plain language, a cron expression with a timezone, and a delivery channel — a
-Slack webhook, an email address, or a signed webhook to an endpoint you run.
-The engine wakes up, asks the database which routines are due, runs them and
-delivers the result.
+page, a connected Notion or Drive source, the workspace's own answers, or
+nothing at all), an instruction in plain language, a cron expression with a
+timezone, and a delivery channel — a Slack webhook, an email address, or a
+signed webhook to an endpoint you run. The engine wakes up, asks the database
+which routines are due, runs them and delivers the result.
 
 A routine with no source of its own can also be given a URL that starts it, so
 something else's deploy or ticket or nightly job is what wakes it rather than
 the clock. What that thing POSTs is what the agent reads.
+
+A standing order is the default shape rather than the only one. A routine can be
+given a number of runs instead, and sets itself to `completed` once it has
+delivered them — a third status beside `active` and `paused`, because a pause is
+something you resume and a finished series is not. Only a delivered run counts
+towards the total, so a week of a dead delivery channel pauses a series rather
+than quietly finishing it.
+
+The source that reads the workspace's own answers is the one with a privilege of
+its own, because what it reports is derived from conversations an admin cannot
+otherwise see. Only an admin may create such a routine, and such a routine may
+never file its output into a knowledge bundle — one clause in the insert and
+update policies says both. A third rule, that it may never be shared to the
+workspace, is a CHECK constraint instead, which is the difference that matters:
+a policy clause binds whoever is making the row, and a CHECK binds the engine
+too. What the report does and does not say is in
+[Routines](routines.md#the-coverage-report).
 
 A routine belongs to a workspace and an agent, but it is owned by the person who
 made it, and it follows the same visibility rule as a session: private by

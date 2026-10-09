@@ -38,6 +38,8 @@ const routine: Routine = {
   triggerKind: "schedule" as const,
   outputBundleId: null,
   outputRetention: 52,
+  endsAfterRuns: null,
+  runsDone: 0,
   status: "active",
   pausedReason: null,
   nextRunAt: null,
@@ -184,6 +186,24 @@ describe("RoutineDetail", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
+  // A finished series has nothing to pause and is not meant to be resumed —
+  // "Resume" would PATCH it back to active for one more delivery before it
+  // completes itself again. The restart somebody actually wants is a new
+  // routine from the template, not this button.
+  it("offers no pause or resume control on a completed routine", () => {
+    render(<RoutineDetail {...props} routine={{ ...routine, status: "completed" }} />);
+    expect(screen.queryByRole("button", { name: /pause/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
+    // The rest of the owner toolbar is still there — only this one control
+    // disappears.
+    expect(screen.getByRole("button", { name: /run now/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /delete/i })).toBeInTheDocument();
+    // The status badge above already reads "Finished" (routine-status.tsx).
+    // The "Next run" field must not contradict it four lines down by falling
+    // back to "Paused" for a status it has no branch for.
+    expect(screen.queryByText("Paused")).not.toBeInTheDocument();
+  });
+
   // Delivery channels are scoped by RLS to their owner, so a teammate's target
   // is genuinely unreadable — say so rather than render an empty field.
   it("explains that a teammate's delivery target is not visible", () => {
@@ -270,6 +290,42 @@ describe("RoutineDetail", () => {
     it("gives a teammate no way to change visibility", () => {
       render(<RoutineDetail {...props} isOwner={false} channelLabel={null} />);
       expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    });
+  });
+
+  /**
+   * A4. Both controls' own PATCH is refused for `source_kind = 'workspace'`
+   * — sharing by `routines_workspace_source_private_check` (0076), filing by
+   * `routine_workspace_source_is_permitted` (0075/0076) — and both refusals
+   * surface as the same 400 naming neither cause. Offering either control to
+   * the owner of a workspace routine invites exactly the PATCH that gets
+   * refused; this is the regression test for hiding them.
+   */
+  describe("a workspace-sourced routine", () => {
+    const workspaceRoutine: Routine = { ...routine, sourceKind: "workspace", sourceUrl: null };
+
+    it("offers no sharing control, even to the owner", () => {
+      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
+      expect(
+        screen.queryByRole("switch", { name: /share with the workspace/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("offers no filing card", () => {
+      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
+      expect(screen.queryByText("Keep a copy")).not.toBeInTheDocument();
+    });
+
+    it("says why, in place of the two controls it removed", () => {
+      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
+      expect(screen.getByText(/never shared and never filed/i)).toBeInTheDocument();
+    });
+
+    it("keeps both controls for every other source kind", () => {
+      render(<RoutineDetail {...props} />);
+      expect(screen.getByRole("switch", { name: /share with the workspace/i })).toBeInTheDocument();
+      expect(screen.getByText("Keep a copy")).toBeInTheDocument();
+      expect(screen.queryByText(/never shared and never filed/i)).not.toBeInTheDocument();
     });
   });
 });

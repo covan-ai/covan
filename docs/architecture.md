@@ -238,10 +238,13 @@ fallback — falls back to a persona-only answer rather than failing the turn.
 
 ## Routines
 
-A routine is: a source (an RSS feed, a web page, a connection, or nothing), an
-instruction, a cron expression with a timezone, and a delivery channel (a Slack
-webhook, an email address, or a signed POST to an endpoint the workspace runs).
-The engine wakes up, asks the database what is due, and runs it.
+A routine is: a source (an RSS feed, a web page, a connection, the workspace's
+own data, or nothing), an instruction, a cron expression with a timezone, and a
+delivery channel (a Slack webhook, an email address, or a signed POST to an
+endpoint the workspace runs). The engine wakes up, asks the database what is
+due, and runs it. A routine runs until somebody stops it unless it was created
+with `ends_after_runs`, in which case it finishes itself — see
+[A routine that ends](#a-routine-that-ends) below.
 
 ### Claiming
 
@@ -284,7 +287,8 @@ source (through the SSRF guard for a feed or a page; through `documents` for a
 connection) → diff what it found against the routine's stored cursor → reserve
 the new item keys in `routine_deliveries` → retrieve the agent's own documents →
 summarise with the model → deliver → file the result, if the routine files →
-record a `routine_runs` row and advance `next_run_at`.
+record a `routine_runs` row and advance `next_run_at`. A `workspace` routine
+takes none of the middle of that — see [The coverage run](#the-coverage-run).
 
 Five details worth knowing:
 
@@ -333,6 +337,65 @@ afternoon represent nothing.
 
 "Run now" (`runOneRoutine`) deliberately skips `claim_due_routines`: the point
 is to run a routine that is _not_ due, so there is nothing to claim.
+
+### A routine that ends
+
+`routines.ends_after_runs` is a count set once at creation; `runs_done` is how
+many it has delivered. The executor increments `runs_done` only on the path that
+records an `ok` run, and sets `status = 'completed'` when it reaches the total —
+a third status rather than a reuse of `paused`, because `paused_reason` is where
+repeated failures write their explanation and a pause is a thing the interface
+offers to resume. `claim_due_routines` and `routines_due_idx` both already
+selected `status = 'active'`, so the engine needed no change.
+
+Only a delivered run counts, which is the whole point of the column: a failed
+run must not consume one, or a week of a dead delivery channel completes a
+series that sent nothing. Neither column has a new policy — both affect only the
+routine's own schedule, and restating `routines_insert_own` is where guards get
+dropped by accident. The accepted consequence is written down rather than
+guarded: `authenticated` holds a table-level UPDATE on `routines`, so an owner
+can PATCH their own `runs_done` back to zero and restart their own series.
+Nothing crosses a tenant boundary and nothing bills anybody else.
+
+### The coverage run
+
+`source_kind = 'workspace'` with `source_config = {"report": "coverage_gaps"}`
+returns from the executor before any of the fetch, diff, cursor or item
+machinery, and renders its summary in code rather than through the summarise
+call. `lib/routines/coverage-source.ts` is the whole run:
+
+1. **Read the workspace once** — the switch, the owner's role, the member count,
+   under the service role. Three conditions are re-asked here and each pauses
+   the routine with a reason: the report has been turned off, the owner is no
+   longer an admin, or the workspace is down to two people, where the asker
+   floor is `null` and no topic can be reported without identifying who asked.
+2. **Read the questions** (`workspace_coverage_gaps`). Replies in the window
+   whose `grounding` is `documents`, paired with the last user message before
+   them in the same session, truncated to 120 characters in SQL, at most 150
+   rows, with opted-out askers filtered at read time and each asker reduced to a
+   `dense_rank()` over a per-call salt — never a user id.
+3. **De-duplicate, then decide whether a model call can change anything.** If
+   the whole window holds fewer distinct askers than the floor, no clustering of
+   it could produce a reportable group, so the run skips having spent nothing.
+4. **One model call**, for cluster labels only, on `gpt-4.1-mini` rather than the
+   agent's own model. The questions ride in the user message, never a system
+   one: they are third-party text.
+5. **Read the reply rather than trust it** — `parseClusters` then `enforceFloor`,
+   both pure and both in our code, so a model that ignores its instructions
+   produces a report that says less rather than a disclosure. A cluster below
+   the floor is dropped; a label that quotes a question is emitted with
+   `label: null` and the topic is still reported.
+6. **Read the totals and print the report** (`coverage-render.ts`). No second
+   model call, no date, no randomness: the same input renders the same bytes,
+   which is why the row ordering in `enforceFloor` avoids a default collator.
+
+Both reads are SECURITY DEFINER and both take the owner's `p_user_id`
+explicitly, which is the one thing about this that is not obvious.
+`is_workspace_admin` asks about `auth.uid()`, and a service-role JWT carries no
+`sub` — so the engine's `auth.uid()` is null and the obvious implementation
+would have raised `42501` on every scheduled run. Each function checks that
+`p_user_id` is an admin of the workspace itself, refuses a caller that has a
+session and names somebody else, and is granted to `service_role` alone.
 
 ## The agent harness
 
@@ -445,7 +508,10 @@ production, at the moment a user uploads a file or sends a message.
   frontend subscribes to `postgres_changes` so shared sessions and idea boards
   update live.
 - `routines`, `routine_runs`, `routine_deliveries`, `delivery_channels` — the
-  scheduling side.
+  scheduling side. `coverage_opt_outs` sits beside them: one row per member who
+  has excluded themselves from their workspace's coverage report, with a
+  self-only `SELECT` policy, so presence is the fact and nobody — admins
+  included — can read anybody else's.
 - `connection_capabilities`, `connection_grants`, `capability_calls` — what an
   agent may do at a connected source, as opposed to what a person may do in
   Postgres. All three are empty, which is an exact description of today's

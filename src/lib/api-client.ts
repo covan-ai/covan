@@ -36,6 +36,15 @@ export type Workspace = {
   slug: string;
   /** Model new agents start on. `null` means the interface picks. */
   defaultModel: string | null;
+  /**
+   * Whether this workspace has turned the coverage report on.
+   *
+   * Optional for the reason `models` is: a frontend deployed ahead of its API
+   * gets nothing here, and the template picker reads the absence as off —
+   * which is the safe direction, since the alternative is offering a routine
+   * the engine would refuse.
+   */
+  gapReportEnabled?: boolean;
 };
 
 export type WorkspaceMember = {
@@ -777,9 +786,19 @@ export const api = {
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
   workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
-  /** Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. */
-  coverage: (days = 30): Promise<CoverageResponse> =>
-    request("GET", `/coverage/workspace?days=${days}`),
+  coverage: {
+    /** Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. */
+    workspace: (days = 30): Promise<CoverageResponse> =>
+      request("GET", `/coverage/workspace?days=${days}`),
+    /** The workspace's own switch. Admin only; 403 otherwise. */
+    setEnabled: (enabled: boolean): Promise<{ ok: true }> =>
+      request("PATCH", "/coverage/settings", { enabled }),
+    /** The caller's own opt-out — nobody else's, not even an admin's. */
+    preference: (): Promise<{ excluded: boolean }> => request("GET", "/coverage/preference"),
+    /** Idempotent: setting the same value twice is not an error. */
+    setPreference: (excluded: boolean): Promise<{ ok: true }> =>
+      request("PUT", "/coverage/preference", { excluded }),
+  },
   apiKeys: {
     list: (): Promise<ApiKeyList> => request("GET", "/api-keys"),
     /** The only response that carries the key itself. Nothing can return it again. */

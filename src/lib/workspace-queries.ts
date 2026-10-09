@@ -28,6 +28,7 @@ export const WORKSPACE_SCOPED_QUERY_KEYS = [
   "usage",
   "favorites",
   "invitations",
+  "coverage",
 ] as const;
 
 /** Refetch everything that belongs to a workspace. Resolves when all have. */

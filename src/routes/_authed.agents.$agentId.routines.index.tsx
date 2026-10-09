@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { PageContainer, PageHeader } from "@/components/page-container";
 import { RoutinesList } from "@/components/routines/routines-list";
@@ -13,10 +13,22 @@ import { useRoutines } from "@/hooks/use-routines";
 // so clicking a routine matched the URL and showed the list right back.
 export const Route = createFileRoute("/_authed/agents/$agentId/routines/")({
   component: RoutinesTab,
+  validateSearch: (search: Record<string, unknown>): { template?: string } => ({
+    template: typeof search.template === "string" ? search.template : undefined,
+  }),
 });
 
 function RoutinesTab() {
   const { agentId } = Route.useParams();
+  const { template } = Route.useSearch();
+  const navigate = useNavigate();
+  const clearTemplate = () =>
+    navigate({
+      to: "/agents/$agentId/routines",
+      params: { agentId },
+      search: {},
+      replace: true,
+    });
   const { data: routines = [], isLoading } = useRoutines();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
 
@@ -30,7 +42,13 @@ function RoutinesTab() {
         badge="Routines"
         title="Work that happens"
         turn="while nobody is watching."
-        action={<CreateRoutineDialog agentId={agentId} />}
+        action={
+          <CreateRoutineDialog
+            agentId={agentId}
+            openTemplate={template}
+            onTemplateConsumed={clearTemplate}
+          />
+        }
       >
         <DocsLink page="routines">
           What a routine can reach, and what it does with a secret

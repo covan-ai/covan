@@ -50,7 +50,8 @@ export const INGEST_TOKEN_PREFIX = "covan_whk_";
 const ROUTINE_COLUMNS =
   "id, agent_id, user_id, workspace_id, name, source_kind, source_config, instruction, " +
   "delivery_channel_id, schedule_cron, timezone, next_run_at, cursor, consecutive_failures, " +
-  "status, trigger_kind, output_bundle_id, output_retention, deleted_at";
+  "status, trigger_kind, output_bundle_id, output_retention, ends_after_runs, runs_done, " +
+  "deleted_at";
 
 /** 32 bytes of CSPRNG, base64url — the shape `lib/api-keys.ts` settled on. */
 export function generateIngestToken(): { token: string; tokenHash: Promise<string> } {

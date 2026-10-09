@@ -248,9 +248,17 @@ export function RoutineDetail({
               {running ? "Running…" : "Run now"}
             </Button>
             {editAction}
-            <Button variant="outline" size="sm" onClick={onTogglePause} disabled={busy}>
-              {routine.status === "active" ? "Pause" : "Resume"}
-            </Button>
+            {/* A completed routine has nothing to pause and nothing to resume
+                into: `ends_after_runs` ran its course, and "Resume" would read
+                as an invitation to restart a finished series — exactly what
+                0074's header argues a status distinct from `paused` is for.
+                Starting over means a new routine from the template, not this
+                button. */}
+            {routine.status !== "completed" && (
+              <Button variant="outline" size="sm" onClick={onTogglePause} disabled={busy}>
+                {routine.status === "active" ? "Pause" : "Resume"}
+              </Button>
+            )}
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" size="sm">
@@ -290,14 +298,23 @@ export function RoutineDetail({
           <Field label="Next run">
             {routine.status === "active" && routine.nextRunAt !== null ? (
               <span className="tabular-nums">{formatRelative(routine.nextRunAt)}</span>
+            ) : routine.status === "completed" ? (
+              "Finished"
             ) : (
               "Paused"
             )}
           </Field>
           <Field label="Instruction">{routine.instruction}</Field>
           {/* Owner only. RLS refuses a teammate's update, so a switch here would
-              produce an error they have no way to act on. */}
-          {isOwner && (
+              produce an error they have no way to act on. And never for a
+              `workspace` routine, owner included: `routines_workspace_source_
+              private_check` (0076) refuses the PATCH outright — sharing would
+              put every delivered report in front of the whole workspace,
+              which is the exact population the floor above keeps it from
+              identifying anyone to. Same shape as hiding Pause/Resume on a
+              completed routine below: nothing a PATCH would refuse is offered
+              here at all. */}
+          {isOwner && routine.sourceKind !== "workspace" && (
             <Field label="Sharing">
               <div className="flex flex-wrap items-center gap-3">
                 <Switch
@@ -318,6 +335,18 @@ export function RoutineDetail({
         </dl>
       </SectionCard>
 
+      {/* A workspace routine can never be shared or filed — see the two
+          comments above and below this card for the refusal each would hit —
+          so this is the one place that says why, for whoever opens this page
+          checking exactly this feature's privacy properties. */}
+      {routine.sourceKind === "workspace" && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Never shared and never filed: sharing would show the whole workspace a report built so
+          that nobody who asked a question can be singled out, and filing would turn what the team
+          does not know into something an agent quotes back as if it did.
+        </p>
+      )}
+
       {/* Owner only, and only where there is something to show: the policy on
           routine_triggers returns nothing to anybody else, so a teammate would
           get an empty card and a button that 404s. */}
@@ -328,8 +357,13 @@ export function RoutineDetail({
       {/* Owner only, for the same reason the pause and delete controls are:
           filing is a write into the workspace's knowledge, and offering the
           control to somebody whose PATCH will be refused produces an error
-          they cannot act on. */}
-      {isOwner && (
+          they cannot act on. And never for a `workspace` routine, for the
+          same reason as the Sharing field above: `routine_workspace_source_
+          is_permitted` (0075/0076) refuses any output bundle on this source
+          kind, because a coverage report filed as a document is "what the
+          team does not know" rather than knowledge, and every agent in the
+          workspace would otherwise retrieve and quote it back as if it were. */}
+      {isOwner && routine.sourceKind !== "workspace" && (
         <RoutineOutputCard
           routine={routine}
           bundles={bundles}

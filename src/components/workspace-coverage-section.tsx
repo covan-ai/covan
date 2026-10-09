@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api, type CoverageAgent, type CoverageTotals } from "@/lib/api-client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { api, ApiError, type CoverageAgent, type CoverageTotals } from "@/lib/api-client";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, Chip, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 
 const WINDOWS = [7, 30, 90] as const;
 
@@ -46,19 +48,49 @@ const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n / of) * 100
  * `available: false` is the window between deploying the API and hand-applying
  * `0053`, and an admin should see nothing rather than an error about a feature
  * they never asked for. Same arrangement as `WorkspaceUsageSection`.
+ *
+ * Carries the workspace's own switch for the *separate* weekly routine
+ * (`gap-report` in `routine-templates.ts`) that this dashboard's figures feed.
+ * Flipping it on does not by itself start sending anything — it only lifts
+ * the `gapReport` requirement that template checks before anyone can set the
+ * routine up — but it is gated behind the same `available` check as the rest
+ * of this section: both read from migrations this phase ships together, and
+ * an admin who cannot see what nothing covered yet has nothing to turn the
+ * routine on for either.
  */
-export function WorkspaceCoverageSection() {
+export function WorkspaceCoverageSection({ gapReportEnabled }: { gapReportEnabled: boolean }) {
   const [days, setDays] = useState<number>(30);
+  const queryClient = useQueryClient();
+  const [togglingReport, setTogglingReport] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["coverage", "workspace", days],
-    queryFn: () => api.coverage(days),
+    queryFn: () => api.coverage.workspace(days),
   });
 
   // No spinner on a switch: `keepPreviousData` is not in use here, so the only
   // loading state that reaches the eye is the first one, and a section that
   // appears mid-scroll is worse than a section that appears a moment late.
   if (isLoading || !data?.available) return null;
+
+  const toggleReport = async (next: boolean) => {
+    if (togglingReport) return;
+    setTogglingReport(true);
+    try {
+      await api.coverage.setEnabled(next);
+      // `gapReportEnabled` lives on `me.workspace`, not on this query — the
+      // routine template picker and the home screen's notice both read it
+      // from there, so this is what makes either of them agree with the
+      // switch the moment it moves.
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : "Couldn't change the coverage report setting",
+      );
+    } finally {
+      setTogglingReport(false);
+    }
+  };
 
   const { totals, agents } = data;
   // `0053` returns every agent in the workspace, including the ones nobody
@@ -75,6 +107,22 @@ export function WorkspaceCoverageSection() {
         description="By agent — never by person, and never the question itself."
         action={<WindowPicker days={days} onChange={setDays} />}
       />
+
+      <div className="mt-6 flex items-start justify-between gap-4 rounded-lg border border-hairline bg-background px-4 py-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">Weekly coverage report</div>
+          <p className="mt-1 text-meta leading-[1.45] text-muted-foreground">
+            Unavailable only for a workspace of exactly two — a reported topic would otherwise
+            identify the other person. Fine alone, and fine again from three people up.
+          </p>
+        </div>
+        <Switch
+          checked={gapReportEnabled}
+          onCheckedChange={toggleReport}
+          disabled={togglingReport}
+          aria-label="Weekly coverage report"
+        />
+      </div>
 
       {totals.answers === 0 ? (
         // Bare, not inside a card. The empty state is already a well with its

@@ -249,7 +249,9 @@ function SettingsPage() {
             were worth to buy, this one says whether the team had written
             anything for them. Admin only, and the functions behind it refuse
             anybody else in their own right. */}
-        {isAdmin && <WorkspaceCoverageSection />}
+        {isAdmin && (
+          <WorkspaceCoverageSection gapReportEnabled={me?.workspace.gapReportEnabled ?? false} />
+        )}
 
         <DeliveryChannelsCard />
 

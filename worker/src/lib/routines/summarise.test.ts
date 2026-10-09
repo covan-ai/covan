@@ -1,6 +1,7 @@
 // worker/src/lib/routines/summarise.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DEFAULT_MODEL } from "../models";
+import { whenAndWhere } from "../prompt";
 import type { FeedItem } from "./feed";
 import { summariseWithModel } from "./summarise";
 
@@ -112,6 +113,102 @@ describe("summariseWithModel", () => {
 
     const messages = createMock.mock.calls[0][0].messages;
     expect(messages.filter((m: any) => m.role === "system")).toHaveLength(1);
+  });
+
+  // A series like "Somebody's first week" tells the model which morning it is
+  // on through this field rather than relying on memory or a second call —
+  // see `routine-templates.ts`'s `first-week` instruction, which picks a
+  // subject by the number this line gives it.
+  it("tells the model which run of how many this is", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Write today's note.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+      runPosition: { done: 2, total: 7 },
+    });
+
+    const systemMessage = createMock.mock.calls[0][0].messages.find(
+      (m: any) => m.role === "system",
+    );
+    // Third morning: two are done, this is the one being written.
+    expect(systemMessage.content).toContain("3 of 7");
+  });
+
+  // A middle run is not told it is the last one — only the run that actually
+  // is gets that sentence (below). Checked separately from "3 of 7" above
+  // because a model could read "of 7" and still not be told plainly that
+  // there is no run after this one.
+  it("does not say this is the last run when it is not", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Write today's note.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+      runPosition: { done: 2, total: 7 },
+    });
+
+    const systemMessage = createMock.mock.calls[0][0].messages.find(
+      (m: any) => m.role === "system",
+    );
+    expect(systemMessage.content).not.toContain("last run");
+  });
+
+  // The seventh morning of "Somebody's first week" is where the curriculum
+  // changes shape — subject 7 is "anything the first six missed" — and that
+  // only makes sense to write if the model knows there is no eighth morning.
+  // Saying so plainly, rather than leaving it to be inferred from "7 of 7",
+  // is the whole point of this sentence.
+  it("says plainly that this is the last run when it is", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Write today's note.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+      runPosition: { done: 6, total: 7 },
+    });
+
+    const systemMessage = createMock.mock.calls[0][0].messages.find(
+      (m: any) => m.role === "system",
+    );
+    expect(systemMessage.content).toContain("7 of 7");
+    expect(systemMessage.content).toContain("last run in the series");
+  });
+
+  // "Byte for byte" (the spec's own words) means this has to pin the whole
+  // string, not just the absence of a pattern — a weaker check like `not
+  // toMatch(/\d+ of \d+/)` would still pass if a stray blank line or an
+  // extra joined segment crept into this message for some other reason.
+  it("says nothing about position for a routine that does not end", async () => {
+    const summarise = summariseWithModel(env);
+    await summarise({
+      persona: "You are Ada.",
+      model: "gpt-4o",
+      instruction: "Write today's note.",
+      items: [item(1)],
+      ragBlock: "",
+      mayDecline: false,
+    });
+
+    const systemMessage = createMock.mock.calls[0][0].messages.find(
+      (m: any) => m.role === "system",
+    );
+    expect(systemMessage.content).toBe(
+      [
+        "You are Ada.",
+        "You are running a scheduled routine for this team.",
+        whenAndWhere(new Date(), undefined),
+      ].join("\n\n"),
+    );
   });
 
   it("makes exactly one completion call for a batch of items, not one per item", async () => {

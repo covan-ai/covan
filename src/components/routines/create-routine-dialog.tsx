@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { Link as RouterLink } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,10 +15,13 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api-client";
+import { useAgentsStore } from "@/lib/agents-store";
 import { useDeliveryChannels, useCreateRoutine } from "@/hooks/use-routines";
 import { useConnections } from "@/hooks/use-connections";
 import { SchedulePicker, scheduleError } from "@/components/routines/schedule-picker";
+import { TemplatePicker } from "@/components/routines/template-picker";
 import type { RoutineSourceKind, RoutineTriggerKind } from "@/lib/routines-api";
+import { templateById, type RoutineTemplate } from "@/lib/routine-templates";
 
 /**
  * Says what a connection routine can and cannot see, in the units the person
@@ -47,8 +50,21 @@ const browserTimezone = () => {
   }
 };
 
-export function CreateRoutineDialog({ agentId }: { agentId: string }) {
+export function CreateRoutineDialog({
+  agentId,
+  openTemplate,
+  onTemplateConsumed,
+}: {
+  agentId: string;
+  /** A template id from the URL. Opens the dialog on it. */
+  openTemplate?: string;
+  /** Called once the request has been acted on, so the URL can be cleaned. */
+  onTemplateConsumed?: () => void;
+}) {
   const { data: channels = [] } = useDeliveryChannels();
+  // The one xor the "Deliver to" field turns on, named once rather than
+  // repeated as `channels.length === 0` at every site that branches on it.
+  const needsNewChannel = channels.length === 0;
   const createRoutine = useCreateRoutine();
   // A connection that has never finished setting itself up has no documents to
   // report, so offering it here would create a routine that can only ever skip.
@@ -56,6 +72,18 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   // outlives it.
   const { data: connectionData } = useConnections();
   const connections = (connectionData?.connections ?? []).filter((c) => !c.needsFolder);
+
+  // Facts the picker needs, read off state this screen already holds.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const { agents } = useAgentsStore();
+  const facts = {
+    // This agent's documents, not the workspace's: the series reads what this
+    // agent can see. See `TemplateFacts`.
+    agentDocumentCount: agents.find((a) => a.id === agentId)?.documents.length ?? 0,
+    isAdmin: me?.members.find((m) => m.id === me.user.id)?.role === "admin",
+    gapReportEnabled: me?.workspace.gapReportEnabled ?? false,
+    memberCount: me?.members.length ?? 1,
+  };
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
@@ -71,10 +99,67 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
   const [timezone, setTimezone] = useState(browserTimezone());
   const [channelId, setChannelId] = useState("");
+  // Flips the moment the person picks a channel by hand, for the same reason
+  // `emailTouched` below exists: a template opened straight from a link
+  // (`openTemplate`) renders step 2 on mount, often before `useDeliveryChannels`
+  // has resolved, so `channels` is `[]` and whatever `applyTemplate` computed
+  // from it is stale by the time the real list arrives. `channelId` alone
+  // cannot tell "the person has not touched this" apart from "nothing resolved
+  // yet", which is why `resolvedChannelId` below reads this flag rather than
+  // `channelId === ""`.
+  const [channelTouched, setChannelTouched] = useState(false);
+  // The channel kind a template or a drafted routine asked for (`d.channelKind`
+  // / `draft.channelKind`), kept rather than resolved once — the channel it
+  // names may not exist in `channels` yet at the moment it is set. `null` for
+  // "Set it up myself", which has no preference and takes whichever channel is
+  // first, same as before this existed.
+  const [wantedChannelKind, setWantedChannelKind] = useState<"email" | "slack" | null>(null);
+  // Only relevant once `needsNewChannel` is true — see the "Deliver to" branch
+  // below. Raw user input, empty until they type. What the field shows and
+  // what `save()` sends is `resolvedDeliveryEmail` below, not this directly —
+  // see its comment for why.
+  const [deliveryEmail, setDeliveryEmail] = useState("");
+  // Flips the moment the person edits the field by hand. Before that, the
+  // field shows `me`'s address live rather than a value captured once: a
+  // template opened straight from a link (`openTemplate`) renders step 2 on
+  // mount, often before `me` has resolved, and nothing afterwards would have
+  // re-seeded a value an effect or an entry handler had already written.
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [endsAfterRuns, setEndsAfterRuns] = useState<number | null>(null);
   const [fieldError, setFieldError] = useState<{
     field: "schedule" | "url";
     message: string;
   } | null>(null);
+
+  // What the field shows and what `save()` sends — the same expression, so
+  // the two can never disagree. Untouched, it tracks `me.user.email` on every
+  // render; touched, it is exactly what the person typed, including empty,
+  // so clearing it to write a different address is never put back.
+  const resolvedDeliveryEmail = emailTouched
+    ? deliveryEmail
+    : deliveryEmail || me?.user.email || "";
+
+  // The channel id a wanted kind resolves to against the LIVE list, or the
+  // first channel if there is no wanted kind (or no match for it) — the same
+  // fallback `skipToForm` and the unknown-template branch below compute by
+  // hand. Kept as a function rather than inlined so `applyTemplate`, `runDraft`
+  // and `resolvedChannelId` all do the lookup the same way.
+  const channelFor = (kind: "email" | "slack" | null) => {
+    if (kind) {
+      const wantedKind = kind === "slack" ? "slack_webhook" : "email";
+      const match = channels.find((c) => c.kind === wantedKind);
+      if (match) return match.id;
+    }
+    return channels[0]?.id ?? "";
+  };
+
+  // What the Select shows and what `save()` sends — the same shape as
+  // `resolvedDeliveryEmail` above and for the same reason: untouched, it
+  // re-resolves `wantedChannelKind` against the live `channels` list on every
+  // render, so a channel that was `[]` when a template applied is not stuck on
+  // the empty string once `useDeliveryChannels` actually answers. Touched, it
+  // is exactly what the person picked, which `channelFor` never overrides.
+  const resolvedChannelId = channelTouched ? channelId : channelFor(wantedChannelKind);
 
   const reset = () => {
     setStep(1);
@@ -88,6 +173,11 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
     setScheduleCron("0 * * * *");
     setTimezone(browserTimezone());
     setChannelId("");
+    setChannelTouched(false);
+    setWantedChannelKind(null);
+    setDeliveryEmail("");
+    setEmailTouched(false);
+    setEndsAfterRuns(null);
     setFieldError(null);
   };
 
@@ -107,23 +197,95 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
       // The draft calls it `cron`; the create endpoint calls it `scheduleCron`.
       setScheduleCron(draft.cron);
       setTimezone(draft.timezone);
-      // channelKind is only a hint — the draft cannot know channel ids, so it
-      // preselects the first channel of a matching kind if one exists.
-      const wanted = draft.channelKind === "slack" ? "slack_webhook" : "email";
-      setChannelId((channels.find((c) => c.kind === wanted) ?? channels[0])?.id ?? "");
+      // channelKind is only a hint — the draft cannot know channel ids.
+      // Recording the preference is all this does; `resolvedChannelId`
+      // resolves it against the live `channels` list on every render, so it
+      // need not have arrived yet.
+      setWantedChannelKind(draft.channelKind);
+      setChannelTouched(false);
     } catch {
       // 422 means the parser could not read the request. Trapping the user on
       // step one retrying prose helps nobody; the form is always reachable.
       toast.message("Couldn't read that one — fill it in below instead.");
-      setChannelId(channels[0]?.id ?? "");
+      setWantedChannelKind(null);
+      setChannelTouched(false);
     } finally {
       setDrafting(false);
       setStep(2);
     }
   };
 
+  /**
+   * A template is a draft that cost nothing.
+   *
+   * The same six assignments `runDraft` makes, from the same shape, without the
+   * call — which is the whole of what a template is. `endsAfterRuns` is the one
+   * field a drafted routine never has, because only a template knows a routine is
+   * a series.
+   */
+  const applyTemplate = (template: RoutineTemplate) => {
+    const d = template.draft;
+    setName(d.name);
+    setSourceKind(d.sourceKind);
+    setSourceUrl(d.sourceUrl ?? "");
+    setInstruction(d.instruction);
+    setScheduleCron(d.scheduleCron);
+    setTimezone(browserTimezone());
+    setEndsAfterRuns(template.endsAfterRuns);
+    // Recording the preference, not resolving it — see `resolvedChannelId`'s
+    // comment for why this is what fixes the deep-linked case `channels`
+    // being `[]` on mount used to break.
+    setWantedChannelKind(d.channelKind);
+    setChannelTouched(false);
+    setStep(2);
+  };
+
+  /**
+   * The URL is a request, and this consumes it.
+   *
+   * An effect, and deliberately not derived state — `_authed.app.tsx:79-93` has
+   * the long version of why, and both of its traps are waiting here. Deriving the
+   * open state from the search param means the dialog stays open until the
+   * router's update lands, TanStack does that in a transition, and closing
+   * visibly lags on the deep-linked path and only on that path. A
+   * `useState(!!openTemplate)` initialiser never sees a second press from the
+   * same screen.
+   *
+   * An unknown id still consumes the request: the parameter has been read and
+   * acted on, and leaving it in the URL would re-open this on every reopen.
+   * Opening on step 1 is the right answer — it is the screen somebody who typed
+   * a wrong URL wanted anyway.
+   */
+  useEffect(() => {
+    if (!openTemplate) return;
+    const template = templateById(openTemplate);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOpen(true);
+    if (template) {
+      applyTemplate(template);
+    } else {
+      setWantedChannelKind(null);
+      setChannelTouched(false);
+    }
+    onTemplateConsumed?.();
+    // `channels` is deliberately not a dependency: it arrives a beat later,
+    // and re-running this on its arrival would reopen a dialog the person had
+    // closed. That used to be unsafe for a different reason — the comment
+    // here used to claim the result was "the same state 'Set it up myself'
+    // produces, which the empty-channel branch handles." It was not:
+    // `skipToForm` runs on a click, long after `channels` has loaded, so that
+    // path does preselect; and the empty-channel branch only covers
+    // `channels.length === 0`, which on a workspace with a channel already
+    // is exactly the case this was not. The actual fix is
+    // `wantedChannelKind` + `resolvedChannelId` above: this effect only ever
+    // records a preference, never resolves a channel id itself, so it has
+    // nothing that `channels` arriving later could make stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTemplate]);
+
   const skipToForm = () => {
-    setChannelId(channels[0]?.id ?? "");
+    setWantedChannelKind(null);
+    setChannelTouched(false);
     setStep(2);
   };
 
@@ -142,9 +304,12 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
         sourceUrl: sourceKind === "rss" || sourceKind === "web" ? sourceUrl.trim() : null,
         connectionId: sourceKind === "connection" ? connectionId : null,
         instruction: instruction.trim(),
-        deliveryChannelId: channelId,
+        ...(needsNewChannel
+          ? { deliveryEmail: resolvedDeliveryEmail.trim() }
+          : { deliveryChannelId: resolvedChannelId }),
         scheduleCron: scheduleCron.trim(),
         timezone,
+        endsAfterRuns,
       });
       toast.success("Routine created");
       close();
@@ -173,12 +338,18 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
   const canSave =
     name.trim() !== "" &&
     instruction.trim() !== "" &&
-    channelId !== "" &&
+    (needsNewChannel ? resolvedDeliveryEmail.trim() !== "" : resolvedChannelId !== "") &&
     // The picker emits "" while a number field is mid-edit, so this also covers
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
     scheduleError(scheduleCron) === null &&
+    // A `workspace` routine needs no url and no connection, exactly like
+    // `none` — it reads its own workspace, which is not a field on this
+    // screen. Without this branch it falls through to the url check below,
+    // and the `gap-report` template's `sourceUrl: null` leaves Create
+    // permanently disabled with no field the person could fill in to clear it.
     (sourceKind === "none" ||
+      sourceKind === "workspace" ||
       (sourceKind === "connection" ? connectionId !== "" : sourceUrl.trim() !== ""));
 
   return (
@@ -201,6 +372,12 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                 rows={4}
                 placeholder="Check Jira for open high-priority bugs every morning at 9am and post a summary to Slack."
               />
+              <div className="flex items-center gap-3">
+                <span className="h-px flex-1 bg-border" />
+                <span className="text-meta text-muted-foreground">or start from one of these</span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+              <TemplatePicker facts={facts} onPick={applyTemplate} />
               <div className="flex items-center justify-between gap-2">
                 <Button variant="ghost" size="sm" onClick={skipToForm}>
                   Set it up myself
@@ -217,7 +394,19 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                 <Input id="routine-name" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
 
-              {connections.length > 0 && (
+              {/* Hidden rather than disabled for `workspace`: its items are
+                  "Scheduled task" and "A connected source", a choice between
+                  two kinds a person can set up from scratch on this screen.
+                  `workspace` is neither - it only ever arrives from the
+                  gap-report template, with no field here for a person to have
+                  chosen it by hand - so a disabled item for it would offer a
+                  third option to a control that is not where that option is
+                  made, rather than explaining why the real two are grayed out.
+                  Hiding the whole control also removes the actual bug:
+                  without it, the trigger showed blank (no item's value is
+                  "workspace") and picking either real item silently converted
+                  the routine away from the one kind that cannot change back. */}
+              {connections.length > 0 && sourceKind !== "workspace" && (
                 <div className="space-y-2">
                   <Label htmlFor="routine-source">Source</Label>
                   <Select
@@ -321,17 +510,34 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="routine-channel">Deliver to</Label>
-                {channels.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Add a delivery channel in Settings first —{" "}
-                    <RouterLink to="/settings" className="text-primary underline">
-                      open Settings
-                    </RouterLink>
-                    .
-                  </p>
+                <Label htmlFor={needsNewChannel ? "routine-channel-email" : "routine-channel"}>
+                  Deliver to
+                </Label>
+                {needsNewChannel ? (
+                  <>
+                    <Input
+                      id="routine-channel-email"
+                      type="email"
+                      placeholder="you@company.com"
+                      value={resolvedDeliveryEmail}
+                      onChange={(e) => {
+                        setEmailTouched(true);
+                        setDeliveryEmail(e.target.value);
+                      }}
+                    />
+                    <p className="text-meta leading-[1.45] text-muted-foreground">
+                      The result arrives here. You can add Slack or another address in Settings
+                      later.
+                    </p>
+                  </>
                 ) : (
-                  <Select value={channelId} onValueChange={setChannelId}>
+                  <Select
+                    value={resolvedChannelId}
+                    onValueChange={(v) => {
+                      setChannelTouched(true);
+                      setChannelId(v);
+                    }}
+                  >
                     <SelectTrigger id="routine-channel">
                       <SelectValue placeholder="Pick a channel" />
                     </SelectTrigger>
@@ -346,7 +552,7 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                 )}
               </div>
 
-              {sourceKind !== "none" && (
+              {sourceKind !== "none" && sourceKind !== "workspace" && (
                 // Not decorative. diffItems treats a null cursor as a baseline
                 // and returns nothing, so the first run is deliberately silent.
                 // Without this line a user whose routine runs hourly sees
@@ -354,6 +560,19 @@ export function CreateRoutineDialog({ agentId }: { agentId: string }) {
                 <p className="text-xs text-muted-foreground">
                   The first run just takes a snapshot — you'll start getting updates from the next
                   change onward.
+                </p>
+              )}
+
+              {sourceKind === "workspace" && (
+                // A `workspace` routine has no cursor and no diff — it reads a
+                // rolling seven-day window and reports on it immediately
+                // (coverage-source.ts; executor.ts's workspace branch). The
+                // sentence above would be false here: there is no "next
+                // change" to wait for, because the first run already is a
+                // real report.
+                <p className="text-xs text-muted-foreground">
+                  This one doesn't wait for a next change — the first run already covers the past
+                  week.
                 </p>
               )}
 

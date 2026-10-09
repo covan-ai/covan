@@ -9,7 +9,7 @@
  * that — so what it sees is only ever as fresh as the connection's own
  * interval.
  */
-export type RoutineSourceKind = "rss" | "web" | "none" | "connection";
+export type RoutineSourceKind = "rss" | "web" | "none" | "connection" | "workspace";
 
 export type Routine = {
   id: string;
@@ -35,7 +35,11 @@ export type Routine = {
   outputBundleId: string | null;
   /** How many of its own filed documents this routine keeps. 52 by default. */
   outputRetention: number;
-  status: "active" | "paused";
+  /** After how many delivered runs this routine ends itself, or null for never. */
+  endsAfterRuns: number | null;
+  /** How many it has delivered. */
+  runsDone: number;
+  status: "active" | "paused" | "completed";
   /** Set when the engine paused this itself after repeated failures. */
   pausedReason: string | null;
   nextRunAt: number | null;
@@ -137,7 +141,14 @@ export type CreateRoutineInput = {
   /** Required when sourceKind is `connection`. */
   connectionId?: string | null;
   instruction: string;
-  deliveryChannelId: string;
+  /**
+   * Exactly one of `deliveryChannelId` and `deliveryEmail`, enforced by the
+   * worker's schema rather than by this type: a workspace with an existing
+   * channel sends its id, and a workspace with none sends an address instead,
+   * and the API creates the channel from it in the same request.
+   */
+  deliveryChannelId?: string;
+  deliveryEmail?: string;
   scheduleCron: string;
   timezone: string;
   /** Omitted means `schedule`, which is what every routine was before this. */
@@ -145,6 +156,8 @@ export type CreateRoutineInput = {
   /** Null or omitted means the routine keeps nothing, which is the default. */
   outputBundleId?: string | null;
   outputRetention?: number;
+  /** After how many delivered runs this routine ends itself, or null for never. */
+  endsAfterRuns?: number | null;
 };
 
 export type UpdateRoutineInput = Partial<{

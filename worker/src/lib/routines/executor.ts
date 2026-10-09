@@ -7,9 +7,16 @@ import { fetchSource, type FetchDeps, type SourceResult } from "./source";
 import { UpstreamError } from "./upstream-error";
 import { fetchConnectionItems } from "./connection-source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
-import { claimItemKeys, deliver, releaseItemKeys, type DeliveryDeps } from "./delivery";
+import {
+  claimItemKeys,
+  deliver,
+  releaseItemKeys,
+  type DeliveryChannel,
+  type DeliveryDeps,
+} from "./delivery";
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
+import type { CoverageRunInput, CoverageRunResult } from "./coverage-source";
 import { embeddingCost, type Entitlements } from "../entitlements";
 import { WARN_AT, sameInstant } from "../entitlements/warn";
 import {
@@ -54,15 +61,20 @@ export const MAX_TRANSIENT_FAILURES = 20;
 /** Backoff never pushes a routine more than this far past its natural next run. */
 const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 
+/** A field added here must also be added to `ingest.ts`'s `ROUTINE_COLUMNS`. */
 export type RoutineRow = {
   id: string;
   agent_id: string;
   user_id: string;
   workspace_id: string;
   name: string;
-  source_kind: "rss" | "web" | "none" | "connection";
-  /** `url` for rss and web, `connectionId` for connection, empty for none. */
-  source_config: { url?: string; connectionId?: string };
+  source_kind: "rss" | "web" | "none" | "connection" | "workspace";
+  /**
+   * `url` for rss and web, `connectionId` for connection, `report` for
+   * workspace (0075 — the only value today is `coverage_gaps`), empty for
+   * none.
+   */
+  source_config: { url?: string; connectionId?: string; report?: string };
   instruction: string;
   delivery_channel_id: string;
   schedule_cron: string;
@@ -80,6 +92,10 @@ export type RoutineRow = {
   output_bundle_id?: string | null;
   /** How many filed documents this routine keeps. 0056's default is 52. */
   output_retention?: number | null;
+  /** After how many delivered runs this routine ends itself. Null means never. */
+  ends_after_runs: number | null;
+  /** Delivered runs so far — incremented only where `finish` records `"ok"`. */
+  runs_done: number;
 };
 
 export type SummariseInput = {
@@ -140,6 +156,15 @@ export type SummariseInput = {
    * of the two answers and is the one a routine should have had first.
    */
   timezone?: string | null;
+  /**
+   * Where this run sits in a routine that ends, or absent for one that does not.
+   *
+   * `done` is how many have been delivered *before* this one, so the run being
+   * written is `done + 1`. Not material — `routineMaterial()` answers "what is
+   * this run working from", and for a scheduled prompt the answer is still
+   * nothing. This is context about the run itself.
+   */
+  runPosition?: { done: number; total: number };
 };
 
 /**
@@ -272,6 +297,19 @@ export type ExecutorDeps = {
    * is a paid call and goes to whichever key is answering this run.
    */
   file?: (input: FilingInput, env: RoutineEnv) => Promise<FilingResult>;
+  /**
+   * The gap report, end to end — Task 12's `runCoverageReport`, bound to its
+   * real dependencies including the one model call. Optional for the same
+   * reason `runWithTools` and `file` are: this module is meant to be drivable
+   * without an environment, and a deployment can be running with no coverage
+   * dep configured at all — the `workspace` branch below treats that as a
+   * deployment mistake and fails loudly rather than skipping forever.
+   *
+   * Takes the resolved run env for the same reason `summarise` and `retrieve`
+   * do: the clustering call is a paid call, and an owner who brought their own
+   * key pays for it rather than the operator.
+   */
+  coverage?: (input: CoverageRunInput, env: RoutineEnv) => Promise<CoverageRunResult>;
   /**
    * What set this run going, reported to a webhook receiver as
    * `run.triggeredBy`.
@@ -437,6 +475,147 @@ export async function runRoutine(
       return { status: "skipped", itemsNew: 0 };
     }
 
+    // A `workspace` routine (0075) reads its own workspace, so none of the
+    // fetch, diff, cursor or item machinery below applies to it — and its
+    // summary is rendered in code rather than written by a model, so neither
+    // does the summarise branch further down. It returns here, through
+    // `finish`, like every other path.
+    if (routine.source_kind === "workspace") {
+      if (!deps.coverage) {
+        // Loud, not silent. A cron Worker without this dep bound is a
+        // deployment mistake, and a routine that quietly skips forever is the
+        // failure this whole feature's pause machinery exists to avoid.
+        await finish(routine, deps, startedAt, {
+          status: "failed",
+          itemsNew: 0,
+          tokens: 0,
+          error: "this deployment cannot run a workspace report",
+        });
+        return { status: "failed", itemsNew: 0 };
+      }
+
+      const result = await deps.coverage(
+        { workspaceId: routine.workspace_id, ownerId: routine.user_id, days: 7 },
+        runEnv,
+      );
+
+      if (result.kind === "pause") {
+        await finish(routine, deps, startedAt, {
+          status: "skipped",
+          itemsNew: 0,
+          tokens: 0,
+          error: result.reason,
+          pause: result.reason,
+        });
+        // Sent after `finish` commits, like `announceQuotaSkip` above and
+        // `announcePause` itself (called from inside `finish`) — fix round 1,
+        // finding B4. The pause must already be visible on the routine's page
+        // before the owner is told about it, and `notifyOwner` swallows its
+        // own errors, so there is nothing to lose by waiting for the write.
+        //
+        // None of this feature's three reasons is a repeated failure, so this
+        // does not read through `announcePause` — see `announceCoveragePause`
+        // for why that one's wording would be false here.
+        await announceCoveragePause(routine, deps, result.reason);
+        return { status: "skipped", itemsNew: 0 };
+      }
+
+      if (result.kind === "skip") {
+        // `model`/`tokens` are only present on the one skip that follows the
+        // clustering call — see `CoverageRunResult`. Checking both narrows
+        // both at once, which is what lets the branch below read them as
+        // required rather than optional; the type does not say the two are
+        // always set together, but `coverage-source.ts` guarantees they are.
+        //
+        // `weightedTokens` is the real weighted figure now that
+        // `clusterQuestions` reports it (fix round 1, finding B2/B3) — the
+        // `?? result.tokens` fallback is only for a `coverage` dependency that
+        // has not been updated to send it, which would otherwise undercharge
+        // nothing truer than the raw count it already had.
+        if (result.model !== undefined && result.tokens !== undefined) {
+          await finish(routine, deps, startedAt, {
+            status: "skipped",
+            itemsNew: 0,
+            error: result.note,
+            tokens: result.tokens,
+            weightedTokens: result.weightedTokens ?? result.tokens,
+            keys,
+            modelCall: { model: result.model, modelOutcome: "answered" },
+          });
+        } else {
+          await finish(routine, deps, startedAt, {
+            status: "skipped",
+            itemsNew: 0,
+            tokens: 0,
+            error: result.note,
+          });
+        }
+        return { status: "skipped", itemsNew: 0 };
+      }
+
+      // `result.kind === "report"`. Claimed before delivering — fix round 1,
+      // finding A3. `claim_due_routines` reclaims a routine whose `claimed_at`
+      // is stale (0055:82), so a worker that dies between this and `finish`
+      // re-runs and would otherwise re-send; `runOneRoutine` bypasses claiming
+      // entirely by design, resting on exactly this backstop (see its own
+      // docstring). Every other kind gets a key before sending for the same
+      // reason — this is the "none" path's own key shape, just below
+      // (`:699-703` as of this writing): no cursor and no diff here either, so
+      // the run's identity is the trigger that produced it, not anything about
+      // what was read.
+      const reportKeysToClaim = trigger
+        ? [`hook:${trigger.eventId}`]
+        : deps.trigger === "manual"
+          ? [`manual:${routine.id}@${startedAt.toISOString()}`]
+          : [`slot:${routine.next_run_at}`];
+      claimedKeys = await claimItemKeys(deps.db, routine.id, reportKeysToClaim);
+      if (claimedKeys.length === 0) {
+        // Already sent for this slot. The clustering call was still made and
+        // paid for before this claim was ever checked, so it is still
+        // metered — same accounting as the post-call skip above.
+        await finish(routine, deps, startedAt, {
+          status: "skipped",
+          itemsNew: 0,
+          tokens: result.tokens,
+          weightedTokens: result.weightedTokens ?? result.tokens,
+          keys,
+          modelCall: { model: result.model, modelOutcome: "answered" },
+        });
+        return { status: "skipped", itemsNew: 0 };
+      }
+
+      // Delivered the same way every other routine is — the same channel
+      // lookup, the same `deliver`, the same event — because nothing about
+      // sending a message is specific to this source; only how the text was
+      // produced is. Fix round 1, finding A4: this used to be a second,
+      // uncommented copy of the ordinary path's lookup below; see
+      // `loadDeliveryChannel` for why that was a real cost and not just
+      // duplication.
+      const channel = await loadDeliveryChannel(deps, routine);
+
+      await deliver(channel, { subject: routine.name, body: result.summary }, deps.deliveryDeps, {
+        event: EVENT_DELIVERED,
+        routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
+        run: {
+          itemsNew: 1,
+          itemsOverflow: 0,
+          triggeredBy: trigger ? "webhook" : (deps.trigger ?? "schedule"),
+        },
+      });
+      delivered = true;
+
+      await finish(routine, deps, startedAt, {
+        status: "ok",
+        itemsNew: 1,
+        summary: result.summary,
+        modelCall: { model: result.model, modelOutcome: "answered" },
+        tokens: result.tokens,
+        weightedTokens: result.weightedTokens ?? result.tokens,
+        keys,
+      });
+      return { status: "ok", itemsNew: 1 };
+    }
+
     // A connection routine reads rows the reconciler already imported rather
     // than fetching anything itself — see `connection-source.ts` for why that
     // is the design and not a shortcut. Everything downstream is identical to a
@@ -588,21 +767,12 @@ export async function runRoutine(
     }
 
     // Checked before summarising: a routine with a missing channel shouldn't
-    // pay for an LLM call it can never deliver.
-    //
-    // SCOPING: the service role bypasses RLS, so both lookups below are scoped
-    // explicitly from the routine row — the channel to its owner, the agent to
-    // the routine's workspace. Matching on id alone would make any tampered row
-    // a cross-tenant read.
-    const { data: channel, error: channelError } = await deps.db
-      .from("delivery_channels")
-      .select("kind, secret_ciphertext")
-      .eq("id", routine.delivery_channel_id)
-      .eq("user_id", routine.user_id)
-      .maybeSingle();
-
-    if (channelError) throw new Error(`delivery channel lookup failed: ${channelError.message}`);
-    if (!channel) throw new Error("delivery channel missing");
+    // pay for an LLM call it can never deliver. Scoping is `loadDeliveryChannel`'s
+    // own comment now (fix round 1, finding A4) — the agent lookup just below
+    // still needs its own: it is scoped to the routine's workspace rather than
+    // its owner, and matching on id alone would make any tampered row a
+    // cross-tenant read there too.
+    const channel = await loadDeliveryChannel(deps, routine);
 
     const { data: agent, error: agentError } = await deps.db
       .from("agents")
@@ -670,6 +840,21 @@ export async function runRoutine(
       // unless what came in matters.
       mayDecline: routine.source_kind !== "none" || trigger !== undefined,
       timezone: routine.timezone,
+      // Only for a routine that ends. A standing order has no position, and a
+      // line claiming one would be a fact the model invents a meaning for.
+      //
+      // `!=`, not `!==`, deliberately: `ingest.ts` builds a routine row
+      // through a cast, so a select path that forgot this column yields
+      // `undefined` rather than `null` for it (see `output_bundle_id`'s
+      // comment above, on the same type, for the same optional-vs-nullable
+      // point). Loose equality degrades that to "unbounded" — no position
+      // at all — instead of `{ done, total: undefined }`, which would be a
+      // position claiming a number the model would have to invent a meaning
+      // for.
+      runPosition:
+        routine.ends_after_runs != null
+          ? { done: routine.runs_done, total: routine.ends_after_runs }
+          : undefined,
     };
 
     // The branch, and the whole of §D. A workspace with something for a tool
@@ -828,6 +1013,36 @@ export async function runRoutine(
 
     return { status: "failed", itemsNew: 0 };
   }
+}
+
+/**
+ * The delivery channel a run sends to.
+ *
+ * SCOPING: the service role bypasses RLS, so this lookup is scoped explicitly
+ * from the routine row rather than on id alone — matching on id alone would
+ * make any tampered row a cross-tenant read.
+ *
+ * Fix round 1, finding A4. Shared by the two paths that need a channel before
+ * sending — the ordinary summarise path and the workspace report path — which
+ * used to copy this query and both its guards byte for byte, with this
+ * comment attached to only one of the two copies. The two sites differ in
+ * what they do with the result next (one also reads an agent afterward),
+ * which is an argument for extracting the lookup alone, not for leaving it
+ * duplicated.
+ */
+async function loadDeliveryChannel(
+  deps: ExecutorDeps,
+  routine: RoutineRow,
+): Promise<DeliveryChannel> {
+  const { data: channel, error } = await deps.db
+    .from("delivery_channels")
+    .select("kind, secret_ciphertext")
+    .eq("id", routine.delivery_channel_id)
+    .eq("user_id", routine.user_id)
+    .maybeSingle();
+  if (error) throw new Error(`delivery channel lookup failed: ${error.message}`);
+  if (!channel) throw new Error("delivery channel missing");
+  return channel;
 }
 
 /**
@@ -1071,6 +1286,43 @@ async function finish(
     patch.paused_reason = outcome.pause;
   }
 
+  /**
+   * A series spends a morning only when it delivered one.
+   *
+   * Guarded on `status === "ok"` and not on "did this run at all", which is the
+   * whole content of 0074's `runs_done`: a week of a dead delivery channel would
+   * otherwise complete a seven-morning series that nobody ever read, and leave
+   * the routine saying "Finished".
+   *
+   * Deliberately NOT the rule the quota block above uses. That one is keyed on
+   * tokens having been spent, because a declined run costs real money and must
+   * be billed; this one is keyed on something having arrived, because a
+   * declined run delivered nothing. Two different questions about the same
+   * run, and the comment above says so for its own.
+   *
+   * A manual "Run now" counts the same as a scheduled tick: it delivers, and
+   * the spec's rule is "only a delivered run increments" — nothing here asks
+   * who or what started the run. The visible consequence is that pressing it
+   * on a seven-morning series finishes the series one calendar day sooner,
+   * with all seven pieces still delivered in order.
+   *
+   * Last, so a pause set by either branch above wins — *if* one is ever set
+   * on an `"ok"` outcome. Nothing today does: `pausedByFailures` requires
+   * `status === "failed"`, and the one call site that sets `outcome.pause`
+   * always pairs it with `status: "skipped"`. So the `patch.status ===
+   * undefined` check below is forward protection for a pause path that does
+   * not exist yet, not a condition exercised by any test — written so that if
+   * one is ever added, "delivered and then found a reason to stop" still
+   * reads as stopped rather than as a finished series.
+   */
+  if (routine.ends_after_runs != null && outcome.status === "ok") {
+    const done = routine.runs_done + 1;
+    patch.runs_done = done;
+    if (done >= routine.ends_after_runs && patch.status === undefined) {
+      patch.status = "completed";
+    }
+  }
+
   const { error: updateError } = await deps.db.from("routines").update(patch).eq("id", routine.id);
   if (updateError) throw new Error(`routines update failed: ${updateError.message}`);
 
@@ -1101,6 +1353,41 @@ async function announcePause(
       `"${routine.name}" has been paused after repeated failures, so it will not run again ` +
       `until you resume it.\n\nLast error: ${reason}\n\n` +
       `Open the routine in the app to resume it once the cause is fixed.`,
+  });
+}
+
+/**
+ * Tell the owner a gap-report routine stopped — in terms that are true for
+ * this feature's three reasons, which `announcePause` is not.
+ *
+ * `announcePause` frames every pause as "paused after repeated failures" and
+ * sends the owner to the routine itself to fix it. None of this feature's
+ * three reasons is a failure: the report was switched off, the owner lost
+ * admin, or the workspace shrank below the floor a topic can be reported
+ * without naming who asked. All three are read-only facts about the
+ * workspace, and two of them are fixed in its Settings rather than on this
+ * routine — reusing `announcePause`'s wording here would tell the owner
+ * something false twice over.
+ *
+ * A second, narrow function rather than a rewrite of `announcePause` itself:
+ * that sentence is also what a repeated-failure pause and a membership-removal
+ * pause would show, and changing it to fit this feature's three reasons would
+ * change what those two say about theirs. Still reuses `announcePause`'s
+ * `routine_paused` notice kind and `EVENT_PAUSED` webhook event — this is a
+ * pause, just not a failure-shaped one, and the owner has only the one
+ * preference toggle for "tell me when a routine stops."
+ */
+async function announceCoveragePause(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  reason: string,
+): Promise<void> {
+  await notifyOwner(routine, deps, "routine_paused", {
+    subject: `Routine paused: ${routine.name}`,
+    body:
+      `"${routine.name}" has stopped: ${reason}.\n\n` +
+      `It will not run again on its own. Once that is no longer true, open the ` +
+      `routine in the app and resume it.`,
   });
 }
 

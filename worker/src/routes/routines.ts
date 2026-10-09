@@ -328,39 +328,63 @@ routines.delete("/delivery-channels/:id", async (c) => {
 
 // ---- routines --------------------------------------------------------------
 
-const createSchema = z.object({
-  agentId: z.string().uuid(),
-  name: z.string().min(1),
-  sourceKind: z.enum(["rss", "web", "none", "connection"]),
-  sourceUrl: z.string().nullable().optional(),
-  /** Required for `connection`, ignored otherwise. */
-  connectionId: z.string().uuid().nullable().optional(),
-  instruction: z.string().min(1),
-  deliveryChannelId: z.string().uuid(),
-  scheduleCron: z.string().min(1),
-  timezone: z.string().default("UTC"),
-  /**
-   * `schedule` unless asked otherwise, which is what every routine was before
-   * 0055. A webhook trigger is only valid on a routine with no source of its
-   * own; the database says so with a CHECK, and 0027's trigger means it can
-   * never be granted to an existing RSS routine afterwards.
-   */
-  triggerKind: z.enum(["schedule", "webhook", "both"]).default("schedule"),
-  /**
-   * Where a delivered summary is kept, or null to keep nothing — which is the
-   * default and what every routine did before 0056.
-   *
-   * Not validated here beyond its shape. The bundle has to be one in the
-   * routine's own workspace, and 0056's policies are what say so: the subquery
-   * resolves through `knowledge_bundles`' RLS, so a bundle in somebody else's
-   * workspace is refused by the same mechanism that refuses somebody else's
-   * agent. Checking it here as well would be a second opinion that can drift
-   * from the one that counts.
-   */
-  outputBundleId: z.string().uuid().nullable().optional(),
-  /** Bounded here as well as by 0056's CHECK, so the refusal names the field. */
-  outputRetention: z.number().int().min(1).max(520).optional(),
-});
+const createSchema = z
+  .object({
+    agentId: z.string().uuid(),
+    name: z.string().min(1),
+    // `workspace` needs neither `sourceUrl` nor `connectionId` below — it reads
+    // its own workspace, resolved server-side (see `createRoutine`'s
+    // `sourceConfigFor`). Whether the caller may actually use it is
+    // `routine_workspace_source_is_permitted` (0076), not this schema.
+    sourceKind: z.enum(["rss", "web", "none", "connection", "workspace"]),
+    sourceUrl: z.string().nullable().optional(),
+    /** Required for `connection`, ignored otherwise. */
+    connectionId: z.string().uuid().nullable().optional(),
+    instruction: z.string().min(1),
+    deliveryChannelId: z.string().uuid().optional(),
+    /**
+     * The alternative to `deliveryChannelId`, for a workspace that has never set
+     * one up: an address to create a channel from, in the same request. Checked
+     * for shape in the handler by the same `channelSecretProblem` the standalone
+     * route uses, not here — z.string().email() would be a second opinion that
+     * can drift from it.
+     */
+    deliveryEmail: z.string().optional(),
+    scheduleCron: z.string().min(1),
+    timezone: z.string().default("UTC"),
+    /**
+     * `schedule` unless asked otherwise, which is what every routine was before
+     * 0055. A webhook trigger is only valid on a routine with no source of its
+     * own; the database says so with a CHECK, and 0027's trigger means it can
+     * never be granted to an existing RSS routine afterwards.
+     */
+    triggerKind: z.enum(["schedule", "webhook", "both"]).default("schedule"),
+    /**
+     * Where a delivered summary is kept, or null to keep nothing — which is the
+     * default and what every routine did before 0056.
+     *
+     * Not validated here beyond its shape. The bundle has to be one in the
+     * routine's own workspace, and 0056's policies are what say so: the subquery
+     * resolves through `knowledge_bundles`' RLS, so a bundle in somebody else's
+     * workspace is refused by the same mechanism that refuses somebody else's
+     * agent. Checking it here as well would be a second opinion that can drift
+     * from the one that counts.
+     */
+    outputBundleId: z.string().uuid().nullable().optional(),
+    /** Bounded here as well as by 0056's CHECK, so the refusal names the field. */
+    outputRetention: z.number().int().min(1).max(520).optional(),
+    /**
+     * A series' length, decided once at creation (0074) — `updateSchema` below
+     * does not get this, the same way it does not get `sourceKind`. Null or
+     * omitted means it runs until somebody stops it.
+     */
+    endsAfterRuns: z.number().int().min(1).max(365).nullish(),
+  })
+  // Exactly one. Both is a caller that has not decided, and neither is a routine
+  // the database would refuse anyway — `delivery_channel_id` is `not null`.
+  .refine((v) => (v.deliveryChannelId === undefined) !== (v.deliveryEmail === undefined), {
+    message: "send either deliveryChannelId or deliveryEmail, not both",
+  });
 
 // agentId and workspaceId are deliberately absent from updateSchema. The
 // database is the real boundary — routines_update_own's WITH CHECK now carries
@@ -416,6 +440,48 @@ routines.post("/routines", async (c) => {
     .single();
   if (!agent) return c.json({ error: "agent not found" }, 404);
 
+  const user = c.get("user");
+  // The agent's workspace, not the caller's *active* one (`getActiveWorkspaceId`,
+  // which the standalone `POST /delivery-channels` uses below): a delivery
+  // channel belongs to a person, not a workspace — 0019 says so outright, and
+  // `routines_insert_own` only checks `dc.user_id = auth.uid()`, never a
+  // workspace match. `delivery_channels.workspace_id` is provenance nothing
+  // reads back; for a channel minted inside a routine, the agent's workspace
+  // is simply the more useful thing to have recorded, not a requirement.
+  const workspaceId = agent.workspace_id as string;
+
+  // A workspace that has never set a channel up cannot otherwise finish this
+  // dialog, and a new workspace is exactly that workspace. The address is the
+  // caller's own and arrives from a field they confirmed; it is validated by
+  // the same `channelSecretProblem` the standalone route uses and encrypted
+  // by the same `encryptSecret`, because this is a second caller of that path
+  // and not a second path.
+  let deliveryChannelId = body.deliveryChannelId;
+  // Set only when this request minted a new channel — the thing to undo if
+  // the routine insert below fails, so a schedule the parser can't read or a
+  // url the SSRF guard refuses doesn't leave an encrypted address nobody can
+  // reach, and correcting the field and resubmitting doesn't mint a second one
+  // on top of it.
+  let createdChannelId: string | undefined;
+  if (body.deliveryEmail !== undefined) {
+    const problem = channelSecretProblem("email", body.deliveryEmail, ownHostsFrom(c.env));
+    if (problem) return c.json({ error: problem }, 400);
+    const { data, error } = await serviceClient(c.env)
+      .from("delivery_channels")
+      .insert({
+        workspace_id: workspaceId,
+        user_id: user.id,
+        kind: "email",
+        label: maskSecret("email", body.deliveryEmail),
+        secret_ciphertext: await encryptSecret(body.deliveryEmail, c.env.ROUTINE_SECRET_KEY),
+      })
+      .select("id")
+      .single();
+    if (error) return c.json({ error: "could not set up that address" }, 500);
+    deliveryChannelId = data.id as string;
+    createdChannelId = deliveryChannelId;
+  }
+
   // The one insert site, shared with the tool an agent uses to propose a
   // routine mid-conversation — see `lib/routines/create.ts` for why there is
   // exactly one.
@@ -423,23 +489,32 @@ routines.post("/routines", async (c) => {
     db,
     {
       agentId: body.agentId,
-      workspaceId: agent.workspace_id as string,
-      userId: c.get("user").id,
+      workspaceId,
+      userId: user.id,
       name: body.name,
       sourceKind: body.sourceKind,
       sourceUrl: body.sourceUrl ?? null,
       connectionId: body.connectionId ?? null,
       instruction: body.instruction,
-      deliveryChannelId: body.deliveryChannelId,
+      // The schema's refine guarantees exactly one of `deliveryChannelId` and
+      // `deliveryEmail` arrived, and the branch above resolves the latter to
+      // a freshly created channel's id — by here, one is always set.
+      deliveryChannelId: deliveryChannelId as string,
       scheduleCron: body.scheduleCron,
       timezone: body.timezone,
       triggerKind: body.triggerKind,
       outputBundleId: body.outputBundleId ?? null,
       ...(body.outputRetention !== undefined ? { outputRetention: body.outputRetention } : {}),
+      endsAfterRuns: body.endsAfterRuns ?? null,
     },
     ownHostsFrom(c.env),
   );
-  if (!created.ok) return c.json({ error: created.message }, created.status);
+  if (!created.ok) {
+    if (createdChannelId) {
+      await serviceClient(c.env).from("delivery_channels").delete().eq("id", createdChannelId);
+    }
+    return c.json({ error: created.message }, created.status);
+  }
   return c.json(mapRoutine(created.row), 201);
 });
 

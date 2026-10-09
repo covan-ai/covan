@@ -12,6 +12,7 @@ import { Badge, Headline, SectionHeading } from "@/components/page-container";
 import { Chip, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar, UserAvatar } from "@/components/avatars";
 import { useQuota, quotaSentence } from "@/lib/quota";
+import { CoverageNotice } from "@/components/coverage-notice";
 import { FirstWeekChecklist } from "@/components/first-week-checklist";
 import { firstWeekSteps, firstWeekRemaining, useChecklistDismissed } from "@/lib/first-week";
 import {
@@ -135,6 +136,16 @@ function Home() {
             {quotaSentence(quota)}
           </p>
         )}
+        {/* Above the checklist, for the same reason the checklist itself sits
+            under the composer rather than over it: this is scaffolding too,
+            and a member who was never told the report exists cannot be said
+            to have a real choice about it. Hidden on its own terms — see
+            `CoverageNotice` — once the workspace has turned the report on,
+            this person has been told, or they already opted out. */}
+        <CoverageNotice
+          workspaceId={me?.workspace.id ?? ""}
+          enabled={me?.workspace.gapReportEnabled ?? false}
+        />
         {/* Under the composer, never over it: the composer is the product and
             this is scaffolding. Hidden from a viewer, since the policies refuse
             them three of the four steps, and hidden while the workspace has no

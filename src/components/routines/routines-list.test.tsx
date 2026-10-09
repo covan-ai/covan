@@ -25,6 +25,8 @@ const routine = (over: Partial<Routine>): Routine => ({
   timezone: "UTC",
   outputBundleId: null,
   outputRetention: 52,
+  endsAfterRuns: null,
+  runsDone: 0,
   triggerKind: "schedule" as const,
   status: "active",
   pausedReason: null,

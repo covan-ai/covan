@@ -6,8 +6,16 @@ import type { CoverageResponse } from "@/lib/api-client";
 
 const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
 
-vi.mock("@tanstack/react-query", () => ({ useQuery }));
-vi.mock("@/lib/api-client", () => ({ api: { coverage: vi.fn() } }));
+const { setEnabled } = vi.hoisted(() => ({ setEnabled: vi.fn() }));
+
+vi.mock("@tanstack/react-query", () => ({
+  useQuery,
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+}));
+vi.mock("@/lib/api-client", () => ({
+  api: { coverage: { setEnabled } },
+  ApiError: class ApiError extends Error {},
+}));
 
 const HEADING = "What nothing was close to.";
 
@@ -39,12 +47,19 @@ const response = (patch: Partial<CoverageResponse> = {}): CoverageResponse =>
     ...patch,
   }) as CoverageResponse;
 
-function renderWith(data: CoverageResponse | undefined, isLoading = false) {
+function renderWith(
+  data: CoverageResponse | undefined,
+  isLoading = false,
+  gapReportEnabled = false,
+) {
   useQuery.mockReturnValue({ data, isLoading, isPending: isLoading });
-  return render(<WorkspaceCoverageSection />);
+  return render(<WorkspaceCoverageSection gapReportEnabled={gapReportEnabled} />);
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  setEnabled.mockResolvedValue({ ok: true });
+});
 
 describe("WorkspaceCoverageSection", () => {
   it("leads with the share of answers that stood on something the team wrote", () => {
@@ -223,5 +238,37 @@ describe("WorkspaceCoverageSection", () => {
 
     expect(screen.getByText("Nothing in this window")).toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
+  });
+
+  describe("the admin switch", () => {
+    it("reflects the workspace's current setting", () => {
+      renderWith(response(), false, true);
+      expect(screen.getByRole("switch", { name: /weekly coverage report/i })).toBeChecked();
+    });
+
+    it("names the floor underneath it, derived rather than flat", () => {
+      renderWith(response());
+      expect(
+        screen.getByText(
+          /unavailable only for a workspace of exactly two.*identify the other person/i,
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("turns the report on through the workspace's own switch", async () => {
+      renderWith(response(), false, false);
+
+      await userEvent.click(screen.getByRole("switch", { name: /weekly coverage report/i }));
+
+      expect(setEnabled).toHaveBeenCalledWith(true);
+    });
+
+    // The floor sentence is informational, not a gate: a two-person workspace
+    // has to be able to flip this on and read why the routine still is not
+    // offered, rather than finding the switch disabled with no explanation.
+    it("stays on the screen regardless of member count — the floor is not enforced here", () => {
+      renderWith(response(), false, false);
+      expect(screen.getByRole("switch", { name: /weekly coverage report/i })).toBeEnabled();
+    });
   });
 });

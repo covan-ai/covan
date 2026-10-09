@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { AppEnv } from "../types";
 import { coverage } from "./coverage";
 
@@ -8,16 +8,98 @@ const WORKSPACE_ID = "workspace-1";
 
 type RpcResult = { data: unknown[] | null; error: { code?: string; message?: string } | null };
 
+type Role = "admin" | "member";
+
+/**
+ * Carried across separate `fakeDb()` calls within one test, because
+ * `fakeDb()` itself is stateless and a fresh one is built per `request()` —
+ * see `request` below. Two of the new tests below ("takes it back", "is
+ * idempotent") make several calls in a row and expect the later ones to see
+ * what the earlier ones wrote, the way a real connection would. `fakeDb`
+ * mutates this object in place rather than owning its own copy of it.
+ */
+type SettingsState = { optedOut: boolean; lastWorkspaceUpdate: Record<string, unknown> | null };
+
 /**
  * Enough of the request-scoped client for `getActiveWorkspaceId` to resolve and
  * for the two RPCs to answer, plus the arguments each was called with — the
  * window is the one thing this route decides on its own, so the tests have to
  * be able to see what it decided.
+ *
+ * Extended (not replaced) for "the switch" and "a member's own choice" below:
+ * an optional second argument gives `workspaces` an UPDATE and
+ * `coverage_opt_outs` a SELECT/UPSERT/DELETE, neither of which the original
+ * `GET /coverage/workspace` tests above ever touch, so they are unaffected.
+ *
+ * `role` only ever changes what the `workspaces` UPDATE answers. That mirrors
+ * the one thing RLS actually gates in this file's routes:
+ * `workspaces_update_admin` is a USING clause, so a non-admin's UPDATE matches
+ * zero rows rather than erroring — see the comment on `PATCH
+ * /coverage/settings` in `coverage.ts`. `coverage_opt_outs`'s policies only
+ * ever check `user_id = auth.uid()`, and this fake has no caller-mismatch case
+ * to model, so its behaviour here does not vary with `role`.
+ *
+ * None of this is RLS. A fake does whatever it is told; what these tests can
+ * prove is that each route reacts correctly to what the database told it, not
+ * that the database was right to say it. The admin enforcement itself is
+ * proved against a live database by `tests/rls/coverage-gaps.test.ts`, in its
+ * describe block "who may turn the report on".
  */
-function fakeDb(rpcs: Record<string, RpcResult>) {
+function fakeDb(
+  rpcs: Record<string, RpcResult>,
+  opts: { role?: Role; state?: SettingsState } = {},
+) {
+  const role = opts.role ?? "admin";
+  const state = opts.state;
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const db = {
     from(table: string) {
+      if (table === "workspaces" && state) {
+        return {
+          update: (values: Record<string, unknown>) => {
+            state.lastWorkspaceUpdate = values;
+            return {
+              eq: () => ({
+                select: async () => ({
+                  data: role === "admin" ? [{ id: WORKSPACE_ID, ...values }] : [],
+                  error: null,
+                }),
+              }),
+            };
+          },
+        };
+      }
+
+      if (table === "coverage_opt_outs" && state) {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: state.optedOut ? { user_id: USER_ID } : null,
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+          // An upsert IS an insert with a conflict target — the options object
+          // is how PostgREST is asked for `ON CONFLICT DO NOTHING`, not a
+          // detail this fake needs to branch on.
+          upsert: async () => {
+            state.optedOut = true;
+            return { data: null, error: null };
+          },
+          delete: () => ({
+            eq: () => ({
+              eq: async () => {
+                state.optedOut = false;
+                return { data: null, error: null };
+              },
+            }),
+          }),
+        };
+      }
+
       const single = async () =>
         table === "profiles"
           ? { data: { active_workspace_id: WORKSPACE_ID }, error: null }
@@ -48,6 +130,35 @@ function appWithDb(db: unknown) {
   app.route("/", coverage);
   return app;
 }
+
+const asAdmin: Role = "admin";
+const asMember: Role = "member";
+
+/**
+ * Not a copy of the client — a request against a fresh app wired to a fresh
+ * `fakeDb()`, except for `settingsState`, which is shared by reference. That
+ * is what lets a test make several `request()` calls in a row ("PUT true,
+ * then PUT false, then GET") and have the later ones see what the earlier
+ * ones wrote.
+ *
+ * `settingsState` is declared and reset by each of the two `describe` blocks
+ * below that use this — see their own `beforeEach`.
+ */
+function request(method: string, path: string, body: unknown, role: Role) {
+  const { db } = fakeDb({}, { role, state: settingsState });
+  return appWithDb(db).request(path, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/** What the most recent `request()` call's UPDATE sent to `table`. */
+function updated(table: "workspaces") {
+  return table === "workspaces" ? settingsState.lastWorkspaceUpdate : null;
+}
+
+let settingsState: SettingsState = { optedOut: false, lastWorkspaceUpdate: null };
 
 const TOTALS_ROW = {
   answers: 100,
@@ -213,5 +324,69 @@ describe("GET /coverage/workspace", () => {
       ungrounded: 0,
       unrecorded: 0,
     });
+  });
+});
+
+describe("the switch", () => {
+  beforeEach(() => {
+    settingsState = { optedOut: false, lastWorkspaceUpdate: null };
+  });
+
+  it("lets an admin turn the report on", async () => {
+    const res = await request("PATCH", "/coverage/settings", { enabled: true }, asAdmin);
+    expect(res.status).toBe(200);
+    expect(updated("workspaces")).toMatchObject({ gap_report_enabled: true });
+  });
+
+  // This proves the route turns a zero-row UPDATE into a 403 — the fake
+  // returns zero rows because `role` told it to, not because any policy ran.
+  // Whether `workspaces_update_admin` actually refuses a non-admin is proved
+  // against a live database by `tests/rls/coverage-gaps.test.ts`, in its
+  // describe block "who may turn the report on".
+  it("refuses a member who is not an admin", async () => {
+    const res = await request("PATCH", "/coverage/settings", { enabled: true }, asMember);
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses a body that is not a boolean", async () => {
+    const res = await request("PATCH", "/coverage/settings", { enabled: "yes" }, asAdmin);
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("a member's own choice", () => {
+  beforeEach(() => {
+    settingsState = { optedOut: false, lastWorkspaceUpdate: null };
+  });
+
+  it("excludes them, and says so afterwards", async () => {
+    expect(
+      (await request("PUT", "/coverage/preference", { excluded: true }, asMember)).status,
+    ).toBe(200);
+    const res = await request("GET", "/coverage/preference", undefined, asMember);
+    expect(await res.json()).toEqual({ excluded: true });
+  });
+
+  it("takes it back", async () => {
+    await request("PUT", "/coverage/preference", { excluded: true }, asMember);
+    await request("PUT", "/coverage/preference", { excluded: false }, asMember);
+    const res = await request("GET", "/coverage/preference", undefined, asMember);
+    expect(await res.json()).toEqual({ excluded: false });
+  });
+
+  it("is idempotent, so a double click is not a 409", async () => {
+    await request("PUT", "/coverage/preference", { excluded: true }, asMember);
+    const again = await request("PUT", "/coverage/preference", { excluded: true }, asMember);
+    expect(again.status).toBe(200);
+  });
+
+  /**
+   * A member does not need to be an admin for this, and must not need the
+   * report to be on either — somebody should be able to opt out before it is
+   * turned on, not only after.
+   */
+  it("works while the report is off", async () => {
+    const res = await request("PUT", "/coverage/preference", { excluded: true }, asMember);
+    expect(res.status).toBe(200);
   });
 });

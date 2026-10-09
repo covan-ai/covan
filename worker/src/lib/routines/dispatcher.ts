@@ -14,8 +14,11 @@ import { runRoutineWithTools } from "./agent-run";
 import { ownHostsFrom } from "./url-guard";
 import { deliveryDepsFrom } from "./delivery";
 import { fileRoutineOutput } from "./filing";
-import { entitlementsFor } from "../entitlements";
+import { entitlementsFor, weighTokens } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
+import { runCoverageReport, type CoverageDeps } from "./coverage-source";
+import { resolveModel } from "../models";
+import { complete, totalTokens } from "../completion";
 
 /**
  * How many routines one tick may run, bounded by the Workers **Free** plan's
@@ -42,6 +45,16 @@ import { retrieveForAgent } from "../retrieval";
  * whose agent actually HAS tools spends far more than 12 and does not fit on
  * Free at all; `docs/routines.md` says so rather than leaving it to be
  * discovered.
+ *
+ * A `workspace` routine (0075) never reaches the fetch above — it has no url
+ * and no connection — but spends about the same dozen a different way: the
+ * membership check, `readWorkspace`'s two parallel reads (workspace row,
+ * members), `readGaps`, the clustering call in its place, `readTotals` on the
+ * one outcome that reaches it, the delivery claim, the channel read (no
+ * agent read — its summary is rendered in code, never written by a model),
+ * the delivery itself, and the two bookkeeping writes. The review that found
+ * this gap counted it at about 12 against the same ceiling, so `BATCH_SIZE`
+ * below did not need to change for it — this paragraph was the part missing.
  *
  * This is also why a scheduled run keeps the old eight-step budget while chat
  * moved to sixteen (`SCHEDULED_MAX_STEPS` in `lib/harness/budget.ts`). The
@@ -139,8 +152,195 @@ function executorDeps(
     file: canFileDocuments(env)
       ? (input, runEnv) => fileRoutineOutput(db, { ...env, ...runEnv }, input)
       : undefined,
+    // The gap report (0075), end to end. `coverageDeps` is rebuilt per call
+    // rather than once per tick, because it closes over `input.ownerId` —
+    // `readTotals` and `readGaps` both need `p_user_id` on the wire (see the
+    // function below for why) and neither has it in its own `CoverageDeps`
+    // signature, which is `(workspaceId, days)` for both. `runEnv` for the
+    // same reason `file` takes it: clustering is a paid call, and it goes to
+    // whichever key is answering this run.
+    coverage: (input, runEnv) => runCoverageReport(input, coverageDeps(db, input.ownerId, runEnv)),
     now: () => new Date(),
   };
+}
+
+/**
+ * Asks the model to group a workspace's unanswered questions into topics —
+ * the one model call `coverage-source.ts`'s header promises, bound to its
+ * real dependencies.
+ *
+ * `readWorkspace` reads two ordinary tables under the service role, so it has
+ * no `auth.uid()` to answer to. `readTotals` and `readGaps` are RPCs instead,
+ * and that is where the two reads 0076 added differ from 0053's pair they
+ * sit beside: `workspace_coverage` (0053) checks `is_workspace_admin`, which
+ * asks `auth.uid()` — null for this service-role caller, always, on every
+ * scheduled run — so it would refuse every call with 42501. 0076's
+ * `workspace_coverage_totals` and `workspace_coverage_gaps` exist because of
+ * exactly that dead end: both take `p_user_id` explicitly instead, check that
+ * id is an admin, and are granted to `service_role` only. `p_user_id` here is
+ * `ownerId` — `runCoverageReport` re-checks admin status itself through
+ * `readWorkspace` before either RPC is ever reached, so this is not a second,
+ * looser gate; it is the same one the two functions insist on asking for
+ * themselves.
+ *
+ * Exported for `dispatcher.test.ts` alone, alongside `clusterQuestions` below
+ * — both are plain functions with no state of their own, and the alternative
+ * for testing them — proving the RPC names, the `p_user_id` wiring, and the
+ * clustering prompt's contract with `parseClusters` only through a full
+ * `runOneRoutine` pass — would mean faking the executor's membership check,
+ * quota check and channel lookup just to reach code that touches none of them.
+ */
+export function coverageDeps(db: SupabaseClient, ownerId: string, env: RoutineEnv): CoverageDeps {
+  return {
+    readWorkspace: async (workspaceId, forOwnerId) => {
+      const [{ data: workspace, error: workspaceError }, { data: members, error: membersError }] =
+        await Promise.all([
+          db.from("workspaces").select("gap_report_enabled").eq("id", workspaceId).single(),
+          db.from("workspace_members").select("user_id, role").eq("workspace_id", workspaceId),
+        ]);
+      // postgrest-js resolves { data, error }; it does not throw — see
+      // `executor.ts`'s membership lookup for the same convention stated at
+      // length. Fix round 1, finding A1: a swallowed error here used to read
+      // as "the report is turned off" or "the owner is no longer an admin",
+      // and the routine paused on a false premise with nothing logged, forever
+      // (`claim_due_routines` only selects `status = 'active'`). A thrown
+      // error is a failed run instead: recorded, backed off, retried next
+      // tick — what a transient read deserves.
+      if (workspaceError) {
+        throw new Error(`workspace read failed: ${workspaceError.message}`);
+      }
+      if (membersError) {
+        throw new Error(`workspace members read failed: ${membersError.message}`);
+      }
+      return {
+        gapReportEnabled: workspace?.gap_report_enabled === true,
+        ownerIsAdmin: (members ?? []).some(
+          (m: { user_id: string; role: string }) => m.user_id === forOwnerId && m.role === "admin",
+        ),
+        memberCount: (members ?? []).length,
+      };
+    },
+    readTotals: async (workspaceId, days) => {
+      const { data, error } = await db.rpc("workspace_coverage_totals", {
+        p_workspace_id: workspaceId,
+        p_user_id: ownerId,
+        p_days: days,
+      });
+      // Fix round 1, finding A2. This read only ever runs on the report path,
+      // after the clustering call already spent money. A swallowed error used
+      // to fall through to every count reading zero, and
+      // `renderCoverageReport` turns zero answers into "no answer recorded
+      // what grounded it, so there is no coverage to report" — printed
+      // directly above the real gap topics `readGaps` found moments earlier.
+      // A thrown error is a failed run instead of a report that contradicts
+      // itself.
+      if (error) {
+        throw new Error(`workspace_coverage_totals failed: ${error.message}`);
+      }
+      const row = (data ?? [])[0];
+      return {
+        days,
+        answers: Number(row?.answers ?? 0),
+        covered: Number(row?.covered ?? 0),
+        fallback: Number(row?.fallback ?? 0),
+        ungrounded: Number(row?.ungrounded ?? 0),
+        unrecorded: Number(row?.unrecorded ?? 0),
+      };
+    },
+    readGaps: async (workspaceId, days) => {
+      const { data, error } = await db.rpc("workspace_coverage_gaps", {
+        p_workspace_id: workspaceId,
+        p_user_id: ownerId,
+        p_days: days,
+      });
+      // This fix wave, finding A3 — and the brief's own miss, not this
+      // function's: `readWorkspace` and `readTotals` beside it both throw,
+      // each for an argument that applies here too and more. An empty read
+      // used to be "the safe reading of an error", but `runCoverageReport`
+      // (coverage-source.ts) turns an empty `readGaps` into `kind: "skip"`
+      // with the note "every answer in this window found something close" —
+      // a run recorded as having found nothing to report when it never
+      // managed to read anything. A thrown error also avoids building a
+      // report on a failed query, and — the reason that actually carries —
+      // gets the run recorded as failed, backed off and retried next tick,
+      // instead of a false all-clear with no failure count and no retry.
+      if (error) {
+        throw new Error(`workspace_coverage_gaps failed: ${error.message}`);
+      }
+      return data ?? [];
+    },
+    cluster: (questions) => clusterQuestions(questions, env),
+  };
+}
+
+/**
+ * The instruction half of the clustering call's contract. The parser half —
+ * `parseClusters` in `coverage-source.ts` — accepts a bare array OR an object
+ * of this exact shape, because `completion.ts`'s `extractJsonObject` (:314-324)
+ * documents that neither provider this build talks to can be made to answer
+ * with a bare top-level array: OpenAI's `response_format: {type:"json_object"}`
+ * guarantees an object, and the Anthropic path extracts `{...}` out of
+ * whatever came back. Naming `clusters` here is what makes the two halves
+ * agree — asking for an array this call cannot receive would mean every
+ * reply parses to nothing, forever, with no error anywhere to say so.
+ */
+const CLUSTER_INSTRUCTION =
+  "Group the questions below into at most eight topics, by the area of work each " +
+  'is about. Respond with a JSON object of the shape {"clusters": [{"label": ' +
+  'string, "members": number[]}]} — one top-level object with a single key, ' +
+  '"clusters", never a bare array. `members` are the zero-based indices of the ' +
+  "questions in that topic. A label is two to six words naming the area — never " +
+  "a question, never a quotation, and never anybody's wording. Leave a question " +
+  "out rather than forcing it into a topic it does not belong to.";
+
+/**
+ * The one model call this feature ever makes.
+ *
+ * `gpt-4.1-mini` rather than whatever an agent's own settings say, because
+ * this call has no agent behind it — grouping questions by area is shaping,
+ * not thinking, the same category `titleModelFor`'s header names for a
+ * session title or a persona draft. `resolveModel` rather than the bare
+ * literal, so an operator's `OPENAI_MODEL` override still wins the way it
+ * does everywhere else a model is picked.
+ *
+ * The questions ride in the user message, never the system one — third-party
+ * text, written by colleagues, and `summarise.ts` makes this argument at
+ * length for a watched page. It applies with more force here, since these are
+ * sentences people typed expecting nobody outside their own question to read
+ * them literally.
+ */
+export async function clusterQuestions(
+  questions: string[],
+  env: RoutineEnv,
+): Promise<{ raw: unknown; model: string; tokens: number; weightedTokens: number }> {
+  const model = resolveModel("gpt-4.1-mini", env);
+  const { text, usage } = await complete(env, {
+    model,
+    json: true,
+    messages: [
+      { role: "system", content: CLUSTER_INSTRUCTION },
+      { role: "user", content: questions.map((q, i) => `${i}. ${q}`).join("\n") },
+    ],
+  });
+
+  // Never thrown past this point: an unparsable reply is a cluster list of
+  // zero, which `enforceFloorWithCoverage` turns into a skip, not a crashed
+  // run. The call was still made and still spent, which is why `tokens` below
+  // is read off `usage` regardless of whether `text` parsed.
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    console.error("coverage clustering reply was not JSON", err);
+  }
+
+  // What the allowance is actually charged, as against what moved — same
+  // `usage` breakdown, two different functions, the same pattern
+  // `summarise.ts` uses. Fix round 1, finding B2/B3: this call's completion
+  // share used to go unweighted (charged at `TOKEN_WEIGHTS.fresh`, 1x,
+  // instead of `TOKEN_WEIGHTS.completion`, 5x) because nothing threaded the
+  // real breakdown past `tokens` — see `weighTokens`.
+  return { raw, model, tokens: totalTokens(usage), weightedTokens: weighTokens(usage) };
 }
 
 /**

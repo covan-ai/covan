@@ -58,7 +58,7 @@ export type RoutineTemplate = {
   endsAfterRuns: number | null;
 };
 
-export type TemplateRequirement = "documents" | "admin" | "gapReport" | "enoughPeople";
+export type TemplateRequirement = "documents" | "admin" | "gapReport" | "enoughPeople" | "feedUrl";
 
 /**
  * Facts the picker reads off state its screen already holds.
@@ -164,7 +164,12 @@ Write it as a short note to one new person: what it is, why it matters here, and
       instruction:
         "Summarise what is new since the last run. Lead with anything that changes what the team should do, name the source of each item, and skip the rest rather than padding.",
     },
-    requires: [],
+    // `create-routine-dialog.tsx` has no input bound to `sourceUrl` right
+    // now — main's b4f4521 removed it before this branch started, and
+    // restoring it is a separate piece of work. Until then `canSave` can
+    // never be satisfied for this template, so it says so here instead of
+    // offering a card that leads nowhere with no explanation.
+    requires: ["feedUrl"],
     endsAfterRuns: null,
   },
 ];
@@ -203,6 +208,11 @@ export function unmetRequirements(
         // workspace of one has nobody to protect from and the engine's floor
         // for it is already 1.
         return facts.memberCount === 2;
+      case "feedUrl":
+        // No fact in `TemplateFacts` decides this one — the dialog has
+        // nowhere to put a `sourceUrl` for anybody, so it is unmet always,
+        // not depending on workspace state.
+        return true;
       default:
         return assertNever(r);
     }
@@ -226,6 +236,8 @@ export function requirementReason(requirement: TemplateRequirement): string {
       return "An admin has to turn the coverage report on in Settings before a routine can read it.";
     case "enoughPeople":
       return "Not available for a workspace of exactly two — any topic the report named would tell one of you about the other, and no setting changes that. One person alone is fine: there is nobody to protect from.";
+    case "feedUrl":
+      return "This dialog doesn't have a place to enter the feed's URL right now — that's a field waiting to come back, not a limit of this template.";
     default:
       return assertNever(requirement);
   }

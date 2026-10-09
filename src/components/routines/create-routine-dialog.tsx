@@ -552,7 +552,7 @@ export function CreateRoutineDialog({
                 )}
               </div>
 
-              {sourceKind !== "none" && (
+              {sourceKind !== "none" && sourceKind !== "workspace" && (
                 // Not decorative. diffItems treats a null cursor as a baseline
                 // and returns nothing, so the first run is deliberately silent.
                 // Without this line a user whose routine runs hourly sees
@@ -560,6 +560,19 @@ export function CreateRoutineDialog({
                 <p className="text-xs text-muted-foreground">
                   The first run just takes a snapshot — you'll start getting updates from the next
                   change onward.
+                </p>
+              )}
+
+              {sourceKind === "workspace" && (
+                // A `workspace` routine has no cursor and no diff — it reads a
+                // rolling seven-day window and reports on it immediately
+                // (coverage-source.ts; executor.ts's workspace branch). The
+                // sentence above would be false here: there is no "next
+                // change" to wait for, because the first run already is a
+                // real report.
+                <p className="text-xs text-muted-foreground">
+                  This one doesn't wait for a next change — the first run already covers the past
+                  week.
                 </p>
               )}
 

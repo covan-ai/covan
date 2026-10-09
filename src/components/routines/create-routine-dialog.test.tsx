@@ -177,6 +177,28 @@ describe("CreateRoutineDialog", () => {
 
     expect(await screen.findByText(/first run just takes a snapshot/i)).toBeInTheDocument();
   });
+
+  /**
+   * Item 4 of the adjudication pass. A `workspace` source has no cursor and
+   * no diff (coverage-source.ts reads a rolling seven-day window and reports
+   * on it immediately), so the snapshot sentence above is false for it: there
+   * is no "next change" to wait for. This drives the actual `gap-report`
+   * template through the actual dialog, like the two tests above it do for
+   * this same template, rather than asserting on the guard in isolation.
+   */
+  it("tells the truth about the gap-report template's first run instead", async () => {
+    channelsList.mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CreateRoutineDialog agentId="a1" openTemplate="gap-report" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByDisplayValue("Coverage gaps")).toBeInTheDocument();
+    expect(screen.getByText(/first run already covers the past week/i)).toBeInTheDocument();
+    expect(screen.queryByText(/first run just takes a snapshot/i)).not.toBeInTheDocument();
+  });
 });
 
 describe("opened from a link", () => {

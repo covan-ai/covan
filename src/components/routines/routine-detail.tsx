@@ -341,9 +341,9 @@ export function RoutineDetail({
           checking exactly this feature's privacy properties. */}
       {routine.sourceKind === "workspace" && (
         <p className="mt-3 text-xs text-muted-foreground">
-          Never shared and never filed: sharing would put this report in front of the same people
-          the floor above protects, and filing would turn what the team does not know into something
-          an agent quotes back as if it did.
+          Never shared and never filed: sharing would show the whole workspace a report built so
+          that nobody who asked a question can be singled out, and filing would turn what the team
+          does not know into something an agent quotes back as if it did.
         </p>
       )}
 

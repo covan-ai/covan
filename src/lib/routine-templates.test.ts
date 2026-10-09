@@ -66,8 +66,25 @@ describe("the templates themselves", () => {
 describe("what a screen's facts leave unmet", () => {
   it("asks for nothing when everything is in place", () => {
     for (const t of ROUTINE_TEMPLATES) {
+      // weekly-digest excluded: no `TemplateFacts` makes it ready while the
+      // dialog has nowhere to enter a `sourceUrl` — see the dedicated test
+      // below.
+      if (t.id === "weekly-digest") continue;
       expect(unmetRequirements(t, ready), t.id).toEqual([]);
     }
+  });
+
+  /**
+   * Item 2 of the adjudication pass. `weekly-digest` has `sourceKind: "rss"`
+   * but `create-routine-dialog.tsx` has no input bound to `sourceUrl` right
+   * now (removed on main in b4f4521, before this branch started), so
+   * `canSave`'s `sourceUrl.trim() !== ""` can never hold for it. `feedUrl`
+   * says so regardless of facts, rather than this template silently reading
+   * as ready when nothing else is checked.
+   */
+  it("never offers the weekly digest as ready — the dialog has nowhere to put its url", () => {
+    const unmet = unmetRequirements(templateById("weekly-digest")!, ready);
+    expect(unmet).toEqual(["feedUrl"]);
   });
 
   /**
@@ -145,7 +162,7 @@ describe("what a screen's facts leave unmet", () => {
   });
 
   it("gives every requirement a sentence that says what to do", () => {
-    for (const r of ["documents", "admin", "gapReport", "enoughPeople"] as const) {
+    for (const r of ["documents", "admin", "gapReport", "enoughPeople", "feedUrl"] as const) {
       expect(requirementReason(r).length, r).toBeGreaterThan(30);
     }
   });

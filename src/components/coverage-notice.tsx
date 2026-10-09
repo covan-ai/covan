@@ -75,8 +75,9 @@ export function CoverageNotice({
       <p className="text-sm leading-[1.45]">
         <span className="font-medium text-foreground">Your admin turned on a coverage report.</span>{" "}
         Once a week it shows which topics the team asked about that no document covered — clustered
-        topics only, from at least three different people. It never shows names and never shows
-        anybody&rsquo;s question. You can leave your questions out, now or later in Settings.
+        topics only, from at least three different people, or every topic if you&rsquo;re the only
+        member here. It never shows names and never shows anybody&rsquo;s question. You can leave
+        your questions out, now or later in Settings.
       </p>
 
       <div className="mt-4 flex items-center gap-2">

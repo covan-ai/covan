@@ -52,6 +52,20 @@ describe("the coverage notice", () => {
     expect(screen.getByText(/never/i)).toBeInTheDocument();
   });
 
+  // The floor promise has to hold at every workspace size: `askerFloor`
+  // (worker/src/lib/routines/coverage-cluster.ts) answers 1 at a single
+  // member, not 3, so the notice cannot promise "three" unconditionally —
+  // it has to cover the solo case too, or it is a false floor claim to the
+  // one person reading it.
+  it("promises a floor that holds alone, not just at three", async () => {
+    renderNotice(true, "w-floor");
+    expect(
+      await screen.findByText(
+        /from at least three different people, or every topic if you.re the only member here/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("offers both choices", async () => {
     renderNotice(true, "w-choices");
     expect(

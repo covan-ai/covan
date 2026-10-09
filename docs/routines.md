@@ -36,9 +36,58 @@ Everything the engine does afterwards is deterministic: the model summarises,
 and it never decides what to fetch or when to run. This is why "why did my
 routine behave differently today?" is not a question anyone has to answer.
 
+## Starting from a template
+
+The box above is a good second step and a poor first one: it asks you to have
+imagined the routine already. So the first step also offers three to pick
+instead, and **picking one makes no model call.** A template is the same set of
+fields a draft produces, written down in advance, so choosing it does exactly
+what accepting a draft does — it fills step 2 and leaves you looking at the
+same editable form, with nothing fetched and nothing billed on the way.
+
+- **Somebody's first week** — one note each morning for a week, from what the
+  team has written down. Needs one document on this agent.
+- **What nobody wrote down** — weekly, the topics your team asked about that no
+  document covered. Needs you to be an admin, needs the coverage report switched
+  on for the workspace, and needs at least three people in it. See
+  [The coverage report](#the-coverage-report).
+- **Weekly digest of a feed** — point it at a feed or a page; once a week, what
+  changed. Needs nothing, and arrives with the URL blank, because that is the
+  one field a template cannot know.
+
+"One document on this agent" means this agent's, not the workspace's. The
+routines screen is scoped to one agent and the series reads that agent's
+knowledge, so documents hung off a different agent do not make this one ready.
+
+A template you cannot use yet is still shown, with the reason where its
+description would be, and is not clickable. Hiding it would mean nobody learns
+the feature exists, and "an admin has to turn this on in Settings" is a useful
+sentence to read. Only the first unmet reason is given: somebody who is not an
+admin does not also need telling that the report is off.
+
+**A workspace with no delivery channel is no longer sent to Settings and back.**
+When there are none, "Deliver to" is an address field pre-filled with your own
+address, and the channel is created from it in the same request that creates the
+routine. If the routine is then refused — an unreadable schedule, a URL the
+guard will not have — the channel is deleted again, so correcting the field and
+pressing Create a second time does not leave a stack of encrypted addresses
+nothing points at.
+
+"Somebody's first week" is the one template that ends: after seven delivered
+mornings it stops itself, and a routine that has stopped that way reads
+**Finished** rather than _Paused_. The instruction carries seven subjects — six
+of them the six knowledge templates the product already suggests, and a seventh
+for anything the first six missed — and the engine tells the model which morning
+it is on, and says plainly when it is the last. That position is the only thing
+that varies between the seven runs: there is no memory and no second model call.
+The mechanism, and what happens when a morning does not arrive, is
+[A routine that ends](#a-routine-that-ends).
+
 ## What it can read
 
-Four source kinds, and the difference between them is what counts as new.
+Five source kinds. For the three that watch something outside, the difference
+between them is what counts as new; the other two have nothing to diff and run
+every time.
 
 | Source           | What a run does                                                          |
 | ---------------- | ------------------------------------------------------------------------ |
@@ -46,6 +95,10 @@ Four source kinds, and the difference between them is what counts as new.
 | Web page         | Fetches it and hashes the body, and reports only when the hash moved     |
 | Connected source | Fetches nothing — it reports the documents a connection has synced since |
 | Scheduled prompt | Fetches nothing — it runs the instruction on the schedule                |
+| Workspace report | Fetches nothing — it reads the workspace's own answers                   |
+
+The last of those is long enough to be its own section:
+[The coverage report](#the-coverage-report).
 
 For the two that fetch, the request carries `If-None-Match` when a previous run
 stored an ETag. A `304` ends the run immediately: no parse, no model call, and a
@@ -57,8 +110,9 @@ redirects, and identifies itself as `covan-routines/1.0`.
 cursor there is nothing to compare against, so the run records what is already
 there — the entry keys, or the page's hash — and stops. Without that rule the
 first tick would post the whole backlog of a feed into somebody's Slack. The
-create dialog says so under the form, and a scheduled prompt is the exception:
-having nothing to diff, it runs the first time and every time.
+create dialog says so under the form. A scheduled prompt and a workspace report
+are the exceptions: having nothing to diff, they run the first time and every
+time.
 
 New feed entries are recognised by identity, not by date: an Atom `<id>`, an RSS
 `<guid>`, and the link when a feed offers neither. Feeds are not reliably
@@ -258,6 +312,192 @@ So for routines that use tools, on Workers Free, either:
 Left as it is, a tick that runs out of subrequests fails the routines it was
 part way through, which is recorded as a run failure and eventually pauses
 them. That is a bad way to find out, which is why it is written here.
+
+## The coverage report
+
+One source kind reads nothing outside the workspace. A **workspace report**
+answers the question an admin cannot answer any other way — _what does the team
+keep asking that nobody has written down?_ — and because the raw material is
+what colleagues typed in private rooms, most of this section is about what the
+report refuses to tell you.
+
+It is off until an admin turns it on, per workspace, in Settings beside the
+coverage figures. The column defaults to false, so **no existing workspace
+starts producing one because of a deploy**, and both database reads behind the
+report refuse while the switch is off rather than trusting the application to
+have checked. Turning the switch on does not by itself send anything: it lifts
+the requirement that stops the template being picked, and somebody still has to
+create the routine.
+
+### What it reads
+
+`messages.grounding` has recorded how every reply arrived since it was added:
+a passage that cleared the similarity floor, the whole document as a fallback,
+or nothing at all. The middle one is what this reports. A reply that fell back
+to whole documents is usually still a decent answer, and it means no passage in
+anything the team wrote was close to what was asked — the question somebody
+keeps asking that nobody has written down.
+
+The question is the last user message before that reply in the same session. A
+run reads the last **seven days**, and at most **150** of those questions,
+newest first — which at 120 characters each is a prompt the size the engine
+already pays for elsewhere. Questions of one character are dropped as stray
+keystrokes, a reply that was regenerated is not counted twice, and a session
+somebody deleted is not read at all: a deletion that left the text of a question
+reachable here would be cosmetic.
+
+### What it never contains
+
+No name and no question text ever reaches an admin. That is four separate
+narrowings, and it is worth seeing them in order:
+
+1. **The database truncates.** The read returns at most **120 characters** of
+   each question, cut in SQL, so the full text never crosses the database
+   boundary at all. It returns no user id either — each asker arrives as an
+   opaque integer, salted per call, which exists so the engine can count
+   distinct people and carries nothing else.
+2. **Only the engine sees even that.** Both database reads are granted to the
+   service role alone — not to an admin's own session — so there is no screen
+   and no API route anywhere that returns a question, and the 120-character
+   rows live inside one run of the routine and are stored nowhere.
+3. **The model sees de-duplicated question text and answers with labels.** Its
+   job is to group the questions into at most eight topics and name each one.
+4. **The delivered report contains labels and counts, and sentences built from
+   those counts** — how many answers found nothing in the window, each topic
+   with how many questions and how many people were behind it, and how many
+   questions did not group into a topic at all.
+
+A label is checked against every question the model saw, before and after
+truncation, and a label that reproduces one is **withheld while the topic is
+still reported**: the row goes out unnamed, with its counts, and the report says
+in its own words that a name was withheld and nothing was dropped. Keeping the
+topic and losing the name is deliberate — a dropped row is indistinguishable
+from a quiet week, and an admin who cannot tell those apart stops trusting the
+report.
+
+**The honest limit of that check is containment, not meaning.** It refuses a
+label that quotes a question; it cannot refuse a label that paraphrases one. So
+a topic name that happens to be a close rewording of something somebody typed
+can in principle be reported. What bounds the damage is the floor below it: in
+any workspace of three or more, nothing is reported at all unless three
+different people asked about it, so a phrase that survives is one three
+colleagues raised independently rather than one person's sentence handed back.
+It is a real residual risk, and it is the
+reason there is no second model call to write the report up — a model asked to
+embellish a label that has already passed the check is the one way a paraphrase
+could get worse rather than better.
+
+### The floor, and the workspace that cannot use this
+
+How many different people a topic needs before it may be reported is derived
+from the size of the workspace, not configured:
+
+| People in the workspace | Floor                               |
+| ----------------------- | ----------------------------------- |
+| 1                       | 1 — there is nobody to protect from |
+| 2                       | the report cannot run at all        |
+| 3 or more               | 3                                   |
+
+**A two-person workspace cannot use this feature, and no setting will change
+that.** With two people, any topic the report names tells one of them something
+about the other; there is no number that fixes it. So the template says so once,
+at the point of picking it, rather than letting somebody set up a routine that
+delivers an empty report every week forever. A workspace of one is the opposite
+case and is allowed: the only person who could read the report is the only
+person who asked.
+
+The floor is not configurable in any form, because a privacy floor an admin can
+set is a privacy floor an admin can set to one.
+
+### Opting out, and why nobody can see who did
+
+Any member can exclude their own questions, from Settings, and the control is
+there whether or not the report has been switched on: a switch that only
+appeared once an admin turned the report on would be asking somebody to have
+decided before they knew the feature existed. The same switch is also the only
+way back in — the notice is shown once and dismissed, so Settings is where a
+decision gets revisited.
+
+Two things about it are worth stating plainly.
+
+**It is retroactive.** The exclusion is applied when the report is read, not
+stamped on each answer as it was written, so opting out today removes everything
+you have ever asked from every future report, not only what you ask next.
+
+**Nobody can see who opted out — including an admin.** The table's read policy
+is self-only, so the question "who excluded themselves?" has no answer anywhere
+in the product, for anybody. That is the feature, not an oversight: an admin who
+could list the opt-outs would learn which individuals chose to hide something,
+which is a sharper signal about a person than anything the report itself
+carries, and one nobody agreed to by declining to agree to something else.
+
+The first time an admin turns the report on, everybody in the workspace is told
+once, in place, with both choices in front of them — exclude me, or keep me in.
+It is a notice rather than a tenth transactional email: an email about a report
+that may never clear its floor is noise.
+
+One sharp edge, because it is easier to read here than to discover: **a
+workspace archive carries the switch but not the opt-outs.**
+`workspaces.gap_report_enabled` is exported; `coverage_opt_outs` deliberately is
+not, because a table whose read policy is self-only would either be a back door
+in an archive an admin downloads or would always export empty. So a workspace
+restored from an archive comes back with the report on and nobody excluded, and
+whoever restores it has to ask again rather than assume anybody's choice came
+back with it.
+
+### One model call, and a report that is printed
+
+A coverage run makes **exactly one** model call, for the cluster labels.
+Everything else — the counts, the ordering, the sentences — is the
+application's, and the same input renders the same text every week, with no
+date, no rounding and no hedging word anywhere in it. The agent's own persona
+and model are not used: there is no agent behind this, and a coverage report
+arriving in the voice of a Support Agent persona is not what anybody wanted.
+
+That split is a decision rather than an optimisation. Handing the surviving
+topics to a model to write up buys three problems: it can put an invented number
+next to a real label, and a report of counts that might be wrong is worse than
+no report; it can embellish a label that has already passed the containment
+check; and a weekly report that reads differently every week is harder to read
+than one that does not.
+
+A quiet week is cheap on purpose. If the whole window has fewer distinct askers
+than the floor, no grouping of it could produce a reportable topic, so the run
+skips without a model call at all — and so does a window where every answer
+found something. The one case that pays and reports nothing is a window whose
+questions came back grouped and no group cleared the floor: the call was made,
+so it is billed, and the run is recorded as a skip rather than as an email
+saying "here is nothing".
+
+### What stops it
+
+Three things are re-asked on every run, because the engine holds a service-role
+client and the policies that guarded the routine's creation cannot see a run:
+the switch is still on, the owner is still an admin of the workspace, and the
+workspace still has enough people in it. Each of them **pauses** the routine
+with the reason, and tells the owner through the channel it already delivers to.
+None of the three fixes itself on the next tick, and a routine that silently
+skips forever is the failure this feature's pause machinery exists to avoid.
+
+Three more things are refused in the database rather than in the API, because
+the browser holds an anon key and `POST /rest/v1/routines` reaches Postgres
+whatever the API accepts:
+
+- **Only an admin can create one** — a clause in the insert and update policies
+  on `routines`, not a role check in a handler.
+- **It cannot file.** A routine that reads its own workspace may not point at a
+  knowledge bundle. A coverage report filed as a document would be a document
+  about what the team does not know, which every agent in the workspace would
+  then retrieve and quote back at somebody in chat as if it were knowledge.
+  This is the same policy clause, which means it is a guard on who can _set_
+  the column rather than a backstop at run time: the engine files with the
+  service role, so a bundle that somehow got onto the row is a document that
+  gets written.
+- **It cannot be shared.** A routine of this kind must stay private. A shared
+  routine lets every member read its run history, including the delivered
+  summary — which is the exact population the design keeps the report away
+  from. This one is a CHECK constraint rather than a policy clause, so unlike
+  the two above it binds the engine as well.
 
 ## Delivery
 
@@ -763,6 +1003,39 @@ nothing. Claim-then-send is the deliberate order: send-then-record duplicates th
 message whenever the recording fails, and a duplicate is the error people
 actually notice.
 
+### A routine that ends
+
+Most routines are standing orders and run until somebody stops them. A routine
+can instead be given a number of runs, decided once when it is created and not
+editable afterwards — "Somebody's first week" is the only thing that sets it
+today, to seven. When the count is reached the routine sets its own status to
+`completed` and stops being due, which needed nothing from the engine: the claim
+query and the index behind it already select only active routines.
+
+**Only a delivered run counts**, and that is the whole reason the counter is not
+simply "times this ran":
+
+- **A failed run does not spend a morning.** A week of a dead Slack webhook
+  would otherwise complete a seven-morning series that sent nothing at all, and
+  leave the routine reading _Finished_ having never once been read. Those
+  failures back off and eventually pause it instead, which is the outcome
+  somebody can act on.
+- **A skipped run does not spend one either** — there was nothing new, or the
+  agent judged none of it relevant.
+
+**Run now** counts like any other delivery, because it delivers one. Pressing it
+on a seven-morning series finishes the series a calendar day early, with all
+seven notes sent and in order.
+
+A finished routine is a third state and not a quiet pause, everywhere it is
+shown: the badge reads **Finished**, "Next run" reads Finished, and no
+Pause/Resume button is rendered at all. Both halves of that matter. "Resume" on
+a finished series reads as an invitation to restart it, and resuming would start
+morning eight of a seven-morning week; and the reason a routine paused is kept
+for what the engine writes there after repeated failures, rather than widened to
+also mean "your first week is over". Running the series again for the next new
+starter is a new routine from the same template.
+
 ## When a run fails
 
 Every run writes a row either way, and the routine's page shows the last fifty:
@@ -817,7 +1090,9 @@ routine the engine paused recovers with one click once the cause is fixed.
 `skipped` is not a failure and is shown rather than hidden, because it is the
 answer to "why didn't it send me anything?". A run is skipped when the source
 answered `304` or hashed to the same page as last time, when a feed had no new
-entries, and on the first run of a feed or page watcher.
+entries, and on the first run of a feed or page watcher. A coverage run has
+three of its own — see
+[One model call, and a report that is printed](#one-model-call-and-a-report-that-is-printed).
 
 ### Nothing relevant
 

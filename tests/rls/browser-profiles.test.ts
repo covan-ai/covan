@@ -516,6 +516,54 @@ describe("browser_tasks.retry_of", () => {
   });
 
   /**
+   * One free retry per original task, enforced here rather than only by a
+   * predicate in a route.
+   *
+   * The re-run after a takeover deliberately bypasses `spend` and never
+   * consults `affordable` — the person paid for the first attempt and a login
+   * wall is not something they did wrong — so what bounds the operator's
+   * money is this column being unique. Before `browser_tasks_retry_of_idx`
+   * was unique the bound was the product of a unique index on a different
+   * table and a check in `routes/browser.ts`, which is thin for a limit on
+   * spend. Asserted through the service role, because that is the only role
+   * that can write the table at all: this is the database's own guarantee,
+   * not a policy question.
+   */
+  it("refuses a second successor for one original task", async () => {
+    const service = serviceClient();
+    const insert = (providerTaskId: string) =>
+      service
+        .from("browser_tasks")
+        .insert({
+          workspace_id: owner.workspaceId,
+          agent_id: seeded.agentId,
+          user_id: owner.id,
+          session_id: seeded.sessionId,
+          provider_task_id: providerTaskId,
+          task: "download last month's invoice from the supplier portal",
+          retry_of: taskId,
+        })
+        .select("id")
+        .single();
+
+    const { data: first, error: firstError } = await insert("bu-task-retry-once");
+    expect(firstError).toBeNull();
+
+    // `finally`, because a failing expectation would otherwise leave the
+    // successor row behind — and the next run of this file would then fail on
+    // the FIRST insert, blaming the wrong half.
+    try {
+      const { error: secondError } = await insert("bu-task-retry-twice");
+      expect(secondError?.code).toBe("23505");
+    } finally {
+      await service
+        .from("browser_tasks")
+        .delete()
+        .eq("id", first?.id as string);
+    }
+  });
+
+  /**
    * The other half, and the half that would catch a table-level grant: 0073's
    * withheld columns are still withheld. Granting one column must not have
    * opened the row.

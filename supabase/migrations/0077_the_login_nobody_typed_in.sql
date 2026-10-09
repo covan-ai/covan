@@ -360,10 +360,30 @@ comment on column public.browser_tasks.retry_of is
   'the offerable predicate knows not to offer a second free attempt for a '
   'task that already has a successor (0077).';
 
--- Lets the screen say "tried again", and is how the offerable predicate knows
--- not to offer a second free attempt. `on delete set null`, because purging an
--- old attempt must not delete the answer the new one produced.
-create index if not exists browser_tasks_retry_of_idx
+-- UNIQUE, and that word is the whole point rather than an optimisation.
+--
+-- One free retry per original task is a limit on the OPERATOR's money: the
+-- re-run after a takeover deliberately bypasses `spend` and never consults
+-- `affordable`, because the person already paid for the first attempt and a
+-- login wall is not something they did wrong. What stops that from being an
+-- unbounded spend is this column -- and until this index was unique, the
+-- bound was the product of a unique index on a different table
+-- (`browser_takeovers.browser_task_id`) and a predicate in a route. That is
+-- thin for a limit on money, and the database would have accepted two
+-- successor rows naming one original.
+--
+-- So the route's `retry_of is null` check is the good error message and this
+-- is the guarantee. The partial index also serves the read it was added for:
+-- "does this task already have a successor", which is how the card knows not
+-- to offer a second free attempt.
+--
+-- Dropped and re-added rather than left to `if not exists`, for the same
+-- reason the window check above is: a guarded create does nothing at all on a
+-- tree that already has the non-unique index, so the uniqueness would never
+-- arrive where it is most needed -- a database that has already run an
+-- earlier form of this file.
+drop index if exists public.browser_tasks_retry_of_idx;
+create unique index if not exists browser_tasks_retry_of_idx
   on public.browser_tasks (retry_of) where retry_of is not null;
 
 -- 0073 names its selectable columns one by one, so a new column is withheld

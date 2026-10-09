@@ -32,6 +32,11 @@ import { serviceClient } from "../supabase";
  * permission question left for RLS to answer that has not already been
  * answered upstream; this reaches past it only to write columns no client role
  * may write.
+ *
+ * `retryOf` arrives from one caller only — `retryBrowserTask` in
+ * `lib/browser/takeover.ts` — and names the attempt this row replaces after a
+ * takeover, which is how the card knows not to offer a second free attempt for
+ * a task that already has a successor (0077).
  */
 export async function recordBrowserTask(
   env: RoutineEnv,
@@ -42,6 +47,8 @@ export async function recordBrowserTask(
     sessionId: string;
     providerTaskId: string;
     task: string;
+    /** The attempt this one replaces, after a takeover. See the header. */
+    retryOf?: string;
   },
 ): Promise<string | null> {
   const { data, error } = await serviceClient(env)
@@ -54,6 +61,7 @@ export async function recordBrowserTask(
       provider_task_id: input.providerTaskId,
       task: input.task,
       status: "queued",
+      retry_of: input.retryOf ?? null,
     })
     .select("id")
     .single();

@@ -61,7 +61,16 @@ describe("profiles", () => {
 describe("createBrowser", () => {
   it("asks for a browser on the profile, with our own timeout", async () => {
     fetchMock.mockResolvedValue(
-      ok({ id: "s-1", status: "active", liveUrl: "https://live.browser-use.com/x", cdpUrl: "wss://secret", timeoutAt: "2026-10-10T10:15:00Z" }, 201),
+      ok(
+        {
+          id: "s-1",
+          status: "active",
+          liveUrl: "https://live.browser-use.com/x",
+          cdpUrl: "wss://secret",
+          timeoutAt: "2026-10-10T10:15:00Z",
+        },
+        201,
+      ),
     );
     const r = await createBrowser(ENV, { profileId: "p-1", proxyCountryCode: "de" });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
@@ -71,7 +80,9 @@ describe("createBrowser", () => {
       // A recording of this browser is a video of somebody typing a password.
       enableRecording: false,
     });
-    expect((r as { value: { liveUrl: string } }).value.liveUrl).toBe("https://live.browser-use.com/x");
+    expect((r as { value: { liveUrl: string } }).value.liveUrl).toBe(
+      "https://live.browser-use.com/x",
+    );
   });
 
   /**
@@ -79,7 +90,9 @@ describe("createBrowser", () => {
    * constructs is a field no log line can print.
    */
   it("never constructs cdpUrl", async () => {
-    fetchMock.mockResolvedValue(ok({ id: "s-1", status: "active", liveUrl: "u", cdpUrl: "wss://secret" }, 201));
+    fetchMock.mockResolvedValue(
+      ok({ id: "s-1", status: "active", liveUrl: "u", cdpUrl: "wss://secret" }, 201),
+    );
     const r = await createBrowser(ENV, { profileId: "p-1" });
     expect(JSON.stringify(r)).not.toContain("secret");
     expect(JSON.stringify(r)).not.toContain("cdpUrl");
@@ -117,7 +130,9 @@ describe("browserLiveUrl", () => {
    * one other function authorized to parse this credential.
    */
   it("never constructs cdpUrl", async () => {
-    fetchMock.mockResolvedValue(ok({ id: "s-1", status: "active", liveUrl: "u", cdpUrl: "wss://secret" }));
+    fetchMock.mockResolvedValue(
+      ok({ id: "s-1", status: "active", liveUrl: "u", cdpUrl: "wss://secret" }),
+    );
     const r = await browserLiveUrl(ENV, "s-1");
     expect(JSON.stringify(r)).not.toContain("secret");
     expect(JSON.stringify(r)).not.toContain("cdpUrl");
@@ -135,7 +150,9 @@ describe("browserState and stopBrowser", () => {
   it("parse nothing a log line could leak", async () => {
     for (const fn of [browserState, stopBrowser]) {
       fetchMock.mockReset();
-      fetchMock.mockResolvedValue(ok({ id: "s-1", status: "stopped", liveUrl: "https://live/x", cdpUrl: "wss://secret" }));
+      fetchMock.mockResolvedValue(
+        ok({ id: "s-1", status: "stopped", liveUrl: "https://live/x", cdpUrl: "wss://secret" }),
+      );
       const r = await fn(ENV, "s-1");
       expect(r).toEqual({ kind: "ok", value: { id: "s-1", status: "stopped" } });
     }

@@ -91,7 +91,10 @@ export function createProfile(
       // `userId` is the Covan user id, and that is a deliberate concession: a
       // pseudonymous UUID at a subprocessor `docs/security.md` already names,
       // in exchange for being able to find a profile again when auditing one.
-      body: { ...(input.name ? { name: input.name } : {}), ...(input.userId ? { userId: input.userId } : {}) },
+      body: {
+        ...(input.name ? { name: input.name } : {}),
+        ...(input.userId ? { userId: input.userId } : {}),
+      },
     },
     opts,
     toProviderProfile,
@@ -140,7 +143,9 @@ export function createBrowser(
       body: {
         profileId: input.profileId,
         timeout: TAKEOVER_PROVIDER_MINUTES,
-        ...(input.proxyCountryCode === undefined ? {} : { proxyCountryCode: input.proxyCountryCode }),
+        ...(input.proxyCountryCode === undefined
+          ? {}
+          : { proxyCountryCode: input.proxyCountryCode }),
         // Explicit, and not a default anybody should change to debug
         // something: a recording of this browser is a video of a person
         // typing their password.
@@ -220,6 +225,9 @@ export function accountHeadroom(
 ): Promise<BrowserResult<BrowserHeadroom>> {
   return send(env, "/billing/account", { method: "GET", redactBody: true }, opts, (body) => {
     const row = (body ?? {}) as Record<string, unknown>;
-    return { active: Number(row.activeSessionCount ?? 0), limit: Number(row.concurrentSessionLimit ?? 0) };
+    return {
+      active: Number(row.activeSessionCount ?? 0),
+      limit: Number(row.concurrentSessionLimit ?? 0),
+    };
   });
 }

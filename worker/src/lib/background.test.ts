@@ -1,13 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { runDueRoutines, runDueConnections, pollDueBrowserTasks } = vi.hoisted(() => ({
-  runDueRoutines: vi.fn(),
-  runDueConnections: vi.fn(),
-  pollDueBrowserTasks: vi.fn(),
-}));
+const { runDueRoutines, runDueConnections, pollDueBrowserTasks, sweepAbandonedTakeovers } =
+  vi.hoisted(() => ({
+    runDueRoutines: vi.fn(),
+    runDueConnections: vi.fn(),
+    pollDueBrowserTasks: vi.fn(),
+    sweepAbandonedTakeovers: vi.fn(),
+  }));
 vi.mock("./routines/dispatcher", () => ({ runDueRoutines }));
 vi.mock("./connections/dispatcher", () => ({ runDueConnections }));
 vi.mock("./browser/poller", () => ({ pollDueBrowserTasks }));
+vi.mock("./browser/sweep", () => ({ sweepAbandonedTakeovers }));
 
 import { runScheduledWork } from "./background";
 
@@ -38,6 +41,8 @@ describe("runScheduledWork", () => {
     runDueConnections.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
     pollDueBrowserTasks.mockReset();
     pollDueBrowserTasks.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepAbandonedTakeovers.mockReset();
+    sweepAbandonedTakeovers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
   });
 
   // The whole point of the sequencing: a busy routine tick has already spent
@@ -148,5 +153,46 @@ describe("runScheduledWork", () => {
 
     await expect(runScheduledWork(withStore)).rejects.toThrow("claim_due_routines failed");
     expect(runDueConnections).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The sweep's placement, which is the only interesting thing about it.
+ *
+ * `runScheduledWork` is strictly either/or, so WHERE a stage sits decides
+ * whether it ever runs on a busy deployment — and a busy deployment is
+ * precisely where somebody abandons a takeover. These three pin the order
+ * rather than the behaviour; the behaviour is `browser/sweep.test.ts`'s.
+ */
+describe("the abandoned-takeover sweep", () => {
+  it("is not reached when routines claimed", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(sweepAbandonedTakeovers).not.toHaveBeenCalled();
+  });
+
+  it("runs on an idle tick", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(sweepAbandonedTakeovers).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The one that pins the order. If the sweep were placed after the browser
+   * poll, this would pass vacuously — so it asserts the poll was NOT reached,
+   * which is only true if the sweep comes first and short-circuits.
+   */
+  it("short-circuits the browser poll when it claimed", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepAbandonedTakeovers.mockResolvedValue({ claimed: 2, ok: 2, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(sweepAbandonedTakeovers).toHaveBeenCalledOnce();
+    expect(pollDueBrowserTasks).not.toHaveBeenCalled();
   });
 });

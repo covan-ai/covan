@@ -398,3 +398,88 @@ describe("every route refuses an API key", () => {
     expect(body.error).toBe("that takeover is already closed");
   });
 });
+
+/**
+ * The forget control (§7a).
+ *
+ * The read is the caller's own client, because `cookie_domains` is a column
+ * `authenticated` may select; the delete is not, because `provider_profile_id`
+ * is a column no client role may even read. So what these tests pin is the
+ * same split the rest of this file does: the permission question answered here,
+ * the provider id handled over there.
+ */
+describe("the browser profile", () => {
+  it("reports which sites the jar is signed into, read with the caller's own client", async () => {
+    const fixture = appWith({
+      tables: {
+        browser_profiles: {
+          select: () => ({
+            data: {
+              cookie_domains: ["portal.example.com", "mail.example.com"],
+              created_at: "2026-10-01T00:00:00.000Z",
+              last_used_at: "2026-10-08T00:00:00.000Z",
+            },
+            error: null,
+          }),
+        },
+      },
+    });
+    const { status, body } = await json(fixture, "GET", "/browser/profile");
+
+    expect(status).toBe(200);
+    expect(body.profile).toMatchObject({
+      signedInTo: ["portal.example.com", "mail.example.com"],
+    });
+  });
+
+  it("answers no profile rather than an empty one when nothing is held", async () => {
+    const fixture = appWith({
+      tables: { browser_profiles: { select: () => ({ data: null, error: null }) } },
+    });
+    const { status, body } = await json(fixture, "GET", "/browser/profile");
+
+    expect(status).toBe(200);
+    expect(body.profile).toBeNull();
+  });
+
+  /**
+   * The read tells somebody which sites this person is signed into, which is
+   * recon rather than work, and no API-key caller has a use for it. The delete
+   * destroys sign-ins outright. Both are refused for `ACTS_BEYOND_THE_KEY`'s
+   * reason, from the other direction.
+   */
+  it.each([
+    ["GET", "/browser/profile"],
+    ["DELETE", "/browser/profile"],
+  ])("refuses an API-key caller on %s %s", async (method, path) => {
+    const fixture = appWith({ apiKeyId: "key-1" });
+    const { status } = await json(fixture, method, path);
+
+    expect(status).toBe(403);
+  });
+
+  it("forgets the jar and names what went, through the module that holds the provider id", async () => {
+    const forget = vi
+      .spyOn(takeover, "forgetProfile")
+      .mockResolvedValue({ kind: "ok", forgotten: ["portal.example.com"] });
+    const fixture = appWith({});
+    const { status, body } = await json(fixture, "DELETE", "/browser/profile");
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ forgotten: ["portal.example.com"] });
+    expect(forget.mock.calls[0][1]).toBe(USER.id);
+  });
+
+  it("answers the module's own status when a browser is still open", async () => {
+    vi.spyOn(takeover, "forgetProfile").mockResolvedValue({
+      kind: "error",
+      status: 409,
+      message: "a browser of yours is open right now",
+    });
+    const fixture = appWith({});
+    const { status, body } = await json(fixture, "DELETE", "/browser/profile");
+
+    expect(status).toBe(409);
+    expect(body.error).toBe("a browser of yours is open right now");
+  });
+});

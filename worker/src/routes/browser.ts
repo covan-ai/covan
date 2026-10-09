@@ -2,7 +2,12 @@ import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { browserLiveUrl } from "../lib/browser/profiles";
-import { closeTakeover, openTakeover, providerSessionFor } from "../lib/browser/takeover";
+import {
+  closeTakeover,
+  forgetProfile,
+  openTakeover,
+  providerSessionFor,
+} from "../lib/browser/takeover";
 
 /**
  * The three caller-bound ends of a browser takeover.
@@ -298,6 +303,75 @@ browser.post("/browser/takeovers/:id/close", async (c) => {
     signedInTo: closed.cookieDomains,
     message: closed.message,
   });
+});
+
+/**
+ * GET /browser/profile — which sites this person's jar is signed into.
+ *
+ * Read with the caller's own client, and that is the point rather than a
+ * detail: `cookie_domains` is one of the five columns 0077 grants
+ * `authenticated` a select on, precisely so a screen can show a person what is
+ * being held for them without anything reaching past RLS to fetch it. The
+ * columns that would make this a leak — `provider_profile_id`,
+ * `proxy_country_code` — are granted to no client role, so this query could
+ * not name them if it tried.
+ *
+ * Refused to an API key for the same reason the rest of this file is, read
+ * from the other end: the answer is a list of the sites somebody is signed
+ * into, which is reconnaissance rather than work, and no key-driven caller has
+ * a use for it.
+ */
+browser.get("/browser/profile", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "see which sites a browser is signed into");
+  if (refusal) return c.json(refusal, 403);
+
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const { data, error } = await db
+    .from("browser_profiles")
+    .select("cookie_domains, created_at, last_used_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("could not read a browser profile", { code: error.code });
+    return c.json({ error: "failed to load your browser sign-ins" }, 500);
+  }
+  if (!data) return c.json({ profile: null });
+
+  return c.json({
+    profile: {
+      signedInTo: Array.isArray(data.cookie_domains)
+        ? data.cookie_domains.filter((d: unknown): d is string => typeof d === "string")
+        : [],
+      createdAt: data.created_at ? String(data.created_at) : null,
+      lastUsedAt: data.last_used_at ? String(data.last_used_at) : null,
+    },
+  });
+});
+
+/**
+ * DELETE /browser/profile — forget every sign-in, without closing the account.
+ *
+ * §7a's control. Deleting on account closure already worked, and it is not the
+ * same right: a person who wants Covan to stop holding a login should not have
+ * to leave to get it. A feature whose whole purpose is to accumulate sign-ins
+ * needs a door out of it that costs less than the exit.
+ *
+ * Nothing about the ORDER of the deletions is decided here — `forgetProfile`
+ * owns that, because the provider id is the thing being ordered around and
+ * this file may not read it. What is decided here is only who may ask.
+ */
+browser.delete("/browser/profile", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "forget a browser's sign-ins");
+  if (refusal) return c.json(refusal, 403);
+
+  const user = c.get("user");
+  const result = await forgetProfile(c.env, user.id);
+  if (result.kind === "error") return c.json({ error: result.message }, result.status as 409);
+
+  return c.json({ forgotten: result.forgotten });
 });
 
 /**

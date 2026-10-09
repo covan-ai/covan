@@ -190,6 +190,7 @@ import {
   ensureProfile,
   openTakeover,
   profileFor,
+  forgetProfile,
   retryBrowserTask,
   type RetryableTask,
 } from "./takeover";
@@ -1122,5 +1123,109 @@ describe("retryBrowserTask", () => {
     // The import rather than the word, so the file can still argue in prose
     // about the allowance it deliberately never asks.
     expect(source).not.toMatch(/^\s*import[^\n]*entitlements/m);
+  });
+});
+
+/**
+ * Forgetting, which is the half of the promise the account screen makes.
+ *
+ * Deleting on account closure was already there, and it is not the same
+ * right: a person who wants Covan to stop holding a login must not have to
+ * close their account to get it. What makes the order load-bearing here is
+ * that the Covan row is the only thing in existence that names the jar —
+ * `provider_profile_id` is withheld from every client role (0077) and
+ * browser-use has no "list by Covan user" — so a row deleted before the
+ * provider confirmed leaves a bag of live session cookies nothing can ever
+ * name again.
+ */
+describe("forgetProfile", () => {
+  it("deletes at the provider BEFORE the row, because the row is the only name the jar has", async () => {
+    const s = store({ profiles: [profileRow()] });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r).toEqual({ kind: "ok", forgotten: ["mail.google.com"] });
+    expect(log).toEqual([
+      "select browser_takeovers",
+      "select browser_profiles",
+      "provider deleteProfile",
+      "delete browser_profiles",
+    ]);
+    expect(s.profiles).toEqual([]);
+  });
+
+  it("keeps the row when the provider refuses, so the jar still has a name", async () => {
+    deleteProfile.mockResolvedValue({ kind: "error", status: 500, message: "500 upstream" });
+    const s = store({ profiles: [profileRow()] });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r.kind).toBe("error");
+    expect(log).not.toContain("delete browser_profiles");
+    expect(s.profiles).toHaveLength(1);
+  });
+
+  /**
+   * The retry path. A first attempt that deleted at the provider and then
+   * failed to delete the row leaves a row naming a jar that is gone; asking
+   * again must finish the job rather than refuse forever on the provider's
+   * entirely correct 404.
+   */
+  it("treats a provider 404 as already forgotten and still clears the row", async () => {
+    deleteProfile.mockResolvedValue({ kind: "error", status: 404, message: "404 Not Found" });
+    const s = store({ profiles: [profileRow()] });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r.kind).toBe("ok");
+    expect(s.profiles).toEqual([]);
+  });
+
+  /**
+   * A browser is running on that jar right now, and stopping it is what saves
+   * the jar — so deleting underneath it would destroy a sign-in the person is
+   * part-way through, and `closeTakeover` would then be refreshing
+   * `cookie_domains` on a row that no longer exists.
+   */
+  it("refuses while a takeover is open, rather than pulling the jar out from under it", async () => {
+    const s = store({ takeovers: [openRow()], profiles: [profileRow()] });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r).toMatchObject({ kind: "error", status: 409 });
+    expect(log).not.toContain("provider deleteProfile");
+    expect(s.profiles).toHaveLength(1);
+  });
+
+  it("ignores a takeover that has already lapsed, which is not a running browser", async () => {
+    const s = store({ takeovers: [openRow({ expires_at: at(-1) })], profiles: [profileRow()] });
+    await expect(forgetProfile(ENV, "user-1", s.deps)).resolves.toMatchObject({ kind: "ok" });
+  });
+
+  it("answers ok with nothing forgotten when there is no jar", async () => {
+    const s = store();
+    await expect(forgetProfile(ENV, "user-1", s.deps)).resolves.toEqual({
+      kind: "ok",
+      forgotten: [],
+    });
+    expect(log).not.toContain("provider deleteProfile");
+  });
+
+  /** A half-made row names no jar, so there is nothing to ask the provider about. */
+  it("clears a half-made row without calling the provider", async () => {
+    const s = store({ profiles: [profileRow({ provider_profile_id: "" })] });
+    await expect(forgetProfile(ENV, "user-1", s.deps)).resolves.toMatchObject({ kind: "ok" });
+    expect(log).not.toContain("provider deleteProfile");
+    expect(s.profiles).toEqual([]);
+  });
+
+  /**
+   * The same rule every other id-keyed mutation in this file follows: this
+   * client answers to no policy, so the owner is in the predicate rather than
+   * beside it.
+   */
+  it("scopes both the read and the delete to the caller", async () => {
+    const s = store({ profiles: [profileRow({ user_id: "someone-else" })] });
+    await expect(forgetProfile(ENV, "user-1", s.deps)).resolves.toEqual({
+      kind: "ok",
+      forgotten: [],
+    });
+    expect(s.profiles).toHaveLength(1);
   });
 });

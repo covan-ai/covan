@@ -190,8 +190,11 @@ and press done. What persists is a *profile* held at browser-use — cookies and
 session state, never in Covan's database — and it belongs to one person rather
 than to a workspace, because a login is a property of a person and not of a
 room they are in. Covan stores an opaque reference to that profile and the list
-of domains it holds, nothing else. Closing your account deletes it at the
-provider. The key is the deployment's,
+of domains it holds, nothing else. **Settings → Browser sign-ins** names those
+domains and forgets them on one click, and closing your account deletes the
+profile at the provider as well — the first because stopping Covan from holding
+a login should not cost somebody their account, the second because erasure has
+to be complete. The key is the deployment's,
 not a member's: nobody is asked to pay a third party to use the feature, and a
 task is metered against the allowance they already have. Unset the variable and
 the tool does not exist. The public list for covan.app is on the

@@ -819,6 +819,20 @@ export const api = {
      */
     close: (id: string): Promise<CloseTakeover> =>
       request("POST", `/browser/takeovers/${id}/close`),
+    /**
+     * Which sites the jar is signed into, which is the whole of what Covan can
+     * say about somebody's logins: the cookies themselves are held by the
+     * provider and the address of them is readable by no client role at all.
+     */
+    profile: (): Promise<{ profile: BrowserProfile | null }> => request("GET", "/browser/profile"),
+    /**
+     * Forget every sign-in, without closing the account.
+     *
+     * Destructive and not undoable — the jar is deleted at the provider, so the
+     * next task behind a login starts from nothing again. Refused while a
+     * browser is open, because stopping that browser is what saves the jar.
+     */
+    forget: (): Promise<{ forgotten: string[] }> => request("DELETE", "/browser/profile"),
   },
   providerKeys: {
     get: (): Promise<ProviderKeyHints> => request("GET", "/workspace/provider-keys"),
@@ -1152,6 +1166,13 @@ export type BrowserTask = {
   retryOf: string | null;
   createdAt: number;
   finishedAt: number | null;
+};
+
+export type BrowserProfile = {
+  /** The sites this person signed into themselves, in their own hands. */
+  signedInTo: string[];
+  createdAt: string | null;
+  lastUsedAt: string | null;
 };
 
 export type Takeover = {

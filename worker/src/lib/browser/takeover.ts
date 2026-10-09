@@ -280,6 +280,141 @@ export async function profileFor(
 }
 
 /**
+ * Forgetting the jar, without closing the account.
+ *
+ * §7a's control, and the half of the promise that was missing: deleting on
+ * account closure already worked (`routes/account.ts`), but erasure is a
+ * different right from "stop holding my logins" — and a person should not
+ * have to leave to exercise the second one. A feature whose whole purpose is
+ * to accumulate sign-ins needs a door out of it that is cheaper than the exit.
+ *
+ * **The order is the load-bearing part, and it is the reverse of what reads
+ * naturally.** The Covan row is the only thing in existence that names this
+ * jar: `provider_profile_id` is granted to no client role (0077), nothing
+ * else in the schema carries it, and browser-use offers no way to ask "which
+ * profiles belong to this Covan user". So a row deleted before the provider
+ * confirmed leaves a bag of live session cookies for sites this person is
+ * still signed into, held by a subprocessor, with nothing anywhere able to
+ * name it again — the precise failure `routes/account.ts` reads the column
+ * early to avoid, arriving through the tidier-looking door.
+ *
+ * Which also decides what a failure does: the row stays. A second attempt
+ * then calls `deleteProfile` on a jar that may already be gone, so the
+ * provider's entirely correct **404 counts as success** — otherwise a first
+ * attempt that died between the two steps would refuse forever.
+ *
+ * Open takeovers are refused rather than swept along. A takeover's provider
+ * session is running on this jar, stopping it is the only thing that saves
+ * the jar, and `closeTakeover` refreshes `cookie_domains` on this row when it
+ * does — so deleting underneath a live browser would destroy a sign-in the
+ * person is in the middle of performing and leave the close writing to a row
+ * that is gone.
+ */
+export type ForgetProfileResult = { kind: "ok"; forgotten: string[] } | Refusal;
+
+const FORGET_FAILED =
+  "your sign-ins could not be forgotten just now — nothing was deleted, so try again in a moment";
+
+export async function forgetProfile(
+  env: RoutineEnv,
+  userId: string,
+  overrides: Partial<TakeoverDeps> = {},
+): Promise<ForgetProfileResult> {
+  const { db, now } = resolve(env, overrides);
+
+  /**
+   * Asked first, and of the takeovers rather than the profile, because a
+   * refusal must cost nothing. `expires_at` is compared here rather than in
+   * the query for `routes/browser.ts`'s reason — the time-aware half of "one
+   * open takeover" cannot live in a partial index, since `now()` is not
+   * immutable.
+   */
+  const { data: standing, error: standingError } = await db
+    .from("browser_takeovers")
+    .select("expires_at")
+    .eq("user_id", userId)
+    .eq("status", "open");
+
+  if (standingError) {
+    console.error("could not check for an open takeover before forgetting", problem(standingError));
+    return { kind: "error", status: 500, message: FORGET_FAILED };
+  }
+  const live = (standing ?? []).some(
+    (row) =>
+      new Date(String((row as { expires_at?: unknown }).expires_at)).getTime() > now().getTime(),
+  );
+  if (live) {
+    return {
+      kind: "error",
+      status: 409,
+      message:
+        "a browser of yours is open right now — press done on it first, and these sign-ins can be forgotten after that",
+    };
+  }
+
+  /**
+   * Read here rather than through `readProfileRow`, and in one query: this is
+   * the only caller that wants `cookie_domains`, and asking for it separately
+   * was a second round trip for a column the first read could have carried.
+   */
+  const { data: row, error: readError } = await db
+    .from("browser_profiles")
+    .select("id, provider_profile_id, cookie_domains")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (readError) {
+    console.error("could not read a browser profile to forget it", problem(readError));
+    return { kind: "error", status: 500, message: FORGET_FAILED };
+  }
+  // Nothing held is not a failure to report; it is the state the person asked
+  // for, and saying so lets the screen be honest without a second read.
+  if (!row) return { kind: "ok", forgotten: [] };
+
+  const providerProfileId = text(row.provider_profile_id);
+  const forgotten = Array.isArray(row.cookie_domains)
+    ? row.cookie_domains.filter((d): d is string => typeof d === "string")
+    : [];
+
+  /**
+   * A half-made row names no jar, so there is nothing at the provider to ask
+   * about — `ensureProfile` claims the unique index before it calls out, and
+   * clearing that claim is exactly what unblocks a person whose first attempt
+   * died mid-flight.
+   */
+  if (providerProfileId) {
+    const gone = await deleteProfile(env, providerProfileId);
+    // 404 is the retry path, not a failure: a first attempt that deleted the
+    // jar and then failed to clear the row must be able to finish.
+    if (gone.kind === "error" && gone.status !== 404) {
+      // The status rather than the body, because the body names the profile
+      // id — the one thing 0077 withholds from every client role.
+      console.error("could not delete a browser profile at the provider", gone.status);
+      return { kind: "error", status: 502, message: FORGET_FAILED };
+    }
+  }
+
+  const { error: deleteError } = await db
+    .from("browser_profiles")
+    .delete()
+    .eq("id", String(row.id))
+    .eq("user_id", userId);
+
+  if (deleteError) {
+    /**
+     * The jar is gone and the row is not, which is the one state this
+     * function can leave behind. Recoverable rather than silent: `profileFor`
+     * will hand the dead id to a task and the provider will refuse it, and
+     * asking to forget again clears the row on the 404 above.
+     */
+    console.error("deleted a browser profile but could not clear its row", problem(deleteError));
+    return { kind: "error", status: 500, message: FORGET_FAILED };
+  }
+
+  return { kind: "ok", forgotten };
+}
+
+/**
  * The provider session behind a takeover this person owns.
  *
  * Exists so exactly one function in the codebase turns a takeover id into a

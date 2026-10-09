@@ -309,6 +309,31 @@ describe("answering in a thread", () => {
     expect(posted().text).toContain("Twenty days a");
   });
 
+  it("sends what it retrieved as data, not as its own instructions", async () => {
+    // Finding 8 of the 2026-10-08 audit. This path assembles the same way the
+    // chat route does, and it had the same defect: the retrieved block rode as
+    // a `system` message. On Slack the material is likelier still to have been
+    // written by somebody outside the workspace — a synced channel is a feed.
+    const fake = db({ identity: true });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    // `create` is declared with no parameters, so the recorded call has to be
+    // told what it was.
+    const [request] = create.mock.calls[0] as unknown as [
+      { messages: { role: string; content: string }[] },
+    ];
+    const messages = request.messages;
+    const at = messages.findIndex((m) => m.content.includes("Twenty days."));
+    expect(messages[at]?.role).toBe("user");
+    // And it is still its own message behind the persona, which is what the
+    // prompt cache reads back. (This fixture's fake `messages` table returns no
+    // rows, so the re-read history is empty and there is no question turn after
+    // it — the role is the whole of what this test is about.)
+    expect(messages[0].role).toBe("system");
+    expect(messages[0].content).not.toContain("Twenty days.");
+  });
+
   it("treats a direct message as a private conversation", async () => {
     const fake = db({ identity: true });
 

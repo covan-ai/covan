@@ -7,6 +7,7 @@ import { MODEL_IDS, availableModels } from "../lib/models";
 import { canSendEmail } from "../lib/email";
 import { removedFromWorkspaceEmail, roleChangedEmail } from "../lib/emails/membership";
 import { notify } from "../lib/emails/send";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 const workspace = new Hono<AppEnv>();
 
@@ -170,6 +171,12 @@ const updateMemberSchema = z.object({ role: z.enum(["admin", "member", "viewer"]
 
 // PATCH /workspace/members/:userId — change a member's role (admin only).
 workspace.patch("/workspace/members/:userId", async (c) => {
+  // A viewer promoted to admin by a key stays an admin after the key is
+  // revoked, which is the same leak as minting a key done to somebody who is
+  // already here. See `lib/api-key-rule.ts`.
+  const refusal = refuseIfKeyAuthenticated(c, "change what somebody may do");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const user = c.get("user");
   const targetUserId = c.req.param("userId");

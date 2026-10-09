@@ -188,21 +188,9 @@ connections.post("/connections/:id/reconnect", async (c) => {
     return c.json({ error: `${provider.label} is not configured on this deployment` }, 501);
   }
 
-  // The permission question, asked of the database by making the smallest
-  // change there is — the same trick `POST /connections/:id/sync` uses, and for
-  // the same reason: seeing a connection is membership, replacing its
-  // credential is writing, and nothing downstream of here consults RLS again.
-  const { data: allowed, error: allowedError } = await c
-    .get("db")
-    .from("connections")
-    .update({ status: connection.status })
-    .eq("id", connection.id)
-    .select("id")
-    .maybeSingle();
-  if (allowedError) return c.json({ error: "failed to load connection" }, 500);
-  if (!allowed) {
-    return c.json({ error: "you do not have permission to reconnect this connection" }, 403);
-  }
+  // Seeing a connection is membership; replacing its credential is writing.
+  const refused = await mayChangeConnection(c, connection, "reconnect");
+  if (refused) return refused;
 
   const state = await signState(
     {
@@ -395,6 +383,10 @@ connections.get("/connections/:id/folders", async (c) => {
     return c.json({ error: "this connection has no folders to choose from" }, 400);
   }
 
+  // Before the token, not after: browsing is reading somebody else's grant.
+  const refused = await mayChangeConnection(c, connection, "browse");
+  if (refused) return refused;
+
   const parent = c.req.query("parent") || "root";
   try {
     const token = await tokenFor(c.env, connection, provider);
@@ -454,17 +446,8 @@ connections.patch("/connections/:id", async (c) => {
   };
   if (body.syncIntervalMinutes) granted.sync_interval_minutes = body.syncIntervalMinutes;
 
-  const { data: allowed, error: grantedError } = await c
-    .get("db")
-    .from("connections")
-    .update(granted)
-    .eq("id", connection.id)
-    .select("id")
-    .maybeSingle();
-  if (grantedError) return c.json({ error: "failed to update connection" }, 500);
-  if (!allowed) {
-    return c.json({ error: "you do not have permission to change this connection" }, 403);
-  }
+  const refused = await mayChangeConnection(c, connection, "change", granted);
+  if (refused) return refused;
 
   // Only now, and only for the columns no client may write. The row this
   // touches is the one the policy just let through.
@@ -530,23 +513,10 @@ connections.post("/connections/:id/sync", async (c) => {
     return c.json({ error: "this connection is paused" }, 409);
   }
 
-  // Asking the database whether this caller may change this connection, by
-  // making the smallest change there is: writing `status` back to the value it
-  // already holds. `loadForCaller` only proved they can SEE it, and a viewer can
-  // see everything — a sync writes documents into the workspace and spends the
-  // owner's allowance, so seeing is not enough. The sync itself runs as the
-  // service role and RLS will not be consulted again, which is exactly why the
-  // question has to be asked here.
-  const { data: allowed } = await c
-    .get("db")
-    .from("connections")
-    .update({ status: connection.status })
-    .eq("id", connection.id)
-    .select("id")
-    .maybeSingle();
-  if (!allowed) {
-    return c.json({ error: "you do not have permission to sync this connection" }, 403);
-  }
+  // A sync writes documents into the workspace and spends the owner's
+  // allowance, and it runs as the service role from here on.
+  const refused = await mayChangeConnection(c, connection, "sync");
+  if (refused) return refused;
 
   const outcome = await runOneConnection(c.env, await withSecret(c.env, connection));
   return c.json(outcome);
@@ -672,6 +642,58 @@ async function loadForCaller(
     connection: { ...(data as object), secret_ciphertext: "" } as ConnectionRow,
     provider,
   };
+}
+
+/**
+ * Whether this caller may change this connection — asked of the database, by
+ * making the smallest change there is.
+ *
+ * `loadForCaller` proves only that they can SEE the row, and seeing one is
+ * membership: `connections_select_member` admits every member of the workspace,
+ * viewers included. Changing one is a different question, and
+ * `connections_update_owner_or_admin` (0057) is what answers it — the grant
+ * holder, an admin, or any writing member while the row is unowned. So the
+ * question is put to the policy rather than re-derived here: the caller's own
+ * client writes a granted column, and a row coming back IS the yes.
+ *
+ * Every handler that reaches the stored grant has to ask, because `tokenFor`
+ * decrypts it with the service role and nothing downstream of that consults RLS
+ * again. `GET /connections/:id/folders` did not ask — finding 5 of the
+ * 2026-10-08 audit — so any viewer of the workspace could browse the grant
+ * holder's Drive through it, one `?parent` at a time, since the Drive query is
+ * `'<parent>' in parents` with `includeItemsFromAllDrives=true`
+ * (`lib/connections/google-drive.ts:189-197`) and is not bounded by the folder
+ * the connection was configured for.
+ *
+ * That "every handler" is a claim, so `connection-permission.static.test.ts`
+ * holds it: a handler here that reaches the grant without naming this function
+ * fails that test.
+ *
+ * `writes` is for `PATCH`, where the granted columns are both the change the
+ * caller asked for and the probe. Everywhere else the write is `status` back to
+ * the value it already holds.
+ */
+async function mayChangeConnection(
+  c: Context<AppEnv>,
+  connection: ConnectionRow,
+  verb: string,
+  writes?: Record<string, unknown>,
+): Promise<Response | undefined> {
+  const { data: allowed, error } = await c
+    .get("db")
+    .from("connections")
+    .update(writes ?? { status: connection.status })
+    .eq("id", connection.id)
+    .select("id")
+    .maybeSingle();
+  // A failed probe is not a yes. `POST /connections/:id/sync` used to read only
+  // `data` here and answer 403 on a database error; 500 says the same no and
+  // says why.
+  if (error) return c.json({ error: "failed to check your permission on this connection" }, 500);
+  if (!allowed) {
+    return c.json({ error: `you do not have permission to ${verb} this connection` }, 403);
+  }
+  return undefined;
 }
 
 /**

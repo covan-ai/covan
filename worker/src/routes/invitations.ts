@@ -8,6 +8,7 @@ import { canSendEmail, sendEmail } from "../lib/email";
 import { invitationEmail } from "../lib/emails/invitation";
 import { joinedEmail } from "../lib/emails/joined";
 import { appUrlOf, notify } from "../lib/emails/send";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 const invitations = new Hono<AppEnv>();
 
@@ -51,6 +52,13 @@ invitations.get("/invitations", async (c) => {
 
 // POST /invitations — create an invite (admin only, enforced by RLS insert policy).
 invitations.post("/invitations", async (c) => {
+  // Asked before the body is even read, because the answer does not depend on
+  // it. An admin's key may invite an admin, and the result is a second person
+  // with their own session — access in somebody else's hands that revoking the
+  // key does not reach. See `lib/api-key-rule.ts` for the rule this is one of.
+  const refusal = refuseIfKeyAuthenticated(c, "invite people to a workspace");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const user = c.get("user");
 

@@ -5,6 +5,7 @@ import { getDocStore } from "../lib/docstore";
 import { accountClosedEmail } from "../lib/emails/closed";
 import { notify } from "../lib/emails/send";
 import { connectedAccountsIn, revokeConnectedAccounts } from "../lib/composio/revoke";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 /**
  * Closing an account.
@@ -128,17 +129,12 @@ async function collectDocumentKeys(
 
 // DELETE /account — close your own account, and nothing else's.
 account.delete("/account", async (c) => {
-  // The third refusal in the family, and the heaviest of the three. The other
-  // two live in `routes/api-keys.ts`: a key may not mint another key and may not
-  // revoke one. All three exist because a key is not a scope list — it is a way
-  // to become the person who owns it — so "acting as the owner" would otherwise
-  // be enough to end the owner. A leaked key that can close the account it came
-  // from destroys the evidence and the account in one call, and no revocation
-  // afterwards can undo it. This one is not optional and it is not derivable:
-  // it has to be written, here, by hand.
-  if (c.get("apiKeyId")) {
-    return c.json({ error: "api keys cannot close an account — sign in to do this" }, 403);
-  }
+  // The heaviest member of the family in `lib/api-key-rule.ts`, which is where
+  // the reasoning lives: a leaked key that can close the account it came from
+  // destroys the evidence and the account in one call, and no revocation
+  // afterwards can undo it.
+  const refusal = refuseIfKeyAuthenticated(c, "close an account");
+  if (refusal) return c.json(refusal, 403);
 
   const db = c.get("db");
   const user = c.get("user");

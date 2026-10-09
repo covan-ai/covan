@@ -497,8 +497,20 @@ error. It also refuses to start on any `ROUTINE_SECRET_KEY` that does not
 decode to 16, 24 or 32 bytes, so a bad key is caught at boot instead of the
 first time a delivery channel is saved.
 
-`loadEnv` cannot see `JWT_SECRET` and `POSTGRES_PASSWORD` — they are consumed
-by Kong, GoTrue, PostgREST and Postgres, none of which run it — so
+`loadEnv` refuses a `JWT_SECRET` too: it is the secret API keys are signed
+with, and `loadEnv` reads it under either spelling — `JWT_SECRET`, which
+GoTrue and PostgREST already need, or `SUPABASE_JWT_SECRET`, which is what the
+Cloudflare deployment sets. The published default is refused on a non-local
+origin, and so is any value shorter than 32 characters. Until the 2026-10-08
+audit neither was: the guard's list could only name variables Covan requires,
+the signing key is optional, and so the one published default that signs
+tokens was the one it could not see. The check below covered it, but only for
+a stack brought up through docker-compose — the published image's entrypoint
+is `bun run src/node.ts`.
+
+`loadEnv` cannot see `POSTGRES_PASSWORD` — it is consumed by Postgres, Kong
+and the Supabase services, none of which run it — and it runs late, long
+after the database is listening. So
 `docker-compose.yml` carries a second, independent guard for the rest of
 step 1: a `secrets-check` service that runs `docker/check-secrets.sh` and
 that `db` depends on with `condition: service_completed_successfully`. Every

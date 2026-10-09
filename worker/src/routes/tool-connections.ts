@@ -224,42 +224,65 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
  * `lib/composio/revoke.ts` lists all three roads a row can leave by and what
  * runs on each.
  *
- * Order: ask the database whether this caller may remove the row, revoke, then
- * delete. Revoking first would let anyone who can name an id hand back somebody
- * else's grant; deleting first would lose the account id that the revocation
- * needs.
+ * Order: read the account id, delete, then revoke. Each step is where it is
+ * because of what the next one cannot do. Revoking before the delete would hand
+ * back somebody else's grant on the word of a read that admits more people than
+ * the delete does — finding 6 of the 2026-10-08 audit, and the reason the read
+ * below is no longer described as a gate. Reading the account id after the
+ * delete would be reading a row that has gone. And the revocation is last
+ * because it is the only step that cannot be taken back.
  */
 toolConnections.delete("/tool-connections/:id", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
-  // Through the caller's own client: `tool_connections_read` admits any member
-  // and `tool_connections_delete` the creator or an admin, so a row this read
-  // does not return is one the delete below would refuse anyway.
+  // Through the caller's own client, and it answers one question only: is there
+  // such a row, and may this person see it. `tool_connections_read` (0059:138)
+  // admits any member of the workspace; `tool_connections_delete` (0059:158)
+  // admits the creator or an admin. The two disagree about every member who did
+  // not create the row, which is why this read decides nothing below.
   const { data: row } = await db
     .from("tool_connections")
     .select("id, workspace_id, transport")
     .eq("id", id)
     .maybeSingle();
+  if (!row) return c.json({ error: "not found" }, 404);
 
-  if (row?.transport === "composio") {
-    // The account id is granted to no client role (0063), so this is the
-    // service role filling in the column the database withheld — after the
-    // read above has already decided the caller may have the row.
+  // The account id is granted to no client role (0063), so the service role
+  // fills in the column the database withheld — and it has to happen while the
+  // row still exists, because the delete takes the id with it. Nothing is
+  // revoked on the strength of this: it only keeps the id in hand for after the
+  // database has agreed.
+  let accountId = "";
+  if (row.transport === "composio") {
     const { data: secretRow } = await serviceClient(c.env)
       .from("tool_connections")
       .select("connected_account_id")
       .eq("id", id)
       .maybeSingle();
-    const accountId =
-      typeof secretRow?.connected_account_id === "string" ? secretRow.connected_account_id : "";
-    // Best effort, and the row goes either way — see `lib/composio/revoke.ts`
-    // for why a card that will not disappear is the worse failure.
-    if (accountId) await revokeConnectedAccounts(c.env, [accountId]);
+    if (typeof secretRow?.connected_account_id === "string") {
+      accountId = secretRow.connected_account_id;
+    }
   }
 
-  const { error } = await db.from("tool_connections").delete().eq("id", id);
+  // The permission question, asked of the policy by doing the thing — and
+  // `.select("id")` is what makes the answer legible. RLS answers a delete it
+  // has no policy for by matching no rows and reporting no error, so without
+  // the returned row a refusal and a success are the same `{ error: null }`.
+  const { data: removed, error } = await db
+    .from("tool_connections")
+    .delete()
+    .eq("id", id)
+    .select("id");
   if (error) return c.json({ error: "failed to remove connection" }, 500);
+  if ((removed ?? []).length === 0) {
+    return c.json({ error: "you do not have permission to remove this connection" }, 403);
+  }
+
+  // Best effort, and the row has already gone — see `lib/composio/revoke.ts`
+  // for why a card that will not disappear is the worse failure.
+  if (accountId) await revokeConnectedAccounts(c.env, [accountId]);
+
   return c.body(null, 204);
 });
 

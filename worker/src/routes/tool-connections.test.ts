@@ -65,6 +65,7 @@ function appWith(
     connection?: Record<string, unknown> | null;
     onSelect?: (columns?: string) => void;
     onDelete?: () => void;
+    deleteAllowed?: boolean;
   } = {},
 ) {
   const dbSpec: FakeDbSpec = {
@@ -90,7 +91,13 @@ function appWith(
         },
         delete: () => {
           spec.onDelete?.();
-          return { data: null, error: null };
+          // A row coming back IS `tool_connections_delete` saying yes, and an
+          // empty result is the policy refusing. The two can disagree with the
+          // read above, which `tool_connections_read` grants to any member.
+          return {
+            data: spec.deleteAllowed === false ? [] : [{ id: "conn-1" }],
+            error: null,
+          };
         },
       },
     },
@@ -334,7 +341,7 @@ describe("PATCH /tool-connections/:id", () => {
  * place to forget.
  */
 describe("DELETE /tool-connections/:id", () => {
-  it("gives the grant back before the row goes, and in that order", async () => {
+  it("gives the grant back only once the database has agreed to the delete", async () => {
     const order: string[] = [];
     fetchMock.mockImplementation(async () => {
       order.push("revoked");
@@ -352,10 +359,41 @@ describe("DELETE /tool-connections/:id", () => {
     );
 
     expect(res.status).toBe(204);
-    // Revoking after the delete would be revoking an id nothing can look up
-    // any more; revoking before the permission check would let anybody who can
-    // name an id hand back somebody else's grant.
-    expect(order).toEqual(["revoked", "deleted"]);
+    // Revoking first would hand back somebody else's grant on the word of a
+    // read that admits more people than the delete does, so the delete — which
+    // IS the permission question — goes first and the irreversible step last.
+    // What still has to happen before the delete is the service-role read of
+    // the account id, because the delete takes that id with it; the test below
+    // on a refused caller is what proves no revocation rides along with it.
+    expect(order).toEqual(["deleted", "revoked"]);
+  });
+
+  it("revokes nothing when the delete policy refuses the caller", async () => {
+    const order: string[] = [];
+    fetchMock.mockImplementation(async () => {
+      order.push("revoked");
+      return new Response(null, { status: 204 });
+    });
+
+    const app = appWith({
+      role: "member",
+      connection: { id: "conn-1", workspace_id: "ws-1", transport: "composio" },
+      // `tool_connections_read` admits any member (0059:138); the delete admits
+      // only the creator or an admin (0059:158). This is a member who is
+      // neither, which the read cannot tell apart.
+      deleteAllowed: false,
+    });
+    const res = await app.request(
+      "/tool-connections/conn-1",
+      { method: "DELETE" },
+      COMPOSIO_ENV as never,
+    );
+
+    expect(res.status).toBe(403);
+    // The revocation is irreversible and happens at Composio. Doing it on a
+    // delete the database then refuses hands back somebody else's grant and
+    // leaves the row behind, still listed, pointing at a dead account.
+    expect(order).toEqual([]);
   });
 
   it("removes the row anyway when Composio refuses the revocation", async () => {
@@ -372,6 +410,15 @@ describe("DELETE /tool-connections/:id", () => {
       COMPOSIO_ENV as never,
     );
     expect(res.status).toBe(204);
+  });
+
+  it("is a 404 for a connection the caller cannot see", async () => {
+    const res = await appWith({ connection: null }).request(
+      "/tool-connections/conn-1",
+      { method: "DELETE" },
+      COMPOSIO_ENV as never,
+    );
+    expect(res.status).toBe(404);
   });
 
   it("makes no request at all for a connection that keeps its own credential", async () => {

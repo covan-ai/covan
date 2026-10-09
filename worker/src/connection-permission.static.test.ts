@@ -28,14 +28,31 @@ import { join } from "node:path";
  * by being written into READ_ONLY_BY_DESIGN with the reason, which is the whole
  * mechanism: the exemption has to be argued for by somebody rather than noticed
  * by nobody.
+ *
+ * Three things this looks for rather than one, because the first draft of this
+ * file asked only whether the name appeared somewhere in the handler, and all
+ * three of these passed it with finding 5 fully reopened:
+ *
+ * - **Comments are stripped first.** `// mayChangeConnection is not needed
+ *   here` satisfied it. A ratchet built to catch a comment standing in for a
+ *   check must not be satisfiable by a comment.
+ * - **The answer has to be returned.** `await mayChangeConnection(…)` with the
+ *   `if (refused) return refused` deleted satisfied it — one lost line, which
+ *   is what a bad merge looks like, and the 403 simply stops happening.
+ * - **It has to be asked first.** Asking after the credential is fetched is
+ *   not asking: `tokenFor` has already refreshed and rewritten the grant by
+ *   then, and on `/folders` the Drive call has already returned.
  */
 const ROUTE = join(process.cwd(), "src", "routes", "connections.ts");
 
 /** The names that reach a connection's stored credential. */
-const REACHES_THE_GRANT = ["withSecret", "tokenFor"];
+const REACHES_THE_GRANT = ["withSecret(", "tokenFor("];
 
 /** The only thing in the file that asks whether this caller may. */
-const ASKS_FIRST = "mayChangeConnection";
+const ASKS_FIRST = "mayChangeConnection(";
+
+/** And acting on the answer, which is the half a lost line removes. */
+const ACTS_ON_IT = "return refused";
 
 /**
  * Handlers that reach the grant without asking, and why that is sound.
@@ -47,6 +64,18 @@ const ASKS_FIRST = "mayChangeConnection";
 const READ_ONLY_BY_DESIGN: Record<string, string> = {};
 
 type Handler = { label: string; body: string };
+
+/**
+ * The same text with its comments removed.
+ *
+ * Crude — a `//` inside a string literal goes with them unless a `:` precedes
+ * it, which covers the URLs in this file and nothing cleverer. It does not need
+ * to be better: what it is for is making sure a claim written in a comment
+ * cannot stand in for the code that would honour it.
+ */
+function codeOnly(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
 
 /**
  * Every route handler in the file, labelled `method path`.
@@ -76,13 +105,25 @@ function handlers(): Handler[] {
     open.body += `${line}\n`;
   }
 
-  return out;
+  return out.map((h) => ({ ...h, body: codeOnly(h.body) }));
 }
 
 const routes = handlers();
 
 function reachesTheGrant(h: Handler): boolean {
-  return REACHES_THE_GRANT.some((name) => h.body.includes(`${name}(`));
+  return REACHES_THE_GRANT.some((name) => h.body.includes(name));
+}
+
+/** Where the handler first touches the grant, or `Infinity` if it never does. */
+function reachesAt(h: Handler): number {
+  const found = REACHES_THE_GRANT.map((name) => h.body.indexOf(name)).filter((i) => i >= 0);
+  return found.length > 0 ? Math.min(...found) : Infinity;
+}
+
+/** Asked, acted on, and asked before the credential is fetched. */
+function asksProperly(h: Handler): boolean {
+  const asked = h.body.indexOf(ASKS_FIRST);
+  return asked >= 0 && h.body.includes(ACTS_ON_IT) && asked < reachesAt(h);
 }
 
 describe("a handler that reaches a connection's grant", () => {
@@ -97,16 +138,17 @@ describe("a handler that reaches a connection's grant", () => {
 
   it("asks the database first, every time", () => {
     const unasked = routes
-      .filter((h) => reachesTheGrant(h) && !h.body.includes(ASKS_FIRST))
+      .filter((h) => reachesTheGrant(h) && !asksProperly(h))
       .map((h) => h.label)
       .filter((label) => !(label in READ_ONLY_BY_DESIGN));
 
     expect(
       unasked,
-      `these reach the stored grant through ${REACHES_THE_GRANT.join(" or ")}, which ` +
+      `these reach the stored grant through ${REACHES_THE_GRANT.join(" or ")} which ` +
         `uses the service role and consults no policy. Seeing the row is membership; ` +
-        `acting on it is not. Call ${ASKS_FIRST} before the credential is fetched, or ` +
-        `add the handler to READ_ONLY_BY_DESIGN with the reason it is safe without it.`,
+        `acting on it is not. Each needs ${ASKS_FIRST}…) *before* the credential is ` +
+        `fetched and a \`${ACTS_ON_IT}\` that honours the answer — in code, not in a ` +
+        `comment — or an entry in READ_ONLY_BY_DESIGN saying why it is safe without one.`,
     ).toEqual([]);
   });
 
@@ -115,8 +157,9 @@ describe("a handler that reaches a connection's grant", () => {
     const handler = routes.find((h) => h.label === label);
     expect(handler, `${label} is in READ_ONLY_BY_DESIGN but no longer exists`).toBeDefined();
     expect(
-      reachesTheGrant(handler!),
-      `${label} no longer reaches the grant — remove it from READ_ONLY_BY_DESIGN`,
+      reachesTheGrant(handler!) && !asksProperly(handler!),
+      `${label} no longer reaches the grant without asking — remove it from ` +
+        "READ_ONLY_BY_DESIGN",
     ).toBe(true);
     expect(
       READ_ONLY_BY_DESIGN[label].length,

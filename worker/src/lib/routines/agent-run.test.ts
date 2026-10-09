@@ -155,9 +155,11 @@ describe("runRoutineWithTools", () => {
     const messages = runAgentTurn.mock.calls[0][0].request.messages as {
       role: string;
       content: string;
+      volatile?: boolean;
     }[];
     const at = messages.findIndex((m) => m.content.includes("our Pro tier is $29"));
     expect(messages[at]?.role).toBe("user");
+    expect(messages[at]?.volatile).toBe(true);
     // The persona stays the only system message.
     expect(messages.filter((m) => m.role === "system")).toHaveLength(1);
   });

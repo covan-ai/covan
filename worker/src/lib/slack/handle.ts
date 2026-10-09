@@ -230,7 +230,9 @@ export async function handleSlackEvent(
   const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
-    ...(retrieval.ragBlock ? [{ role: "user" as const, content: retrieval.ragBlock }] : []),
+    ...(retrieval.ragBlock
+      ? [{ role: "user" as const, content: retrieval.ragBlock, volatile: true as const }]
+      : []),
     ...(latestTurn ? [latestTurn] : []),
   ];
 

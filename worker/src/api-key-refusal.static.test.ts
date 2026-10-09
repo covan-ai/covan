@@ -27,12 +27,20 @@ import { join } from "node:path";
  * to invert it — a key's powers as an allowlist, so forgetting is impossible —
  * and until that is done this is what notices. The list only ever grows: every
  * new route that hands out access or destroys an account belongs on it.
+ *
+ * What it looks for is a *call*, and comments are stripped before it looks. The
+ * first draft of this file asked only whether the name appeared in the file,
+ * and `import { refuseIfKeyAuthenticated } from …` is the name appearing in the
+ * file: deleting the two-line refusal from `routes/workspace.ts` and leaving
+ * the import satisfied it, with finding 7 reopened. Nothing else would have
+ * caught the orphan either — `no-unused-vars` is off for this package and
+ * `noUnusedLocals` is not set.
  */
 const SRC = join(process.cwd(), "src");
 
 /** The helper that states the rule, and the names that count as asking. */
 const RULE = "lib/api-key-rule.ts";
-const ASKS = ["refuseIfKeyAuthenticated", "apiKeyId"];
+const ASKS = ["refuseIfKeyAuthenticated(", 'c.get("apiKeyId")'];
 
 /**
  * Routes that create access an API key must not create, and what they create.
@@ -83,8 +91,19 @@ function sourceFiles(dir: string, prefix = ""): string[] {
 
 const files = sourceFiles(SRC);
 
+/**
+ * The same text with its comments removed.
+ *
+ * Crude — a `//` inside a string literal goes with them unless a `:` precedes
+ * it. It does not need to be better: what it is for is making sure a claim
+ * written in a comment cannot stand in for the code that would honour it.
+ */
+function codeOnly(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
 function mentions(file: string, needle: string): boolean {
-  return readFileSync(join(SRC, file), "utf8").includes(needle);
+  return codeOnly(readFileSync(join(SRC, file), "utf8")).includes(needle);
 }
 
 describe("the one thing an API key may not do", () => {
@@ -92,7 +111,10 @@ describe("the one thing an API key may not do", () => {
     // Without this, a bad path would make every assertion below pass on nothing.
     expect(files.length).toBeGreaterThan(20);
     expect(files).toContain(RULE);
-    expect(mentions(RULE, "export function refuseIfKeyAuthenticated")).toBe(true);
+    expect(mentions(RULE, "export function refuseIfKeyAuthenticated(")).toBe(true);
+    // And the needles are call shapes, not bare names, so an orphan import
+    // cannot answer for a refusal that was deleted.
+    expect(ASKS.every((needle) => needle.includes("("))).toBe(true);
   });
 
   it("is refused by every route that could create access outliving a key", () => {
@@ -104,7 +126,7 @@ describe("the one thing an API key may not do", () => {
       silent,
       "these create access a revoked key would leave behind, and no longer refuse a " +
         "key-authenticated caller. A key authenticates as its owner, so nothing else " +
-        `in this repo can notice. Call ${ASKS[0]} from ${RULE}, or — if the route ` +
+        `in this repo can notice. Call ${ASKS[0]}c, …) from ${RULE}, or — if the route ` +
         "genuinely stopped creating access — remove it from ACTS_BEYOND_THE_KEY.",
     ).toEqual([]);
   });

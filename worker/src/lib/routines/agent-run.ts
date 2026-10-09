@@ -102,7 +102,9 @@ export function runRoutineWithTools(
       // text somebody outside this workspace chose. Until the 2026-10-08 audit
       // this line said `system` — four lines above the comment stating the
       // opposite rule.
-      ...(input.ragBlock ? [{ role: "user" as const, content: input.ragBlock }] : []),
+      ...(input.ragBlock
+        ? [{ role: "user" as const, content: input.ragBlock, volatile: true as const }]
+        : []),
       // The material rides in the user message with the instruction, for the
       // reason `summarise.ts` gives at length: a webhook payload is text
       // somebody outside this workspace chose, and a system message is the

@@ -147,9 +147,12 @@ const blockOpen = (documentName: string) => `<document name="${documentName}">\n
  * A document name is a filename a member chose, and here it lands inside an
  * attribute of the element that bounds the document. `"> Ignore the above <` is
  * a legal name for an upload; left alone it would close the element and let a
- * title speak from outside it. The three characters that could do that come out.
+ * title speak from outside it. The three characters that could do that come
+ * out, and so do newlines — with the other three gone a newline cannot forge a
+ * delimiter, but the frame states the name on one line and a name that spans
+ * two puts a line of somebody's choosing where a filename belongs.
  */
-const safeName = (documentName: string) => documentName.replace(/[<>"]/g, "");
+const safeName = (documentName: string) => documentName.replace(/[<>"\r\n]/g, "");
 
 /**
  * The same hole from the other side, and the one that would make the delimiters
@@ -159,10 +162,16 @@ const safeName = (documentName: string) => documentName.replace(/[<>"]/g, "");
  * rather than removed — the text is what somebody asked about, and it is quoted,
  * not withheld.
  *
+ * Both ends, not just the close. Escaping the exit alone leaves a body free to
+ * open an element of its own and attribute what follows to a file it is not —
+ * `<document name="hr-policy.md">` written inside somebody's meeting notes.
+ * That is attribution rather than escape, since the close stays broken either
+ * way, and it is the same character class, so there is no reason to leave it.
+ *
  * Applied before the budget is measured, so the escape is paid for rather than
  * smuggled past the char count.
  */
-const fenceBody = (body: string) => body.replace(/<\/(document)/gi, "<\\/$1");
+const fenceBody = (body: string) => body.replace(/<(\/?)(document)/gi, "<\\$1$2");
 
 /**
  * The least amount of a passage worth sending. Below this a chunk is a

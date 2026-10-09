@@ -163,7 +163,7 @@ reports.post("/sessions/:id/report", async (c) => {
     ...history,
     // `user`, not `system`: quoted document text, not this server's own words.
     // See `lib/rag.ts` and the assembly comment in `routes/chat.ts`.
-    ...(ragBlock ? [{ role: "user" as const, content: ragBlock }] : []),
+    ...(ragBlock ? [{ role: "user" as const, content: ragBlock, volatile: true as const }] : []),
     { role: "user", content: instruction },
   ];
 

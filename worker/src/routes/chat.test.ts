@@ -641,6 +641,11 @@ describe("retrieved material in the prompt", () => {
       (m) => typeof m.content === "string" && m.content.includes("Vacation is 20 days."),
     );
     expect(msgs[at]?.role).toBe("user");
+    // `volatile` is not asserted here and cannot be: this reads the OpenAI
+    // call, and `toOpenAIMessages` keeps role and content alone because that
+    // provider's cache is positional. The flag is pinned where it is read —
+    // `lib/completion.test.ts` — and across the assembly sites by
+    // `prompt-cache.static.test.ts`.
     // And in the same place as before: immediately before the question it
     // grounds, so the prefix the prompt cache reads back — persona, manifest,
     // prior turns — is byte-identical turn over turn. See the assembly comment

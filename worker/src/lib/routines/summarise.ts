@@ -101,7 +101,9 @@ export function summariseWithModel(env: RoutineEnv) {
         //
         // Nothing is sent when retrieval found nothing, so an agent with no
         // documents gets exactly the prompt it got before this existed.
-        ...(input.ragBlock ? [{ role: "user" as const, content: input.ragBlock }] : []),
+        ...(input.ragBlock
+          ? [{ role: "user" as const, content: input.ragBlock, volatile: true as const }]
+          : []),
         ...(input.mayDecline ? [{ role: "system" as const, content: DECISION_INSTRUCTION }] : []),
         // The material rides in the user message with the instruction, which
         // matters most when the material arrived from outside: a webhook

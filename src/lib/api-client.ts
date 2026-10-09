@@ -470,6 +470,15 @@ export const api = {
       request("PATCH", `/sessions/${id}`, { visibility }),
     rename: (id: string, title: string): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, { title }),
+    /**
+     * The browser tasks of one conversation, newest first.
+     *
+     * A table read rather than an SSE event, and that is the point: the
+     * approval card is driven only by a `confirm` event into in-memory state
+     * and does not survive a reload, while a takeover offer has to.
+     */
+    browserTasks: (id: string): Promise<{ tasks: BrowserTask[] }> =>
+      request("GET", `/sessions/${id}/browser-tasks`),
   },
   messages: {
     create: (input: { sessionId: string; role: "user"; content: string }): Promise<Message> =>
@@ -786,6 +795,30 @@ export const api = {
     create: (name: string): Promise<ApiKey & { token: string }> =>
       request("POST", "/api-keys", { name }),
     revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/api-keys/${id}`),
+  },
+  browser: {
+    /**
+     * Mint a live browser for its owner.
+     *
+     * The `liveUrl` comes back here and nowhere else. browser-use is explicit
+     * about what it is — *"Treat the URL as a credential: anyone with it can
+     * interact with the active browser"* — so it is never stored, never put
+     * in a query cache that outlives the tab, and never logged.
+     */
+    takeOver: (browserTaskId: string): Promise<Takeover> =>
+      request("POST", "/browser/takeovers", { browserTaskId }),
+    /** What a reloaded tab asks, so a reload does not lock somebody out of their own browser. */
+    current: (): Promise<{ takeover: Takeover | null }> =>
+      request("GET", "/browser/takeovers/current"),
+    /**
+     * Done signing in.
+     *
+     * Closing is what stops the provider session, and stopping is the only
+     * thing that saves the cookie jar — so this is the step that makes the
+     * sign-in persist, not a tidy-up. It can take a few seconds.
+     */
+    close: (id: string): Promise<CloseTakeover> =>
+      request("POST", `/browser/takeovers/${id}/close`),
   },
   providerKeys: {
     get: (): Promise<ProviderKeyHints> => request("GET", "/workspace/provider-keys"),
@@ -1107,6 +1140,34 @@ export type ApiKey = {
  * Two different sentences, and the section renders nothing for the first.
  */
 export type ApiKeyList = { available: boolean; keys: ApiKey[] };
+
+/** One browser task, as the takeover card reads it. Mirrors the worker's `BrowserTaskDTO`. */
+export type BrowserTask = {
+  id: string;
+  task: string;
+  status: "queued" | "running" | "finished" | "failed" | "stopped";
+  output: string | null;
+  error: string | null;
+  /** Set when a takeover already produced a second attempt. One retry per original, ever. */
+  retryOf: string | null;
+  createdAt: number;
+  finishedAt: number | null;
+};
+
+export type Takeover = {
+  id: string;
+  browserTaskId?: string | null;
+  /** A credential. Held in component state for the life of the tab and nowhere else. */
+  liveUrl: string | null;
+  expiresAt: string;
+};
+
+export type CloseTakeover = {
+  retriedTaskId: string | null;
+  /** The sites the jar now holds, which is the whole of what Covan can say about somebody's logins. */
+  signedInTo: string[];
+  message: string;
+};
 
 /**
  * What the workspace's own provider keys look like from here — hints, never

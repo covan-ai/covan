@@ -1061,3 +1061,44 @@ export function mapConnectionRun(row: {
     startedAt: toEpochMs(row.started_at),
   };
 }
+
+/**
+ * A browser task, as the chat screen needs it.
+ *
+ * `retryOf` is here so the screen can say "tried again" and so the takeover
+ * card knows not to offer a second free attempt — one retry per original task
+ * is a bound on the operator's money, and 0077 makes it a unique index.
+ *
+ * **The select that feeds this must name its columns.** `select("*")` on
+ * `browser_tasks` answers 42501 for the whole row, because
+ * `provider_task_id` is granted to no client role (0073): one deployment-wide
+ * BROWSER_USE_API_KEY makes that id the boundary between two tenants at the
+ * provider.
+ */
+export type BrowserTaskDTO = {
+  id: string;
+  task: string;
+  status: "queued" | "running" | "finished" | "failed" | "stopped";
+  output: string | null;
+  error: string | null;
+  retryOf: string | null;
+  createdAt: number;
+  finishedAt: number | null;
+};
+
+/** The columns `mapBrowserTask` needs, named because a wildcard is refused. */
+export const BROWSER_TASK_COLUMNS =
+  "id, task, status, output, error, retry_of, created_at, finished_at";
+
+export function mapBrowserTask(row: Record<string, unknown>): BrowserTaskDTO {
+  return {
+    id: String(row.id),
+    task: String(row.task ?? ""),
+    status: row.status as BrowserTaskDTO["status"],
+    output: typeof row.output === "string" && row.output ? row.output : null,
+    error: typeof row.error === "string" && row.error ? row.error : null,
+    retryOf: row.retry_of ? String(row.retry_of) : null,
+    createdAt: toEpochMs(String(row.created_at)),
+    finishedAt: row.finished_at ? toEpochMs(String(row.finished_at)) : null,
+  };
+}

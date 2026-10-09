@@ -6,6 +6,7 @@ import { entitlementsMiddleware } from "./middleware/entitlements";
 import { rateLimit } from "./middleware/ratelimit";
 import { runScheduledWork } from "./lib/background";
 import { agents } from "./routes/agents";
+import { browser } from "./routes/browser";
 import { favorites } from "./routes/favorites";
 import { sessions } from "./routes/sessions";
 import { ideas } from "./routes/ideas";
@@ -151,6 +152,7 @@ api.use("/routines/:id/run", rateLimit("expensive"));
 api.use("/sessions/:id/report", rateLimit("expensive"));
 
 api.route("/", agents);
+api.route("/", browser);
 api.route("/", favorites);
 api.route("/", sessions);
 api.route("/", ideas);

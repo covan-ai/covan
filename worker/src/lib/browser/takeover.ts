@@ -280,6 +280,50 @@ export async function profileFor(
 }
 
 /**
+ * The provider session behind a takeover this person owns.
+ *
+ * Exists so exactly one function in the codebase turns a takeover id into a
+ * provider session id. `browser_takeovers.provider_session_id` is granted to
+ * no client role (0077, for `connected_account_id`'s reason — one
+ * deployment-wide `BROWSER_USE_API_KEY` makes that id the boundary between two
+ * tenants at the provider), so a route could not read it with the caller's own
+ * client even if it wanted to, and this reaches past RLS to do it.
+ *
+ * Which is why `userId` is in the predicate rather than beside it. The
+ * takeover id arrives from a URL path, so it is caller-supplied, and this
+ * client answers to no policy — the same argument the header makes about
+ * `closeTakeover`'s claim. Scoped to the owner, a caller can only ever resolve
+ * their own session.
+ *
+ * It answers null rather than throwing on a missing row, because "no live
+ * takeover" is the ordinary case on a reloaded tab and not an error to show
+ * anybody.
+ */
+export async function providerSessionFor(
+  env: RoutineEnv,
+  input: { takeoverId: string; userId: string },
+  overrides: Partial<TakeoverDeps> = {},
+): Promise<string | null> {
+  const { db } = resolve(env, overrides);
+  const { data, error } = await db
+    .from("browser_takeovers")
+    .select("provider_session_id")
+    .eq("id", input.takeoverId)
+    .eq("user_id", input.userId)
+    .eq("status", "open")
+    .maybeSingle();
+  if (error) {
+    console.error(
+      "could not resolve a takeover's provider session",
+      input.takeoverId,
+      problem(error),
+    );
+    return null;
+  }
+  return text(data?.provider_session_id);
+}
+
+/**
  * Find or create the jar, in the one order that cannot orphan a profile.
  *
  * **The Covan row is inserted first, and the provider is called only if that

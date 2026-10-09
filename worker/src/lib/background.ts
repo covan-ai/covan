@@ -2,6 +2,7 @@ import type { RoutineEnv } from "./../types";
 import { canSyncConnections } from "./../types";
 import { runDueRoutines } from "./routines/dispatcher";
 import { runDueConnections } from "./connections/dispatcher";
+import { pollDueBrowserTasks } from "./browser/poller";
 import { PROVIDERS } from "./connections/registry";
 
 /**
@@ -32,6 +33,20 @@ import { PROVIDERS } from "./connections/registry";
 export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   const routines = await runDueRoutines(env);
   if (routines.claimed > 0) return;
+
+  /**
+   * Browser tasks, between routines and connections.
+   *
+   * The order is the design doc's, and the trade-off is real: a deployment
+   * whose routines fill every tick never reaches this, so a browser answer
+   * waits. Routines are the half somebody scheduled for a specific minute; a
+   * browser task is already minutes old by the time it finishes and its
+   * person has been told to expect "a few minutes". An idle tick costs one
+   * subrequest here — the claim, answering nothing — which is why this sits
+   * above the connection sync rather than below it.
+   */
+  const browser = await pollDueBrowserTasks(env);
+  if (browser.claimed > 0) return;
 
   if (!canSyncConnections(env)) {
     // Not an error, and not silent either. This is the cron-only Worker

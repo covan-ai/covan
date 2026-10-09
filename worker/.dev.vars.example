@@ -76,6 +76,29 @@ RESEND_FROM=
 # carries Composio's branding until you set your own.
 # COMPOSIO_API_KEY=
 
+# Optional. Lets an agent drive a real browser — read a page that needs
+# JavaScript, pull a number out of a site with no API — through browser-use,
+# which runs the browser and the agent loop. Unset, the `browse` tool is not
+# offered and the Integrations page names this variable.
+#
+# Three things to know before you set it:
+#   1. It adds a subprocessor. A task's instruction, and whatever the browser
+#      reads on somebody's behalf, go to browser-use. See docs/security.md.
+#   2. YOU pay, not the person asking. There is no per-member key here: one
+#      deployment key, billed to you, metered against the same allowance a
+#      chat turn spends at 137,000 tokens a task — about a seventh of a 1M
+#      monthly allowance, so roughly seven tasks. A self-hosted install with
+#      no allowance configured is unmetered, which here means unbounded:
+#      watch the bill or set QUOTA_MONTHLY_TOKENS.
+#   3. SET IT ON THE CRON WORKER TOO. The cron Worker is what polls a running
+#      task, so a key set here and not there starts tasks whose answers never
+#      arrive — and the only sign is a line in `wrangler tail`.
+# BROWSER_USE_API_KEY=
+# Optional. A proxy, or a self-hosted browser-use, in front of
+# api.browser-use.com. Their framework is MIT and they rent browsers at
+# $0.02/hour, so this is a real route rather than a courtesy.
+# BROWSER_USE_BASE_URL=
+
 # Not set here: DOCS_DIR. Document storage on Cloudflare is the DOCS R2 binding
 # declared in wrangler.toml; DOCS_DIR is the Node/Docker filesystem fallback and
 # is set by docker-compose.yml, not by this file.

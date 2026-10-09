@@ -616,6 +616,14 @@ create.
 > [CLI docs](https://supabase.com/docs/guides/deployment/database-migrations) if
 > `db push` reports drift.
 
+**Finish this step fully before step 5.** `0073`, `0074` and `0075` add the
+coverage-gap report, and `GET /me` — the call every authenticated page makes on
+load — now selects `gap_report_enabled` off `workspaces`, one of the columns
+they add. PostgREST fails the whole request when a selected column does not
+exist rather than returning what it can, so deploying the frontend ahead of
+those three migrations does not degrade the one section that depends on
+them — it turns every page behind sign-in into a 500.
+
 ### 3. Configure and deploy the API Worker
 
 Steps 3 and 4 all run from `worker/`.

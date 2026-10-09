@@ -629,4 +629,30 @@ describe("POST /routines, creating a delivery channel inline", () => {
       expect(inserted("routines")[0].ends_after_runs).toBe(endsAfterRuns);
     });
   });
+
+  // Task 17's blocker (b): `createSchema`'s `sourceKind` enum did not list
+  // `workspace`, so this request 400'd on the zod parse, before `createRoutine`
+  // — and therefore (c) and (d) below it — ever ran.
+  describe("sourceKind workspace", () => {
+    it("is accepted with no url and no connection, and gets the report slug server-side", async () => {
+      const { request, inserted } = requestWith();
+
+      const { status } = await request("POST", "/routines", {
+        ...ROUTINE_BODY,
+        name: "Coverage gaps",
+        sourceKind: "workspace",
+        deliveryChannelId: CHANNEL_ID,
+      });
+
+      expect(status).toBe(201);
+      const row = inserted("routines")[0];
+      expect(row.source_kind).toBe("workspace");
+      // (d): the slug is decided in `createRoutine`, not sent by this request
+      // — `ROUTINE_BODY` carries no report field at all. Matched against
+      // 0075's own pattern, not just equality.
+      const config = row.source_config as Record<string, unknown>;
+      expect(config.report).toBe("coverage_gaps");
+      expect(String(config.report)).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
+    });
+  });
 });

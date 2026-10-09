@@ -288,7 +288,13 @@ export function CreateRoutineDialog({
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
     scheduleError(scheduleCron) === null &&
+    // A `workspace` routine needs no url and no connection, exactly like
+    // `none` — it reads its own workspace, which is not a field on this
+    // screen. Without this branch it falls through to the url check below,
+    // and the `gap-report` template's `sourceUrl: null` leaves Create
+    // permanently disabled with no field the person could fill in to clear it.
     (sourceKind === "none" ||
+      sourceKind === "workspace" ||
       (sourceKind === "connection" ? connectionId !== "" : sourceUrl.trim() !== ""));
 
   return (

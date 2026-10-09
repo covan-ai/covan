@@ -26,7 +26,7 @@ export type CreateRoutineInput = {
   workspaceId: string;
   userId: string;
   name: string;
-  sourceKind: "rss" | "web" | "none" | "connection";
+  sourceKind: "rss" | "web" | "none" | "connection" | "workspace";
   sourceUrl?: string | null;
   connectionId?: string | null;
   instruction: string;
@@ -53,9 +53,29 @@ export type CreateRoutineResult =
  */
 export type RoutineInsertRow = Parameters<typeof mapRoutine>[0];
 
+/**
+ * The slug is decided here, not carried in from the caller.
+ *
+ * `executor.ts`'s `RoutineRow.source_config` types `report?: string`, but
+ * nothing branches on it at run time — the workspace path dispatches on
+ * `source_kind` alone and calls `deps.coverage(...)` unconditionally. So
+ * today the only consumer of this value is 0075's
+ * `routines_workspace_config_check`, which just needs *a* snake_case slug to
+ * be present. There is exactly one report, so widening the template, the
+ * client type and `createSchema` to carry a field that names it would buy
+ * nothing, and the slug belongs next to the constraint that validates it
+ * instead. When a second report ships, this is where its field gets added.
+ *
+ * `"coverage_gaps"` must match the fixtures that already assume it
+ * (`tests/rls/coverage-gaps.test.ts`, `executor.test.ts`) exactly — a mismatch
+ * here is invisible until a run.
+ */
 function sourceConfigFor(input: CreateRoutineInput): Record<string, string> {
   if (input.sourceKind === "connection" && input.connectionId) {
     return { connectionId: input.connectionId };
+  }
+  if (input.sourceKind === "workspace") {
+    return { report: "coverage_gaps" };
   }
   if (input.sourceUrl) return { url: input.sourceUrl };
   return {};

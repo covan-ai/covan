@@ -332,7 +332,11 @@ const createSchema = z
   .object({
     agentId: z.string().uuid(),
     name: z.string().min(1),
-    sourceKind: z.enum(["rss", "web", "none", "connection"]),
+    // `workspace` needs neither `sourceUrl` nor `connectionId` below — it reads
+    // its own workspace, resolved server-side (see `createRoutine`'s
+    // `sourceConfigFor`). Whether the caller may actually use it is
+    // `routine_workspace_source_is_permitted` (0075), not this schema.
+    sourceKind: z.enum(["rss", "web", "none", "connection", "workspace"]),
     sourceUrl: z.string().nullable().optional(),
     /** Required for `connection`, ignored otherwise. */
     connectionId: z.string().uuid().nullable().optional(),

@@ -201,6 +201,34 @@ describe("opened from a link", () => {
   });
 
   /**
+   * Task 17's blocker (a). `canSave`'s source check used to fall through to
+   * the url branch for every `sourceKind` it did not name explicitly, so a
+   * `workspace` routine — which has no url field on screen at all — landed on
+   * `sourceUrl.trim() !== ""` and `gap-report`'s `sourceUrl: null` left Create
+   * permanently disabled. This drives the actual template through the actual
+   * dialog rather than asserting on `canSave` in isolation, so a regression
+   * in either the template's shape or the check itself fails here.
+   */
+  it("enables Create for the gap-report template, whose workspace source needs no url", async () => {
+    channelsList.mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CreateRoutineDialog agentId="a1" openTemplate="gap-report" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByDisplayValue("Coverage gaps")).toBeInTheDocument();
+    // `me` resolves a beat after mount, and the pre-filled address derives
+    // from it live rather than from a snapshot `applyTemplate` took (see
+    // `resolvedDeliveryEmail`'s own comment) — so wait for it rather than
+    // asserting before it has had a chance to land.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Create routine$/i })).not.toBeDisabled(),
+    );
+  });
+
+  /**
    * Review Focus 3. Somebody edits the URL, or a template is renamed after a
    * link was shared. The dialog opens on step 1 — the normal thing — rather
    * than crashing or landing on an empty step 2.

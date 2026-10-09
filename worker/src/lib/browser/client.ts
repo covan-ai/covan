@@ -108,7 +108,10 @@ function parseCost(raw: unknown): number | null {
 }
 
 function baseOf(env: BrowserEnv): string {
-  return (env.BROWSER_USE_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  // `||` rather than `??`, matching `composio/client.ts:271`: an empty
+  // string is not an override, and `docker-compose.yml` sets one when the
+  // operator has not. `??` kept it and made every request relative.
+  return (env.BROWSER_USE_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
 }
 
 export async function send<T>(

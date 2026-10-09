@@ -137,3 +137,56 @@ describe("what the compose stack hands the API worker", () => {
     },
   );
 });
+
+/**
+ * `lib/env.ts` is the second place a variable gets dropped, and the one with
+ * no symptom at all.
+ *
+ * On Cloudflare, bindings arrive from `wrangler.toml` and secrets, so the code
+ * sees whatever was set. On every Docker and Node self-host, `loadEnv()` builds
+ * the `Bindings` object field by field from `process.env` — an explicit
+ * allowlist, which is the right design for the same reason compose naming each
+ * variable is. The cost is identical: a variable missing from that list is
+ * `undefined` to the code however the operator set it.
+ *
+ * The comment above `COMPOSIO_API_KEY` in that file spells this out — *"omit it
+ * here and every Docker and Node self-host reports the feature unconfigured
+ * with no error anywhere, while the Cloudflare build works fine"* — and then
+ * `BROWSER_USE_API_KEY`, added next, was omitted anyway. Compose was not
+ * passing it either, so there were two independent reasons and fixing one
+ * would have changed nothing; which is why this test checks both layers rather
+ * than the one that was found first.
+ */
+describe("what lib/env.ts forwards to the self-hosted runtime", () => {
+  const envTs = readFileSync(join(root, "worker", "src", "lib", "env.ts"), "utf8");
+  /** `NAME: source.NAME` / `source.NAME ?? …` — read off the file, not listed. */
+  const forwarded = new Set([...envTs.matchAll(/\bsource\.([A-Z][A-Z0-9_]*)/g)].map((m) => m[1]));
+
+  it("forwards every optional variable the compose stack passes it", () => {
+    const api = compose.slice(compose.indexOf("\n  covan-api:"), compose.indexOf("\n  covan-web:"));
+    const handed = [...api.matchAll(/^      ([A-Z][A-Z0-9_]*): /gm)].map((m) => m[1]);
+
+    const dropped = handed
+      .filter((name) => readByWorker.has(name))
+      .filter((name) => !forwarded.has(name))
+      // Read by the runtime rather than from `Bindings`: node.ts takes these
+      // off `process.env` directly, because they configure the server and the
+      // intervals rather than the app.
+      .filter((name) => !["PORT", "ROUTINE_TICK_MS", "PURGE_TICK_MS"].includes(name))
+      .sort();
+
+    expect(
+      dropped,
+      "handed to the container by docker-compose.yml and read off `env` in " +
+        "worker/src, but never copied into Bindings by loadEnv() — so the " +
+        "code sees undefined however the operator sets it, on every " +
+        "self-host, with no error anywhere",
+    ).toEqual([]);
+  });
+
+  /** Named, so a revert is loud. Both layers, because both were missing. */
+  it.each(["BROWSER_USE_API_KEY", "BROWSER_USE_BASE_URL"])("forwards %s", (name) => {
+    expect(forwarded.has(name), `loadEnv() drops ${name}`).toBe(true);
+    expect(passedThrough.has(name), `compose drops ${name}`).toBe(true);
+  });
+});

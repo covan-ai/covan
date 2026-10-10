@@ -71,7 +71,7 @@ from. That is the whole loop, and it is the thing to check first.
 `docker compose pull` is worth the extra line: without it the first run compiles
 the frontend on your machine, and with it both images come from
 [`ghcr.io/covan-ai`](https://github.com/orgs/covan-ai/packages), prebuilt for
-amd64 and arm64. Pin a release with `COVAN_VERSION=0.3.0` in `.env` — no leading
+amd64 and arm64. Pin a release with `COVAN_VERSION=0.4.0` in `.env` — no leading
 `v`, since the image tags are semver — or track the branch with
 `COVAN_VERSION=edge`. Stop with `docker compose down`, and add `-v` to throw
 away the database and the uploaded documents too.

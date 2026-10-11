@@ -106,6 +106,14 @@ export type BrowserTaskRow = {
    * hands `deliver` the row's own answer, whatever the caller selected.
    */
   credential_id?: string | null;
+  /**
+   * When the task was created, and the task it retries. `deliver` reads them
+   * to find the message that asked for it. Optional because a test row may
+   * leave them out; the cron's claim returns the whole row and the open tab's
+   * read names both.
+   */
+  created_at?: string;
+  retry_of?: string | null;
 };
 
 /** How a task ended, in the shape the delivery step wants. */

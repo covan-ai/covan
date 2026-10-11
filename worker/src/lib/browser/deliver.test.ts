@@ -110,6 +110,15 @@ let inserted: Record<string, unknown>[];
 let messageInsertFails: boolean;
 /** The person's last message, as `theirWords` reads it; a string, null for none, or an Error to fail the read. */
 let theirLast: string | null | Error;
+/**
+ * The person's messages with their times, when a test cares which one is
+ * read: the fake applies `lte` and returns the latest left. Null uses `theirLast`.
+ */
+let said: { content: string; created_at: string }[] | null;
+/** The `created_at` bound `theirWords` asked for, if any. */
+let bound: string | undefined;
+/** `browser_tasks` rows `askedAt` can read, by id; an Error fails the read. */
+let tasks: Record<string, { created_at: string }> | Error;
 
 function fakeDb(): SupabaseClient {
   return {
@@ -145,16 +154,40 @@ function fakeDb(): SupabaseClient {
           }),
         };
       }
+      if (table === "browser_tasks") {
+        let id = "";
+        const read = {
+          eq: (_column: string, value: string) => {
+            id = value;
+            return read;
+          },
+          maybeSingle: async () =>
+            tasks instanceof Error
+              ? { data: null, error: { message: tasks.message } }
+              : { data: tasks[id] ?? null, error: null },
+        };
+        return { select: () => read };
+      }
       if (table === "messages") {
         const read = {
           eq: () => read,
           is: () => read,
+          lte: (_column: string, value: string) => {
+            bound = value;
+            return read;
+          },
           order: () => read,
           limit: () => read,
-          maybeSingle: async () =>
-            theirLast instanceof Error
+          maybeSingle: async () => {
+            if (said) {
+              const left = said.filter((m) => bound === undefined || m.created_at <= bound);
+              const latest = left.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+              return { data: latest ? { content: latest.content } : null, error: null };
+            }
+            return theirLast instanceof Error
               ? { data: null, error: { message: theirLast.message } }
-              : { data: theirLast === null ? null : { content: theirLast }, error: null },
+              : { data: theirLast === null ? null : { content: theirLast }, error: null };
+          },
         };
         return {
           select: () => read,
@@ -183,6 +216,9 @@ beforeEach(() => {
   inserted = [];
   messageInsertFails = false;
   theirLast = null;
+  said = null;
+  bound = undefined;
+  tasks = {};
   complete.mockReset();
   complete.mockResolvedValue({
     text: "Example.com lists three tiers: Starter at $29/mo, Pro at $99/mo, and Enterprise on request.",
@@ -669,5 +705,73 @@ describe("the language of the answer", () => {
     expect(inserted).toHaveLength(1);
     expect(sent()[1]).toMatchObject({ role: "user" });
     expect(String(sent()[1].content)).toContain(ROW.task);
+  });
+
+  it("tells the model their message is not its to carry out, and to write no tool calls", async () => {
+    theirLast = "Review the repo, the site and Tasklet, then write it all up.";
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(String(sent()[0].content)).toContain(
+      "Whatever else their message asks for is not yours to do: write no tool calls or code",
+    );
+  });
+});
+
+/**
+ * 2026-10-11: two covan.app results were phrased against "start them again"
+ * and "scan them in order", sent while the browser worked, and answered those
+ * instead of delivering what it found.
+ */
+describe("which of their messages is shown", () => {
+  const sent = () => complete.mock.calls[0][1].messages;
+  const ASKED = "Covan'ın sitesini tarayıcıyla incele.";
+  const LATER = "Görevleri yeniden başlat ve sırayla tara.";
+
+  beforeEach(() => {
+    said = [
+      { content: "Merhaba", created_at: "2026-10-11T15:19:00.000Z" },
+      { content: ASKED, created_at: "2026-10-11T15:20:00.000Z" },
+      { content: LATER, created_at: "2026-10-11T15:25:00.000Z" },
+    ];
+  });
+
+  it("shows the one that started the task, not one sent while it ran", async () => {
+    await deliverBrowserTask(
+      { ...ROW, created_at: "2026-10-11T15:20:05.000Z" },
+      FINISHED,
+      ENV,
+      fakeDb(),
+    );
+    expect(bound).toBe("2026-10-11T15:20:05.000Z");
+    expect(sent()[1]).toEqual({ role: "user", content: ASKED });
+  });
+
+  it("shows the message that started the original for a retry, made later by a button", async () => {
+    tasks = { "bt-0": { created_at: "2026-10-11T15:20:05.000Z" } };
+    await deliverBrowserTask(
+      { ...ROW, created_at: "2026-10-11T15:30:00.000Z", retry_of: "bt-0" },
+      FINISHED,
+      ENV,
+      fakeDb(),
+    );
+    expect(sent()[1]).toEqual({ role: "user", content: ASKED });
+  });
+
+  it("bounds a retry by its own time when its original cannot be read", async () => {
+    tasks = new Error("timeout");
+    await deliverBrowserTask(
+      { ...ROW, created_at: "2026-10-11T15:22:00.000Z", retry_of: "bt-0" },
+      FINISHED,
+      ENV,
+      fakeDb(),
+    );
+    expect(bound).toBe("2026-10-11T15:22:00.000Z");
+    expect(sent()[1]).toEqual({ role: "user", content: ASKED });
+    expect(inserted).toHaveLength(1);
+  });
+
+  it("reads the latest, as before, for a row that carries no time", async () => {
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(bound).toBeUndefined();
+    expect(sent()[1]).toEqual({ role: "user", content: LATER });
   });
 });

@@ -1,12 +1,19 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { AppEnv } from "../types";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import {
+  handBackBrowser,
+  liveBrowser,
+  stopConversationBrowser,
+  takeOverBrowser,
+} from "../lib/browser/controls";
 import { browserLiveUrl } from "../lib/browser/profiles";
 import {
   closeTakeover,
   forgetProfile,
   openTakeover,
   providerSessionFor,
+  type RetryableTask,
 } from "../lib/browser/takeover";
 
 /**
@@ -50,9 +57,11 @@ const browser = new Hono<AppEnv>();
  * handler to forget — and it is deliberately NOT used, for a reason worth
  * recording: a sub-app mounted at `"/"` merges its middleware into the parent,
  * so a path pattern broad enough to cover these three would refuse API keys on
- * every unrelated route in the API. So: three explicit calls, and the knowledge
- * that the static ratchet cannot tell three from one. **Anyone adding a fourth
- * handler here has to remember.**
+ * every unrelated route in the API. So: one explicit call per handler, and
+ * anyone adding a handler here has to remember. The ratchet helps only where
+ * it is told to look: `HANDLERS_BEYOND_THE_KEY` pins the four
+ * `/browser/sessions/:id` handlers one by one; the older ones are still
+ * checked per file.
  */
 /**
  * How long a takeover's live URL is good for, for the client's countdown.
@@ -417,6 +426,194 @@ function offerable(row: { status?: unknown; output?: unknown; retry_of?: unknown
     row.retry_of == null
   );
 }
+
+/**
+ * The browser beside a conversation, from the person's side: watch it, take it
+ * over, hand it back, stop it.
+ *
+ * The same split as the takeover routes above. What is decided HERE is only
+ * who may ask: each handler refuses an API key first (a live URL, a browser in
+ * somebody's hands and a free retry are all access that would outlive the
+ * key — `api-key-refusal.static.test.ts` pins each of these four handlers by
+ * name), then reads the `browser_sessions` row through the caller's own
+ * client. 0078's policy is the owner's alone, so a colleague in the same
+ * shared conversation — who sees the answers, which are ordinary messages —
+ * finds no row here, and "not yours" is the same 404 as "no such thing".
+ *
+ * Everything that needs a provider id is `lib/browser/controls.ts`'s, with the
+ * service role, keyed to the row id read here AND the caller's own user id.
+ */
+
+type BrowserSessionRow = { id: string; live_state: unknown; human_since: unknown };
+
+/** The caller's own browser, or the response that says why not. */
+async function ownBrowser(
+  c: Context<AppEnv>,
+): Promise<{ row: BrowserSessionRow } | { refused: Response }> {
+  const { data, error } = await c
+    .get("db")
+    .from("browser_sessions")
+    .select("id, live_state, human_since")
+    .eq("id", c.req.param("id"))
+    .maybeSingle();
+  if (error) {
+    console.error("could not read a conversation's browser", { code: error.code });
+    return { refused: c.json({ error: "failed to load that browser" }, 500) };
+  }
+  if (!data) return { refused: c.json({ error: "no such browser" }, 404) };
+  return { row: data as BrowserSessionRow };
+}
+
+function owned(c: Context<AppEnv>, row: BrowserSessionRow) {
+  return { browserSessionId: String(row.id), userId: c.get("user").id };
+}
+
+/**
+ * GET /browser/sessions/:id/live — the live view, for its owner, minted fresh.
+ *
+ * `liveUrl` is in this body and nowhere else: *"Treat the URL as a
+ * credential"* — so it is not logged here, not stored by the module, and the
+ * response says `no-store` so no cache keeps it either. Idempotent, so a
+ * reloaded tab asks again and gets its browser back (Review focus 3).
+ */
+browser.get("/browser/sessions/:id/live", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "watch a browser");
+  if (refusal) return c.json(refusal, 403);
+
+  const own = await ownBrowser(c);
+  if ("refused" in own) return own.refused;
+
+  const live = await liveBrowser(c.env, owned(c, own.row));
+  if (live.kind === "error") return c.json({ error: live.message }, live.status as 409);
+
+  c.header("Cache-Control", "no-store");
+  return c.json({ liveUrl: live.liveUrl, liveState: live.liveState });
+});
+
+/**
+ * POST /browser/sessions/:id/take-over — the person's hands on the browser.
+ *
+ * Answers `human` only once the provider has reported the agent's run ended,
+ * which can take seconds (Review focus 2); past ten of them it answers 202
+ * `cancelling`, the panel stays inert, and the client asks again — the module
+ * documents why asking again is the whole of the follow-up. A browser already
+ * in the caller's hands is answered from the row, with its own clock, and
+ * nothing is asked of the provider.
+ */
+browser.post("/browser/sessions/:id/take-over", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "take over a browser");
+  if (refusal) return c.json(refusal, 403);
+
+  const own = await ownBrowser(c);
+  if ("refused" in own) return own.refused;
+
+  if (own.row.live_state === "human") {
+    const since = Date.parse(String(own.row.human_since));
+    if (Number.isFinite(since)) return c.json({ liveState: "human", humanSince: since });
+  }
+
+  const taken = await takeOverBrowser(c.env, owned(c, own.row));
+  if (taken.kind === "error") return c.json({ error: taken.message }, taken.status as 502);
+  if (taken.kind === "cancelling") return c.json({ liveState: "cancelling" }, 202);
+  return c.json({ liveState: "human", humanSince: taken.humanSince });
+});
+
+/**
+ * POST /browser/sessions/:id/hand-back — Done: the agent continues.
+ *
+ * The task it continues is the newest one this browser ran, read through the
+ * caller's own client — `closeTakeover`'s reason: the follow-up is written
+ * into a conversation, and somebody who can no longer read the original
+ * should not be able to have it run again. Then the same successor query
+ * `POST /browser/takeovers` makes, for the same reason and before anything is
+ * spent: one free retry per original, ever.
+ */
+browser.post("/browser/sessions/:id/hand-back", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "hand a browser back");
+  if (refusal) return c.json(refusal, 403);
+
+  const own = await ownBrowser(c);
+  if ("refused" in own) return own.refused;
+  if (own.row.live_state !== "human") {
+    return c.json(
+      { error: "this browser is not in your hands, so there is nothing to hand back" },
+      409,
+    );
+  }
+
+  const db = c.get("db");
+  const { data: original, error } = await db
+    .from("browser_tasks")
+    .select("id, workspace_id, agent_id, user_id, session_id, task, retry_of, status, stop_reason")
+    .eq("browser_session_id", String(own.row.id))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error("could not read the task a hand-back continues", { code: error.code });
+    return c.json({ error: "failed to load that browser's task" }, 500);
+  }
+  if (!original) {
+    return c.json({ error: "this browser has no task for the agent to continue" }, 409);
+  }
+  /**
+   * Only a task that stopped short is continued — `offerable()`'s rule, which
+   * the free retry has always been bound by. `failed` is the login wall (a
+   * settled `login_required`) and every other run that did not finish;
+   * `stopped` `handed_to_person` is a run the person took over mid-way. A
+   * `finished` task already answered, and re-running it would put a second
+   * answer in the conversation and spend the retry for nothing; a run stopped
+   * at `cost_cap` would get a second full ceiling of the operator's money.
+   */
+  const continuable =
+    original.status === "failed" ||
+    (original.status === "stopped" && original.stop_reason === "handed_to_person");
+  if (!continuable) {
+    return c.json(
+      { error: "the last task in this browser has nothing for the agent to continue" },
+      409,
+    );
+  }
+
+  const { data: successor, error: successorError } = await db
+    .from("browser_tasks")
+    .select("id")
+    .eq("retry_of", String(original.id))
+    .limit(1)
+    .maybeSingle();
+  if (successorError) {
+    console.error("could not look for a browser task's successor", { code: successorError.code });
+    return c.json({ error: "failed to load that browser's task" }, 500);
+  }
+  if (successor) {
+    return c.json({ error: "that browser task has already been tried again" }, 409);
+  }
+
+  const handed = await handBackBrowser(c.env, {
+    ...owned(c, own.row),
+    original: original as RetryableTask,
+  });
+  if (handed.kind === "error") return c.json({ error: handed.message }, handed.status as 409);
+  return c.json({ browserTaskId: handed.browserTaskId });
+});
+
+/**
+ * POST /browser/sessions/:id/stop — close the panel, and keep what was done in
+ * it. Stopping is what saves the jar (*"always stop the session to persist
+ * profile state"*); the module says why a failed stop leaves the row for the
+ * sweep. Idempotent: a browser already stopped answers 204 again.
+ */
+browser.post("/browser/sessions/:id/stop", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "stop a browser");
+  if (refusal) return c.json(refusal, 403);
+
+  const own = await ownBrowser(c);
+  if ("refused" in own) return own.refused;
+
+  const stopped = await stopConversationBrowser(c.env, owned(c, own.row));
+  if (stopped.kind === "error") return c.json({ error: stopped.message }, stopped.status as 502);
+  return c.body(null, 204);
+});
 
 export { browser, offerable };
 

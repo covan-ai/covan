@@ -1,7 +1,13 @@
 import { Hono } from "hono";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
+
+const pollConversationBrowser = vi.fn();
+vi.mock("../lib/browser/live", () => ({
+  pollConversationBrowser: (...args: unknown[]) => pollConversationBrowser(...args),
+}));
+
 import { sessions } from "./sessions";
 
 const SESSION_ROW = {
@@ -277,5 +283,131 @@ describe("answers that have been regenerated", () => {
 
     const body = (await res.json()) as Array<{ versions?: string[] }>;
     expect(body[0]).not.toHaveProperty("versions");
+  });
+});
+
+describe("GET /sessions/:id/browser-tasks", () => {
+  const TASK = {
+    id: "bt-1",
+    task: "read the pricing table",
+    status: "running",
+    output: null,
+    error: null,
+    retry_of: null,
+    created_at: "2026-10-10T11:59:00.000Z",
+    finished_at: null,
+    api_version: "v4",
+    stop_reason: null,
+    browser_session_id: "bs-1",
+    signin_host: "linkedin.com",
+  };
+  const LIVE = {
+    session: { id: "bs-1", liveState: "agent", humanSince: null, browserReady: true },
+    events: [{ ts: "2026-10-10T11:59:58Z", type: "agent.step", text: "opened the page" }],
+    delivered: false,
+  };
+
+  beforeEach(() => {
+    pollConversationBrowser.mockReset();
+    pollConversationBrowser.mockResolvedValue(LIVE);
+  });
+
+  function appSeeing(visible: boolean) {
+    return appWith({
+      tables: {
+        chat_sessions: {
+          select: () => ({ data: visible ? { id: "session-1" } : null, error: null }),
+        },
+        browser_tasks: { select: () => ({ data: [TASK], error: null }) },
+      },
+    });
+  }
+
+  it("answers 404 for a conversation the caller cannot see, before touching the provider", async () => {
+    const { app } = appSeeing(false);
+    const res = await app.request("/sessions/session-1/browser-tasks");
+    expect(res.status).toBe(404);
+    expect(pollConversationBrowser).not.toHaveBeenCalled();
+  });
+
+  it("polls the caller's own browser in this conversation, then reads the tasks after it", async () => {
+    const { app, fake } = appSeeing(true);
+    const res = await app.request("/sessions/session-1/browser-tasks");
+    expect(res.status).toBe(200);
+    expect(pollConversationBrowser).toHaveBeenCalledWith(undefined, {
+      chatSessionId: "session-1",
+      userId: "user-1",
+    });
+    // Read after the poll, so a run it just settled is shown settled.
+    expect(fake.calls.map((c) => c.table)).toEqual(["chat_sessions", "browser_tasks"]);
+    const body = await res.json();
+    expect(body).toEqual({
+      tasks: [
+        {
+          id: "bt-1",
+          task: "read the pricing table",
+          status: "running",
+          output: null,
+          error: null,
+          retryOf: null,
+          createdAt: Date.parse("2026-10-10T11:59:00.000Z"),
+          finishedAt: null,
+          apiVersion: "v4",
+          stopReason: null,
+          browserSessionId: "bs-1",
+          signInHost: "linkedin.com",
+        },
+      ],
+      session: LIVE.session,
+      events: LIVE.events,
+      delivered: false,
+    });
+  });
+
+  /**
+   * A poll that settles a run has made the row terminal before it delivers,
+   * so a request cancelled mid-delivery (the tab closed) would lose that
+   * answer for good. The poll is handed to the execution context's
+   * `waitUntil` — `deferred`'s job — and is still awaited for the response.
+   */
+  it("keeps the poll alive past the request, so an abandoned tab cannot lose an answer", async () => {
+    let finish!: (value: typeof LIVE) => void;
+    pollConversationBrowser.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const waitUntil = vi.fn();
+    const { app } = appSeeing(true);
+
+    const pending = app.request("/sessions/session-1/browser-tasks", {}, undefined, {
+      waitUntil,
+      passThroughOnException: () => {},
+    } as never);
+
+    await vi.waitFor(() => expect(waitUntil).toHaveBeenCalledTimes(1));
+    let kept = false;
+    void (waitUntil.mock.calls[0][0] as Promise<unknown>).then(() => {
+      kept = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    // What is kept alive is the poll itself: it has not settled, so neither
+    // has this.
+    expect(kept).toBe(false);
+
+    finish(LIVE);
+    expect((await pending).status).toBe(200);
+    await vi.waitFor(() => expect(kept).toBe(true));
+  });
+
+  it("names its columns, granted ones only", async () => {
+    const { app, fake } = appSeeing(true);
+    await app.request("/sessions/session-1/browser-tasks");
+    const columns = String(fake.callsTo("browser_tasks")[0].columns);
+    expect(columns).not.toContain("*");
+    expect(columns).toContain("api_version");
+    expect(columns).toContain("stop_reason");
+    expect(columns).toContain("browser_session_id");
+    expect(columns).not.toMatch(/provider_/);
   });
 });

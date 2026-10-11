@@ -202,6 +202,8 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // reasons and fixing one would have changed nothing.
     BROWSER_USE_API_KEY: source.BROWSER_USE_API_KEY,
     BROWSER_USE_BASE_URL: source.BROWSER_USE_BASE_URL,
+    BROWSER_USE_V4_BASE_URL: source.BROWSER_USE_V4_BASE_URL,
+    BROWSER_USE_MODEL: source.BROWSER_USE_MODEL,
     // Where a message from the quota wall goes, defaulting in `routes/support.ts`
     // to efe@covan.app. Forwarded for a sharper reason than the one above: that
     // route is mounted unconditionally, so without this an operator's own users

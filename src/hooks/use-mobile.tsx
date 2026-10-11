@@ -34,3 +34,30 @@ export function useIsMobile() {
     () => false,
   );
 }
+
+/** Tailwind's `lg`, where the chat's own header and rail change shape. */
+const BELOW_LG = "(max-width: 1023px)";
+
+function subscribeBelowLg(onStoreChange: () => void) {
+  const mql = window.matchMedia(BELOW_LG);
+  mql.addEventListener("change", onStoreChange);
+  return () => mql.removeEventListener("change", onStoreChange);
+}
+
+/**
+ * Whether the viewport is narrower than `lg` — a second breakpoint, for the one
+ * layout that needs it.
+ *
+ * The browser beside a conversation is a 16:9 picture of somebody else's
+ * screen. Beside a chat column it needs room that a tablet in portrait does not
+ * have, so below `lg` it becomes a full-height sheet rather than a split, and
+ * `useIsMobile`'s 768 would leave a 900px window splitting it into two columns
+ * too narrow to read either. Same mechanism as above, same server snapshot.
+ */
+export function useIsBelowLg() {
+  return React.useSyncExternalStore(
+    subscribeBelowLg,
+    () => window.matchMedia(BELOW_LG).matches,
+    () => false,
+  );
+}

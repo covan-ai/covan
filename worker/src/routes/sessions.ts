@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
+import { pollConversationBrowser } from "../lib/browser/live";
+import { deferred } from "../lib/defer";
 import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 
@@ -269,7 +271,8 @@ sessions.get("/sessions/:id/messages", async (c) => {
 });
 
 /**
- * GET /sessions/:id/browser-tasks — what the takeover card reads.
+ * GET /sessions/:id/browser-tasks — what the takeover card and the browser
+ * panel read, every three seconds while the tab is open.
  *
  * A card and not an SSE event, for the reason §3 gives: `ConfirmCard` is
  * driven only by a `confirm` event into in-memory state and does not survive a
@@ -277,7 +280,18 @@ sessions.get("/sessions/:id/messages", async (c) => {
  *
  * The session is read first, through the caller's own client, so RLS answers
  * "not yours" as 404 — the same shape `ideas.ts` uses against `chat_sessions`.
- * Then the tasks, whose own policy narrows them again to this caller.
+ *
+ * **Then it is the live endpoint.** `pollConversationBrowser` asks the
+ * provider about the caller's own running run in this conversation, records
+ * its progress, and settles it inline the moment it has ended — so the answer
+ * lands while the person is looking, and the five-minute cron is only the
+ * fallback. That needs columns no client role can read, so it runs with the
+ * service role in `lib/browser/live.ts`, scoped there to this conversation and
+ * this caller; nothing it answers carries a provider id.
+ *
+ * The tasks are read AFTER it, through the caller's client, whose own policy
+ * narrows them again to this caller — and so a run the poll just settled is
+ * shown settled in the same response.
  *
  * **The select names columns** because `select("*")` on `browser_tasks`
  * answers 42501 for the whole row: `provider_task_id` is granted to no client
@@ -297,6 +311,20 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
   }
   if (!session) return c.json({ error: "no such conversation" }, 404);
 
+  // Kept alive past the request as well as awaited. A poll that settles a run
+  // has already made the row terminal before its model call and message
+  // insert — claim first is what keeps the two clocks to one answer — so if
+  // the tab closes mid-delivery and the runtime cancels the request's pending
+  // work, neither clock would ever deliver that answer. `deferred` is
+  // `waitUntil` on Workers and nothing on Node, where the process outlives
+  // the request anyway.
+  const polled = pollConversationBrowser(c.env, {
+    chatSessionId: id,
+    userId: c.get("user").id,
+  });
+  deferred(c, polled);
+  const live = await polled;
+
   const { data, error } = await db
     .from("browser_tasks")
     .select(BROWSER_TASK_COLUMNS)
@@ -309,6 +337,9 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
 
   return c.json({
     tasks: (data ?? []).map((row) => mapBrowserTask(row as Record<string, unknown>)),
+    session: live.session,
+    events: live.events,
+    delivered: live.delivered,
   });
 });
 

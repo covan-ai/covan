@@ -3,6 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { complete, type CompletionMessage, type CompletionUsage } from "../completion";
 import { resolveModel } from "../models";
 import { deliver, deliveryDepsFrom, type DeliveryChannel } from "../routines/delivery";
+import { bareHost } from "./outcome";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 
 /**
@@ -22,19 +23,24 @@ import type { BrowserTaskRow, FinishedTask } from "./poller";
  * phrasing rather than reasoning. A tool loop here would be a second agent
  * turn nobody asked for, on a Worker whose whole subrequest budget is fifty.
  *
- * **Nothing here throws.** It is called from `settle()` after the row has
+ * **Nothing here throws.** It is called from `settleBrowserTask` after the row has
  * already reached a terminal status, so a throw would lose the delivery
  * without making the task claimable again. Every failure is logged and
  * degrades to something a person can still read.
  */
 
-/** The model is told to answer the question, not to describe the browser. */
+/**
+ * The model is told to answer the question, not to describe the browser —
+ * with one exception it is told about in the message itself: a login wall,
+ * where pointing at the browser is the whole of the answer.
+ */
 const SYSTEM = [
   "A browser agent was asked to do something on the web and has finished.",
   "Write the answer to the person who asked, in their own language, as if you had just",
-  "looked it up yourself. Do not mention browsers, tasks, agents or tools, and do not",
-  "apologise for the delay. If the browser did not manage it, say plainly what stopped it.",
-  "Keep to what the browser actually reported — do not add facts it did not give you.",
+  "looked it up yourself. Do not mention browsers, tasks, agents or tools unless the",
+  "message below tells you to, and do not apologise for the delay. If the browser did",
+  "not manage it, say plainly what stopped it. Keep to what the browser actually",
+  "reported — do not add facts it did not give you.",
 ].join(" ");
 
 export async function deliverBrowserTask(
@@ -119,13 +125,88 @@ export async function deliverBrowserTask(
 }
 
 /**
+ * The site a login wall names, or a description when the run named none.
+ *
+ * Narrowed by `bareHost` exactly as settle narrows what it stores in
+ * `signin_host`, so the message and the panel's prompt name the same site —
+ * and a model's `https://LinkedIn.com/login` is not repeated into the
+ * conversation as though it were a site's name.
+ */
+function siteOf(outcome: FinishedTask): string {
+  return bareHost(outcome.reported?.host ?? null) ?? "a site it needed";
+}
+
+/**
+ * What the model is shown, by how the run ended.
+ *
+ * A login wall is the one ending a person can fix with their own hands while
+ * the browser is still there (Task 1.5's take-over), so that message has one
+ * job: name the site and say the panel beside the conversation is waiting. One
+ * sentence, through the same model call as every other answer — which is what
+ * puts it in the language the person asked in. A block says what stopped it.
+ * Everything else, including every v2 task, is answered as before.
+ */
+function brief(row: BrowserTaskRow, outcome: FinishedTask): string {
+  const asked = [`What was asked: ${row.task}`, ""];
+  const reported = outcome.output ? ["What the browser reported:", outcome.output, ""] : [];
+
+  if (outcome.reported?.status === "login_required") {
+    return [
+      ...asked,
+      `The browser stopped because ${siteOf(outcome)} requires the person to sign in, and it has no sign-in for it.`,
+      "It is still open in the browser panel beside this conversation, waiting for them to sign in there themselves.",
+      "",
+      ...reported,
+      "Tell them in one sentence, in the language they asked in, which site wants them to sign in",
+      "and that the browser panel is waiting for them.",
+    ].join("\n");
+  }
+
+  if (outcome.reported?.status === "blocked") {
+    return [
+      ...asked,
+      ...reported,
+      "It reports that something stopped it before it could finish. Say in one sentence what stopped it.",
+    ].join("\n");
+  }
+
+  return [
+    ...asked,
+    ...reported,
+    outcome.status === "finished"
+      ? "It reports that it succeeded."
+      : "It reports that it did NOT succeed. Say what stopped it.",
+  ].join("\n");
+}
+
+/**
+ * What is delivered when the model cannot be asked: the output itself, or for
+ * a login wall a sentence that still names the site and the panel, because
+ * that ending has no output to fall back on and is the one the person can act
+ * on.
+ */
+function fallback(row: BrowserTaskRow, outcome: FinishedTask): string {
+  if (outcome.reported?.status === "login_required") {
+    return (
+      `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
+      "waiting for you to do it there."
+    );
+  }
+  return (
+    outcome.output ??
+    `I could not finish "${row.task}" — ${outcome.error ?? "the browser stopped without an answer"}.`
+  );
+}
+
+/**
  * The output as a sentence, or the output itself.
  *
  * No model call when there is nothing to phrase: a task that was given up on
  * has an `error` and no `output`, and paying for a completion to rewrite
- * "this took too long" is paying twice for a failure. And if the call fails,
- * the raw output is returned rather than nothing — it is what the person
- * wanted, just less polished.
+ * "this took too long" is paying twice for a failure. A login wall is the
+ * exception — it has no output and is still worth a sentence in the person's
+ * language. And if the call fails, the raw output is returned rather than
+ * nothing — it is what the person wanted, just less polished.
  */
 async function phrase(
   row: BrowserTaskRow,
@@ -134,28 +215,13 @@ async function phrase(
   model: string,
   temperature: number | null | undefined,
 ): Promise<{ content: string; usage: CompletionUsage | null }> {
-  if (!outcome.output) {
-    return {
-      content: `I could not finish "${row.task}" — ${outcome.error ?? "the browser stopped without an answer"}.`,
-      usage: null,
-    };
+  if (!outcome.output && outcome.reported?.status !== "login_required") {
+    return { content: fallback(row, outcome), usage: null };
   }
 
   const messages: CompletionMessage[] = [
     { role: "system", content: SYSTEM },
-    {
-      role: "user",
-      content: [
-        `What was asked: ${row.task}`,
-        "",
-        "What the browser reported:",
-        outcome.output,
-        "",
-        outcome.status === "finished"
-          ? "It reports that it succeeded."
-          : "It reports that it did NOT succeed. Say what stopped it.",
-      ].join("\n"),
-    },
+    { role: "user", content: brief(row, outcome) },
   ];
 
   try {
@@ -164,10 +230,10 @@ async function phrase(
       messages,
       ...(typeof temperature === "number" ? { temperature } : {}),
     });
-    return { content: text.trim() || outcome.output, usage };
+    return { content: text.trim() || fallback(row, outcome), usage };
   } catch (err) {
     console.error("could not phrase a browser task's answer; delivering it raw", row.id, err);
-    return { content: outcome.output, usage: null };
+    return { content: fallback(row, outcome), usage: null };
   }
 }
 

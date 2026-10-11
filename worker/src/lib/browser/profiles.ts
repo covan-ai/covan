@@ -1,4 +1,5 @@
 import { send, type BrowserEnv, type BrowserResult } from "./client";
+import { sendV4 } from "./v4";
 
 /**
  * The provider's profiles and standalone browsers.
@@ -6,7 +7,13 @@ import { send, type BrowserEnv, type BrowserResult } from "./client";
  * Beside `client.ts` rather than inside it, and for a reason worth stating:
  * `client.ts` is the agent — tasks, their status, stopping them. This is the
  * browser a PERSON drives, and the cookie jar that survives it. They share one
- * base URL and one header, so they share `send`, and nothing else.
+ * header, so they share `send`, and nothing else.
+ *
+ * **They are on the v4 base** (`sendV4`): the nine `/profiles` and `/browsers`
+ * operations are identical in the v2 and v4 documents, so the parsing here is
+ * unchanged and only the base moved, to follow `v4.ts`'s runs. The exception is
+ * `accountHeadroom`: `/billing/account` exists only in v2 (the provider's docs
+ * say to read it there "including when using V4"), so it stays on `send`.
  *
  * **Three of these functions deliberately parse less than the provider
  * returns.** `POST /browsers` answers `liveUrl` AND `cdpUrl`; both are full
@@ -83,7 +90,7 @@ export function createProfile(
   input: { name?: string; userId?: string },
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<ProviderProfile>> {
-  return send(
+  return sendV4(
     env,
     "/profiles",
     {
@@ -106,7 +113,7 @@ export function getProfile(
   providerProfileId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<ProviderProfile>> {
-  return send(
+  return sendV4(
     env,
     `/profiles/${encodeURIComponent(providerProfileId)}`,
     { method: "GET", redactBody: true },
@@ -121,7 +128,7 @@ export function deleteProfile(
   providerProfileId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<null>> {
-  return send(
+  return sendV4(
     env,
     `/profiles/${encodeURIComponent(providerProfileId)}`,
     { method: "DELETE", redactBody: true },
@@ -135,7 +142,7 @@ export function createBrowser(
   input: { profileId: string; proxyCountryCode?: string | null },
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<ProviderBrowser>> {
-  return send(
+  return sendV4(
     env,
     "/browsers",
     {
@@ -165,7 +172,7 @@ export function browserLiveUrl(
   providerSessionId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<ProviderBrowser>> {
-  return send(
+  return sendV4(
     env,
     `/browsers/${encodeURIComponent(providerSessionId)}`,
     { method: "GET", redactBody: true },
@@ -180,7 +187,7 @@ export function browserState(
   providerSessionId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<BrowserStatus>> {
-  return send(
+  return sendV4(
     env,
     `/browsers/${encodeURIComponent(providerSessionId)}`,
     { method: "GET", redactBody: true },
@@ -195,7 +202,7 @@ export function stopBrowser(
   providerSessionId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<BrowserResult<BrowserStatus>> {
-  return send(
+  return sendV4(
     env,
     `/browsers/${encodeURIComponent(providerSessionId)}`,
     { method: "PATCH", body: { action: "stop" }, redactBody: true },

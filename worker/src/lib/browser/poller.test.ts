@@ -31,6 +31,46 @@ vi.mock("./client", async (importOriginal) => {
   };
 });
 
+const runStatus = vi.fn(
+  async (
+    _env: unknown,
+    _id: string,
+    _opts?: { signal?: AbortSignal },
+  ): Promise<BrowserResult<{ status: RunStatus }>> => ({
+    kind: "ok",
+    value: { status: "running" },
+  }),
+);
+const runSummary = vi.fn(
+  async (
+    _env: unknown,
+    _id: string,
+    _opts?: { signal?: AbortSignal },
+  ): Promise<BrowserResult<RunSummary>> => ({ kind: "error", status: 500, message: "unset" }),
+);
+const cancelRun = vi.fn(
+  async (
+    _env: unknown,
+    _id: string,
+    _opts?: { signal?: AbortSignal },
+  ): Promise<BrowserResult<{ status: RunStatus }>> => ({
+    kind: "ok",
+    value: { status: "cancelled" },
+  }),
+);
+vi.mock("./v4", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./v4")>();
+  return {
+    ...actual,
+    runStatus: (env: unknown, id: string, opts?: { signal?: AbortSignal }) =>
+      runStatus(env, id, opts),
+    runSummary: (env: unknown, id: string, opts?: { signal?: AbortSignal }) =>
+      runSummary(env, id, opts),
+    cancelRun: (env: unknown, id: string, opts?: { signal?: AbortSignal }) =>
+      cancelRun(env, id, opts),
+  };
+});
+
 import {
   pollDueBrowserTasks,
   MAX_POLLS,
@@ -38,13 +78,28 @@ import {
   type BrowserTaskRow,
   type FinishedTask,
 } from "./poller";
+import type { RunStatus, RunSummary } from "./v4";
+import { memoryDb } from "../../test-support/memory-db";
 
 const ENV = { BROWSER_USE_API_KEY: "bu_test" } as RoutineEnv;
 const NOW = new Date("2026-10-09T12:00:00Z");
 
 type Row = Record<string, unknown>;
 let claimed: BrowserTaskRow[];
-let updates: { id: unknown; patch: Row }[];
+/** What the table holds, when a test wants it to differ from what was claimed. */
+let stored: Row[] | null;
+let mem: ReturnType<typeof memoryDb>;
+
+/** The task-row writes the tick made, oldest first, as `{ id, patch }`. */
+function updatesOf(): { id: unknown; patch: Row }[] {
+  return mem
+    .callsTo("browser_tasks")
+    .filter((c) => c.op === "update")
+    .map((c) => ({
+      id: c.filters.find((f) => f.column === "id")?.value,
+      patch: c.values ?? {},
+    }));
+}
 
 function row(over: Partial<BrowserTaskRow> = {}): BrowserTaskRow {
   return {
@@ -62,23 +117,20 @@ function row(over: Partial<BrowserTaskRow> = {}): BrowserTaskRow {
 }
 
 /**
- * A db whose `rpc` hands back whatever `claimed` holds and whose `update`
- * records the patch instead of applying it. `rpc` is a `vi.fn` so a test can
- * assert the claim's arguments and that an idle tick never makes it.
+ * A db whose `rpc` hands back whatever `claimed` holds, over tables that apply
+ * the writes they are sent — conditions included, because the settle's claim
+ * and the release are both conditional on the row not having ended, and that
+ * condition is what keeps the cron from delivering an answer the open tab
+ * already delivered. `rpc` is a `vi.fn` so a test can assert the claim's
+ * arguments and that an idle tick never makes it.
  */
 function fakeDb(): SupabaseClient & { rpc: ReturnType<typeof vi.fn> } {
+  mem = memoryDb({
+    browser_tasks: stored ?? claimed.map((r) => ({ ...r })),
+    browser_sessions: [{ id: "bs-1", live_state: "agent" }],
+  });
   const rpc = vi.fn(async () => ({ data: claimed, error: null }));
-  return {
-    rpc,
-    from: () => ({
-      update: (patch: Row) => ({
-        eq: (_col: string, id: unknown) => {
-          updates.push({ id, patch });
-          return Promise.resolve({ error: null });
-        },
-      }),
-    }),
-  } as unknown as SupabaseClient & { rpc: ReturnType<typeof vi.fn> };
+  return { ...mem.db, rpc } as unknown as SupabaseClient & { rpc: ReturnType<typeof vi.fn> };
 }
 
 // Typed with the real signature so `finish.mock.calls[0][1]` is a
@@ -98,7 +150,11 @@ function deps() {
 
 beforeEach(() => {
   claimed = [];
-  updates = [];
+  stored = null;
+  runStatus.mockReset();
+  runSummary.mockReset();
+  cancelRun.mockReset();
+  cancelRun.mockResolvedValue({ kind: "ok", value: { status: "cancelled" } });
   taskStatus.mockReset();
   stopTask.mockReset();
   stopTask.mockResolvedValue({ kind: "ok", value: null });
@@ -148,12 +204,12 @@ describe("a task still running", () => {
   it("releases the claim and books the next poll", async () => {
     const result = await pollDueBrowserTasks(ENV, deps());
     expect(result).toEqual({ claimed: 1, ok: 1, failed: 0 });
-    expect(updates[0].patch).toMatchObject({
+    expect(updatesOf()[0].patch).toMatchObject({
       status: "running",
       claimed_at: null,
       poll_count: 1,
     });
-    expect(new Date(String(updates[0].patch.next_poll_at)).getTime()).toBeGreaterThan(
+    expect(new Date(String(updatesOf()[0].patch.next_poll_at)).getTime()).toBeGreaterThan(
       NOW.getTime(),
     );
     expect(finish).not.toHaveBeenCalled();
@@ -245,7 +301,11 @@ describe("when things go wrong", () => {
     taskStatus.mockResolvedValue({ kind: "error", status: 0, message: "network down" });
     const result = await pollDueBrowserTasks(ENV, deps());
     expect(result).toEqual({ claimed: 1, ok: 0, failed: 1 });
-    expect(updates[0].patch).toMatchObject({ status: "running", claimed_at: null, poll_count: 3 });
+    expect(updatesOf()[0].patch).toMatchObject({
+      status: "running",
+      claimed_at: null,
+      poll_count: 3,
+    });
     expect(finish).not.toHaveBeenCalled();
   });
 
@@ -289,5 +349,168 @@ describe("when things go wrong", () => {
       } as unknown as SupabaseClient & { rpc: ReturnType<typeof vi.fn> },
     };
     await expect(pollDueBrowserTasks(ENV, d)).rejects.toThrow(/claim_due_browser_tasks/);
+  });
+});
+
+describe("two clocks, one delivery", () => {
+  /**
+   * The open tab polls every three seconds and may settle a run between the
+   * cron's claim and its write. Whatever the cron then writes must not put
+   * the row back to `running` — that would make it due again, and the next
+   * tick would deliver the same answer a second time.
+   */
+  it("does not bring a row the open tab settled back to running", async () => {
+    claimed = [row({ status: "running" })];
+    stored = [{ ...row(), status: "finished" }];
+    taskStatus.mockResolvedValue({
+      kind: "ok",
+      value: { status: "running", output: null, isSuccess: null, costUsd: null, finishedAt: null },
+    });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(mem.tables.browser_tasks[0].status).toBe("finished");
+    const release = mem.callsTo("browser_tasks").find((c) => c.op === "update");
+    expect(release?.filters).toContainEqual({
+      column: "status",
+      value: ["queued", "running"],
+      kind: "in",
+    });
+  });
+
+  it("delivers nothing for a row the open tab already settled", async () => {
+    claimed = [row()];
+    stored = [{ ...row(), status: "finished" }];
+    taskStatus.mockResolvedValue({
+      kind: "ok",
+      value: {
+        status: "finished",
+        output: "done",
+        isSuccess: true,
+        costUsd: 0.1,
+        finishedAt: null,
+      },
+    });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(finish).not.toHaveBeenCalled();
+  });
+});
+
+describe("a v4 run", () => {
+  function v4Row(over: Partial<BrowserTaskRow> = {}): BrowserTaskRow {
+    return row({
+      api_version: "v4",
+      provider_task_id: "run-1",
+      provider_run_id: "run-1",
+      browser_session_id: "bs-1",
+      ...over,
+    });
+  }
+
+  function summary(over: Partial<RunSummary> = {}): RunSummary {
+    return {
+      id: "run-1",
+      status: "completed",
+      result: "Starter $29, Pro $99",
+      output: null,
+      error: null,
+      totalCostUsd: 0.09,
+      sessionId: "bu-session-1",
+      ...over,
+    };
+  }
+
+  it("is polled on the runs API, not as a v2 task", async () => {
+    claimed = [v4Row()];
+    runStatus.mockResolvedValue({ kind: "ok", value: { status: "running" } });
+    const result = await pollDueBrowserTasks(ENV, deps());
+    expect(result).toEqual({ claimed: 1, ok: 1, failed: 0 });
+    expect(runStatus).toHaveBeenCalledWith(ENV, "run-1", expect.anything());
+    expect(taskStatus).not.toHaveBeenCalled();
+    expect(runSummary).not.toHaveBeenCalled();
+    expect(updatesOf()[0].patch).toMatchObject({ status: "running", poll_count: 1 });
+  });
+
+  it("counts dispatching as still going", async () => {
+    claimed = [v4Row()];
+    runStatus.mockResolvedValue({ kind: "ok", value: { status: "dispatching" } });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(finish).not.toHaveBeenCalled();
+  });
+
+  it("reads the summary once the run has ended, and settles it", async () => {
+    claimed = [v4Row()];
+    runStatus.mockResolvedValue({ kind: "ok", value: { status: "completed" } });
+    runSummary.mockResolvedValue({ kind: "ok", value: summary() });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(runSummary).toHaveBeenCalledWith(ENV, "run-1", expect.anything());
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(finish.mock.calls[0][1]).toMatchObject({
+      status: "finished",
+      output: "Starter $29, Pro $99",
+      costUsd: 0.09,
+    });
+    expect(mem.tables.browser_tasks[0]).toMatchObject({ status: "finished", poll_count: 1 });
+    // R4: the agent let go of the browser.
+    expect(mem.tables.browser_sessions[0].live_state).toBe("none");
+  });
+
+  it("carries a login wall through to the delivery", async () => {
+    claimed = [v4Row()];
+    runStatus.mockResolvedValue({ kind: "ok", value: { status: "completed" } });
+    runSummary.mockResolvedValue({
+      kind: "ok",
+      value: summary({ result: null, output: { status: "login_required", host: "linkedin.com" } }),
+    });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(finish.mock.calls[0][1]).toMatchObject({
+      status: "failed",
+      reported: { status: "login_required", host: "linkedin.com" },
+    });
+  });
+
+  it("tries again next tick when the summary cannot be read", async () => {
+    claimed = [v4Row()];
+    runStatus.mockResolvedValue({ kind: "ok", value: { status: "completed" } });
+    runSummary.mockResolvedValue({ kind: "error", status: 502, message: "502 Bad Gateway" });
+    const result = await pollDueBrowserTasks(ENV, deps());
+    expect(result.failed).toBe(1);
+    expect(finish).not.toHaveBeenCalled();
+    expect(mem.tables.browser_tasks[0].status).toBe("running");
+  });
+
+  it("gives up on an unreadable summary at the same ceiling as everything else", async () => {
+    claimed = [v4Row({ poll_count: MAX_POLLS - 1 })];
+    runStatus.mockResolvedValue({ kind: "ok", value: { status: "completed" } });
+    runSummary.mockResolvedValue({ kind: "error", status: 502, message: "502 Bad Gateway" });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(finish.mock.calls[0][1]).toMatchObject({ status: "failed" });
+  });
+
+  it("cancels a run that has been polled too many times, and tells the person", async () => {
+    claimed = [v4Row({ poll_count: MAX_POLLS - 1 })];
+    runStatus.mockResolvedValue({ kind: "ok", value: { status: "running" } });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(cancelRun).toHaveBeenCalledWith(ENV, "run-1", expect.anything());
+    expect(stopTask).not.toHaveBeenCalled();
+    expect(finish.mock.calls[0][1]).toMatchObject({ status: "stopped", stopReason: "cancelled" });
+    expect(mem.tables.browser_tasks[0]).toMatchObject({
+      status: "stopped",
+      stop_reason: "cancelled",
+    });
+  });
+
+  it("ends a run the provider has never heard of", async () => {
+    claimed = [v4Row()];
+    runStatus.mockResolvedValue({ kind: "error", status: 404, message: "404 Not Found" });
+    await pollDueBrowserTasks(ENV, deps());
+    expect(finish.mock.calls[0][1]).toMatchObject({ status: "failed" });
+  });
+
+  it("leaves a run claimable when the provider cannot be reached", async () => {
+    claimed = [v4Row()];
+    runStatus.mockResolvedValue({ kind: "error", status: 0, message: "network down" });
+    const result = await pollDueBrowserTasks(ENV, deps());
+    expect(result.failed).toBe(1);
+    expect(mem.tables.browser_tasks[0]).toMatchObject({ status: "running", claimed_at: null });
   });
 });

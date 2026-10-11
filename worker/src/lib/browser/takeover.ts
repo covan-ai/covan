@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
 import { createTask, type BrowserResult } from "./client";
+import { stopSessionBrowsers } from "./controls";
 import {
   accountHeadroom,
   browserState,
@@ -137,8 +138,8 @@ const SETTLE_DELAY_MS = 1_000;
  * feature exists to give them. 3.1 seconds is one sample, so the margin is
  * generous on purpose.
  */
-const JAR_ATTEMPTS = 8;
-const JAR_DELAY_MS = 1_000;
+export const JAR_ATTEMPTS = 8;
+export const JAR_DELAY_MS = 1_000;
 
 /** A person's jar, as the rest of the worker needs it: our id, theirs, the pinned egress. */
 export type TakeoverProfile = {
@@ -309,6 +310,56 @@ export async function profileFor(
 }
 
 /**
+ * The jar a conversation's run carries: this person's, provisioned now if
+ * they have none yet (ruling R19).
+ *
+ * A sign-in the person performs in the panel beside the conversation is kept
+ * only because stopping the browser saves it into the profile the browser was
+ * opened with — browser-use: *"always stop the session to persist profile
+ * state"*. A browser opened with no profile has nowhere to save it, so before
+ * this, everybody who had never used the old takeover signed in, pressed
+ * Done, and lost the sign-in the moment the browser stopped. So the first run
+ * that needs one makes one.
+ *
+ * **`ensureProfile`'s claim-first order, unchanged**: the row is claimed on
+ * the unique index before the provider is called, so two first runs racing —
+ * two conversations, a double-click — make one profile at browser-use, never
+ * an orphan. The loser finds the winner's claim mid-flight and gets null
+ * rather than waiting on it.
+ *
+ * **Null is never a reason for the run not to start.** A provider that will
+ * not make a profile (the deployment's limit, a fault) leaves the run where
+ * it was before this existed — against the public web, with no jar — and the
+ * failure is logged as a status, because the provider's body for this one is
+ * about the deployment rather than the person.
+ *
+ * The label is `routes/browser.ts`'s constant, for its reason: a label, not an
+ * identity. No egress is pinned, because a tool call carries no request
+ * country to pin it to — so the jar is pinned to none, which is the provider's
+ * "no proxy", and stays so (see `ensureProfile`'s `proxyCountryCode`).
+ *
+ * Called by `browse` only after its refusals (ruling R13: nothing is spent on
+ * a refusal) and before `createRun`, and by the hand-back, which can be the
+ * first run to want one when an earlier provisioning failed.
+ */
+export async function runProfile(
+  env: RoutineEnv,
+  userId: string,
+  overrides: Partial<TakeoverDeps> = {},
+): Promise<TakeoverProfile | null> {
+  const ensured = await ensureProfile(env, userId, { label: RUN_PROFILE_LABEL }, overrides);
+  if (ensured.kind === "ok") return ensured.value;
+  console.error(
+    "could not provision a browser profile for a run; running without one",
+    ensured.status,
+  );
+  return null;
+}
+
+/** What a profile provisioned for a run is called at the provider. See `runProfile`. */
+const RUN_PROFILE_LABEL = "covan";
+
+/**
  * Forgetting the jar, without closing the account.
  *
  * §7a's control, and the half of the promise that was missing: deleting on
@@ -381,6 +432,9 @@ export async function forgetProfile(
     };
   }
 
+  const released = await releaseConversationBrowsers(env, db, userId);
+  if (released) return released;
+
   /**
    * Read here rather than through `readProfileRow`, and in one query: this is
    * the only caller that wants `cookie_domains`, and asking for it separately
@@ -441,6 +495,80 @@ export async function forgetProfile(
   }
 
   return { kind: "ok", forgotten };
+}
+
+/**
+ * The browsers beside this person's conversations, before their jar goes
+ * (final-review I5).
+ *
+ * Each runs on the jar `forgetProfile` is about to delete, so the open
+ * takeover's reasoning applies to them too. **One the agent is driving or
+ * one in the person's own hands is refused** — deleting underneath it would
+ * destroy what is being done in it, and the sweep or the close would then
+ * refresh `cookie_domains` on a row that is gone. **An idle one is let go
+ * of**: its browser stopped, best-effort, and its agent session forgotten
+ * (`provider_session_id` and `provider_browser_id` cleared), because a
+ * follow-up in that session would carry the forgotten cookies straight back
+ * into the next run. The next `browse` in that conversation opens a fresh
+ * session instead, exactly as a first one does.
+ *
+ * Only rows still naming a browser are stopped — ruling R20's marker: a
+ * confirmed stop clears it, so the rest are already stopped — which keeps
+ * this to a handful of provider calls however many conversations the person
+ * has had. The clear is one write for all of them, narrowed to rows still
+ * `none`, so a run that started meanwhile keeps its session. A stop that
+ * fails does not block the forgetting: the person asked for the jar to go,
+ * and the browser is the provider's to time out.
+ *
+ * @returns the refusal, or null to carry on.
+ */
+async function releaseConversationBrowsers(
+  env: RoutineEnv,
+  db: SupabaseClient,
+  userId: string,
+): Promise<Refusal | null> {
+  const { data, error } = await db
+    .from("browser_sessions")
+    .select("id, live_state, provider_session_id, provider_browser_id")
+    .eq("user_id", userId);
+  if (error) {
+    console.error("could not check a person's browsers before forgetting", problem(error));
+    return { kind: "error", status: 500, message: FORGET_FAILED };
+  }
+  const rows = (data ?? []) as Record<string, unknown>[];
+  if (rows.some((row) => row.live_state === "agent" || row.live_state === "human")) {
+    return {
+      kind: "error",
+      status: 409,
+      message:
+        "a browser of yours is in use beside a conversation right now — let the agent finish, or " +
+        "close it in the panel, and these sign-ins can be forgotten after that",
+    };
+  }
+
+  const held = rows.filter((row) => text(row.provider_session_id) || text(row.provider_browser_id));
+  if (held.length === 0) return null;
+
+  for (const row of held) {
+    const browserId = text(row.provider_browser_id);
+    if (!browserId) continue;
+    const stopped = await stopSessionBrowsers(env, {
+      providerSessionId: text(row.provider_session_id),
+      storedBrowserId: browserId,
+    });
+    if (!stopped) console.warn("forgetting a jar whose browser would not stop");
+  }
+
+  const { error: clearError } = await db
+    .from("browser_sessions")
+    .update({ provider_session_id: null, provider_browser_id: null })
+    .eq("user_id", userId)
+    .eq("live_state", "none");
+  if (clearError) {
+    console.error("could not forget a person's browser sessions", problem(clearError));
+    return { kind: "error", status: 500, message: FORGET_FAILED };
+  }
+  return null;
 }
 
 /**

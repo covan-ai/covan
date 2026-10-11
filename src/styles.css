@@ -474,11 +474,47 @@
   animation: caret-blink 1s steps(1) infinite;
 }
 
+/*
+ * The browser beside the conversation, while an agent holds it.
+ *
+ * A 1px amber edge round the panel that breathes between 40% and 100% over
+ * 2.4s. It is `.step-running`'s rule at panel scale — the machine is busy and
+ * nothing is being asked — and it is the ONE amber element DESIGN.md allows
+ * over 44px, which is why it is a hairline and not a glow, and why the panel
+ * adds the class only while an agent's run is going (`browser-panel.tsx`).
+ *
+ * Drawn on `::after` so only the edge breathes, not the frame inside it, and
+ * with `pointer-events: none` so it never sits between the person and the
+ * browser. The opacity lives ONLY in the keyframes, `.step-arrive`'s care: with
+ * motion switched off the base state is a steady, full amber hairline, which
+ * still says "an agent has this" without moving.
+ */
+@keyframes browser-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.browser-live::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid var(--accent-orange);
+  animation: browser-breathe 2.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
   .stream-caret,
   .step-arrive,
   .step-running,
+  .browser-live::after,
   .stream-live > :last-child::after {
     animation: none;
   }

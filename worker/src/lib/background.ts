@@ -3,7 +3,7 @@ import { canSyncConnections } from "./../types";
 import { runDueRoutines } from "./routines/dispatcher";
 import { runDueConnections } from "./connections/dispatcher";
 import { pollDueBrowserTasks } from "./browser/poller";
-import { sweepAbandonedTakeovers } from "./browser/sweep";
+import { sweepAbandonedTakeovers, sweepConversationBrowsers } from "./browser/sweep";
 import { PROVIDERS } from "./connections/registry";
 
 /**
@@ -52,6 +52,19 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
    */
   const takeovers = await sweepAbandonedTakeovers(env);
   if (takeovers.claimed > 0) return;
+
+  /**
+   * The same safety net for the browser beside a conversation: somebody took
+   * its controls and never pressed Done, or nobody is using it any more and it
+   * is still open at the provider (ruling R20). Both arms come from one claim
+   * in one batch. Same stage, same reason, same either/or — it is reached only
+   * when the takeover sweep claimed nothing, so the two never share a tick's
+   * subrequests (`sweepConversationBrowsers` does that arithmetic: 42 of 50 at
+   * worst, these two claims included). The price is that an idle tick spends
+   * two subrequests here, the two claims, rather than one.
+   */
+  const conversations = await sweepConversationBrowsers(env);
+  if (conversations.claimed > 0) return;
 
   /**
    * Browser tasks, between routines and connections.

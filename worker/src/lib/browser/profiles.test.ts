@@ -28,7 +28,7 @@ describe("profiles", () => {
     fetchMock.mockResolvedValue(ok({ id: "p-1", cookieDomains: [] }, 201));
     const r = await createProfile(ENV, { name: "Efe", userId: "user-1" });
     expect(r).toEqual({ kind: "ok", value: { id: "p-1", cookieDomains: [] } });
-    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v2/profiles");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v4/profiles");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ name: "Efe", userId: "user-1" });
   });
 
@@ -45,7 +45,7 @@ describe("profiles", () => {
     expect((r as { value: { cookieDomains: string[] } }).value.cookieDomains).toEqual([
       "mail.google.com",
     ]);
-    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v2/profiles/p-1");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v4/profiles/p-1");
     expect(fetchMock.mock.calls[0][1].method).toBe("GET");
   });
 
@@ -54,7 +54,7 @@ describe("profiles", () => {
     const r = await deleteProfile(ENV, "p-1");
     expect(r.kind).toBe("ok");
     expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
-    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v2/profiles/p-1");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v4/profiles/p-1");
   });
 });
 
@@ -118,7 +118,7 @@ describe("browserLiveUrl", () => {
       }),
     );
     const r = await browserLiveUrl(ENV, "s-1");
-    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v2/browsers/s-1");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v4/browsers/s-1");
     expect(fetchMock.mock.calls[0][1].method).toBe("GET");
     expect((r as { value: { liveUrl: string } }).value.liveUrl).toBe(
       "https://live.browser-use.com/x",
@@ -171,6 +171,12 @@ describe("accountHeadroom", () => {
     fetchMock.mockResolvedValue(ok({ concurrentSessionLimit: 10, activeSessionCount: 7 }));
     const r = await accountHeadroom(ENV);
     expect(r).toEqual({ kind: "ok", value: { active: 7, limit: 10 } });
+  });
+
+  it("stays on v2, because /billing/account has no v4 form", async () => {
+    fetchMock.mockResolvedValue(ok({ concurrentSessionLimit: 10, activeSessionCount: 7 }));
+    await accountHeadroom({ ...ENV, BROWSER_USE_V4_BASE_URL: "https://v4.internal/api/v4" });
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v2/billing/account");
   });
 });
 

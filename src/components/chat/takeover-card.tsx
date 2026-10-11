@@ -1,27 +1,99 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type BrowserTask, type Takeover } from "@/lib/api-client";
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { api, type BrowserTask, type ConversationBrowser, type Takeover } from "@/lib/api-client";
+import { Button } from "@/components/ui/button";
+import { useConversationBrowser } from "./use-conversation-browser";
 
 /**
- * The offer to sign in yourself, and the browser you do it in.
+ * The sign-in prompt inside the browser panel, for a run that stopped at a
+ * login wall.
  *
- * A browser task that stopped at a login wall is recoverable: Covan rents a
- * real browser, hands you its address, and you sign in **in your own tab, at
- * the site itself**. Covan never sees the password, never stores one, and is
- * never sent one — which is the whole reason the sign-in happens over there
- * rather than in a form here.
+ * This used to be a card in the conversation that rented a separate browser
+ * and sent the person to it in a new tab — because there was no browser on
+ * screen to sign in to. Now there is: the run's own browser is beside the
+ * conversation, so the prompt lives in the panel, and the sign-in happens in
+ * the frame after "Take over" (the panel's pill, the primary action while this
+ * is showing). Covan never sees the password, never stores one, and is never
+ * sent one — the person types it at the site, in a browser Covan does not
+ * read. No credentials UI here; that is Phase 2.
  *
- * **There is deliberately no iframe.** Three reasons, and the first two are
- * enough on their own. A passkey cannot work in one: WebAuthn is origin-bound,
- * so a platform passkey or a security key is simply unreachable from an
- * embedded view. A password manager correctly refuses to fill it, because the
- * origin it can see is the provider's rather than the site's. And the frame is
- * not a security boundary anyway — browser-use says so outright: *"View-only
- * embeds are a UI restriction, not a server-enforced permission. Anyone who
- * opens the live URL directly or uses the underlying CDP URL can still control
- * the browser."* So a new tab, where the browser behaves like a browser.
+ * **The new tab survives as the fallback, and for the reasons it was once the
+ * only path.** A passkey cannot work in an iframe: WebAuthn is origin-bound,
+ * so a platform passkey or a security key is unreachable from an embedded
+ * view. A password manager correctly refuses to fill one, because the origin
+ * it can see is the provider's rather than the site's. So "Open in a new
+ * window" puts the same browser in a tab of its own, where it behaves like a
+ * browser. The tab itself — reserved inside the click, navigated when the
+ * address arrives — is `openInNewWindow` in `use-conversation-browser.ts`.
+ */
+
+/** The prompt's one sentence, with the site named when the run named one. */
+function signInSentence(host: string | null): string {
+  /**
+   * The host is the run's `signin_host`, which 0078 stores only when it is
+   * already a bare lowercase host — so it is safe to render as one, and a run
+   * that said "LinkedIn.com" or a URL arrives here as null. The sentence still
+   * says sign in; it just cannot say where. A wrong host would send somebody
+   * to the wrong site, which is worse than naming none.
+   */
+  return `${host ?? "This site"} needs you to sign in. Take over, sign in in the browser, then press Done.`;
+}
+
+export function SignInPrompt({
+  host,
+  onOpenWindow,
+  opening = false,
+}: {
+  host: string | null;
+  /** The new-tab fallback. Called from the click, because the tab is reserved inside it. */
+  onOpenWindow: () => void;
+  opening?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-3">
+      <p className="text-sm font-medium">{signInSentence(host)}</p>
+      {/* The last two sentences were added after the first real run, and they
+          are there because the alternative is wasting somebody's time. A
+          hand-performed LinkedIn sign-in saved correctly, attached correctly,
+          and ran again from a different address in the same country — and
+          LinkedIn asked for the password again. Sites that bind a session to
+          one IP defeat this, and the person deciding whether to sign in is the
+          one who should know that before they do it rather than after. */}
+      <p className="mt-1 text-meta text-muted-foreground">
+        You type your password at the site; Covan never receives it. The agent then carries on — no
+        charge for the second attempt. Some sites tie a sign-in to one network address and will ask
+        again anyway; LinkedIn is one of them.
+      </p>
+      {/* A link-weight control rather than a button-shaped one: the pill's
+          Take over is this prompt's one primary action, and this is the way
+          round it when the frame is not enough. */}
+      <button
+        type="button"
+        className="mt-2 text-meta text-foreground underline underline-offset-4 hover:text-muted-foreground disabled:opacity-50"
+        disabled={opening}
+        onClick={onOpenWindow}
+      >
+        Open in a new window
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The v2 takeover card — the legacy path, kept in the transcript (ruling R18).
+ *
+ * Before the browser panel, a browser task that stopped at a login wall was
+ * recovered here: Covan rented a separate browser, handed you its address, and
+ * you signed in **in your own tab, at the site itself**. Tasks drained from
+ * before 0078 still end that way, and somebody may be part-way through one —
+ * holding an open takeover whose Done is their free retry — when the panel
+ * ships. So the card stays, for v2 tasks only.
+ *
+ * **There is deliberately no iframe here**, for the reasons the new-window
+ * fallback above gives: passkeys and password managers do not work in one,
+ * and the frame is not a security boundary anyway — *"View-only embeds are a
+ * UI restriction, not a server-enforced permission."*
  */
 
 /** How often the countdown redraws. A second, because it shows seconds. */
@@ -56,11 +128,13 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
   const [closedId, setClosedId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  const { data } = useQuery({
-    queryKey: ["browser-tasks", sessionId],
-    queryFn: () => api.sessions.browserTasks(sessionId),
-    enabled: !!sessionId,
-  });
+  /**
+   * The conversation's tasks, from the browser panel's own poll rather than a
+   * query of this card's: a second query function on `["browser-tasks", id]`
+   * would answer that key without the panel's event history, and the two
+   * would overwrite each other's shape every tick.
+   */
+  const { data } = useConversationBrowser(sessionId);
   /**
    * This conversation's browser tasks, read before the takeover query because
    * it is what decides whether that query can produce anything at all.
@@ -78,7 +152,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
    */
   const { data: current } = useQuery({
     queryKey: ["browser-takeover-current"],
-    queryFn: () => api.browser.current(),
+    queryFn: () => api.takeovers.current(),
     /**
      * Not asked until this conversation has a browser task in it, and that is
      * a correctness-preserving saving rather than a guess.
@@ -142,7 +216,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
 
   const open = useMutation({
     mutationFn: async (browserTaskId: string) => {
-      const result = await api.browser.takeOver(browserTaskId);
+      const result = await api.takeovers.takeOver(browserTaskId);
       if (!result.liveUrl) {
         throw new Error("That browser started but there is no address to open it at.");
       }
@@ -168,7 +242,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
   });
 
   const close = useMutation({
-    mutationFn: (id: string) => api.browser.close(id),
+    mutationFn: (id: string) => api.takeovers.close(id),
     onSuccess: async (result, id) => {
       setMinted(null);
       setClosedId(id);
@@ -268,7 +342,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
 }
 
 /** This conversation's tasks, or none while they are still loading. */
-function tasksFor(data: { tasks: BrowserTask[] } | undefined): BrowserTask[] {
+function tasksFor(data: ConversationBrowser | undefined): BrowserTask[] {
   return data?.tasks ?? [];
 }
 
@@ -288,9 +362,14 @@ function tasksFor(data: { tasks: BrowserTask[] } | undefined): BrowserTask[] {
  * `retryOf`, so it is answered by looking across the list rather than at the
  * task in hand. The list is this conversation's, newest first, which is where
  * any successor of a task in it would be.
+ *
+ * **And only a v2 task** (ruling R18). A v4 run stopped at a wall in the
+ * browser beside the conversation, and the panel's own prompt continues it
+ * there; offering it here too would rent a second browser for the same wall.
  */
 function offerable(task: BrowserTask, all: BrowserTask[]): boolean {
   return (
+    task.apiVersion === "v2" &&
     task.status === "failed" &&
     !!task.output &&
     task.retryOf == null &&

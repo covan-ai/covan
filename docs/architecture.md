@@ -426,21 +426,47 @@ not change when a service is added.**
 worth naming rather than discovering: it has no `tool_connections` row at all,
 because it points at the open web rather than at a tenant's service — and its
 answer does not arrive in the turn that called it. It hands the work to
-browser-use, the turn ends, and the cron Worker writes the result back into the
-conversation as a new assistant message minutes later. Everything about that
-lives in `lib/browser/`; nothing in the loop or the registry had to learn about
+browser-use, the turn ends, and the result is written back into the conversation
+as a new assistant message once the run has ended. Everything about that lives
+in `lib/browser/`; nothing in the loop or the registry had to learn about
 waiting.
 
+**Two clocks bring the answer back, and one step delivers it.** Each
+conversation has one `browser_sessions` row per person — which provider session
+it is, and who has the controls — and each `browse` is a run inside that session
+on browser-use's V4 API, so a follow-up continues in the same browser. While the
+conversation is open in a tab, the tab polls `GET /sessions/:id/browser-tasks`
+every three seconds; that route asks the provider about the caller's own running
+run, records its progress, and settles it inline the moment it has ended. The
+five-minute cron poller is the fallback for a closed tab, and still the only
+thing that drains the v2 tasks written before the move to V4. Both can see the
+same run end in the same second, so settling begins with a conditional update —
+`status` from `queued` or `running` to its terminal value, `returning` the row —
+and only the caller that gets a row back writes the message. Postgres serialises
+two such updates, so exactly one does, and nothing is read first. It is the
+discipline `closeTakeover` already had: a side effect that must happen once is
+gated on a write that can succeed once. Take over stops its task with the same
+condition, so a run that was cancelled on purpose is not then reported as
+cancelled.
+
 It is also **the one tool whose answer can require a person mid-flight.** A
-task that stops at a login wall is offered back to its owner: a route mints a
-real browser at the provider, hands over its address in a response body and
-nowhere else, and the person signs in in their own tab. Pressing done stops the
-provider session — which is the only thing that saves the cookie jar — and
-re-runs the original task once. A cron sweep stops the browsers of people who
-closed the tab instead, so an abandoned sign-in is saved rather than lost.
-`browser_profiles` and `browser_takeovers` hold that; both withhold their
-provider ids from every client role, for the reason `connected_account_id`
-has one.
+browser panel sits beside the conversation: a route returns the provider's live
+view in a response body and nowhere else, and it is shown to the person who owns
+the browser. Take over cancels the run, waits until the provider says it has
+ended, and only then sets `live_state = 'human'`; Done sets it back to `agent`
+and starts one follow-up run in the same provider session (the free retry);
+close stops the browser, which is the only thing that saves the cookie jar into
+the person's profile (provisioned on their first `browse`). The sweep is the
+safety net for everything nobody closes, in two arms of one claim: a browser in
+human hands whose tab has stopped polling for ten minutes (the open tab moves
+`human_since` forward about once a minute), and a browser nobody is using ten
+minutes after its last run. It stops each, reads the jar back, and clears the
+browser id the row names — so an abandoned sign-in is saved rather than lost and
+an idle browser stops billing — and gives up on a row older than the provider's
+four-hour hard timeout, which has no browser left to stop. `browser_sessions`, `browser_profiles` and
+`browser_takeovers` hold that; all three withhold their provider ids from every
+client role, for the reason `connected_account_id` has one, and the first is
+readable by its owner only.
 
 So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
 function installed on it. The `composio` transport is the same shape with the

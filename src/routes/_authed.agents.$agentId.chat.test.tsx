@@ -60,6 +60,9 @@ vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
 const listMessages = vi.fn();
 const createMessage = vi.fn();
 const showVersion = vi.fn();
+const browserTasks = vi.fn();
+const browserLive = vi.fn();
+const takeoverCurrent = vi.fn();
 vi.mock("@/lib/api-client", () => ({
   ApiError: class ApiError extends Error {
     status = 500;
@@ -71,7 +74,9 @@ vi.mock("@/lib/api-client", () => ({
   assetSrc: (path: string) => (path ? `https://api.test${path}` : ""),
   api: {
     me: () => Promise.resolve({ user: { id: "user-1" }, models: ["gpt-4.1", "claude-opus-5"] }),
-    sessions: { messages: listMessages, setVisibility: vi.fn() },
+    sessions: { messages: listMessages, setVisibility: vi.fn(), browserTasks },
+    browser: { live: browserLive, takeOver: vi.fn(), handBack: vi.fn(), stop: vi.fn() },
+    takeovers: { takeOver: vi.fn(), current: takeoverCurrent, close: vi.fn() },
     messages: {
       create: createMessage,
       update: vi.fn(),
@@ -283,6 +288,10 @@ beforeEach(() => {
   stubMatchMedia();
   listMessages.mockResolvedValue([question]);
   createMessage.mockResolvedValue(question);
+  // No browser beside the conversation, which is almost every conversation.
+  browserTasks.mockResolvedValue({ tasks: [], session: null, events: [], delivered: false });
+  browserLive.mockResolvedValue({ liveUrl: "https://live.example/view", liveState: "agent" });
+  takeoverCurrent.mockResolvedValue({ takeover: null });
   // jsdom implements no scrolling at all, so the component's own call is the
   // only evidence of what it asked for.
   scrollTo = vi.fn();
@@ -1259,5 +1268,141 @@ describe("a reply that stopped to ask", () => {
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("the browser beside the conversation", () => {
+  const running = {
+    tasks: [
+      {
+        id: "task-1",
+        task: "find the invoice",
+        status: "running",
+        output: null,
+        error: null,
+        retryOf: null,
+        createdAt: 0,
+        finishedAt: null,
+        apiVersion: "v4",
+        stopReason: null,
+        browserSessionId: "bs-1",
+        signInHost: null,
+      },
+    ],
+    session: { id: "bs-1", liveState: "agent", humanSince: null, browserReady: true },
+    events: [],
+    delivered: false,
+  };
+
+  it("is not there, and not offered, in a conversation with no browser", async () => {
+    await renderChat();
+
+    await waitFor(() => expect(browserTasks).toHaveBeenCalledWith("session-1"));
+    expect(screen.queryByRole("heading", { name: "Browser" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show the browser" })).toBeNull();
+  });
+
+  it("opens beside the chat while the agent is browsing", async () => {
+    browserTasks.mockResolvedValue(running);
+    await renderChat();
+
+    expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
+    expect(await screen.findByTitle("The agent's browser")).toBeInTheDocument();
+  });
+
+  it("comes back from the header control after it was closed", async () => {
+    browserTasks.mockResolvedValue(running);
+    await renderChat();
+
+    // A run is going, so close only hides it — stop would not cancel the run.
+    await userEvent.click(await screen.findByRole("button", { name: "Close the browser" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Browser" })).toBeNull());
+
+    await userEvent.click(screen.getByRole("button", { name: "Show the browser" }));
+    expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
+  });
+
+  it("waits for the header control on a narrow screen, then opens as a sheet", async () => {
+    onAPhone = true;
+    browserTasks.mockResolvedValue(running);
+    await renderChat();
+
+    const control = await screen.findByRole("button", { name: "Show the browser" });
+    expect(screen.queryByRole("dialog", { name: "Browser" })).toBeNull();
+
+    await userEvent.click(control);
+    expect(await screen.findByRole("dialog", { name: "Browser" })).toBeInTheDocument();
+  });
+  /**
+   * Opening the panel used to swap `return chatPane` for a split around it,
+   * which remounted the chat column: the scroll listener stayed on the
+   * detached node, so "jump to the latest" never appeared again, and a draft
+   * in an edit box was lost. The column is now the same node throughout.
+   */
+  it("keeps the chat column, and its scrolling, when the panel opens", async () => {
+    const { container, client } = await renderChat();
+    const column = container.querySelector("section");
+    expect(column).not.toBeNull();
+
+    browserTasks.mockResolvedValue(running);
+    await act(async () => {
+      client.setQueryData(["browser-tasks", "session-1"], running);
+    });
+    expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
+    expect(container.querySelector("section")).toBe(column);
+
+    act(() => place(scroller(container), { scrollTop: 0, scrollHeight: 4000, clientHeight: 600 }));
+    expect(screen.getByLabelText("Jump to the latest message")).toBeInTheDocument();
+  });
+
+  /**
+   * On a phone the sheet never opens by itself and the prompt is inside it,
+   * so a login wall would otherwise be invisible: the header control carries
+   * the filled square — "this one is yours" — while a sign-in waits.
+   */
+  it("marks the header control on a narrow screen while a sign-in waits", async () => {
+    onAPhone = true;
+    browserTasks.mockResolvedValue({
+      ...running,
+      tasks: [{ ...running.tasks[0], status: "failed", stopReason: "login_required" }],
+      session: { ...running.session, liveState: "none" },
+    });
+    await renderChat();
+
+    const control = await screen.findByRole("button", {
+      name: "Show the browser: a site needs you to sign in",
+    });
+    expect(control.querySelector(".bg-accent-orange")).not.toBeNull();
+  });
+
+  it("does not mark it when nothing is waiting on the person", async () => {
+    onAPhone = true;
+    browserTasks.mockResolvedValue(running);
+    await renderChat();
+
+    const control = await screen.findByRole("button", { name: "Show the browser" });
+    expect(control.querySelector(".bg-accent-orange")).toBeNull();
+  });
+
+  /** Ruling R18: a drained v2 task keeps its old card, in the transcript. */
+  it("still offers a v2 task's sign-in in the transcript", async () => {
+    browserTasks.mockResolvedValue({
+      tasks: [
+        {
+          ...running.tasks[0],
+          status: "failed",
+          output: "could not sign in",
+          apiVersion: "v2",
+          browserSessionId: null,
+        },
+      ],
+      session: null,
+      events: [],
+      delivered: false,
+    });
+    await renderChat();
+
+    expect(await screen.findByRole("button", { name: /sign in myself/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Browser" })).toBeNull();
   });
 });

@@ -29,7 +29,7 @@ export type QueryResult = {
 export type Filter = {
   column: string;
   value: unknown;
-  kind: "eq" | "in" | "gt" | "ilike" | "is" | "not" | "textSearch";
+  kind: "eq" | "neq" | "in" | "gt" | "ilike" | "is" | "not" | "textSearch";
 };
 
 export type QueryContext = {
@@ -101,6 +101,15 @@ class Chain implements PromiseLike<QueryResult> {
 
   eq(column: string, value: unknown) {
     this.ctx.filters.push({ column, value, kind: "eq" });
+    return this;
+  }
+
+  // A conditional write's guard — `live_state <> 'human'` — recorded as its own
+  // kind, because "never overwrite that one value" and "only from this one
+  // value" are different predicates and a test has to be able to tell them
+  // apart.
+  neq(column: string, value: unknown) {
+    this.ctx.filters.push({ column, value, kind: "neq" });
     return this;
   }
 

@@ -37,7 +37,30 @@ import { serviceClient } from "../supabase";
  * `lib/browser/takeover.ts` — and names the attempt this row replaces after a
  * takeover, which is how the card knows not to offer a second free attempt for
  * a task that already has a successor (0077).
+ *
+ * **Two shapes, because two APIs are live at once (0078).** `browse` now
+ * creates v4 runs, each inside the conversation's browser session; the
+ * take-over's re-run still creates a v2 task until it moves too, and v2 rows
+ * already in flight are drained on the v2 API. A v4 row says so in
+ * `api_version` — the column the poller branches on — and carries its run id
+ * and its browser. **`provider_task_id` gets the run id as well**: the column
+ * is `not null`, and every reader written before v4 reads it, so the one value
+ * that addresses something real is better than an empty string that
+ * addresses nothing. A v2 row is written exactly as it always was, and the
+ * column's default says what it is.
  */
+export type RecordedRun =
+  | {
+      /** The v2 task. */
+      providerTaskId: string;
+    }
+  | {
+      /** The v4 run, written to `provider_run_id` and to `provider_task_id`. */
+      providerRunId: string;
+      /** The `browser_sessions` row the run is driving. */
+      browserSessionId: string;
+    };
+
 export async function recordBrowserTask(
   env: RoutineEnv,
   input: {
@@ -45,12 +68,20 @@ export async function recordBrowserTask(
     agentId: string;
     userId: string;
     sessionId: string;
-    providerTaskId: string;
     task: string;
     /** The attempt this one replaces, after a takeover. See the header. */
     retryOf?: string;
-  },
+  } & RecordedRun,
 ): Promise<string | null> {
+  const provider =
+    "providerRunId" in input
+      ? {
+          provider_task_id: input.providerRunId,
+          provider_run_id: input.providerRunId,
+          browser_session_id: input.browserSessionId,
+          api_version: "v4",
+        }
+      : { provider_task_id: input.providerTaskId };
   const { data, error } = await serviceClient(env)
     .from("browser_tasks")
     .insert({
@@ -58,7 +89,7 @@ export async function recordBrowserTask(
       agent_id: input.agentId,
       user_id: input.userId,
       session_id: input.sessionId,
-      provider_task_id: input.providerTaskId,
+      ...provider,
       task: input.task,
       status: "queued",
       retry_of: input.retryOf ?? null,

@@ -177,6 +177,27 @@ vi.mock("./client", async (importOriginal) => {
   };
 });
 
+/**
+ * The stop of a conversation's browser, mocked at the module: its own tests
+ * are `controls.test.ts`'s, and this file asks only whether `forgetProfile`
+ * calls it, for which browsers, and in what order against the deletions.
+ */
+const stopSessionBrowsers = vi.fn(
+  async (
+    _env: unknown,
+    _input: { providerSessionId: string | null; storedBrowserId: string | null },
+  ): Promise<boolean> => true,
+);
+vi.mock("./controls", () => ({
+  stopSessionBrowsers: (
+    env: unknown,
+    input: { providerSessionId: string | null; storedBrowserId: string | null },
+  ) => {
+    log.push("provider stop session browsers");
+    return stopSessionBrowsers(env, input);
+  },
+}));
+
 vi.mock("./tasks", () => ({
   recordBrowserTask: (env: RoutineEnv, input: Parameters<typeof recordBrowserTask>[1]) => {
     log.push("record browser_task");
@@ -192,6 +213,7 @@ import {
   profileFor,
   forgetProfile,
   retryBrowserTask,
+  runProfile,
   type RetryableTask,
 } from "./takeover";
 import { TAKEOVER_PROVIDER_MINUTES } from "./profiles";
@@ -229,8 +251,11 @@ function matchesFilters(row: Row, filters: Filter[]): boolean {
  * original task through the service client — losing §2's whole reason for the
  * `workspace_id` column — would throw here instead of passing.
  */
-function store(seed: { takeovers?: Row[]; profiles?: Row[]; tasks?: Row[] } = {}) {
+function store(
+  seed: { takeovers?: Row[]; profiles?: Row[]; tasks?: Row[]; sessions?: Row[] } = {},
+) {
   const takeovers = [...(seed.takeovers ?? [])];
+  const sessions = [...(seed.sessions ?? [])];
   const profiles = [...(seed.profiles ?? [])];
   const tasks = [...(seed.tasks ?? [])];
   const state = {
@@ -283,7 +308,9 @@ function store(seed: { takeovers?: Row[]; profiles?: Row[]; tasks?: Row[] } = {}
           if (profiles.some((r) => r.user_id === values.user_id)) {
             return { data: null, error: null };
           }
-          const row = { id: `prof-${++ids}`, ...values };
+          // `created_at` is `not null default now()` in 0077: a claim made
+          // this instant is a request in flight, not an abandoned one.
+          const row = { id: `prof-${++ids}`, created_at: NOW.toISOString(), ...values };
           profiles.push(row);
           return { data: ctx.single ? row : [row], error: null };
         },
@@ -316,6 +343,12 @@ function store(seed: { takeovers?: Row[]; profiles?: Row[]; tasks?: Row[] } = {}
         },
         update: write("browser_takeovers", takeovers),
       } satisfies TableHandlers,
+      // The browser beside a conversation (0078), which `forgetProfile` asks
+      // about before it deletes the jar those browsers carry (final-review I5).
+      browser_sessions: {
+        select: read("browser_sessions", sessions),
+        update: write("browser_sessions", sessions),
+      },
     },
   });
 
@@ -329,6 +362,7 @@ function store(seed: { takeovers?: Row[]; profiles?: Row[]; tasks?: Row[] } = {}
     takeovers,
     profiles,
     tasks,
+    sessions,
     state,
     deps: {
       db: service.db as unknown as SupabaseClient,
@@ -348,6 +382,18 @@ function profileRow(over: Row = {}): Row {
     cookie_domains: ["mail.google.com"],
     proxy_country_code: null,
     created_at: NOW.toISOString(),
+    ...over,
+  };
+}
+
+/** A browser beside a conversation, idle, still naming its session and browser. */
+function sessionRow(over: Row = {}): Row {
+  return {
+    id: "bs-1",
+    user_id: "user-1",
+    live_state: "none",
+    provider_session_id: "bu-agent-session",
+    provider_browser_id: "bu-browser",
     ...over,
   };
 }
@@ -404,9 +450,11 @@ beforeEach(() => {
     createTask,
     recordBrowserTask,
     sleep,
+    stopSessionBrowsers,
   ]) {
     fn.mockReset();
   }
+  stopSessionBrowsers.mockResolvedValue(true);
   accountHeadroom.mockResolvedValue({ kind: "ok", value: { active: 1, limit: 10 } });
   createProfile.mockResolvedValue({ kind: "ok", value: { id: "bu-profile", cookieDomains: [] } });
   getProfile.mockResolvedValue({
@@ -641,6 +689,80 @@ describe("ensureProfile", () => {
     expect(s.profiles).toEqual([]);
     expect(getProfile).not.toHaveBeenCalled();
     expect(createBrowser).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Ruling R19: a person's jar is provisioned on their first `browse` (and on a
+ * hand-back that turns out to be first), so a sign-in performed in the panel
+ * has a profile to be saved into. `ensureProfile`'s claim-first order, so a
+ * person gets one profile at the provider however many first runs race; and
+ * never a reason for the run not to start.
+ */
+describe("runProfile", () => {
+  it("answers the jar a person already has, without calling the provider", async () => {
+    const s = store({ profiles: [profileRow({ proxy_country_code: "de" })] });
+
+    await expect(runProfile(ENV, "user-1", s.deps)).resolves.toEqual({
+      id: "prof-1",
+      providerProfileId: "bu-profile",
+      proxyCountryCode: "de",
+    });
+    expect(createProfile).not.toHaveBeenCalled();
+  });
+
+  it("provisions one, claim first, for a person who has none", async () => {
+    const s = store();
+
+    const profile = await runProfile(ENV, "user-1", s.deps);
+
+    expect(profile).toEqual({
+      id: "prof-1",
+      providerProfileId: "bu-profile",
+      proxyCountryCode: null,
+    });
+    expect(log).toEqual([
+      "select browser_profiles",
+      "insert browser_profiles",
+      "provider createProfile",
+      "update browser_profiles",
+    ]);
+    // The route's constant, never the person's email: a label, not an identity.
+    expect(createProfile.mock.calls[0][1]).toEqual({ name: "covan", userId: "user-1" });
+  });
+
+  it("makes one profile at the provider when two first runs race", async () => {
+    const s = store();
+
+    const both = await Promise.all([
+      runProfile(ENV, "user-1", s.deps),
+      runProfile(ENV, "user-1", s.deps),
+    ]);
+
+    expect(createProfile).toHaveBeenCalledTimes(1);
+    expect(s.profiles).toHaveLength(1);
+    // The loser re-reads: it joins the winner's jar if the fill has landed,
+    // or runs without one if the claim is still mid-flight — never a second
+    // profile, and never a different one.
+    const held = both.filter((p) => p !== null);
+    expect(held.length).toBeGreaterThan(0);
+    for (const p of held) {
+      expect(p).toEqual({ id: "prof-1", providerProfileId: "bu-profile", proxyCountryCode: null });
+    }
+  });
+
+  it("answers null, logging only a status, when the provider will not make one", async () => {
+    createProfile.mockResolvedValue({
+      kind: "error",
+      status: 402,
+      message: '402 Payment Required\n{"detail":"Profile limit exceeded"}',
+    });
+    const s = store();
+
+    await expect(runProfile(ENV, "user-1", s.deps)).resolves.toBeNull();
+    expect(s.profiles).toEqual([]);
+    expect(JSON.stringify(spoken)).not.toContain("Profile limit exceeded");
+    expect(spoken.flat()).toContain(402);
   });
 });
 
@@ -1146,6 +1268,7 @@ describe("forgetProfile", () => {
     expect(r).toEqual({ kind: "ok", forgotten: ["mail.google.com"] });
     expect(log).toEqual([
       "select browser_takeovers",
+      "select browser_sessions",
       "select browser_profiles",
       "provider deleteProfile",
       "delete browser_profiles",
@@ -1191,6 +1314,87 @@ describe("forgetProfile", () => {
     expect(r).toMatchObject({ kind: "error", status: 409 });
     expect(log).not.toContain("provider deleteProfile");
     expect(s.profiles).toHaveLength(1);
+  });
+
+  /**
+   * Final-review I5: the browser beside a conversation runs on this jar too.
+   * One the agent is driving, or one in the person's own hands, is the open
+   * takeover's case again — deleting underneath it destroys what is being
+   * done in it.
+   */
+  it.each(["agent", "human"])(
+    "refuses while a conversation's browser is in %s hands",
+    async (liveState) => {
+      const s = store({
+        profiles: [profileRow()],
+        sessions: [sessionRow({ live_state: liveState })],
+      });
+      const r = await forgetProfile(ENV, "user-1", s.deps);
+
+      expect(r).toMatchObject({ kind: "error", status: 409 });
+      expect(log).not.toContain("provider deleteProfile");
+      expect(stopSessionBrowsers).not.toHaveBeenCalled();
+      expect(s.profiles).toHaveLength(1);
+      expect(s.sessions[0]).toMatchObject({ provider_session_id: "bu-agent-session" });
+    },
+  );
+
+  /**
+   * An idle browser still carries the jar, and its agent session would hand
+   * the forgotten cookies to the next run. So the browser is stopped
+   * (best-effort), and the session forgotten: the next `browse` in that
+   * conversation opens a fresh one.
+   */
+  it("stops an idle browser and forgets its session before it forgets the jar", async () => {
+    const s = store({ profiles: [profileRow()], sessions: [sessionRow()] });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers.mock.calls[0][1]).toMatchObject({
+      providerSessionId: "bu-agent-session",
+      storedBrowserId: "bu-browser",
+    });
+    expect(s.sessions[0]).toMatchObject({
+      live_state: "none",
+      provider_session_id: null,
+      provider_browser_id: null,
+    });
+    expect(log.indexOf("provider stop session browsers")).toBeLessThan(
+      log.indexOf("provider deleteProfile"),
+    );
+  });
+
+  it("does not stop a browser already known stopped, and still forgets its session", async () => {
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [sessionRow({ provider_browser_id: null })],
+    });
+    await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(stopSessionBrowsers).not.toHaveBeenCalled();
+    expect(s.sessions[0]).toMatchObject({ provider_session_id: null });
+  });
+
+  it("forgets the jar even when an idle browser will not stop", async () => {
+    stopSessionBrowsers.mockResolvedValue(false);
+    const s = store({ profiles: [profileRow()], sessions: [sessionRow()] });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r).toMatchObject({ kind: "ok" });
+    expect(s.profiles).toEqual([]);
+    expect(s.sessions[0]).toMatchObject({ provider_session_id: null, provider_browser_id: null });
+  });
+
+  it("leaves somebody else's browsers alone", async () => {
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [sessionRow({ user_id: "someone-else", live_state: "human" })],
+    });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers).not.toHaveBeenCalled();
+    expect(s.sessions[0]).toMatchObject({ provider_session_id: "bu-agent-session" });
   });
 
   it("ignores a takeover that has already lapsed, which is not a running browser", async () => {

@@ -385,6 +385,8 @@ services:
       # either way, because the provider's `secrets` field is never populated.
       BROWSER_USE_API_KEY: ${BROWSER_USE_API_KEY:-}
       BROWSER_USE_BASE_URL: ${BROWSER_USE_BASE_URL:-}
+      BROWSER_USE_V4_BASE_URL: ${BROWSER_USE_V4_BASE_URL:-}
+      BROWSER_USE_MODEL: ${BROWSER_USE_MODEL:-}
       PORT: 8787
       ROUTINE_TICK_MS: ${ROUTINE_TICK_MS:-60000}
     volumes:

@@ -184,9 +184,9 @@ it in, which is the boundary stated as code rather than as a promise: nothing
 typed into Covan can be handed to a browser.
 
 A browser task can nonetheless act inside a site you are signed in to, because
-you can sign in yourself. When a task stops at a login wall, Covan rents a
-browser and hands you its address; you sign in at the site, in your own tab,
-and press done. What persists is a *profile* held at browser-use — cookies and
+you can sign in yourself. When a task stops at a login wall, you take over the
+browser the task was using — it is shown in a panel beside the conversation —
+sign in at the site, and press Done. What persists is a *profile* held at browser-use — cookies and
 session state, never in Covan's database — and it belongs to one person rather
 than to a workspace, because a login is a property of a person and not of a
 room they are in. Covan stores an opaque reference to that profile and the list
@@ -204,6 +204,42 @@ not a member's: nobody is asked to pay a third party to use the feature, and a
 task is metered against the allowance they already have. Unset the variable and
 the tool does not exist. The public list for covan.app is on the
 [subprocessor page](https://covan.app/subprocessors).
+
+**The panel hands somebody a live browser, and its address is the whole of the
+access.** Whoever holds the live view's URL can see that browser, and the
+provider's own instruction for it is *"Treat the URL as a credential"*; Covan
+does. It is returned in the response body of a request made by the browser's
+owner and nowhere else: not stored in a row, not written to a log, not put in a
+message or an error string, and the response says `no-store` so nothing caches
+it. It is minted fresh each time the owner's tab asks, which is how a reloaded
+tab gets its browser back without the address ever being kept. An API key is
+refused those routes: a live view is access that would outlive the key.
+
+**View-only is a restriction of the page, not of the provider** — in the
+provider's words, *"View-only embeds are a UI restriction, not a server-enforced
+permission."* While the agent drives, the panel is `inert`, and that is a courtesy
+to the person watching, not a lock, which is why the address is protected as
+above rather than by the frame. The line Covan *does* enforce is that two sets of
+hands never share one browser: **Take over cancels the agent's run first**, and
+the browser is handed over only once the provider says the run has ended, so a
+person is never typing into a field the agent is mid-way through.
+
+**It is the owner's alone.** `browser_sessions` has one policy, the same shape as
+the browser tasks': the row is the owner's, and only while they are still a
+member of the workspace. A colleague in a shared conversation sees the answers,
+which are ordinary messages, and nothing of the browser; asking for its routes
+gets the same 404 as asking for something that does not exist. The provider's
+identifiers for a session, a browser, a run and a profile are granted to no
+client role at all, for the reason `connected_account_id` has: one deployment key
+makes each of them the address of something running, possibly signed in as
+somebody. A browser somebody took over and never handed back is stopped by a
+sweep about ten minutes after their tab stops asking for it (the open tab is the
+proof somebody is still there), and one nobody is using about ten minutes after
+its last task, because stopping it is what saves their sign-in into their own
+profile and ends the billing. Both are floors: the sweep runs every five
+minutes. Forgetting the sign-ins refuses while one of these browsers is in use,
+and otherwise stops the idle ones and forgets their sessions, so no later task
+carries the forgotten cookies.
 
 Every human action in this is still an ordinary policy, because every one of
 them is a person changing a row: members see grants, anyone who can write may

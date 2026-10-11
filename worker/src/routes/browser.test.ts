@@ -10,6 +10,7 @@ import {
 import { browser, offerable } from "./browser";
 import * as takeover from "../lib/browser/takeover";
 import * as profiles from "../lib/browser/profiles";
+import * as controls from "../lib/browser/controls";
 
 /**
  * The route half of a takeover, which is the half that answers permission
@@ -495,6 +496,321 @@ describe("the browser profile", () => {
 
     expect(status).toBe(409);
     expect(body.error).toBe("a browser of yours is open right now");
+  });
+});
+
+/**
+ * The browser beside the conversation: watch, take over, hand back, stop.
+ *
+ * What these pin is the route's half — the refusal first, the row read
+ * through the caller's own client (RLS deciding "not yours" as 404), and only
+ * then the module that holds the service role, called with the row id and the
+ * caller's own user id. `controls.test.ts` pins what the module does.
+ */
+describe("/browser/sessions/:id", () => {
+  const SESSION = { id: "bs-1", live_state: "agent", human_since: null };
+  const ORIGINAL = {
+    id: "bt-0",
+    workspace_id: WORKSPACE_ID,
+    agent_id: "agent-1",
+    user_id: USER.id,
+    session_id: "chat-1",
+    task: "read the pricing table",
+    retry_of: null,
+    // A settled `login_required`: the run completed, and the row says failed.
+    status: "failed",
+    stop_reason: null,
+  };
+  const LIVE = "https://live.browser-use.com/the-panel";
+
+  let take: ReturnType<typeof vi.spyOn>;
+  let hand: ReturnType<typeof vi.spyOn>;
+  let watch: ReturnType<typeof vi.spyOn>;
+  let stop: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    take = vi
+      .spyOn(controls, "takeOverBrowser")
+      .mockResolvedValue({ kind: "human", humanSince: 1_791_000_000_000 });
+    hand = vi
+      .spyOn(controls, "handBackBrowser")
+      .mockResolvedValue({ kind: "ok", browserTaskId: "bt-1" });
+    watch = vi
+      .spyOn(controls, "liveBrowser")
+      .mockResolvedValue({ kind: "ok", liveUrl: LIVE, liveState: "agent" });
+    stop = vi.spyOn(controls, "stopConversationBrowser").mockResolvedValue({ kind: "ok" });
+  });
+
+  function withSession(
+    row: Record<string, unknown> | null,
+    tasks: Record<string, unknown> | null = ORIGINAL,
+    apiKeyId?: string,
+  ) {
+    return appWith({
+      apiKeyId,
+      tables: { browser_sessions: selects(row), browser_tasks: selects(tasks) },
+    });
+  }
+
+  async function call(fixture: ReturnType<typeof appWith>, method: string, path: string) {
+    const res = await fixture.app.request(path, { method }, {
+      BROWSER_USE_API_KEY: "bu_test",
+    } as never);
+    const raw = await res.text();
+    return {
+      status: res.status,
+      body: raw ? (JSON.parse(raw) as Record<string, unknown>) : null,
+      headers: res.headers,
+    };
+  }
+
+  const ROUTES: Array<[string, string]> = [
+    ["GET", "/browser/sessions/bs-1/live"],
+    ["POST", "/browser/sessions/bs-1/take-over"],
+    ["POST", "/browser/sessions/bs-1/hand-back"],
+    ["POST", "/browser/sessions/bs-1/stop"],
+  ];
+
+  const anyModuleCalled = () => [take, hand, watch, stop].some((spy) => spy.mock.calls.length > 0);
+
+  it.each(ROUTES)("refuses an API key on %s %s before reading anything", async (method, path) => {
+    const fixture = withSession({ ...SESSION, live_state: "human" }, ORIGINAL, "key-1");
+    const { status, body } = await call(fixture, method, path);
+
+    expect(status).toBe(403);
+    expect(String(body?.error)).toContain("api keys cannot");
+    expect(fixture.calls.filter((c) => c.table === "browser_sessions")).toEqual([]);
+    expect(anyModuleCalled()).toBe(false);
+  });
+
+  /**
+   * RLS on `browser_sessions` is the owner's: a colleague in the same shared
+   * conversation sees the answers and nothing of the browser, so to them the
+   * row is not there — and "not yours" is the same 404 as "no such thing".
+   */
+  it.each(ROUTES)(
+    "404s %s %s for a browser the caller's client cannot see",
+    async (method, path) => {
+      const fixture = withSession(null);
+      const { status } = await call(fixture, method, path);
+
+      expect(status).toBe(404);
+      expect(anyModuleCalled()).toBe(false);
+    },
+  );
+
+  it.each(ROUTES)("reads %s %s's row through the caller's own client", async (method, path) => {
+    const fixture = withSession({ ...SESSION, live_state: "human" });
+    await call(fixture, method, path);
+
+    const read = fixture.calls.find((c) => c.table === "browser_sessions");
+    expect(read?.filters).toContainEqual({ column: "id", value: "bs-1", kind: "eq" });
+  });
+
+  describe("GET …/live", () => {
+    it("hands the live URL to its owner in the body, and writes it nowhere", async () => {
+      const said = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fixture = withSession(SESSION);
+      const { status, body, headers } = await call(fixture, "GET", "/browser/sessions/bs-1/live");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ liveUrl: LIVE, liveState: "agent" });
+      expect(watch.mock.calls[0][1]).toEqual({ browserSessionId: "bs-1", userId: USER.id });
+      // A credential: not for a shared cache or the browser's disk cache.
+      expect(headers.get("Cache-Control")).toBe("no-store");
+      expect(JSON.stringify(fixture.calls)).not.toContain("the-panel");
+      const spoken = [said, console.error as unknown as typeof said].flatMap((s) => s.mock.calls);
+      expect(JSON.stringify(spoken)).not.toContain("the-panel");
+    });
+
+    it("re-mints on every call, so a reload gets the browser back", async () => {
+      const fixture = withSession(SESSION);
+      await call(fixture, "GET", "/browser/sessions/bs-1/live");
+      const again = await call(fixture, "GET", "/browser/sessions/bs-1/live");
+
+      expect(again.body).toMatchObject({ liveUrl: LIVE });
+      expect(watch).toHaveBeenCalledTimes(2);
+    });
+
+    it("409s when no browser is live", async () => {
+      watch.mockResolvedValue({ kind: "error", status: 409, message: "no browser is open" });
+      const fixture = withSession(SESSION);
+      const { status, body } = await call(fixture, "GET", "/browser/sessions/bs-1/live");
+
+      expect(status).toBe(409);
+      expect(body).toEqual({ error: "no browser is open" });
+    });
+  });
+
+  describe("POST …/take-over", () => {
+    it("answers human once the provider says the run has ended", async () => {
+      const fixture = withSession(SESSION);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/take-over");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ liveState: "human", humanSince: 1_791_000_000_000 });
+      expect(take.mock.calls[0][1]).toEqual({ browserSessionId: "bs-1", userId: USER.id });
+    });
+
+    /** Review focus 2: the panel stays inert until the run is really over. */
+    it("answers 202 cancelling while the run has not ended", async () => {
+      take.mockResolvedValue({ kind: "cancelling" });
+      const fixture = withSession(SESSION);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/take-over");
+
+      expect(status).toBe(202);
+      expect(body).toEqual({ liveState: "cancelling" });
+    });
+
+    it("answers a browser already in the caller's hands without touching the provider", async () => {
+      const fixture = withSession({
+        ...SESSION,
+        live_state: "human",
+        human_since: "2026-10-10T12:00:00.000Z",
+      });
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/take-over");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({
+        liveState: "human",
+        humanSince: Date.parse("2026-10-10T12:00:00.000Z"),
+      });
+      expect(take).not.toHaveBeenCalled();
+    });
+
+    it("passes the module's refusal through with its status", async () => {
+      take.mockResolvedValue({ kind: "error", status: 502, message: "could not stop the agent" });
+      const fixture = withSession(SESSION);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/take-over");
+
+      expect(status).toBe(502);
+      expect(body).toEqual({ error: "could not stop the agent" });
+    });
+  });
+
+  describe("POST …/hand-back", () => {
+    const HUMAN = { ...SESSION, live_state: "human", human_since: "2026-10-10T12:00:00.000Z" };
+
+    it("continues the newest task in this browser, read through the caller's client", async () => {
+      const fixture = withSession(HUMAN);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ browserTaskId: "bt-1" });
+      expect(hand.mock.calls[0][1]).toEqual({
+        browserSessionId: "bs-1",
+        userId: USER.id,
+        original: ORIGINAL,
+      });
+      const read = fixture.calls.find(
+        (c) => c.table === "browser_tasks" && !c.filters.some((f) => f.column === "retry_of"),
+      );
+      expect(read?.filters).toContainEqual({
+        column: "browser_session_id",
+        value: "bs-1",
+        kind: "eq",
+      });
+      expect(read?.order).toEqual([{ column: "created_at", ascending: false }]);
+    });
+
+    /** The one free retry: a second hand-back for the same task is refused before it costs. */
+    it("409s an original that already has a successor, before the provider is asked", async () => {
+      let call_ = 0;
+      const fixture = appWith({
+        tables: {
+          browser_sessions: selects(HUMAN),
+          browser_tasks: {
+            select: () => {
+              call_ += 1;
+              return call_ === 1
+                ? { data: ORIGINAL, error: null }
+                : { data: { id: "bt-1" }, error: null };
+            },
+          },
+        },
+      });
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(409);
+      expect(String(body?.error)).toContain("already been tried again");
+      expect(hand).not.toHaveBeenCalled();
+    });
+
+    it("continues a run the person took over mid-way", async () => {
+      const midRun = { ...ORIGINAL, status: "stopped", stop_reason: "handed_to_person" };
+      const fixture = withSession(HUMAN, midRun);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ browserTaskId: "bt-1" });
+      expect(hand.mock.calls[0][1]).toMatchObject({ original: { id: "bt-0" } });
+    });
+
+    /**
+     * `offerable()`'s rule, which the free retry has always been bound by: a
+     * task that answered has nothing to continue, and re-running it would put
+     * a second answer in the conversation and spend the retry. A run stopped
+     * at its cost ceiling is not offered either — continuing it would be a
+     * second full ceiling of the operator's money.
+     */
+    it.each([
+      ["a task that finished", { status: "finished", stop_reason: null }],
+      ["a run stopped at its cost ceiling", { status: "stopped", stop_reason: "cost_cap" }],
+    ])("409s %s, before the provider is asked or a row is written", async (_label, over) => {
+      const fixture = withSession(HUMAN, { ...ORIGINAL, ...over });
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(409);
+      expect(String(body?.error)).toContain("nothing for the agent to continue");
+      // `handBackBrowser` is the only thing here that calls the provider or
+      // writes a row, so not calling it is both.
+      expect(hand).not.toHaveBeenCalled();
+      expect(fixture.calls.filter((c) => c.op !== "select")).toEqual([]);
+    });
+
+    it("409s a browser that is not in the caller's hands", async () => {
+      const fixture = withSession(SESSION);
+      const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(409);
+      expect(hand).not.toHaveBeenCalled();
+    });
+
+    it("409s when this browser has run nothing to continue", async () => {
+      const fixture = withSession(HUMAN, null);
+      const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(409);
+      expect(hand).not.toHaveBeenCalled();
+    });
+
+    it("passes the module's refusal through with its status", async () => {
+      hand.mockResolvedValue({ kind: "error", status: 409, message: "already tried once" });
+      const fixture = withSession(HUMAN);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(409);
+      expect(body).toEqual({ error: "already tried once" });
+    });
+  });
+
+  describe("POST …/stop", () => {
+    it("stops the browser and answers 204", async () => {
+      const fixture = withSession({ ...SESSION, live_state: "human" });
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
+
+      expect(status).toBe(204);
+      expect(body).toBeNull();
+      expect(stop.mock.calls[0][1]).toEqual({ browserSessionId: "bs-1", userId: USER.id });
+    });
+
+    it("passes a failed stop through with its status", async () => {
+      stop.mockResolvedValue({ kind: "error", status: 502, message: "could not stop it" });
+      const fixture = withSession(SESSION);
+      const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
+
+      expect(status).toBe(502);
+    });
   });
 });
 

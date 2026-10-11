@@ -277,3 +277,121 @@ describe("when the ground has moved", () => {
     await expect(deliverBrowserTask(ROW, FINISHED, ENV, fakeDb())).resolves.toBeUndefined();
   });
 });
+
+describe("a v4 run that stopped short (ruling R8's outcome)", () => {
+  const LOGIN: FinishedTask = {
+    status: "failed",
+    output: null,
+    error: null,
+    costUsd: 0.04,
+    reported: { status: "login_required", host: "linkedin.com", answer: null },
+  };
+
+  /**
+   * The one failure a person can fix with their own hands while the browser
+   * is still there. So the message names the site and points at the panel,
+   * in one sentence, through the same model call as every other answer —
+   * which is what puts it in the person's language.
+   */
+  it("asks for a sign-in on the named site, and says the browser panel is waiting", async () => {
+    complete.mockResolvedValue({
+      text: "LinkedIn wants you to sign in — the browser beside this chat is waiting for you.",
+      usage: { promptTokens: 120, completionTokens: 20 } as CompletionUsage,
+      finishReason: "stop",
+    });
+    await deliverBrowserTask(ROW, LOGIN, ENV, fakeDb());
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    const request = complete.mock.calls[0][1];
+    const prompt = request.messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("linkedin.com");
+    expect(prompt).toMatch(/sign in/i);
+    expect(prompt).toMatch(/browser panel/i);
+    expect(prompt).toMatch(/one sentence/i);
+    expect(prompt).toMatch(/language/i);
+    expect(String(inserted[0].content)).toContain("LinkedIn wants you to sign in");
+  });
+
+  it("still names the site and the panel when the model call fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    complete.mockRejectedValue(new Error("provider down"));
+    await deliverBrowserTask(ROW, LOGIN, ENV, fakeDb());
+    error.mockRestore();
+    expect(inserted).toHaveLength(1);
+    expect(String(inserted[0].content)).toContain("linkedin.com");
+    expect(String(inserted[0].content)).toMatch(/browser/i);
+  });
+
+  /**
+   * The run's `host` is a model's words, and settle already narrows it to a
+   * bare host before it stores one. The message says the same site the panel
+   * does, not the raw string — a URL with a path and capitals is not a site's
+   * name, and a sentence carrying one reads like a link.
+   */
+  it("names the site as a bare host, the way the panel does", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    complete.mockRejectedValue(new Error("provider down"));
+    await deliverBrowserTask(
+      ROW,
+      {
+        ...LOGIN,
+        reported: {
+          status: "login_required",
+          host: "https://LinkedIn.com:443/login",
+          answer: null,
+        },
+      },
+      ENV,
+      fakeDb(),
+    );
+    error.mockRestore();
+    expect(String(inserted[0].content)).toMatch(/^linkedin\.com needs you to sign in/);
+  });
+
+  it("falls back to a description when the host is not a host at all", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    complete.mockRejectedValue(new Error("provider down"));
+    await deliverBrowserTask(
+      ROW,
+      { ...LOGIN, reported: { status: "login_required", host: "the login page", answer: null } },
+      ENV,
+      fakeDb(),
+    );
+    error.mockRestore();
+    expect(String(inserted[0].content)).toMatch(/^a site it needed needs you to sign in/);
+  });
+
+  it("says what stopped it when the run was blocked", async () => {
+    await deliverBrowserTask(
+      ROW,
+      {
+        status: "failed",
+        output: "a captcha would not clear",
+        error: null,
+        costUsd: 0.04,
+        reported: { status: "blocked", host: null, answer: "a captcha would not clear" },
+      },
+      ENV,
+      fakeDb(),
+    );
+    const prompt = complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("a captcha would not clear");
+    expect(prompt).toMatch(/what stopped it/i);
+    expect(prompt).not.toMatch(/browser panel/i);
+  });
+
+  it("answers a run that said done exactly as before", async () => {
+    await deliverBrowserTask(
+      ROW,
+      {
+        ...FINISHED,
+        reported: { status: "done", host: null, answer: FINISHED.output },
+      },
+      ENV,
+      fakeDb(),
+    );
+    const prompt = complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("It reports that it succeeded.");
+    expect(prompt).not.toMatch(/browser panel/i);
+  });
+});

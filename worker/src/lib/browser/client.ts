@@ -44,7 +44,7 @@ export const TIMEOUT_MS = 15_000;
 
 export type BrowserEnv = Pick<
   RoutineEnv,
-  "BROWSER_USE_API_KEY" | "BROWSER_USE_BASE_URL" | "SUBREQUESTS"
+  "BROWSER_USE_API_KEY" | "BROWSER_USE_BASE_URL" | "BROWSER_USE_V4_BASE_URL" | "SUBREQUESTS"
 >;
 
 /** Our vocabulary, not theirs. See `mapStatus`. */
@@ -101,7 +101,7 @@ function mapStatus(raw: unknown): BrowserTaskStatus {
  * insert with a message about the column rather than about the provider. So
  * this answers null for anything that is not a finite number.
  */
-function parseCost(raw: unknown): number | null {
+export function parseCost(raw: unknown): number | null {
   if (typeof raw !== "string" && typeof raw !== "number") return null;
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
@@ -118,7 +118,12 @@ export async function send<T>(
   env: BrowserEnv,
   path: string,
   init: { method: string; body?: unknown; redactBody?: boolean },
-  opts: { signal?: AbortSignal } | undefined,
+  /**
+   * `base` replaces the v2 base for this one request, with no trailing slash.
+   * `v4.ts` is the only thing that passes it, and it resolves
+   * `BROWSER_USE_V4_BASE_URL` first; everything else here keeps `baseOf`.
+   */
+  opts: { signal?: AbortSignal; base?: string } | undefined,
   parse: (body: unknown) => T,
 ): Promise<BrowserResult<T>> {
   const key = env.BROWSER_USE_API_KEY;
@@ -137,7 +142,7 @@ export async function send<T>(
   const fetchImpl = meteredFetch(env) ?? fetch;
   let res: Response;
   try {
-    res = await fetchImpl(`${baseOf(env)}${path}`, {
+    res = await fetchImpl(`${opts?.base ?? baseOf(env)}${path}`, {
       method: init.method,
       headers: {
         // The provider's own header name, and no `Bearer` prefix. Their key

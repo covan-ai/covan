@@ -19,6 +19,7 @@ import {
 } from "../lib/browser/credentials";
 import { openBrowsersAmong } from "../lib/browser/live";
 import { browserLiveUrl } from "../lib/browser/profiles";
+import { cancelWaitingTask, NOT_STARTED } from "../lib/browser/queue";
 import { runInFlight } from "../lib/browser/sessions";
 import { HUMAN_GIVE_UP_HOURS } from "../lib/browser/sweep";
 import {
@@ -684,6 +685,11 @@ browser.post("/browser/sessions/:id/hand-back", async (c) => {
     .from("browser_tasks")
     .select("id, workspace_id, agent_id, user_id, session_id, task, retry_of, status, stop_reason")
     .eq("browser_session_id", String(own.row.id))
+    // The task the browser last ran: one that never started (0080) has no
+    // run to continue. Not by `provider_task_id`, which no client role may
+    // read (0073), so not filter on either.
+    .neq("status", "waiting")
+    .or(`stop_reason.is.null,stop_reason.neq.${NOT_STARTED}`)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -809,6 +815,45 @@ browser.post("/browser/sessions/:id/stop", async (c) => {
 
   const stopped = await stopConversationBrowser(c.env, owned(c, own.row));
   if (stopped.kind === "error") return c.json({ error: stopped.message }, stopped.status as 502);
+  return c.body(null, 204);
+});
+
+/**
+ * POST /browser/tasks/:id/cancel — take a task out of its browser's line
+ * before its turn (0080), the panel's Remove.
+ *
+ * Whose task it is is asked through the caller's own client: 0073's policy
+ * shows a person their own tasks and nobody else's, so a row that comes back
+ * is theirs. The write is the service role's (`queue.ts`), because no client
+ * role may write `browser_tasks`, and it is a compare-and-set on `waiting`:
+ * a task that started in the meantime is not stopped by this — that is the
+ * panel's take-over — and answers 409.
+ *
+ * Refused to an API key, for the stop's reason: it changes what somebody's
+ * browser does next.
+ */
+browser.post("/browser/tasks/:id/cancel", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "remove a browser task");
+  if (refusal) return c.json(refusal, 403);
+
+  const id = c.req.param("id");
+  const { data: task, error } = await c
+    .get("db")
+    .from("browser_tasks")
+    .select("id, status")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    console.error("could not read a browser task to remove it", { code: error.code });
+    return c.json({ error: "failed to load that browser task" }, 500);
+  }
+  if (!task) return c.json({ error: "not found" }, 404);
+  if (task.status !== "waiting" || !(await cancelWaitingTask(c.env, String(task.id)))) {
+    return c.json(
+      { error: "That task has already started, so it can't be taken out of the line." },
+      409,
+    );
+  }
   return c.body(null, 204);
 });
 

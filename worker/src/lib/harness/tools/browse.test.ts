@@ -110,6 +110,25 @@ vi.mock("../../browser/sessions", () => ({
 }));
 
 /**
+ * The browser's line (0080), mocked for `profileFor`'s reason: the real
+ * functions build a service-role client, and `queue.test.ts` is where the
+ * line itself is proved. Empty unless a test says otherwise.
+ */
+const waitingInLine = vi.fn(async (_env: unknown, _id: string): Promise<number | null> => 0);
+const queueBrowserTask = vi.fn(
+  async (_env: unknown, _input: Record<string, unknown>): Promise<string | null> => "bt-waiting",
+);
+vi.mock("../../browser/queue", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../browser/queue")>();
+  return {
+    ...actual,
+    waitingInLine: (env: unknown, id: string) => waitingInLine(env, id),
+    queueBrowserTask: (env: unknown, input: Record<string, unknown>) =>
+      queueBrowserTask(env, input),
+  };
+});
+
+/**
  * Mocked because the real one builds a service-role client, and the point of
  * these tests is the tool's own decisions rather than Supabase's constructor.
  * Null is the ordinary case — somebody who has never taken over a browser has
@@ -211,6 +230,7 @@ vi.mock("../../browser/credentials", async (importOriginal) => {
 
 import { credentialAliases, type CredentialBinding } from "../../browser/credentials";
 import { browseTool, BROWSER_TASK_TOKENS } from "./browse";
+import { QUEUE_MAX } from "../../browser/queue";
 
 /**
  * `ctx.db` is a TRIPWIRE, and it is the guard for the defect of 2026-10-09.
@@ -295,6 +315,10 @@ beforeEach(() => {
   recordRunStart.mockResolvedValue(undefined);
   releaseBrowserSession.mockReset();
   releaseBrowserSession.mockResolvedValue(undefined);
+  waitingInLine.mockReset();
+  waitingInLine.mockResolvedValue(0);
+  queueBrowserTask.mockReset();
+  queueBrowserTask.mockResolvedValue("bt-waiting");
   fetchMock.mockReset();
   fetchMock.mockImplementation(async () =>
     json({ id: RUN_ID, sessionId: PROVIDER_SESSION, status: "queued" }, 202),
@@ -630,25 +654,85 @@ describe("once approved", () => {
       refusedWithNothingSpent();
     });
 
-    it("refuses while a run of this browser has not settled, in the 409's words", async () => {
-      ensureBrowserSession.mockResolvedValue({
-        kind: "ok",
-        value: {
-          id: "bs-1",
-          providerSessionId: PROVIDER_SESSION,
-          liveState: "agent",
-          runInFlight: true,
-          profileId: null,
-        },
+    /**
+     * 0080: a browser mid-run takes the task at the end of its line instead of
+     * refusing it. On 2026-10-11 the refusal is what left an agent saying three
+     * tasks were running when one was. Nothing is spent until it starts.
+     */
+    describe("the line, while the browser is busy", () => {
+      function busy(waiting = 0) {
+        ensureBrowserSession.mockResolvedValue({
+          kind: "ok",
+          value: {
+            id: "bs-1",
+            providerSessionId: PROVIDER_SESSION,
+            liveState: "agent",
+            runInFlight: true,
+            profileId: null,
+          },
+        });
+        waitingInLine.mockResolvedValue(waiting);
+      }
+
+      it("queues the task behind a run that has not settled, and says where it is in line", async () => {
+        busy();
+
+        const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+        expect(result.kind).toBe("ok");
+        const content = (result as { content: string }).content;
+        expect(content).toMatch(/^Queued: .*number 1 in line/);
+        expect(content).toMatch(/Do not call browse again/);
+        expect(queueBrowserTask).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            task: TASK,
+            site: "linkedin.com",
+            browserSessionId: "bs-1",
+            sessionId: "sess-1",
+          }),
+        );
+        refusedWithNothingSpent();
       });
 
-      const result = await browseTool.run({ task: TASK }, ctx());
+      it("queues behind tasks already waiting even when nothing runs, so the order holds", async () => {
+        busy(2);
+        ensureBrowserSession.mockResolvedValue({
+          kind: "ok",
+          value: {
+            id: "bs-1",
+            providerSessionId: PROVIDER_SESSION,
+            liveState: "none",
+            runInFlight: false,
+            profileId: null,
+          },
+        });
 
-      expect(result.kind).toBe("error");
-      expect((result as { message: string }).message).toMatch(
-        /a browser task is still running in this conversation/i,
-      );
-      refusedWithNothingSpent();
+        const result = await browseTool.run({ task: TASK }, ctx());
+
+        expect((result as { content: string }).content).toMatch(/number 3 in line/);
+        refusedWithNothingSpent();
+      });
+
+      it("refuses when the line is full, and queues nothing", async () => {
+        busy(QUEUE_MAX);
+
+        const result = await browseTool.run({ task: TASK }, ctx());
+
+        expect(result.kind).toBe("error");
+        expect((result as { message: string }).message).toMatch(/already waiting/);
+        expect(queueBrowserTask).not.toHaveBeenCalled();
+        refusedWithNothingSpent();
+      });
+
+      it("says so, and starts nothing, when the line cannot be read or written", async () => {
+        busy();
+        waitingInLine.mockResolvedValueOnce(null);
+        expect((await browseTool.run({ task: TASK }, ctx())).kind).toBe("error");
+        queueBrowserTask.mockResolvedValueOnce(null);
+        expect((await browseTool.run({ task: TASK }, ctx())).kind).toBe("error");
+        refusedWithNothingSpent();
+      });
     });
 
     /**
@@ -1027,6 +1111,7 @@ describe("a person with no jar yet", () => {
         }),
     ],
     [
+      // Queued behind it (0080), not refused — and no jar until it starts.
       "a run has not settled",
       () =>
         ensureBrowserSession.mockResolvedValue({
@@ -1044,12 +1129,12 @@ describe("a person with no jar yet", () => {
       "the browser is being opened by another request",
       () => ensureBrowserSession.mockResolvedValue({ kind: "error", status: 409, message: "busy" }),
     ],
-  ])("is not given one when browse refuses because %s", async (_label, arrange) => {
+  ])("is not given one when browse starts no run because %s", async (_label, arrange) => {
     arrange();
 
-    const result = await browseTool.run({ task: TASK }, ctx());
+    await browseTool.run({ task: TASK }, ctx());
 
-    expect(result.kind).toBe("error");
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(runProfile).not.toHaveBeenCalled();
   });
 });

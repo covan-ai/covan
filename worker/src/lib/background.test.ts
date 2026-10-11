@@ -6,17 +6,20 @@ const {
   pollDueBrowserTasks,
   sweepAbandonedTakeovers,
   sweepConversationBrowsers,
+  startQueuedBrowserTasks,
 } = vi.hoisted(() => ({
   runDueRoutines: vi.fn(),
   runDueConnections: vi.fn(),
   pollDueBrowserTasks: vi.fn(),
   sweepAbandonedTakeovers: vi.fn(),
   sweepConversationBrowsers: vi.fn(),
+  startQueuedBrowserTasks: vi.fn(async () => ({ expired: 0, started: 0 })),
 }));
 vi.mock("./routines/dispatcher", () => ({ runDueRoutines }));
 vi.mock("./connections/dispatcher", () => ({ runDueConnections }));
 vi.mock("./browser/poller", () => ({ pollDueBrowserTasks }));
 vi.mock("./browser/sweep", () => ({ sweepAbandonedTakeovers, sweepConversationBrowsers }));
+vi.mock("./browser/queue", () => ({ startQueuedBrowserTasks }));
 
 import { runScheduledWork } from "./background";
 
@@ -257,5 +260,64 @@ describe("the human-mode browser sweep", () => {
     await runScheduledWork(base as never);
 
     expect(pollDueBrowserTasks).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * Browser tasks waiting their turn (0080): started above the poll, so a line
+ * a settle could not advance moves on the same tick, and short-circuiting like
+ * every stage, because a start is a dozen subrequests.
+ */
+describe("the browser line stage", () => {
+  beforeEach(() => {
+    for (const stage of [runDueRoutines, sweepAbandonedTakeovers, sweepConversationBrowsers]) {
+      stage.mockReset();
+      stage.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    }
+    pollDueBrowserTasks.mockReset();
+    pollDueBrowserTasks.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    runDueConnections.mockReset();
+    runDueConnections.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    startQueuedBrowserTasks.mockReset();
+    startQueuedBrowserTasks.mockResolvedValue({ expired: 0, started: 0 });
+  });
+
+  it("runs after the browser sweeps and before the poll, and lets an idle tick go on", async () => {
+    const order: string[] = [];
+    sweepConversationBrowsers.mockImplementation(async () => {
+      order.push("sweep");
+      return { claimed: 0, ok: 0, failed: 0 };
+    });
+    startQueuedBrowserTasks.mockImplementation(async () => {
+      order.push("line");
+      return { expired: 0, started: 0 };
+    });
+    pollDueBrowserTasks.mockImplementation(async () => {
+      order.push("poll");
+      return { claimed: 0, ok: 0, failed: 0 };
+    });
+
+    await runScheduledWork(base as never);
+
+    expect(order).toEqual(["sweep", "line", "poll"]);
+  });
+
+  it.each([[{ expired: 0, started: 1 }], [{ expired: 1, started: 0 }]])(
+    "short-circuits the poll when it did something: %o",
+    async (did) => {
+      startQueuedBrowserTasks.mockResolvedValue(did);
+
+      await runScheduledWork(base as never);
+
+      expect(pollDueBrowserTasks).not.toHaveBeenCalled();
+    },
+  );
+
+  it("is not reached when the conversation sweep claimed", async () => {
+    sweepConversationBrowsers.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(startQueuedBrowserTasks).not.toHaveBeenCalled();
   });
 });

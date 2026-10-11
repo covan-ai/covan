@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { NOT_STARTED } from "./queue";
 
 /**
  * What the chat model is told about this conversation's browser tasks.
@@ -54,6 +55,9 @@ function standing(row: TaskRow): string {
   const reason = typeof row.stop_reason === "string" ? row.stop_reason : null;
   const host = typeof row.signin_host === "string" ? row.signin_host : null;
   const error = typeof row.error === "string" && row.error.trim() ? row.error : null;
+  if (reason === NOT_STARTED) {
+    return `did not start${error ? `: ${clip(error, ERROR_CHARS)}` : ""}`;
+  }
   if (reason === "login_required") {
     return `stopped at a sign-in${host ? ` on ${host}` : ""}; waiting for the person to sign in in the browser panel`;
   }
@@ -64,6 +68,8 @@ function standing(row: TaskRow): string {
     return `blocked by the site${error ? `: ${clip(error, ERROR_CHARS)}` : ""}`;
   }
   switch (row.status) {
+    case "waiting":
+      return "waiting its turn — it starts by itself when the tasks before it are done, and its answer will arrive as a new message";
     case "queued":
     case "running":
       return "running now — its answer will arrive as a new message";

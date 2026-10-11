@@ -25,6 +25,7 @@ const live = vi.fn();
 const takeOver = vi.fn();
 const handBack = vi.fn();
 const stop = vi.fn();
+const removeWaiting = vi.fn();
 const save = vi.fn();
 const takeoverCurrent = vi.fn();
 const takeoverOpen = vi.fn();
@@ -43,6 +44,7 @@ vi.mock("@/lib/api-client", () => ({
       takeOver: (...a: unknown[]) => takeOver(...a),
       handBack: (...a: unknown[]) => handBack(...a),
       stop: (...a: unknown[]) => stop(...a),
+      removeWaiting: (...a: unknown[]) => removeWaiting(...a),
       credentials: {
         save: (...a: unknown[]) => save(...a),
         list: () => Promise.resolve({ logins: [] }),
@@ -126,6 +128,7 @@ beforeEach(() => {
     return { browserTaskId: "task-2" };
   });
   stop.mockReset().mockResolvedValue(undefined);
+  removeWaiting.mockReset().mockResolvedValue(undefined);
   // Nobody has a browser of their own open, which is the ordinary case.
   takeoverCurrent.mockReset().mockResolvedValue({ takeover: null });
   takeoverOpen.mockReset().mockResolvedValue({
@@ -1118,5 +1121,80 @@ describe("a browser of your own (Task 3.1)", () => {
     await openIt();
     expect(container.querySelector(".browser-live")).toBeNull();
     expect(container.querySelector(".bg-accent-orange")).not.toBeNull();
+  });
+});
+
+/**
+ * 0080: the browser's line. What starts by itself when the browser is free,
+ * next first, each with a way out before its turn — and the close says what
+ * it takes with it.
+ */
+describe("tasks waiting their turn", () => {
+  const waitingTask = (id: string, text: string) =>
+    task({ id, task: text, status: "waiting", stopReason: null });
+  const withLine = () =>
+    snapshot("agent", [
+      waitingTask("w2", "review tasklet.ai"),
+      waitingTask("w1", "review covan.app"),
+      task(),
+    ]);
+
+  it("lists them next first, under the browser", async () => {
+    browserTasks.mockResolvedValue(withLine());
+    renderPanel();
+
+    const list = await screen.findByRole("region", { name: "Queued tasks" });
+    const items = list.querySelectorAll("li");
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toContain("Up next");
+    expect(items[0].textContent).toContain("review covan.app");
+    expect(items[1].textContent).toContain("Second in line");
+    expect(items[1].textContent).toContain("review tasklet.ai");
+  });
+
+  it("takes one out of the line, and asks again", async () => {
+    browserTasks.mockResolvedValue(withLine());
+    renderPanel();
+
+    await screen.findByRole("region", { name: "Queued tasks" });
+    const before = browserTasks.mock.calls.length;
+    await userEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+
+    expect(removeWaiting).toHaveBeenCalledWith("w1");
+    await waitFor(() => expect(browserTasks.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it("says why one could not be removed: it started meanwhile", async () => {
+    browserTasks.mockResolvedValue(withLine());
+    removeWaiting.mockRejectedValue(
+      new Error("That task has already started, so it can't be taken out of the line."),
+    );
+    renderPanel();
+
+    await screen.findByRole("region", { name: "Queued tasks" });
+    await userEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/already started/);
+  });
+
+  it("warns that closing an idle browser drops what waits for it", async () => {
+    browserTasks.mockResolvedValue(
+      snapshot("none", [
+        waitingTask("w1", "review covan.app"),
+        task({ status: "failed", stopReason: "login_required", signInHost: "x.com" }),
+      ]),
+    );
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Close the browser" }));
+    expect(screen.getByText(/The task waiting for it won't run\./)).toBeInTheDocument();
+  });
+
+  it("shows no list when nothing waits", async () => {
+    browserTasks.mockResolvedValue(agentDriving());
+    renderPanel();
+
+    await screen.findByTitle("The agent's browser");
+    expect(screen.queryByRole("region", { name: "Queued tasks" })).toBeNull();
   });
 });

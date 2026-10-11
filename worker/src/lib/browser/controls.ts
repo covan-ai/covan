@@ -13,6 +13,7 @@ import {
 } from "./profiles";
 import type { LiveState } from "./sessions";
 import { JAR_ATTEMPTS, JAR_DELAY_MS, runProfile, type RetryableTask } from "./takeover";
+import { cancelWaitingTasks, NOT_STARTED } from "./queue";
 import { recordBrowserTask } from "./tasks";
 import { browsersFor, cancelRun, createRun, isTerminalRun, runStatus, type RunStatus } from "./v4";
 
@@ -126,6 +127,10 @@ async function runToStop(
     .eq("browser_session_id", input.browserSessionId)
     .eq("user_id", input.userId)
     .eq("api_version", "v4")
+    // A task that never started (0080: waiting its turn, or out of the line
+    // before its turn) has no run, and is not what is in the browser.
+    .neq("status", "waiting")
+    .or(`stop_reason.is.null,stop_reason.neq.${NOT_STARTED}`)
     .order("created_at", { ascending: false })
     .limit(1);
   if (error) {
@@ -950,6 +955,15 @@ export async function stopConversationBrowser(
     return { kind: "error", status: 500, message: UNSTOPPED.message };
   }
   if (!row) return NOT_FOUND;
+
+  /**
+   * What was waiting for this browser does not run (0080): somebody who
+   * closed it should not find it reopened by the next task in line. Before
+   * the stop, so the queue's cron cannot start one in the moment between the
+   * stop and this; and whatever the stop then does, because the person asked
+   * for the browser to go. Said in the conversation, once.
+   */
+  await cancelWaitingTasks(env, input.browserSessionId, { db });
 
   const stopped = await stopSessionBrowsers(env, {
     providerSessionId: text(row.provider_session_id),

@@ -1,20 +1,10 @@
 import { hasBrowserKey } from "../../browser/client";
-import {
-  credentialsFor,
-  savedLogin,
-  siteHostOf,
-  type CredentialBinding,
-} from "../../browser/credentials";
-import { conversationRun, jarForRun } from "../../browser/outcome";
-import {
-  ensureBrowserSession,
-  recordRunStart,
-  releaseBrowserSession,
-} from "../../browser/sessions";
-import { stopDeclinedBrowser } from "../../browser/profiles";
+import { savedLogin, siteHostOf } from "../../browser/credentials";
+import { QUEUE_MAX, queueBrowserTask, waitingInLine } from "../../browser/queue";
+import { ensureBrowserSession, releaseBrowserSession } from "../../browser/sessions";
+import { beginConversationRun, finishRunStart } from "../../browser/start";
 import { recordBrowserTask } from "../../browser/tasks";
-import { heldTakeover, profileFor, runProfile } from "../../browser/takeover";
-import { createRun } from "../../browser/v4";
+import { heldTakeover, profileFor } from "../../browser/takeover";
 import { BROWSER_TASK_TOKENS, entitlementsFor } from "../../entitlements";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
@@ -80,6 +70,31 @@ const STILL_RUNNING =
   "a browser task is still running in this conversation, and its browser does one thing at a " +
   "time. Its answer will arrive as a new message; tell the person that, and do not retry this " +
   "turn.";
+
+/**
+ * What the model is told when its task has been put in the browser's line
+ * (0080) instead of started. Not an error: the task will run, by itself, and
+ * the model's job is to say so and stop — a model that called `browse` again
+ * would queue the same task twice.
+ */
+function queuedFor(position: number): string {
+  return (
+    `Queued: this conversation's browser is busy, so this task is number ${position} in line ` +
+    "and starts by itself when the ones before it are done. Its answer will arrive as a new " +
+    "message in this conversation, after theirs. Tell the person that and finish your reply. " +
+    "Do not call browse again for this."
+  );
+}
+
+/** What the model is told when the line is full (`QUEUE_MAX`). */
+const QUEUE_FULL =
+  `${QUEUE_MAX} browser tasks are already waiting for this conversation's browser, which runs ` +
+  "them one at a time. Tell the person it will do those first, and offer to ask for this one " +
+  "once they are done; do not retry this turn.";
+
+const CANNOT_TELL_LINE =
+  "could not check what this conversation's browser already has waiting, so the task was not " +
+  "started. Say so plainly and offer to try again; do not retry this turn.";
 
 /**
  * What the model is told while the person is driving the browser themselves.
@@ -296,27 +311,6 @@ async function loginNote(ctx: ToolContext, site: string): Promise<string | null>
   }
 }
 
-/**
- * The saved login a run on `site` carries, or null.
- *
- * A read that fails is a run without the login, not a run that does not
- * start: it meets the login wall and says so, which the person can fix in the
- * panel. Logged as a fixed sentence and nothing else — the error names a table
- * and a code today, and this line must stay safe whatever it names tomorrow.
- */
-async function loginFor(ctx: ToolContext, site: string): Promise<CredentialBinding | null> {
-  try {
-    return await credentialsFor(ctx.env, {
-      agentId: ctx.agentId,
-      userId: ctx.userId,
-      host: site,
-    });
-  } catch {
-    console.warn("could not read the saved logins for a browser task; running without one");
-    return null;
-  }
-}
-
 export const browseTool: AgentTool = {
   name: "browse",
   description:
@@ -498,69 +492,73 @@ export const browseTool: AgentTool = {
      * as the backstop for a run that starts between this read and ours.
      */
     if (session.value.liveState === "human") return { kind: "error", message: IN_THEIR_HANDS };
-    if (session.value.runInFlight) return { kind: "error", message: STILL_RUNNING };
 
     /**
-     * Ruling R19: a person with no jar gets one now, so what they sign in to
-     * in the panel has a profile to be saved into when the browser stops.
-     * After the refusals above, because a refusal must cost nothing, and
-     * before the run, which carries it. Once per person: `runProfile` is
-     * `ensureProfile`'s claim-first order, so racing first runs make one
-     * profile. A failure answers null and the run goes ahead without a jar,
-     * exactly as it did before this existed.
+     * The line (0080). A browser mid-run, or with tasks already waiting for
+     * it, takes this one at the end of its line rather than refusing it: on
+     * 2026-10-11 the refusal is what left an agent telling somebody three
+     * tasks were running when one was. Waiting tasks count even when nothing
+     * runs — a line held by a sign-in, or between one settle and the next
+     * start — so the order is the order they were asked in.
      *
-     * Subrequests: nothing for a person who has a jar (`profileFor` above
-     * already read it). The first time, four — the re-read, the claim, the
-     * provider's create and the fill — once per person, ever.
+     * Nothing is charged here. The allowance was asked above; the charge is
+     * made when the task starts (`lib/browser/queue.ts`), and a task that
+     * never starts costs nothing.
      */
-    const jar = profile ?? (await runProfile(ctx.env, ctx.userId));
-
-    const continuing = session.value.providerSessionId;
-    const opening = continuing === null;
-
-    // The preamble, the schema, the model and the cost ceiling are
-    // `conversationRun`'s, shared with the hand-back so the two cannot drift.
-    // A follow-up continues the browser this conversation already has; a
-    // first run names no session and the provider opens one.
-    /**
-     * The saved login for `site`, if there is one this person may use (Task
-     * 2.3). After the refusals, so a refused browse decrypts nothing, and on
-     * every run that names the site — the provider's bindings are run-scoped,
-     * so a follow-up that needs the login carries it again. `conversationRun`
-     * puts the bindings in the body and the sentence naming their aliases in
-     * the task; nothing else in this function ever holds a value.
-     */
-    const login = site ? await loginFor(ctx, site) : null;
-    // A follow-up names the jar only when its browser was opened with it; see
-    // `jarForSession` for the provider's rule. And a run carrying a shared
-    // login carries no jar at all (ruling R38): see `jarForRun`.
-    const {
-      profile: sent,
-      withoutProfile,
-      detach,
-    } = jarForRun(jar, { opening, openedWith: session.value.profileId }, login);
-    const created = await createRun(
-      ctx.env,
-      conversationRun(ctx.env, {
+    const waiting = await waitingInLine(ctx.env, session.value.id);
+    if (waiting === null) return { kind: "error", message: CANNOT_TELL_LINE };
+    if (session.value.runInFlight || waiting > 0) {
+      if (waiting >= QUEUE_MAX) return { kind: "error", message: QUEUE_FULL };
+      const queued = await queueBrowserTask(ctx.env, {
+        workspaceId: ctx.workspaceId,
+        agentId: ctx.agentId,
+        userId: ctx.userId,
+        sessionId: ctx.sessionId,
         task,
-        sessionId: continuing,
-        profile: sent,
-        withoutProfile,
-        login,
-      }),
-      { signal: ctx.signal },
-    );
+        site,
+        browserSessionId: session.value.id,
+      });
+      if (!queued) {
+        return {
+          kind: "error",
+          message:
+            "the browser is busy and this task could not be put in line for it. Say so plainly " +
+            "and offer to ask again once the current task is done; do not retry this turn.",
+        };
+      }
+      return { kind: "ok", content: queuedFor(waiting + 1) };
+    }
 
-    if (created.kind === "error") {
+    /**
+     * Ruling R19: a person with no jar gets one now, inside
+     * `beginConversationRun` — after the refusals above, because a refusal
+     * must cost nothing, and before the run, which carries it. The saved login
+     * for `site` (Task 2.3) is looked up there too, after the refusals, so a
+     * refused browse decrypts nothing. `lib/browser/start.ts` is shared with
+     * the queue, so a task that waited its turn starts exactly as this one.
+     */
+    const begun = await beginConversationRun(ctx.env, {
+      userId: ctx.userId,
+      agentId: ctx.agentId,
+      task,
+      site,
+      browser: session.value,
+      profile,
+      signal: ctx.signal,
+    });
+    const opening = session.value.providerSessionId === null;
+
+    if (begun.kind === "error") {
       // A run that never started opened nothing, so the claim goes back —
       // otherwise every `browse` in the next minute is told to wait for it.
       // A follow-up's row names a live browser and is left alone.
       if (opening) await releaseBrowserSession(ctx.env, session.value.id);
       // 429 is the concurrency pool, which is account-wide and shared across
       // every tenant on this deployment — ten sessions at $0 lifetime spend.
-      // v1 refuses and says so; a queue is a later problem with real numbers
-      // behind it.
-      if (created.status === 429) {
+      // Refused and said so. The line (0080) is this conversation's browser
+      // doing one thing at a time; a full pool is every browser busy, and
+      // waiting on it is a later problem with real numbers behind it.
+      if (begun.status === 429) {
         return {
           kind: "error",
           message:
@@ -572,17 +570,17 @@ export const browseTool: AgentTool = {
       // rule for which failures are somebody's money — and a 409 counts, as
       // every other provider error does (ruling R12): this is the path it
       // has always taken, with only the sentence changed.
-      if (wasBilled(created.status) && created.status !== 0) {
+      if (wasBilled(begun.status) && begun.status !== 0) {
         await spend(ctx, BROWSER_TASK_TOKENS);
       }
       // Not retried, and never a second session: the busy one is this
       // conversation's browser, mid-run.
-      if (created.status === 409) return { kind: "error", message: STILL_RUNNING };
-      // `created.message` is a status line and never the provider's body:
+      if (begun.status === 409) return { kind: "error", message: STILL_RUNNING };
+      // `begun.message` is a status line and never the provider's body:
       // `createRun` sends with `redactBody: true`, and a body that echoed this
       // request would echo a saved login's bindings into
       // `message_steps.result_excerpt`. Pinned in `browse.test.ts`.
-      return { kind: "error", message: `could not start the browser task: ${created.message}` };
+      return { kind: "error", message: `could not start the browser task: ${begun.message}` };
     }
 
     /**
@@ -608,12 +606,11 @@ export const browseTool: AgentTool = {
       // The person's sentence, not the preamble: it is what the answer is
       // delivered against and what a take-over runs again.
       task,
-      providerRunId: created.value.id,
+      providerRunId: begun.value.run.id,
       browserSessionId: session.value.id,
       // Ruling R32: the saved login this run carried, so a login wall
       // afterwards is blamed on it — and on nothing the run was never given.
-      // The same condition `conversationRun` puts the bindings in the body on.
-      ...(login?.bindings.length ? { credentialId: login.id } : {}),
+      ...(begun.value.credentialId ? { credentialId: begun.value.credentialId } : {}),
     });
 
     if (!recorded) {
@@ -625,40 +622,10 @@ export const browseTool: AgentTool = {
       };
     }
 
-    // The agent has the controls, and a first run's session is now this
-    // conversation's browser. Logged rather than failed if it cannot be
-    // written: the run is real and its answer will still arrive.
-    await recordRunStart(ctx.env, {
-      browserSessionId: session.value.id,
-      ...(opening ? { providerSessionId: created.value.sessionId } : {}),
-      // The jar this run carries, which the claim could not name when it was
-      // provisioned just now. See `recordRunStart`. Only by the run that
-      // opens the browser: a follow-up's browser keeps the jar it was opened
-      // with, and the row must not say otherwise. A shared login's run takes
-      // the jar off the row instead (R38): the claim above named the jar
-      // before the login was known, and a detached follow-up's browser is a
-      // fresh one without it.
-      ...(detach ? { providerBrowserId: null } : {}),
-      ...(withoutProfile ? { profileId: null } : sent && opening ? { profileId: sent.id } : {}),
-    });
-
-    /**
-     * Ruling R41: the profiled browser this run declined (`detach`) is stopped
-     * — after the write above, which already made the row forget it, so the
-     * panel and the settle converge on the new browser first. Stopping it is
-     * also what saves the person's jar (*"always stop the session to persist
-     * profile state"*). Best-effort: a refusal logs a status, the run is real,
-     * and the sweeps stop every active browser of the session anyway.
-     *
-     * Subrequests: one more, on this path only — a shared login's follow-up
-     * into a browser opened with the person's jar (the stop). Every other
-     * `browse` spends what it did.
-     */
-    if (detach) {
-      await stopDeclinedBrowser(ctx.env, session.value.providerBrowserId ?? null, {
-        signal: ctx.signal,
-      });
-    }
+    // The agent has the controls, a first run's session is now this
+    // conversation's browser, and a profiled browser the run declined is
+    // stopped (R41). See `finishRunStart`.
+    await finishRunStart(ctx.env, session.value, begun.value, { signal: ctx.signal });
 
     await spend(ctx, BROWSER_TASK_TOKENS);
 

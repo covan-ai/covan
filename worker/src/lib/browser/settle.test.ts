@@ -339,6 +339,43 @@ describe("settleBrowserTask", () => {
     expect(mem.callsTo("browser_tasks").filter((c) => c.op === "update")).toHaveLength(2);
   });
 
+  /**
+   * 0080: the browser is free, so the next task in its line starts — after
+   * the answer, so the person reads the first result before the second is
+   * under way.
+   */
+  describe("the task waiting behind it", () => {
+    it("is started in the claimed row's browser, after the answer is delivered", async () => {
+      const { deps } = setup();
+      const order: string[] = [];
+      deliver.mockImplementation(async () => void order.push("deliver"));
+      const advance = vi.fn(async (_id: string) => void order.push("advance"));
+
+      await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, { ...deps, advance });
+
+      expect(advance).toHaveBeenCalledWith("bs-1");
+      expect(order).toEqual(["deliver", "advance"]);
+    });
+
+    it("is not started by a settle that lost the claim", async () => {
+      const { deps } = setup([taskRow({ status: "finished" })]);
+      const advance = vi.fn(async () => {});
+      await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, { ...deps, advance });
+      expect(advance).not.toHaveBeenCalled();
+    });
+
+    it("cannot undo the settle when it fails to start", async () => {
+      const { deps } = setup();
+      const advance = vi.fn(async () => {
+        throw new Error("provider down");
+      });
+      expect(
+        await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, { ...deps, advance }),
+      ).toBe(true);
+      expect(deliver).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("hands the browser back from the agent (ruling R4)", async () => {
     const { mem, deps } = setup();
     await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, deps);

@@ -6,8 +6,8 @@ import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake
 import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
 import { MAX_STEPS, MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
-import { NOT_RUN_FOR_A_QUESTION } from "../lib/harness/loop";
-import type { AgentTool } from "../lib/harness/registry";
+import { NOT_RUN_EXCERPT, NOT_RUN_FOR_A_QUESTION } from "../lib/harness/loop";
+import type { AgentTool, ToolContext, ToolResult } from "../lib/harness/registry";
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter } from "../lib/subrequests";
 
@@ -2083,6 +2083,164 @@ describe("POST /chat/confirm/:id", () => {
         [2, "refused"],
       ]);
       expect(stepsWritten.mock.calls[0][0][0].result_excerpt).not.toBe("Create a routine?");
+    });
+  });
+
+  /**
+   * 2026-10-11 21:32: three sites asked for in one batch, the first approved,
+   * and the model never called the other two — one browser ran and three were
+   * reported. The card now lists the rest, and this route runs what it listed.
+   */
+  describe("a batch whose card listed the rest", () => {
+    const look = vi.fn(async (args: unknown, ctx: ToolContext): Promise<ToolResult> =>
+      ctx.confirmed
+        ? { kind: "ok", content: `looked at ${(args as { task: string }).task}` }
+        : {
+            kind: "needs_confirmation",
+            summary: "Look?",
+            proposal: { task: (args as { task: string }).task },
+          },
+    );
+    const LOOK: AgentTool = {
+      name: "look",
+      description: "Looks.",
+      input: { type: "object", properties: {}, additionalProperties: true },
+      destructive: true,
+      isConfigured: () => true,
+      approvedTogether: {
+        max: 3,
+        line: (args) => (typeof args.task === "string" ? args.task : null),
+        card: (asked, lines) => ({
+          summary: `all ${lines.length + 1}?`,
+          proposal: { ...(asked.proposal as object), thenInLine: lines.join("\n") },
+        }),
+        listed: (proposal) =>
+          String((proposal as { thenInLine?: string } | null)?.thenInLine ?? "")
+            .split("\n")
+            .filter(Boolean),
+      },
+      run: look,
+    };
+    const CALLS = [
+      { id: "call_1", name: "look", arguments: '{"task":"the repo"}' },
+      { id: "call_2", name: "look", arguments: '{"task":"covan.app"}' },
+      { id: "call_3", name: "look", arguments: '{"task":"tasklet.ai"}' },
+    ];
+    const unrun = (index: number, task: string) => ({
+      index,
+      tool: "look",
+      request: { task },
+      resultExcerpt: NOT_RUN_EXCERPT,
+      resultChars: NOT_RUN_FOR_A_QUESTION.length,
+      status: "refused",
+      durationMs: 0,
+    });
+    const parkedWith = (thenInLine: string) => ({
+      ...PARKED,
+      tool: "look",
+      tool_call: CALLS[0],
+      summary: "all 3?",
+      proposal: { task: "the repo", thenInLine },
+      messages: [
+        { role: "user", content: "look at all three" },
+        { role: "assistant", content: "", toolCalls: CALLS },
+        { role: "tool", toolCallId: "call_2", content: NOT_RUN_FOR_A_QUESTION },
+        { role: "tool", toolCallId: "call_3", content: NOT_RUN_FOR_A_QUESTION },
+      ],
+      steps: [
+        { ...PARKED.steps[0], tool: "look", request: { task: "the repo" } },
+        unrun(1, "covan.app"),
+        unrun(2, "tasklet.ai"),
+      ],
+    });
+    const toolTurns = () =>
+      (completionCreate.mock.calls.find((c) => c[0].stream)?.[0].messages ?? [])
+        .filter((m: { role: string }) => m.role === "tool")
+        .map((m: { tool_call_id: string; content: string }) => [m.tool_call_id, m.content]);
+
+    beforeEach(() => {
+      look.mockClear();
+      approvedTool = LOOK;
+      extraTool = LOOK;
+    });
+
+    it("runs every listed call, approved, in its own place, before the model", async () => {
+      parked = parkedWith("covan.app\ntasklet.ai");
+      const { app } = appWith({ question: "look at all three" });
+      answersWith(streamOf("All three are under way."));
+
+      const body = await (await confirm(app, true)).text();
+
+      expect(look).toHaveBeenCalledTimes(3);
+      expect(look.mock.calls.every(([, ctx]) => ctx.confirmed === true)).toBe(true);
+      expect(toolTurns()).toEqual([
+        ["call_1", "looked at the repo"],
+        ["call_2", "looked at covan.app"],
+        ["call_3", "looked at tasklet.ai"],
+      ]);
+      // Written over the refused steps, under the numbers the person saw.
+      expect(
+        stepsWritten.mock.calls[0][0].map((s: { step_index: number; status: string }) => [
+          s.step_index,
+          s.status,
+        ]),
+      ).toEqual([
+        [0, "ok"],
+        [1, "ok"],
+        [2, "ok"],
+      ]);
+      expect(body).toContain('"index":1');
+      expect(body).toContain('"index":2');
+    });
+
+    it("parks again on a call the card did not list, before the model runs", async () => {
+      parked = parkedWith("covan.app");
+      const { app } = appWith({ question: "look at all three" });
+
+      const body = await (await confirm(app, true)).text();
+
+      expect(look).toHaveBeenCalledTimes(3);
+      expect(look.mock.calls[2][1].confirmed).toBe(false);
+      expect(completionCreate.mock.calls.find((c) => c[0].stream)).toBeUndefined();
+      const row = pausedWritten.mock.calls.at(-1)?.[0];
+      expect(row.tool_call).toEqual(CALLS[2]);
+      // The call that asked is left unanswered; the ones that ran are answered.
+      const answered = (
+        row.messages as Array<{ role: string; toolCallId?: string; content?: string }>
+      )
+        .filter((m) => m.role === "tool")
+        .map((m) => [m.toolCallId, m.content]);
+      expect(answered).toEqual([
+        ["call_1", "looked at the repo"],
+        ["call_2", "looked at covan.app"],
+      ]);
+      expect(row.steps.map((s: { status: string }) => s.status)).toEqual(["ok", "ok", "pending"]);
+      expect(body).toContain('"type":"confirm"');
+      expect(body).toContain('"type":"paused"');
+    });
+
+    it("declines the listed calls with the one the person declined", async () => {
+      parked = parkedWith("covan.app\ntasklet.ai");
+      const { app } = appWith({ question: "look at all three" });
+      answersWith(streamOf("Understood."));
+
+      await (await confirm(app, false)).text();
+
+      expect(look).not.toHaveBeenCalled();
+      const answers = toolTurns();
+      expect(answers).toHaveLength(3);
+      for (const [, content] of answers) expect(content).toContain("declined");
+    });
+
+    it("leaves a call the card did not list as it was, when the person says no", async () => {
+      parked = parkedWith("covan.app");
+      const { app } = appWith({ question: "look at all three" });
+      answersWith(streamOf("Understood."));
+
+      await (await confirm(app, false)).text();
+
+      expect(look).not.toHaveBeenCalled();
+      expect(toolTurns()[2]).toEqual(["call_3", NOT_RUN_FOR_A_QUESTION]);
     });
   });
 

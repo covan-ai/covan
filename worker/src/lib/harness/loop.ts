@@ -664,7 +664,7 @@ function labelFor(tool: string, args: unknown): string {
  * the first as an approval would let a refused call unlock the very connection
  * it was refused on.
  */
-function approvedConnectionsFrom(steps: AgentStep[]): string[] {
+export function approvedConnectionsFrom(steps: AgentStep[]): string[] {
   const out = new Set<string>();
   for (const step of steps) {
     if (step.tool !== "run_tool" || step.status !== "ok") continue;
@@ -682,7 +682,7 @@ function approvedConnectionsFrom(steps: AgentStep[]): string[] {
  * destructive operation nobody has approved is not covered by the connection's
  * approval. See `ToolContext.approvedSlugs`.
  */
-function approvedSlugsFrom(steps: AgentStep[]): string[] {
+export function approvedSlugsFrom(steps: AgentStep[]): string[] {
   const out = new Set<string>();
   for (const step of steps) {
     if (step.tool !== "run_tool" || step.status !== "ok") continue;
@@ -690,6 +690,152 @@ function approvedSlugsFrom(steps: AgentStep[]): string[] {
     if (typeof slug === "string" && slug) out.add(slug);
   }
   return [...out];
+}
+
+/** The step a call answered `NOT_RUN_FOR_A_QUESTION` is recorded with. */
+export const NOT_RUN_EXCERPT = "refused: an earlier call in the batch stopped to ask";
+
+/**
+ * The card for a call that asks, widened with the later calls of its batch
+ * that its tool puts on the same card (`AgentTool.approvedTogether`). The card
+ * unchanged for every other tool, and when there are none.
+ */
+export function oneCard(
+  tool: AgentTool | undefined,
+  asked: { summary: string; proposal: unknown },
+  later: ToolCall[],
+): { summary: string; proposal: unknown } {
+  const together = tool?.approvedTogether;
+  if (!tool || !together) return asked;
+  const lines = later
+    .filter((call) => call.name === tool.name)
+    .flatMap((call) => {
+      const parsed = parseArguments(call.arguments);
+      const line = parsed.ok ? together.line(parsed.args) : null;
+      return line ? [line] : [];
+    })
+    .slice(0, together.max);
+  return lines.length > 0 ? together.card(asked, lines) : asked;
+}
+
+/** One call, run: answered, or stopped to ask the person. */
+export type ToolCallRun =
+  | { kind: "answered"; message: CompletionMessage; step: AgentStep }
+  | { kind: "asks"; step: AgentStep; summary: string; proposal: unknown };
+
+/**
+ * Run one tool call the way the loop does: the `running` event, the tool with
+ * its ceiling, the capped result, the step and the settled event.
+ *
+ * Exported for the confirm route, which since 2026-10-12 runs the rest of a
+ * parked batch itself, and has to record those calls exactly as the loop
+ * would have — same excerpt, same `resultChars`, same label.
+ *
+ * `steps` is what the approvals so far are read from; `record` is where the
+ * step goes, and is called before the settled event, as the loop always did.
+ * A call that asks is recorded `pending` and left unanswered; the caller
+ * decides what that means for the calls after it.
+ */
+export async function runToolCall(
+  call: ToolCall,
+  o: {
+    tools: AgentTool[];
+    ctx: ToolContext;
+    steps: AgentStep[];
+    index: number;
+    pass: number;
+    toolTimeoutMs: number;
+    maxOutputChars: number;
+    signal?: AbortSignal;
+    onEvent?: (event: HarnessEvent) => void;
+    record: (step: AgentStep) => void;
+    /** The pass ended on the output limit, so bad arguments were cut off. */
+    cutOff?: boolean;
+  },
+): Promise<ToolCallRun> {
+  const { index, pass } = o;
+  const parsed = parseArguments(call.arguments);
+  const args = parsed.ok ? parsed.args : {};
+  const label = labelFor(call.name, args);
+  o.onEvent?.({ type: "step", index, tool: call.name, status: "running", label });
+
+  const tool = o.tools.find((t) => t.name === call.name);
+  const startedAt = Date.now();
+  // What the model was already allowed to run, so the step below can record
+  // what this call added. A copy rather than the live set: `find_tool`
+  // writes into that set as it renders, and `run_tool` deletes from it on a
+  // 404, so reading it again afterwards is the only way to see the change.
+  const allowedBefore = o.ctx.offeredSlugs ? new Set(o.ctx.offeredSlugs) : null;
+  const result: ToolResult = !parsed.ok
+    ? { kind: "error", message: o.cutOff ? CUT_OFF_ARGUMENTS : parsed.message }
+    : !tool
+      ? {
+          kind: "error",
+          message: `no tool named ${call.name} — the tools you may call are: ${o.tools
+            .map((t) => t.name)
+            .join(", ")}`,
+        }
+      : await runWithTimeout(
+          tool,
+          args,
+          // Recomputed per call rather than once per turn: a call that
+          // lands mid-batch unlocks its connection for the next one, which
+          // is the whole point of scoping the approval to a connection.
+          {
+            ...o.ctx,
+            approvedConnections: approvedConnectionsFrom(o.steps),
+            approvedSlugs: approvedSlugsFrom(o.steps),
+          },
+          o.toolTimeoutMs,
+          o.signal,
+        );
+  const durationMs = Date.now() - startedAt;
+
+  if (result.kind === "needs_confirmation") {
+    // The turn stops here, with the call unanswered on purpose: resuming
+    // is what answers it, and a `tool` turn written now would be a lie
+    // about something that has not happened.
+    const step: AgentStep = {
+      index,
+      pass,
+      tool: call.name,
+      request: args,
+      resultExcerpt: cap(result.summary, MAX_STEP_EXCERPT_CHARS),
+      // No `resultChars`, and not zero either: the call is deliberately
+      // left unanswered until somebody approves it, so nothing has been
+      // put in front of the model to measure. The resume writes the real
+      // figure over this row.
+      status: "pending",
+      durationMs,
+    };
+    o.record(step);
+    o.onEvent?.({ type: "step", index, tool: call.name, status: "pending", label });
+    return { kind: "asks", step, summary: result.summary, proposal: result.proposal };
+  }
+
+  const content =
+    result.kind === "ok" ? cap(result.content, o.maxOutputChars) : `error: ${result.message}`;
+  const status: StepStatus = result.kind === "ok" ? "ok" : "failed";
+  const step: AgentStep = {
+    index,
+    pass,
+    tool: call.name,
+    request: args,
+    resultExcerpt: cap(content, MAX_STEP_EXCERPT_CHARS),
+    // After `maxOutputChars`, which is what the model sees, and before
+    // `MAX_STEP_EXCERPT_CHARS`, which is only what the transcript keeps.
+    // This is the number every remaining pass of the turn pays to re-send.
+    resultChars: content.length,
+    // Only when this call actually widened what the model may run, so the
+    // column stays null for the tools that never offer anything. See
+    // `AgentStep.offered`.
+    ...(addedSlugs(allowedBefore, o.ctx.offeredSlugs) ?? {}),
+    status,
+    durationMs,
+  };
+  o.record(step);
+  o.onEvent?.({ type: "step", index, tool: call.name, status, label });
+  return { kind: "answered", message: { role: "tool", toolCallId: call.id, content }, step };
 }
 
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
@@ -1021,78 +1167,24 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         continue;
       }
 
-      const index = steps.length;
-      const parsed = parseArguments(call.arguments);
-      const args = parsed.ok ? parsed.args : {};
-      opts.onEvent?.({
-        type: "step",
-        index,
-        tool: call.name,
-        status: "running",
-        label: labelFor(call.name, args),
+      const run = await runToolCall(call, {
+        tools: opts.tools,
+        ctx: opts.ctx,
+        steps,
+        index: steps.length,
+        pass,
+        toolTimeoutMs,
+        maxOutputChars,
+        signal: opts.signal,
+        onEvent: opts.onEvent,
+        record,
+        // This pass's own finish reason: it is set by the `end` event above,
+        // before any of the calls it asked for runs.
+        cutOff: finishReason === "length",
       });
 
-      const tool = opts.tools.find((t) => t.name === call.name);
-      const startedAt = Date.now();
-      // What the model was already allowed to run, so the step below can record
-      // what this call added. A copy rather than the live set: `find_tool`
-      // writes into that set as it renders, and `run_tool` deletes from it on a
-      // 404, so reading it again afterwards is the only way to see the change.
-      const allowedBefore = opts.ctx.offeredSlugs ? new Set(opts.ctx.offeredSlugs) : null;
-      const result: ToolResult = !parsed.ok
-        ? {
-            kind: "error",
-            // This pass's own finish reason: it is set by the `end` event above,
-            // before any of the calls it asked for runs.
-            message: finishReason === "length" ? CUT_OFF_ARGUMENTS : parsed.message,
-          }
-        : !tool
-          ? {
-              kind: "error",
-              message: `no tool named ${call.name} — the tools you may call are: ${opts.tools
-                .map((t) => t.name)
-                .join(", ")}`,
-            }
-          : await runWithTimeout(
-              tool,
-              args,
-              // Recomputed per call rather than once per turn: a call that
-              // lands mid-batch unlocks its connection for the next one, which
-              // is the whole point of scoping the approval to a connection.
-              {
-                ...opts.ctx,
-                approvedConnections: approvedConnectionsFrom(steps),
-                approvedSlugs: approvedSlugsFrom(steps),
-              },
-              toolTimeoutMs,
-              opts.signal,
-            );
-      const durationMs = Date.now() - startedAt;
-
-      if (result.kind === "needs_confirmation") {
-        // The turn stops here, with the call unanswered on purpose: resuming
-        // is what answers it, and a `tool` turn written now would be a lie
-        // about something that has not happened.
-        record({
-          index,
-          pass,
-          tool: call.name,
-          request: args,
-          resultExcerpt: cap(result.summary, MAX_STEP_EXCERPT_CHARS),
-          // No `resultChars`, and not zero either: the call is deliberately
-          // left unanswered until somebody approves it, so nothing has been
-          // put in front of the model to measure. The resume writes the real
-          // figure over this row.
-          status: "pending",
-          durationMs,
-        });
-        opts.onEvent?.({
-          type: "step",
-          index,
-          tool: call.name,
-          status: "pending",
-          label: labelFor(call.name, args),
-        });
+      if (run.kind === "asks") {
+        const later = calls.slice(calls.indexOf(call) + 1);
         // The calls after this one in the same batch will not run, and they
         // are answered now for the ceiling's reason above: the resume answers
         // only the call it asked about, and a call left with no result is a
@@ -1100,20 +1192,33 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // pass parked on the first, the resume sent the other two unanswered,
         // and the turn ended cut short. Not shown live, like the ceiling's
         // refusals; the recorded step is what keeps them in the transcript.
-        for (const later of calls.slice(calls.indexOf(call) + 1)) {
-          messages.push({ role: "tool", toolCallId: later.id, content: NOT_RUN_FOR_A_QUESTION });
-          const unrun = parseArguments(later.arguments);
+        //
+        // The resume runs them itself (`routes/chat.ts`, the confirm route)
+        // rather than leaving it to the model, which on 2026-10-11 21:32 never
+        // asked again; this answer is what it replaces.
+        for (const unanswered of later) {
+          messages.push({
+            role: "tool",
+            toolCallId: unanswered.id,
+            content: NOT_RUN_FOR_A_QUESTION,
+          });
+          const unrun = parseArguments(unanswered.arguments);
           record({
             index: steps.length,
             pass,
-            tool: later.name,
+            tool: unanswered.name,
             request: unrun.ok ? unrun.args : {},
-            resultExcerpt: "refused: an earlier call in the batch stopped to ask",
+            resultExcerpt: NOT_RUN_EXCERPT,
             resultChars: NOT_RUN_FOR_A_QUESTION.length,
             status: "refused",
             durationMs: 0,
           });
         }
+        const card = oneCard(
+          opts.tools.find((t) => t.name === call.name),
+          { summary: run.summary, proposal: run.proposal },
+          later,
+        );
         return {
           text,
           usage,
@@ -1124,40 +1229,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
             reason: "confirmation",
             messages,
             call,
-            summary: result.summary,
-            proposal: result.proposal,
+            summary: card.summary,
+            proposal: card.proposal,
           },
         };
       }
 
-      const content =
-        result.kind === "ok" ? cap(result.content, maxOutputChars) : `error: ${result.message}`;
-      messages.push({ role: "tool", toolCallId: call.id, content });
-      const status: StepStatus = result.kind === "ok" ? "ok" : "failed";
-      record({
-        index,
-        pass,
-        tool: call.name,
-        request: args,
-        resultExcerpt: cap(content, MAX_STEP_EXCERPT_CHARS),
-        // After `maxOutputChars`, which is what the model sees, and before
-        // `MAX_STEP_EXCERPT_CHARS`, which is only what the transcript keeps.
-        // This is the number every remaining pass of the turn pays to re-send.
-        resultChars: content.length,
-        // Only when this call actually widened what the model may run, so the
-        // column stays null for the tools that never offer anything. See
-        // `AgentStep.offered`.
-        ...(addedSlugs(allowedBefore, opts.ctx.offeredSlugs) ?? {}),
-        status,
-        durationMs,
-      });
-      opts.onEvent?.({
-        type: "step",
-        index,
-        tool: call.name,
-        status,
-        label: labelFor(call.name, args),
-      });
+      messages.push(run.message);
     }
 
     if (spentSteps() >= hardSteps && !stopped) stopped = "budget";

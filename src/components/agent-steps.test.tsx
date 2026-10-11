@@ -195,6 +195,30 @@ describe("the confirmation card", () => {
     expect(screen.queryByText("kind")).not.toBeInTheDocument();
   });
 
+  // Several browser tasks on one card: the rest arrive as one numbered row.
+  it("lists the tasks after the first one, one to a line, with no change of its own", () => {
+    render(
+      <ConfirmCard
+        pending={{
+          id: "p2",
+          tool: "browse",
+          summary: "Use a browser to do these 3 things?",
+          proposal: {
+            kind: "browse",
+            task: "look at the repo",
+            thenInLine: "2. look at covan.app\n3. look at tasklet.ai",
+          },
+        }}
+        busy={false}
+        onAnswer={() => {}}
+      />,
+    );
+    expect(screen.getByText("then in line")).toBeInTheDocument();
+    const list = screen.getByText(/2\. look at covan\.app/);
+    expect(list.textContent).toBe("2. look at covan.app\n3. look at tasklet.ai");
+    expect(list).toHaveClass("whitespace-pre-wrap");
+  });
+
   it("says plainly that nothing has happened yet", () => {
     render(<ConfirmCard pending={pending} busy={false} onAnswer={() => {}} />);
     expect(screen.getByText(/nothing happens until you say so/)).toBeInTheDocument();

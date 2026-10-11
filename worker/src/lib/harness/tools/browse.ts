@@ -92,6 +92,21 @@ const QUEUE_FULL =
   "them one at a time. Tell the person it will do those first, and offer to ask for this one " +
   "once they are done; do not retry this turn.";
 
+/**
+ * A task as the card lists it below the first one: one line, so the card can
+ * number it and the confirm route can read it back. Null for a task the
+ * first card cannot speak for — one too short to run, or one that signs in
+ * with a saved login, which its own card has to name (`signsInAs`).
+ */
+function lineOf(args: Record<string, unknown>): string | null {
+  if (typeof args.task !== "string" || args.site !== undefined) return null;
+  const line = args.task.replace(/\s+/g, " ").trim();
+  return line.length >= MIN_TASK_CHARS ? line : null;
+}
+
+/** The numbered list under the first task, from 2 because the card's own is 1. */
+const LISTED = /^\d+\. (.+)$/;
+
 const CANNOT_TELL_LINE =
   "could not check what this conversation's browser already has waiting, so the task was not " +
   "started. Say so plainly and offer to try again; do not retry this turn.";
@@ -347,6 +362,33 @@ export const browseTool: AgentTool = {
   destructive: true,
   // No `needs`: there is no connection and no channel for this to point at.
   isConfigured: (env: ToolEnv) => hasBrowserKey(env),
+  // The first starts and the rest wait their turn, so the line holds no more
+  // than the queue does.
+  approvedTogether: {
+    max: QUEUE_MAX,
+    line: lineOf,
+    card(asked, lines) {
+      const proposal = (asked.proposal ?? {}) as Record<string, unknown>;
+      return {
+        summary: `Use a browser to do these ${lines.length + 1} things?`,
+        proposal: {
+          ...proposal,
+          thenInLine: lines.map((line, i) => `${i + 2}. ${line}`).join("\n"),
+          ...(typeof proposal.cost === "string"
+            ? { cost: `${proposal.cost}, for each of the ${lines.length + 1}` }
+            : {}),
+        },
+      };
+    },
+    listed(proposal) {
+      const list = (proposal as { thenInLine?: unknown } | null)?.thenInLine;
+      if (typeof list !== "string") return [];
+      return list.split("\n").flatMap((row) => {
+        const match = LISTED.exec(row);
+        return match ? [match[1]] : [];
+      });
+    },
+  },
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = args as { task?: unknown; site?: unknown };
     if (typeof input.task !== "string" || !input.task.trim()) {

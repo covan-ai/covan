@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { savedLogin, tasksThatCarriedALogin } from "../lib/browser/credentials";
 import { pollConversationBrowser } from "../lib/browser/live";
+import { NOT_STARTED } from "../lib/browser/queue";
 import { deferred } from "../lib/defer";
 import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
@@ -368,7 +369,9 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
    * retry binds; it names a label and a host, and opens nothing. A failure
    * is "none", for `carried`'s reason.
    */
-  const newest = rows[0];
+  // The newest task the browser actually ran: one waiting its turn, or one
+  // that ended without starting (0080), is not the wall the card shows.
+  const newest = rows.find((row) => row.status !== "waiting" && row.stop_reason !== NOT_STARTED);
   let offered: { id: string; label: string; siteHost: string } | null = null;
   if (
     newest &&

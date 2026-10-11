@@ -917,6 +917,12 @@ export const api = {
     stop: (browserSessionId: string): Promise<void> =>
       request("POST", `/browser/sessions/${browserSessionId}/stop`),
     /**
+     * Take a task out of the browser's line before its turn (0080). A task
+     * that has already started answers 409 — stopping that is the take-over.
+     */
+    removeWaiting: (browserTaskId: string): Promise<void> =>
+      request("POST", `/browser/tasks/${browserTaskId}/cancel`),
+    /**
      * The person's browsers that may still be open, for Settings (Task 3.2):
      * where each one is, who has it, and whether its browser is still open —
      * a boolean, never an id. No live URL: this list mints none.
@@ -1286,7 +1292,8 @@ export type ApiKeyList = { available: boolean; keys: ApiKey[] };
 export type BrowserTask = {
   id: string;
   task: string;
-  status: "queued" | "running" | "finished" | "failed" | "stopped";
+  /** `waiting`: in the browser's line, not started yet. `queued`: a run the provider took. */
+  status: "waiting" | "queued" | "running" | "finished" | "failed" | "stopped";
   output: string | null;
   error: string | null;
   /** Set when a hand-back already produced a second attempt. One retry per original, ever. */

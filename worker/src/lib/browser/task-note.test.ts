@@ -111,6 +111,25 @@ describe("browserTaskNote", () => {
     expect(note).toContain('"a" — handed to the person in the browser panel');
   });
 
+  /** 0080: a task in the browser's line, and one that left it without starting. */
+  it("says a task is waiting its turn, and that one which never started did not", async () => {
+    const { db } = dbWith([
+      { task: "Review tasklet.ai", status: "waiting" },
+      {
+        task: "Review the repo",
+        status: "stopped",
+        stop_reason: "not_started",
+        error: "the browser was closed before its turn came",
+      },
+      { task: "Review covan.app", status: "running" },
+    ]);
+    const lines = String(await browserTaskNote(db, "sess-1", NOW)).split("\n");
+    expect(lines[2]).toBe(
+      '2. "Review the repo" — did not start: the browser was closed before its turn came',
+    );
+    expect(lines[3]).toMatch(/^3\. "Review tasklet\.ai" — waiting its turn — it starts by itself/);
+  });
+
   it("shortens a long task to one line", async () => {
     const { db } = dbWith([{ task: `Open the page\nand ${"x".repeat(300)}`, status: "running" }]);
     const line = String(await browserTaskNote(db, "sess-1", NOW)).split("\n")[1];

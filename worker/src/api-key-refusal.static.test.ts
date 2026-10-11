@@ -82,6 +82,8 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "starts a run in the owner's signed-in browser and spends the one free retry on their behalf, an act the owner never took that outlives the key",
   "routes/browser.ts POST /browser/sessions/:id/stop":
     "stops somebody's browser, ending a sign-in they may be in the middle of and deciding what their cookie jar keeps",
+  "routes/browser.ts POST /browser/tasks/:id/cancel":
+    "takes a task somebody approved out of their browser's line, deciding what their browser does next on their behalf",
   "routes/browser.ts GET /browser/sessions":
     "lists which of somebody's browsers are open right now, in which conversations and in whose hands — a map of where a signed-in browser of theirs can be found, read the way GET /browser/profile and GET /browser/credentials are refused: reconnaissance rather than work, which no key-driven caller needs",
   "routes/browser.ts GET /browser/credentials":

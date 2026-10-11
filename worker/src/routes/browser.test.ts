@@ -13,6 +13,7 @@ import * as profiles from "../lib/browser/profiles";
 import * as controls from "../lib/browser/controls";
 import * as credentials from "../lib/browser/credentials";
 import * as live from "../lib/browser/live";
+import * as queue from "../lib/browser/queue";
 
 /**
  * The route half of a takeover, which is the half that answers permission
@@ -774,6 +775,16 @@ describe("/browser/sessions/:id", () => {
         kind: "eq",
       });
       expect(read?.order).toEqual([{ column: "created_at", ascending: false }]);
+      // 0080: a task waiting its turn, or one that left the line unstarted, is
+      // not what the browser last ran — and not by `provider_task_id`, which
+      // the caller's client may not read.
+      expect(read?.filters).toEqual(
+        expect.arrayContaining([
+          { column: "status", value: "waiting", kind: "neq" },
+          { column: "", value: "stop_reason.is.null,stop_reason.neq.not_started", kind: "or" },
+        ]),
+      );
+      expect(read?.filters.some((f) => f.column === "provider_task_id")).toBe(false);
     });
 
     /** The one free retry: a second hand-back for the same task is refused before it costs. */
@@ -882,6 +893,61 @@ describe("/browser/sessions/:id", () => {
 
       expect(status).toBe(500);
       expect(hand).not.toHaveBeenCalled();
+    });
+  });
+
+  /** 0080: the panel's Remove, for a task waiting its turn in the browser's line. */
+  describe("POST /browser/tasks/:id/cancel", () => {
+    let cancel: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      cancel = vi.spyOn(queue, "cancelWaitingTask").mockResolvedValue(true);
+    });
+
+    const withTask = (task: Record<string, unknown> | null, apiKeyId?: string) =>
+      appWith({ apiKeyId, tables: { browser_tasks: selects(task) } });
+
+    it("takes a waiting task of the caller's out of the line", async () => {
+      const fixture = withTask({ id: "bt-7", status: "waiting" });
+      const { status } = await call(fixture, "POST", "/browser/tasks/bt-7/cancel");
+
+      expect(status).toBe(204);
+      expect(cancel.mock.calls[0][1]).toBe("bt-7");
+      // Whose task it is was asked through the caller's own client, by id.
+      const read = fixture.calls.find((c) => c.table === "browser_tasks");
+      expect(read?.filters).toEqual([{ column: "id", value: "bt-7", kind: "eq" }]);
+    });
+
+    it("is a 404 for a task the caller cannot see", async () => {
+      const { status } = await call(withTask(null), "POST", "/browser/tasks/bt-7/cancel");
+      expect(status).toBe(404);
+      expect(cancel).not.toHaveBeenCalled();
+    });
+
+    it("409s a task that has started, or started while it was being removed", async () => {
+      const started = await call(
+        withTask({ id: "bt-7", status: "running" }),
+        "POST",
+        "/browser/tasks/bt-7/cancel",
+      );
+      expect(started.status).toBe(409);
+      expect(cancel).not.toHaveBeenCalled();
+
+      cancel.mockResolvedValue(false);
+      const raced = await call(
+        withTask({ id: "bt-7", status: "waiting" }),
+        "POST",
+        "/browser/tasks/bt-7/cancel",
+      );
+      expect(raced.status).toBe(409);
+      expect(String(raced.body?.error)).toMatch(/already started/);
+    });
+
+    it("refuses an API key before reading anything", async () => {
+      const fixture = withTask({ id: "bt-7", status: "waiting" }, "key-1");
+      const { status } = await call(fixture, "POST", "/browser/tasks/bt-7/cancel");
+      expect(status).toBe(403);
+      expect(fixture.calls).toEqual([]);
+      expect(cancel).not.toHaveBeenCalled();
     });
   });
 

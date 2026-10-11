@@ -3,6 +3,7 @@ import { canSyncConnections } from "./../types";
 import { runDueRoutines } from "./routines/dispatcher";
 import { runDueConnections } from "./connections/dispatcher";
 import { pollDueBrowserTasks } from "./browser/poller";
+import { startQueuedBrowserTasks } from "./browser/queue";
 import { sweepAbandonedTakeovers, sweepConversationBrowsers } from "./browser/sweep";
 import { PROVIDERS } from "./connections/registry";
 
@@ -77,6 +78,16 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
    * subrequest here — the claim, answering nothing — which is why this sits
    * above the connection sync rather than below it.
    */
+  /**
+   * Browser tasks waiting their turn (0080), just above the poll. A settle
+   * starts what is behind it when it can; this is for the rest — a line a
+   * take-over or a sign-in held and has let go of, a start that has to be
+   * tried again, and every start on Free, where the poll's settles leave it
+   * here. An idle tick costs two subrequests: the expiry and the claim.
+   */
+  const queue = await startQueuedBrowserTasks(env);
+  if (queue.started > 0 || queue.expired > 0) return;
+
   const browser = await pollDueBrowserTasks(env);
   if (browser.claimed > 0) return;
 

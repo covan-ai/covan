@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
+import { workerPlan } from "../limits";
 import { serviceClient } from "../supabase";
 import { hasBrowserKey, stopTask, taskStatus } from "./client";
 import { deliverBrowserTask } from "./deliver";
@@ -398,5 +399,9 @@ async function settle(
     db: deps.db,
     now: deps.now,
     deliver: deps.finish,
+    // Starting the next task in line is a dozen more subrequests per settle,
+    // and this tick settles up to `BATCH_SIZE` of them: past Free's fifty. On
+    // Free the queue's own cron stage starts it on the next tick instead.
+    ...(workerPlan(env) === "paid" ? {} : { advance: async () => {} }),
   });
 }

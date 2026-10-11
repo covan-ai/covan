@@ -1027,6 +1027,46 @@ describe("liveBrowser", () => {
 });
 
 describe("stopConversationBrowser", () => {
+  /**
+   * 0080: closing the browser takes what was waiting for it out of the line,
+   * so the next task does not reopen a browser somebody just closed — and
+   * says so in the conversation, once.
+   */
+  it("takes the tasks waiting for it out of the line, and says so once", async () => {
+    provider.list = () => json({ items: [{ id: "bu-browser-1", status: "active" }] });
+    const mem = memoryDb({
+      browser_tasks: [
+        taskRow({ status: "finished" }),
+        taskRow({
+          id: "bt-1",
+          status: "waiting",
+          provider_task_id: null,
+          provider_run_id: null,
+          task: "Review tasklet.ai",
+        }),
+      ],
+      browser_sessions: [sessionRow({ live_state: "none" })],
+      browser_profiles: [],
+      messages: [],
+      chat_sessions: [{ id: "chat-1" }],
+    });
+    const deps = { db: mem.db as unknown as SupabaseClient, now: () => NOW, sleep };
+
+    expect(await stopConversationBrowser(ENV, ME, deps)).toEqual({ kind: "ok" });
+
+    expect(mem.tables.browser_tasks[0].status).toBe("finished");
+    expect(mem.tables.browser_tasks[1]).toMatchObject({
+      status: "stopped",
+      stop_reason: "not_started",
+    });
+    expect(mem.tables.messages).toHaveLength(1);
+    expect(mem.tables.messages[0]).toMatchObject({ session_id: "chat-1", role: "assistant" });
+    expect(String(mem.tables.messages[0].content)).toMatch(/closed.*\n- Review tasklet\.ai$/s);
+    // Before anything else is written: the line first, then the browser.
+    const writes = mem.calls.filter((c) => c.op !== "select");
+    expect(writes[0]).toMatchObject({ table: "browser_tasks", op: "update" });
+  });
+
   it("stops the session's live browser and gives the controls to nobody", async () => {
     provider.list = () =>
       json({

@@ -35,6 +35,25 @@ export function isRunning(task: BrowserTask): boolean {
 }
 
 /**
+ * A task that ran: not one waiting its turn in the browser's line (0080), and
+ * not one that left the line without starting (`stop_reason = 'not_started'`).
+ * The rules below are about what the browser last did, and a task that never
+ * reached it did nothing there.
+ */
+export function ran(task: BrowserTask): boolean {
+  return task.status !== "waiting" && task.stopReason !== "not_started";
+}
+
+/** The tasks waiting their turn in this browser, oldest first: next in line first. */
+export function waitingFor(data: ConversationBrowser | undefined): BrowserTask[] {
+  const session = data?.session;
+  if (!session) return [];
+  return data.tasks
+    .filter((t) => t.status === "waiting" && t.browserSessionId === session.id)
+    .reverse();
+}
+
+/**
  * Whether the next ask is worth a provider call.
  *
  * A run queued or running, or a browser somebody holds — the agent, or the
@@ -44,7 +63,14 @@ export function isRunning(task: BrowserTask): boolean {
  */
 export function shouldPoll(data: ConversationBrowser | undefined): boolean {
   if (!data) return false;
-  return data.tasks.some(isRunning) || (!!data.session && data.session.liveState !== "none");
+  return (
+    data.tasks.some(isRunning) ||
+    // A task waiting its turn starts by itself, and the panel should see it
+    // start. Cheap to ask: with nothing running the server makes no provider
+    // call.
+    data.tasks.some((t) => t.status === "waiting") ||
+    (!!data.session && data.session.liveState !== "none")
+  );
 }
 
 /**
@@ -70,7 +96,7 @@ export function shouldPoll(data: ConversationBrowser | undefined): boolean {
  * somebody to Take over, which can only answer that the browser has closed.
  */
 export function signInFor(data: ConversationBrowser | undefined): BrowserTask | null {
-  const newest = data?.tasks[0];
+  const newest = data?.tasks.find(ran);
   const session = data?.session;
   if (!newest || !session || !session.browserReady) return null;
   return newest.status === "failed" &&
@@ -92,7 +118,7 @@ export function signInFor(data: ConversationBrowser | undefined): BrowserTask | 
 export function canContinue(data: ConversationBrowser | undefined): boolean {
   const session = data?.session;
   if (!session) return false;
-  const newest = data.tasks.find((t) => t.browserSessionId === session.id);
+  const newest = data.tasks.find((t) => t.browserSessionId === session.id && ran(t));
   if (!newest || newest.apiVersion !== "v4" || newest.retryOf != null) return false;
   return (
     newest.status === "failed" ||

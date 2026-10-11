@@ -1091,7 +1091,8 @@ export function mapConnectionRun(row: {
 export type BrowserTaskDTO = {
   id: string;
   task: string;
-  status: "queued" | "running" | "finished" | "failed" | "stopped";
+  /** `waiting`: in the browser's line, not started (0080). `queued`: a run the provider took. */
+  status: "waiting" | "queued" | "running" | "finished" | "failed" | "stopped";
   output: string | null;
   error: string | null;
   retryOf: string | null;

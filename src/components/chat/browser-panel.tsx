@@ -18,8 +18,10 @@ import {
   eventId,
   isRunning,
   openInNewWindow,
+  ran,
   signInFor,
   useConversationBrowser,
+  waitingFor,
 } from "./use-conversation-browser";
 
 /**
@@ -56,6 +58,9 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 
 const GAVE_UP = "The agent has not let go of the browser yet. Try again in a moment.";
 
+/** A queued task's place, as the list says it. The server keeps at most three waiting. */
+const PLACES = ["Up next", "Second in line", "Third in line"];
+
 /** The server's sentences start in lower case, for splicing; on their own they are sentences. */
 function sentence(text: string): string {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
@@ -90,6 +95,8 @@ export function BrowserPanel({
   const running = (data?.tasks ?? []).some(isRunning);
   const prompt = signInFor(data);
   const continuable = canContinue(data);
+  // Tasks waiting their turn in this browser (0080), next in line first.
+  const line = waitingFor(data);
   const liveState: LiveState = session?.liveState ?? "none";
 
   /**
@@ -111,7 +118,8 @@ export function BrowserPanel({
   const [mints, setMints] = useState(0);
   const browserId = session?.id ?? null;
   const browserReady = session?.browserReady ?? false;
-  const newestTask = data?.tasks[0]?.id ?? null;
+  // The newest task the browser ran: one only waiting its turn changes nothing on screen.
+  const newestTask = data?.tasks.find(ran)?.id ?? null;
   // The poll's tick, as a reason to mint again: a later answer than the one
   // already acted on, while a run is going and nothing is on screen. The first
   // answer is the mount's own mint, so it is not counted twice.
@@ -263,9 +271,26 @@ export function BrowserPanel({
       setLive({ url: null, problem: null });
       patchLiveState("none", null);
       void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
+      // Closing takes what was waiting out of the line, and says so in the
+      // conversation (0080).
+      if (line.length > 0) {
+        void queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
+      }
       onHide();
     },
     onError: (err) => setProblem(messageOf(err)),
+  });
+
+  /** Take one task out of the line before its turn (0080). */
+  const removeWaiting = useMutation({
+    mutationFn: (taskId: string) => api.browser.removeWaiting(taskId),
+    onMutate: () => setProblem(null),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) }),
+    // A 409 is a task that started meanwhile: the sentence says so.
+    onError: (err) => {
+      setProblem(messageOf(err));
+      void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
+    },
   });
 
   const mode: "agent" | "human" | "cancelling" | "idle" =
@@ -392,7 +417,9 @@ export function BrowserPanel({
     ? live.problem
     : session && (running || liveState !== "none")
       ? "Starting the browser…"
-      : "No browser is open right now.";
+      : line.length > 0
+        ? "Starting the next task…"
+        : "No browser is open right now.";
 
   return (
     <div
@@ -436,6 +463,8 @@ export function BrowserPanel({
         <div className="flex items-center gap-2 border-b border-border px-4 py-2">
           <span className="min-w-0 flex-1 text-sm">
             Close the browser? Closing it saves your sign-ins to your profile.
+            {line.length === 1 && " The task waiting for it won't run."}
+            {line.length > 1 && ` The ${line.length} tasks waiting for it won't run.`}
           </span>
           <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
             Keep it open
@@ -540,6 +569,40 @@ export function BrowserPanel({
           <p role="alert" className="text-center text-meta text-destructive">
             {problem}
           </p>
+        )}
+
+        {/* The line (0080): what starts by itself when the browser is free,
+            next first. Remove takes one out before its turn; a task that has
+            started is the take-over's, not this list's. */}
+        {line.length > 0 && (
+          <section aria-label="Queued tasks" className="flex flex-col gap-1.5">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Queued
+            </h3>
+            <ol className="flex flex-col gap-1.5">
+              {line.map((task, i) => (
+                <li
+                  key={task.id}
+                  className="flex items-start gap-2 rounded-[10px] border border-border bg-card px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-muted-foreground">
+                      {PLACES[i] ?? `Number ${i + 1} in line`}
+                    </p>
+                    <p className="line-clamp-2 text-sm [overflow-wrap:anywhere]">{task.task}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={removeWaiting.isPending}
+                    onClick={() => removeWaiting.mutate(task.id)}
+                  >
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ol>
+          </section>
         )}
 
         {data && data.events.length > 0 && (

@@ -3,6 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
 import { deliverBrowserTask } from "./deliver";
 import { bareHost, OUTCOME_STATUSES, type OutcomeStatus } from "./outcome";
+import { advanceBrowserQueue } from "./queue";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 import { browsersFor, type RunSummary } from "./v4";
 
@@ -175,6 +176,11 @@ export type SettleDeps = {
    * Not called when the row already named one, or the settle named none.
    */
   onBrowserNamed?: (providerBrowserId: string) => void;
+  /**
+   * Start what was waiting behind this task in its browser (0080). Defaults
+   * to `advanceBrowserQueue` through the same client.
+   */
+  advance?: (browserSessionId: string) => Promise<unknown>;
 };
 
 function problem(error: { code?: string; message?: string } | null): {
@@ -271,6 +277,23 @@ export async function settleBrowserTask(
 
   const credentialId = await carriedLogin(db, row.id, outcome);
   await deliver({ ...row, credential_id: credentialId }, outcome, env, db);
+
+  /**
+   * The browser is free: start the next task in its line (0080), after the
+   * answer, so a person reads the first result before the second is under
+   * way. Only the call that won the claim gets here, and the queue's own
+   * claim keeps two clocks from starting one task twice. What it cannot start
+   * now — a line held by a sign-in, a busy provider — the cron starts later.
+   */
+  if (browserSessionId) {
+    try {
+      await (overrides.advance ?? ((id: string) => advanceBrowserQueue(env, id, { db })))(
+        browserSessionId,
+      );
+    } catch (err) {
+      console.error("could not start the next browser task in line", row.id, err);
+    }
+  }
   return true;
 }
 

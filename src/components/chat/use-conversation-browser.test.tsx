@@ -3,7 +3,15 @@ import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ConversationBrowser } from "@/lib/api-client";
-import { browserKey, useBrowserPanel } from "./use-conversation-browser";
+import {
+  browserKey,
+  canContinue,
+  ran,
+  shouldPoll,
+  signInFor,
+  useBrowserPanel,
+  waitingFor,
+} from "./use-conversation-browser";
 
 /**
  * When the panel opens and shuts by itself. The chat route's tests cover what
@@ -132,5 +140,48 @@ describe("useBrowserPanel", () => {
     rerender({ sessionId: "chat-2", narrow: false });
     await waitFor(() => expect(browserTasks).toHaveBeenCalledWith("chat-2"));
     expect(result.current.open).toBe(false);
+  });
+});
+
+/**
+ * 0080: tasks waiting their turn in the browser's line sit in front of the
+ * newest task the browser actually ran. The sign-in card and Done are about
+ * that task, so neither may be hidden behind a task that has not started.
+ */
+describe("a browser with tasks waiting their turn", () => {
+  type Task = ConversationBrowser["tasks"][number];
+  const base = browser("ran", "failed", "none").tasks[0];
+  const wall: Task = { ...base, id: "wall", stopReason: "login_required", signInHost: "x.com" };
+  const waiting = (id: string): Task => ({ ...base, id, status: "waiting", stopReason: null });
+  const removed: Task = { ...base, id: "removed", status: "stopped", stopReason: "not_started" };
+  const withTasks = (tasks: Task[], liveState = "none"): ConversationBrowser =>
+    ({ ...browser("x", "failed", liveState), tasks }) as ConversationBrowser;
+
+  it("knows a task that never reached the browser from one that ran", () => {
+    expect(ran(waiting("w"))).toBe(false);
+    expect(ran(removed)).toBe(false);
+    expect(ran(wall)).toBe(true);
+  });
+
+  it("lists the line oldest first, next in line first", () => {
+    // The poll answers newest first.
+    expect(waitingFor(withTasks([waiting("w2"), waiting("w1"), wall])).map((t) => t.id)).toEqual([
+      "w1",
+      "w2",
+    ]);
+  });
+
+  it("keeps the sign-in card for a wall with tasks queued behind it", () => {
+    expect(signInFor(withTasks([waiting("w1"), removed, wall]))?.id).toBe("wall");
+  });
+
+  it("keeps Done for the task the person took over, not the one waiting", () => {
+    const taken: Task = { ...base, id: "taken", status: "stopped", stopReason: "handed_to_person" };
+    expect(canContinue(withTasks([waiting("w1"), taken], "human"))).toBe(true);
+  });
+
+  it("keeps asking while a task waits, so the panel sees it start", () => {
+    expect(shouldPoll(withTasks([waiting("w1"), wall]))).toBe(true);
+    expect(shouldPoll(withTasks([removed, wall]))).toBe(false);
   });
 });

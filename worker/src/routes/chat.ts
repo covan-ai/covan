@@ -6,6 +6,7 @@ import { serviceClient } from "../lib/supabase";
 import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
 import { type CompletionMessage, type CompletionUsage } from "../lib/completion";
 import {
+  answerUnanswered,
   parseArguments,
   runWithTimeout,
   type AgentStep,
@@ -1225,9 +1226,12 @@ chat.post("/chat/confirm/:id", async (c) => {
             : `error: ${result.message}`;
 
         // The pending step, resolved. Its index is kept so the numbering the
-        // person already saw does not move under them.
+        // person already saw does not move under them. Found by its status
+        // rather than taken as the last: the later calls of its batch are
+        // recorded after it, as refused (`NOT_RUN_FOR_A_QUESTION`).
+        const at = pause.steps.findLastIndex((step) => step.status === "pending");
         const steps = pause.steps.map((step, i) =>
-          i === pause.steps.length - 1 && step.status === "pending"
+          i === at
             ? {
                 ...step,
                 status:
@@ -1248,16 +1252,19 @@ chat.post("/chat/confirm/:id", async (c) => {
             : step,
         );
         carried = steps;
+        const settled = at === -1 ? steps[steps.length - 1] : steps[at];
         send({
           type: "step",
-          index: steps[steps.length - 1]?.index ?? 0,
+          index: settled?.index ?? 0,
           tool: pause.toolCall.name,
-          status: steps[steps.length - 1]?.status ?? "ok",
+          status: settled?.status ?? "ok",
           label: pause.toolCall.name,
         });
 
+        // `answerUnanswered` for a turn parked before the loop answered the
+        // rest of its batch itself; for one parked after, it adds nothing.
         const messages: CompletionMessage[] = [
-          ...pause.messages,
+          ...answerUnanswered(pause.messages, pause.toolCall.id),
           { role: "tool", toolCallId: pause.toolCall.id, content: resolved },
         ];
 

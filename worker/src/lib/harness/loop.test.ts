@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CompletionEvent, CompletionMessage } from "../completion";
 import type { AgentTool, ToolContext, ToolResult } from "./registry";
-import { runAgentTurn, parseArguments, NO_TOOLS_NOTICE, type PassUsage } from "./loop";
+import {
+  runAgentTurn,
+  parseArguments,
+  answerUnanswered,
+  NO_TOOLS_NOTICE,
+  NOT_RUN_FOR_A_QUESTION,
+  type PassUsage,
+} from "./loop";
 import { cap, MAX_STEP_EXCERPT_CHARS } from "./budget";
 
 /**
@@ -1234,6 +1241,95 @@ describe("a turn that stops to ask", () => {
     });
     expect(turn.paused).toBeUndefined();
     expect(turn.text).toBe("Created.");
+  });
+
+  /**
+   * 2026-10-11: three `browse` calls in one pass parked on the first, and the
+   * resume sent the other two with no result — a 400, and a turn cut short.
+   */
+  it("answers the later calls of its batch as not run, and runs none of them", async () => {
+    scripted([
+      pass("", [
+        { id: "c0", name: "search", arguments: "{}" },
+        { id: "c1", name: "browse", arguments: '{"task":"the repo"}' },
+        { id: "c2", name: "browse", arguments: '{"task":"covan.app"}' },
+        { id: "c3", name: "browse", arguments: '{"task":"tasklet.ai"}' },
+      ]),
+    ]);
+    const browse = vi.fn(async (): Promise<ToolResult> => ({
+      kind: "needs_confirmation",
+      summary: "?",
+      proposal: {},
+    }));
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [
+        tool("search", async () => ({ kind: "ok", content: "found" })),
+        tool("browse", browse),
+      ],
+    });
+
+    expect(browse).toHaveBeenCalledTimes(1);
+    expect(turn.paused).toMatchObject({ reason: "confirmation", call: { id: "c1" } });
+    const results = (turn.paused?.messages ?? []).filter((m) => m.role === "tool");
+    // The call before it ran and was answered; the one that asked is left for
+    // the resume; the two after it are answered as not run.
+    expect(results).toEqual([
+      { role: "tool", toolCallId: "c0", content: "found" },
+      { role: "tool", toolCallId: "c2", content: NOT_RUN_FOR_A_QUESTION },
+      { role: "tool", toolCallId: "c3", content: NOT_RUN_FOR_A_QUESTION },
+    ]);
+    expect(turn.steps.map((s) => [s.tool, s.status])).toEqual([
+      ["search", "ok"],
+      ["browse", "pending"],
+      ["browse", "refused"],
+      ["browse", "refused"],
+    ]);
+    expect(turn.steps[2]).toMatchObject({ index: 2, request: { task: "covan.app" } });
+  });
+
+  it("answers nothing extra when the call that asks is the last of its batch", async () => {
+    scripted([pass("", [{ id: "c1", name: "schedule", arguments: "{}" }])]);
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [
+        tool("schedule", async () => ({ kind: "needs_confirmation", summary: "?", proposal: {} })),
+      ],
+    });
+    expect(turn.paused?.messages.some((m) => m.role === "tool")).toBe(false);
+    expect(turn.steps).toHaveLength(1);
+  });
+});
+
+describe("answerUnanswered", () => {
+  const asked: CompletionMessage = {
+    role: "assistant",
+    content: "",
+    toolCalls: [
+      { id: "c1", name: "browse", arguments: "{}" },
+      { id: "c2", name: "browse", arguments: "{}" },
+      { id: "c3", name: "browse", arguments: "{}" },
+    ],
+  };
+
+  it("answers every call of the last turn but the pending one that has no result", () => {
+    const out = answerUnanswered([{ role: "user", content: "go" }, asked], "c1");
+    expect(out.slice(2)).toEqual([
+      { role: "tool", toolCallId: "c2", content: NOT_RUN_FOR_A_QUESTION },
+      { role: "tool", toolCallId: "c3", content: NOT_RUN_FOR_A_QUESTION },
+    ]);
+  });
+
+  it("leaves a transcript with nothing missing exactly as it was", () => {
+    const whole: CompletionMessage[] = [
+      { role: "user", content: "go" },
+      asked,
+      { role: "tool", toolCallId: "c2", content: NOT_RUN_FOR_A_QUESTION },
+      { role: "tool", toolCallId: "c3", content: NOT_RUN_FOR_A_QUESTION },
+    ];
+    expect(answerUnanswered(whole, "c1")).toBe(whole);
+    const none: CompletionMessage[] = [{ role: "user", content: "hi" }];
+    expect(answerUnanswered(none, "c1")).toBe(none);
   });
 });
 

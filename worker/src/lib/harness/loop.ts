@@ -460,6 +460,57 @@ export const NO_TOOLS_NOTICE =
   "of you, and say so plainly if the question needs something you cannot reach.";
 
 /**
+ * What a call is answered with when an earlier call in the same batch stopped
+ * the turn to ask the person. It did not run, and saying so is what lets the
+ * model ask for it again once the question is settled rather than report on
+ * work that never happened.
+ */
+export const NOT_RUN_FOR_A_QUESTION =
+  "error: not run — the turn stopped to ask the person about an earlier call in this batch. " +
+  "If this is still needed, call it again once that one is answered.";
+
+/**
+ * Every call of the last assistant turn that has no result yet, except
+ * `pending`, answered with `NOT_RUN_FOR_A_QUESTION`.
+ *
+ * For the resume. `runAgentLoop` answers a parked batch's later calls itself,
+ * but a turn parked before it did is stored without them, and resuming it
+ * sends calls with no result — a 400 that ends the turn cut short. Returns
+ * `messages` unchanged when nothing is missing.
+ */
+export function answerUnanswered(
+  messages: CompletionMessage[],
+  pending: string,
+): CompletionMessage[] {
+  let last = -1;
+  let calls: ToolCall[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role === "assistant" && message.toolCalls?.length) {
+      last = i;
+      calls = message.toolCalls;
+      break;
+    }
+  }
+  if (last === -1) return messages;
+  const answered = new Set(
+    messages
+      .slice(last + 1)
+      .flatMap((message) => (message.role === "tool" ? [message.toolCallId] : [])),
+  );
+  const missing = calls.filter((call) => call.id !== pending && !answered.has(call.id));
+  if (missing.length === 0) return messages;
+  return [
+    ...messages,
+    ...missing.map((call): CompletionMessage => ({
+      role: "tool",
+      toolCallId: call.id,
+      content: NOT_RUN_FOR_A_QUESTION,
+    })),
+  ];
+}
+
+/**
  * The arguments, or the reason they could not be read.
  *
  * Strict where `lib/completion.ts` is forgiving, and the two are answering
@@ -1000,6 +1051,27 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
           status: "pending",
           label: labelFor(call.name, args),
         });
+        // The calls after this one in the same batch will not run, and they
+        // are answered now for the ceiling's reason above: the resume answers
+        // only the call it asked about, and a call left with no result is a
+        // 400 from the provider. On 2026-10-11 three `browse` calls in one
+        // pass parked on the first, the resume sent the other two unanswered,
+        // and the turn ended cut short. Not shown live, like the ceiling's
+        // refusals; the recorded step is what keeps them in the transcript.
+        for (const later of calls.slice(calls.indexOf(call) + 1)) {
+          messages.push({ role: "tool", toolCallId: later.id, content: NOT_RUN_FOR_A_QUESTION });
+          const unrun = parseArguments(later.arguments);
+          record({
+            index: steps.length,
+            pass,
+            tool: later.name,
+            request: unrun.ok ? unrun.args : {},
+            resultExcerpt: "refused: an earlier call in the batch stopped to ask",
+            resultChars: NOT_RUN_FOR_A_QUESTION.length,
+            status: "refused",
+            durationMs: 0,
+          });
+        }
         return {
           text,
           usage,

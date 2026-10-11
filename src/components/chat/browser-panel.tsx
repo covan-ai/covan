@@ -11,7 +11,7 @@ import { ApiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import { HeaderAction } from "@/components/chat/turn-actions";
 import { cn } from "@/lib/utils";
-import { SignInPrompt } from "./takeover-card";
+import { SignInCard } from "./sign-in-card";
 import {
   browserKey,
   canContinue,
@@ -58,10 +58,16 @@ const GAVE_UP = "The agent has not let go of the browser yet. Try again in a mom
 
 export function BrowserPanel({
   sessionId,
+  agentId,
+  canShare = false,
   onHide,
   layout = "side",
 }: {
   sessionId: string;
+  /** The conversation's agent: what a login saved from the sign-in card is saved for. */
+  agentId?: string;
+  /** Whether the person may save a login for everyone using the agent: not a viewer (R34). */
+  canShare?: boolean;
   onHide: () => void;
   /** `side` beside the chat at `lg` and up; `sheet` full-height below it. */
   layout?: "side" | "sheet";
@@ -187,7 +193,17 @@ export function BrowserPanel({
   });
 
   const handBack = useMutation({
-    mutationFn: (id: string) => api.browser.handBack(id),
+    // A site only after a save on the sign-in card (R24); the server finds the
+    // login itself, so nothing secret is in these variables.
+    mutationFn: ({
+      id,
+      site,
+      credentialId,
+    }: {
+      id: string;
+      site?: string;
+      credentialId?: string;
+    }) => (site ? api.browser.handBack(id, { site, credentialId }) : api.browser.handBack(id)),
     onMutate: () => setProblem(null),
     onSuccess: () => {
       // Inert again before the next poll: a run has just been started in this
@@ -264,6 +280,33 @@ export function BrowserPanel({
     }).catch((err: unknown) => setProblem(messageOf(err)));
   }
 
+  /**
+   * A login was just saved from the sign-in card: the one free retry, with it
+   * (R24). Hand-back continues only a browser in the person's hands, and the
+   * browser at a wall is nobody's, so it is taken over first — the same
+   * take-over Just this once makes, with its wait for the agent to let go —
+   * and then handed back naming the site. The server resolves the login; the
+   * password went to the save and nowhere near this.
+   */
+  async function continueWithLogin(site: string, credentialId: string) {
+    if (!session) return;
+    const id = session.id;
+    setProblem(null);
+    if (liveState !== "human") {
+      let taken: TakeOverResult;
+      try {
+        taken = await takeOver.mutateAsync(id);
+      } catch {
+        return; // `takeOver`'s own onError has said why, beside the button.
+      }
+      if (taken.liveState !== "human") {
+        setProblem(GAVE_UP);
+        return;
+      }
+    }
+    handBack.mutate({ id, site, credentialId });
+  }
+
   const status =
     mode === "agent" || mode === "cancelling"
       ? "The agent is driving"
@@ -335,10 +378,15 @@ export function BrowserPanel({
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         {prompt && (
-          <SignInPrompt
+          <SignInCard
             host={prompt.signInHost}
+            carriedSavedLogin={prompt.carriedSavedLogin}
+            agentId={agentId}
+            canShare={canShare}
             opening={takeOver.isPending}
+            onJustThisOnce={() => session && takeOver.mutate(session.id)}
             onOpenWindow={() => openWindow(true)}
+            onSaved={(site, credentialId) => void continueWithLogin(site, credentialId)}
           />
         )}
 
@@ -397,7 +445,7 @@ export function BrowserPanel({
               donePending={handBack.isPending}
               continuable={continuable}
               onTakeOver={() => session && takeOver.mutate(session.id)}
-              onDone={() => session && handBack.mutate(session.id)}
+              onDone={() => session && handBack.mutate({ id: session.id })}
               onClose={close}
             />
           </div>

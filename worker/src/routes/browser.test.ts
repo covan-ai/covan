@@ -11,6 +11,7 @@ import { browser, offerable } from "./browser";
 import * as takeover from "../lib/browser/takeover";
 import * as profiles from "../lib/browser/profiles";
 import * as controls from "../lib/browser/controls";
+import * as credentials from "../lib/browser/credentials";
 
 /**
  * The route half of a takeover, which is the half that answers permission
@@ -833,4 +834,555 @@ it("passes a 402 through, so the operator's bill is not reported as a bug", asyn
 
   expect(status).toBe(402);
   expect(body.error).toMatch(/run out of browser credit/);
+});
+
+/**
+ * The login you save, from the route's side (Task 2.4).
+ *
+ * `lib/browser/credentials.ts` holds the service role and the only plaintext;
+ * what is pinned here is the route's half — an API key refused before
+ * anything is read, the agent (or the row) read through the caller's own
+ * client so RLS decides who may act, every typed refusal turned into a fixed
+ * sentence a dialog can show, and no username or password in any response or
+ * log line, on any path.
+ */
+describe("/browser/credentials", () => {
+  const AGENT_ID = "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+  const CRED_ID = "0d9c8b7a-6f5e-4d3c-9b2a-1f0e9d8c7b6a";
+  const SECRET_USER = "ada.lovelace@example.com";
+  const SECRET_PASS = "hunter2-correct-horse";
+  const LEVELS = ["log", "info", "warn", "error", "debug", "trace"] as const;
+
+  let save: ReturnType<typeof vi.spyOn>;
+  let forget: ReturnType<typeof vi.spyOn>;
+  let spoken: Array<ReturnType<typeof vi.spyOn>>;
+
+  beforeEach(() => {
+    save = vi.spyOn(credentials, "saveCredential").mockResolvedValue({
+      ok: true,
+      credential: {
+        id: CRED_ID,
+        scope: "owner",
+        siteHost: "linkedin.com",
+        label: "linkedin.com — personal",
+        replaced: false,
+      },
+    });
+    forget = vi.spyOn(credentials, "forgetCredential").mockResolvedValue({ ok: true });
+    spoken = LEVELS.map((level) => vi.spyOn(console, level).mockImplementation(() => {}));
+  });
+
+  /** Everything any console level was handed, as one string. */
+  function logged(): string {
+    return spoken
+      .flatMap((spy) => spy.mock.calls)
+      .map((call) =>
+        call
+          .map((a: unknown) =>
+            a instanceof Error ? `${a.message} ${a.stack}` : (JSON.stringify(a) ?? String(a)),
+          )
+          .join(" "),
+      )
+      .join("\n");
+  }
+
+  const AGENT_ROW = { id: AGENT_ID, workspace_id: WORKSPACE_ID };
+
+  function withTables(tables: FakeDbSpec["tables"], apiKeyId?: string) {
+    return appWith({ apiKeyId, tables });
+  }
+
+  async function send(
+    fixture: ReturnType<typeof appWith>,
+    method: string,
+    path: string,
+    body?: unknown,
+  ) {
+    const res = await fixture.app.request(
+      path,
+      {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      },
+      { BROWSER_USE_API_KEY: "bu_test" } as never,
+    );
+    const raw = await res.text();
+    return {
+      status: res.status,
+      raw,
+      body: raw ? (JSON.parse(raw) as Record<string, unknown>) : null,
+    };
+  }
+
+  const SAVE_BODY = {
+    agentId: AGENT_ID,
+    scope: "owner",
+    site: "https://www.LinkedIn.com/login",
+    label: "linkedin.com — personal",
+    username: SECRET_USER,
+    password: SECRET_PASS,
+  };
+
+  it.each([
+    ["GET", "/browser/credentials"],
+    ["POST", "/browser/credentials"],
+    ["DELETE", `/browser/credentials/${CRED_ID}`],
+  ])("refuses an API key on %s %s before reading anything", async (method, path) => {
+    const fixture = withTables(
+      { agents: selects(AGENT_ROW), browser_credentials: selects({ id: CRED_ID }) },
+      "key-1",
+    );
+    const { status, body } = await send(
+      fixture,
+      method,
+      path,
+      method === "POST" ? SAVE_BODY : undefined,
+    );
+
+    expect(status).toBe(403);
+    expect(String(body?.error)).toContain("api keys cannot");
+    expect(fixture.calls).toEqual([]);
+    expect(save).not.toHaveBeenCalled();
+    expect(forget).not.toHaveBeenCalled();
+  });
+
+  describe("GET", () => {
+    const ROWS = [
+      {
+        id: CRED_ID,
+        workspace_id: WORKSPACE_ID,
+        agent_id: AGENT_ID,
+        user_id: USER.id,
+        scope: "owner",
+        site_host: "linkedin.com",
+        label: "LinkedIn — personal",
+        created_at: "2026-10-01T00:00:00.000Z",
+        last_used_at: "2026-10-09T00:00:00.000Z",
+      },
+      {
+        id: "cred-shared",
+        workspace_id: WORKSPACE_ID,
+        agent_id: AGENT_ID,
+        user_id: "user-2",
+        scope: "agent",
+        site_host: "github.com",
+        label: "GitHub — shared",
+        created_at: "2026-10-02T00:00:00.000Z",
+        last_used_at: null,
+      },
+    ];
+
+    function listing(role: "admin" | "member") {
+      return withTables({
+        browser_credentials: { select: () => ({ data: ROWS, error: null }) },
+        workspace_members: {
+          select: (ctx: QueryContext) => {
+            const admins = ctx.filters.some((f) => f.column === "role" && f.value === "admin");
+            return {
+              data: role === "admin" || !admins ? [{ workspace_id: WORKSPACE_ID, role }] : [],
+              error: null,
+            };
+          },
+        },
+      });
+    }
+
+    it("lists through the caller's own client, granted columns only, never a username", async () => {
+      const fixture = listing("member");
+      const { status, body, raw } = await send(fixture, "GET", "/browser/credentials");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({
+        logins: [
+          {
+            id: CRED_ID,
+            agentId: AGENT_ID,
+            label: "LinkedIn — personal",
+            siteHost: "linkedin.com",
+            scope: "owner",
+            lastUsedAt: "2026-10-09T00:00:00.000Z",
+            createdAt: "2026-10-01T00:00:00.000Z",
+            own: true,
+            canForget: true,
+          },
+          {
+            id: "cred-shared",
+            agentId: AGENT_ID,
+            label: "GitHub — shared",
+            siteHost: "github.com",
+            scope: "agent",
+            lastUsedAt: null,
+            createdAt: "2026-10-02T00:00:00.000Z",
+            own: false,
+            // A colleague's shared login: only an admin may forget it.
+            canForget: false,
+          },
+        ],
+      });
+      const read = fixture.callsTo("browser_credentials")[0];
+      expect(read.columns).not.toMatch(/ciphertext|username|password|\*/);
+      expect(raw).not.toMatch(/user_id|userId|username/);
+    });
+
+    it("lets a workspace admin forget a colleague's shared login", async () => {
+      const fixture = listing("admin");
+      const { body } = await send(fixture, "GET", "/browser/credentials");
+
+      const logins = body?.logins as Array<{ id: string; canForget: boolean }>;
+      expect(logins.find((l) => l.id === "cred-shared")?.canForget).toBe(true);
+    });
+
+    it("narrows to one agent when asked", async () => {
+      const fixture = listing("member");
+      await send(fixture, "GET", `/browser/credentials?agentId=${AGENT_ID}`);
+
+      expect(fixture.callsTo("browser_credentials")[0].filters).toContainEqual({
+        column: "agent_id",
+        value: AGENT_ID,
+        kind: "eq",
+      });
+    });
+
+    it("answers an empty list for an agent id that is not one", async () => {
+      const fixture = listing("member");
+      const { status, body } = await send(fixture, "GET", "/browser/credentials?agentId=nope");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ logins: [] });
+      expect(fixture.callsTo("browser_credentials")).toEqual([]);
+    });
+  });
+
+  describe("POST", () => {
+    it("reads the agent through the caller's own client, then saves with the row's workspace", async () => {
+      const fixture = withTables({ agents: selects(AGENT_ROW) });
+      const { status, body, raw } = await send(fixture, "POST", "/browser/credentials", SAVE_BODY);
+
+      expect(status).toBe(200);
+      expect(body).toEqual({
+        credential: {
+          id: CRED_ID,
+          scope: "owner",
+          siteHost: "linkedin.com",
+          label: "linkedin.com — personal",
+          replaced: false,
+        },
+      });
+      const read = fixture.callsTo("agents")[0];
+      expect(read.filters).toContainEqual({ column: "id", value: AGENT_ID, kind: "eq" });
+      expect(save.mock.calls[0][1]).toEqual({
+        workspaceId: WORKSPACE_ID,
+        agentId: AGENT_ID,
+        userId: USER.id,
+        scope: "owner",
+        siteHost: SAVE_BODY.site,
+        label: SAVE_BODY.label,
+        username: SECRET_USER,
+        password: SECRET_PASS,
+      });
+      expect(raw).not.toContain(SECRET_USER);
+      expect(raw).not.toContain(SECRET_PASS);
+      expect(logged()).not.toContain(SECRET_USER);
+      expect(logged()).not.toContain(SECRET_PASS);
+    });
+
+    /**
+     * R34, 0021's line: shared things need a member, yours need only
+     * membership. A viewer may use the agent and save a login for themself,
+     * but not one every colleague's runs will sign in with.
+     */
+    describe("a login for everyone (R34)", () => {
+      function asRole(role: string | null) {
+        return withTables({
+          agents: selects(AGENT_ROW),
+          workspace_members: {
+            select: (ctx: QueryContext) => {
+              const mine =
+                ctx.filters.some((f) => f.column === "user_id" && f.value === USER.id) &&
+                ctx.filters.some((f) => f.column === "workspace_id" && f.value === WORKSPACE_ID);
+              return { data: mine && role ? { role } : null, error: null };
+            },
+          },
+        });
+      }
+      const SHARED = { ...SAVE_BODY, scope: "agent", label: "linkedin.com — shared" };
+
+      it("refuses a viewer, through the caller's own client, before anything is saved", async () => {
+        const fixture = asRole("viewer");
+        const { status, body } = await send(fixture, "POST", "/browser/credentials", SHARED);
+
+        expect(status).toBe(403);
+        expect(body).toEqual({
+          error:
+            "Only workspace members who can edit can save a login for everyone. Save it for yourself instead.",
+        });
+        expect(save).not.toHaveBeenCalled();
+        expect(fixture.callsTo("workspace_members")[0].filters).toContainEqual({
+          column: "workspace_id",
+          value: WORKSPACE_ID,
+          kind: "eq",
+        });
+      });
+
+      it("refuses a caller with no membership row at all", async () => {
+        const { status } = await send(asRole(null), "POST", "/browser/credentials", SHARED);
+        expect(status).toBe(403);
+        expect(save).not.toHaveBeenCalled();
+      });
+
+      it.each(["member", "admin"])("saves for a %s", async (role) => {
+        const { status } = await send(asRole(role), "POST", "/browser/credentials", SHARED);
+        expect(status).toBe(200);
+        expect(save.mock.calls[0][1]).toMatchObject({ scope: "agent" });
+      });
+
+      it("lets a viewer save a login for themself", async () => {
+        const fixture = asRole("viewer");
+        const { status } = await send(fixture, "POST", "/browser/credentials", SAVE_BODY);
+        expect(status).toBe(200);
+        expect(save.mock.calls[0][1]).toMatchObject({ scope: "owner" });
+      });
+    });
+
+    it("404s an agent the caller cannot use, before anything is saved", async () => {
+      const fixture = withTables({ agents: selects(null) });
+      const { status } = await send(fixture, "POST", "/browser/credentials", SAVE_BODY);
+
+      expect(status).toBe(404);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["no agent id", { ...SAVE_BODY, agentId: undefined }],
+      ["an agent id that is not one", { ...SAVE_BODY, agentId: "agent-1" }],
+    ])("refuses %s without reading anything", async (_label, payload) => {
+      const fixture = withTables({ agents: selects(AGENT_ROW) });
+      const { status } = await send(fixture, "POST", "/browser/credentials", payload);
+
+      expect(status).toBe(400);
+      expect(fixture.calls).toEqual([]);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["invalid_scope", 400, "A login is saved either for you or for everyone using this agent."],
+      ["invalid_host", 400, "That is not a website address a login can be saved for."],
+      ["invalid_label", 400, "Give the login a name, like “LinkedIn — sales account”."],
+      ["label_is_username", 400, "The name is shown to others, so it cannot contain the username."],
+      ["label_is_password", 400, "The name is shown to others, so it cannot contain the password."],
+      ["invalid_username", 400, "The username must be between 1 and 2048 bytes."],
+      ["invalid_password", 400, "The password must be between 1 and 2048 bytes."],
+      ["agent_not_found", 404, "That agent is not in this workspace."],
+      [
+        "shared_exists",
+        409,
+        "A shared login for linkedin.com already exists. Ask a workspace admin, or whoever saved it, to remove it first.",
+      ],
+    ])("answers %s with a fixed sentence", async (reason, expectedStatus, sentence) => {
+      save.mockResolvedValue({ ok: false, reason, message: "the library's words" } as never);
+      const fixture = withTables({ agents: selects(AGENT_ROW) });
+      const { status, body, raw } = await send(fixture, "POST", "/browser/credentials", SAVE_BODY);
+
+      expect(status).toBe(expectedStatus);
+      expect(body).toEqual({ error: sentence });
+      expect(raw).not.toContain(SECRET_USER);
+      expect(raw).not.toContain(SECRET_PASS);
+      expect(logged()).not.toContain(SECRET_USER);
+      expect(logged()).not.toContain(SECRET_PASS);
+    });
+
+    it("answers a failed save with a sentence that carries no value, and logs none", async () => {
+      save.mockRejectedValue(new Error("browser_credentials: insert failed (23502)"));
+      const fixture = withTables({ agents: selects(AGENT_ROW) });
+      const { status, body, raw } = await send(fixture, "POST", "/browser/credentials", SAVE_BODY);
+
+      expect(status).toBe(500);
+      expect(body).toEqual({ error: "Couldn't save that login. Try again in a moment." });
+      expect(raw).not.toContain(SECRET_USER);
+      expect(raw).not.toContain(SECRET_PASS);
+      expect(logged()).not.toContain(SECRET_USER);
+      expect(logged()).not.toContain(SECRET_PASS);
+    });
+  });
+
+  describe("DELETE", () => {
+    it("404s an id that is not a uuid, before anything is read", async () => {
+      const fixture = withTables({ browser_credentials: selects({ id: CRED_ID }) });
+      const { status } = await send(fixture, "DELETE", "/browser/credentials/not-a-uuid");
+
+      expect(status).toBe(404);
+      expect(fixture.calls).toEqual([]);
+      expect(forget).not.toHaveBeenCalled();
+    });
+
+    it("404s a login the caller's own client cannot see", async () => {
+      const fixture = withTables({ browser_credentials: selects(null) });
+      const { status } = await send(fixture, "DELETE", `/browser/credentials/${CRED_ID}`);
+
+      expect(status).toBe(404);
+      expect(forget).not.toHaveBeenCalled();
+    });
+
+    it("forgets, as the caller, and answers 204", async () => {
+      const fixture = withTables({ browser_credentials: selects({ id: CRED_ID }) });
+      const { status } = await send(fixture, "DELETE", `/browser/credentials/${CRED_ID}`);
+
+      expect(status).toBe(204);
+      expect(forget.mock.calls[0][1]).toEqual({ credentialId: CRED_ID, userId: USER.id });
+    });
+
+    it.each([
+      ["not_found", 404, "That saved login is not there any more."],
+      ["forbidden", 403, "Only a workspace admin, or whoever saved it, can remove a shared login."],
+    ])("answers %s with a fixed sentence", async (reason, expectedStatus, sentence) => {
+      forget.mockResolvedValue({ ok: false, reason } as never);
+      const fixture = withTables({ browser_credentials: selects({ id: CRED_ID }) });
+      const { status, body } = await send(fixture, "DELETE", `/browser/credentials/${CRED_ID}`);
+
+      expect(status).toBe(expectedStatus);
+      expect(body).toEqual({ error: sentence });
+    });
+  });
+});
+
+/**
+ * R24: Save on the sign-in card hands the browser back with the login
+ * attached. The client names the site and nothing else; the binding is
+ * resolved here, for the caller, by `credentialsFor` — plaintext never
+ * arrives from the client on this call.
+ */
+describe("POST /browser/sessions/:id/hand-back with a site", () => {
+  const HUMAN = { id: "bs-1", live_state: "human", human_since: "2026-10-10T12:00:00.000Z" };
+  const ORIGINAL = {
+    id: "bt-0",
+    workspace_id: WORKSPACE_ID,
+    agent_id: "agent-1",
+    user_id: USER.id,
+    session_id: "chat-1",
+    task: "read the pricing table",
+    retry_of: null,
+    status: "failed",
+    stop_reason: "login_required",
+  };
+  const LOGIN = {
+    id: "cred-1",
+    label: "LinkedIn — shared",
+    scope: "agent" as const,
+    siteHost: "linkedin.com",
+    aliases: { username: "linkedin_com_username", password: "linkedin_com_password" },
+    bindings: [],
+  };
+
+  let hand: ReturnType<typeof vi.spyOn>;
+  let resolveLogin: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    hand = vi
+      .spyOn(controls, "handBackBrowser")
+      .mockResolvedValue({ kind: "ok", browserTaskId: "bt-1" });
+    resolveLogin = vi.spyOn(credentials, "credentialsFor").mockResolvedValue(LOGIN as never);
+  });
+
+  async function handBack(body?: unknown) {
+    const fixture = appWith({
+      tables: { browser_sessions: selects(HUMAN), browser_tasks: selects(ORIGINAL) },
+    });
+    const res = await fixture.app.request(
+      "/browser/sessions/bs-1/hand-back",
+      {
+        method: "POST",
+        headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      },
+      { BROWSER_USE_API_KEY: "bu_test" } as never,
+    );
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it("resolves the caller's binding for the normalised site and carries it", async () => {
+    const { status, body } = await handBack({ site: "https://www.LinkedIn.com/login" });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ browserTaskId: "bt-1" });
+    expect(resolveLogin.mock.calls[0][1]).toEqual({
+      agentId: "agent-1",
+      userId: USER.id,
+      host: "linkedin.com",
+    });
+    expect(hand.mock.calls[0][1]).toEqual({
+      browserSessionId: "bs-1",
+      userId: USER.id,
+      original: ORIGINAL,
+      login: LOGIN,
+    });
+  });
+
+  /**
+   * R35: the save's own id goes with the hand-back, so the run binds the login
+   * just saved rather than one `pick` would prefer. `credentialsFor` decides
+   * whether the caller may use it; the route only passes it on.
+   */
+  it("passes the saved login's id on as a preference", async () => {
+    const credentialId = "0d9c8b7a-6f5e-4d3c-9b2a-1f0e9d8c7b6a";
+    const { status } = await handBack({ site: "linkedin.com", credentialId });
+
+    expect(status).toBe(200);
+    expect(resolveLogin.mock.calls[0][1]).toEqual({
+      agentId: "agent-1",
+      userId: USER.id,
+      host: "linkedin.com",
+      prefer: credentialId,
+    });
+  });
+
+  it("400s a credential id that is not one, before the retry is spent", async () => {
+    const { status } = await handBack({ site: "linkedin.com", credentialId: "cred-1" });
+
+    expect(status).toBe(400);
+    expect(resolveLogin).not.toHaveBeenCalled();
+    expect(hand).not.toHaveBeenCalled();
+  });
+
+  it("is exactly today's hand-back with no body, or a body without a site", async () => {
+    for (const body of [undefined, {}]) {
+      hand.mockClear();
+      const { status } = await handBack(body);
+      expect(status).toBe(200);
+      expect(hand.mock.calls[0][1]).toEqual({
+        browserSessionId: "bs-1",
+        userId: USER.id,
+        original: ORIGINAL,
+      });
+    }
+    expect(resolveLogin).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a site that is not a host", { site: "not a site" }],
+    ["a site that is not a string", { site: 42 }],
+  ])("400s %s, before the retry is spent", async (_label, body) => {
+    const { status } = await handBack(body);
+
+    expect(status).toBe(400);
+    expect(resolveLogin).not.toHaveBeenCalled();
+    expect(hand).not.toHaveBeenCalled();
+  });
+
+  it("409s when there is no saved login the caller may use, before the retry is spent", async () => {
+    resolveLogin.mockResolvedValue(null);
+    const { status, body } = await handBack({ site: "linkedin.com" });
+
+    expect(status).toBe(409);
+    expect(String(body.error)).toContain("linkedin.com");
+    expect(hand).not.toHaveBeenCalled();
+  });
+
+  it("500s, without spending the retry, when the login cannot be read", async () => {
+    resolveLogin.mockRejectedValue(new Error("browser_credentials: read failed (57014)"));
+    const { status } = await handBack({ site: "linkedin.com" });
+
+    expect(status).toBe(500);
+    expect(hand).not.toHaveBeenCalled();
+  });
 });

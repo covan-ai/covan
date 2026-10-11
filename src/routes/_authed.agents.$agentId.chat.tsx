@@ -1938,6 +1938,8 @@ function ChatTab() {
           <BrowserPanel
             key={active.id}
             sessionId={active.id}
+            agentId={agentId}
+            canShare={canWrite}
             layout="sheet"
             onHide={browserPanel.hide}
           />
@@ -1997,7 +1999,15 @@ function ChatTab() {
   } else if (browserPanel.open && active && !belowLg) {
     // Keyed by the conversation so a second chat never inherits the first
     // one's live view.
-    side = <BrowserPanel key={active.id} sessionId={active.id} onHide={browserPanel.hide} />;
+    side = (
+      <BrowserPanel
+        key={active.id}
+        sessionId={active.id}
+        agentId={agentId}
+        canShare={canWrite}
+        onHide={browserPanel.hide}
+      />
+    );
   } else if (isBrainstorm && active) {
     side = (
       <div className="flex h-full flex-col border-l border-border">

@@ -71,6 +71,13 @@ export async function recordBrowserTask(
     task: string;
     /** The attempt this one replaces, after a takeover. See the header. */
     retryOf?: string;
+    /**
+     * The saved login the run carried as secret bindings (ruling R32, 0079),
+     * so `deliver` says "the saved login did not work" only of one it was
+     * given. Absent or null for a run that carried none, which the column's
+     * null already says.
+     */
+    credentialId?: string | null;
   } & RecordedRun,
 ): Promise<string | null> {
   const provider =
@@ -93,6 +100,7 @@ export async function recordBrowserTask(
       task: input.task,
       status: "queued",
       retry_of: input.retryOf ?? null,
+      ...(input.credentialId ? { credential_id: input.credentialId } : {}),
     })
     .select("id")
     .single();

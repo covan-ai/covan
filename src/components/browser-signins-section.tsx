@@ -14,6 +14,7 @@ import {
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
+import { SavedLoginsList } from "@/components/saved-logins";
 import { api, ApiError } from "@/lib/api-client";
 
 /**
@@ -37,8 +38,34 @@ import { api, ApiError } from "@/lib/api-client";
  * needs it. Making them type an address to drop a cookie jar would price the
  * safe action like the unsafe one, and the predictable result is that nobody
  * uses it.
+ *
+ * **And the logins a person chose to save (Task 2.4)**, which are a different
+ * thing and get their own section: a username and password kept, encrypted,
+ * for one agent, because somebody pressed Save on the sign-in card. Their own
+ * and the shared ones they can see — label, site, who it is for, last used,
+ * Forget — never a username (`SavedLoginsList`). Each section draws only when
+ * it has something to show.
  */
 export function BrowserSignInsSection() {
+  return (
+    <>
+      <CookieJarSection />
+      <SavedLoginsList
+        wrap={(list) => (
+          <section className="mt-16">
+            <SectionHeading
+              title="Saved logins"
+              description="Logins you saved for an agent, and the ones your team saved for everyone using one. Encrypted; Covan's AI model is never given them."
+            />
+            <SectionCard className="mt-6">{list}</SectionCard>
+          </section>
+        )}
+      />
+    </>
+  );
+}
+
+function CookieJarSection() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -85,7 +112,7 @@ export function BrowserSignInsSection() {
           When a browser task stops at a login, you can sign in yourself in your own tab. What
           survives that is a cookie jar held by our browser provider, so the next task does not ask
           again. <strong>Covan never receives your password</strong> — you type it at the site, and
-          this is the whole of what is kept.
+          this is the whole of what signing in yourself keeps.
         </p>
 
         {sites.length > 0 ? (

@@ -104,6 +104,19 @@ describe("createRun", () => {
     expect("customProxy" in body).toBe(false);
   });
 
+  /**
+   * Ruling R38: a run carrying a shared login must not run in a browser that
+   * has the person's profile, and the provider's way to say so on a follow-up
+   * is an explicit `profileId: null` — "null vs a profiled browser declines
+   * reuse and provisions fresh". So `null` is sent as `null`, not dropped.
+   */
+  it("sends an explicit null profileId, which declines a profiled browser", async () => {
+    fetchMock.mockResolvedValue(json(created, 202));
+    await createRun(ENV, { task: "t", sessionId: SESSION_ID, profileId: null, maxCostUsd: 0.25 });
+    const settings = sentBody().browserSettings as Record<string, unknown>;
+    expect(settings).toEqual({ profileId: null });
+  });
+
   it("omits browserSettings entirely when none of its fields is given", async () => {
     fetchMock.mockResolvedValue(json(created, 202));
     await createRun(ENV, { task: "t", maxCostUsd: 0.25 });

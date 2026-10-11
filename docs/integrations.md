@@ -778,10 +778,17 @@ derived from browser-use's own published figure of 17c per solved task; what
 each task really cost is recorded, so it can be corrected from invoices rather
 than from a blog post.
 
-**No password is ever given to an agent, and that is enforced rather than
-promised.** browser-use accepts a field for credentials and this build never
-fills it in, so nothing you type into Covan can be handed to a browser. What a
-browser task *can* do is carry a sign-in you performed yourself: when a task
+**No password is ever given to the model in your conversation, and that is
+enforced rather than promised.** You can save a login for a site on an agent, for
+yourself or for everyone using it, and its browser then signs in by itself:
+browser-use's browsing agent is told two alias names and the provider types the
+values — which, once typed, are reachable by the page and by anything with access
+to that browser, as the provider says (see [Security](security.md)). A login
+saved for everyone signs in inside a browser that carries nobody's profile, so
+the account it signs into is never kept in a person's cookies, and forgetting it
+stops the agent using it.
+Without a saved login, a browser task *can* carry a sign-in you performed
+yourself: when a task
 stops at a login wall, you are offered the browser — take over in the panel (or
 open it in a tab of your own from there), sign in at the site — Covan sees
 nothing of it — and press Done, and the task continues in the same browser,
@@ -832,8 +839,9 @@ are on the card too.
   the open web by design, so there is no origin to lock and this guard does not
   apply to it. What stands in its place is narrower in a different direction —
   one human sentence per task, shown to you whole and approved by you before
-  anything runs, no credentials of any kind, and nothing the browser reads is
-  ever executed. If that trade is not one you want, leave
+  anything runs, no credential in the sentence and none the conversation's model
+  is given (a login you saved is typed by the provider on its own site only), and nothing
+  the browser reads is ever executed. If that trade is not one you want, leave
   `BROWSER_USE_API_KEY` unset and the tool does not exist.
 - **It cannot choose a method you did not allow**, and it is told not to try
   another one.
@@ -873,7 +881,10 @@ approval card names the sites the browser is signed in to, so "check the FT
 front page" cannot quietly mean "inside my signed-in session" without you
 seeing it; the profile follows one person rather than a workspace, so a
 colleague's injected task cannot reach your jar; and a task may be retried
-after a takeover exactly once, ever, so a loop cannot be spun up.
+after a takeover exactly once, ever, so a loop cannot be spun up. A saved login
+adds two more: it is typed only on the site it was saved for, never on one a
+page or the task named, and the card names that site and login before anything
+runs.
 
 **What is missing is a domain allow-list**, and it is the real answer rather
 than one of these. A task should be able to say "this one may only touch

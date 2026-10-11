@@ -1287,6 +1287,7 @@ describe("the browser beside the conversation", () => {
         stopReason: null,
         browserSessionId: "bs-1",
         signInHost: null,
+        carriedSavedLogin: false,
       },
     ],
     session: { id: "bs-1", liveState: "agent", humanSince: null, browserReady: true },

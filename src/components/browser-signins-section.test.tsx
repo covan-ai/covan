@@ -10,9 +10,10 @@ import { BrowserSignInsSection } from "./browser-signins-section";
  * can say about somebody's logins at all, so saying them wrong is the whole
  * failure available to this component.
  */
-const { profile, forget, FakeApiError } = vi.hoisted(() => ({
+const { profile, forget, listLogins, FakeApiError } = vi.hoisted(() => ({
   profile: vi.fn(),
   forget: vi.fn(),
+  listLogins: vi.fn(),
   FakeApiError: class FakeApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -23,7 +24,7 @@ const { profile, forget, FakeApiError } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api-client", () => ({
-  api: { browser: { profile, forget } },
+  api: { browser: { profile, forget, credentials: { list: listLogins } } },
   ApiError: FakeApiError,
 }));
 
@@ -42,6 +43,7 @@ beforeEach(() => {
     profile: { cookieDomains: ["portal.example.com"], createdAt: null, lastUsedAt: null },
   });
   forget.mockResolvedValue({ forgotten: ["portal.example.com"] });
+  listLogins.mockResolvedValue({ logins: [] });
 });
 
 describe("BrowserSignInsSection", () => {
@@ -107,5 +109,55 @@ describe("BrowserSignInsSection", () => {
 
     expect(await screen.findByText(/a browser of yours is open right now/i)).toBeTruthy();
     expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+});
+
+/**
+ * Task 2.4: the logins a person chose to save are their own section — shown
+ * whether or not a cookie jar exists, and never with a username.
+ */
+describe("Saved logins", () => {
+  const LOGIN = {
+    id: "cred-1",
+    agentId: "agent-1",
+    label: "Supplier portal — personal",
+    siteHost: "portal.example.com",
+    scope: "owner",
+    lastUsedAt: null,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    own: true,
+    canForget: true,
+  };
+
+  it("lists them under their own heading, even with no jar", async () => {
+    profile.mockResolvedValue({ profile: null });
+    listLogins.mockResolvedValue({ logins: [LOGIN] });
+    renderSection();
+
+    expect(await screen.findByText("Saved logins")).toBeTruthy();
+    expect(screen.getByText("Supplier portal — personal")).toBeTruthy();
+    expect(listLogins).toHaveBeenCalledWith(undefined);
+  });
+
+  /**
+   * Final review #5: "the AI model never sees them" was absolute, and the
+   * provider's own browsing agent can see a typed value. What Covan controls
+   * is what Covan's model is given.
+   */
+  it("says Covan's AI model is never given them, and no more than that", async () => {
+    listLogins.mockResolvedValue({ logins: [LOGIN] });
+    const { container } = renderSection();
+
+    await screen.findByText("Saved logins");
+    expect(container.textContent).toContain("Encrypted; Covan's AI model is never given them.");
+    expect(container.textContent).not.toContain("the AI model never sees them");
+  });
+
+  it("never shows a username", async () => {
+    listLogins.mockResolvedValue({ logins: [{ ...LOGIN, username: "ada@example.com" }] });
+    const { container } = renderSection();
+
+    await screen.findByText("Supplier portal — personal");
+    expect(container.textContent).not.toContain("ada@example.com");
   });
 });

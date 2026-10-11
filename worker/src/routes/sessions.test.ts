@@ -7,6 +7,16 @@ const pollConversationBrowser = vi.fn();
 vi.mock("../lib/browser/live", () => ({
   pollConversationBrowser: (...args: unknown[]) => pollConversationBrowser(...args),
 }));
+const tasksThatCarriedALogin = vi.fn();
+// A failed read thrown by the stand-in rather than by the `vi.fn`, which vitest
+// reports as a failure even when the route catches it.
+let carryReadFails = false;
+vi.mock("../lib/browser/credentials", () => ({
+  tasksThatCarriedALogin: async (...args: unknown[]) => {
+    if (carryReadFails) throw new Error("browser_tasks: read failed (57014)");
+    return tasksThatCarriedALogin(...args);
+  },
+}));
 
 import { sessions } from "./sessions";
 
@@ -323,6 +333,69 @@ describe("GET /sessions/:id/browser-tasks", () => {
     });
   }
 
+  /**
+   * The sign-in card says "the saved login didn't work" only of a run that
+   * carried one (R32). `credential_id` is granted to no client role, so the
+   * caller's own read cannot see it; the route asks `credentials.ts` — with
+   * the service role, scoped to this caller — and only when a task is at a
+   * login wall, so the ordinary three-second poll costs nothing more.
+   */
+  describe("carriedSavedLogin", () => {
+    const WALL = { ...TASK, status: "failed", stop_reason: "login_required" };
+
+    function appWithTasks(rows: Array<Record<string, unknown>>) {
+      return appWith({
+        tables: {
+          chat_sessions: { select: () => ({ data: { id: "session-1" }, error: null }) },
+          browser_tasks: { select: () => ({ data: rows, error: null }) },
+        },
+      });
+    }
+
+    beforeEach(() => {
+      tasksThatCarriedALogin.mockReset();
+      carryReadFails = false;
+    });
+
+    it("is true of a walled task that carried a saved login, asked for the caller only", async () => {
+      tasksThatCarriedALogin.mockResolvedValue(new Set(["bt-1"]));
+      const { app, fake } = appWithTasks([WALL, { ...TASK, id: "bt-0" }]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as {
+        tasks: Array<{ id: string; carriedSavedLogin: boolean }>;
+      };
+
+      expect(body.tasks.map((t) => [t.id, t.carriedSavedLogin])).toEqual([
+        ["bt-1", true],
+        ["bt-0", false],
+      ]);
+      expect(tasksThatCarriedALogin).toHaveBeenCalledWith(undefined, {
+        userId: "user-1",
+        taskIds: ["bt-1"],
+      });
+      // Never asked of the caller's own client, which could not answer.
+      expect(String(fake.callsTo("browser_tasks")[0].columns)).not.toContain("credential_id");
+    });
+
+    it("asks nothing when no task is at a login wall", async () => {
+      const { app } = appWithTasks([TASK]);
+      await app.request("/sessions/session-1/browser-tasks");
+      expect(tasksThatCarriedALogin).not.toHaveBeenCalled();
+    });
+
+    it("answers false, not a failed poll, when the question cannot be answered", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      carryReadFails = true;
+      const { app } = appWithTasks([WALL]);
+
+      const res = await app.request("/sessions/session-1/browser-tasks");
+      const body = (await res.json()) as { tasks: Array<{ carriedSavedLogin: boolean }> };
+
+      expect(res.status).toBe(200);
+      expect(body.tasks[0].carriedSavedLogin).toBe(false);
+    });
+  });
+
   it("answers 404 for a conversation the caller cannot see, before touching the provider", async () => {
     const { app } = appSeeing(false);
     const res = await app.request("/sessions/session-1/browser-tasks");
@@ -356,6 +429,7 @@ describe("GET /sessions/:id/browser-tasks", () => {
           stopReason: null,
           browserSessionId: "bs-1",
           signInHost: "linkedin.com",
+          carriedSavedLogin: false,
         },
       ],
       session: LIVE.session,

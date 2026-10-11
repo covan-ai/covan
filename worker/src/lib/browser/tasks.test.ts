@@ -54,6 +54,32 @@ describe("recordBrowserTask", () => {
     });
   });
 
+  /**
+   * Ruling R32: the run says whether it carried a saved login, so deliver can
+   * tell "the saved login did not work" from "this run never had it".
+   */
+  it("records the saved login a run carried", async () => {
+    await recordBrowserTask(ENV, {
+      ...WHO,
+      providerRunId: "run-1",
+      browserSessionId: "bs-1",
+      credentialId: "cred-1",
+    });
+    expect(inserted[0]).toMatchObject({ credential_id: "cred-1" });
+  });
+
+  it("records no saved login for a run that carried none, leaving the column's null", async () => {
+    await recordBrowserTask(ENV, { ...WHO, providerRunId: "run-1", browserSessionId: "bs-1" });
+    expect(inserted[0]).not.toHaveProperty("credential_id");
+    await recordBrowserTask(ENV, {
+      ...WHO,
+      providerRunId: "run-2",
+      browserSessionId: "bs-1",
+      credentialId: null,
+    });
+    expect(inserted[1]).not.toHaveProperty("credential_id");
+  });
+
   it("still writes a v2 task the way it always has, for the take-over's re-run", async () => {
     await recordBrowserTask(ENV, { ...WHO, providerTaskId: "bu-task-1", retryOf: "bt-0" });
 

@@ -3,21 +3,21 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { BrowserTask, ConversationBrowser, Takeover } from "@/lib/api-client";
-import { SignInPrompt, TakeoverCard } from "./takeover-card";
+import { TakeoverCard } from "./takeover-card";
 import { openInNewWindow } from "./use-conversation-browser";
 
 /**
  * Two things live in this file, and both are about signing in.
  *
- * `SignInPrompt` is the prompt inside the browser panel, for a v4 run that
- * stopped at a login wall. `TakeoverCard` is the v2 card it replaced, kept in
- * the transcript for tasks drained from before 0078 and for somebody who was
- * part-way through one when this shipped.
+ * `openInNewWindow`, the new-tab fallback the browser panel's sign-in card
+ * (`sign-in-card.test.tsx`, which replaced Phase 1's prompt) offers, and
+ * `TakeoverCard`, the v2 card kept in the transcript for tasks drained from
+ * before 0078 and for somebody who was part-way through one when the panel
+ * shipped.
  *
- * What matters is that the sentence names the right site or none, that the
- * promises made are the true ones, which tasks get a button (one bounds the
- * operator's money), and that the live URL — a credential — reaches an
- * address bar and nothing else.
+ * What matters is which tasks get a button (one bounds the operator's
+ * money), and that the live URL — a credential — reaches an address bar and
+ * nothing else.
  */
 
 const browserTasks = vi.fn();
@@ -61,6 +61,7 @@ function task(over: Partial<BrowserTask> = {}): BrowserTask {
     stopReason: null,
     browserSessionId: null,
     signInHost: null,
+    carriedSavedLogin: false,
     ...over,
   };
 }
@@ -112,65 +113,7 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("the sentence", () => {
-  it("names the site the run said it needed a sign-in on", () => {
-    render(<SignInPrompt host="linkedin.com" onOpenWindow={vi.fn()} />);
-    expect(
-      screen.getByText(
-        "linkedin.com needs you to sign in. Take over, sign in in the browser, then press Done.",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  /**
-   * 0078 stores a host only when it is already a bare lowercase host, so a run
-   * that reported "LinkedIn.com" or a URL arrives as null. The panel still
-   * says sign in — it just cannot say where, and a wrong host would send the
-   * person to the wrong site.
-   */
-  it("says the same thing without a host when the run named none", () => {
-    render(<SignInPrompt host={null} onOpenWindow={vi.fn()} />);
-    expect(
-      screen.getByText(
-        "This site needs you to sign in. Take over, sign in in the browser, then press Done.",
-      ),
-    ).toBeInTheDocument();
-  });
-});
-
-describe("what the prompt promises", () => {
-  /**
-   * Added after the first real run. A hand-performed LinkedIn sign-in saved
-   * correctly, attached to the re-run correctly, ran from another address in
-   * the same country, and LinkedIn asked for the password again. The person
-   * deciding whether to go and sign in is the one who should know that before
-   * they spend the time, not after.
-   */
-  it("does not promise the second attempt gets in", () => {
-    const { container } = render(<SignInPrompt host={null} onOpenWindow={vi.fn()} />);
-    expect(container.textContent).toMatch(/tie a sign-in to one network address/i);
-  });
-
-  it("still says the second attempt is free, because it is", () => {
-    const { container } = render(<SignInPrompt host={null} onOpenWindow={vi.fn()} />);
-    expect(container.textContent).toMatch(/no charge for the second attempt/i);
-  });
-
-  it("says Covan never receives the password", () => {
-    const { container } = render(<SignInPrompt host={null} onOpenWindow={vi.fn()} />);
-    expect(container.textContent).toMatch(/covan never receives it/i);
-  });
-});
-
 describe("the new-window fallback", () => {
-  it("is offered as 'Open in a new window'", async () => {
-    const onOpenWindow = vi.fn();
-    render(<SignInPrompt host="linkedin.com" onOpenWindow={onOpenWindow} />);
-
-    await userEvent.click(screen.getByRole("button", { name: "Open in a new window" }));
-    expect(onOpenWindow).toHaveBeenCalledTimes(1);
-  });
-
   it("reserves the tab before the address exists, then navigates it", async () => {
     let resolve!: (url: string) => void;
     const done = openInNewWindow(() => new Promise<string>((r) => (resolve = r)));

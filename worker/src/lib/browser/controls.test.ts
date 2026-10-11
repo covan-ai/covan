@@ -494,6 +494,242 @@ describe("handBackBrowser", () => {
   });
 
   /**
+   * R24: the card's Save hands the browser back with the login the route
+   * resolved through `credentialsFor`. Bindings are run-scoped at the
+   * provider, so the follow-up carries them itself, and the row says it did
+   * (R32) — which is what lets deliver say "the saved login did not work".
+   */
+  it("carries a saved login into the follow-up and records which one", async () => {
+    const { deps } = inTheirHands();
+    const allowedDomains = ["linkedin.com"];
+    const login = {
+      id: "cred-1",
+      label: "LinkedIn — shared",
+      scope: "agent" as const,
+      siteHost: "linkedin.com",
+      aliases: { username: "linkedin_com_username", password: "linkedin_com_password" },
+      bindings: [
+        {
+          alias: "linkedin_com_username",
+          source: { type: "inline" as const, value: "ada@example.com" },
+          allowedDomains,
+        },
+        {
+          alias: "linkedin_com_password",
+          source: { type: "inline" as const, value: "hunter2" },
+          allowedDomains,
+        },
+      ],
+    };
+
+    const result = await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login }, deps);
+
+    expect(result).toEqual({ kind: "ok", browserTaskId: "bt-2" });
+    const body = sentBody(/\/runs$/);
+    expect(body.secretBindings).toEqual(login.bindings);
+    expect(String(body.task)).toContain("`linkedin_com_username`");
+    // R36: the person saved a login; they did not sign in by hand.
+    expect(String(body.task)).toContain(
+      "The person has saved a login for this site; sign in with it when the site asks, " +
+        "then continue the original task: read the pricing table",
+    );
+    expect(String(body.task)).not.toContain(HAND_BACK_TASK);
+    // The alias sentence comes before it.
+    expect(String(body.task).indexOf("`linkedin_com_username`")).toBeLessThan(
+      String(body.task).indexOf("The person has saved a login"),
+    );
+    expect(recordBrowserTask.mock.calls[0][1]).toMatchObject({
+      retryOf: "bt-0",
+      credentialId: "cred-1",
+    });
+  });
+
+  /**
+   * Ruling R38: the hand-back after "Save for everyone" must not sign the
+   * shared account in inside the person's own profile. The browser the person
+   * took over was opened with their jar, so the run asks for a fresh
+   * profile-less browser in the same session (`profileId: null`), and the row
+   * stops claiming the jar — conditionally on the jar it read — so a later
+   * follow-up does not send it into that browser (R23).
+   */
+  describe("with a shared login (R38)", () => {
+    function login(scope: "agent" | "owner") {
+      const allowedDomains = ["linkedin.com"];
+      return {
+        id: "cred-1",
+        label: "LinkedIn",
+        scope,
+        siteHost: "linkedin.com",
+        aliases: { username: "linkedin_com_username", password: "linkedin_com_password" },
+        bindings: [
+          {
+            alias: "linkedin_com_username",
+            source: { type: "inline" as const, value: "ada@example.com" },
+            allowedDomains,
+          },
+          {
+            alias: "linkedin_com_password",
+            source: { type: "inline" as const, value: "hunter2" },
+            allowedDomains,
+          },
+        ],
+      };
+    }
+
+    it("declines the person's profiled browser and the row lets go of the jar", async () => {
+      const { mem, deps } = inTheirHands();
+
+      const result = await handBackBrowser(
+        ENV,
+        { ...ME, original: ORIGINAL, login: login("agent") },
+        deps,
+      );
+
+      expect(result).toMatchObject({ kind: "ok" });
+      const body = sentBody(/\/runs$/);
+      expect(body.sessionId).toBe("bu-session-1");
+      expect(body.browserSettings).toEqual({ profileId: null });
+      expect(mem.tables.browser_sessions[0].profile_id).toBeNull();
+      const cleared = mem
+        .callsTo("browser_sessions")
+        .find((c) => c.op === "update" && (c.values as Row).profile_id === null);
+      expect(cleared?.filters).toContainEqual({ column: "profile_id", value: "bp-1", kind: "eq" });
+    });
+
+    /**
+     * Ruling R41: the profiled browser the provider declined is stopped — which
+     * saves the person's jar — and the row forgets it in the write that clears
+     * the jar, so the live view, take-over and settle converge on the new one.
+     * By the id this hand-back confirmed open; the session is never listed
+     * afterwards, because its active browser is by then the run's.
+     */
+    it("stops the declined browser and forgets it on the row, in the same write", async () => {
+      const { mem, deps } = inTheirHands();
+
+      await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login: login("agent") }, deps);
+
+      expect(calls()).toContain(`PATCH ${V4_BASE}/browsers/bu-browser-1`);
+      expect(calls().filter((c) => c.startsWith("PATCH "))).toHaveLength(1);
+      expect(mem.tables.browser_sessions[0]).toMatchObject({
+        profile_id: null,
+        provider_browser_id: null,
+      });
+      const writes = mem
+        .callsTo("browser_sessions")
+        .filter((c) => c.op === "update" && (c.values as Row).profile_id === null);
+      expect(writes).toHaveLength(1);
+      expect(writes[0].values).toMatchObject({ provider_browser_id: null });
+      // After the run was accepted, not before.
+      const order = calls();
+      expect(order.indexOf(`POST ${V4_BASE}/runs`)).toBeLessThan(
+        order.indexOf(`PATCH ${V4_BASE}/browsers/bu-browser-1`),
+      );
+    });
+
+    it("stops the browser it confirmed open when the session had moved to another", async () => {
+      provider.browser = (id) =>
+        id === "bu-browser-1" ? json({ id, status: "stopped" }) : json({ id, status: "active" });
+      provider.list = () => json({ items: [{ id: "bu-browser-9", status: "active" }] });
+      const { deps } = inTheirHands();
+
+      await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login: login("agent") }, deps);
+
+      expect(calls()).toContain(`PATCH ${V4_BASE}/browsers/bu-browser-9`);
+      expect(calls()).not.toContain(`PATCH ${V4_BASE}/browsers/bu-browser-1`);
+    });
+
+    it("does not fail the run when the stop is refused, and logs a status only", async () => {
+      provider.stop = () => json({ detail: "boom bu-browser-1" }, 500);
+      const { mem, deps } = inTheirHands();
+
+      const result = await handBackBrowser(
+        ENV,
+        { ...ME, original: ORIGINAL, login: login("agent") },
+        deps,
+      );
+
+      expect(result).toMatchObject({ kind: "ok" });
+      expect(mem.tables.browser_sessions[0]).toMatchObject({
+        live_state: "agent",
+        profile_id: null,
+        provider_browser_id: null,
+      });
+      expect(JSON.stringify(spoken)).toContain("500");
+      expect(JSON.stringify(spoken)).not.toContain("bu-browser-1");
+    });
+
+    it.each([
+      ["a personal login", "owner", "bp-1"],
+      ["a browser opened without a jar", "agent", null],
+    ] as const)("stops nothing for %s", async (_label, scope, profileId) => {
+      const { mem, deps } = inTheirHands();
+      mem.tables.browser_sessions[0].profile_id = profileId;
+
+      await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login: login(scope) }, deps);
+
+      expect(calls().filter((c) => c.startsWith("PATCH "))).toHaveLength(0);
+      expect(mem.tables.browser_sessions[0].provider_browser_id).toBe("bu-browser-1");
+    });
+
+    it("does not let go of a jar the row no longer names", async () => {
+      const { mem, deps } = inTheirHands();
+      // Something else rewrote the row's jar after the hand-back read it.
+      const realCreate = provider.create;
+      provider.create = () => {
+        mem.tables.browser_sessions[0].profile_id = "bp-other";
+        return realCreate();
+      };
+
+      await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login: login("agent") }, deps);
+
+      expect(mem.tables.browser_sessions[0].profile_id).toBe("bp-other");
+    });
+
+    it("reuses a browser opened without a jar as it is", async () => {
+      const { mem, deps } = inTheirHands();
+      mem.tables.browser_sessions[0].profile_id = null;
+
+      await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login: login("agent") }, deps);
+
+      expect(sentBody(/\/runs$/).browserSettings).toEqual({ profileId: null });
+    });
+
+    it("leaves a personal login in the person's own jar, as before", async () => {
+      const { mem, deps } = inTheirHands();
+
+      await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login: login("owner") }, deps);
+
+      expect(sentBody(/\/runs$/).browserSettings).toEqual({
+        profileId: "bu-profile-1",
+        proxyCountryCode: "de",
+      });
+      expect(mem.tables.browser_sessions[0].profile_id).toBe("bp-1");
+    });
+
+    it("keeps the jar on the row when the provider refuses the run", async () => {
+      provider.create = () => json({ detail: "busy" }, 409);
+      const { mem, deps } = inTheirHands();
+
+      await handBackBrowser(ENV, { ...ME, original: ORIGINAL, login: login("agent") }, deps);
+
+      expect(mem.tables.browser_sessions[0].profile_id).toBe("bp-1");
+      // Nothing was declined, so nothing is stopped.
+      expect(calls().filter((c) => c.startsWith("PATCH "))).toHaveLength(0);
+    });
+  });
+
+  it("sends no bindings and records no login when the hand-back carries none", async () => {
+    const { deps } = inTheirHands();
+
+    await handBackBrowser(ENV, { ...ME, original: ORIGINAL }, deps);
+
+    expect(sentBody(/\/runs$/)).not.toHaveProperty("secretBindings");
+    expect(recordBrowserTask.mock.calls[0][1]).not.toHaveProperty("credentialId");
+    expect(String(sentBody(/\/runs$/).task)).toContain(`${HAND_BACK_TASK}read the pricing table`);
+    expect(String(sentBody(/\/runs$/).task)).not.toContain("saved a login");
+  });
+
+  /**
    * `recordRunStart` skips its whole update while the person holds the
    * controls, so the hand-back writes the run-start bookkeeping itself — the
    * cursor above all: the old run's last event id would skip the new run's

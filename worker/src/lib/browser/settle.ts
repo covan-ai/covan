@@ -224,6 +224,9 @@ export async function settleBrowserTask(
     })
     .eq("id", row.id)
     .in("status", ["queued", "running"])
+    // Not `credential_id` (final review #6): the claim is the one write every
+    // settle depends on, so it names no column of 0079's — a worker deployed
+    // before that migration still settles. See `carriedLogin` below.
     .select("id, browser_session_id")
     .maybeSingle();
 
@@ -266,8 +269,40 @@ export async function settleBrowserTask(
     }
   }
 
-  await deliver(row, outcome, env, db);
+  const credentialId = await carriedLogin(db, row.id, outcome);
+  await deliver({ ...row, credential_id: credentialId }, outcome, env, db);
   return true;
+}
+
+/**
+ * Ruling R32: which saved login the run carried, read back from the row rather
+ * than trusted from `row`. The two clocks hand `settleBrowserTask` rows read
+ * with different column lists — the cron's claim returns the whole row, the
+ * open tab's read names its columns — and "the saved login did not work" must
+ * not depend on which of them settled the run.
+ *
+ * Read only for a login wall, the one outcome `deliver` asks it about, and
+ * after the claim rather than in it (final review #6): one subrequest on that
+ * path alone, and the claim stays independent of 0079. A read that fails is a
+ * wall delivered as one no saved login was tried at — today's sign-in
+ * sentence — and is logged as a code, never a row.
+ */
+async function carriedLogin(
+  db: SupabaseClient,
+  taskId: string,
+  outcome: FinishedTask,
+): Promise<string | null> {
+  if (outcome.reported?.status !== "login_required") return null;
+  const { data, error } = await db
+    .from("browser_tasks")
+    .select("credential_id")
+    .eq("id", taskId)
+    .maybeSingle();
+  if (error) {
+    console.error("could not read which saved login a run carried", taskId, error.code);
+    return null;
+  }
+  return typeof data?.credential_id === "string" ? data.credential_id : null;
 }
 
 /**

@@ -878,9 +878,27 @@ export const api = {
      * Done: the agent continues from where the person left the browser. This
      * is the one free retry, so a 409 says it was already spent, or that there
      * is nothing for the agent to continue.
+     *
+     * `{ site }` after a save on the sign-in card (R24): the server finds the
+     * login saved for that site and sends it with the run. A site, never a
+     * password — the binding is resolved on the server. `credentialId` is the
+     * id the save returned (R35), so the run binds that login; the server
+     * honours it only for a login the caller may use.
      */
-    handBack: (browserSessionId: string): Promise<{ browserTaskId: string }> =>
-      request("POST", `/browser/sessions/${browserSessionId}/hand-back`),
+    handBack: (
+      browserSessionId: string,
+      options?: { site?: string; credentialId?: string },
+    ): Promise<{ browserTaskId: string }> =>
+      request(
+        "POST",
+        `/browser/sessions/${browserSessionId}/hand-back`,
+        options?.site
+          ? {
+              site: options.site,
+              ...(options.credentialId ? { credentialId: options.credentialId } : {}),
+            }
+          : undefined,
+      ),
     /**
      * Close the browser and keep what was done in it. Stopping is what saves
      * the sign-ins — *"always stop the session to persist profile state"* —
@@ -903,6 +921,30 @@ export const api = {
      * browser is open, because stopping that browser is what saves the jar.
      */
     forget: (): Promise<{ forgotten: string[] }> => request("DELETE", "/browser/profile"),
+    /**
+     * Saved logins (0079): a site's username and password, kept for one agent
+     * so its browser signs in without asking.
+     */
+    credentials: {
+      /** The caller's own and the shared ones they can see; `agentId` narrows to one agent. */
+      list: (agentId?: string): Promise<{ logins: SavedLogin[] }> =>
+        request(
+          "GET",
+          agentId
+            ? `/browser/credentials?agentId=${encodeURIComponent(agentId)}`
+            : "/browser/credentials",
+        ),
+      /**
+       * Save, or replace one's own. The one request in this client that carries
+       * a password: the caller holds it in component state and nowhere else,
+       * and nothing here logs a body. Refusals are sentences meant to be shown.
+       */
+      save: (input: SaveLoginInput): Promise<{ credential: SavedLoginReceipt }> =>
+        request("POST", "/browser/credentials", input),
+      /** The saver always; a workspace admin for a shared one. 403 otherwise. */
+      forget: (id: string): Promise<void> =>
+        request("DELETE", `/browser/credentials/${encodeURIComponent(id)}`),
+    },
   },
   providerKeys: {
     get: (): Promise<ProviderKeyHints> => request("GET", "/workspace/provider-keys"),
@@ -1248,6 +1290,11 @@ export type BrowserTask = {
   browserSessionId: string | null;
   /** The bare host a run said it needed a sign-in on, or null. Shape-checked by 0078. */
   signInHost: string | null;
+  /**
+   * Whether the run carried a saved login (R32) — so a wall after it is "the
+   * saved login didn't work". Answered by the server for walled tasks only.
+   */
+  carriedSavedLogin: boolean;
 };
 
 /**
@@ -1307,6 +1354,46 @@ export type BrowserProfile = {
   cookieDomains: string[];
   createdAt: string | null;
   lastUsedAt: string | null;
+};
+
+/**
+ * A saved login as a screen may show it (`GET /browser/credentials`): its
+ * name, its site, who it is for. Never the username or the password — the
+ * server has no plaintext to send and grants neither ciphertext to anybody.
+ */
+export type SavedLogin = {
+  id: string;
+  agentId: string;
+  label: string;
+  siteHost: string;
+  /** `owner`: only its saver's runs use it. `agent`: everyone using the agent. */
+  scope: "owner" | "agent";
+  lastUsedAt: string | null;
+  createdAt: string;
+  /** Whether the caller saved it. */
+  own: boolean;
+  /** Whether the server would let the caller forget it: their own, or a shared one as admin. */
+  canForget: boolean;
+};
+
+/** What a save sends. Held only for the length of the request; see `SaveLoginDialog`. */
+export type SaveLoginInput = {
+  agentId: string;
+  scope: "owner" | "agent";
+  site: string;
+  label: string;
+  username: string;
+  password: string;
+};
+
+/** What a save answers: the saved row's public fields, nothing typed into the dialog. */
+export type SavedLoginReceipt = {
+  id: string;
+  scope: "owner" | "agent";
+  siteHost: string;
+  label: string;
+  /** True when the caller's own login for the site was overwritten in place. */
+  replaced: boolean;
 };
 
 /**

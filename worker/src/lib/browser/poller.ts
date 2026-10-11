@@ -100,6 +100,12 @@ export type BrowserTaskRow = {
   /** The v4 run. 0078 also writes it into `provider_task_id`; this one is preferred. */
   provider_run_id?: string | null;
   browser_session_id?: string | null;
+  /**
+   * The saved login the run carried (0079, ruling R32), or null. Optional for
+   * `api_version`'s reason; `settleBrowserTask` reads it back in its claim and
+   * hands `deliver` the row's own answer, whatever the caller selected.
+   */
+  credential_id?: string | null;
 };
 
 /** How a task ended, in the shape the delivery step wants. */

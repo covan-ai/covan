@@ -212,6 +212,38 @@ export function stopBrowser(
 }
 
 /**
+ * Stop the browser a run declined (ruling R41), best-effort.
+ *
+ * A run carrying a shared login that was accepted into a session whose stored
+ * browser was opened with the person's profile is answered with a fresh,
+ * profile-less browser (R38, R40), and the profiled one is left idle at the
+ * provider. **Stopping it is also what saves the person's jar**: browser-use,
+ * *"always stop the session to persist profile state"* — whatever they signed
+ * in to in that browser is not kept until it stops, and an idle one is billed
+ * until it does. Stopped by the id the row names and by nothing else: the
+ * session's other active browsers are the one the run is in.
+ *
+ * Never throws and never fails the run it follows: the stop is one
+ * subrequest, a refusal logs a status and nothing more (no id, no body), and
+ * the sweeps stop every active browser of the session later regardless. A
+ * browser already gone (404) is a browser stopped.
+ */
+export async function stopDeclinedBrowser(
+  env: BrowserEnv,
+  providerBrowserId: string | null,
+  opts?: { signal?: AbortSignal },
+): Promise<void> {
+  if (!providerBrowserId) return;
+  const stopped = await stopBrowser(env, providerBrowserId, opts);
+  if (stopped.kind === "error" ? stopped.status !== 404 : stopped.value.status !== "stopped") {
+    console.error(
+      "could not stop a browser a run declined",
+      stopped.kind === "error" ? stopped.status : stopped.value.status,
+    );
+  }
+}
+
+/**
  * How full the shared pool is.
  *
  * The concurrency limit is account-wide across every tenant on one deployment

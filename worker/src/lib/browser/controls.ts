@@ -1,8 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
-import { conversationRun, jarForSession } from "./outcome";
-import { browserLiveUrl, browserState, getProfile, stopBrowser } from "./profiles";
+import type { CredentialBinding } from "./credentials";
+import { conversationRun, jarForRun } from "./outcome";
+import {
+  browserLiveUrl,
+  browserState,
+  getProfile,
+  stopBrowser,
+  stopDeclinedBrowser,
+} from "./profiles";
 import type { LiveState } from "./sessions";
 import { JAR_ATTEMPTS, JAR_DELAY_MS, runProfile, type RetryableTask } from "./takeover";
 import { recordBrowserTask } from "./tasks";
@@ -178,6 +185,10 @@ const UNCONFIRMED: Refusal = {
  * the panel's `browserReady`, and with it the sign-in prompt, stops offering a
  * browser that is not there (ruling R20's marker).
  *
+ * Answers the id of the open browser, which a caller that has to name it (the
+ * hand-back's R41 stop) cannot take from the row it read: it may just have
+ * been replaced here.
+ *
  * Subrequests: one when the named browser is open; up to three otherwise (its
  * status, the session's list, the write).
  */
@@ -186,11 +197,11 @@ async function confirmBrowser(
   db: SupabaseClient,
   input: Owned,
   ids: { providerSessionId: string | null; providerBrowserId: string | null },
-): Promise<"open" | "gone" | "unknown"> {
+): Promise<{ open: string } | "gone" | "unknown"> {
   const stored = ids.providerBrowserId;
   if (stored) {
     const state = await browserState(env, stored);
-    if (state.kind === "ok" && state.value.status === "active") return "open";
+    if (state.kind === "ok" && state.value.status === "active") return { open: stored };
     if (state.kind === "error" && state.status !== 404) {
       console.error("could not read whether a browser is open", state.status);
       return "unknown";
@@ -206,7 +217,7 @@ async function confirmBrowser(
     }
     found = browsers.value.find((b) => b.status === "active" && b.id)?.id ?? null;
   }
-  if (found === stored) return found ? "open" : "gone";
+  if (found === stored) return found ? { open: found } : "gone";
 
   const write = db
     .from("browser_sessions")
@@ -218,7 +229,7 @@ async function confirmBrowser(
     : write.is("provider_browser_id", null));
   // Not fatal either way: the answer is the provider's, and the next call asks again.
   if (error) console.error("could not record a session's browser", problem(error));
-  return found ? "open" : "gone";
+  return found ? { open: found } : "gone";
 }
 
 /**
@@ -369,6 +380,17 @@ export const HAND_BACK_TASK =
   "The person has handled the browser themselves (for example signed in). " +
   "Continue the original task: ";
 
+/**
+ * The same, when the hand-back carries a login saved from the sign-in card
+ * (R36). The person did not sign in by hand, and telling the agent they did
+ * would have it assume a session the browser does not have; it is told a
+ * login was saved and to use it. The alias sentence `conversationRun` puts in
+ * front names the bindings.
+ */
+export const HAND_BACK_WITH_LOGIN_TASK =
+  "The person has saved a login for this site; sign in with it when the site asks, " +
+  "then continue the original task: ";
+
 export type HandBackResult = { kind: "ok"; browserTaskId: string } | Refusal;
 
 const NOT_IN_THEIR_HANDS: Refusal = {
@@ -431,10 +453,20 @@ async function giveBack(db: SupabaseClient, input: Owned, now: Date): Promise<vo
  * Taken BEFORE the provider is called, so a run that is refused hands the
  * browser back to the person (`giveBack`) rather than leaving the panel saying
  * the agent has it.
+ *
+ * **`login`, when the sign-in card's Save sent the person here (R24).** The
+ * route resolved it with `credentialsFor` for the caller — the client named a
+ * site and nothing else — and it rides into the follow-up exactly as `browse`
+ * hands a first run its login: bindings are run-scoped at the provider (*"a
+ * follow-up run that needs the same credential must send it again"*), so a
+ * login saved a moment ago reaches this run only by being sent with it. The
+ * row records which login it carried (R32), so a second wall is "the saved
+ * login did not work" rather than "sign in". Absent, the hand-back is the one
+ * it always was.
  */
 export async function handBackBrowser(
   env: RoutineEnv,
-  input: Owned & { original: RetryableTask },
+  input: Owned & { original: RetryableTask; login?: CredentialBinding | null },
   overrides: Partial<ControlDeps> = {},
 ): Promise<HandBackResult> {
   const { db, now } = resolve(env, overrides);
@@ -515,17 +547,24 @@ export async function handBackBrowser(
   const jar = await runProfile(env, input.userId, { db, now });
   // Named only when it is the jar this browser was opened with: a browser that
   // had none (or another) is reused as it is, not replaced by a fresh one that
-  // has lost the sign-in the person just made. See `jarForSession`.
-  const profile = jarForSession(jar, {
-    opening: false,
-    openedWith: text(claimed.profile_id),
-  });
+  // has lost the sign-in the person just made. See `jarForSession`. Except
+  // under a shared login, which is never signed in inside the person's jar
+  // (ruling R38): a browser opened with it is declined for a fresh,
+  // profile-less one in the same session. See `jarForRun`.
+  const openedWith = text(claimed.profile_id);
+  const { profile, withoutProfile, detach } = jarForRun(
+    jar,
+    { opening: false, openedWith },
+    input.login ?? null,
+  );
   const created = await createRun(
     env,
     conversationRun(env, {
-      task: `${HAND_BACK_TASK}${original.task}`,
+      task: `${input.login?.bindings.length ? HAND_BACK_WITH_LOGIN_TASK : HAND_BACK_TASK}${original.task}`,
       sessionId: providerSessionId,
       profile,
+      withoutProfile,
+      login: input.login,
     }),
   );
   if (created.kind === "error") {
@@ -533,6 +572,41 @@ export async function handBackBrowser(
     await giveBack(db, input, now());
     // 409 is the provider's busy session, which is the person's to retry.
     return { kind: "error", status: created.status === 409 ? 409 : 502, message: NOT_CONTINUED };
+  }
+
+  /**
+   * The run was accepted in a fresh browser without the jar (R38), so the row
+   * stops claiming it: a later follow-up sends the jar only when the row names
+   * it (R23), and sending it now would decline the profile-less browser for a
+   * profiled one. The same write forgets the browser the row names (R41): it
+   * is the profiled one the provider declined, and the live view, take-over
+   * and settle must converge on the new one. Only once the provider has
+   * accepted the run — a refused run replaced nothing — and narrowed to the
+   * jar this hand-back read, so a row rewritten meanwhile is left as it is.
+   * Not fatal: the run is real, and a row left naming the jar costs the next
+   * follow-up a fresh browser, not a shared login in the person's jar.
+   *
+   * Then the declined browser is stopped (`stopDeclinedBrowser`, R41), which
+   * also saves the person's jar (*"always stop the session to persist profile
+   * state"*) — by the id this hand-back confirmed open, never by listing the
+   * session, whose active browser is now the run's. Best-effort: a refusal
+   * logs a status, the run is real, and the sweeps stop every active browser
+   * of the session regardless.
+   *
+   * Subrequests: this write and the stop — two more, on this path only: a
+   * shared login handed back into a browser opened with the person's jar.
+   */
+  if (detach && openedWith) {
+    const { error: detachError } = await db
+      .from("browser_sessions")
+      .update({ profile_id: null, provider_browser_id: null })
+      .eq("id", input.browserSessionId)
+      .eq("user_id", input.userId)
+      .eq("profile_id", openedWith);
+    if (detachError) {
+      console.error("could not record a browser opened without the jar", problem(detachError));
+    }
+    await stopDeclinedBrowser(env, alive.open);
   }
 
   /**
@@ -549,6 +623,8 @@ export async function handBackBrowser(
     providerRunId: created.value.id,
     browserSessionId: input.browserSessionId,
     retryOf: original.id,
+    // Only a login whose bindings were sent: `conversationRun` drops an empty one.
+    ...(input.login?.bindings.length ? { credentialId: input.login.id } : {}),
   });
   if (!browserTaskId) {
     // A run nothing in this database names is one whose answer can never be

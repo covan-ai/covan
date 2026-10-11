@@ -1,10 +1,17 @@
 import { hasBrowserKey } from "../../browser/client";
-import { conversationRun, jarForSession } from "../../browser/outcome";
+import {
+  credentialsFor,
+  savedLogin,
+  siteHostOf,
+  type CredentialBinding,
+} from "../../browser/credentials";
+import { conversationRun, jarForRun } from "../../browser/outcome";
 import {
   ensureBrowserSession,
   recordRunStart,
   releaseBrowserSession,
 } from "../../browser/sessions";
+import { stopDeclinedBrowser } from "../../browser/profiles";
 import { recordBrowserTask } from "../../browser/tasks";
 import { profileFor, runProfile } from "../../browser/takeover";
 import { createRun } from "../../browser/v4";
@@ -28,12 +35,21 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
  * takes minutes. Minutes do not fit in a chat turn. Polling belongs outside
  * the model loop, and it lives in `lib/browser/poller.ts`.
  *
- * **One argument, deliberately.** Not a URL plus a goal, not a step list. The
- * provider's own agent decomposes a sentence; a second argument would be
- * Covan second-guessing a loop it did not write. It is also what makes the
+ * **One instruction, deliberately.** Not a URL plus a goal, not a step list.
+ * The provider's own agent decomposes a sentence; a second instruction would
+ * be Covan second-guessing a loop it did not write. It is also what makes the
  * approval card honest: with no endpoint, no method and no origin to inspect,
  * the sentence IS the blast radius, so one sentence is the whole of what a
  * person is shown and the whole of what they agree to.
+ *
+ * **`site` is not a second instruction (Task 2.3).** It names which saved
+ * login, if any, the run may carry — a host, checked to be one, and shown on
+ * the card as the login it selects ("signs in as linkedin.com (saved login:
+ * …)") so it is agreed to as visibly as the sentence. It does not steer the
+ * browser, and it never decides where the password may be typed: that is the
+ * saved row's own `site_host`, in the bindings `credentialsFor` builds
+ * (Review focus 4). A model talked into naming the wrong site gets that site's
+ * login typed on that site only, and the card said so before anyone agreed.
  *
  * **No `needs`, and that is the direct lesson of the Composio attempt.** A
  * browser task points at the public web, not at a tenant's connected
@@ -156,6 +172,74 @@ async function allowanceNote(ctx: ToolContext): Promise<string | null> {
   }
 }
 
+/** `siteOf`'s answer for a `site` that is there and is not a host. */
+const INVALID_SITE = Symbol("invalid site");
+
+/**
+ * The `site` argument as the host a saved login is filed under, null when the
+ * model named none, or `INVALID_SITE`.
+ *
+ * Normalised by `siteHostOf`, the very function a saved `site_host` went
+ * through (R25), so `https://www.LinkedIn.com/login` finds the login saved as
+ * `linkedin.com` — and there is no second normaliser here to drift from it. A
+ * blank string is no site: some models fill every optional field, and a task
+ * that needs no sign-in must not be refused for an empty one.
+ */
+function siteOf(raw: unknown): string | null | typeof INVALID_SITE {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string") return INVALID_SITE;
+  if (!raw.trim()) return null;
+  return siteHostOf(raw) ?? INVALID_SITE;
+}
+
+/**
+ * What the card says the browser will sign in with, or nothing.
+ *
+ * `"linkedin.com (saved login: LinkedIn — sales account)"`: the host the login
+ * is typed on, and the saver's own name for it — never the username, which is
+ * encrypted precisely because it is often the more personal half, and which a
+ * colleague approving a shared agent's task has no business reading. Through
+ * `savedLogin`, which names the login without opening it: a card somebody
+ * declines must decrypt nothing and mark nothing used.
+ *
+ * Null when nothing is saved for the site, and null if the read fails — the
+ * question is still worth asking without the row, as with `jarNote`.
+ */
+async function loginNote(ctx: ToolContext, site: string): Promise<string | null> {
+  try {
+    const login = await savedLogin(ctx.env, {
+      agentId: ctx.agentId,
+      userId: ctx.userId,
+      host: site,
+    });
+    return login ? `${login.siteHost} (saved login: ${login.label})` : null;
+  } catch {
+    console.warn("could not read the saved logins for a browser task's card");
+    return null;
+  }
+}
+
+/**
+ * The saved login a run on `site` carries, or null.
+ *
+ * A read that fails is a run without the login, not a run that does not
+ * start: it meets the login wall and says so, which the person can fix in the
+ * panel. Logged as a fixed sentence and nothing else — the error names a table
+ * and a code today, and this line must stay safe whatever it names tomorrow.
+ */
+async function loginFor(ctx: ToolContext, site: string): Promise<CredentialBinding | null> {
+  try {
+    return await credentialsFor(ctx.env, {
+      agentId: ctx.agentId,
+      userId: ctx.userId,
+      host: site,
+    });
+  } catch {
+    console.warn("could not read the saved logins for a browser task; running without one");
+    return null;
+  }
+}
+
 export const browseTool: AgentTool = {
   name: "browse",
   description:
@@ -164,10 +248,11 @@ export const browseTool: AgentTool = {
     "language and a real browser carries it out elsewhere. This does not answer you now — it " +
     "starts the work and comes back with the answer as a new message in a few minutes, so say " +
     "that you have started it and do not wait or ask again. The browser may carry sign-ins the " +
-    "person performed themselves, in their own hands, in an earlier takeover; it can never be " +
-    "given a password and cannot sign in to anything on its own. The browser opens beside the " +
-    "conversation, where the person can watch it and take over at any time. Use http_request " +
-    "instead when the thing you want has an API.",
+    "person performed themselves, in their own hands, in an earlier takeover. You are never " +
+    "shown a password: when the task has to sign in to a site, put that site's host in `site` " +
+    "and, if the person saved a login for it, the browser is given it to type in itself. The " +
+    "browser opens beside the conversation, where the person can watch it and take over at any " +
+    "time. Use http_request instead when the thing you want has an API.",
   input: {
     type: "object",
     properties: {
@@ -178,6 +263,12 @@ export const browseTool: AgentTool = {
           "One instruction, in plain language, naming the site and what to get or do. " +
           "The person is shown this sentence word for word and has to approve it.",
       },
+      site: {
+        type: "string",
+        description:
+          "The host whose saved login the task needs, like linkedin.com — only when it has to " +
+          "sign in there; leave it out otherwise.",
+      },
     },
     required: ["task"],
     additionalProperties: false,
@@ -186,7 +277,7 @@ export const browseTool: AgentTool = {
   // No `needs`: there is no connection and no channel for this to point at.
   isConfigured: (env: ToolEnv) => hasBrowserKey(env),
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const input = args as { task?: unknown };
+    const input = args as { task?: unknown; site?: unknown };
     if (typeof input.task !== "string" || !input.task.trim()) {
       return { kind: "error", message: "task is required" };
     }
@@ -195,6 +286,17 @@ export const browseTool: AgentTool = {
       return {
         kind: "error",
         message: "say what to do in one sentence — which site, and what to get or do there",
+      };
+    }
+    const site = siteOf(input.site);
+    if (site === INVALID_SITE) {
+      // Before the card and before the meter (ruling R13's order): a refusal
+      // costs nothing and leaves nothing behind.
+      return {
+        kind: "error",
+        message:
+          "site must be the bare host of a website, like linkedin.com — or leave it out when " +
+          "the task does not need to sign in anywhere",
       };
     }
 
@@ -250,6 +352,7 @@ export const browseTool: AgentTool = {
        * rather than a person signed into. See `jarNote`.
        */
       const cookies = await jarNote(ctx, profile);
+      const signsInAs = site ? await loginNote(ctx, site) : null;
       return {
         kind: "needs_confirmation",
         summary: "Use a browser to do this?",
@@ -260,6 +363,7 @@ export const browseTool: AgentTool = {
           task,
           ...(cost ? { cost } : {}),
           ...(cookies ? { cookies } : {}),
+          ...(signsInAs ? { signsInAs } : {}),
         },
       };
     }
@@ -327,12 +431,32 @@ export const browseTool: AgentTool = {
     // `conversationRun`'s, shared with the hand-back so the two cannot drift.
     // A follow-up continues the browser this conversation already has; a
     // first run names no session and the provider opens one.
+    /**
+     * The saved login for `site`, if there is one this person may use (Task
+     * 2.3). After the refusals, so a refused browse decrypts nothing, and on
+     * every run that names the site — the provider's bindings are run-scoped,
+     * so a follow-up that needs the login carries it again. `conversationRun`
+     * puts the bindings in the body and the sentence naming their aliases in
+     * the task; nothing else in this function ever holds a value.
+     */
+    const login = site ? await loginFor(ctx, site) : null;
     // A follow-up names the jar only when its browser was opened with it; see
-    // `jarForSession` for the provider's rule.
-    const sent = jarForSession(jar, { opening, openedWith: session.value.profileId });
+    // `jarForSession` for the provider's rule. And a run carrying a shared
+    // login carries no jar at all (ruling R38): see `jarForRun`.
+    const {
+      profile: sent,
+      withoutProfile,
+      detach,
+    } = jarForRun(jar, { opening, openedWith: session.value.profileId }, login);
     const created = await createRun(
       ctx.env,
-      conversationRun(ctx.env, { task, sessionId: continuing, profile: sent }),
+      conversationRun(ctx.env, {
+        task,
+        sessionId: continuing,
+        profile: sent,
+        withoutProfile,
+        login,
+      }),
       { signal: ctx.signal },
     );
 
@@ -363,6 +487,10 @@ export const browseTool: AgentTool = {
       // Not retried, and never a second session: the busy one is this
       // conversation's browser, mid-run.
       if (created.status === 409) return { kind: "error", message: STILL_RUNNING };
+      // `created.message` is a status line and never the provider's body:
+      // `createRun` sends with `redactBody: true`, and a body that echoed this
+      // request would echo a saved login's bindings into
+      // `message_steps.result_excerpt`. Pinned in `browse.test.ts`.
       return { kind: "error", message: `could not start the browser task: ${created.message}` };
     }
 
@@ -391,6 +519,10 @@ export const browseTool: AgentTool = {
       task,
       providerRunId: created.value.id,
       browserSessionId: session.value.id,
+      // Ruling R32: the saved login this run carried, so a login wall
+      // afterwards is blamed on it — and on nothing the run was never given.
+      // The same condition `conversationRun` puts the bindings in the body on.
+      ...(login?.bindings.length ? { credentialId: login.id } : {}),
     });
 
     if (!recorded) {
@@ -411,9 +543,31 @@ export const browseTool: AgentTool = {
       // The jar this run carries, which the claim could not name when it was
       // provisioned just now. See `recordRunStart`. Only by the run that
       // opens the browser: a follow-up's browser keeps the jar it was opened
-      // with, and the row must not say otherwise.
-      ...(sent && opening ? { profileId: sent.id } : {}),
+      // with, and the row must not say otherwise. A shared login's run takes
+      // the jar off the row instead (R38): the claim above named the jar
+      // before the login was known, and a detached follow-up's browser is a
+      // fresh one without it.
+      ...(detach ? { providerBrowserId: null } : {}),
+      ...(withoutProfile ? { profileId: null } : sent && opening ? { profileId: sent.id } : {}),
     });
+
+    /**
+     * Ruling R41: the profiled browser this run declined (`detach`) is stopped
+     * — after the write above, which already made the row forget it, so the
+     * panel and the settle converge on the new browser first. Stopping it is
+     * also what saves the person's jar (*"always stop the session to persist
+     * profile state"*). Best-effort: a refusal logs a status, the run is real,
+     * and the sweeps stop every active browser of the session anyway.
+     *
+     * Subrequests: one more, on this path only — a shared login's follow-up
+     * into a browser opened with the person's jar (the stop). Every other
+     * `browse` spends what it did.
+     */
+    if (detach) {
+      await stopDeclinedBrowser(ctx.env, session.value.providerBrowserId ?? null, {
+        signal: ctx.signal,
+      });
+    }
 
     await spend(ctx, BROWSER_TASK_TOKENS);
 

@@ -25,6 +25,7 @@ const live = vi.fn();
 const takeOver = vi.fn();
 const handBack = vi.fn();
 const stop = vi.fn();
+const save = vi.fn();
 
 vi.mock("@/lib/api-client", () => ({
   api: {
@@ -34,6 +35,10 @@ vi.mock("@/lib/api-client", () => ({
       takeOver: (...a: unknown[]) => takeOver(...a),
       handBack: (...a: unknown[]) => handBack(...a),
       stop: (...a: unknown[]) => stop(...a),
+      credentials: {
+        save: (...a: unknown[]) => save(...a),
+        list: () => Promise.resolve({ logins: [] }),
+      },
     },
   },
 }));
@@ -52,6 +57,7 @@ function task(over: Partial<BrowserTask> = {}): BrowserTask {
     stopReason: null,
     browserSessionId: "bs-1",
     signInHost: null,
+    carriedSavedLogin: false,
     ...over,
   };
 }
@@ -80,7 +86,7 @@ function renderPanel() {
   const onHide = vi.fn();
   const view = render(
     <QueryClientProvider client={client}>
-      <BrowserPanel sessionId="s-1" onHide={onHide} />
+      <BrowserPanel sessionId="s-1" agentId="agent-1" canShare onHide={onHide} />
     </QueryClientProvider>,
   );
   return { client, onHide, ...view };
@@ -111,6 +117,15 @@ beforeEach(() => {
     return { browserTaskId: "task-2" };
   });
   stop.mockReset().mockResolvedValue(undefined);
+  save.mockReset().mockResolvedValue({
+    credential: {
+      id: "cred-1",
+      scope: "owner",
+      siteHost: "linkedin.com",
+      label: "linkedin.com — personal",
+      replaced: false,
+    },
+  });
 });
 
 afterEach(() => {
@@ -544,11 +559,7 @@ describe("the sign-in prompt", () => {
     browserTasks.mockResolvedValue(snapshot("none", [wall({ signInHost: "linkedin.com" })]));
     renderPanel();
 
-    expect(
-      await screen.findByText(
-        "linkedin.com needs you to sign in. Take over, sign in in the browser, then press Done.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("linkedin.com needs you to sign in.")).toBeInTheDocument();
     // The ink fill: the primary button, per DESIGN.md — not amber.
     expect(screen.getByRole("button", { name: "Take over" })).toHaveClass("bg-primary");
   });
@@ -557,11 +568,7 @@ describe("the sign-in prompt", () => {
     browserTasks.mockResolvedValue(snapshot("none", [wall()]));
     renderPanel();
 
-    expect(
-      await screen.findByText(
-        "This site needs you to sign in. Take over, sign in in the browser, then press Done.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("This site needs you to sign in.")).toBeInTheDocument();
   });
 
   /**
@@ -632,6 +639,57 @@ describe("the sign-in prompt", () => {
     await frameWrapper();
     expect(screen.queryByText(/needs you to sign in/)).toBeNull();
     expect(screen.getByRole("button", { name: "Take over" })).not.toHaveClass("bg-primary");
+  });
+
+  /**
+   * Task 2.4: the card replaced the prompt, and "Just this once" is the
+   * take-over it always was.
+   */
+  it("takes over for Just this once", async () => {
+    browserTasks.mockResolvedValue(snapshot("none", [wall({ signInHost: "linkedin.com" })]));
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Just this once" }));
+    await waitFor(() => expect(takeOver).toHaveBeenCalledWith("bs-1"));
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  /**
+   * R24: a login saved from the card goes with the one free retry. The
+   * browser at a wall is nobody's (`none`), and hand-back continues only a
+   * browser in the person's hands, so the panel takes it over first — then
+   * hands it back naming the site, never the password.
+   */
+  it("hands back with the site once a login is saved", async () => {
+    browserTasks.mockResolvedValue(snapshot("none", [wall({ signInHost: "linkedin.com" })]));
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Save for me" }));
+    await userEvent.type(await screen.findByLabelText("Username"), "ada@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "hunter2-correct-horse");
+    await userEvent.click(screen.getByRole("button", { name: "Save and continue" }));
+
+    await waitFor(() =>
+      expect(handBack).toHaveBeenCalledWith("bs-1", {
+        site: "linkedin.com",
+        credentialId: "cred-1",
+      }),
+    );
+    expect(save.mock.calls[0][0]).toMatchObject({ agentId: "agent-1", site: "linkedin.com" });
+    expect(takeOver).toHaveBeenCalledWith("bs-1");
+    expect(takeOver.mock.invocationCallOrder[0]).toBeLessThan(handBack.mock.invocationCallOrder[0]);
+    expect(JSON.stringify(handBack.mock.calls)).not.toContain("hunter2");
+  });
+
+  it("says when the run carried a saved login that did not work", async () => {
+    browserTasks.mockResolvedValue(
+      snapshot("none", [wall({ signInHost: "linkedin.com", carriedSavedLogin: true })]),
+    );
+    renderPanel();
+
+    expect(
+      await screen.findByText("The saved login for linkedin.com didn't get past the sign-in."),
+    ).toBeInTheDocument();
   });
 });
 

@@ -178,10 +178,13 @@ that is what you need.
 **A browser is a second subprocessor, and what goes to it is different in
 kind.** Set `BROWSER_USE_API_KEY` and an agent can hand a web task to
 browser-use: what leaves here is the task sentence a person wrote and approved,
-and what that provider sees is whatever the page it opens shows it. No credential
-goes with it — the provider accepts a field for one and this build never fills
-it in, which is the boundary stated as code rather than as a promise: nothing
-typed into Covan can be handed to a browser.
+and what that provider sees is whatever the page it opens shows it. A credential
+goes with it only if a person chose to save one for that agent and that site —
+the paragraphs below say exactly how — and the model Covan runs for the
+conversation never receives it. The task sentence never carries one: the
+provider takes a credential in a field of its own, and that field is filled from
+the saved row alone. What the provider's own browsing agent can see is a
+different question, answered under what this does not cover.
 
 A browser task can nonetheless act inside a site you are signed in to, because
 you can sign in yourself. When a task stops at a login wall, you take over the
@@ -204,6 +207,175 @@ not a member's: nobody is asked to pay a third party to use the feature, and a
 task is metered against the allowance they already have. Unset the variable and
 the tool does not exist. The public list for covan.app is on the
 [subprocessor page](https://covan.app/subprocessors).
+
+**A login you save is the one password Covan keeps, and the line it holds is
+"never given to Covan's model" rather than "never received".** A person can save
+a username and password for a site, for one agent — from the card at a login
+wall — so the agent's browser signs in by itself the next time. It is the one place Covan holds a password somebody typed for another
+site, which is why it is a dialog that says so and not a side effect of
+anything. Covan receives it, then. What the design guarantees is where it goes
+from there.
+
+**What is stored.** Each half, the username and the password, is encrypted
+separately with AES-GCM under the Worker's key (`ROUTINE_SECRET_KEY`, in the
+envelope `secret-box.ts` writes — the same one delivery-channel secrets and
+connection tokens use) before it reaches Postgres. There is no plaintext
+username column to grant by mistake: the username is encrypted because it is
+often the more personal half, and a shared login's row is readable by a team.
+Both ciphertext columns are granted to no client role, and no client role can
+write the table at all — saving means encrypting, which only the Worker does,
+through the service role, after the route has asked through the caller's own
+client whether they may use the agent. Each half is refused above 2,048 bytes.
+
+**Who can read it: nobody, through the API.** The one function that decrypts a
+saved login is the one that builds a run, and a login that will not decrypt —
+the key changed — is a run without it, which meets the login wall.
+The list route answers a label, a site, a scope and when it was last used.
+Every one of these routes refuses an API key outright: a login planted by a
+key would keep signing in as somebody after the key was revoked, and the list
+is a map of where somebody's passwords are kept.
+
+**Who may save what, and who sees it.** A personal login — used only when its
+saver is the person the agent is working for, and seen by nobody else — can be
+saved by anyone who can use the agent, viewers included, because it is theirs.
+A login "for everyone using this agent" is a shared thing and follows the rule
+above: workspace admins and members may save one, viewers may not. **Anyone
+who uses the agent can then have it sign in and act as that account on that
+site.** The list shows them a shared login's label, its site, its scope and when
+it was last used — never the username, which is why a label that contains the
+username, or the password, is refused — so they can read which account the agent will sign in as
+before it does. But the list is not the whole of what they
+can see: whoever runs a task with it can watch the browser, so they can see
+what the browser types and whatever the account shows once it is signed in.
+Save a login for everyone only if everyone using the agent may act as that
+account. A site gets one shared login per agent; a second member's save is
+refused and says to ask an admin, or whoever saved the first, to remove it. The
+list does not name the saver, though the table records them by id.
+
+**Where it goes.** To one provider, over TLS, for one run. There are two ways a
+run is given one, and in both the Worker looks the login up and the client never
+sends a value.
+
+- **The agent starts a task.** When it calls `browse` and names the site the task
+  needs to sign in to, the Worker looks for a saved login for that site on that
+  agent that this person may use — their own first, else the agent's shared one
+  — and, when there is none for the site itself, for the nearest parent it was
+  saved under: a login saved for `linkedin.com` serves `accounts.linkedin.com`,
+  never the other way round, and is still typed only on `linkedin.com` and its
+  subdomains. It sends the provider two *secret bindings*, one per half, with
+  the run. When a login is saved for the site, the card the person approves names
+  it (*"signs in as linkedin.com (saved login: …)"*).
+- **The person saves at a login wall.** The dialog shows the site the login is
+  for, prefilled from the wall and editable, and says the login will only ever
+  be typed on that site and its subdomains: the wall's host is what the run
+  reported, which a page can steer, so the site saved is the one the person
+  confirmed. *Save and continue* then
+  hands the browser back with that site and the id of the login just saved — not
+  its values: the save was the one request that carried them. The Worker
+  resolves that login for the caller (the id is honoured only for their own
+  personal login or a shared one whose saver is still a member, and otherwise the
+  ordinary choice applies) and sends the bindings with the one free retry. That
+  retry is not behind an approval card: pressing the button is the person's yes.
+
+Either way the conversation's model is never given a value; the task text the
+provider's agent receives names the two aliases, and only that. Both runs record
+which saved login they carried (`browser_tasks.credential_id`), the free retry
+included. The
+provider types the value into the focused field itself, and only into a field
+whose frame is on the binding's `allowedDomains`. That list is the saved row's
+own site and nothing else, on both paths — never a host from the task sentence
+or from a page, because a domain the model chose is a domain a page could have
+talked it into. The run request is sent with its body redacted, so a provider
+error cannot echo the values into a log or a step's result. Bindings are
+run-scoped at the provider: a follow-up run carries them again or does not have
+them, and a scheduled run, which has no conversation and nobody to approve,
+cannot start a browser task at all.
+
+**Which login a run carried is written down.** The run's record names the saved
+login it was given (`browser_tasks.credential_id`, granted to no client role),
+so "the saved login didn't get past the sign-in" is said only of a run that carried one. A
+login merely saved was never tried when the model named no site, and telling a
+person to re-enter a correct password sends them round the same wall again.
+
+**How it leaves.** **Forget**, in settings, deletes the row; the saver can always
+do it, and a workspace admin can for a shared login — never for somebody's
+personal one, which an admin cannot see either. Closing an account deletes the
+logins it saved, shared ones included, through the same cascade that removes the
+rest of an account; an agent or a workspace removed for good takes its logins
+with it. Leaving a
+workspace deletes nothing, on purpose — somebody re-invited should not have to
+type a password again — and instead a shared login stops being used the moment
+its saver is no longer a member, until the saver or an admin removes it. A run
+already started was handed its bindings when it was created; Forget stops the
+next one. **Forgetting does not change the password at the site.** If a login
+should stop working everywhere, change it there.
+
+**A shared login is never signed in inside anybody's own browser profile.** A
+run that carries one runs in a browser with no profile: the run that opens the
+conversation's browser names none, and a follow-up in a browser that was opened
+with your profile asks the provider for a fresh browser without it, in the same
+session. So the sign-in a shared login performs is saved into nobody's cookie
+jar, and Forget — or its saver leaving the workspace — really does stop the
+agent signing in as that account. A personal login is different on purpose: it
+signs in inside your own profile, as a sign-in by hand does, so after Forget the
+site may stay signed in inside your own browser profile until its cookies
+expire. There is no per-site removal: to sign out completely, forget your
+browser sign-ins in **Settings → Browser sign-ins**, which signs you out of
+every site.
+
+**What this does not cover.** Say it plainly, because for some readers it is
+the end of the evaluation.
+
+- **A page that reads its own form fields.** Once the provider has typed a value
+  it is on the page, and its documentation says as much: it is *"accessible to
+  the page and to an agent with browser/CDP access"*. The `allowedDomains` rule
+  decides where a value may be typed, not what a page that receives it then does.
+  A host covers its subdomains, and a login is saved for the site's bare host (a
+  leading `www.` is dropped), so one saved for a broad host is typed on any of
+  its subdomains. For a host whose subdomains belong to different people — a
+  shared hosting suffix — that is somebody else's page, and Covan does not keep a
+  list of such suffixes, so don't save a login for one.
+- **browser-use's own browsing agent.** Covan's model never receives the value;
+  the model driving the browser at the provider is another matter. Asking it for
+  an alias keeps the value out of the task text, but the provider is explicit
+  that aliases *"do not guarantee that the agent cannot see the value: once
+  typed, it is accessible to the page and to an agent with browser/CDP access"*.
+  Treat what that agent can reach as reachable by a login typed into it.
+- **Anything with CDP access to the live browser.** Whoever can drive the browser
+  can read what is on its pages. That is the provider's caveat as much as ours,
+  and it is why the live view's address is protected as above.
+- **The provider itself.** browser-use receives the values in order to type
+  them, over TLS, for the run. What it does with them is its own; trusting it
+  with a login is the same decision as trusting it with the pages.
+- **A saver who stays a member but loses the right.** Whether a shared login is
+  still used is decided by membership, not by role: a saver demoted to viewer
+  still has theirs bound until it is forgotten.
+- **What colleagues see of a shared login in use.** The list shows them only
+  its name, but a shared login is there for them to use: anyone who uses the
+  agent can have it sign in and act as the account, and can see what the
+  browser types and what the account shows in the panel beside their own
+  conversation while it does — whatever the site puts on screen, the username
+  and the account's own pages included. Covan does not mask a page.
+- **Whoever operates this deployment.** The operator holds the service-role key
+  and `ROUTINE_SECRET_KEY`, and with both can decrypt every saved login. The
+  encryption keeps a login out of a leaked database dump or a misgranted column;
+  it does not keep it from the people who run the server. On covan.app that is
+  us; on a self-hosted install it is whoever administers it.
+
+**What a hostile page can do with it.** A page can contain text addressed to the
+agent reading it, and nobody has solved that. A saved login narrows what such
+text can achieve rather than removing it: the value is typed only on the site
+the row was saved for, so a page that talks the agent into "sign in at
+somewhere-else.example" gets nothing typed there; the model chooses only which
+saved site a task needs, and the card names that site and that login before
+anything runs; the task is one sentence a person wrote and approved; and a login
+wall earns one free retry per task, so nothing can loop. What it does not
+narrow is where the browser goes — the provider is explicit that a binding's
+domains are *"not a browser-wide navigation or network allowlist"*.
+
+**Two-factor is not solved by this.** The provider's inline bindings carry no
+one-time codes, so a site that asks for one, or for an SMS code or a passkey,
+still stops at a login wall and needs the person. The save dialog says so.
 
 **The panel hands somebody a live browser, and its address is the whole of the
 access.** Whoever holds the live view's URL can see that browser, and the
@@ -299,7 +471,8 @@ password.
 
 Delivery-channel secrets — a Slack webhook URL, for instance — are encrypted
 with AES-GCM before they are stored, using a key held only by the API. The
-database on its own does not yield them.
+database on its own does not yield them. Saved website logins use the same key
+and the same envelope.
 
 The Node build refuses to start rather than run in a state that looks fine and
 is not:
@@ -323,8 +496,10 @@ TLS everywhere, in and out. Uploaded files and the database are encrypted at
 rest by whoever provides them — which is your choice when you self-host, and is
 [named for covan.app on the subprocessor page](https://covan.app/subprocessors).
 
-Passwords are never stored. Authentication is Supabase Auth, and what the
-database holds is a hash.
+Your Covan password is never stored. Authentication is Supabase Auth, and what
+the database holds is a hash. The one other password in this database is a login
+somebody chose to save for a website — encrypted, not hashed, because it has to
+be typed again; see [the one place an agent does act](#the-one-place-an-agent-does-act-and-what-it-costs).
 
 ## Rate limits and the ceiling above them
 
@@ -378,7 +553,8 @@ resolve to you. The short list:
    file, not a backup. covan.app's own job restores every nightly dump into a
    throwaway Postgres and compares row counts before keeping it — worth copying.
 5. **Keep the encryption key.** Lose the one that encrypts delivery-channel
-   secrets and every stored webhook becomes undecryptable noise.
+   secrets and every stored webhook becomes undecryptable noise — and every
+   saved website login with it, which the agent then meets as a login wall.
 6. **Decide where the model calls go.** Completions and embeddings can each be
    pointed at any OpenAI-compatible endpoint, independently — which is the whole
    answer for anyone who cannot send document text to the United States. See

@@ -51,7 +51,7 @@ const ASKS = ["refuseIfKeyAuthenticated(", 'c.get("apiKeyId")'];
  */
 const ACTS_BEYOND_THE_KEY: Record<string, string> = {
   "routes/browser.ts":
-    "mints a live browser URL carrying the owner's own signed-in cookies, and browser-use documents that URL as full control of that browser — so it is access that outlives the key by the whole session, and revoking the key does not touch it",
+    "mints a live browser URL carrying the owner's own signed-in cookies, and browser-use documents that URL as full control of that browser — so it is access that outlives the key by the whole session, and revoking the key does not touch it; and it saves a site's password for an agent, which signs in as that person on every later run long after the key is revoked",
   "routes/api-keys.ts":
     "mints and revokes keys: a key that writes successors cannot be revoked, and a leaked one can take down the keys somebody still relies on",
   "routes/account.ts":
@@ -82,6 +82,12 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "starts a run in the owner's signed-in browser and spends the one free retry on their behalf, an act the owner never took that outlives the key",
   "routes/browser.ts POST /browser/sessions/:id/stop":
     "stops somebody's browser, ending a sign-in they may be in the middle of and deciding what their cookie jar keeps",
+  "routes/browser.ts GET /browser/credentials":
+    "lists which sites somebody has a saved login for, and on which agents — reconnaissance about where their passwords are kept, which no key-driven caller needs",
+  "routes/browser.ts POST /browser/credentials":
+    "saves a site's password for an agent, so every later run signs in as that person — a login planted by a key keeps working after the key is revoked",
+  "routes/browser.ts DELETE /browser/credentials/:id":
+    "forgets a saved login, possibly a shared one the whole team's agent signs in with — a destructive act on their behalf that revoking the key does not undo",
 };
 
 /**

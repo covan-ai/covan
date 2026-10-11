@@ -994,6 +994,28 @@ describe("the sweep of a browser nobody handed back", () => {
       });
     });
 
+    /**
+     * Ruling R38: a browser a shared login ran in names no jar on its row, and
+     * the stop must not read a person's jar back on its account. Every active
+     * browser of the session is still stopped — a declined profiled one
+     * included — so the provider persists whatever each one held into its own
+     * profile, and nothing more.
+     */
+    it("stops a jar-less browser without reading any jar back", async () => {
+      const { deps, mem } = setup([idle({ profile_id: null })]);
+
+      const result = await sweepConversationBrowsers(ENV, deps);
+
+      expect(result).toEqual({ claimed: 1, ok: 1, failed: 0 });
+      expect(stopBrowser).toHaveBeenCalledOnce();
+      expect(getProfile).not.toHaveBeenCalled();
+      expect(mem.tables.browser_sessions[0]).toMatchObject({
+        live_state: "none",
+        provider_browser_id: null,
+        profile_id: null,
+      });
+    });
+
     it("keeps the lease and the browser it named when the stop fails, so the lease spaces the retry", async () => {
       stopBrowser.mockResolvedValue({ kind: "error", status: 502, message: "bad gateway" });
       const { deps, mem } = setup([idle()]);

@@ -224,6 +224,80 @@ describe("settleBrowserTask", () => {
     expect(deliver.mock.calls[0][1]).toBe(DONE);
   });
 
+  /**
+   * Ruling R32. Whether the run carried a saved login is the row's to say,
+   * and the two clocks hand settle rows read with different column lists — so
+   * the claim reads it back itself and deliver is given the row's own answer,
+   * not whatever the caller happened to select.
+   */
+  const WALL: FinishedTask = {
+    status: "failed",
+    output: null,
+    error: null,
+    costUsd: 0.05,
+    reported: { status: "login_required", host: "linkedin.com", answer: null },
+  };
+
+  it("hands deliver the saved login a walled run carried, read back from the row", async () => {
+    const { deps } = setup([taskRow({ credential_id: "cred-1" })]);
+
+    // The caller's copy says nothing about it, as the open tab's read does not.
+    await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, WALL, deps);
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver.mock.calls[0][0]).toMatchObject({ id: "bt-1", credential_id: "cred-1" });
+  });
+
+  it("hands deliver no saved login when the run carried none", async () => {
+    const { deps } = setup([taskRow({ credential_id: null })]);
+
+    await settleBrowserTask(
+      ENV,
+      taskRow({ credential_id: "stale-caller-copy" }) as BrowserTaskRow,
+      WALL,
+      deps,
+    );
+
+    expect(deliver.mock.calls[0][0].credential_id).toBeNull();
+  });
+
+  /**
+   * Final review #6: the claim is the write every settle depends on, and it
+   * must not depend on 0079 — a worker deployed before the migration would
+   * otherwise fail every claim on an unknown column. `credential_id` matters
+   * only to a login wall's sentence, so only a wall reads it, after the claim.
+   */
+  it("claims without naming credential_id, and reads it only for a login wall", async () => {
+    const { mem, deps } = setup([taskRow({ credential_id: "cred-1" })]);
+
+    await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, deps);
+
+    const claim = mem.callsTo("browser_tasks")[0];
+    expect(claim.op).toBe("update");
+    expect(String(claim.columns)).not.toContain("credential_id");
+    expect(
+      mem.callsTo("browser_tasks").some((c) => String(c.columns).includes("credential_id")),
+    ).toBe(false);
+    expect(deliver.mock.calls[0][0].credential_id).toBeNull();
+  });
+
+  it("still delivers a login wall, as one that carried no login, when that read fails", async () => {
+    const mem = memoryDb(
+      { browser_tasks: [taskRow({ credential_id: "cred-1" })], browser_sessions: [sessionRow()] },
+      (ctx) =>
+        ctx.table === "browser_tasks" && ctx.op === "select"
+          ? { data: null, error: { code: "42703", message: "column does not exist" } }
+          : undefined,
+    );
+    const deps = { db: mem.db as unknown as SupabaseClient, now: () => NOW, deliver };
+
+    const delivered = await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, WALL, deps);
+
+    expect(delivered).toBe(true);
+    expect(deliver.mock.calls[0][0].credential_id).toBeNull();
+    expect(JSON.stringify(spoken)).not.toContain("cred-1");
+  });
+
   it("the claim is the first thing it does: nothing is read or written before it", async () => {
     const { mem, deps } = setup();
     await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, deps);

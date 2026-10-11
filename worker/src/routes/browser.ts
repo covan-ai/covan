@@ -7,6 +7,16 @@ import {
   stopConversationBrowser,
   takeOverBrowser,
 } from "../lib/browser/controls";
+import {
+  CREDENTIAL_MAX_BYTES,
+  credentialsFor,
+  forgetCredential,
+  saveCredential,
+  siteHostOf,
+  type CredentialBinding,
+  type CredentialScope,
+  type SaveRefusal,
+} from "../lib/browser/credentials";
 import { browserLiveUrl } from "../lib/browser/profiles";
 import {
   closeTakeover,
@@ -527,10 +537,41 @@ browser.post("/browser/sessions/:id/take-over", async (c) => {
  * should not be able to have it run again. Then the same successor query
  * `POST /browser/takeovers` makes, for the same reason and before anything is
  * spent: one free retry per original, ever.
+ *
+ * **An optional `{ site }` (R24)** — the sign-in card's Save, which has just
+ * stored a login and wants this retry to sign in with it. The client names the
+ * site and nothing else: the binding is resolved here, for the caller, by
+ * `credentialsFor`, after every rule above has passed and before anything is
+ * spent, so a site with no login the caller may use is a 409 that leaves the
+ * free retry where it was. Plaintext never arrives from the client on this
+ * call. No body, or a body without a site, is the hand-back it always was.
+ *
+ * **And the saved row's id, `credentialId` (R35)**, which the save answered.
+ * Without it the run would bind whichever login `pick` prefers — the caller's
+ * own personal one, which may be the very login that just failed, while the
+ * person has just saved a new shared one. It is a preference `credentialsFor`
+ * honours only for a row the caller may use on this agent and site.
  */
 browser.post("/browser/sessions/:id/hand-back", async (c) => {
   const refusal = refuseIfKeyAuthenticated(c, "hand a browser back");
   if (refusal) return c.json(refusal, 403);
+
+  type HandBackBody = { site?: unknown; credentialId?: unknown };
+  const body = await c.req.json<HandBackBody>().catch((): HandBackBody => ({}));
+  let site: string | null = null;
+  let prefer: string | null = null;
+  if (body && body.site !== undefined && body.site !== null) {
+    site = typeof body.site === "string" ? siteHostOf(body.site) : null;
+    if (!site) {
+      return c.json({ error: "That is not a website a saved login can be used on." }, 400);
+    }
+    if (body.credentialId !== undefined && body.credentialId !== null) {
+      if (typeof body.credentialId !== "string" || !UUID.test(body.credentialId)) {
+        return c.json({ error: "That is not a saved login." }, 400);
+      }
+      prefer = body.credentialId;
+    }
+  }
 
   const own = await ownBrowser(c);
   if ("refused" in own) return own.refused;
@@ -589,9 +630,37 @@ browser.post("/browser/sessions/:id/hand-back", async (c) => {
     return c.json({ error: "that browser task has already been tried again" }, 409);
   }
 
+  // The login is the caller's to use on the original's agent, chosen by the
+  // same rule `browse` chooses by (own row first, then a shared one whose
+  // saver is still a member — R29, R30). The task row was read through the
+  // caller's own client, so its agent is one this caller ran.
+  let login: CredentialBinding | null = null;
+  if (site) {
+    try {
+      login = await credentialsFor(c.env, {
+        agentId: String(original.agent_id),
+        userId: c.get("user").id,
+        host: site,
+        ...(prefer ? { prefer } : {}),
+      });
+    } catch (err) {
+      console.error("could not read a saved login for a hand-back", String(err));
+      return c.json({ error: "Couldn't read the saved login. Try again in a moment." }, 500);
+    }
+    if (!login) {
+      return c.json(
+        {
+          error: `There is no saved login for ${site} you can use here. Save it again, or take over and sign in yourself.`,
+        },
+        409,
+      );
+    }
+  }
+
   const handed = await handBackBrowser(c.env, {
     ...owned(c, own.row),
     original: original as RetryableTask,
+    ...(login ? { login } : {}),
   });
   if (handed.kind === "error") return c.json({ error: handed.message }, handed.status as 409);
   return c.json({ browserTaskId: handed.browserTaskId });
@@ -613,6 +682,304 @@ browser.post("/browser/sessions/:id/stop", async (c) => {
   const stopped = await stopConversationBrowser(c.env, owned(c, own.row));
   if (stopped.kind === "error") return c.json({ error: stopped.message }, stopped.status as 502);
   return c.body(null, 204);
+});
+
+/**
+ * The login you save: a site's username and password kept for one agent, so
+ * its browser signs in without asking every time (0079, Task 2.4).
+ *
+ * The same split as everything above. Who may ask is decided HERE, through the
+ * caller's own client — the agent row for a save, the login row for a forget,
+ * the list itself for a read — so RLS answers "not yours" before anything
+ * else is asked. `lib/browser/credentials.ts` holds the service role, the
+ * encryption and the only plaintext, and re-checks what a caller's word must
+ * not settle.
+ *
+ * **No value leaves the request.** The save's body is the one place a
+ * password crosses this API, and it goes from the parsed body straight into
+ * `saveCredential`: no log line here names the body or any field of it, the
+ * refusals are fixed sentences of this file's rather than anything that could
+ * quote what was typed, a failed save is reduced to a status, and the answer
+ * is the saved row's public fields. Nothing in this worker logs request
+ * bodies (`index.ts` mounts cors, the rate limiter and auth, none of which
+ * read one); `browser.test.ts` spies every console level through a save and a
+ * failed one to keep it so.
+ *
+ * Refused to an API key, each handler by itself (`HANDLERS_BEYOND_THE_KEY`):
+ * a login planted by a key keeps signing in as somebody after the key is
+ * revoked, a forget by one is a team's login gone, and the list is a map of
+ * where somebody's passwords are kept.
+ */
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Every column 0079 grants `authenticated` that a screen needs. Never a ciphertext. */
+const SAVED_LOGIN_COLUMNS =
+  "id, workspace_id, agent_id, user_id, scope, site_host, label, created_at, last_used_at";
+
+/**
+ * `saveCredential`'s refusals, in this product's words. Fixed sentences, so
+ * none of them can carry what was typed — the label check is about the
+ * username, and a sentence quoting it would be the leak the check prevents.
+ */
+function saveRefusal(
+  reason: SaveRefusal,
+  host: string,
+): { status: 400 | 404 | 409; error: string } {
+  switch (reason) {
+    case "invalid_scope":
+      return {
+        status: 400,
+        error: "A login is saved either for you or for everyone using this agent.",
+      };
+    case "invalid_host":
+      return { status: 400, error: "That is not a website address a login can be saved for." };
+    case "invalid_label":
+      return { status: 400, error: "Give the login a name, like “LinkedIn — sales account”." };
+    case "label_is_username":
+      return {
+        status: 400,
+        error: "The name is shown to others, so it cannot contain the username.",
+      };
+    case "label_is_password":
+      return {
+        status: 400,
+        error: "The name is shown to others, so it cannot contain the password.",
+      };
+    case "invalid_username":
+      return {
+        status: 400,
+        error: `The username must be between 1 and ${CREDENTIAL_MAX_BYTES} bytes.`,
+      };
+    case "invalid_password":
+      return {
+        status: 400,
+        error: `The password must be between 1 and ${CREDENTIAL_MAX_BYTES} bytes.`,
+      };
+    case "agent_not_found":
+      return { status: 404, error: "That agent is not in this workspace." };
+    case "shared_exists":
+      // R28: one shared login per site per agent; a departed saver's row
+      // blocks a new one until somebody who may removes it (2.2's review).
+      return {
+        status: 409,
+        error: `A shared login for ${host} already exists. Ask a workspace admin, or whoever saved it, to remove it first.`,
+      };
+  }
+}
+
+/** A body field as text, or empty — never `String(object)`. */
+function field(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * GET /browser/credentials — the saved logins this caller can see: their own,
+ * and the shared ones of agents they may use (0079's read policy, which this
+ * read goes through). `?agentId=` narrows it to one agent's, for that agent's
+ * settings.
+ *
+ * Label, host, scope, when it was saved and last used, whether it is the
+ * caller's own and whether they may forget it. Never a username — there is no
+ * plaintext column to name, and both ciphertexts are granted to nobody — and
+ * not the saver's id either: `own` says the one thing a screen needs from it.
+ * `canForget` is `forgetCredential`'s rule, read off the caller's own
+ * memberships: their own row always, a shared row when they are an admin of
+ * its workspace. The DELETE decides again; this only spares a screen a button
+ * that can only be refused.
+ */
+browser.get("/browser/credentials", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "see which sites have a saved login");
+  if (refusal) return c.json(refusal, 403);
+
+  const db = c.get("db");
+  const user = c.get("user");
+  const agentId = c.req.query("agentId");
+  // Not an agent at all, so no login of one: answered without a query that
+  // Postgres would answer 22P02.
+  if (agentId !== undefined && !UUID.test(agentId)) return c.json({ logins: [] });
+
+  let query = db.from("browser_credentials").select(SAVED_LOGIN_COLUMNS);
+  if (agentId) query = query.eq("agent_id", agentId);
+  const { data, error } = await query.order("created_at", { ascending: false });
+  if (error) {
+    console.error("could not list saved logins", { code: error.code });
+    return c.json({ error: "failed to load your saved logins" }, 500);
+  }
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+
+  let adminOf = new Set<string>();
+  if (rows.some((row) => row.scope === "agent" && row.user_id !== user.id)) {
+    const { data: roles, error: rolesError } = await db
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", user.id)
+      .eq("role", "admin");
+    if (rolesError) {
+      // Not knowing is "not an admin": the button is hidden, not the list.
+      console.error("could not read a caller's admin workspaces", { code: rolesError.code });
+    } else {
+      adminOf = new Set(
+        ((roles ?? []) as Array<{ workspace_id: unknown }>).map((r) => String(r.workspace_id)),
+      );
+    }
+  }
+
+  return c.json({
+    logins: rows.map((row) => {
+      const own = row.user_id === user.id;
+      return {
+        id: String(row.id),
+        agentId: String(row.agent_id),
+        label: String(row.label ?? ""),
+        siteHost: String(row.site_host ?? ""),
+        scope: row.scope === "agent" ? "agent" : "owner",
+        lastUsedAt: row.last_used_at ? String(row.last_used_at) : null,
+        createdAt: String(row.created_at),
+        own,
+        canForget: own || (row.scope === "agent" && adminOf.has(String(row.workspace_id))),
+      };
+    }),
+  });
+});
+
+/**
+ * POST /browser/credentials — save (or replace) a login, from the sign-in
+ * card's dialog.
+ *
+ * The agent is read through the caller's own client first, so an agent they
+ * may not use — another workspace's, one in the trash — is a 404 and nothing
+ * is encrypted or written. Its workspace comes from that row, never from the
+ * request. Then `saveCredential`, whose refusals become `saveRefusal`'s
+ * sentences: the dialog shows them as they are.
+ */
+browser.post("/browser/credentials", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "save a login for an agent");
+  if (refusal) return c.json(refusal, 403);
+
+  const parsed = await c.req.json<unknown>().catch(() => null);
+  const body = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const agentId = field(body, "agentId");
+  if (!UUID.test(agentId)) return c.json({ error: "Name the agent this login is for." }, 400);
+
+  const db = c.get("db");
+  const { data: agent, error } = await db
+    .from("agents")
+    .select("id, workspace_id")
+    .eq("id", agentId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("could not read an agent for a saved login", { code: error.code });
+    return c.json({ error: "Couldn't save that login. Try again in a moment." }, 500);
+  }
+  if (!agent) return c.json({ error: "That agent is not one you can use." }, 404);
+
+  /**
+   * R34, 0021's line: shared things need a member, yours need only
+   * membership. Seeing the agent is enough to save a login for oneself; a
+   * login every colleague's runs will sign in with is a shared thing, so a
+   * viewer — who may use the agent but change nothing of the team's — is
+   * refused. Asked through the caller's own client, of the agent's workspace,
+   * and `can_write_in_workspace`'s bias kept: anything but a viewer may.
+   */
+  const requested = field(body, "scope");
+  if (requested === "agent") {
+    const { data: membership, error: roleError } = await db
+      .from("workspace_members")
+      .select("role")
+      .eq("workspace_id", String(agent.workspace_id))
+      .eq("user_id", c.get("user").id)
+      .maybeSingle();
+    if (roleError) {
+      console.error("could not read a caller's role for a shared login", { code: roleError.code });
+      return c.json({ error: "Couldn't save that login. Try again in a moment." }, 500);
+    }
+    const role = membership ? String((membership as { role: unknown }).role ?? "") : "";
+    if (!role || role === "viewer") {
+      return c.json(
+        {
+          error:
+            "Only workspace members who can edit can save a login for everyone. Save it for yourself instead.",
+        },
+        403,
+      );
+    }
+  }
+
+  const site = field(body, "site");
+  let saved;
+  try {
+    saved = await saveCredential(c.env, {
+      workspaceId: String(agent.workspace_id),
+      agentId,
+      userId: c.get("user").id,
+      scope: requested as CredentialScope,
+      siteHost: site,
+      label: field(body, "label"),
+      username: field(body, "username"),
+      password: field(body, "password"),
+    });
+  } catch (err) {
+    // `credentials.ts` builds its errors from a table name and a code, so the
+    // message carries no value; nothing else of the request is logged.
+    console.error("could not save a login", err instanceof Error ? err.message : "unknown");
+    return c.json({ error: "Couldn't save that login. Try again in a moment." }, 500);
+  }
+
+  if (!saved.ok) {
+    const answer = saveRefusal(saved.reason, siteHostOf(site) ?? "this site");
+    return c.json({ error: answer.error }, answer.status);
+  }
+  const { id, scope, siteHost, label, replaced } = saved.credential;
+  return c.json({ credential: { id, scope, siteHost, label, replaced } });
+});
+
+/**
+ * DELETE /browser/credentials/:id — forget a saved login (R29).
+ *
+ * The id is checked for shape first, because `forgetCredential` would hand a
+ * malformed one to Postgres and get 22P02 back as a 500 (2.2's review). Then
+ * the row is read through the caller's own client — a login they cannot see
+ * is not there — and `forgetCredential` decides with the service role: the
+ * saver always, a workspace admin for a shared login, nobody else.
+ */
+browser.delete("/browser/credentials/:id", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "forget a saved login");
+  if (refusal) return c.json(refusal, 403);
+
+  const gone = { error: "That saved login is not there any more." };
+  const id = c.req.param("id");
+  if (!UUID.test(id)) return c.json(gone, 404);
+
+  const { data, error } = await c
+    .get("db")
+    .from("browser_credentials")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    console.error("could not read a saved login to forget", { code: error.code });
+    return c.json({ error: "Couldn't forget that login. Try again in a moment." }, 500);
+  }
+  if (!data) return c.json(gone, 404);
+
+  let forgotten;
+  try {
+    forgotten = await forgetCredential(c.env, { credentialId: id, userId: c.get("user").id });
+  } catch (err) {
+    console.error("could not forget a login", err instanceof Error ? err.message : "unknown");
+    return c.json({ error: "Couldn't forget that login. Try again in a moment." }, 500);
+  }
+  if (forgotten.ok) return c.body(null, 204);
+  if (forgotten.reason === "forbidden") {
+    return c.json(
+      { error: "Only a workspace admin, or whoever saved it, can remove a shared login." },
+      403,
+    );
+  }
+  return c.json(gone, 404);
 });
 
 export { browser, offerable };

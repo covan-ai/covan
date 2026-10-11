@@ -56,6 +56,7 @@ const recordBrowserTask = vi.fn(
       task: string;
       providerRunId?: string;
       browserSessionId?: string;
+      credentialId?: string | null;
     },
   ): Promise<string | null> => "bt-1",
 );
@@ -92,7 +93,12 @@ const ensureBrowserSession = vi.fn(
 const recordRunStart = vi.fn(
   async (
     _env: unknown,
-    _input: { browserSessionId: string; providerSessionId?: string },
+    _input: {
+      browserSessionId: string;
+      providerSessionId?: string;
+      profileId?: string | null;
+      providerBrowserId?: null;
+    },
   ): Promise<void> => {},
 );
 const releaseBrowserSession = vi.fn(async (_env: unknown, _id: string): Promise<void> => {});
@@ -160,6 +166,42 @@ vi.mock("../../entitlements", async (importOriginal) => {
   return { ...actual, entitlementsFor: () => ({ snapshot: (userId: string) => snapshot(userId) }) };
 });
 
+/**
+ * The saved logins (Task 2.3), mocked for `profileFor`'s reason: the real
+ * functions build a service-role client, and `credentials.test.ts` is where
+ * which row is picked, and how it is decrypted, is proved. Everything else in
+ * the module stays real — `siteHostOf` normalises the `site` argument and
+ * `credentialAliases` names the aliases, and a test that faked either would be
+ * checking the fake. Null by default: nobody has saved a login, and every
+ * test that is not about one sees the run it always saw.
+ */
+type LoginArgs = { agentId: string; userId: string; host: string };
+const credentialsFor = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _env: unknown,
+      _args: { agentId: string; userId: string; host: string },
+    ): Promise<import("../../browser/credentials").CredentialBinding | null> => null,
+  ),
+);
+const savedLogin = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _env: unknown,
+      _args: { agentId: string; userId: string; host: string },
+    ): Promise<import("../../browser/credentials").SavedLogin | null> => null,
+  ),
+);
+vi.mock("../../browser/credentials", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../browser/credentials")>();
+  return {
+    ...actual,
+    credentialsFor: (env: unknown, args: LoginArgs) => credentialsFor(env, args),
+    savedLogin: (env: unknown, args: LoginArgs) => savedLogin(env, args),
+  };
+});
+
+import { credentialAliases, type CredentialBinding } from "../../browser/credentials";
 import { browseTool, BROWSER_TASK_TOKENS } from "./browse";
 
 /**
@@ -252,6 +294,10 @@ beforeEach(() => {
   spend.mockReset();
   snapshot.mockReset();
   snapshot.mockResolvedValue({ used: 0, limit: 1_000_000, resetsAt: "2026-11-01T00:00:00Z" });
+  credentialsFor.mockReset();
+  credentialsFor.mockResolvedValue(null);
+  savedLogin.mockReset();
+  savedLogin.mockResolvedValue(null);
 });
 
 /** The provider answering `status` to the run's creation. */
@@ -677,6 +723,18 @@ describe("availability", () => {
     expect(browseTool.description).toMatch(/take over at any time/i);
   });
 
+  it("tells the model what `site` is for, and no longer that the browser can never sign in", () => {
+    const site = (browseTool.input as { properties: Record<string, { description?: string }> })
+      .properties.site;
+    expect(site).toBeDefined();
+    expect(site.description).toMatch(/saved login/i);
+    expect(browseTool.description).toMatch(/`site`/);
+    expect(browseTool.description).toMatch(/never shown a password/i);
+    expect(browseTool.description).not.toMatch(/can never be given a password/i);
+    // Optional: a task with no sign-in in it names none.
+    expect((browseTool.input as { required: string[] }).required).toEqual(["task"]);
+  });
+
   it("needs nothing from the workspace, because it points at the public web", () => {
     expect(browseTool.needs).toBeUndefined();
   });
@@ -1011,5 +1069,561 @@ describe("what the approval card claims about the jar", () => {
     const row = String((result as { proposal: Record<string, unknown> }).proposal.cookies ?? "");
 
     expect(row).toBe("1 site: portal.example.com");
+  });
+});
+
+/**
+ * Task 2.3: the login you save, carried by the run that needs it.
+ *
+ * The model names a site; the server finds the login saved for it and hands
+ * it to the provider as two `SecretBinding`s. The model sees two alias names
+ * and nothing else, and so does every place the run's words end up — the tool
+ * result, `message_steps.result_excerpt`, `browser_tasks`, a log line.
+ */
+describe("a saved login (Task 2.3)", () => {
+  // Distinctive enough that a substring search cannot match anything else.
+  const USERNAME = "ada.lovelace@example.com";
+  const PASSWORD = "hunter2-correct-horse";
+  const LABEL = "LinkedIn — sales account";
+  const ctx = () => ctxWith({ confirmed: true });
+
+  function saved(siteHost = "linkedin.com"): CredentialBinding {
+    const aliases = credentialAliases(siteHost);
+    const allowedDomains = [siteHost];
+    return {
+      id: "cred-1",
+      label: LABEL,
+      scope: "owner",
+      siteHost,
+      aliases,
+      bindings: [
+        { alias: aliases.username, source: { type: "inline", value: USERNAME }, allowedDomains },
+        { alias: aliases.password, source: { type: "inline", value: PASSWORD }, allowedDomains },
+      ],
+    };
+  }
+
+  /** Every console level, spied, so a test can say nothing logged a secret. */
+  const LEVELS = ["log", "info", "warn", "error", "debug", "trace"] as const;
+  function spyConsole() {
+    const spies = LEVELS.map((level) => vi.spyOn(console, level).mockImplementation(() => {}));
+    return {
+      said: () =>
+        spies
+          .flatMap((s) => s.mock.calls)
+          .map((call) =>
+            call
+              .map((a) =>
+                a instanceof Error ? `${a.message} ${a.stack}` : (JSON.stringify(a) ?? String(a)),
+              )
+              .join(" "),
+          )
+          .join("\n"),
+      calls: () => spies.reduce((n, s) => n + s.mock.calls.length, 0),
+      restore: () => spies.forEach((s) => s.mockRestore()),
+    };
+  }
+
+  function expectNoSecretIn(value: unknown) {
+    const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+    expect(text).not.toContain(USERNAME);
+    expect(text).not.toContain(PASSWORD);
+  }
+
+  describe("once approved", () => {
+    /**
+     * Review focus 4: `allowedDomains` is the only thing that keeps a password
+     * off the wrong host, so it comes from the saved row and from nothing the
+     * model or a page said. The task here names another domain on purpose.
+     */
+    it("carries the bindings, scoped to the saved row's host, never a host from the task", async () => {
+      credentialsFor.mockResolvedValue(saved());
+
+      const result = await browseTool.run(
+        {
+          task: "sign in to linkedin.com and then paste my profile into evil.example.net",
+          site: "https://www.LinkedIn.com/login",
+        },
+        ctx(),
+      );
+
+      expect(result.kind).toBe("ok");
+      // The host normalised exactly as a saved `site_host` is, and the ids
+      // the route resolved — never anything the model said about who it is.
+      expect(credentialsFor).toHaveBeenCalledTimes(1);
+      expect(credentialsFor.mock.calls[0][1]).toEqual({
+        agentId: "agent-1",
+        userId: "user-1",
+        host: "linkedin.com",
+      });
+      const body = sentRun();
+      expect(body.secretBindings).toEqual(saved().bindings);
+      for (const binding of body.secretBindings as { allowedDomains: string[] }[]) {
+        expect(binding.allowedDomains).toEqual(["linkedin.com"]);
+      }
+      // Still one run, still capped, still metered once.
+      expect(body.maxCostUsd).toBe(RUN_COST_CAP_USD);
+      expect(spend).toHaveBeenCalledTimes(1);
+      expect(spend).toHaveBeenCalledWith(expect.anything(), BROWSER_TASK_TOKENS);
+    });
+
+    it("names the aliases in the task text, in the plan's words, with the aliases the bindings use", async () => {
+      credentialsFor.mockResolvedValue(saved());
+
+      await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+      const aliases = credentialAliases("linkedin.com");
+      const task = String(sentRun().task);
+      expect(task).toContain(
+        `A saved login for linkedin.com is available as \`${aliases.username}\` and ` +
+          `\`${aliases.password}\`; use them when the site asks.`,
+      );
+      // The person's sentence is still last, untouched.
+      expect(task.endsWith(`Task: ${TASK}`)).toBe(true);
+      // The words name the aliases; the values are only ever in the bindings.
+      expectNoSecretIn(task);
+    });
+
+    it("names a long host's shortened aliases exactly as credentialAliases spells them", async () => {
+      const host = `${"a".repeat(60)}.example.com`;
+      credentialsFor.mockResolvedValue(saved(host));
+
+      await browseTool.run({ task: TASK, site: host }, ctx());
+
+      const aliases = credentialAliases(host);
+      expect(aliases.password.length).toBeLessThanOrEqual(64);
+      expect(String(sentRun().task)).toContain(
+        `available as \`${aliases.username}\` and \`${aliases.password}\``,
+      );
+    });
+
+    it("runs exactly as before when no login is saved for the site: no bindings, no sentence", async () => {
+      await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+      expect(credentialsFor).toHaveBeenCalledTimes(1);
+      const body = sentRun();
+      expect(body).not.toHaveProperty("secretBindings");
+      expect(String(body.task)).not.toMatch(/saved login/i);
+      expect(spend).toHaveBeenCalledTimes(1);
+    });
+
+    it("looks for no login at all when the model names no site", async () => {
+      credentialsFor.mockResolvedValue(saved());
+
+      await browseTool.run({ task: TASK }, ctx());
+
+      expect(credentialsFor).not.toHaveBeenCalled();
+      expect(sentRun()).not.toHaveProperty("secretBindings");
+      expect(String(sentRun().task)).not.toMatch(/saved login/i);
+    });
+
+    /**
+     * Ruling R32: the row says which saved login the run carried, so that a
+     * login wall afterwards can be blamed on that login — and only then.
+     */
+    it("records on the task which saved login the run carried", async () => {
+      credentialsFor.mockResolvedValue(saved());
+
+      await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+      expect(recordBrowserTask.mock.calls[0][1].credentialId).toBe("cred-1");
+    });
+
+    /**
+     * Ruling R38 (operator): a shared login is never written into a person's
+     * jar. The sign-in it performs would otherwise be saved into the profile
+     * of whoever happened to run the task, and Forget — or the saver leaving
+     * (R29) — would not stop the agent acting as that account. Personal
+     * logins keep the person's own jar.
+     */
+    describe("a shared login (R38)", () => {
+      const JAR = { id: "prof-1", providerProfileId: "prov-1", proxyCountryCode: "de" };
+      const shared = (): CredentialBinding => ({ ...saved(), scope: "agent" });
+      const follow = (profileId: string | null) =>
+        ensureBrowserSession.mockResolvedValue({
+          kind: "ok",
+          value: {
+            id: "bs-1",
+            providerSessionId: PROVIDER_SESSION,
+            liveState: "none",
+            runInFlight: false,
+            profileId,
+          },
+        });
+
+      it("opens the browser without the person's jar, and the row records none", async () => {
+        profileFor.mockResolvedValue(JAR);
+        credentialsFor.mockResolvedValue(shared());
+
+        await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+        const body = sentRun();
+        expect(body).not.toHaveProperty("sessionId");
+        // Explicit, not absent (R40): the claim may have raced a provisioning.
+        expect(body.browserSettings).toEqual({ profileId: null });
+        expect(body.secretBindings).toEqual(shared().bindings);
+        // The claim was taken before the login was known; the run's start
+        // takes the jar back off the row, so R23 keeps follow-ups jar-less.
+        expect(recordRunStart.mock.calls[0][1]).toMatchObject({
+          providerSessionId: PROVIDER_SESSION,
+          profileId: null,
+        });
+      });
+
+      it("declines a browser opened with the person's jar: an explicit null, and the row lets go of it", async () => {
+        profileFor.mockResolvedValue(JAR);
+        follow("prof-1");
+        credentialsFor.mockResolvedValue(shared());
+
+        await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+        const body = sentRun();
+        expect(body.sessionId).toBe(PROVIDER_SESSION);
+        expect(body.browserSettings).toEqual({ profileId: null });
+        expect(recordRunStart.mock.calls[0][1]).toMatchObject({ profileId: null });
+      });
+
+      it("opens the browser with an explicit null profile even when the person has no jar", async () => {
+        credentialsFor.mockResolvedValue(shared());
+
+        await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+        expect(sentRun().browserSettings).toEqual({ profileId: null });
+      });
+
+      it("reuses a browser opened without a jar as it is: the same explicit null, which matches it (R40)", async () => {
+        profileFor.mockResolvedValue(JAR);
+        follow(null);
+        credentialsFor.mockResolvedValue(shared());
+
+        await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+        expect(sentRun().browserSettings).toEqual({ profileId: null });
+      });
+
+      /**
+       * Ruling R41: the profiled browser the provider declined is stopped
+       * (which saves the person's jar), and the same write that takes the jar
+       * off the row forgets it, so the live view, take-over and settle
+       * converge on the new browser.
+       */
+      describe("declining a profiled browser (R41)", () => {
+        const followWithBrowser = (profileId: string | null, providerBrowserId: string | null) =>
+          ensureBrowserSession.mockResolvedValue({
+            kind: "ok",
+            value: {
+              id: "bs-1",
+              providerSessionId: PROVIDER_SESSION,
+              liveState: "none",
+              runInFlight: false,
+              profileId,
+              providerBrowserId,
+            },
+          });
+        const stops = () =>
+          fetchMock.mock.calls.filter(
+            ([url, init]) => url.startsWith(`${V4_BASE}/browsers/`) && init?.method === "PATCH",
+          );
+
+        it("stops the stored browser and nulls the id in the write that clears the jar", async () => {
+          profileFor.mockResolvedValue(JAR);
+          followWithBrowser("prof-1", "br-old");
+          credentialsFor.mockResolvedValue(shared());
+          fetchMock.mockImplementation(async (url: string, init: RequestInit) =>
+            url === `${V4_BASE}/runs`
+              ? json({ id: RUN_ID, sessionId: PROVIDER_SESSION, status: "queued" }, 202)
+              : json({ id: "br-old", status: "stopped" }),
+          );
+
+          await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+          expect(stops().map(([url]) => url)).toEqual([`${V4_BASE}/browsers/br-old`]);
+          expect(JSON.parse(String(stops()[0][1].body))).toEqual({ action: "stop" });
+          expect(recordRunStart.mock.calls[0][1]).toMatchObject({
+            profileId: null,
+            providerBrowserId: null,
+          });
+        });
+
+        it("does not fail the run when the stop is refused, and logs a status only", async () => {
+          const console_ = spyConsole();
+          profileFor.mockResolvedValue(JAR);
+          followWithBrowser("prof-1", "br-old");
+          credentialsFor.mockResolvedValue(shared());
+          fetchMock.mockImplementation(async (url: string) =>
+            url === `${V4_BASE}/runs`
+              ? json({ id: RUN_ID, sessionId: PROVIDER_SESSION, status: "queued" }, 202)
+              : json({ detail: "refused br-old" }, 500),
+          );
+
+          const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+          const said = console_.said();
+          console_.restore();
+          expect(result.kind).toBe("ok");
+          expect(spend).toHaveBeenCalledTimes(1);
+          expect(recordRunStart.mock.calls[0][1]).toMatchObject({ providerBrowserId: null });
+          expect(said).toContain("500");
+          expect(said).not.toContain("br-old");
+        });
+
+        it.each([
+          ["a browser opened without a jar", () => followWithBrowser(null, "br-old"), "shared"],
+          ["the run that opens the browser", () => {}, "shared"],
+          ["a personal login", () => followWithBrowser("prof-1", "br-old"), "personal"],
+          ["no login at all", () => followWithBrowser("prof-1", "br-old"), "none"],
+        ] as const)("stops nothing and keeps the id for %s", async (_label, arrange, kind) => {
+          profileFor.mockResolvedValue(JAR);
+          arrange();
+          credentialsFor.mockResolvedValue(
+            kind === "shared" ? shared() : kind === "personal" ? saved() : null,
+          );
+
+          await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+          expect(stops()).toHaveLength(0);
+          expect(recordRunStart.mock.calls[0][1]).not.toHaveProperty("providerBrowserId");
+        });
+
+        it("has nothing to stop when the row names no browser yet, but still lets go of the jar", async () => {
+          profileFor.mockResolvedValue(JAR);
+          followWithBrowser("prof-1", null);
+          credentialsFor.mockResolvedValue(shared());
+
+          await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+          expect(stops()).toHaveLength(0);
+          expect(recordRunStart.mock.calls[0][1]).toMatchObject({
+            profileId: null,
+            providerBrowserId: null,
+          });
+        });
+      });
+
+      it("leaves a personal login in the person's own jar, as before", async () => {
+        profileFor.mockResolvedValue(JAR);
+        follow("prof-1");
+        credentialsFor.mockResolvedValue(saved());
+
+        await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+        expect(sentRun().browserSettings).toEqual({ profileId: "prov-1", proxyCountryCode: "de" });
+        expect(recordRunStart.mock.calls[0][1]).not.toHaveProperty("profileId");
+      });
+    });
+
+    it.each([
+      ["no site was named", { task: TASK }, () => {}],
+      ["no login is saved for the site", { task: TASK, site: "linkedin.com" }, () => {}],
+      [
+        "the saved logins could not be read",
+        { task: TASK, site: "linkedin.com" },
+        () =>
+          credentialsFor.mockRejectedValue(new Error("browser_credentials: read failed (57014)")),
+      ],
+    ])("records no saved login when %s", async (_label, args, arrange) => {
+      const console_ = spyConsole();
+      arrange();
+
+      await browseTool.run(args, ctx());
+
+      console_.restore();
+      expect(recordBrowserTask).toHaveBeenCalledTimes(1);
+      expect(recordBrowserTask.mock.calls[0][1].credentialId ?? null).toBeNull();
+    });
+
+    it("treats a blank site as no site, rather than refusing a task that needs no sign-in", async () => {
+      await browseTool.run({ task: TASK, site: "  " }, ctx());
+      expect(credentialsFor).not.toHaveBeenCalled();
+      expect(runCalls()).toHaveLength(1);
+    });
+
+    /**
+     * A database that cannot be read is a run without the login, not a run
+     * that does not start: the run meets the login wall and says so, which
+     * the person can fix in the panel. The log line says that it happened and
+     * nothing of what was being read.
+     */
+    it("runs without the binding, and logs a status only, when the saved logins cannot be read", async () => {
+      const console_ = spyConsole();
+      credentialsFor.mockRejectedValue(new Error("browser_credentials: read failed (57014)"));
+
+      const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+      const said = console_.said();
+      const logged = console_.calls();
+      console_.restore();
+      expect(result.kind).toBe("ok");
+      expect(runCalls()).toHaveLength(1);
+      expect(sentRun()).not.toHaveProperty("secretBindings");
+      expect(String(sentRun().task)).not.toMatch(/saved login/i);
+      expect(spend).toHaveBeenCalledTimes(1);
+      expect(logged).toBeGreaterThan(0);
+      expect(said).not.toContain("57014");
+    });
+
+    it("looks the login up after the refusals, so a refused browse decrypts nothing", async () => {
+      credentialsFor.mockResolvedValue(saved());
+      ensureBrowserSession.mockResolvedValue({
+        kind: "ok",
+        value: {
+          id: "bs-1",
+          providerSessionId: PROVIDER_SESSION,
+          liveState: "human",
+          runInFlight: false,
+          profileId: null,
+        },
+      });
+
+      const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+      expect(result.kind).toBe("error");
+      expect(credentialsFor).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The provider validates the body and, on a refusal, may echo it — and
+     * this body carries the password. `send` withholds every v4 error body
+     * (`redactBody: true`); this pins it for the one request where that is
+     * the difference between an error message and a leaked login, because
+     * the message becomes `message_steps.result_excerpt`, which every member
+     * of a shared session can read.
+     */
+    it.each([400, 422, 500, 503])(
+      "carries neither half of the login out of a provider %i that echoes the request",
+      async (status) => {
+        const console_ = spyConsole();
+        credentialsFor.mockResolvedValue(saved());
+        fetchMock.mockImplementation(async (_url, init) =>
+          json(
+            {
+              detail: "invalid request",
+              echoed: JSON.parse(String(init.body)),
+              raw: String(init.body),
+            },
+            status,
+          ),
+        );
+
+        const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+        const said = console_.said();
+        console_.restore();
+        expect(result.kind).toBe("error");
+        // The request did carry them: this is the case the redaction is for.
+        expect(String(runCalls()[0][1].body)).toContain(PASSWORD);
+        expectNoSecretIn(result);
+        expectNoSecretIn((result as { message: string }).message);
+        expectNoSecretIn(said);
+        expect(recordBrowserTask).not.toHaveBeenCalled();
+      },
+    );
+
+    it("carries neither half of the login into the tool result, the task row or a log line", async () => {
+      const console_ = spyConsole();
+      credentialsFor.mockResolvedValue(saved());
+
+      const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx());
+
+      const said = console_.said();
+      console_.restore();
+      expect(result.kind).toBe("ok");
+      expectNoSecretIn(result);
+      expectNoSecretIn(recordBrowserTask.mock.calls);
+      expectNoSecretIn(recordRunStart.mock.calls);
+      expectNoSecretIn(said);
+    });
+  });
+
+  describe("an invalid site", () => {
+    it.each([
+      ["not a host", "not a host"],
+      ["a dotless name", "localhost"],
+      ["an address with a user in it", "ada@linkedin.com"],
+      ["a number", 42],
+    ])("is refused, before the card and before anything is spent: %s", async (_label, site) => {
+      for (const confirmed of [false, true]) {
+        const result = await browseTool.run({ task: TASK, site }, ctxWith({ confirmed }));
+        expect(result.kind).toBe("error");
+        expect((result as { message: string }).message).toMatch(/site/i);
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(affordable).not.toHaveBeenCalled();
+      expect(ensureBrowserSession).not.toHaveBeenCalled();
+      expect(spend).not.toHaveBeenCalled();
+      expect(credentialsFor).not.toHaveBeenCalled();
+      expect(savedLogin).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("on the approval card", () => {
+    it("says which saved login the browser signs in with — by its label, never its username", async () => {
+      savedLogin.mockResolvedValue({
+        id: "cred-1",
+        label: LABEL,
+        scope: "owner",
+        siteHost: "linkedin.com",
+      });
+
+      const result = await browseTool.run(
+        { task: TASK, site: "https://www.linkedin.com/feed" },
+        ctxWith(),
+      );
+
+      expect(result.kind).toBe("needs_confirmation");
+      const proposal = (result as { proposal: Record<string, unknown> }).proposal;
+      expect(proposal.signsInAs).toBe(`linkedin.com (saved login: ${LABEL})`);
+      expect(savedLogin.mock.calls[0][1]).toEqual({
+        agentId: "agent-1",
+        userId: "user-1",
+        host: "linkedin.com",
+      });
+      // A card somebody may decline decrypts nothing.
+      expect(credentialsFor).not.toHaveBeenCalled();
+      expectNoSecretIn(result);
+    });
+
+    it("adds signsInAs to the card's rows and nothing else", async () => {
+      profileFor.mockResolvedValue({
+        id: "prof-1",
+        providerProfileId: "prov-1",
+        proxyCountryCode: null,
+      });
+      savedLogin.mockResolvedValue({
+        id: "cred-1",
+        label: LABEL,
+        scope: "agent",
+        siteHost: "linkedin.com",
+      });
+
+      const result = await browseTool.run(
+        { task: TASK, site: "linkedin.com" },
+        ctxWith({ db: refusingDb(["portal.example.com"]) }),
+      );
+
+      const proposal = (result as { proposal: Record<string, unknown> }).proposal;
+      expect(Object.keys(proposal).sort()).toEqual([
+        "cookies",
+        "cost",
+        "kind",
+        "signsInAs",
+        "task",
+      ]);
+    });
+
+    it("says nothing about a saved login when there is none for the site", async () => {
+      const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctxWith());
+      const proposal = (result as { proposal: Record<string, unknown> }).proposal;
+      expect(proposal.signsInAs).toBeUndefined();
+    });
+
+    it("still asks the question when the saved logins cannot be read", async () => {
+      const console_ = spyConsole();
+      savedLogin.mockRejectedValue(new Error("browser_credentials: read failed (57014)"));
+      const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctxWith());
+      console_.restore();
+      expect(result.kind).toBe("needs_confirmation");
+      expect((result as { proposal: Record<string, unknown> }).proposal.signsInAs).toBeUndefined();
+    });
   });
 });

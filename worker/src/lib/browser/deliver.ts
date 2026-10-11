@@ -3,6 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { complete, type CompletionMessage, type CompletionUsage } from "../completion";
 import { resolveModel } from "../models";
 import { deliver, deliveryDepsFrom, type DeliveryChannel } from "../routines/delivery";
+import { credentialCoversHost, hasSavedCredential } from "./credentials";
 import { bareHost } from "./outcome";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 
@@ -74,12 +75,14 @@ export async function deliverBrowserTask(
       .maybeSingle();
 
     const model = resolveModel((agent?.model as string | null) ?? null, env);
+    const saved = await savedLoginState(row, outcome, env, db);
     const { content, usage } = await phrase(
       row,
       outcome,
       env,
       model,
       agent?.temperature as number | null,
+      saved,
     );
 
     const { data: message, error } = await db
@@ -137,18 +140,93 @@ function siteOf(outcome: FinishedTask): string {
 }
 
 /**
+ * What a login wall has to do with a saved login (Task 2.3, ruling R32):
+ *
+ * - `failed`: the run CARRIED a saved login (`browser_tasks.credential_id`)
+ *   and it was for the site that walled it. That login is what did not work —
+ *   a changed password, usually — and "sign in" is the wrong thing to ask of
+ *   somebody who already gave it. The offer is to update it.
+ * - `unused`: the run carried none for this site, but a login is saved for it
+ *   (`hasSavedCredential`, R27). It was never tried — the model named no
+ *   `site`, a hand-back ran without it, `site` named another host — so it has
+ *   not failed, and asking again is what would use it. Today's sign-in wording,
+ *   plus that.
+ * - null: anything else, including every ending that is not a login wall and a
+ *   wall with no usable host.
+ *
+ * Only `credential_id` can say `failed`. A login that is merely saved and
+ * blamed anyway sends the person to re-type a correct password and round the
+ * same wall again; that was the reason the run now writes down what it carried.
+ *
+ * **A failed read is today's wording.** Both lookups throw on a read error,
+ * and this file does not throw; the cost of not knowing is the plainer
+ * sentence, not a lost delivery. Logged as a fixed sentence and the row id.
+ * Up to four reads, all only on a login wall, through the service-role client
+ * this delivery already holds.
+ */
+type SavedLoginState = "failed" | "unused" | null;
+
+async function savedLoginState(
+  row: BrowserTaskRow,
+  outcome: FinishedTask,
+  env: RoutineEnv,
+  db: SupabaseClient,
+): Promise<SavedLoginState> {
+  if (outcome.reported?.status !== "login_required") return null;
+  const host = bareHost(outcome.reported.host ?? null);
+  if (!host) return null;
+  try {
+    if (
+      row.credential_id &&
+      (await credentialCoversHost(env, { credentialId: row.credential_id, host }, { db }))
+    ) {
+      return "failed";
+    }
+    const saved = await hasSavedCredential(
+      env,
+      { agentId: row.agent_id, userId: row.user_id, host },
+      { db },
+    );
+    return saved ? "unused" : null;
+  } catch {
+    console.warn("could not ask whether a login was saved for a browser task's site", row.id);
+    return null;
+  }
+}
+
+/**
  * What the model is shown, by how the run ended.
  *
  * A login wall is the one ending a person can fix with their own hands while
  * the browser is still there (Task 1.5's take-over), so that message has one
  * job: name the site and say the panel beside the conversation is waiting. One
  * sentence, through the same model call as every other answer — which is what
- * puts it in the language the person asked in. A block says what stopped it.
- * Everything else, including every v2 task, is answered as before.
+ * puts it in the language the person asked in. A wall the run's own saved
+ * login could not get past (`saved === "failed"`, Task 2.3) is the same one
+ * sentence about a different repair: the saved login didn't get past the sign-in
+ * (it may be a code, an SMS or a passkey step), and the offer is to update it. A wall on a site whose saved login the run never
+ * carried (`"unused"`) is today's sentence and one true clause more: asking
+ * again would use it. A block says what stopped it. Everything else,
+ * including every v2 task, is answered as before.
  */
-function brief(row: BrowserTaskRow, outcome: FinishedTask): string {
+function brief(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginState): string {
   const asked = [`What was asked: ${row.task}`, ""];
   const reported = outcome.output ? ["What the browser reported:", outcome.output, ""] : [];
+
+  // Task 2.3, R32: the run carried a saved login for this site and the wall
+  // stood anyway, so the saved login is what to fix — a changed password,
+  // usually.
+  if (outcome.reported?.status === "login_required" && saved === "failed") {
+    return [
+      ...asked,
+      `The browser stopped because ${siteOf(outcome)} requires signing in, and the saved login for it didn't get past the sign-in.`,
+      "It is still open in the browser panel beside this conversation.",
+      "",
+      ...reported,
+      "Tell them in one sentence, in the language they asked in, that the saved login for",
+      `${siteOf(outcome)} didn't get past the sign-in, and offer to update it.`,
+    ].join("\n");
+  }
 
   if (outcome.reported?.status === "login_required") {
     return [
@@ -159,6 +237,12 @@ function brief(row: BrowserTaskRow, outcome: FinishedTask): string {
       ...reported,
       "Tell them in one sentence, in the language they asked in, which site wants them to sign in",
       "and that the browser panel is waiting for them.",
+      ...(saved === "unused"
+        ? [
+            `A login is saved for ${siteOf(outcome)}, but this run was not given it: add, in the same`,
+            "sentence, that if they ask again the saved login will be used.",
+          ]
+        : []),
     ].join("\n");
   }
 
@@ -185,12 +269,16 @@ function brief(row: BrowserTaskRow, outcome: FinishedTask): string {
  * that ending has no output to fall back on and is the one the person can act
  * on.
  */
-function fallback(row: BrowserTaskRow, outcome: FinishedTask): string {
+function fallback(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginState): string {
+  if (outcome.reported?.status === "login_required" && saved === "failed") {
+    return `The saved login for ${siteOf(outcome)} didn't get past the sign-in — would you like to update it?`;
+  }
   if (outcome.reported?.status === "login_required") {
-    return (
-      `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
-      "waiting for you to do it there."
-    );
+    return saved === "unused"
+      ? `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
+          "waiting for you to do it there, or ask again and your saved login will be used."
+      : `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
+          "waiting for you to do it there.";
   }
   return (
     outcome.output ??
@@ -214,14 +302,15 @@ async function phrase(
   env: RoutineEnv,
   model: string,
   temperature: number | null | undefined,
+  saved: SavedLoginState,
 ): Promise<{ content: string; usage: CompletionUsage | null }> {
   if (!outcome.output && outcome.reported?.status !== "login_required") {
-    return { content: fallback(row, outcome), usage: null };
+    return { content: fallback(row, outcome, saved), usage: null };
   }
 
   const messages: CompletionMessage[] = [
     { role: "system", content: SYSTEM },
-    { role: "user", content: brief(row, outcome) },
+    { role: "user", content: brief(row, outcome, saved) },
   ];
 
   try {
@@ -230,10 +319,10 @@ async function phrase(
       messages,
       ...(typeof temperature === "number" ? { temperature } : {}),
     });
-    return { content: text.trim() || fallback(row, outcome), usage };
+    return { content: text.trim() || fallback(row, outcome, saved), usage };
   } catch (err) {
     console.error("could not phrase a browser task's answer; delivering it raw", row.id, err);
-    return { content: fallback(row, outcome), usage: null };
+    return { content: fallback(row, outcome, saved), usage: null };
   }
 }
 

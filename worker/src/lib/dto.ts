@@ -1113,6 +1113,15 @@ export type BrowserTaskDTO = {
    * checks its shape, so it is safe to render as a hostname.
    */
   signInHost: string | null;
+  /**
+   * Whether this run carried a saved login (R32) — `credential_id is not
+   * null`, answered by the worker, because the column itself is granted to no
+   * client role and a screen has no use for which login it was. The sign-in
+   * card reads it: a wall after a saved login is "the saved login didn't
+   * work", not "save one". Computed only for tasks at a login wall; false
+   * otherwise.
+   */
+  carriedSavedLogin: boolean;
 };
 
 /**
@@ -1124,7 +1133,10 @@ export type BrowserTaskDTO = {
 export const BROWSER_TASK_COLUMNS =
   "id, task, status, output, error, retry_of, created_at, finished_at, api_version, stop_reason, browser_session_id, signin_host";
 
-export function mapBrowserTask(row: Record<string, unknown>): BrowserTaskDTO {
+export function mapBrowserTask(
+  row: Record<string, unknown>,
+  carriedSavedLogin = false,
+): BrowserTaskDTO {
   return {
     id: String(row.id),
     task: String(row.task ?? ""),
@@ -1138,5 +1150,6 @@ export function mapBrowserTask(row: Record<string, unknown>): BrowserTaskDTO {
     stopReason: typeof row.stop_reason === "string" && row.stop_reason ? row.stop_reason : null,
     browserSessionId: row.browser_session_id ? String(row.browser_session_id) : null,
     signInHost: typeof row.signin_host === "string" && row.signin_host ? row.signin_host : null,
+    carriedSavedLogin,
   };
 }

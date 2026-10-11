@@ -6,81 +6,6 @@ import { Button } from "@/components/ui/button";
 import { useConversationBrowser } from "./use-conversation-browser";
 
 /**
- * The sign-in prompt inside the browser panel, for a run that stopped at a
- * login wall.
- *
- * This used to be a card in the conversation that rented a separate browser
- * and sent the person to it in a new tab — because there was no browser on
- * screen to sign in to. Now there is: the run's own browser is beside the
- * conversation, so the prompt lives in the panel, and the sign-in happens in
- * the frame after "Take over" (the panel's pill, the primary action while this
- * is showing). Covan never sees the password, never stores one, and is never
- * sent one — the person types it at the site, in a browser Covan does not
- * read. No credentials UI here; that is Phase 2.
- *
- * **The new tab survives as the fallback, and for the reasons it was once the
- * only path.** A passkey cannot work in an iframe: WebAuthn is origin-bound,
- * so a platform passkey or a security key is unreachable from an embedded
- * view. A password manager correctly refuses to fill one, because the origin
- * it can see is the provider's rather than the site's. So "Open in a new
- * window" puts the same browser in a tab of its own, where it behaves like a
- * browser. The tab itself — reserved inside the click, navigated when the
- * address arrives — is `openInNewWindow` in `use-conversation-browser.ts`.
- */
-
-/** The prompt's one sentence, with the site named when the run named one. */
-function signInSentence(host: string | null): string {
-  /**
-   * The host is the run's `signin_host`, which 0078 stores only when it is
-   * already a bare lowercase host — so it is safe to render as one, and a run
-   * that said "LinkedIn.com" or a URL arrives here as null. The sentence still
-   * says sign in; it just cannot say where. A wrong host would send somebody
-   * to the wrong site, which is worse than naming none.
-   */
-  return `${host ?? "This site"} needs you to sign in. Take over, sign in in the browser, then press Done.`;
-}
-
-export function SignInPrompt({
-  host,
-  onOpenWindow,
-  opening = false,
-}: {
-  host: string | null;
-  /** The new-tab fallback. Called from the click, because the tab is reserved inside it. */
-  onOpenWindow: () => void;
-  opening?: boolean;
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-3">
-      <p className="text-sm font-medium">{signInSentence(host)}</p>
-      {/* The last two sentences were added after the first real run, and they
-          are there because the alternative is wasting somebody's time. A
-          hand-performed LinkedIn sign-in saved correctly, attached correctly,
-          and ran again from a different address in the same country — and
-          LinkedIn asked for the password again. Sites that bind a session to
-          one IP defeat this, and the person deciding whether to sign in is the
-          one who should know that before they do it rather than after. */}
-      <p className="mt-1 text-meta text-muted-foreground">
-        You type your password at the site; Covan never receives it. The agent then carries on — no
-        charge for the second attempt. Some sites tie a sign-in to one network address and will ask
-        again anyway; LinkedIn is one of them.
-      </p>
-      {/* A link-weight control rather than a button-shaped one: the pill's
-          Take over is this prompt's one primary action, and this is the way
-          round it when the frame is not enough. */}
-      <button
-        type="button"
-        className="mt-2 text-meta text-foreground underline underline-offset-4 hover:text-muted-foreground disabled:opacity-50"
-        disabled={opening}
-        onClick={onOpenWindow}
-      >
-        Open in a new window
-      </button>
-    </div>
-  );
-}
-
-/**
  * The v2 takeover card — the legacy path, kept in the transcript (ruling R18).
  *
  * Before the browser panel, a browser task that stopped at a login wall was
@@ -91,7 +16,7 @@ export function SignInPrompt({
  * ships. So the card stays, for v2 tasks only.
  *
  * **There is deliberately no iframe here**, for the reasons the new-window
- * fallback above gives: passkeys and password managers do not work in one,
+ * fallback in `sign-in-card.tsx` gives: passkeys and password managers do not work in one,
  * and the frame is not a security boundary anyway — *"View-only embeds are a
  * UI restriction, not a server-enforced permission."*
  */

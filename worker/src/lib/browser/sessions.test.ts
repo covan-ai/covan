@@ -129,7 +129,14 @@ function sessionRow(over: Row = {}): Row {
 
 /** A row nobody is driving and no run is using: the ordinary answer. */
 function ref(id: string, providerSessionId: string | null, profileId: string | null = null) {
-  return { id, providerSessionId, liveState: "none", runInFlight: false, profileId };
+  return {
+    id,
+    providerSessionId,
+    liveState: "none",
+    runInFlight: false,
+    profileId,
+    providerBrowserId: null,
+  };
 }
 
 const WHO = {
@@ -452,6 +459,58 @@ describe("recordRunStart", () => {
 
     await recordRunStart(ENV, { browserSessionId: "bs-1" }, s.deps);
     expect(s.rows[0].profile_id).toBe("bp-1");
+  });
+
+  /**
+   * Ruling R38: a run carrying a shared login runs in a browser without the
+   * person's profile — the opening run names none, a follow-up asks the
+   * provider for a fresh profile-less browser — so the row stops claiming the
+   * jar, and later follow-ups (R23) do not send it into that browser.
+   */
+  it("forgets the jar when the run carries none on purpose (null), in the same write", async () => {
+    const opening = store([
+      sessionRow({ provider_session_id: null, last_run_at: null, profile_id: "bp-1" }),
+    ]);
+    await recordRunStart(
+      ENV,
+      { browserSessionId: "bs-1", providerSessionId: "bu-session-new", profileId: null },
+      opening.deps,
+    );
+    expect(opening.rows[0]).toMatchObject({
+      provider_session_id: "bu-session-new",
+      profile_id: null,
+    });
+    expect(opening.calls.filter((c) => c.op === "update")).toHaveLength(1);
+
+    const followUp = store([sessionRow({ profile_id: "bp-1" })]);
+    await recordRunStart(ENV, { browserSessionId: "bs-1", profileId: null }, followUp.deps);
+    expect(followUp.rows[0]).toMatchObject({ live_state: "agent", profile_id: null });
+  });
+
+  /**
+   * Ruling R41: a run that declined a profiled browser forgets the browser
+   * the row names in the same write that takes the jar off it, and a run that
+   * did not leaves the id alone.
+   */
+  it("forgets the browser the row names (null) in the same write that takes the jar off", async () => {
+    const s = store([sessionRow({ profile_id: "bp-1", provider_browser_id: "br-old" })]);
+
+    await recordRunStart(
+      ENV,
+      { browserSessionId: "bs-1", profileId: null, providerBrowserId: null },
+      s.deps,
+    );
+
+    expect(s.rows[0]).toMatchObject({ profile_id: null, provider_browser_id: null });
+    expect(s.calls.filter((c) => c.op === "update")).toHaveLength(1);
+  });
+
+  it("leaves the browser the row names alone when the run did not decline one", async () => {
+    const s = store([sessionRow({ profile_id: "bp-1", provider_browser_id: "br-old" })]);
+
+    await recordRunStart(ENV, { browserSessionId: "bs-1", profileId: null }, s.deps);
+
+    expect(s.rows[0]).toMatchObject({ profile_id: null, provider_browser_id: "br-old" });
   });
 
   /**

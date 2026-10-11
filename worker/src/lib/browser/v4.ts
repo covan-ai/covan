@@ -97,7 +97,13 @@ export type CreateRunInput = {
   task: string;
   /** The provider's session id from an earlier run: a follow-up in the same browser. Omit for a first run. */
   sessionId?: string;
-  profileId?: string;
+  /**
+   * `null` is sent as `null` (ruling R38): on a follow-up it is the provider's
+   * "not this profiled browser" — *"an explicit value mismatching the live
+   * browser's profile (incl. null vs a profiled browser) declines reuse and
+   * provisions fresh"*. `undefined` names none and the live browser is reused.
+   */
+  profileId?: string | null;
   /** `null` is the provider's "no proxy"; `undefined` leaves its default (US). */
   proxyCountryCode?: string | null;
   customProxy?: CustomProxy;
@@ -176,9 +182,10 @@ function text(raw: unknown): string | null {
  *
  * The provider rejects unknown keys on the body and on `browserSettings`
  * (`additionalProperties: false`), so this sends exactly the fields its schema
- * names and **omits an absent optional rather than sending `null`**. The one
- * `null` that goes out is `proxyCountryCode: null`, because there it means
- * something: run without a proxy.
+ * names and **omits an absent optional rather than sending `null`**. The two
+ * `null`s that go out are the two that mean something: `proxyCountryCode:
+ * null`, run without a proxy, and `profileId: null`, a browser without the
+ * person's profile (ruling R38).
  */
 export function createRun(
   env: BrowserEnv,
@@ -187,7 +194,11 @@ export function createRun(
 ): Promise<BrowserResult<CreatedRun>> {
   const proxy = input.customProxy;
   const browserSettings = {
-    ...(input.profileId ? { profileId: input.profileId } : {}),
+    ...(input.profileId === null
+      ? { profileId: null }
+      : input.profileId
+        ? { profileId: input.profileId }
+        : {}),
     ...(input.proxyCountryCode === undefined ? {} : { proxyCountryCode: input.proxyCountryCode }),
     ...(proxy
       ? {

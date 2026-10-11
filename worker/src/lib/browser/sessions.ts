@@ -74,6 +74,11 @@ export type BrowserSessionRef = {
   liveState: LiveState;
   runInFlight: boolean;
   profileId: string | null;
+  /**
+   * The provider's id of the browser the row names, which a shared-login run
+   * that declines a profiled browser stops (R41). Null before one is known.
+   */
+  providerBrowserId?: string | null;
 };
 
 /**
@@ -98,6 +103,7 @@ type SessionRow = {
   id: string;
   profileId: string | null;
   providerSessionId: string | null;
+  providerBrowserId: string | null;
   liveState: LiveState;
   createdAt: string | null;
 };
@@ -112,7 +118,7 @@ async function readSessionRow(
 ): Promise<{ row: SessionRow | null; failed: boolean }> {
   const { data, error } = await db
     .from("browser_sessions")
-    .select("id, profile_id, provider_session_id, live_state, created_at")
+    .select("id, profile_id, provider_session_id, provider_browser_id, live_state, created_at")
     .eq("chat_session_id", input.chatSessionId)
     .eq("user_id", input.userId)
     .maybeSingle();
@@ -126,6 +132,7 @@ async function readSessionRow(
       id: String(data.id),
       profileId: text(data.profile_id),
       providerSessionId: text(data.provider_session_id),
+      providerBrowserId: text(data.provider_browser_id),
       liveState: toLiveState(data.live_state),
       createdAt: text(data.created_at),
     },
@@ -176,6 +183,7 @@ async function existing(
       liveState: row.liveState,
       runInFlight: running,
       profileId: row.profileId,
+      providerBrowserId: row.providerBrowserId,
     },
   };
 }
@@ -269,6 +277,7 @@ export async function ensureBrowserSession(
         liveState: "none",
         runInFlight: false,
         profileId: input.profileId,
+        providerBrowserId: null,
       },
     };
   }
@@ -315,8 +324,23 @@ export async function recordRunStart(
      * claim named none, and the sweep reads `profile_id` to refresh the jar
      * after it stops the browser. Written in the same update, so it costs
      * nothing; absent, the column is left as it is.
+     *
+     * `null` takes the jar off the row (ruling R38): the run carries a shared
+     * login and so runs in a browser with no profile — opened without one, or
+     * a fresh one the follow-up asked the provider for. The row stops claiming
+     * the jar, so a later follow-up does not send it into that browser (R23)
+     * and no sweep reads a jar back on its account.
      */
-    profileId?: string;
+    profileId?: string | null;
+    /**
+     * `null` forgets the browser the row names (ruling R41), in the same write
+     * that takes the jar off it: the run was accepted in a fresh browser and
+     * the profiled one it declined has been stopped, so the live view,
+     * take-over and the settle must converge on the new one, which the open
+     * tab (`browser.ready`) or the next poll names. The cursor goes back to
+     * the start in this write too, so that event is read again.
+     */
+    providerBrowserId?: null;
   },
   overrides: Partial<SessionDeps> = {},
 ): Promise<void> {
@@ -333,7 +357,8 @@ export async function recordRunStart(
     live_state: "agent",
     last_run_at: now().toISOString(),
     events_cursor: 0,
-    ...(input.profileId ? { profile_id: input.profileId } : {}),
+    ...(input.profileId === undefined ? {} : { profile_id: input.profileId }),
+    ...(input.providerBrowserId === null ? { provider_browser_id: null } : {}),
   };
 
   if (input.providerSessionId) {

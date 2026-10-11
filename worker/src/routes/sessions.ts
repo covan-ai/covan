@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
+import { tasksThatCarriedALogin } from "../lib/browser/credentials";
 import { pollConversationBrowser } from "../lib/browser/live";
 import { deferred } from "../lib/defer";
 import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
@@ -335,8 +336,30 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
     return c.json({ error: "failed to load browser tasks" }, 500);
   }
 
+  /**
+   * Which walled tasks carried a saved login (R32), for the sign-in card's
+   * "the saved login didn't work". `credential_id` is granted to no client
+   * role, so the caller's read above cannot name it; `credentials.ts` answers
+   * with the service role, scoped to this caller, and only a yes per task id
+   * comes back. Asked only when a task is at a login wall, so the ordinary
+   * three-second poll costs nothing more; and a failure is "no", because a
+   * card that offers to save a login is a smaller wrong than a poll that fails.
+   */
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const walled = rows
+    .filter((row) => row.stop_reason === "login_required")
+    .map((row) => String(row.id));
+  let carried = new Set<string>();
+  if (walled.length > 0) {
+    try {
+      carried = await tasksThatCarriedALogin(c.env, { userId: c.get("user").id, taskIds: walled });
+    } catch (err) {
+      console.error("could not tell whether a walled task carried a saved login", String(err));
+    }
+  }
+
   return c.json({
-    tasks: (data ?? []).map((row) => mapBrowserTask(row as Record<string, unknown>)),
+    tasks: rows.map((row) => mapBrowserTask(row, carried.has(String(row.id)))),
     session: live.session,
     events: live.events,
     delivered: live.delivered,

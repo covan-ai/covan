@@ -6,6 +6,7 @@ import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake
 import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
 import { MAX_STEPS, MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
+import { NOT_RUN_FOR_A_QUESTION } from "../lib/harness/loop";
 import type { AgentTool } from "../lib/harness/registry";
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter } from "../lib/subrequests";
@@ -1937,6 +1938,78 @@ describe("POST /chat/confirm/:id", () => {
     expect(stepsWritten.mock.calls[0][0]).toEqual([
       expect.objectContaining({ step_index: 0, tool: "schedule_job", status: "refused" }),
     ]);
+  });
+
+  /**
+   * 2026-10-11: three `browse` calls parked on the first, and the resume sent
+   * the other two with no result. A 400, and the turn ended cut short.
+   */
+  describe("a batch that parked on one of several calls", () => {
+    const BATCH = [
+      { id: "call_1", name: "schedule_job", arguments: "{}" },
+      { id: "call_2", name: "schedule_job", arguments: '{"cron":"0 9 * * 1"}' },
+      { id: "call_3", name: "schedule_job", arguments: '{"cron":"0 9 * * 2"}' },
+    ];
+
+    it("answers the calls a turn parked before this fix left unanswered", async () => {
+      parked = {
+        ...PARKED,
+        messages: [
+          { role: "user", content: "every monday" },
+          { role: "assistant", content: "", toolCalls: BATCH },
+        ],
+      };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, false)).text();
+
+      const sent = completionCreate.mock.calls.find((c) => c[0].stream)?.[0].messages;
+      const answered = sent
+        .filter((m: { role: string }) => m.role === "tool")
+        .map((m: { tool_call_id: string; content: string }) => [m.tool_call_id, m.content]);
+      expect(answered.map(([id]: string[]) => id).sort()).toEqual(["call_1", "call_2", "call_3"]);
+      expect(answered.filter(([id]: string[]) => id !== "call_1")).toEqual([
+        ["call_2", NOT_RUN_FOR_A_QUESTION],
+        ["call_3", NOT_RUN_FOR_A_QUESTION],
+      ]);
+    });
+
+    it("resolves the pending step when the batch's later calls were recorded after it", async () => {
+      parked = {
+        ...PARKED,
+        messages: [
+          { role: "user", content: "every monday" },
+          { role: "assistant", content: "", toolCalls: BATCH },
+          { role: "tool", toolCallId: "call_2", content: NOT_RUN_FOR_A_QUESTION },
+          { role: "tool", toolCallId: "call_3", content: NOT_RUN_FOR_A_QUESTION },
+        ],
+        steps: [
+          PARKED.steps[0],
+          { ...PARKED.steps[0], index: 1, status: "refused", resultExcerpt: "refused" },
+          { ...PARKED.steps[0], index: 2, status: "refused", resultExcerpt: "refused" },
+        ],
+      };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, false)).text();
+
+      const sent = completionCreate.mock.calls.find((c) => c[0].stream)?.[0].messages;
+      // Each call answered once: nothing added on top of what the loop wrote.
+      expect(sent.filter((m: { role: string }) => m.role === "tool")).toHaveLength(3);
+      expect(
+        stepsWritten.mock.calls[0][0].map((s: { step_index: number; status: string }) => [
+          s.step_index,
+          s.status,
+        ]),
+      ).toEqual([
+        [0, "refused"],
+        [1, "refused"],
+        [2, "refused"],
+      ]);
+      expect(stepsWritten.mock.calls[0][0][0].result_excerpt).not.toBe("Create a routine?");
+    });
   });
 
   /**

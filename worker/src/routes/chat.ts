@@ -13,6 +13,7 @@ import {
   type PassUsage,
 } from "../lib/harness/loop";
 import { capabilitiesFor } from "../lib/harness/available";
+import { browserTaskNote } from "../lib/browser/task-note";
 import { toolByName } from "../lib/harness/registry";
 import { cap, MAX_TOOL_OUTPUT_CHARS, TOOL_TIMEOUT_MS } from "../lib/harness/budget";
 import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
@@ -297,10 +298,21 @@ chat.post("/chat/stream", async (c) => {
   // `prompt-cache.static.test.ts` watches every site that builds one.
   const priorTurns = history.slice(0, -1);
   const latestTurn = history[history.length - 1];
+  // Where this conversation's browser tasks stand, read fresh — the history is
+  // text and cannot say (see `lib/browser/task-note.ts`). Only where the agent
+  // can browse, and not on a continuation, which finishes an answer rather
+  // than starting one. `system` because it is Covan speaking, not anything the
+  // person or a document wrote; `volatile` because it changes between turns
+  // and must stay behind the cached prefix.
+  const taskNote =
+    !continuing && tools.some((t) => t.name === "browse")
+      ? await browserTaskNote(db, sessionId)
+      : null;
   const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
     ...(ragBlock ? [{ role: "user" as const, content: ragBlock, volatile: true as const }] : []),
+    ...(taskNote ? [{ role: "system" as const, content: taskNote, volatile: true as const }] : []),
     ...(latestTurn ? [latestTurn] : []),
     // On a continuation `latestTurn` is the cut-off answer, and this is the
     // turn that asks for the rest of it. See `CONTINUE_INSTRUCTION` for why it

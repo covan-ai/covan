@@ -361,6 +361,8 @@ function appWith(spec: {
   connections?: Array<Record<string, unknown>>;
   /** Rows standing in for this person's `delivery_channels`. */
   channels?: Array<Record<string, unknown>>;
+  /** This conversation's `browser_tasks`, newest first, as the note reads them. */
+  browserTasks?: Array<Record<string, unknown>>;
 }) {
   const documents = spec.documents ?? [];
   const rows = [
@@ -431,6 +433,7 @@ function appWith(spec: {
       // naming them, which is what keeps these assertions about retrieval.
       tool_connections: { select: () => ({ data: spec.connections ?? [], error: null }) },
       delivery_channels: { select: () => ({ data: spec.channels ?? [], error: null }) },
+      browser_tasks: { select: () => ({ data: spec.browserTasks ?? [], error: null }) },
     },
     rpc: {
       match_chunks: (args: Record<string, unknown>) => {
@@ -1208,6 +1211,77 @@ function asksFor(tool: string, said = "") {
     };
   };
 }
+
+/**
+ * 2026-10-11: with a text-only history the agent said three browser tasks
+ * were running when one was. It is now told, each turn, where they stand.
+ */
+describe("the browser tasks the agent is told about", () => {
+  const BROWSE: AgentTool = {
+    name: "browse",
+    description: "Browses.",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    destructive: false,
+    isConfigured: () => true,
+    run: async () => ({ kind: "ok", content: "started" }),
+  };
+  const sentMessages = () =>
+    completionCreate.mock.calls.find((c) => c[0].stream)?.[0].messages as Array<{
+      role: string;
+      content: string;
+    }>;
+
+  it("lists them just before the question, as Covan's word rather than the person's", async () => {
+    extraTool = BROWSE;
+    const { app, calls } = appWith({
+      question: "is the browser done?",
+      browserTasks: [
+        { task: "Review tasklet.ai", status: "running" },
+        { task: "Review covan.app", status: "finished" },
+      ],
+    });
+    answersWith(streamOf("Not yet."));
+
+    await ask(app);
+
+    const read = calls.find((q) => q.table === "browser_tasks");
+    expect(read?.filters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ column: "session_id", value: SESSION.id }),
+      ]),
+    );
+    const sent = sentMessages();
+    const note = sent.at(-2);
+    expect(note?.role).toBe("system");
+    expect(note?.content).toContain('1. "Review covan.app" — finished');
+    expect(note?.content).toContain('2. "Review tasklet.ai" — running now');
+    expect(sent.at(-1)).toMatchObject({ role: "user", content: "is the browser done?" });
+  });
+
+  it("says nothing when the conversation has no task", async () => {
+    extraTool = BROWSE;
+    const { app } = appWith({ question: "hello" });
+    answersWith(streamOf("Hi."));
+
+    await ask(app);
+
+    expect(
+      sentMessages().some((m) => m.content.includes("Browser tasks in this conversation")),
+    ).toBe(false);
+  });
+
+  it("does not read them for an agent that cannot browse", async () => {
+    const { app, calls } = appWith({
+      question: "hello",
+      browserTasks: [{ task: "x", status: "running" }],
+    });
+    answersWith(streamOf("Hi."));
+
+    await ask(app);
+
+    expect(calls.some((q) => q.table === "browser_tasks")).toBe(false);
+  });
+});
 
 describe("a turn that stops to ask", () => {
   it("parks what the turn spent when it asked before saying anything", async () => {

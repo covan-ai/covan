@@ -103,9 +103,19 @@ export const httpRequestTool: AgentTool = {
         description: "Query string parameters, as a flat object of strings.",
         additionalProperties: { type: "string" },
       },
+      /**
+       * An object as well as a string. A JSON body written as a string is JSON
+       * inside JSON: every quote and newline of a long document is escaped,
+       * which is more output tokens for the same content — and output is what
+       * ran out on 2026-10-11, six times, writing one qrucial page. Not an
+       * array: OpenAI refuses an array schema with no `items`, and a body that
+       * is a bare array can still go as a string.
+       */
       body: {
-        type: "string",
-        description: "Request body, already serialised. Ignored for GET and HEAD.",
+        anyOf: [{ type: "object" }, { type: "string" }],
+        description:
+          "Request body. For a JSON object, give the object itself — it is sent as JSON, with " +
+          "no need to put it in a string. A string is sent as it is. Ignored for GET and HEAD.",
       },
     },
     required: ["connectionId", "method", "path"],
@@ -197,8 +207,15 @@ export const httpRequestTool: AgentTool = {
       "User-Agent": "covan-agent/1.0",
       ...(await authHeaders(ctx.env, connection)),
     };
-    const sendsBody = method !== "GET" && method !== "HEAD" && typeof input.body === "string";
-    if (sendsBody) headers["Content-Type"] = "application/json";
+    const body =
+      method === "GET" || method === "HEAD"
+        ? null
+        : typeof input.body === "string"
+          ? input.body
+          : input.body !== null && typeof input.body === "object"
+            ? JSON.stringify(input.body)
+            : null;
+    if (body !== null) headers["Content-Type"] = "application/json";
 
     // Counted like every other outbound call a turn makes — this one reaches a
     // third party the model chose, so it is exactly the kind that runs a turn
@@ -207,7 +224,7 @@ export const httpRequestTool: AgentTool = {
     const res = await send(target.toString(), {
       method,
       headers,
-      ...(sendsBody ? { body: input.body as string } : {}),
+      ...(body !== null ? { body } : {}),
       // Every 3xx is an error, for `lib/routines/delivery.ts`'s reason: a
       // redirect is either a request to repeat a credentialed request at a
       // host the connection does not name, or a request to drop the body.

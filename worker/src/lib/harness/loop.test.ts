@@ -5,11 +5,13 @@ import {
   runAgentTurn,
   parseArguments,
   answerUnanswered,
+  CUT_OFF_ARGUMENTS,
   NO_TOOLS_NOTICE,
   NOT_RUN_FOR_A_QUESTION,
+  TOKEN_WARNING,
   type PassUsage,
 } from "./loop";
-import { cap, MAX_STEP_EXCERPT_CHARS } from "./budget";
+import { cap, MAX_STEP_EXCERPT_CHARS, TOKEN_WARNING_SHARE } from "./budget";
 
 /**
  * The loop, driven by a scripted model.
@@ -35,8 +37,9 @@ function pass(
   text: string,
   calls: Array<{ id: string; name: string; arguments: string }> = [],
   // What the pass reports having cost. Trimming now depends on it — a leg
-  // boundary is not on its own a reason to rewrite the transcript.
-  usage: { promptTokens?: number } = {},
+  // boundary is not on its own a reason to rewrite the transcript. And how it
+  // ended, when that is the point: `"length"` is a pass cut off at the limit.
+  usage: { promptTokens?: number; finishReason?: string } = {},
 ): CompletionEvent[] {
   const events: CompletionEvent[] = [];
   if (text) events.push({ type: "delta", text });
@@ -51,7 +54,7 @@ function pass(
       reasoningTokens: 4,
       webSearches: null,
     },
-    finishReason: calls.length > 0 ? "tool_calls" : "stop",
+    finishReason: usage.finishReason ?? (calls.length > 0 ? "tool_calls" : "stop"),
   });
   return events;
 }
@@ -297,6 +300,52 @@ describe("when a tool goes wrong", () => {
     expect(run).not.toHaveBeenCalled();
     const second = streamCompletion.mock.calls[1][1].messages as CompletionMessage[];
     expect(second[2].content).toContain("not valid JSON");
+  });
+
+  /**
+   * 2026-10-11: a long `http_request` body cut at 4,096 output tokens six
+   * passes running, each answered "not valid JSON — send them again".
+   */
+  it("says the arguments were cut off, not malformed, when the pass hit the output limit", async () => {
+    scripted([
+      pass("", [{ id: "c1", name: "search", arguments: '{"query":"a very long' }], {
+        finishReason: "length",
+      }),
+      pass("split it"),
+    ]);
+    const run = vi.fn(async () => ({ kind: "ok" as const, content: "x" }));
+    const turn = await runAgentTurn({ ...base, tools: [tool("search", run)] });
+    expect(run).not.toHaveBeenCalled();
+    const second = streamCompletion.mock.calls[1][1].messages as CompletionMessage[];
+    expect(second[2]).toEqual({
+      role: "tool",
+      toolCallId: "c1",
+      content: `error: ${CUT_OFF_ARGUMENTS}`,
+    });
+    expect(second[2].content).not.toContain("send them again");
+    expect(turn.steps[0].status).toBe("failed");
+  });
+
+  it("runs a whole call from a pass that hit the limit, and blames only the one cut off", async () => {
+    scripted([
+      pass(
+        "",
+        [
+          { id: "c1", name: "search", arguments: '{"query":"whole"}' },
+          { id: "c2", name: "search", arguments: '{"query":"cut' },
+        ],
+        { finishReason: "length" },
+      ),
+      pass("ok"),
+    ]);
+    const run = vi.fn(async () => ({ kind: "ok" as const, content: "found" }));
+    await runAgentTurn({ ...base, tools: [tool("search", run)] });
+    expect(run).toHaveBeenCalledTimes(1);
+    const second = streamCompletion.mock.calls[1][1].messages as CompletionMessage[];
+    expect(second.filter((m) => m.role === "tool").map((m) => m.content)).toEqual([
+      "found",
+      `error: ${CUT_OFF_ARGUMENTS}`,
+    ]);
   });
 });
 
@@ -830,6 +879,54 @@ describe("the budget", () => {
         });
         expect(turn.paused).toBeUndefined();
         expect(turn.text).toBe("done");
+      });
+
+      /**
+       * 2026-10-11: both qrucial turns met the ceiling mid-write with no word
+       * that it was near.
+       */
+      it("warns once, at TOKEN_WARNING_SHARE of the ceiling, while there is room to act on it", async () => {
+        forever();
+        await runAgentTurn({
+          ...base,
+          tools: searching(),
+          // 15 a pass: the fifth reaches 75, past 70% of 100; the seventh stops.
+          budget: { maxSteps: 50, maxTurnTokens: 100 },
+        });
+        const warnings = (t: CompletionMessage[]) =>
+          t.filter((m) => m.role === "system" && m.content === TOKEN_WARNING).length;
+        expect(TOKEN_WARNING_SHARE).toBe(0.7);
+        expect(warnings(sentTranscripts[4])).toBe(0);
+        expect(warnings(sentTranscripts[5])).toBe(1);
+        expect(warnings(sentTranscripts.at(-1) ?? [])).toBe(1);
+      });
+
+      it("does not warn a resumed turn that was already warned", async () => {
+        forever();
+        await runAgentTurn({
+          ...base,
+          request: {
+            ...base.request,
+            messages: [
+              { role: "user" as const, content: "go" },
+              { role: "system" as const, content: TOKEN_WARNING },
+            ],
+          },
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 100 },
+        });
+        const last = sentTranscripts.at(-1) ?? [];
+        expect(last.filter((m) => m.content === TOKEN_WARNING)).toHaveLength(1);
+      });
+
+      it("says nothing to a turn that stays under it", async () => {
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        await runAgentTurn({
+          ...base,
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 1_000 },
+        });
+        expect(sentTranscripts.flat().some((m) => m.content === TOKEN_WARNING)).toBe(false);
       });
     });
 

@@ -55,16 +55,120 @@ import type { BrowserTaskRow, FinishedTask } from "./poller";
  * language (Turkish login walls came back Turkish 19/20 with it, 18/20
  * without) and every message that started a task was answered with the
  * result.
+ *
+ * **And then their message was taken away.** On 2026-10-11 21:32, on
+ * claude-sonnet-4-5, the message that started a GitHub task asked for
+ * "GitHub, then covan.app, then tasklet.ai, and compare". With it as the only
+ * user turn the phrasing call did what it asked: it dropped most of a 4,154
+ * character report on the repo and wrote about the other two sites — a
+ * funding round, customer logos, usage figures — none of which any browser
+ * had seen. The sentence above did not hold on Claude. So the phrasing call
+ * no longer sees their words at all: `languageOf` reads them, in a call of its
+ * own, for the one thing they were there for, and this call is told the
+ * language by name ("Write in Turkish."), with the brief as its user turn.
+ * Naming the language is not the cue that failed above — that was "the
+ * language to write in" pointing at quoted words, which left the model to
+ * guess. And `strayReply` checks what comes back.
  */
 const SYSTEM = [
-  "A browser agent was asked to do something on the web and has finished.",
-  "Write the answer to the person who asked, in the language of their message, as if you had just",
-  "looked it up yourself. Do not mention browsers, tasks, agents or tools unless the",
-  "brief below tells you to, and do not apologise for the delay. If the browser did",
-  "not manage it, say plainly what stopped it. Keep to what the browser actually",
-  "reported — do not add facts it did not give you.",
-  "Whatever else their message asks for is not yours to do: write no tool calls or code, only this answer.",
+  "A browser looked something up for the person and has finished. Pass on what it found.",
+  "The brief below is everything that was looked at: every fact, site and page you mention",
+  "must come from it. Do not describe any site or page it does not contain, and never say",
+  "you looked at anything else. Start by naming in a few words what was looked at, then give",
+  "what it found, keeping every useful detail, unless the brief asks for one sentence.",
+  "Do not mention browsers, tasks, agents or tools unless the brief tells you to, and do",
+  "not apologise for the delay. If it did not manage it, say plainly what stopped it.",
+  "Write no tool calls or code, only the answer.",
 ].join(" ");
+
+/** What the answer is told about its language, by name or without one. */
+function writeIn(language: string | null): string {
+  return language
+    ? `Write in ${language}.`
+    : "Write in the language the person uses with you; if you cannot tell, write in English.";
+}
+
+/**
+ * Which language the person wrote in, by name, from their own message.
+ *
+ * A call of its own, so the call that writes the answer never sees their
+ * words (see `SYSTEM`). One word back, checked to be a name and nothing else:
+ * an answer that is a sentence, or carries anything but letters, is treated
+ * as not knowing, which is a plainer prompt rather than a lost delivery.
+ */
+const LANGUAGE_SYSTEM =
+  "Name the language the person's message is written in. Answer with its English name only " +
+  "(for example: Turkish), nothing else.";
+const LANGUAGE_NAME = /^[A-Za-z][A-Za-z ()-]{1,30}$/;
+
+async function languageOf(
+  env: RoutineEnv,
+  model: string,
+  words: string,
+  rowId: string,
+): Promise<{ language: string | null; usage: CompletionUsage | null }> {
+  try {
+    const { text, usage } = await complete(env, {
+      model,
+      messages: [
+        { role: "system", content: LANGUAGE_SYSTEM },
+        { role: "user", content: words },
+      ],
+      maxTokens: 10,
+    });
+    const name = text.trim().replace(/[.!]+$/, "");
+    return { language: LANGUAGE_NAME.test(name) ? name : null, usage };
+  } catch {
+    console.warn("could not tell the language of a browser task's question", rowId);
+    return { language: null, usage: null };
+  }
+}
+
+/** Two calls' tokens as one row's, for the two columns the row keeps. */
+function plus(a: CompletionUsage | null, b: CompletionUsage | null): CompletionUsage | null {
+  if (!a || !b) return a ?? b;
+  const sum = (x: number | null, y: number | null) =>
+    x === null && y === null ? null : (x ?? 0) + (y ?? 0);
+  return {
+    ...b,
+    promptTokens: sum(a.promptTokens, b.promptTokens),
+    completionTokens: sum(a.completionTokens, b.completionTokens),
+  };
+}
+
+/**
+ * Whether a phrased answer went past what the browser reported, in the two
+ * ways it has:
+ *
+ * - it names a site that is in neither the task nor the report — on
+ *   2026-10-11 21:32, `tasklet.ai`, in the answer to a task about a GitHub
+ *   repo (`www.` aside, and case aside);
+ * - it carries tool-call markup — on 2026-10-11, made-up calls in YAML and
+ *   XML in place of two answers.
+ *
+ * Either way the report itself is delivered instead (`fallback`): plainer, in
+ * the browser's language rather than theirs, and true.
+ */
+const HOST = /\b(?:[a-z0-9-]+\.)+[a-z]{2,24}\b/gi;
+const TOOL_MARKUP =
+  /<\/?(?:function_calls|invoke|tool_call|tool_use|parameter)\b|```(?:ya?ml|xml)\b[\s\S]*?\b(?:tool|invoke|function)\b/i;
+
+function strayReply(text: string, row: BrowserTaskRow, outcome: FinishedTask): boolean {
+  if (TOOL_MARKUP.test(text)) return true;
+  const known = [row.task, outcome.output ?? "", outcome.reported?.host ?? ""]
+    .join(" ")
+    .toLowerCase();
+  const bare = (host: string) => host.toLowerCase().replace(/^www\./, "");
+  return [...text.matchAll(HOST)].some(([host]) => {
+    // A file name or a version is not a site: only hosts whose last label is
+    // letters reach here, but `README.md` would; a name ending in a common
+    // file extension is left alone.
+    if (/\.(md|txt|json|ts|tsx|js|py|csv|pdf|png|jpe?g|yml|yaml|toml|sql|html?)$/i.test(host)) {
+      return false;
+    }
+    return !known.includes(bare(host));
+  });
+}
 
 export async function deliverBrowserTask(
   row: BrowserTaskRow,
@@ -99,15 +203,18 @@ export async function deliverBrowserTask(
     const model = resolveModel((agent?.model as string | null) ?? null, env);
     const saved = await savedLoginState(row, outcome, env, db);
     const words = needsModel(outcome) ? await theirWords(row, db) : null;
-    const { content, usage } = await phrase(
+    const told = words ? await languageOf(env, model, words, row.id) : null;
+    const phrased = await phrase(
       row,
       outcome,
       env,
       model,
       agent?.temperature as number | null,
       saved,
-      words,
+      told?.language ?? null,
     );
+    const content = phrased.content;
+    const usage = plus(told?.usage ?? null, phrased.usage);
 
     const { data: message, error } = await db
       .from("messages")
@@ -190,12 +297,13 @@ function siteOf(outcome: FinishedTask): string {
  */
 type SavedLoginState = "failed" | "unused" | null;
 
-/** How much of the person's message the phrasing call is shown: enough to tell a language, no more. */
+/** How much of the person's message `languageOf` is shown: enough to tell a language, no more. */
 const WORDS_SHOWN = 400;
 
 /**
  * The message the person sent to start the task, for the one thing the
- * phrasing call cannot know without it: which language to answer in.
+ * answer cannot know without it: which language to answer in. Read by
+ * `languageOf`, and by nothing that writes the answer.
  *
  * `row.task` is not their words. The chat model wrote it for the browser
  * agent, in English whatever the person wrote, so "answer in the language
@@ -406,24 +514,18 @@ async function phrase(
   model: string,
   temperature: number | null | undefined,
   saved: SavedLoginState,
-  words: string | null,
+  language: string | null,
 ): Promise<{ content: string; usage: CompletionUsage | null }> {
   if (!needsModel(outcome)) {
     return { content: fallback(row, outcome, saved), usage: null };
   }
 
-  // With their words, the brief is the system message and their words are the
-  // user turn, which is what settles the language (see `SYSTEM`). Without
-  // them, the brief stands in as the message, as it always did.
-  const messages: CompletionMessage[] = words
-    ? [
-        { role: "system", content: `${SYSTEM}\n\n${brief(row, outcome, saved)}` },
-        { role: "user", content: words },
-      ]
-    : [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: brief(row, outcome, saved) },
-      ];
+  // The brief is the user turn, and their words are nowhere in this call; the
+  // language is named instead (see `SYSTEM`).
+  const messages: CompletionMessage[] = [
+    { role: "system", content: `${SYSTEM} ${writeIn(language)}` },
+    { role: "user", content: brief(row, outcome, saved) },
+  ];
 
   try {
     const { text, usage } = await complete(env, {
@@ -431,7 +533,12 @@ async function phrase(
       messages,
       ...(typeof temperature === "number" ? { temperature } : {}),
     });
-    return { content: text.trim() || fallback(row, outcome, saved), usage };
+    const said = text.trim();
+    if (said && strayReply(said, row, outcome)) {
+      console.warn("a browser task's answer went past its report; delivering the report", row.id);
+      return { content: fallback(row, outcome, saved), usage };
+    }
+    return { content: said || fallback(row, outcome, saved), usage };
   } catch (err) {
     console.error("could not phrase a browser task's answer; delivering it raw", row.id, err);
     return { content: fallback(row, outcome, saved), usage: null };

@@ -663,7 +663,12 @@ describe("a v4 run that stopped short (ruling R8's outcome)", () => {
  * Spanish. The prompt said "in the language they asked in" and showed only
  * `row.task`, which the chat model writes in English whatever the person did.
  * Quoting their words inside the brief made it worse; their words as the user
- * turn, with the brief as the system message, is what held (see `SYSTEM`).
+ * turn, with the brief as the system message, held on gpt-4.1-mini.
+ *
+ * 2026-10-11 21:32, on Claude: with their words as the user turn, the answer
+ * did what their message asked — three sites, compared — and made up two of
+ * them. Now their words go only to a call that names the language, and the
+ * answer is told it by name (see `SYSTEM`).
  */
 describe("the language of the answer", () => {
   const WALL: FinishedTask = {
@@ -673,46 +678,141 @@ describe("the language of the answer", () => {
     costUsd: 0.01,
     reported: { status: "login_required", host: "the-internet.herokuapp.com", answer: null },
   };
-  const sent = () => complete.mock.calls[0][1].messages;
+  const TURKISH = "Şu sayfadaki fiyat tablosunu okuyup bana özetler misin?";
+  const asking = () => complete.mock.calls[0][1].messages;
+  const answering = () => complete.mock.calls.at(-1)![1].messages;
+  const names = (language: string) =>
+    complete.mockResolvedValueOnce({
+      text: language,
+      usage: { promptTokens: 50, completionTokens: 2 } as CompletionUsage,
+      finishReason: "stop",
+    });
 
-  it("gives the model the person's own words as the user turn, and the brief as the system", async () => {
-    theirLast = "Şu sayfadaki fiyat tablosunu okuyup bana özetler misin?";
+  it("asks which language in a call of its own, with their words as its user turn", async () => {
+    theirLast = TURKISH;
     await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
-    expect(sent()).toHaveLength(2);
-    expect(sent()[0]).toMatchObject({ role: "system" });
-    expect(String(sent()[0].content)).toContain(ROW.task);
-    expect(String(sent()[0].content)).toContain("the-internet.herokuapp.com");
-    expect(sent()[1]).toEqual({ role: "user", content: theirLast });
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(asking()).toHaveLength(2);
+    expect(String(asking()[0].content)).toMatch(/Name the language/);
+    expect(asking()[1]).toEqual({ role: "user", content: TURKISH });
   });
 
-  it("names no language anywhere but the one rule, because every mention was a cue", async () => {
-    theirLast = "Open the page and tell me what it shows.";
+  it("tells the answer the language by name, and never shows it their words", async () => {
+    theirLast = TURKISH;
+    names("Turkish");
     await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
-    const system = String(sent()[0].content);
-    expect(system).toContain("in the language of their message");
-    expect(system).not.toMatch(/language they asked in|own language|language to write in/);
+    expect(answering()).toHaveLength(2);
+    expect(String(answering()[0].content)).toContain("Write in Turkish.");
+    expect(answering()[1]).toMatchObject({ role: "user" });
+    expect(String(answering()[1].content)).toContain(ROW.task);
+    expect(String(answering()[1].content)).toContain("the-internet.herokuapp.com");
+    expect(JSON.stringify(answering())).not.toContain(TURKISH);
   });
 
-  it("shows only so much of them: enough to tell a language", async () => {
+  it("keeps their request out of the answer even when it asks for more than this task", async () => {
+    theirLast = "Review the repo, the site and Tasklet, then write it all up.";
+    names("English");
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(JSON.stringify(answering())).not.toContain("Tasklet");
+    expect(String(answering()[0].content)).toContain("never say you looked at anything else");
+    expect(String(answering()[0].content)).toContain("Write no tool calls or code");
+  });
+
+  it("names no language when the answer was not a plain name", async () => {
+    theirLast = TURKISH;
+    names("The message is written in Turkish, a Turkic language.");
+    await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
+    expect(String(answering()[0].content)).toContain(
+      "Write in the language the person uses with you",
+    );
+  });
+
+  it("still delivers when the language cannot be asked", async () => {
+    theirLast = TURKISH;
+    complete.mockRejectedValueOnce(new Error("provider down"));
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(inserted).toHaveLength(1);
+    expect(String(answering()[0].content)).toContain(
+      "Write in the language the person uses with you",
+    );
+  });
+
+  it("counts the language call in the row's tokens", async () => {
+    theirLast = TURKISH;
+    names("Turkish");
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(inserted[0]).toMatchObject({ prompt_tokens: 350, completion_tokens: 42 });
+  });
+
+  it("shows the language call only so much of them: enough to tell a language", async () => {
     theirLast = "a".repeat(5_000);
     await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
-    expect(sent()[1]).toEqual({ role: "user", content: "a".repeat(400) });
+    expect(asking()[1]).toEqual({ role: "user", content: "a".repeat(400) });
   });
 
-  it("still delivers, with the brief as the message, when their words cannot be read", async () => {
+  it("still delivers, with no language call, when their words cannot be read", async () => {
     theirLast = new Error("timeout");
     await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
     expect(inserted).toHaveLength(1);
-    expect(sent()[1]).toMatchObject({ role: "user" });
-    expect(String(sent()[1].content)).toContain(ROW.task);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(String(answering()[1].content)).toContain(ROW.task);
+  });
+});
+
+/**
+ * 2026-10-11 21:32: the answer to a task about a GitHub repo described
+ * tasklet.ai — a site no browser had opened. And on 2026-10-11, made-up tool
+ * calls in YAML stood in for two answers. Either way the report itself goes out.
+ */
+describe("an answer that goes past the report", () => {
+  const replies = (text: string) =>
+    complete.mockResolvedValue({
+      text,
+      usage: { promptTokens: 300, completionTokens: 40 } as CompletionUsage,
+      finishReason: "stop",
+    });
+
+  it("is replaced by the report when it names a site the report does not", async () => {
+    replies("Example.com has three tiers. Tasklet.ai, by comparison, raised $40M.");
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(inserted[0].content).toBe(FINISHED.output);
   });
 
-  it("tells the model their message is not its to carry out, and to write no tool calls", async () => {
-    theirLast = "Review the repo, the site and Tasklet, then write it all up.";
-    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
-    expect(String(sent()[0].content)).toContain(
-      "Whatever else their message asks for is not yours to do: write no tool calls or code",
+  it("is kept when every site it names is in the task or the report", async () => {
+    replies(
+      "On www.example.com: Starter $29/mo, Pro $99/mo, Enterprise on request (see README.md).",
     );
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(inserted[0].content).toContain("Starter $29/mo");
+  });
+
+  it("is replaced by the report when it carries tool-call markup", async () => {
+    replies('Let me look.\n<function_calls><invoke name="browse"></invoke></function_calls>');
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(inserted[0].content).toBe(FINISHED.output);
+  });
+
+  it("is replaced by the report when it writes a tool call in YAML", async () => {
+    replies("```yaml\ntool: browse\ntask: covan.app\n```");
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(inserted[0].content).toBe(FINISHED.output);
+  });
+
+  it("leaves a login wall's sentence alone: the site it names is the one the run reported", async () => {
+    replies("the-internet.herokuapp.com wants you to sign in; the browser panel is waiting.");
+    await deliverBrowserTask(
+      ROW,
+      {
+        status: "failed",
+        output: null,
+        error: null,
+        costUsd: 0.01,
+        reported: { status: "login_required", host: "the-internet.herokuapp.com", answer: null },
+      },
+      ENV,
+      fakeDb(),
+    );
+    expect(inserted[0].content).toContain("browser panel is waiting");
   });
 });
 
@@ -722,6 +822,7 @@ describe("the language of the answer", () => {
  * instead of delivering what it found.
  */
 describe("which of their messages is shown", () => {
+  // To the language call, the only one that sees their words.
   const sent = () => complete.mock.calls[0][1].messages;
   const ASKED = "Covan'ın sitesini tarayıcıyla incele.";
   const LATER = "Görevleri yeniden başlat ve sırayla tara.";

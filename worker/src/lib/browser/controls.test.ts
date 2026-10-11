@@ -1093,6 +1093,61 @@ describe("stopConversationBrowser", () => {
     });
   });
 
+  /**
+   * Measured 2026-10-11: a read 0.6 s before the provider's write came back
+   * with the list from before the stop — not empty, so the first rule took it
+   * as written — and the one site the browser had added went unrecorded.
+   */
+  it("waits for a list written after the stop, not just a non-empty one", async () => {
+    const STOPPED = "2026-10-10T12:00:00.500Z";
+    let read = 0;
+    provider.list = () => json({ items: [{ id: "bu-browser-1", status: "active" }] });
+    provider.stop = (id) => json({ id, status: "stopped", finishedAt: STOPPED });
+    provider.profile = (id) =>
+      read++ < 2
+        ? json({ id, cookieDomains: ["old.example"], updatedAt: "2026-10-10T11:30:00.000Z" })
+        : json({
+            id,
+            cookieDomains: ["old.example", "httpbin.org"],
+            updatedAt: "2026-10-10T12:00:01.100000Z",
+          });
+    const { mem, deps } = setup(
+      [],
+      [sessionRow({ live_state: "human", human_since: "2026-10-10T11:58:00.000Z" })],
+    );
+    mem.tables.browser_profiles[0].cookie_domains = ["old.example"];
+
+    expect(await stopConversationBrowser(ENV, ME, deps)).toEqual({ kind: "ok" });
+
+    expect(read).toBe(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(mem.tables.browser_profiles[0].cookie_domains).toEqual(["old.example", "httpbin.org"]);
+  });
+
+  /**
+   * Also measured 2026-10-11: twice the provider saved a jar on a stop — a
+   * later browser had the cookies — without ever moving the profile. A fresh
+   * profile read back `cookieDomains: null` for nine minutes, and the close
+   * wrote `[]`, so Settings said nothing had been saved.
+   */
+  it("records nothing when the provider never writes the profile after the stop", async () => {
+    provider.list = () => json({ items: [{ id: "bu-browser-1", status: "active" }] });
+    provider.stop = (id) => json({ id, status: "stopped", finishedAt: "2026-10-10T12:00:00.500Z" });
+    provider.profile = (id) =>
+      json({ id, cookieDomains: null, updatedAt: "2026-10-10T11:57:53.634Z" });
+    const { mem, deps } = setup(
+      [],
+      [sessionRow({ live_state: "human", human_since: "2026-10-10T11:58:00.000Z" })],
+    );
+    mem.tables.browser_profiles[0].cookie_domains = ["kept.example"];
+
+    expect(await stopConversationBrowser(ENV, ME, deps)).toEqual({ kind: "ok" });
+
+    expect(calls().filter((c) => c.includes("/profiles/"))).toHaveLength(8);
+    expect(mem.tables.browser_profiles[0].cookie_domains).toEqual(["kept.example"]);
+    expect(mem.tables.browser_profiles[0].last_used_at).toBeUndefined();
+  });
+
   it("does not read the jar when the stop failed, which saved nothing", async () => {
     provider.list = () => json({ items: [{ id: "bu-browser-1", status: "active" }] });
     provider.stop = () => json({ detail: "upstream" }, 500);

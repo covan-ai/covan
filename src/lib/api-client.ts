@@ -824,7 +824,8 @@ export const api = {
    * The v2 takeover — a separate browser rented for a login wall, signed into
    * in a new tab — kept for tasks drained from before 0078 and for anybody
    * part-way through one when the browser panel shipped (ruling R18). A v4
-   * task is the panel's, through `browser` below.
+   * task is the panel's, through `browser` below. A takeover with no task is
+   * the panel's too: the person's own browser, from `open` (Task 3.1).
    */
   takeovers: {
     /**
@@ -837,6 +838,14 @@ export const api = {
      */
     takeOver: (browserTaskId: string): Promise<Takeover> =>
       request("POST", "/browser/takeovers", { browserTaskId }),
+    /**
+     * A browser of the person's own, with no task behind it — the browser
+     * panel's Open browser (Task 3.1), to sign in ahead of time so the agent's
+     * browser later finds them signed in. The same primitive and the same
+     * credential as `takeOver`; 409 says a conversation's browser is in use,
+     * or one of these is already open.
+     */
+    open: (): Promise<Takeover> => request("POST", "/browser/takeovers"),
     /** What a reloaded tab asks, so a reload does not lock somebody out of their own browser. */
     current: (): Promise<{ takeover: Takeover | null }> =>
       request("GET", "/browser/takeovers/current"),
@@ -907,6 +916,12 @@ export const api = {
      */
     stop: (browserSessionId: string): Promise<void> =>
       request("POST", `/browser/sessions/${browserSessionId}/stop`),
+    /**
+     * The person's browsers that may still be open, for Settings (Task 3.2):
+     * where each one is, who has it, and whether its browser is still open —
+     * a boolean, never an id. No live URL: this list mints none.
+     */
+    open: (): Promise<OpenBrowsers> => request("GET", "/browser/sessions"),
     /**
      * Which sites the jar is signed into, which is the whole of what Covan can
      * say about somebody's logins: the cookies themselves are held by the
@@ -1295,6 +1310,12 @@ export type BrowserTask = {
    * saved login didn't work". Answered by the server for walled tasks only.
    */
   carriedSavedLogin: boolean;
+  /**
+   * A saved login this person may use for `signInHost`, when the run did not
+   * carry one: the sign-in card's "Try again with the saved login". Its label
+   * and host, never its username. Only on the wall the card shows.
+   */
+  savedLogin: { id: string; label: string; siteHost: string } | null;
 };
 
 /**
@@ -1326,9 +1347,10 @@ export type ConversationBrowser = {
   delivered: boolean;
 };
 
-/** A v2 takeover (`api.takeovers`). */
+/** A takeover (`api.takeovers`): a v2 task's, or the person's own with no task (Task 3.1). */
 export type Takeover = {
   id: string;
+  /** The task it was opened for; null for a browser the person opened themselves. */
   browserTaskId?: string | null;
   /** A credential. Held in component state for the life of the tab and nowhere else. */
   liveUrl: string | null;
@@ -1344,6 +1366,45 @@ export type CloseTakeover = {
 
 export type TakeOverResult =
   { liveState: "human"; humanSince: number } | { liveState: "cancelling" };
+
+/**
+ * Where a browser is, as the caller may see it. A conversation they can no
+ * longer open is null, and the screen says something neutral instead.
+ */
+export type BrowserPlace = {
+  conversation: { id: string; title: string | null } | null;
+  agent: { id: string; name: string } | null;
+};
+
+/** A browser beside a conversation that may still be open. Mirrors `GET /browser/sessions`. */
+export type OpenConversationBrowser = BrowserPlace & {
+  id: string;
+  liveState: "none" | "agent" | "human";
+  /** A run of the agent's is queued or going in it. Stop is not offered then (R17). */
+  running: boolean;
+  /**
+   * Whether the stop route would accept a Stop now: no run in flight, and a
+   * row the agent had last only ten minutes after its last run (R50, R51).
+   */
+  stoppable: boolean;
+  /** Whether its browser has not been seen stopped. A boolean, never the provider's id. */
+  browserOpen: boolean;
+  lastUsedAt: string | null;
+};
+
+/** The person's open takeover: their own browser (Task 3.1) or a v2 task's. */
+export type OpenTakeover = BrowserPlace & {
+  id: string;
+  /** Opened for a task, whose close runs it again. */
+  forTask: boolean;
+  openedAt: string;
+  expiresAt: string;
+};
+
+export type OpenBrowsers = {
+  browsers: OpenConversationBrowser[];
+  takeover: OpenTakeover | null;
+};
 
 export type BrowserProfile = {
   /**

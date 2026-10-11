@@ -10,10 +10,12 @@ import { BrowserSignInsSection } from "./browser-signins-section";
  * can say about somebody's logins at all, so saying them wrong is the whole
  * failure available to this component.
  */
-const { profile, forget, listLogins, FakeApiError } = vi.hoisted(() => ({
+const { profile, forget, listLogins, openBrowsers, stop, FakeApiError } = vi.hoisted(() => ({
   profile: vi.fn(),
   forget: vi.fn(),
   listLogins: vi.fn(),
+  openBrowsers: vi.fn(),
+  stop: vi.fn(),
   FakeApiError: class FakeApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -24,8 +26,15 @@ const { profile, forget, listLogins, FakeApiError } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api-client", () => ({
-  api: { browser: { profile, forget, credentials: { list: listLogins } } },
+  api: {
+    browser: { profile, forget, open: openBrowsers, stop, credentials: { list: listLogins } },
+    takeovers: { close: vi.fn() },
+  },
   ApiError: FakeApiError,
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 
 function renderSection() {
@@ -44,6 +53,8 @@ beforeEach(() => {
   });
   forget.mockResolvedValue({ forgotten: ["portal.example.com"] });
   listLogins.mockResolvedValue({ logins: [] });
+  openBrowsers.mockResolvedValue({ browsers: [], takeover: null });
+  stop.mockResolvedValue(undefined);
 });
 
 describe("BrowserSignInsSection", () => {
@@ -77,7 +88,8 @@ describe("BrowserSignInsSection", () => {
     });
     renderSection();
 
-    expect(await screen.findByText(/no sign-ins have been saved yet/i)).toBeTruthy();
+    // Not "nothing saved": the provider can save a jar and not report it.
+    expect(await screen.findByText(/no sites are listed yet/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /forget these sign-ins/i })).toBeTruthy();
   });
 
@@ -159,5 +171,44 @@ describe("Saved logins", () => {
 
     await screen.findByText("Supplier portal — personal");
     expect(container.textContent).not.toContain("ada@example.com");
+  });
+});
+
+/**
+ * Task 3.2 (ruling R48): the person's open browsers, the third part. Stopping
+ * one is what saves its sign-ins, so the sites above are asked for again.
+ */
+describe("Open browsers", () => {
+  const IDLE = {
+    id: "bs-idle",
+    conversation: { id: "chat-3", title: "Compare plans" },
+    agent: { id: "agent-2", name: "Scout" },
+    liveState: "none",
+    running: false,
+    stoppable: true,
+    browserOpen: true,
+    lastUsedAt: new Date().toISOString(),
+  };
+
+  it("lists them under their own heading, even with no jar", async () => {
+    profile.mockResolvedValue({ profile: null });
+    openBrowsers.mockResolvedValue({ browsers: [IDLE], takeover: null });
+    renderSection();
+
+    expect(await screen.findByText("Open browsers")).toBeTruthy();
+    expect(screen.getByText("Compare plans")).toBeTruthy();
+  });
+
+  it("asks for the sites again after a stop, which is what saved them", async () => {
+    openBrowsers.mockResolvedValue({ browsers: [IDLE], takeover: null });
+    renderSection();
+
+    await screen.findByText("Compare plans");
+    const before = profile.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Stop it" }));
+
+    expect(stop).toHaveBeenCalledWith("bs-idle");
+    await waitFor(() => expect(profile.mock.calls.length).toBeGreaterThan(before));
   });
 });

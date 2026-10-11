@@ -35,7 +35,12 @@ import { sendV4 } from "./v4";
  */
 export const TAKEOVER_PROVIDER_MINUTES = 15;
 
-export type ProviderProfile = { id: string; cookieDomains: string[] };
+/**
+ * `updatedAt` is the provider's clock, and is what `readJarAfterStop` compares
+ * a stop's `finishedAt` against. Null only if the provider leaves it out, which
+ * its schema says it never does; absent where a caller built one by hand.
+ */
+export type ProviderProfile = { id: string; cookieDomains: string[]; updatedAt?: string | null };
 export type ProviderBrowser = {
   id: string;
   status: "active" | "stopped";
@@ -43,8 +48,16 @@ export type ProviderBrowser = {
   liveUrl: string | null;
   timeoutAt: string | null;
 };
-/** Just enough to say "stopped yet?" without touching a URL. */
-export type BrowserStatus = { id: string; status: "active" | "stopped" };
+/**
+ * Just enough to say "stopped yet?" without touching a URL. `finishedAt` is
+ * when the provider says the browser stopped, by its own clock: the moment the
+ * jar's write is measured from (`readJarAfterStop`).
+ */
+export type BrowserStatus = {
+  id: string;
+  status: "active" | "stopped";
+  finishedAt?: string | null;
+};
 export type BrowserHeadroom = { active: number; limit: number | null };
 
 function domainsOf(raw: unknown): string[] {
@@ -57,9 +70,17 @@ function statusOf(raw: unknown): "active" | "stopped" {
   return String(raw) === "stopped" ? "stopped" : "active";
 }
 
+function stampOf(raw: unknown): string | null {
+  return typeof raw === "string" && raw ? raw : null;
+}
+
 function toProviderProfile(body: unknown): ProviderProfile {
   const row = (body ?? {}) as Record<string, unknown>;
-  return { id: String(row.id ?? ""), cookieDomains: domainsOf(row.cookieDomains) };
+  return {
+    id: String(row.id ?? ""),
+    cookieDomains: domainsOf(row.cookieDomains),
+    updatedAt: stampOf(row.updatedAt),
+  };
 }
 
 function toProviderBrowser(body: unknown): ProviderBrowser {
@@ -82,7 +103,11 @@ function toProviderBrowser(body: unknown): ProviderBrowser {
  */
 function toBrowserStatus(body: unknown): BrowserStatus {
   const row = (body ?? {}) as Record<string, unknown>;
-  return { id: String(row.id ?? ""), status: statusOf(row.status) };
+  return {
+    id: String(row.id ?? ""),
+    status: statusOf(row.status),
+    finishedAt: stampOf(row.finishedAt),
+  };
 }
 
 export function createProfile(
@@ -120,6 +145,39 @@ export function getProfile(
     opts,
     toProviderProfile,
   );
+}
+
+/**
+ * Whether a profile read back after a stop is the jar that stop saved.
+ *
+ * The provider writes the profile some time after it reports the browser
+ * stopped (3.1 s on 2026-10-09, 0.6 s on 2026-10-11), so a read straight after
+ * a stop can be the list from before it. The first readers here treated only
+ * an EMPTY list as "not written yet", and that is not enough: a profile that
+ * already held `the-internet.herokuapp.com` read back unchanged 0.6 s before
+ * the provider added `httpbin.org` to it, and the stale list was recorded as
+ * the new one.
+ *
+ * So freshness is decided by time, not by content: the profile's `updatedAt`
+ * at or after the stop's `finishedAt`, both the provider's own clock. When the
+ * stop did not say when it finished — a 404 for a browser already gone, an
+ * older provider — there is no time to compare, and the old rule stands: a
+ * non-empty list is taken as written, an empty one as not yet.
+ *
+ * A read that never becomes written is a real outcome, not only a slow one. On
+ * 2026-10-11 the provider twice saved a jar on a stop (a later browser had the
+ * cookies) without ever moving the profile's `updatedAt` or `cookieDomains`;
+ * on a fresh profile they stayed `null` for nine minutes. Callers keep what
+ * they had rather than record the stale list.
+ *
+ * A predicate and not the read loop itself: the loops live with their callers,
+ * which read through their own import of `getProfile`.
+ */
+export function jarWrittenSince(profile: ProviderProfile, stoppedAt: string | null): boolean {
+  const stopped = stoppedAt ? Date.parse(stoppedAt) : Number.NaN;
+  const updated = profile.updatedAt ? Date.parse(profile.updatedAt) : Number.NaN;
+  if (Number.isNaN(stopped) || Number.isNaN(updated)) return profile.cookieDomains.length > 0;
+  return updated >= stopped;
 }
 
 /** What makes a per-person profile forgettable rather than a one-way door. */

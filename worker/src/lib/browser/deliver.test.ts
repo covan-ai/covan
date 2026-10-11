@@ -108,6 +108,8 @@ let channelRow: Record<string, unknown> | null;
 let sessionExists: boolean;
 let inserted: Record<string, unknown>[];
 let messageInsertFails: boolean;
+/** The person's last message, as `theirWords` reads it; a string, null for none, or an Error to fail the read. */
+let theirLast: string | null | Error;
 
 function fakeDb(): SupabaseClient {
   return {
@@ -144,7 +146,18 @@ function fakeDb(): SupabaseClient {
         };
       }
       if (table === "messages") {
+        const read = {
+          eq: () => read,
+          is: () => read,
+          order: () => read,
+          limit: () => read,
+          maybeSingle: async () =>
+            theirLast instanceof Error
+              ? { data: null, error: { message: theirLast.message } }
+              : { data: theirLast === null ? null : { content: theirLast }, error: null },
+        };
         return {
+          select: () => read,
           insert: (rowIn: Record<string, unknown>) => {
             inserted.push(rowIn);
             return {
@@ -169,6 +182,7 @@ beforeEach(() => {
   sessionExists = true;
   inserted = [];
   messageInsertFails = false;
+  theirLast = null;
   complete.mockReset();
   complete.mockResolvedValue({
     text: "Example.com lists three tiers: Starter at $29/mo, Pro at $99/mo, and Enterprise on request.",
@@ -524,7 +538,9 @@ describe("a v4 run that stopped short (ruling R8's outcome)", () => {
       expect(prompt()).toMatch(/has no sign-in for it/i);
       expect(prompt()).toMatch(/browser panel/i);
       expect(prompt()).toMatch(/a login is saved for linkedin\.com/i);
-      expect(prompt()).toMatch(/ask again/i);
+      // The panel's button, never "ask again", which looped (2026-10-11).
+      expect(prompt()).toMatch(/panel can try again with the saved login/i);
+      expect(prompt()).not.toMatch(/ask again/i);
       expect(prompt()).not.toMatch(/did not work|didn't get past the sign-in/i);
       expect(prompt()).not.toMatch(/update it/i);
     });
@@ -540,7 +556,8 @@ describe("a v4 run that stopped short (ruling R8's outcome)", () => {
       const content = String(inserted[0].content);
       expect(content).toMatch(/^linkedin\.com needs you to sign in/);
       expect(content).toMatch(/saved login/i);
-      expect(content).toMatch(/ask again/i);
+      expect(content).toMatch(/try again there with your saved login/i);
+      expect(content).not.toMatch(/ask again/i);
       expect(content).not.toMatch(/did not work|didn't get past the sign-in/i);
     });
 
@@ -602,5 +619,55 @@ describe("a v4 run that stopped short (ruling R8's outcome)", () => {
       expect(hasSavedCredential).not.toHaveBeenCalled();
       expect(credentialCoversHost).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * Measured 2026-10-11: an English conversation got its login-wall sentence in
+ * Spanish. The prompt said "in the language they asked in" and showed only
+ * `row.task`, which the chat model writes in English whatever the person did.
+ * Quoting their words inside the brief made it worse; their words as the user
+ * turn, with the brief as the system message, is what held (see `SYSTEM`).
+ */
+describe("the language of the answer", () => {
+  const WALL: FinishedTask = {
+    status: "failed",
+    output: null,
+    error: null,
+    costUsd: 0.01,
+    reported: { status: "login_required", host: "the-internet.herokuapp.com", answer: null },
+  };
+  const sent = () => complete.mock.calls[0][1].messages;
+
+  it("gives the model the person's own words as the user turn, and the brief as the system", async () => {
+    theirLast = "Şu sayfadaki fiyat tablosunu okuyup bana özetler misin?";
+    await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
+    expect(sent()).toHaveLength(2);
+    expect(sent()[0]).toMatchObject({ role: "system" });
+    expect(String(sent()[0].content)).toContain(ROW.task);
+    expect(String(sent()[0].content)).toContain("the-internet.herokuapp.com");
+    expect(sent()[1]).toEqual({ role: "user", content: theirLast });
+  });
+
+  it("names no language anywhere but the one rule, because every mention was a cue", async () => {
+    theirLast = "Open the page and tell me what it shows.";
+    await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
+    const system = String(sent()[0].content);
+    expect(system).toContain("in the language of their message");
+    expect(system).not.toMatch(/language they asked in|own language|language to write in/);
+  });
+
+  it("shows only so much of them: enough to tell a language", async () => {
+    theirLast = "a".repeat(5_000);
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(sent()[1]).toEqual({ role: "user", content: "a".repeat(400) });
+  });
+
+  it("still delivers, with the brief as the message, when their words cannot be read", async () => {
+    theirLast = new Error("timeout");
+    await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
+    expect(inserted).toHaveLength(1);
+    expect(sent()[1]).toMatchObject({ role: "user" });
+    expect(String(sent()[1].content)).toContain(ROW.task);
   });
 });

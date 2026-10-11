@@ -12,6 +12,7 @@ import * as takeover from "../lib/browser/takeover";
 import * as profiles from "../lib/browser/profiles";
 import * as controls from "../lib/browser/controls";
 import * as credentials from "../lib/browser/credentials";
+import * as live from "../lib/browser/live";
 
 /**
  * The route half of a takeover, which is the half that answers permission
@@ -89,6 +90,7 @@ let open: ReturnType<typeof vi.spyOn>;
 let close: ReturnType<typeof vi.spyOn>;
 let session: ReturnType<typeof vi.spyOn>;
 let liveUrl: ReturnType<typeof vi.spyOn>;
+let held: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   open = vi.spyOn(takeover, "openTakeover").mockResolvedValue({
@@ -104,6 +106,8 @@ beforeEach(() => {
     message: "signed in and trying again",
   });
   session = vi.spyOn(takeover, "providerSessionFor").mockResolvedValue("s-1");
+  // Ruling R44: nobody has a browser of their own open, which is the ordinary case.
+  held = vi.spyOn(takeover, "heldTakeover").mockResolvedValue(false);
   liveUrl = vi.spyOn(profiles, "browserLiveUrl").mockResolvedValue({
     kind: "ok",
     value: {
@@ -276,6 +280,7 @@ describe("GET /browser/takeovers/current", () => {
     user_id: USER.id,
     browser_task_id: "task-1",
     status: "open",
+    created_at: new Date(Date.now() - 5 * 60_000).toISOString(),
     expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
   };
 
@@ -306,20 +311,47 @@ describe("GET /browser/takeovers/current", () => {
     expect(liveUrl).not.toHaveBeenCalled();
   });
 
-  it("answers none for a row past its window, so a new one can be opened", async () => {
+  /**
+   * Ruling R51 (b), `heldTakeover`'s reading: an open row is the person's
+   * browser until it is closed, even past `expires_at` — the provider keeps
+   * it up to fifteen minutes, and the take-over and the hand-back refuse on
+   * it. So a reload gets it back, with its Done, rather than an Open browser
+   * beside a refusal that says to press Done somewhere it cannot be seen.
+   */
+  it("answers a row past its window that is still open, inside the provider's lifetime", async () => {
     const fixture = appWith({
       tables: {
         browser_takeovers: selects({
           ...OPEN_ROW,
-          expires_at: new Date(Date.now() - 60_000).toISOString(),
+          created_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+          expires_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+        }),
+      },
+    });
+    const { body } = await json(fixture, "GET", "/browser/takeovers/current");
+
+    expect(body.takeover).toMatchObject({
+      id: "to-1",
+      liveUrl: "https://live.browser-use.com/abc",
+    });
+    // Still asked of the provider, which says whether the browser is there.
+    expect(liveUrl).toHaveBeenCalledOnce();
+  });
+
+  it("answers none for a row past the provider's lifetime, asking the provider nothing", async () => {
+    const fixture = appWith({
+      tables: {
+        browser_takeovers: selects({
+          ...OPEN_ROW,
+          created_at: new Date(Date.now() - 16 * 60_000).toISOString(),
+          expires_at: new Date(Date.now() - 6 * 60_000).toISOString(),
         }),
       },
     });
     const { body } = await json(fixture, "GET", "/browser/takeovers/current");
 
     expect(body.takeover).toBeNull();
-    // Nothing asked the provider: an expired row is not somebody's live
-    // browser, and POST is what closes it.
+    // The provider has ended that browser; POST is what closes the row.
     expect(liveUrl).not.toHaveBeenCalled();
   });
 
@@ -687,6 +719,36 @@ describe("/browser/sessions/:id", () => {
       expect(status).toBe(502);
       expect(body).toEqual({ error: "could not stop the agent" });
     });
+
+    /**
+     * Ruling R46: the person's own browser is live on the jar this one runs
+     * on, and whichever stops last writes it. Taking this one too would put
+     * the jar in two pairs of hands, so it is refused before the provider is
+     * asked anything — `takeOverBrowser` is what cancels runs and reads the
+     * browser, so not calling it is both.
+     */
+    it("409s while the caller has a browser of their own open, before the provider is asked", async () => {
+      held.mockResolvedValue(true);
+      const fixture = withSession(SESSION);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/take-over");
+
+      expect(status).toBe(409);
+      // The panel shows the server's sentence as it is (M2): capital to period.
+      expect(String(body?.error)).toMatch(/^Press Done in the browser you opened.*\.$/);
+      expect(held.mock.calls[0][1]).toBe(USER.id);
+      expect(take).not.toHaveBeenCalled();
+      expect(fixture.calls.filter((c) => c.op !== "select")).toEqual([]);
+    });
+
+    it("500s, asking the provider nothing, when it cannot tell whether one is open", async () => {
+      held.mockResolvedValue(null);
+      const fixture = withSession(SESSION);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/take-over");
+
+      expect(status).toBe(500);
+      expect(body).toEqual({ error: "Couldn't check your other browser. Try again in a moment." });
+      expect(take).not.toHaveBeenCalled();
+    });
   });
 
   describe("POST …/hand-back", () => {
@@ -793,11 +855,59 @@ describe("/browser/sessions/:id", () => {
       expect(status).toBe(409);
       expect(body).toEqual({ error: "already tried once" });
     });
+
+    /**
+     * Ruling R44: a browser the person opened for themselves is live on the
+     * same jar. The agent's run would make two live browsers on it, and the
+     * one that stops last writes it — so a fresh sign-in could be lost. Refused
+     * before the provider is asked or a row written, which leaves the free
+     * retry where it was.
+     */
+    it("409s while the caller has a browser of their own open, before the retry is spent", async () => {
+      held.mockResolvedValue(true);
+      const fixture = withSession(HUMAN);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(409);
+      expect(String(body?.error)).toMatch(/press Done in the browser you opened/i);
+      expect(held.mock.calls[0][1]).toBe(USER.id);
+      expect(hand).not.toHaveBeenCalled();
+      expect(fixture.calls.filter((c) => c.op !== "select")).toEqual([]);
+    });
+
+    it("500s, without spending the retry, when it cannot tell whether one is open", async () => {
+      held.mockResolvedValue(null);
+      const fixture = withSession(HUMAN);
+      const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/hand-back");
+
+      expect(status).toBe(500);
+      expect(hand).not.toHaveBeenCalled();
+    });
   });
 
   describe("POST …/stop", () => {
+    /**
+     * The browser's runs, as the caller's own client answers the in-flight
+     * read: `runs` rows, or an error. Separate from `withSession`, whose task
+     * fixture is a single row for the hand-back's reads.
+     */
+    function withRuns(
+      row: Record<string, unknown>,
+      runs: Array<Record<string, unknown>> | { error: { code: string; message: string } },
+    ) {
+      return appWith({
+        tables: {
+          browser_sessions: selects(row),
+          browser_tasks: {
+            select: () =>
+              Array.isArray(runs) ? { data: runs, error: null } : { data: null, error: runs.error },
+          },
+        },
+      });
+    }
+
     it("stops the browser and answers 204", async () => {
-      const fixture = withSession({ ...SESSION, live_state: "human" });
+      const fixture = withRuns({ ...SESSION, live_state: "human" }, []);
       const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
 
       expect(status).toBe(204);
@@ -807,10 +917,99 @@ describe("/browser/sessions/:id", () => {
 
     it("passes a failed stop through with its status", async () => {
       stop.mockResolvedValue({ kind: "error", status: 502, message: "could not stop it" });
-      const fixture = withSession(SESSION);
+      const fixture = withRuns({ ...SESSION, live_state: "none" }, []);
       const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
 
       expect(status).toBe(502);
+    });
+
+    /**
+     * Ruling R50: Stop never kills a running agent run. A stop does not cancel
+     * the run, and a run whose browser vanished under it settles as a failure
+     * (R17) — so a v4 run of this browser still queued or running is refused,
+     * read through the caller's own client before the provider is asked.
+     */
+    it("409s while a run of this browser has not settled, before anything is stopped", async () => {
+      const fixture = withRuns({ ...SESSION, live_state: "none" }, [{ id: "bt-9" }]);
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
+
+      expect(status).toBe(409);
+      expect(body).toEqual({
+        error: "The agent is using this browser right now. Take it over in the conversation first.",
+      });
+      expect(stop).not.toHaveBeenCalled();
+      const read = fixture.calls.find((c) => c.table === "browser_tasks");
+      expect(read?.filters).toEqual(
+        expect.arrayContaining([
+          { column: "browser_session_id", value: "bs-1", kind: "eq" },
+          { column: "api_version", value: "v4", kind: "eq" },
+          { column: "status", value: ["queued", "running"], kind: "in" },
+        ]),
+      );
+    });
+
+    it("409s while the row says the agent has it and its last run was under ten minutes ago", async () => {
+      const fixture = withRuns(
+        {
+          ...SESSION,
+          live_state: "agent",
+          last_run_at: new Date(Date.now() - 9 * 60_000).toISOString(),
+        },
+        [],
+      );
+      const { status, body } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
+
+      expect(status).toBe(409);
+      expect(String(body?.error)).toMatch(/^The agent is using this browser right now\./);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Ruling R51 (c): an `agent` row with no run is a finished run nobody has
+     * settled yet — the cron may not be running. Refused for ever, it was a
+     * browser with no way out from Settings, and none at all once its
+     * conversation was gone. Ten minutes after its last run, with nothing in
+     * flight, it is stopped like any other.
+     */
+    it("stops an agent row with no run in flight once its last run is over ten minutes old", async () => {
+      const fixture = withRuns(
+        {
+          ...SESSION,
+          live_state: "agent",
+          last_run_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+        },
+        [],
+      );
+      const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
+
+      expect(status).toBe(204);
+      expect(stop.mock.calls[0][1]).toEqual({ browserSessionId: "bs-1", userId: USER.id });
+    });
+
+    it("still 409s an old agent row while a run of it is in flight", async () => {
+      const fixture = withRuns(
+        {
+          ...SESSION,
+          live_state: "agent",
+          last_run_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+        },
+        [{ id: "bt-9" }],
+      );
+      const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
+
+      expect(status).toBe(409);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    it("500s, stopping nothing, when it cannot tell whether a run is going", async () => {
+      const fixture = withRuns(
+        { ...SESSION, live_state: "human" },
+        { error: { code: "57014", message: "timeout" } },
+      );
+      const { status } = await call(fixture, "POST", "/browser/sessions/bs-1/stop");
+
+      expect(status).toBe(500);
+      expect(stop).not.toHaveBeenCalled();
     });
   });
 });
@@ -1384,5 +1583,427 @@ describe("POST /browser/sessions/:id/hand-back with a site", () => {
 
     expect(status).toBe(500);
     expect(hand).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Settings → Browser sign-ins, its third part (Task 3.2, ruling R48): the
+ * browsers of this person that may still be open, each with where it is and
+ * who has it, so they can be found and stopped from one place.
+ *
+ * Pinned here: an API key refused before anything is read; every row read
+ * through the caller's own client and only granted columns asked for; whether
+ * a browser is open answered by the module as a boolean, for the caller's own
+ * ids; and nothing in the answer that is a provider id or a live URL — this
+ * screen never mints one, and asks the provider nothing.
+ */
+describe("GET /browser/sessions", () => {
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  const ROWS = [
+    // The agent is driving: a run is going in it.
+    {
+      id: "bs-agent",
+      chat_session_id: "chat-1",
+      agent_id: "agent-1",
+      live_state: "agent",
+      human_since: null,
+      last_run_at: minutesAgo(1),
+    },
+    // In the person's hands; the tab's heartbeat moved `human_since` lately.
+    {
+      id: "bs-human",
+      chat_session_id: "chat-2",
+      agent_id: "agent-1",
+      live_state: "human",
+      human_since: minutesAgo(2),
+      last_run_at: minutesAgo(30),
+    },
+    // Nobody's, its browser not yet seen stopped: the idle sweep's.
+    {
+      id: "bs-idle",
+      chat_session_id: "chat-3",
+      agent_id: "agent-2",
+      live_state: "none",
+      human_since: null,
+      last_run_at: minutesAgo(4),
+    },
+    // Nobody's, and its browser already stopped (the module says so).
+    {
+      id: "bs-stopped",
+      chat_session_id: "chat-4",
+      agent_id: "agent-1",
+      live_state: "none",
+      human_since: null,
+      last_run_at: minutesAgo(6),
+    },
+    // Nobody's, its last run past the provider's four-hour lifetime: nothing
+    // can be running, so nobody is asked about it.
+    {
+      id: "bs-ancient",
+      chat_session_id: "chat-5",
+      agent_id: "agent-1",
+      live_state: "none",
+      human_since: null,
+      last_run_at: minutesAgo(5 * 60),
+    },
+  ];
+  const GRANTED = new Set([
+    "id",
+    "user_id",
+    "workspace_id",
+    "agent_id",
+    "chat_session_id",
+    "live_state",
+    "human_since",
+    "last_run_at",
+    "created_at",
+  ]);
+  const TAKEOVER_GRANTED = new Set([
+    "id",
+    "user_id",
+    "workspace_id",
+    "profile_id",
+    "browser_task_id",
+    "status",
+    "expires_at",
+    "created_at",
+    "closed_at",
+  ]);
+
+  let openAmong: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    openAmong = vi
+      .spyOn(live, "openBrowsersAmong")
+      .mockResolvedValue(new Set(["bs-idle", "bs-human"]));
+  });
+
+  function listing(
+    over: {
+      rows?: Array<Record<string, unknown>>;
+      takeover?: Record<string, unknown> | null;
+      apiKeyId?: string;
+    } = {},
+  ) {
+    return appWith({
+      apiKeyId: over.apiKeyId,
+      tables: {
+        browser_sessions: { select: () => ({ data: over.rows ?? ROWS, error: null }) },
+        browser_tasks: {
+          select: (ctx) => {
+            // The takeover's own task, by id; otherwise the runs in flight.
+            if (ctx.filters.some((f) => f.column === "id")) {
+              return {
+                data: { id: "bt-v2", session_id: "chat-9", agent_id: "agent-2" },
+                error: null,
+              };
+            }
+            return { data: [{ browser_session_id: "bs-agent" }], error: null };
+          },
+        },
+        browser_takeovers: { select: () => ({ data: over.takeover ?? null, error: null }) },
+        // chat-2 is a conversation the caller can no longer see.
+        chat_sessions: {
+          select: () => ({
+            data: [
+              { id: "chat-1", title: "Supplier pricing" },
+              { id: "chat-3", title: null },
+              { id: "chat-9", title: "The portal" },
+            ],
+            error: null,
+          }),
+        },
+        agents: {
+          select: () => ({
+            data: [
+              { id: "agent-1", name: "Researcher" },
+              { id: "agent-2", name: "Scout" },
+            ],
+            error: null,
+          }),
+        },
+      },
+    });
+  }
+
+  async function list(fixture: ReturnType<typeof appWith>) {
+    return json(fixture, "GET", "/browser/sessions");
+  }
+
+  type Listed = {
+    browsers: Array<Record<string, unknown>>;
+    takeover: Record<string, unknown> | null;
+  };
+
+  it("refuses an API key before reading anything", async () => {
+    const fixture = listing({ apiKeyId: "key-1" });
+    const { status, body } = await list(fixture);
+
+    expect(status).toBe(403);
+    expect(String(body.error)).toContain("api keys cannot");
+    expect(fixture.calls.filter((c) => c.table.startsWith("browser_"))).toEqual([]);
+    expect(openAmong).not.toHaveBeenCalled();
+  });
+
+  it("reads the caller's own rows through their own client, and only granted columns", async () => {
+    const fixture = listing({
+      takeover: {
+        id: "to-1",
+        browser_task_id: null,
+        expires_at: minutesAgo(-8),
+        created_at: minutesAgo(2),
+      },
+    });
+    await list(fixture);
+
+    const read = fixture.calls.find((c) => c.table === "browser_sessions");
+    expect(read?.filters).toContainEqual({ column: "user_id", value: USER.id, kind: "eq" });
+    for (const column of String(read?.columns).split(",")) {
+      expect(GRANTED.has(column.trim()), column).toBe(true);
+    }
+    // M7: PostgREST answers at most a thousand rows; newest first, so a
+    // person with more conversations than that loses the ancient ones from
+    // the list, never the browser they used a minute ago.
+    expect(read?.order).toEqual([{ column: "last_run_at", ascending: false }]);
+    const takeoverRead = fixture.calls.find((c) => c.table === "browser_takeovers");
+    expect(takeoverRead?.filters).toContainEqual({
+      column: "user_id",
+      value: USER.id,
+      kind: "eq",
+    });
+    expect(takeoverRead?.filters).toContainEqual({ column: "status", value: "open", kind: "eq" });
+    for (const column of String(takeoverRead?.columns).split(",")) {
+      expect(TAKEOVER_GRANTED.has(column.trim()), column).toBe(true);
+    }
+  });
+
+  it("asks the module about the caller's own ids, and not about a browser past its lifetime", async () => {
+    const fixture = listing();
+    await list(fixture);
+
+    expect(openAmong).toHaveBeenCalledTimes(1);
+    const asked = openAmong.mock.calls[0][1] as { userId: string; browserSessionIds: string[] };
+    expect(asked.userId).toBe(USER.id);
+    expect([...asked.browserSessionIds].sort()).toEqual([
+      "bs-agent",
+      "bs-human",
+      "bs-idle",
+      "bs-stopped",
+    ]);
+  });
+
+  it("lists the browsers that may be open — the agent's, the person's, the idle — and not a stopped one", async () => {
+    const { status, body } = await list(listing());
+
+    expect(status).toBe(200);
+    const ids = (body as unknown as Listed).browsers.map((b) => b.id);
+    expect(ids.sort()).toEqual(["bs-agent", "bs-human", "bs-idle"]);
+  });
+
+  it("says where each one is and who has it, with a neutral answer for a conversation out of sight", async () => {
+    const { body } = await list(listing());
+    const byId = Object.fromEntries(
+      (body as unknown as Listed).browsers.map((b) => [String(b.id), b]),
+    );
+
+    expect(byId["bs-agent"]).toMatchObject({
+      conversation: { id: "chat-1", title: "Supplier pricing" },
+      agent: { id: "agent-1", name: "Researcher" },
+      liveState: "agent",
+      running: true,
+      browserOpen: false,
+    });
+    expect(byId["bs-human"]).toMatchObject({
+      conversation: null,
+      liveState: "human",
+      running: false,
+      browserOpen: true,
+    });
+    expect(byId["bs-idle"]).toMatchObject({
+      conversation: { id: "chat-3", title: null },
+      agent: { id: "agent-2", name: "Scout" },
+      liveState: "none",
+      running: false,
+      browserOpen: true,
+    });
+    // When it was last used: the later of the last run and the tab's heartbeat.
+    expect(byId["bs-human"].lastUsedAt).toBe(ROWS[1].human_since);
+    expect(byId["bs-idle"].lastUsedAt).toBe(ROWS[2].last_run_at);
+  });
+
+  /**
+   * Ruling R51 (c): whether Stop would be accepted, decided by the stop
+   * route's own rule — no run in flight, and an `agent` row only ten minutes
+   * after its last run — so Settings offers Stop exactly when it works. A
+   * boolean; no provider value.
+   */
+  it("says which ones a Stop would be accepted on", async () => {
+    const rows = [
+      ...ROWS,
+      {
+        id: "bs-left-recent",
+        chat_session_id: "chat-1",
+        agent_id: "agent-1",
+        live_state: "agent",
+        human_since: null,
+        last_run_at: minutesAgo(5),
+      },
+      {
+        id: "bs-left-old",
+        chat_session_id: "chat-1",
+        agent_id: "agent-1",
+        live_state: "agent",
+        human_since: null,
+        last_run_at: minutesAgo(11),
+      },
+    ];
+    const { body } = await list(listing({ rows }));
+    const byId = Object.fromEntries(
+      (body as unknown as Listed).browsers.map((b) => [String(b.id), b]),
+    );
+
+    expect(byId["bs-agent"]).toMatchObject({ running: true, stoppable: false });
+    expect(byId["bs-human"]).toMatchObject({ stoppable: true });
+    expect(byId["bs-idle"]).toMatchObject({ stoppable: true });
+    expect(byId["bs-left-recent"]).toMatchObject({ running: false, stoppable: false });
+    expect(byId["bs-left-old"]).toMatchObject({ running: false, stoppable: true });
+  });
+
+  it("asks which runs are in flight through the caller's own client, for these browsers only", async () => {
+    const fixture = listing();
+    await list(fixture);
+
+    const runs = fixture.calls.find(
+      (c) => c.table === "browser_tasks" && c.filters.some((f) => f.column === "status"),
+    );
+    expect(runs?.filters).toContainEqual({
+      column: "status",
+      value: ["queued", "running"],
+      kind: "in",
+    });
+    const named = runs?.filters.find((f) => f.column === "browser_session_id");
+    expect([...(named?.value as string[])].sort()).toEqual(["bs-agent", "bs-human", "bs-idle"]);
+  });
+
+  it("carries no provider id and no live URL, and asks the provider nothing", async () => {
+    const { body } = await list(
+      listing({
+        takeover: {
+          id: "to-1",
+          browser_task_id: null,
+          expires_at: minutesAgo(-8),
+          created_at: minutesAgo(2),
+        },
+      }),
+    );
+
+    const said = JSON.stringify(body);
+    expect(said).not.toMatch(/provider|liveUrl|live_url|cdp/i);
+    expect(session).not.toHaveBeenCalled();
+    expect(liveUrl).not.toHaveBeenCalled();
+  });
+
+  it("names the caller's own open browser, which belongs to no conversation", async () => {
+    const takeover = {
+      id: "to-1",
+      browser_task_id: null,
+      expires_at: minutesAgo(-8),
+      created_at: minutesAgo(2),
+    };
+    const { body } = await list(listing({ takeover }));
+
+    expect((body as unknown as Listed).takeover).toEqual({
+      id: "to-1",
+      forTask: false,
+      conversation: null,
+      agent: null,
+      openedAt: takeover.created_at,
+      expiresAt: takeover.expires_at,
+    });
+  });
+
+  it("names a task's takeover by the conversation its task was asked in", async () => {
+    const takeover = {
+      id: "to-2",
+      browser_task_id: "bt-v2",
+      expires_at: minutesAgo(-8),
+      created_at: minutesAgo(2),
+    };
+    const fixture = listing({ takeover });
+    const { body } = await list(fixture);
+
+    expect((body as unknown as Listed).takeover).toMatchObject({
+      id: "to-2",
+      forTask: true,
+      conversation: { id: "chat-9", title: "The portal" },
+      agent: { id: "agent-2", name: "Scout" },
+    });
+    const task = fixture.calls.find(
+      (c) => c.table === "browser_tasks" && c.filters.some((f) => f.column === "id"),
+    );
+    expect(task?.filters).toContainEqual({ column: "id", value: "bt-v2", kind: "eq" });
+  });
+
+  /**
+   * Fails closed. A row drawn as not running offers a Stop, which under a run
+   * the stop route refuses (R50) because it would kill the agent's run (R17,
+   * R48). Not knowing which runs are going must therefore read as "the agent's
+   * rows are running", never as "nothing is".
+   */
+  it("treats every agent row as running when the runs cannot be read", async () => {
+    const fixture = appWith({
+      tables: {
+        browser_sessions: { select: () => ({ data: ROWS, error: null }) },
+        browser_tasks: {
+          select: () => ({ data: null, error: { message: "boom", code: "57014" } }),
+        },
+        browser_takeovers: { select: () => ({ data: null, error: null }) },
+        chat_sessions: { select: () => ({ data: [], error: null }) },
+        agents: { select: () => ({ data: [], error: null }) },
+      },
+    });
+    const { status, body } = await list(fixture);
+
+    expect(status).toBe(200);
+    const byId = Object.fromEntries(
+      (body as unknown as Listed).browsers.map((b) => [String(b.id), b]),
+    );
+    expect(byId["bs-agent"]).toMatchObject({ liveState: "agent", running: true });
+    // The person's own and the idle one are nobody's run, and keep their Stop.
+    expect(byId["bs-human"]).toMatchObject({ running: false });
+    expect(byId["bs-idle"]).toMatchObject({ running: false });
+  });
+
+  it("still lists what the rows themselves say when it cannot tell which browsers are open", async () => {
+    openAmong.mockResolvedValue(null);
+    const { status, body } = await list(listing());
+
+    expect(status).toBe(200);
+    const ids = (body as unknown as Listed).browsers.map((b) => b.id);
+    expect(ids.sort()).toEqual(["bs-agent", "bs-human"]);
+  });
+
+  it("answers an empty list, and asks nothing more, when the caller has no browsers", async () => {
+    const fixture = listing({ rows: [] });
+    const { status, body } = await list(fixture);
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ browsers: [], takeover: null });
+    expect(fixture.calls.filter((c) => c.table === "chat_sessions")).toEqual([]);
+    expect(fixture.calls.filter((c) => c.table === "agents")).toEqual([]);
+  });
+
+  it("500s when the caller's own rows cannot be read", async () => {
+    const fixture = appWith({
+      tables: {
+        browser_sessions: {
+          select: () => ({ data: null, error: { message: "boom", code: "XX000" } }),
+        },
+      },
+    });
+    const { status } = await list(fixture);
+
+    expect(status).toBe(500);
+    expect(openAmong).not.toHaveBeenCalled();
   });
 });

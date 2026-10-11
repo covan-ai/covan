@@ -13,7 +13,7 @@ import {
 } from "../../browser/sessions";
 import { stopDeclinedBrowser } from "../../browser/profiles";
 import { recordBrowserTask } from "../../browser/tasks";
-import { profileFor, runProfile } from "../../browser/takeover";
+import { heldTakeover, profileFor, runProfile } from "../../browser/takeover";
 import { createRun } from "../../browser/v4";
 import { BROWSER_TASK_TOKENS, entitlementsFor } from "../../entitlements";
 import { affordable, spend, wasBilled } from "../spend";
@@ -90,6 +90,23 @@ const STILL_RUNNING =
 const IN_THEIR_HANDS =
   "the person is using the browser right now, in the panel beside this conversation. The " +
   "agent continues when they press Done there; tell them that, and do not retry this turn.";
+
+/**
+ * What the model is told while the person has a browser of their own open —
+ * the one they open from the chat header to sign in ahead of time (Task 3.1).
+ *
+ * It runs on the same cookie jar this run would carry, and whichever browser
+ * stops last writes the jar (ruling R44), so a run now could overwrite the
+ * sign-in they are in the middle of making. Their Done is what saves it.
+ */
+const OWN_BROWSER_OPEN =
+  "the person has a browser of their own open right now, signing in to sites. Ask them to " +
+  "press Done in the browser they opened first, so the sign-in is saved before the agent " +
+  "uses it; tell them that, and do not retry this turn.";
+
+const CANNOT_TELL =
+  "could not check whether the person's own browser is open, so the browser was not started. " +
+  "Say so plainly and offer to try again; do not retry this turn.";
 
 export { BROWSER_TASK_TOKENS };
 
@@ -192,6 +209,66 @@ function siteOf(raw: unknown): string | null | typeof INVALID_SITE {
   return siteHostOf(raw) ?? INVALID_SITE;
 }
 
+/** How many hosts named in a task are asked about: three reads at most, per proposal. */
+const TASK_HOSTS_ASKED = 3;
+
+/**
+ * The hosts a task names, as a saved `site_host` would be filed: from URLs
+ * (`https://quotes.toscrape.com/login`) and from bare names (`linkedin.com`),
+ * in the order they appear, at most `TASK_HOSTS_ASKED`.
+ */
+function hostsIn(task: string): string[] {
+  const found: string[] = [];
+  const named = /\bhttps?:\/\/[^\s"'<>()[\]]+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/gi;
+  for (const match of task.matchAll(named)) {
+    const host = siteHostOf(match[0]);
+    if (host && !found.includes(host)) found.push(host);
+    if (found.length === TASK_HOSTS_ASKED) break;
+  }
+  return found;
+}
+
+/**
+ * The site whose saved login a task needs, when the model named none.
+ *
+ * Found in the 2026-10-11 e2e: gpt-4.1-mini never filled `site`, not even for
+ * "Please try again with my saved login" — its own task said "using the saved
+ * login credentials" and the run carried none. So a login saved for a site was
+ * unusable in any conversation but the one it was saved in, and the wall's
+ * "ask again" became a loop.
+ *
+ * So when `site` is absent, the first host the task names that has a login
+ * this person may use (`savedLogin`, the card's own lookup) stands in for it.
+ * This decides only WHICH saved login the run may carry, never where it may
+ * be typed — that stays the row's own `site_host`, in the bindings
+ * `credentialsFor` builds (Review focus 4) — and it is shown on the card as
+ * `signsInAs` exactly as a named `site` is, so the person approves it. A task
+ * steered to name a site gets that site's login typed on that site only, and
+ * the card said so first.
+ *
+ * Asked the same way for the card and for the approved run (the same task
+ * text), so the two agree. A read that fails is no site: the run meets the
+ * wall and the panel offers the login from there.
+ */
+async function siteFromTask(ctx: ToolContext, task: string): Promise<string | null> {
+  for (const host of hostsIn(task)) {
+    try {
+      const login = await savedLogin(ctx.env, {
+        agentId: ctx.agentId,
+        userId: ctx.userId,
+        host,
+      });
+      // The task's host, as a model's `site` would be: `savedLogin` and
+      // `credentialsFor` both walk up from it to the saved row (R37).
+      if (login) return host;
+    } catch {
+      console.warn("could not read the saved logins for a browser task's sites");
+      return null;
+    }
+  }
+  return null;
+}
+
 /**
  * What the card says the browser will sign in with, or nothing.
  *
@@ -288,8 +365,8 @@ export const browseTool: AgentTool = {
         message: "say what to do in one sentence — which site, and what to get or do there",
       };
     }
-    const site = siteOf(input.site);
-    if (site === INVALID_SITE) {
+    const named = siteOf(input.site);
+    if (named === INVALID_SITE) {
       // Before the card and before the meter (ruling R13's order): a refusal
       // costs nothing and leaves nothing behind.
       return {
@@ -315,6 +392,9 @@ export const browseTool: AgentTool = {
           "this cannot be done unattended. Say so plainly rather than retrying.",
       };
     }
+
+    // The model's `site`, or a host the task names that has a saved login.
+    const site = named ?? (await siteFromTask(ctx, task));
 
     /**
      * Whose cookie jar this browser will carry, resolved from `ctx.userId`.
@@ -373,6 +453,17 @@ export const browseTool: AgentTool = {
     // `lib/harness/spend.ts`.
     const refused = await affordable(ctx);
     if (refused) return refused;
+
+    /**
+     * Ruling R44, beside R13's refusals below and for their reason: before
+     * the provider is called, so before the meter. And before the browser row
+     * is claimed, so a refusal leaves no claim to hand back. The person's own
+     * browser and this run would carry one jar, and the one that stops last
+     * writes it. One read, through the service role keyed to `ctx.userId`.
+     */
+    const ownBrowser = await heldTakeover(ctx.env, ctx.userId);
+    if (ownBrowser === null) return { kind: "error", message: CANNOT_TELL };
+    if (ownBrowser) return { kind: "error", message: OWN_BROWSER_OPEN };
 
     /**
      * This conversation's browser, found or claimed BEFORE the provider is

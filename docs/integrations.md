@@ -765,6 +765,15 @@ that says who has the controls. It works as follows:
   the last task) is given up on. Take over on a browser that has already been
   stopped says so, and asks you to start the task again.
 
+**You can also sign in ahead of time**: the browser control in a conversation's
+header is always there for you, and when the conversation has no browser open the
+panel offers **Open browser** — a browser of your own on the same profile, for ten
+minutes, whose Done stops it and so saves what you signed in to. Whichever browser
+on your profile stops last writes it, so Open browser is refused while a
+conversation's browser is in use (or a run is still finishing) and tries to stop
+your idle ones first, and while yours is open the agent starts no browser task
+and a conversation's Take over and Done wait for it.
+
 The panel is yours alone. A colleague in a shared conversation sees the
 answers, which are ordinary messages, and nothing of the browser — for them the
 panel's routes answer "no such browser".

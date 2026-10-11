@@ -32,14 +32,25 @@ import type { BrowserTaskRow, FinishedTask } from "./poller";
 
 /**
  * The model is told to answer the question, not to describe the browser —
- * with one exception it is told about in the message itself: a login wall,
+ * with one exception it is told about in the brief itself: a login wall,
  * where pointing at the browser is the whole of the answer.
+ *
+ * **"In the language of their message", and their message as the user turn.**
+ * Measured 2026-10-11 on gpt-4.1-mini: "in their own language" with only the
+ * English brief to go on answered a login wall in Spanish, and quoting the
+ * person's words inside the brief as "the language to write in" made it worse
+ * — Spanish for an English speaker in 19 of 20 runs. With the brief in the
+ * system message and the person's own words as the user message, 60 runs
+ * across English, Turkish and German, answers and login walls, all came back
+ * in the person's language. The per-case instructions in `brief` say nothing
+ * about language for the same reason: every mention of it was a cue to pick
+ * one.
  */
 const SYSTEM = [
   "A browser agent was asked to do something on the web and has finished.",
-  "Write the answer to the person who asked, in their own language, as if you had just",
+  "Write the answer to the person who asked, in the language of their message, as if you had just",
   "looked it up yourself. Do not mention browsers, tasks, agents or tools unless the",
-  "message below tells you to, and do not apologise for the delay. If the browser did",
+  "brief below tells you to, and do not apologise for the delay. If the browser did",
   "not manage it, say plainly what stopped it. Keep to what the browser actually",
   "reported — do not add facts it did not give you.",
 ].join(" ");
@@ -76,6 +87,7 @@ export async function deliverBrowserTask(
 
     const model = resolveModel((agent?.model as string | null) ?? null, env);
     const saved = await savedLoginState(row, outcome, env, db);
+    const words = needsModel(outcome) ? await theirWords(row, db) : null;
     const { content, usage } = await phrase(
       row,
       outcome,
@@ -83,6 +95,7 @@ export async function deliverBrowserTask(
       model,
       agent?.temperature as number | null,
       saved,
+      words,
     );
 
     const { data: message, error } = await db
@@ -166,6 +179,54 @@ function siteOf(outcome: FinishedTask): string {
  */
 type SavedLoginState = "failed" | "unused" | null;
 
+/** How much of the person's message the phrasing call is shown: enough to tell a language, no more. */
+const WORDS_SHOWN = 400;
+
+/**
+ * The person's own last message in the conversation, for the one thing the
+ * phrasing call cannot know without it: which language to answer in.
+ *
+ * `row.task` is not their words. The chat model wrote it for the browser
+ * agent, in English whatever the person wrote, so "answer in the language
+ * they asked in" with only the task to go on is a guess. On 2026-10-11 the
+ * guess for an English conversation was Spanish ("El sitio … requiere que
+ * inicies sesión"); for a Turkish one it would usually be English.
+ *
+ * The latest message the person sent and did not edit away — not the one
+ * that started the task, which this row does not name. Close enough for a
+ * language: somebody who changes language halfway through a conversation is
+ * answered in the one they changed to. Read only when a model call will
+ * happen. **A failed read is today's prompt**, never a lost delivery: nothing
+ * in this file throws.
+ */
+async function theirWords(row: BrowserTaskRow, db: SupabaseClient): Promise<string | null> {
+  try {
+    const { data, error } = await db
+      .from("messages")
+      .select("content")
+      .eq("session_id", row.session_id)
+      .eq("role", "user")
+      .is("superseded_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.warn("could not read the person's words for a browser task's answer", row.id);
+      return null;
+    }
+    const content = typeof data?.content === "string" ? data.content.trim() : "";
+    return content ? content.slice(0, WORDS_SHOWN) : null;
+  } catch {
+    console.warn("could not read the person's words for a browser task's answer", row.id);
+    return null;
+  }
+}
+
+/** Whether `phrase` will ask the model: the same test it makes before doing so. */
+function needsModel(outcome: FinishedTask): boolean {
+  return Boolean(outcome.output) || outcome.reported?.status === "login_required";
+}
+
 async function savedLoginState(
   row: BrowserTaskRow,
   outcome: FinishedTask,
@@ -223,7 +284,7 @@ function brief(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginStat
       "It is still open in the browser panel beside this conversation.",
       "",
       ...reported,
-      "Tell them in one sentence, in the language they asked in, that the saved login for",
+      "Tell them in one sentence that the saved login for",
       `${siteOf(outcome)} didn't get past the sign-in, and offer to update it.`,
     ].join("\n");
   }
@@ -235,12 +296,16 @@ function brief(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginStat
       "It is still open in the browser panel beside this conversation, waiting for them to sign in there themselves.",
       "",
       ...reported,
-      "Tell them in one sentence, in the language they asked in, which site wants them to sign in",
+      "Tell them in one sentence which site wants them to sign in",
       "and that the browser panel is waiting for them.",
       ...(saved === "unused"
         ? [
+            // The panel's button, not "ask again": a model that left `site`
+            // out once will leave it out again, and in the 2026-10-11 e2e that
+            // promise was a loop. The card's "Try again with the saved login"
+            // binds it whatever the model does.
             `A login is saved for ${siteOf(outcome)}, but this run was not given it: add, in the same`,
-            "sentence, that if they ask again the saved login will be used.",
+            "sentence, that the browser panel can try again with the saved login.",
           ]
         : []),
     ].join("\n");
@@ -276,7 +341,7 @@ function fallback(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginS
   if (outcome.reported?.status === "login_required") {
     return saved === "unused"
       ? `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
-          "waiting for you to do it there, or ask again and your saved login will be used."
+          "waiting for you to do it there, or to try again there with your saved login."
       : `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
           "waiting for you to do it there.";
   }
@@ -303,15 +368,24 @@ async function phrase(
   model: string,
   temperature: number | null | undefined,
   saved: SavedLoginState,
+  words: string | null,
 ): Promise<{ content: string; usage: CompletionUsage | null }> {
-  if (!outcome.output && outcome.reported?.status !== "login_required") {
+  if (!needsModel(outcome)) {
     return { content: fallback(row, outcome, saved), usage: null };
   }
 
-  const messages: CompletionMessage[] = [
-    { role: "system", content: SYSTEM },
-    { role: "user", content: brief(row, outcome, saved) },
-  ];
+  // With their words, the brief is the system message and their words are the
+  // user turn, which is what settles the language (see `SYSTEM`). Without
+  // them, the brief stands in as the message, as it always did.
+  const messages: CompletionMessage[] = words
+    ? [
+        { role: "system", content: `${SYSTEM}\n\n${brief(row, outcome, saved)}` },
+        { role: "user", content: words },
+      ]
+    : [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: brief(row, outcome, saved) },
+      ];
 
   try {
     const { text, usage } = await complete(env, {

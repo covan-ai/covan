@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
-import { createTask, type BrowserResult } from "./client";
+import { createTask, hasBrowserKey, type BrowserResult } from "./client";
 import { stopSessionBrowsers } from "./controls";
 import {
   accountHeadroom,
@@ -10,6 +10,7 @@ import {
   createProfile,
   deleteProfile,
   getProfile,
+  jarWrittenSince,
   stopBrowser,
   TAKEOVER_PROVIDER_MINUTES,
 } from "./profiles";
@@ -527,10 +528,22 @@ async function releaseConversationBrowsers(
   db: SupabaseClient,
   userId: string,
 ): Promise<Refusal | null> {
+  /**
+   * Narrowed in the query, `clearTheJar`'s reason (ruling R51): a guard, and
+   * PostgREST answers at most a thousand rows without saying so, so a live
+   * browser past a thousand forgotten ones would be cut off the answer and
+   * the jar deleted under it. Only the rows acted on below come back:
+   * someone's hands on it, or a session or browser still named. The clear at
+   * the end is an update, which no row cap touches.
+   */
   const { data, error } = await db
     .from("browser_sessions")
     .select("id, live_state, provider_session_id, provider_browser_id")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .or(
+      "live_state.in.(agent,human),provider_session_id.not.is.null," +
+        "provider_browser_id.not.is.null",
+    );
   if (error) {
     console.error("could not check a person's browsers before forgetting", problem(error));
     return { kind: "error", status: 500, message: FORGET_FAILED };
@@ -541,8 +554,8 @@ async function releaseConversationBrowsers(
       kind: "error",
       status: 409,
       message:
-        "a browser of yours is in use beside a conversation right now — let the agent finish, or " +
-        "close it in the panel, and these sign-ins can be forgotten after that",
+        "A browser of yours is in use beside a conversation right now. Let the agent finish, or " +
+        "close it in the panel, and these sign-ins can be forgotten after that.",
     };
   }
 
@@ -567,6 +580,225 @@ async function releaseConversationBrowsers(
   if (clearError) {
     console.error("could not forget a person's browser sessions", problem(clearError));
     return { kind: "error", status: 500, message: FORGET_FAILED };
+  }
+  return null;
+}
+
+/**
+ * Whether this person has a takeover open right now: true, false, or null
+ * when it cannot be told.
+ *
+ * Ruling R44's other half. A browser the person opened for themselves — from
+ * the chat header, to sign in ahead of time (Task 3.1) — runs on their jar,
+ * and so does every browser beside their conversations. Two live browsers on
+ * one profile is a race for the jar: browser-use saves a profile when a
+ * browser stops (*"always stop the session to persist profile state"*), so
+ * whichever stops LAST writes it, and a sign-in made in one can be overwritten
+ * by the other stopping after it. So `browse` and the hand-back ask this
+ * before they start a run, and refuse while the answer is yes.
+ *
+ * **Held until it is closed, not until its window ends** (ruling R49): any
+ * `status = 'open'` row, whatever its `expires_at`. Past the window the
+ * browser is still running — the provider keeps it up to its fifteen minutes,
+ * and the sweep stops it within about five of the window's end — so the jar
+ * is still live in it, and a run started then would be the second writer this
+ * guard exists to prevent. Refusing a little longer, until the sweep or Done
+ * closes the row, is the accepted cost. Not `forgetProfile`'s reading, which
+ * asks a different question (whether somebody is signing in right now) and
+ * keeps its own. Any takeover counts, a task's too — it is the same jar.
+ *
+ * **And no longer than the browser can exist** (ruling R51): an open row
+ * rented more than `TAKEOVER_PROVIDER_MINUTES` ago names a browser the
+ * provider has already ended, so there is no live jar left to protect. Without
+ * that bound a cron that stopped running would leave the row open, and
+ * `browse` refused, for ever. See `takeoverStillLive`.
+ *
+ * Null when the read fails, and the callers refuse on null: the cost of
+ * refusing one run on a database hiccup is a "try again", and the cost of
+ * guessing wrong is a sign-in silently lost. Through the service role, keyed
+ * to the caller's own id, `profileFor`'s shape — the callers hold either no
+ * client that may read this table (`browse`'s `ctx.db` is a tripwire) or one
+ * they should not need to.
+ */
+export async function heldTakeover(
+  env: RoutineEnv,
+  userId: string,
+  overrides: Partial<TakeoverDeps> = {},
+): Promise<boolean | null> {
+  const { db, now } = resolve(env, overrides);
+  const { data, error } = await db
+    .from("browser_takeovers")
+    .select("created_at")
+    .eq("user_id", userId)
+    .eq("status", "open");
+  if (error) {
+    console.error("could not check for an open takeover", problem(error));
+    return null;
+  }
+  return ((data ?? []) as { created_at?: unknown }[]).some((row) =>
+    takeoverStillLive(row.created_at, now()),
+  );
+}
+
+/**
+ * Whether an open takeover's browser can still exist: rented less than
+ * `TAKEOVER_PROVIDER_MINUTES` ago, the provider's own timeout for it
+ * (`createBrowser` asks for exactly that). The one reading of "open" for
+ * everything that acts on the person's own browser past its window —
+ * `heldTakeover`'s refusals and `GET /browser/takeovers/current`'s reload
+ * (ruling R51).
+ *
+ * An unreadable `created_at` (`not null default now()` in 0077, so not
+ * reachable) counts as live: the cost of that is a refusal until the sweep
+ * or the next Open closes the row, and the other way is a jar with two
+ * writers.
+ */
+export function takeoverStillLive(createdAt: unknown, now: Date): boolean {
+  const rented = Date.parse(String(createdAt));
+  if (!Number.isFinite(rented)) return true;
+  return rented + TAKEOVER_PROVIDER_MINUTES * 60_000 > now.getTime();
+}
+
+/**
+ * How many idle conversation browsers a task-less takeover stops before it
+ * rents its own. The subrequest bound: see `clearTheJar`.
+ */
+export const IDLE_BROWSER_STOPS = 2;
+
+/**
+ * What a takeover is told while a browser beside one of the person's
+ * conversations is live. No more than is true: `live_state = 'agent'` outlives
+ * a finished run until the open tab's poll or the five-minute cron settles it,
+ * so "the agent is using it" may already be over — the sentence allows for a
+ * run still finishing, and says how long waiting takes.
+ *
+ * Not "press Done" for the person's own: in their hands, that panel's Done is
+ * the hand-back, which starts a run — the opposite of freeing the jar. Its
+ * close is what stops the browser. A whole sentence, capital to period,
+ * because the panel and the takeover card show it as it comes.
+ */
+const CONVERSATION_BROWSER_IN_USE =
+  "A browser beside one of your conversations is still in use — by the agent, by you, or by " +
+  "a run that is still finishing. If it is yours, close it from that conversation's panel; " +
+  "otherwise try again in a few minutes.";
+
+/**
+ * Make this person's jar the takeover's alone before renting it a browser
+ * (ruling R44: one jar, one writer). A takeover and the browsers beside the
+ * person's conversations run on the same profile, and whichever stops last
+ * writes it.
+ *
+ * - **One the agent is driving, or one in the person's hands, is refused**,
+ *   409, before anything is rented: that browser stopping after the
+ *   takeover's Done would write over the sign-in just made — or the other way
+ *   round, over what is being done beside the conversation. For every
+ *   takeover: the person's own (Task 3.1) and a v2 task's alike (ruling R46).
+ * - **An idle one is stopped, for the person's own takeover only**
+ *   (`stopIdle`) — `live_state = 'none'` with a browser still named, ruling
+ *   R20's marker — by `stopSessionBrowsers`, the same stop the panel's close
+ *   and the sweep make, and a confirmed stop clears `provider_browser_id` as
+ *   the sweep's idle arm does: narrowed to the row still being nobody's and
+ *   still naming that browser, so a run that started meanwhile keeps its own.
+ *   The session is kept; the next `browse` continues it in a fresh browser.
+ *   Best-effort: a stop that fails is logged and the takeover goes ahead, the
+ *   row keeps naming the browser, and the idle sweep claims it on that marker
+ *   (ten minutes after its last run). A v2 task's takeover only refuses, as
+ *   ruling R46 asks.
+ * - **No read of the jar afterwards** (ruling R47). Straight after a stop it
+ *   would read the jar before the provider has written it (about three
+ *   seconds later, measured), and the takeover's own close rewrites
+ *   `cookie_domains` anyway. What matters is only that the idle browser is
+ *   stopped before the takeover's starts: its write lands seconds after its
+ *   stop, the takeover's on Done minutes later, so the takeover is the last
+ *   writer and the sign-in is what the jar keeps.
+ *
+ * **Not a lock, and the gap is seconds, not milliseconds.** Between the read
+ * here and the takeover's row being written, `openTakeover` spends the
+ * headroom call, the profile read (four calls, the first time) and the
+ * provider's `createBrowser` — seconds of provider round trips. A `browse` or
+ * a take-over that starts inside that window finds no open takeover yet
+ * (`heldTakeover`) and goes ahead, so for that one run the jar is live in two
+ * browsers. No guard is placed on it, deliberately: closing it would need a
+ * claim taken before the rent, and what it costs when it happens is the write
+ * of whichever of the two browsers stops first.
+ *
+ * **Subrequests, bounded.** The browsers read (1); with `stopIdle`, for each of
+ * at most `IDLE_BROWSER_STOPS` (2) idle browsers, the session's browsers list
+ * (1), its stop (1 — a session has one active browser in practice;
+ * `stopSessionBrowsers` stops each it finds) and the marker's clear (1). That
+ * is 1 + 2 × 3 = **7 at most**, and 1 for a person with no idle browser —
+ * which after the idle sweep is nearly everybody — and for every v2 task's
+ * takeover. The route around it spends 7 on its ordinary path (the workspace
+ * or task reads, the standing-takeover read, the headroom, the profile read,
+ * the browser, the insert — and at most one for the auth middleware, none
+ * when the token verifies locally), so an ordinary open is 8, one with two
+ * idle browsers 14, and the worst case anywhere in this request — a stale
+ * takeover to close as well (up to 13, `closeStale` with the eight jar reads),
+ * a first-ever profile (+3) and a 422 retry (+1) — about 31, inside Workers
+ * Free's 50. Idle browsers past the bound are left to the sweep and said so in
+ * the log.
+ *
+ * @returns the refusal, or null to carry on.
+ */
+async function clearTheJar(
+  env: RoutineEnv,
+  deps: TakeoverDeps,
+  userId: string,
+  options: { stopIdle: boolean },
+): Promise<Refusal | null> {
+  const { db } = deps;
+  /**
+   * Narrowed in the query, not after it (M7): this read is a guard, and
+   * PostgREST answers at most a thousand rows without saying so. Unfiltered,
+   * a person with that many conversations whose browsers are long stopped
+   * could have the one live row cut off the answer — and be let through onto
+   * a jar two browsers write. So only the rows either branch below acts on
+   * come back: someone's hands on it, or a browser still named.
+   */
+  const { data, error } = await db
+    .from("browser_sessions")
+    .select("id, live_state, provider_session_id, provider_browser_id")
+    .eq("user_id", userId)
+    .or("live_state.in.(agent,human),provider_browser_id.not.is.null");
+  if (error) {
+    console.error("could not check a person's browsers before a takeover", problem(error));
+    return {
+      kind: "error",
+      status: 500,
+      message: "Couldn't check the browsers beside your conversations. Try again in a moment.",
+    };
+  }
+  const rows = (data ?? []) as Record<string, unknown>[];
+  if (rows.some((row) => row.live_state === "agent" || row.live_state === "human")) {
+    return { kind: "error", status: 409, message: CONVERSATION_BROWSER_IN_USE };
+  }
+  if (!options.stopIdle) return null;
+
+  const idle = rows.filter((row) => row.live_state === "none" && text(row.provider_browser_id));
+  if (idle.length > IDLE_BROWSER_STOPS) {
+    console.warn("more idle browsers than a takeover stops; the sweep has the rest", idle.length);
+  }
+
+  for (const row of idle.slice(0, IDLE_BROWSER_STOPS)) {
+    const browserId = text(row.provider_browser_id) as string;
+    const stopped = await stopSessionBrowsers(env, {
+      providerSessionId: text(row.provider_session_id),
+      storedBrowserId: browserId,
+    });
+    if (!stopped) {
+      console.warn("opening a takeover beside an idle browser that would not stop");
+      continue;
+    }
+    const { error: clearError } = await db
+      .from("browser_sessions")
+      .update({ provider_browser_id: null })
+      .eq("id", String(row.id))
+      .eq("user_id", userId)
+      .eq("live_state", "none")
+      .eq("provider_browser_id", browserId);
+    // Not fatal: the browser is stopped, and the idle sweep's stop of a
+    // stopped browser is a no-op that clears the marker.
+    if (clearError) console.error("could not record a stopped idle browser", problem(clearError));
   }
   return null;
 }
@@ -955,8 +1187,10 @@ export async function openTakeover(
       return {
         kind: "error",
         status: 409,
+        // A whole sentence, naming the button by its label: the panel and
+        // the takeover card show it as it comes.
         message:
-          "you already have a browser open. Finish signing in and press done in that one, or " +
+          "You already have a browser open. Finish signing in and press Done in that one, or " +
           "wait for it to close, before opening another.",
       };
     }
@@ -969,11 +1203,35 @@ export async function openTakeover(
   }
 
   /**
+   * One jar, one writer (rulings R44, R46): every takeover is refused while a
+   * conversation's browser is in use, before anything is rented. A takeover
+   * with no task — the person's own browser, opened from the chat header (Task
+   * 3.1) — also stops their idle ones; a v2 task's only refuses. Before the
+   * headroom, so idle browsers stopped here are back in the pool before it is
+   * counted.
+   */
+  const blocked = await clearTheJar(env, deps, input.userId, {
+    stopIdle: !input.browserTaskId,
+  });
+  if (blocked) return blocked;
+
+  /**
    * Before the network, deliberately — `composio.ts:264-268`'s rule. With the
    * pool at ten, one person's login dialog could otherwise 429 every other
    * tenant's task for fifteen minutes, and their own re-run with it.
    */
   const headroom = await accountHeadroom(env);
+  /**
+   * No `BROWSER_USE_API_KEY` on this deployment: `send` answers 501 before
+   * the network. "Try again shortly" would be a promise nothing keeps, so it
+   * is said as what it is — with the 501 every other route gives a missing
+   * key (`composio.ts`, `connections.ts`). Decided by the key itself, not by
+   * the status (ruling R51): a 501 from the provider, on a deployment that
+   * has one, is a failed read like any other, answered below.
+   */
+  if (headroom.kind === "error" && !hasBrowserKey(env)) {
+    return { kind: "error", status: 501, message: "This Covan has no browser set up." };
+  }
   if (headroom.kind === "error") {
     console.error("could not read browser-use headroom", headroom.status);
     return {
@@ -1160,23 +1418,29 @@ export async function openTakeover(
  * Three outcomes, and the middle one is the state the first version did not
  * have a name for:
  *
- * - **a list with something in it** — written, and the answer.
- * - **an empty list, every time we asked** — a browser somebody opened and
- *   signed into nothing in. Genuinely empty, and `closeTakeover` is right to
- *   say the sign-in did not stick.
+ * - **a list the provider wrote after the stop** — the answer, empty
+ *   included: a browser somebody opened and signed into nothing in is
+ *   genuinely empty, and `closeTakeover` is right to say the sign-in did not
+ *   stick.
  * - **null** — the provider would not say. NOT an empty jar: the browser
  *   stopped cleanly, so the cookies were persisted whatever this read
- *   answered, and the re-run goes ahead. One attempt only, because a refused
- *   read is a refused read and asking eight times would turn a provider
- *   outage into an eight-second request.
+ *   answered, and the re-run goes ahead. One attempt only on a refused read,
+ *   because a refused read is a refused read and asking eight times would turn
+ *   a provider outage into an eight-second request. And null too when every
+ *   read was older than the stop (`jarWrittenSince`): the provider has saved
+ *   a jar on a stop without ever moving the profile, so a list from before
+ *   the stop says nothing about this one, and "did not stick" would be a guess.
  *
- * Only the empty-list case waits, because only the empty-list case is
- * ambiguous. See `JAR_ATTEMPTS` for why its margin is generous.
+ * `stoppedAt` is the stop's `finishedAt`. Without it there is no time to
+ * compare, and the first rule stands: a non-empty list is the answer, an empty
+ * one is waited out and then believed. See `JAR_ATTEMPTS` for why its margin
+ * is generous.
  */
 async function settledJar(
   env: RoutineEnv,
   deps: TakeoverDeps,
   providerProfileId: string,
+  stoppedAt: string | null,
 ): Promise<string[] | null> {
   for (let attempt = 0; attempt < JAR_ATTEMPTS; attempt += 1) {
     const read = await getProfile(env, providerProfileId);
@@ -1184,10 +1448,14 @@ async function settledJar(
       console.error("stopped a takeover but could not read the jar back", read.status);
       return null;
     }
-    if (read.value.cookieDomains.length > 0) return read.value.cookieDomains;
+    if (jarWrittenSince(read.value, stoppedAt)) return read.value.cookieDomains;
     // Nothing yet. Not slept after the last attempt, so the caller is not held
     // for a second that buys no further read.
     if (attempt < JAR_ATTEMPTS - 1) await deps.sleep(JAR_DELAY_MS);
+  }
+  if (stoppedAt) {
+    console.log("stopped a takeover but its jar was not written since; not saying what it holds");
+    return null;
   }
   return [];
 }
@@ -1208,7 +1476,13 @@ async function settledJar(
 async function recordStop(
   env: RoutineEnv,
   deps: TakeoverDeps,
-  row: { userId: string; takeoverId: string; profileId: string },
+  row: {
+    userId: string;
+    takeoverId: string;
+    profileId: string;
+    /** The stop's `finishedAt`, which `settledJar` waits for the jar to be written after. */
+    stoppedAt: string | null;
+  },
 ): Promise<{ profile: TakeoverProfile; cookieDomains: string[] | null } | null> {
   const { db, now } = deps;
   const { userId, takeoverId } = row;
@@ -1254,7 +1528,7 @@ async function recordStop(
   if (stopError)
     console.error("could not record a takeover's stop", takeoverId, problem(stopError));
 
-  const cookieDomains = await settledJar(env, deps, providerProfileId);
+  const cookieDomains = await settledJar(env, deps, providerProfileId, row.stoppedAt);
   if (cookieDomains) {
     const { error } = await db
       .from("browser_profiles")
@@ -1336,7 +1610,12 @@ async function closeStale(
     return;
   }
 
-  await recordStop(env, deps, { userId, takeoverId, profileId: row.profileId });
+  await recordStop(env, deps, {
+    userId,
+    takeoverId,
+    profileId: row.profileId,
+    stoppedAt: stopped.value.finishedAt ?? null,
+  });
 }
 
 /**
@@ -1431,6 +1710,7 @@ export async function closeTakeover(
   }
 
   let settled = stopped.value.status === "stopped";
+  let finishedAt = stopped.value.finishedAt ?? null;
   for (let attempt = 0; !settled && attempt < SETTLE_ATTEMPTS; attempt += 1) {
     await sleep(SETTLE_DELAY_MS);
     const state = await browserState(env, providerSessionId);
@@ -1439,6 +1719,7 @@ export async function closeTakeover(
       break;
     }
     settled = state.value.status === "stopped";
+    finishedAt = state.value.finishedAt ?? null;
   }
   if (!settled) {
     // `provider_stopped_at` stays null, so the sweep finishes this.
@@ -1454,6 +1735,7 @@ export async function closeTakeover(
     userId: input.userId,
     takeoverId,
     profileId: String(claimed.profile_id),
+    stoppedAt: finishedAt,
   });
   /**
    * Its own sentence, not `CLOSE_FAILED`.
@@ -1503,6 +1785,24 @@ export async function closeTakeover(
     original = data as RetryableTask;
   }
 
+  /**
+   * A takeover with no task is the person's own browser, opened from the chat
+   * header to sign in ahead of time (Task 3.1). Nothing was waiting on it, so
+   * its two answers say what happened to the jar and nothing about a task —
+   * there never was one to run again.
+   */
+  if (!original) {
+    return {
+      kind: "ok",
+      retriedTaskId: null,
+      cookieDomains: cookieDomains ?? [],
+      message:
+        cookieDomains && cookieDomains.length === 0
+          ? "the browser is closed, but it closed with no cookies saved, so no sign-in was kept."
+          : "the browser is closed and your sign-ins are saved to your browser profile.",
+    };
+  }
+
   if (cookieDomains && cookieDomains.length === 0) {
     return {
       kind: "ok",
@@ -1512,15 +1812,6 @@ export async function closeTakeover(
         "that sign-in didn't stick — the browser closed with no cookies saved, so the task " +
         "was not run again. Ask again and it will start a fresh task, which can be taken " +
         "over in turn.",
-    };
-  }
-
-  if (!original) {
-    return {
-      kind: "ok",
-      retriedTaskId: null,
-      cookieDomains: cookieDomains ?? [],
-      message: "your sign-in is saved. Nothing was waiting on it, so nothing was run.",
     };
   }
 

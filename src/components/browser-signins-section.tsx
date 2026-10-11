@@ -14,6 +14,7 @@ import {
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
+import { OpenBrowsersList } from "@/components/open-browsers";
 import { SavedLoginsList } from "@/components/saved-logins";
 import { api, ApiError } from "@/lib/api-client";
 
@@ -45,11 +46,29 @@ import { api, ApiError } from "@/lib/api-client";
  * and the shared ones they can see — label, site, who it is for, last used,
  * Forget — never a username (`SavedLoginsList`). Each section draws only when
  * it has something to show.
+ *
+ * **And the browsers of theirs that may still be open (Task 3.2, ruling
+ * R48)**, each with the way to end it that already exists: the panel's close,
+ * or the takeover's Done (`OpenBrowsersList`). Directly under the sign-ins
+ * rather than last, because the two are one subject: stopping a browser is
+ * what saves what was signed in there, and an open one is what Forget refuses
+ * on — the person who meets that refusal finds the browser just below it.
  */
 export function BrowserSignInsSection() {
   return (
     <>
       <CookieJarSection />
+      <OpenBrowsersList
+        wrap={(list) => (
+          <section className="mt-16">
+            <SectionHeading
+              title="Open browsers"
+              description="Browsers of yours that may still be open. Stopping one saves its sign-ins; none is stopped while the agent is using it."
+            />
+            <SectionCard className="mt-6">{list}</SectionCard>
+          </section>
+        )}
+      />
       <SavedLoginsList
         wrap={(list) => (
           <section className="mt-16">
@@ -138,10 +157,14 @@ function CookieJarSection() {
           </div>
         ) : (
           // A row with no domains is a real state, not a loading one: a profile
-          // is created the first time a takeover is opened, and the jar is
-          // empty until a stop has saved something into it.
+          // is created the first time a browser needs one, and the list is
+          // filled in when a stop has saved something into it. Not "nothing
+          // saved": on 2026-10-11 the provider saved a jar on a stop and never
+          // reported it, so an empty list can sit beside a jar that holds
+          // cookies — which is also why Forget is offered either way.
           <p className="text-sm leading-[1.5] text-muted-foreground">
-            No sign-ins have been saved yet.
+            No sites are listed yet. The list fills in after a browser of yours stops, and can lag
+            behind it.
           </p>
         )}
 

@@ -108,6 +108,48 @@ async function fillAndSave(label?: string) {
   await userEvent.click(screen.getByRole("button", { name: "Save and continue" }));
 }
 
+/**
+ * Found in the 2026-10-11 e2e: a run sent without `site` carried no login, met
+ * the wall with one saved for the site, and the card offered to save another.
+ */
+describe("a login already saved for the site", () => {
+  const SAVED = { id: "cred-q", label: "LinkedIn — sales account", siteHost: "linkedin.com" };
+
+  it("offers to try again with it, instead of the Saves", () => {
+    renderCard({ savedLogin: SAVED });
+
+    expect(screen.getByText("linkedin.com needs you to sign in.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/try again with your saved login, LinkedIn — sales account/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Just this once" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Try again with the saved login" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save for me" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save for everyone using this agent" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hands back with that login, by the host it was saved for", async () => {
+    const { props } = renderCard({ host: "accounts.linkedin.com", savedLogin: SAVED });
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again with the saved login" }));
+
+    expect(props.onSaved).toHaveBeenCalledWith("linkedin.com", "cred-q");
+  });
+
+  it("asks to update it instead when it is the login that just failed", () => {
+    renderCard({ carriedSavedLogin: true, savedLogin: SAVED });
+
+    expect(
+      screen.queryByRole("button", { name: "Try again with the saved login" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update for me" })).toBeInTheDocument();
+  });
+});
+
 describe("the three choices", () => {
   it("offers Just this once, Save for me and Save for everyone when the wall named its site", () => {
     renderCard();

@@ -17,12 +17,17 @@ import {
   type CredentialScope,
   type SaveRefusal,
 } from "../lib/browser/credentials";
+import { openBrowsersAmong } from "../lib/browser/live";
 import { browserLiveUrl } from "../lib/browser/profiles";
+import { runInFlight } from "../lib/browser/sessions";
+import { HUMAN_GIVE_UP_HOURS } from "../lib/browser/sweep";
 import {
   closeTakeover,
   forgetProfile,
+  heldTakeover,
   openTakeover,
   providerSessionFor,
+  takeoverStillLive,
   type RetryableTask,
 } from "../lib/browser/takeover";
 
@@ -201,9 +206,12 @@ browser.post("/browser/takeovers", async (c) => {
 
     workspaceId = String(data.workspace_id);
   } else {
-    // No task named: a takeover opened from settings, to sign in ahead of
-    // time. It still needs a room, and the only honest one is a workspace the
-    // caller is actually in — read through their own client for that reason.
+    // No task named: the person's own browser, opened from the chat header to
+    // sign in ahead of time (Task 3.1). `openTakeover` gives it the jar to
+    // itself first — refused while a conversation's browser is in use, idle
+    // ones stopped (ruling R44). It still needs a room, and the only honest
+    // one is a workspace the caller is actually in — read through their own
+    // client for that reason.
     const { data, error } = await db
       .from("workspace_members")
       .select("workspace_id")
@@ -264,7 +272,7 @@ browser.get("/browser/takeovers/current", async (c) => {
 
   const { data, error } = await db
     .from("browser_takeovers")
-    .select("id, browser_task_id, expires_at")
+    .select("id, browser_task_id, expires_at, created_at")
     .eq("user_id", user.id)
     .eq("status", "open")
     .maybeSingle();
@@ -275,10 +283,17 @@ browser.get("/browser/takeovers/current", async (c) => {
   }
   if (!data) return c.json({ takeover: null });
 
-  // Past its window is not a live browser. Answered as "none" rather than
-  // handed back, because opening a new one is what the person wants and
-  // `POST` closes the stale row itself.
-  if (new Date(String(data.expires_at)).getTime() <= Date.now()) {
+  /**
+   * `heldTakeover`'s reading (ruling R51): open is the person's browser until
+   * it is closed, even past `expires_at` — the take-over and the hand-back
+   * refuse on it, so a reload has to give its Done back rather than an Open
+   * browser beside a refusal to press Done somewhere unseen. Done still saves
+   * it, and the sweep closes it otherwise. Only once the provider has
+   * certainly ended the browser (`takeoverStillLive`) is it "none", without
+   * asking; inside that, the provider check below still answers null for a
+   * browser that has gone early.
+   */
+  if (!takeoverStillLive(data.created_at, new Date())) {
     return c.json({ takeover: null });
   }
 
@@ -454,7 +469,39 @@ function offerable(row: { status?: unknown; output?: unknown; retry_of?: unknown
  * service role, keyed to the row id read here AND the caller's own user id.
  */
 
-type BrowserSessionRow = { id: string; live_state: unknown; human_since: unknown };
+type BrowserSessionRow = {
+  id: string;
+  live_state: unknown;
+  human_since: unknown;
+  last_run_at: unknown;
+};
+
+/**
+ * How long after its last run an `agent` row with nothing in flight is taken
+ * as let go (ruling R51). `live_state = 'agent'` outlives a finished run until
+ * the open tab's poll or the cron settles it; ten minutes is the idle sweep's
+ * own reading of "nobody is using this browser" (0078), and well past the
+ * time a finished run takes to be settled by either.
+ */
+const AGENT_LET_GO_MINUTES = 10;
+
+/**
+ * Whether a Stop of this row would be accepted, given whether a run of it is
+ * in flight: never under a run (R50), and an `agent` row only once its last
+ * run is `AGENT_LET_GO_MINUTES` old. A row with no readable last run has no
+ * run to wait on. The stop route and the Settings list both ask this, so
+ * Settings offers Stop exactly when it works.
+ */
+function stopAccepted(
+  row: { live_state: unknown; last_run_at: unknown },
+  running: boolean,
+  now: number,
+): boolean {
+  if (running) return false;
+  if (row.live_state !== "agent") return true;
+  const at = Date.parse(String(row.last_run_at));
+  return !Number.isFinite(at) || now - at >= AGENT_LET_GO_MINUTES * 60_000;
+}
 
 /** The caller's own browser, or the response that says why not. */
 async function ownBrowser(
@@ -463,7 +510,7 @@ async function ownBrowser(
   const { data, error } = await c
     .get("db")
     .from("browser_sessions")
-    .select("id, live_state, human_since")
+    .select("id, live_state, human_since, last_run_at")
     .eq("id", c.req.param("id"))
     .maybeSingle();
   if (error) {
@@ -522,6 +569,31 @@ browser.post("/browser/sessions/:id/take-over", async (c) => {
     if (Number.isFinite(since)) return c.json({ liveState: "human", humanSince: since });
   }
 
+  /**
+   * Ruling R46, R44's reason: not while the caller has a browser of their own
+   * open (Task 3.1). It runs on the jar this one does, and whichever of two
+   * live browsers stops last writes it — so taking this one too could lose
+   * the sign-in being made there, or what is done here. Before
+   * `takeOverBrowser`, which is what cancels a run and asks the provider about
+   * the browser, so a refusal costs nothing. A browser already in the
+   * caller's hands is answered above from the row, as it always was.
+   */
+  const theirOwnOpen = await heldTakeover(c.env, c.get("user").id);
+  if (theirOwnOpen === null) {
+    return c.json({ error: "Couldn't check your other browser. Try again in a moment." }, 500);
+  }
+  if (theirOwnOpen) {
+    // Whole sentences, as the hand-back's below: the panel shows them as they come.
+    return c.json(
+      {
+        error:
+          "Press Done in the browser you opened first, so your sign-in is saved before you take " +
+          "over this one.",
+      },
+      409,
+    );
+  }
+
   const taken = await takeOverBrowser(c.env, owned(c, own.row));
   if (taken.kind === "error") return c.json({ error: taken.message }, taken.status as 502);
   if (taken.kind === "cancelling") return c.json({ liveState: "cancelling" }, 202);
@@ -578,6 +650,31 @@ browser.post("/browser/sessions/:id/hand-back", async (c) => {
   if (own.row.live_state !== "human") {
     return c.json(
       { error: "this browser is not in your hands, so there is nothing to hand back" },
+      409,
+    );
+  }
+
+  /**
+   * Ruling R44: not while the caller has a browser of their own open — the
+   * one opened from the chat header to sign in ahead of time (Task 3.1). It
+   * runs on the jar this run would carry, and whichever of two live browsers
+   * stops last writes it, so the agent's run could overwrite the sign-in being
+   * made there. Before the task reads and before `handBackBrowser`, which is
+   * the only thing here that calls the provider or writes a row, so the free
+   * retry stays where it was. Asked of `takeover.ts`, which reads the
+   * caller's own takeovers by their id (`heldTakeover`).
+   */
+  const theirOwnOpen = await heldTakeover(c.env, c.get("user").id);
+  if (theirOwnOpen === null) {
+    return c.json({ error: "Couldn't check your other browser. Try again in a moment." }, 500);
+  }
+  if (theirOwnOpen) {
+    return c.json(
+      {
+        error:
+          "Press Done in the browser you opened first, so your sign-in is saved before the " +
+          "agent uses it.",
+      },
       409,
     );
   }
@@ -671,6 +768,21 @@ browser.post("/browser/sessions/:id/hand-back", async (c) => {
  * it. Stopping is what saves the jar (*"always stop the session to persist
  * profile state"*); the module says why a failed stop leaves the row for the
  * sweep. Idempotent: a browser already stopped answers 204 again.
+ *
+ * **Never under a running agent run** (ruling R50). A stop does not cancel a
+ * run, and a run whose browser vanished under it settles as a failure (R17)
+ * — so it is refused, 409, while a v4 run of it is still `queued` or
+ * `running` (one more read, `runInFlight`, through the caller's own client),
+ * and while the row says the agent has the browser and its last run is less
+ * than `AGENT_LET_GO_MINUTES` old (`stopAccepted`). Past that, an `agent` row
+ * with nothing in flight is a finished run nobody has settled — a cron that
+ * is not running leaves it there for good — and refusing it for ever was a
+ * browser with no way out from Settings, and none at all once its
+ * conversation was out of sight (ruling R51). Not knowing is a refusal too,
+ * 500: a stop guessed safe is the run killed. The panel's close only hides
+ * while the agent holds the browser, so it does not meet this; Settings' Stop
+ * can, for a run that started after its list was read, and shows the
+ * sentence.
  */
 browser.post("/browser/sessions/:id/stop", async (c) => {
   const refusal = refuseIfKeyAuthenticated(c, "stop a browser");
@@ -679,9 +791,266 @@ browser.post("/browser/sessions/:id/stop", async (c) => {
   const own = await ownBrowser(c);
   if ("refused" in own) return own.refused;
 
+  const running = await runInFlight(c.get("db"), String(own.row.id));
+  if (running === null) {
+    return c.json(
+      { error: "Couldn't check whether the agent is using this browser. Try again in a moment." },
+      500,
+    );
+  }
+  if (!stopAccepted(own.row, running, Date.now())) {
+    return c.json(
+      {
+        error: "The agent is using this browser right now. Take it over in the conversation first.",
+      },
+      409,
+    );
+  }
+
   const stopped = await stopConversationBrowser(c.env, owned(c, own.row));
   if (stopped.kind === "error") return c.json({ error: stopped.message }, stopped.status as 502);
   return c.body(null, 204);
+});
+
+/**
+ * Where a browser is, as the caller may see it: the conversation's title and
+ * agent, each read through the caller's own client. A conversation they can no
+ * longer open — a shared chat made private again, a workspace left — is null,
+ * and the screen says something neutral rather than a title RLS would not
+ * have handed over.
+ */
+type Place = {
+  conversation: { id: string; title: string | null } | null;
+  agent: { id: string; name: string } | null;
+};
+
+/** The columns 0078 grants `authenticated` that this list needs. Never a provider id. */
+const OPEN_BROWSER_COLUMNS = "id, chat_session_id, agent_id, live_state, human_since, last_run_at";
+
+function laterOf(a: unknown, b: unknown): string | null {
+  const times = [a, b].filter((t): t is string => typeof t === "string" && t.length > 0);
+  if (times.length === 0) return null;
+  return times.reduce((x, y) => (Date.parse(y) > Date.parse(x) ? y : x));
+}
+
+/**
+ * GET /browser/sessions — the caller's browsers that may still be open, for
+ * Settings → Browser sign-ins (Task 3.2, ruling R48), each with a way to end it.
+ *
+ * Two kinds. The browser beside a conversation: one the agent or the person
+ * has the controls of, or one nobody has whose browser has not been seen
+ * stopped (the idle sweep's state, 0078). And the caller's open takeover —
+ * the browser they opened to sign in ahead of time (Task 3.1), or a v2 task's
+ * — of which 0077's partial unique index allows one.
+ *
+ * **Everything that decides what is shown is read through `c.get("db")`.**
+ * 0078's policy is the owner's, with the workspace half that makes a removed
+ * member stop seeing their own rows; the select names only columns 0078
+ * grants. Whether a browser is still open is the one thing it cannot answer —
+ * `provider_browser_id` is granted to no client role — so the ids RLS
+ * returned are handed to `openBrowsersAmong`, which reads that column with
+ * the service role, narrowed to those ids and this caller, and answers a set
+ * of Covan's own ids. A boolean per row is all that reaches the response.
+ *
+ * **No provider call and no live URL.** This is a list on a settings page;
+ * minting a live view to draw it would hand out the credential the panel
+ * guards (*"Treat the URL as a credential"*) to a screen that only needs to
+ * say a browser exists. Stored state only: about seven subrequests at most —
+ * the rows, the open-browser read, the runs in flight, the takeover, its
+ * task, the titles and the agents — and fewer when there is less to name.
+ *
+ * **A row whose last run is past the provider's four-hour lifetime is not
+ * asked about.** The provider has ended that browser whatever the row says
+ * (`sweep.ts` settles such a row without a stop, for that reason), and
+ * leaving it out keeps the `in (...)` to the handful of recent ones rather
+ * than every conversation that ever browsed.
+ *
+ * Refused to an API key for `GET /browser/profile`'s reason: which browsers of
+ * somebody's are open, where, and in whose hands is reconnaissance rather
+ * than work (`HANDLERS_BEYOND_THE_KEY` pins it by handler).
+ */
+browser.get("/browser/sessions", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "see which browsers are open");
+  if (refusal) return c.json(refusal, 403);
+
+  const db = c.get("db");
+  const user = c.get("user");
+  const failed = { error: "failed to load your open browsers" };
+
+  // Newest first (M7): PostgREST answers at most a thousand rows, and the
+  // ones it would cut are then the oldest — past the provider's four-hour
+  // lifetime, for anybody short of a thousand runs in four hours — never the
+  // one used a minute ago.
+  const { data: sessionRows, error } = await db
+    .from("browser_sessions")
+    .select(OPEN_BROWSER_COLUMNS)
+    .eq("user_id", user.id)
+    .order("last_run_at", { ascending: false });
+  if (error) {
+    console.error("could not list a person's browsers", { code: error.code });
+    return c.json(failed, 500);
+  }
+  type Row = {
+    id: unknown;
+    chat_session_id: unknown;
+    agent_id: unknown;
+    live_state: unknown;
+    human_since: unknown;
+    last_run_at: unknown;
+  };
+  const rows = (sessionRows ?? []) as Row[];
+
+  const lifetime = HUMAN_GIVE_UP_HOURS * 3_600_000;
+  const held = (row: Row) => row.live_state === "agent" || row.live_state === "human";
+  const candidates = rows.filter((row) => {
+    if (held(row)) return true;
+    const at = Date.parse(String(row.last_run_at));
+    return Number.isFinite(at) && Date.now() - at <= lifetime;
+  });
+
+  const open =
+    (await openBrowsersAmong(c.env, {
+      userId: user.id,
+      browserSessionIds: candidates.map((row) => String(row.id)),
+    })) ?? new Set<string>();
+  // Not knowing which are open shows what the rows themselves say: the ones
+  // somebody has the controls of. An idle one is the sweep's either way.
+  const listed = candidates.filter((row) => held(row) || open.has(String(row.id)));
+
+  let running = new Set<string>();
+  if (listed.length > 0) {
+    const { data: runs, error: runsError } = await db
+      .from("browser_tasks")
+      .select("browser_session_id")
+      .in(
+        "browser_session_id",
+        listed.map((row) => String(row.id)),
+      )
+      .in("status", ["queued", "running"]);
+    if (runsError) {
+      /**
+       * Fails closed: not knowing is "every row the agent has is running".
+       * A row drawn as not running offers a Stop, and under a run that is a
+       * button that can only fail: the stop route refuses it (R50), because
+       * a stop would pull the browser out from under the agent mid-run,
+       * which R17 and R48 forbid. The agent's rows then say
+       * "the agent is using it" and link to their conversation, where the
+       * panel decides with its own poll; the person's and the idle ones are
+       * nobody's run and keep their Stop. Not a 500, because the rest of the
+       * list is still right and is the reason the person came here.
+       */
+      console.error("could not read a person's browser runs", { code: runsError.code });
+      running = new Set(
+        listed.filter((row) => row.live_state === "agent").map((row) => String(row.id)),
+      );
+    } else {
+      running = new Set(
+        ((runs ?? []) as Array<{ browser_session_id: unknown }>).map((r) =>
+          String(r.browser_session_id),
+        ),
+      );
+    }
+  }
+
+  const { data: takeoverRow, error: takeoverError } = await db
+    .from("browser_takeovers")
+    .select("id, browser_task_id, expires_at, created_at")
+    .eq("user_id", user.id)
+    .eq("status", "open")
+    .maybeSingle();
+  if (takeoverError) {
+    console.error("could not look for a person's open takeover", { code: takeoverError.code });
+    return c.json(failed, 500);
+  }
+
+  // A task's takeover is where its task was asked; the caller's own browser
+  // (Task 3.1) belongs to no conversation.
+  let takeoverChat: string | null = null;
+  let takeoverAgent: string | null = null;
+  if (takeoverRow?.browser_task_id) {
+    const { data: task } = await db
+      .from("browser_tasks")
+      .select("id, session_id, agent_id")
+      .eq("id", String(takeoverRow.browser_task_id))
+      .maybeSingle();
+    if (task) {
+      takeoverChat = task.session_id ? String(task.session_id) : null;
+      takeoverAgent = task.agent_id ? String(task.agent_id) : null;
+    }
+  }
+
+  const chatIds = [
+    ...new Set([
+      ...listed.map((row) => String(row.chat_session_id)),
+      ...(takeoverChat ? [takeoverChat] : []),
+    ]),
+  ];
+  const agentIds = [
+    ...new Set([
+      ...listed.map((row) => String(row.agent_id)),
+      ...(takeoverAgent ? [takeoverAgent] : []),
+    ]),
+  ];
+
+  const titles = new Map<string, string | null>();
+  if (chatIds.length > 0) {
+    const { data: chats, error: chatsError } = await db
+      .from("chat_sessions")
+      .select("id, title")
+      .in("id", chatIds);
+    if (chatsError) console.error("could not name a person's browsers", { code: chatsError.code });
+    for (const chat of (chats ?? []) as Array<{ id: unknown; title: unknown }>) {
+      titles.set(String(chat.id), typeof chat.title === "string" && chat.title ? chat.title : null);
+    }
+  }
+  const names = new Map<string, string>();
+  if (agentIds.length > 0) {
+    const { data: agents, error: agentsError } = await db
+      .from("agents")
+      .select("id, name")
+      .in("id", agentIds);
+    if (agentsError) {
+      console.error("could not name a person's browsers' agents", { code: agentsError.code });
+    }
+    for (const agent of (agents ?? []) as Array<{ id: unknown; name: unknown }>) {
+      names.set(String(agent.id), String(agent.name ?? ""));
+    }
+  }
+
+  const place = (chatId: string | null, agentId: string | null): Place => ({
+    conversation:
+      chatId && titles.has(chatId) ? { id: chatId, title: titles.get(chatId) ?? null } : null,
+    agent: agentId && names.has(agentId) ? { id: agentId, name: names.get(agentId)! } : null,
+  });
+
+  const browsers = listed
+    .map((row) => ({
+      id: String(row.id),
+      ...place(String(row.chat_session_id), String(row.agent_id)),
+      liveState: row.live_state === "agent" || row.live_state === "human" ? row.live_state : "none",
+      running: running.has(String(row.id)),
+      // The stop route's own rule, so Settings offers Stop exactly when it
+      // would be accepted (ruling R51). A runs read that failed counts every
+      // agent row as running, so it is not stoppable either: fails closed.
+      stoppable: stopAccepted(row, running.has(String(row.id)), Date.now()),
+      browserOpen: open.has(String(row.id)),
+      lastUsedAt: laterOf(row.last_run_at, row.human_since),
+    }))
+    // Most recently used first; a row with no time at all goes last.
+    .sort((a, b) => (Date.parse(b.lastUsedAt ?? "") || 0) - (Date.parse(a.lastUsedAt ?? "") || 0));
+
+  return c.json({
+    browsers,
+    takeover: takeoverRow
+      ? {
+          id: String(takeoverRow.id),
+          forTask: Boolean(takeoverRow.browser_task_id),
+          ...place(takeoverChat, takeoverAgent),
+          openedAt: String(takeoverRow.created_at),
+          expiresAt: String(takeoverRow.expires_at),
+        }
+      : null,
+  });
 });
 
 /**

@@ -71,8 +71,42 @@ export type RunSummary = {
  * One entry of a run's event log.
  *
  * `data` is whatever the provider put there, minus every live or CDP URL — see
- * `scrubEvent`. For a `browser.ready` or `browser.reattached` event it is
- * `{ browser_session_id }` and nothing else.
+ * `scrubEvent`. For a `browser.attached`, `browser.ready` or
+ * `browser.reattached` event it is `{ browser_session_id }` and nothing else.
+ *
+ * **The catalogue (Task 3.4).** The provider publishes none; these are the
+ * `type` values eight real runs sent on 2026-10-11, in the order a run sends
+ * them, with the fields of `data` each carried. `live.ts`'s `eventLine` turns
+ * them into the panel's lines.
+ *
+ * - `run.created` — `model`, `session_id`, `workspace_id`, `is_free_tier`,
+ *   `browser_settings` (`profile_id`, `proxy_country_code`, `custom_proxy` as
+ *   a boolean, …) and `secret_bindings` as `{ alias, allowed_domains }` only:
+ *   no value.
+ * - `run.dispatching` (`transport`), `run.dispatched` (`transport`,
+ *   `browser_session_id`), `worker.started`, `workspace.ready`, `core.spawn`.
+ * - `browser.attached` — `browser_session_id`, `live_view_url`,
+ *   `cdp_url_present`; then `browser.ready` (`browser_session_id`,
+ *   `live_view_url`) on a new browser, or `browser.reattached` (the same) on a
+ *   follow-up in the conversation's browser.
+ * - `llm.request` / `llm.response` — one pair per model call: model, token
+ *   counts, `cost_usd`.
+ * - `core.event` — the provider agent's own transcript, `data.type` one of
+ *   `step_start`, `reasoning` (encrypted), `tool_use`, `step_finish`, `text`,
+ *   with the detail in `data.part`. A `tool_use` names `part.tool`:
+ *   `browser_execute` (its `state.input.description` is the agent's own
+ *   sentence for the step; `state.input.code` and `state.output` are the code
+ *   and the page), `skill`, or `bash` — which is how it types a saved login,
+ *   `POST …/secrets/<alias>/type`, answering `{ alias, code, ok, origin }` and
+ *   never the value. A `text` part is what the agent says, its last one the
+ *   run's JSON answer.
+ * - `secret.typed` — `secret: { alias, origin }`, once per field typed.
+ * - `outputs.promoted`, `state.promoted`, `run.completed`, `browser.released`
+ *   (`status`: `kept_alive`, `timeout_at`, `browser_session_id`),
+ *   `worker.session_released`.
+ *
+ * Only the three browser events carried a live URL, and no event carried a
+ * `wss://` address or a secret's value.
  */
 export type RunEvent = { id: number; ts: string; type: string; data: Record<string, unknown> };
 
@@ -289,7 +323,7 @@ export function runSummary(
 const URL_KEYS = new Set(["live_view_url", "cdp_url", "liveUrl", "cdpUrl", "liveViewUrl"]);
 
 /** The browser events: the ones that announce a browser and, today, carry its URLs. */
-const BROWSER_EVENT_TYPES = new Set(["browser.ready", "browser.reattached"]);
+const BROWSER_EVENT_TYPES = new Set(["browser.attached", "browser.ready", "browser.reattached"]);
 
 function withoutUrlKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutUrlKeys);
@@ -304,12 +338,12 @@ function withoutUrlKeys(value: unknown): unknown {
 }
 
 /**
- * **An allowlist for the two browser events, a denylist for the rest.**
+ * **An allowlist for the three browser events, a denylist for the rest.**
  *
  * `browser.ready`/`browser.reattached` are the events documented to carry the
- * URLs, so for them nothing is copied except `browser_session_id`: a URL-valued
- * field the provider adds next month cannot get through a rule that names what
- * IS kept. Other events are free-form text the poller shows as progress, and
+ * URLs, and real runs showed `browser.attached` carrying one too, so for them
+ * nothing is copied except `browser_session_id`: a URL-valued field the
+ * provider adds next month cannot get through a rule that names what IS kept. Other events are free-form text the poller shows as progress, and
  * allowlisting those would blank the feature; for them the known URL keys are
  * stripped at any depth, as a second belt rather than the first.
  */

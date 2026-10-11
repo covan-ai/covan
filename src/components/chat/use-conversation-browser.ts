@@ -155,7 +155,8 @@ export function useConversationBrowser(sessionId: string | undefined) {
 
 type View = {
   sessionId: string | undefined;
-  mode: "auto" | "shown" | "hidden";
+  /** `shown` by the person; `latched` when it opened by itself, and stays. */
+  mode: "auto" | "shown" | "latched" | "hidden";
   /** The newest task when the person hid the panel: a newer one opens it again. */
   dismissed: string | null;
 };
@@ -182,7 +183,19 @@ export function useBrowserPanel(sessionId: string | undefined, narrow: boolean) 
   const newest = data?.tasks[0]?.id ?? null;
   const wanted = shouldPoll(data) || !!signInFor(data);
   const dismissed = current.mode === "hidden" && current.dismissed === newest;
-  const open = !!sessionId && (current.mode === "shown" || (!narrow && wanted && !dismissed));
+  const opensByItself = !narrow && wanted && !dismissed;
+  // Once it has opened by itself it stays until the person closes it: the
+  // run finishing ends `wanted`, but the browser is still there, idle, with
+  // the page the agent just read (found in the end-to-end run). Set during
+  // render, the way React keeps state derived from earlier renders. `latched`
+  // rather than `shown`, so a window narrowed below `lg` afterwards still
+  // does not get a sheet it never asked for.
+  if (sessionId && opensByItself && current.mode !== "shown" && current.mode !== "latched") {
+    setView({ sessionId, mode: "latched", dismissed: null });
+  }
+  const open =
+    !!sessionId &&
+    (current.mode === "shown" || (current.mode === "latched" && !narrow) || opensByItself);
 
   return {
     /** A browser exists beside this conversation, so the header control is worth showing. */

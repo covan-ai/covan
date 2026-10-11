@@ -26,10 +26,18 @@ const takeOver = vi.fn();
 const handBack = vi.fn();
 const stop = vi.fn();
 const save = vi.fn();
+const takeoverCurrent = vi.fn();
+const takeoverOpen = vi.fn();
+const takeoverClose = vi.fn();
 
 vi.mock("@/lib/api-client", () => ({
   api: {
     sessions: { browserTasks: (...a: unknown[]) => browserTasks(...a) },
+    takeovers: {
+      current: (...a: unknown[]) => takeoverCurrent(...a),
+      open: (...a: unknown[]) => takeoverOpen(...a),
+      close: (...a: unknown[]) => takeoverClose(...a),
+    },
     browser: {
       live: (...a: unknown[]) => live(...a),
       takeOver: (...a: unknown[]) => takeOver(...a),
@@ -58,6 +66,7 @@ function task(over: Partial<BrowserTask> = {}): BrowserTask {
     browserSessionId: "bs-1",
     signInHost: null,
     carriedSavedLogin: false,
+    savedLogin: null,
     ...over,
   };
 }
@@ -117,6 +126,18 @@ beforeEach(() => {
     return { browserTaskId: "task-2" };
   });
   stop.mockReset().mockResolvedValue(undefined);
+  // Nobody has a browser of their own open, which is the ordinary case.
+  takeoverCurrent.mockReset().mockResolvedValue({ takeover: null });
+  takeoverOpen.mockReset().mockResolvedValue({
+    id: "to-1",
+    liveUrl: SECRET,
+    expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+  });
+  takeoverClose.mockReset().mockResolvedValue({
+    retriedTaskId: null,
+    cookieDomains: ["linkedin.com"],
+    message: "the browser is closed and your sign-ins are saved to your browser profile.",
+  });
   save.mockReset().mockResolvedValue({
     credential: {
       id: "cred-1",
@@ -605,8 +626,9 @@ describe("the sign-in prompt", () => {
     live.mockRejectedValue(new ApiError(409, "no browser is open beside this conversation"));
     renderPanel();
 
-    // The header's window control appears once the poll has answered a session.
-    await screen.findByRole("button", { name: "Open in new window" });
+    // A stopped browser is no browser to show, so the panel offers one of the
+    // person's own instead (Task 3.1, fix round 1) — once the poll has answered.
+    await screen.findByRole("button", { name: "Open browser" });
     expect(screen.queryByText(/needs you to sign in/)).toBeNull();
     expect(screen.queryByText("Waiting for you to sign in")).toBeNull();
   });
@@ -707,6 +729,24 @@ describe("closing", () => {
     expect(stop).not.toHaveBeenCalled();
   });
 
+  /**
+   * Ruling R50: the stop route refuses while the row says the agent has the
+   * browser, run or no run — so the panel's close hides there too, rather
+   * than asking "Close the browser?" and then showing the server's 409.
+   */
+  it("only hides the panel while the agent holds the browser, even with no run going", async () => {
+    browserTasks.mockResolvedValue(
+      snapshot("agent", [task({ status: "finished", output: "found it" })]),
+    );
+    const { onHide } = renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Close the browser" }));
+    expect(onHide).toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    expect(screen.queryByText(/close the browser\?/i)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("stops the browser otherwise, after saying the sign-ins are kept", async () => {
     browserTasks.mockResolvedValue(personDriving());
     const { onHide } = renderPanel();
@@ -756,5 +796,327 @@ describe("what the agent did", () => {
 
     const lines = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(lines).toEqual(["Opened the portal", "Clicked Invoices"]);
+  });
+});
+
+/**
+ * Task 3.1: a browser of your own, opened from the chat header to sign in
+ * ahead of time, so the agent's browser later finds you signed in.
+ *
+ * The same rules as the agent's browser where they apply — the URL is a
+ * credential held in component state, the frame is the person's to touch —
+ * and three of its own: nothing is rented until the person presses Open
+ * browser, a takeover that belongs to a task is the transcript card's and not
+ * this panel's (ruling R43), and Done is the close that saves the jar.
+ */
+describe("a browser of your own (Task 3.1)", () => {
+  const noBrowser = (): ConversationBrowser => ({
+    tasks: [],
+    session: null,
+    events: [],
+    delivered: false,
+  });
+  const inTen = () => new Date(Date.now() + 10 * 60_000).toISOString();
+
+  async function openIt() {
+    await userEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+    return screen.findByTitle("Your browser");
+  }
+
+  it("offers Open browser in a conversation with no browser, and rents nothing until it is pressed", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
+    expect(screen.getByText(/sign in to sites ahead of time/i)).toBeInTheDocument();
+    expect(takeoverOpen).not.toHaveBeenCalled();
+    expect(screen.queryByTitle("Your browser")).toBeNull();
+    // Nor the agent's pill: there is no agent here to take over from.
+    expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
+  });
+
+  it("opens it in the panel, in the person's hands", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    renderPanel();
+
+    const frame = await openIt();
+    expect(frame).toHaveAttribute("src", SECRET);
+    expect(takeoverOpen).toHaveBeenCalledTimes(1);
+    const wrapper = screen.getByTestId("browser-frame");
+    expect(wrapper).not.toHaveAttribute("inert");
+    expect(wrapper).not.toHaveAttribute("tabindex");
+    expect(wrapper).not.toHaveClass("pointer-events-none");
+    expect(screen.getByText("You are using the browser")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+  });
+
+  it("says how long is left of its window", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverOpen.mockResolvedValue({
+      id: "to-1",
+      liveUrl: SECRET,
+      expiresAt: new Date(Date.now() + 9 * 60_000 + 30_000).toISOString(),
+    });
+    renderPanel();
+
+    await openIt();
+    expect(screen.getByText(/^9:[23]\d left/)).toBeInTheDocument();
+  });
+
+  it("says so once the window is up, and still offers Done", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverCurrent.mockResolvedValue({
+      takeover: {
+        id: "to-1",
+        browserTaskId: null,
+        liveUrl: SECRET,
+        expiresAt: new Date(Date.now() + 1_000).toISOString(),
+      },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderPanel();
+
+    await screen.findByTitle("Your browser");
+    await act(() => vi.advanceTimersByTimeAsync(2_100));
+    // Ruling R49: no more urgent than is true. The sweep's stop saves the jar
+    // as Done's does, so a lapsed window loses nothing.
+    expect(
+      await screen.findByText(
+        "Time is up. Press Done to finish; if you don't, it closes by itself shortly and your sign-ins are still saved.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/press Done now/i)).toBeNull();
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+  });
+
+  it("keeps the live URL in no query cache, no storage and no text", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    const { client, container } = renderPanel();
+
+    await openIt();
+    const queries = client
+      .getQueryCache()
+      .getAll()
+      .map((q) => ({ key: q.queryKey, data: q.state.data }));
+    const mutations = client
+      .getMutationCache()
+      .getAll()
+      .map((m) => ({ key: m.options.mutationKey, data: m.state.data, vars: m.state.variables }));
+    expect(JSON.stringify(queries)).not.toContain("secret-address");
+    expect(JSON.stringify(mutations)).not.toContain("secret-address");
+    const stored = [localStorage, sessionStorage].flatMap((s) =>
+      Array.from({ length: s.length }, (_, i) => `${s.key(i)}=${s.getItem(s.key(i) ?? "")}`),
+    );
+    expect(stored.join("\n")).not.toContain("secret-address");
+    expect(container.textContent ?? "").not.toContain("secret-address");
+  });
+
+  /** Review focus 3, for this browser: a reload re-mints it from the row. */
+  it("gets it back after a reload, without renting another", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverCurrent.mockResolvedValue({
+      takeover: { id: "to-1", browserTaskId: null, liveUrl: SECRET, expiresAt: inTen() },
+    });
+    renderPanel();
+
+    expect(await screen.findByTitle("Your browser")).toHaveAttribute("src", SECRET);
+    expect(takeoverOpen).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Ruling R51 (b): after a reload past the window, `current` answers the
+   * still-open row, and the panel shows it with its Done and the "Time is
+   * up" line — not Open browser beside a refusal to press Done somewhere.
+   */
+  it("gets a browser past its window back after a reload, with Done", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverCurrent.mockResolvedValue({
+      takeover: {
+        id: "to-1",
+        browserTaskId: null,
+        liveUrl: SECRET,
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    renderPanel();
+
+    expect(await screen.findByTitle("Your browser")).toHaveAttribute("src", SECRET);
+    expect(screen.getByText(/^Time is up\. Press Done to finish/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open browser" })).toBeNull();
+  });
+
+  /** Ruling R43: the two never both claim one takeover. */
+  it("leaves a task's takeover to the card in the transcript", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverCurrent.mockResolvedValue({
+      takeover: { id: "to-9", browserTaskId: "task-9", liveUrl: SECRET, expiresAt: inTen() },
+    });
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
+    expect(screen.queryByTitle("Your browser")).toBeNull();
+  });
+
+  /**
+   * Fix round 1 (review): a conversation that has ever browsed keeps its
+   * `browser_sessions` row after the idle stop, reported with `browserReady:
+   * false`. "No browser yet" has to include that, or Open browser is
+   * unreachable in every conversation that ever used one (ruling R42).
+   */
+  it("offers Open browser beside a conversation browser that has been stopped", async () => {
+    browserTasks.mockResolvedValue(
+      snapshot("none", [task({ status: "finished", output: "found it" })], {
+        session: { id: "bs-1", liveState: "none", humanSince: null, browserReady: false },
+      }),
+    );
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
+    expect(takeoverOpen).not.toHaveBeenCalled();
+  });
+
+  /** Fix round 1, item 5: a race must never hide a live conversation browser and its controls. */
+  it.each([
+    ["the agent is driving", agentDriving, "Take over"],
+    ["the person is driving", personDriving, "Done"],
+  ])("never hides a conversation browser while %s", async (_label, make, control) => {
+    browserTasks.mockResolvedValue(make());
+    takeoverCurrent.mockResolvedValue({
+      takeover: { id: "to-1", browserTaskId: null, liveUrl: SECRET, expiresAt: inTen() },
+    });
+    renderPanel();
+
+    expect(await screen.findByTitle("The agent's browser")).toBeInTheDocument();
+    await waitFor(() => expect(takeoverCurrent).toHaveBeenCalled());
+    // Let its answer land, so what follows is the view after it, not before.
+    await act(async () => {});
+    expect(screen.queryByTitle("Your browser")).toBeNull();
+    expect(screen.getByRole("button", { name: control })).toBeInTheDocument();
+  });
+
+  it("is shown over a conversation browser nobody is using, so its Done can be found", async () => {
+    browserTasks.mockResolvedValue(idle());
+    takeoverCurrent.mockResolvedValue({
+      takeover: { id: "to-1", browserTaskId: null, liveUrl: SECRET, expiresAt: inTen() },
+    });
+    renderPanel();
+
+    expect(await screen.findByTitle("Your browser")).toBeInTheDocument();
+    expect(screen.queryByTitle("The agent's browser")).toBeNull();
+  });
+
+  it("Done closes it, which is what saves the sign-ins, and says so", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    renderPanel();
+
+    await openIt();
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    expect(takeoverClose).toHaveBeenCalledWith("to-1");
+    expect(await screen.findByText(/your sign-ins are saved/i)).toBeInTheDocument();
+    expect(screen.queryByTitle("Your browser")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open browser" })).toBeInTheDocument();
+  });
+
+  it("closing the panel asks first, and closing the browser is Done", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    const { onHide } = renderPanel();
+
+    await openIt();
+    await userEvent.click(screen.getByRole("button", { name: "Close the browser" }));
+    expect(screen.getByText(/closing it saves your sign-ins/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close it" }));
+
+    expect(takeoverClose).toHaveBeenCalledWith("to-1");
+    await waitFor(() => expect(onHide).toHaveBeenCalled());
+  });
+
+  it("treats a browser the sweep already closed as closed", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverClose.mockRejectedValue(new ApiError(409, "that takeover is already closed"));
+    renderPanel();
+
+    await openIt();
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+
+    // Every way a takeover is closed stops its browser — Done, the sweep, a
+    // new Open over a lapsed one — and the stop is what saves the jar.
+    expect(
+      await screen.findByText(
+        "This browser has already been closed, and your sign-ins were saved.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByTitle("Your browser")).toBeNull();
+  });
+
+  /**
+   * M4: one already open — in another tab, say, opened after this panel
+   * mounted. The 409 is not the end of it: the panel asks which browser is
+   * open, and a task-less one is this panel's to show (ruling R43).
+   */
+  it("adopts the browser a 409 says is already open, when it is the person's own", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverOpen.mockRejectedValue(
+      new ApiError(
+        409,
+        "You already have a browser open. Finish signing in and press Done in that one.",
+      ),
+    );
+    renderPanel();
+    await waitFor(() => expect(takeoverCurrent).toHaveBeenCalledTimes(1));
+    takeoverCurrent.mockResolvedValue({
+      takeover: { id: "to-2", browserTaskId: null, liveUrl: SECRET, expiresAt: inTen() },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+
+    expect(await screen.findByTitle("Your browser")).toHaveAttribute("src", SECRET);
+    expect(takeoverCurrent).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+  });
+
+  it("says the 409 when the browser already open is a task's, which is not this panel's", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverOpen.mockRejectedValue(
+      new ApiError(
+        409,
+        "You already have a browser open. Finish signing in and press Done in that one.",
+      ),
+    );
+    renderPanel();
+    await waitFor(() => expect(takeoverCurrent).toHaveBeenCalledTimes(1));
+    takeoverCurrent.mockResolvedValue({
+      takeover: { id: "to-9", browserTaskId: "task-9", liveUrl: SECRET, expiresAt: inTen() },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^You already have a browser open/);
+    expect(takeoverCurrent).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTitle("Your browser")).toBeNull();
+  });
+
+  it("says a refusal where the button is", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    takeoverOpen.mockRejectedValue(
+      new ApiError(409, "a browser of yours is in use beside a conversation right now"),
+    );
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/in use beside a conversation/);
+    expect(screen.queryByTitle("Your browser")).toBeNull();
+  });
+
+  /** DESIGN.md: the breathing edge is the agent's, only while its run is going. */
+  it("does not breathe the amber edge, which is the agent's", async () => {
+    browserTasks.mockResolvedValue(noBrowser());
+    const { container } = renderPanel();
+
+    await openIt();
+    expect(container.querySelector(".browser-live")).toBeNull();
+    expect(container.querySelector(".bg-accent-orange")).not.toBeNull();
   });
 });

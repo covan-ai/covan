@@ -367,6 +367,34 @@ describe("runEvents", () => {
     expect(serialised).not.toContain("other.example");
   });
 
+  /**
+   * Task 3.4: real runs announce the browser twice, `browser.attached` before
+   * `browser.ready`, and the first carries `live_view_url` too. It is on the
+   * allowlist with the other two rather than left to the denylist.
+   */
+  it("keeps only browser_session_id from browser.attached as well", async () => {
+    fetchMock.mockResolvedValue(
+      json({
+        events: [
+          {
+            ...ready,
+            type: "browser.attached",
+            data: {
+              browser_session_id: BROWSER_ID,
+              live_view_url: LIVE_URL,
+              cdp_url_present: true,
+              viewer_link: "https://other.example/view?token=abc",
+            },
+          },
+        ],
+      }),
+    );
+    const result = await runEvents(ENV, RUN_ID, 0);
+    const events = (result as { value: { events: { data: Record<string, unknown> }[] } }).value
+      .events;
+    expect(events[0].data).toEqual({ browser_session_id: BROWSER_ID });
+  });
+
   it("strips a live or cdp URL field from any other event type as well", async () => {
     fetchMock.mockResolvedValue(
       json({

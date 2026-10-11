@@ -151,8 +151,17 @@ async function readSessionRow(
  * back, never to anything a caller sent. `null` when the read fails, and the
  * caller refuses rather than guessing either way: guessing "no" is a charge
  * for a refusal, guessing "yes" a wrong sentence.
+ *
+ * Exported for `POST /browser/sessions/:id/stop` (ruling R50), which asks it
+ * through the caller's own client — every column it reads is granted to
+ * `authenticated` (0078), and RLS on `browser_tasks` already narrows it to
+ * the caller's runs — and refuses on yes or null: a stop does not cancel a
+ * run, and a run whose browser vanished under it settles as a failure.
  */
-async function runInFlight(db: SupabaseClient, browserSessionId: string): Promise<boolean | null> {
+export async function runInFlight(
+  db: SupabaseClient,
+  browserSessionId: string,
+): Promise<boolean | null> {
   const { data, error } = await db
     .from("browser_tasks")
     .select("id")

@@ -29,7 +29,7 @@ export type QueryResult = {
 export type Filter = {
   column: string;
   value: unknown;
-  kind: "eq" | "neq" | "in" | "gt" | "ilike" | "is" | "not" | "textSearch";
+  kind: "eq" | "neq" | "in" | "gt" | "ilike" | "is" | "not" | "or" | "textSearch";
 };
 
 export type QueryContext = {
@@ -143,6 +143,15 @@ class Chain implements PromiseLike<QueryResult> {
   // different questions.
   not(column: string, operator: string, value: unknown) {
     this.ctx.filters.push({ column, value: { operator, value }, kind: "not" });
+    return this;
+  }
+
+  // PostgREST's `or=(…)`, which supabase-js takes as one string of
+  // comma-separated `column.operator.value` conditions. Recorded whole, with
+  // no column of its own, because the string IS the condition — a test asks
+  // for it verbatim, and `memory-db.ts` evaluates the few shapes in use.
+  or(filters: string) {
+    this.ctx.filters.push({ column: "", value: filters, kind: "or" });
     return this;
   }
 

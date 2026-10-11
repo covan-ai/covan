@@ -56,6 +56,18 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 
 const GAVE_UP = "The agent has not let go of the browser yet. Try again in a moment.";
 
+/** The server's sentences start in lower case, for splicing; on their own they are sentences. */
+function sentence(text: string): string {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+/**
+ * The person's own browser (Task 3.1): a takeover with no task behind it,
+ * opened from this panel to sign in ahead of time. `liveUrl` is the same
+ * credential the agent's view is, and kept the same way — see the file's note.
+ */
+type OwnBrowser = { id: string; liveUrl: string | null; expiresAt: string };
+
 export function BrowserPanel({
   sessionId,
   agentId,
@@ -143,6 +155,33 @@ export function BrowserPanel({
   const [takeOverState, setTakeOverState] = useState<"idle" | "trying" | "gave-up">("idle");
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+
+  /**
+   * The person's own browser, if one is open (Task 3.1).
+   *
+   * Asked for once on mount, which is the reload recovery: the live URL is in
+   * component state and nowhere else, so a reloaded tab re-mints it from the
+   * open row through `GET /browser/takeovers/current`, as the transcript card
+   * does for a task's takeover. **Only a takeover with no task is this
+   * panel's** (ruling R43) — one opened for a task belongs to the v2 card in
+   * the transcript, which claims only a takeover whose task is in its
+   * conversation, so the two never both claim one. A failed ask is no
+   * browser: Open browser is still there, and its 409 says if one is open.
+   */
+  const [own, setOwn] = useState<OwnBrowser | null>(null);
+  useEffect(() => {
+    let current = true;
+    api.takeovers.current().then(
+      ({ takeover }) => {
+        if (!current || !takeover || takeover.browserTaskId) return;
+        setOwn({ id: takeover.id, liveUrl: takeover.liveUrl, expiresAt: takeover.expiresAt });
+      },
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
 
   const alive = useRef(true);
   useEffect(() => {
@@ -252,10 +291,14 @@ export function BrowserPanel({
    * persist profile state"*), but it does not cancel a run, and a run whose
    * browser vanished under it settles as a failure. So while one is going,
    * close only hides the panel; otherwise it stops, after one line saying the
-   * sign-ins are kept.
+   * sign-ins are kept. And while the row says the agent has the browser, run
+   * or no run: the stop route refuses there (ruling R50), and a "Close the
+   * browser?" answered with its 409 would be the panel arguing with itself.
+   * Take over, then close, is the way out of that state, and the pill offers
+   * the first half.
    */
   function close() {
-    if (!session || running) {
+    if (!session || running || liveState === "agent") {
       onHide();
       return;
     }
@@ -305,6 +348,38 @@ export function BrowserPanel({
       }
     }
     handBack.mutate({ id, site, credentialId });
+  }
+
+  /**
+   * The person's own browser, or the offer of one (Task 3.1, ruling R42).
+   *
+   * Offered whenever this conversation has no browser to show: none ever, or
+   * one that has been stopped. The row outlives its browser — the idle stop
+   * and a close clear the browser but keep the session, which the next run
+   * continues — so "no browser" is a row that is nobody's, names no browser
+   * (`browserReady` false) and has nothing running, not a missing row. Without
+   * that, Open browser was unreachable in any conversation that ever browsed.
+   *
+   * And the person's own, once open, is shown over a conversation browser
+   * nobody is using, so its Done can always be found from here — but never
+   * over one the agent or the person holds. Under rulings R44 and R46 the two
+   * cannot both be live; if a race ever makes them so, the live conversation
+   * browser and its controls keep the panel.
+   */
+  const nobodys = !session || (session.liveState === "none" && !running);
+  const nothingToShow = !!data && (!session || (nobodys && !session.browserReady));
+  if ((own && nobodys) || nothingToShow) {
+    // `problem` goes along: a Take over that found the browser gone is what
+    // switches this view in, and its sentence is the explanation of the switch.
+    return (
+      <OwnBrowserView
+        own={own}
+        onChange={setOwn}
+        onHide={onHide}
+        layout={layout}
+        notice={problem}
+      />
+    );
   }
 
   const status =
@@ -381,6 +456,7 @@ export function BrowserPanel({
           <SignInCard
             host={prompt.signInHost}
             carriedSavedLogin={prompt.carriedSavedLogin}
+            savedLogin={prompt.savedLogin}
             agentId={agentId}
             canShare={canShare}
             opening={takeOver.isPending}
@@ -480,6 +556,295 @@ export function BrowserPanel({
               </li>
             ))}
           </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** How often the countdown redraws. A second, because it shows seconds. */
+const TICK_MS = 1_000;
+
+/**
+ * The person's own browser in the panel, or the offer of one (Task 3.1).
+ *
+ * What it is for: signing in to sites ahead of time, so the agent's browser —
+ * which carries the same profile — finds the person signed in. It is the
+ * existing task-less takeover (ruling R43): `POST /browser/takeovers` with no
+ * task rents it, `POST …/close` is Done, and Done is what saves the sign-ins,
+ * because stopping the browser is what writes the profile (*"always stop the
+ * session to persist profile state"*). **Nothing is rented until Open browser
+ * is pressed** — the header control only opens this panel.
+ *
+ * In the person's hands from the first moment, so the frame is live and not
+ * `inert`; there is no agent here to keep the controls from. The edge does not
+ * breathe — DESIGN.md keeps the amber hairline for an agent's run in progress
+ * — and the status chip is the filled square, the panel's own "this one is
+ * yours". The takeover has a window (`expiresAt`, ten minutes) and the panel
+ * counts it down rather than letting it lapse unannounced; past it, Done still
+ * saves, and the sweep stops a browser nobody closed.
+ *
+ * Not a mutation's state, deliberately: `useMutation` keeps what it resolved
+ * with in the mutation cache, and what `open` resolves with is the credential.
+ */
+function OwnBrowserView({
+  own,
+  onChange,
+  onHide,
+  layout,
+  notice,
+}: {
+  own: OwnBrowser | null;
+  onChange: (next: OwnBrowser | null) => void;
+  onHide: () => void;
+  layout: "side" | "sheet";
+  /** A refusal the conversation's view was showing when this one took over. */
+  notice: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState<"opening" | "closing" | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  // Only while something is counting down.
+  useEffect(() => {
+    if (!own) return;
+    const id = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(id);
+  }, [own]);
+
+  async function open() {
+    setBusy("opening");
+    setProblem(null);
+    setNote(null);
+    try {
+      const opened = await api.takeovers.open();
+      if (!alive.current) return;
+      setNow(Date.now());
+      onChange({ id: opened.id, liveUrl: opened.liveUrl, expiresAt: opened.expiresAt });
+    } catch (err) {
+      if (!alive.current) return;
+      /**
+       * 409 is a sentence worth reading: a conversation's browser is in use,
+       * or a browser of the person's is already open. That second one may be
+       * this panel's to show — opened in another tab after this one mounted
+       * (M4) — so the panel asks which is open, as the mount does, and adopts
+       * it when it has no task. A task's stays the transcript card's (R43),
+       * and then, or when the ask fails, the sentence is the answer.
+       */
+      if (err instanceof ApiError && err.status === 409) {
+        const already = await api.takeovers.current().then(
+          ({ takeover }) => (takeover && !takeover.browserTaskId ? takeover : null),
+          () => null,
+        );
+        if (!alive.current) return;
+        if (already) {
+          setNow(Date.now());
+          onChange({ id: already.id, liveUrl: already.liveUrl, expiresAt: already.expiresAt });
+          return;
+        }
+      }
+      setProblem(sentence(messageOf(err)));
+    } finally {
+      if (alive.current) setBusy(null);
+    }
+  }
+
+  /** Done: stop the browser, which saves the sign-ins. Can take a few seconds. */
+  async function done(thenHide: boolean) {
+    if (!own) return;
+    setBusy("closing");
+    setProblem(null);
+    try {
+      const closed = await api.takeovers.close(own.id);
+      void queryClient.invalidateQueries({ queryKey: ["browser-profile"] });
+      if (!alive.current) return;
+      onChange(null);
+      setNote(sentence(closed.message));
+      if (thenHide) onHide();
+    } catch (err) {
+      if (!alive.current) return;
+      // Already closed — the sweep stopped it after its window, another tab
+      // pressed Done, or a new Open browser closed the lapsed one. Nothing is
+      // left to close, so the panel says so and lets go. And the sign-ins are
+      // kept, which is worth saying: every one of those paths stops the
+      // browser (a refused stop is retried by the sweep), and the stop is what
+      // saves the jar.
+      if (err instanceof ApiError && err.status === 409) {
+        onChange(null);
+        setNote("This browser has already been closed, and your sign-ins were saved.");
+        if (thenHide) onHide();
+      } else {
+        setProblem(sentence(messageOf(err)));
+      }
+    } finally {
+      if (alive.current) {
+        setBusy(null);
+        setConfirmingClose(false);
+      }
+    }
+  }
+
+  /** The same browser in a tab of its own, for a site that will not sign in inside a frame. */
+  function openWindow() {
+    if (!own) return;
+    const { id, liveUrl } = own;
+    setProblem(null);
+    openInNewWindow(async () => {
+      if (liveUrl) return liveUrl;
+      const { takeover } = await api.takeovers.current();
+      if (!takeover?.liveUrl || takeover.id !== id) throw new Error("This browser has closed.");
+      return takeover.liveUrl;
+    }).catch((err: unknown) => setProblem(messageOf(err)));
+  }
+
+  function close() {
+    if (!own) {
+      onHide();
+      return;
+    }
+    setConfirmingClose(true);
+  }
+
+  const left = own ? new Date(own.expiresAt).getTime() - now : 0;
+  // Past the window, no more urgent than is true (ruling R49): the browser
+  // is still open and still the person's, and if nobody presses Done the
+  // sweep stops it within a few minutes — and that stop saves the jar too.
+  const clock =
+    left > 0
+      ? `${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1_000)).padStart(2, "0")} left — press Done to save your sign-ins.`
+      : "Time is up. Press Done to finish; if you don't, it closes by itself shortly and your sign-ins are still saved.";
+
+  return (
+    <div
+      className={cn(
+        "relative flex h-full flex-col bg-background",
+        layout === "side" && "border-l border-border",
+      )}
+    >
+      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
+        <span
+          aria-hidden="true"
+          className={cn(
+            "h-2 w-2 shrink-0 rounded-[2px]",
+            own ? "bg-accent-orange" : "bg-muted-foreground/40",
+          )}
+        />
+        <span className="sr-only">{own ? "You are driving" : "Nobody is driving"}</span>
+        <h2 className="min-w-0 flex-1 truncate font-dm text-title font-medium">Browser</h2>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {own && (
+            <HeaderAction label="Open in new window" onClick={openWindow}>
+              <ExternalLink className="h-4 w-4" />
+            </HeaderAction>
+          )}
+          <HeaderAction label="Close the browser" onClick={close}>
+            <X className="h-4 w-4" />
+          </HeaderAction>
+        </div>
+      </div>
+
+      {confirmingClose && own && (
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+          <span className="min-w-0 flex-1 text-sm">
+            Close the browser? Closing it saves your sign-ins to your profile.
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
+            Keep it open
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy !== null}
+            onClick={() => void done(true)}
+          >
+            Close it
+          </Button>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        <div
+          className={cn(
+            "flex w-full justify-center",
+            layout === "side" && "min-h-0 flex-1 items-center",
+          )}
+        >
+          {own ? (
+            <div
+              data-testid="browser-frame"
+              className="aspect-video w-full overflow-hidden rounded-xl border border-border bg-background"
+            >
+              {own.liveUrl ? (
+                <iframe
+                  title="Your browser"
+                  src={own.liveUrl}
+                  allow="autoplay"
+                  className="h-full w-full border-0"
+                />
+              ) : (
+                <div className="grid h-full place-items-center p-4 text-center text-meta text-muted-foreground">
+                  The browser has no view to show yet. Open it in a new window instead.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="grid aspect-video w-full place-items-center rounded-xl border border-border bg-background p-6 text-center">
+              <div className="flex max-w-xs flex-col items-center gap-3">
+                <p className="text-sm">
+                  Sign in to sites ahead of time, so the agent&apos;s browser finds you signed in.
+                </p>
+                <Button size="sm" disabled={busy !== null} onClick={() => void open()}>
+                  {busy === "opening" ? "Opening…" : "Open browser"}
+                </Button>
+                <p className="text-meta text-muted-foreground">
+                  It stays open for ten minutes. Press Done to save your sign-ins.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {own && (
+          <>
+            <div className="flex justify-center">
+              <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-card py-1 pl-3 pr-1 text-sm">
+                <span>You are using the browser</span>
+                <span aria-hidden="true" className="text-muted-foreground">
+                  ·
+                </span>
+                <Button size="sm" disabled={busy !== null} onClick={() => void done(false)}>
+                  {busy === "closing" ? "Saving…" : "Done"}
+                </Button>
+              </div>
+            </div>
+            <p className="text-center font-mono text-meta tabular-nums text-muted-foreground">
+              {clock}
+            </p>
+          </>
+        )}
+
+        {note && !own && (
+          <p role="status" className="text-center text-meta text-muted-foreground">
+            {note}
+          </p>
+        )}
+
+        {/* The carried notice only until something newer has been said. */}
+        {(problem ?? (own || note ? null : notice)) && (
+          <p role="alert" className="text-center text-meta text-destructive">
+            {problem ?? notice}
+          </p>
         )}
       </div>
     </div>

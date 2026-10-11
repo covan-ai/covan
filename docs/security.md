@@ -252,8 +252,8 @@ account. A site gets one shared login per agent; a second member's save is
 refused and says to ask an admin, or whoever saved the first, to remove it. The
 list does not name the saver, though the table records them by id.
 
-**Where it goes.** To one provider, over TLS, for one run. There are two ways a
-run is given one, and in both the Worker looks the login up and the client never
+**Where it goes.** To one provider, over TLS, for one run. There are three ways a
+run is given one, and in each the Worker looks the login up and the client never
 sends a value.
 
 - **The agent starts a task.** When it calls `browse` and names the site the task
@@ -264,7 +264,11 @@ sends a value.
   never the other way round, and is still typed only on `linkedin.com` and its
   subdomains. It sends the provider two *secret bindings*, one per half, with
   the run. When a login is saved for the site, the card the person approves names
-  it (*"signs in as linkedin.com (saved login: …)"*).
+  it (*"signs in as linkedin.com (saved login: …)"*). When the model names no
+  site, the first of up to three sites the task itself names (a URL or a bare
+  host) that has a saved login stands in for it, and the card names that login
+  the same way. This only chooses *which* saved login the run may carry; where it
+  may be typed is still the saved login's own site.
 - **The person saves at a login wall.** The dialog shows the site the login is
   for, prefilled from the wall and editable, and says the login will only ever
   be typed on that site and its subdomains: the wall's host is what the run
@@ -276,6 +280,11 @@ sends a value.
   personal login or a shared one whose saver is still a member, and otherwise the
   ordinary choice applies) and sends the bindings with the one free retry. That
   retry is not behind an approval card: pressing the button is the person's yes.
+- **The person tries again with a login already saved.** When a run met a wall
+  without carrying a login, and one this person may use is saved for that site,
+  the wall's card offers *Try again with the saved login* instead of saving
+  another. It is the same hand-back, naming that login's id, and the same one
+  free retry.
 
 Either way the conversation's model is never given a value; the task text the
 provider's agent receives names the two aliases, and only that. Both runs record
@@ -394,7 +403,11 @@ to the person watching, not a lock, which is why the address is protected as
 above rather than by the frame. The line Covan *does* enforce is that two sets of
 hands never share one browser: **Take over cancels the agent's run first**, and
 the browser is handed over only once the provider says the run has ended, so a
-person is never typing into a field the agent is mid-way through.
+person is never typing into a field the agent is mid-way through. The browser a
+person opens from the chat header to sign in ahead of time runs on the same
+profile, and whichever browser stops last writes it, so it is refused while one
+beside a conversation is in use, it tries to stop their idle ones first, and no
+agent run starts while it is open.
 
 **It is the owner's alone.** `browser_sessions` has one policy, the same shape as
 the browser tasks': the row is the owner's, and only while they are still a

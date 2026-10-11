@@ -106,9 +106,10 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
    * conversation at once, and pressing done in the wrong one re-ran the task
    * into a conversation nobody was looking at.
    *
-   * A takeover opened from settings carries no task, so it belongs to no
-   * conversation and is shown in none — which is correct until there is a
-   * settings screen to show it on.
+   * A takeover with no task is the person's own browser, opened from the
+   * browser panel to sign in ahead of time (Task 3.1). It belongs to no
+   * conversation and is never this card's: the panel shows it, and claims only
+   * a takeover with no task, so the two never both claim one (ruling R43).
    */
   const standing = current?.takeover;
   const belongsHere =

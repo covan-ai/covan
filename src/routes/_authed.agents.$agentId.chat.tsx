@@ -41,7 +41,7 @@ import { AnswerTurn } from "@/components/chat/answer-turn";
 import { Button } from "@/components/ui/button";
 import { BrowserPanel } from "@/components/chat/browser-panel";
 import { TakeoverCard } from "@/components/chat/takeover-card";
-import { useBrowserPanel } from "@/components/chat/use-conversation-browser";
+import { browserKey, useBrowserPanel } from "@/components/chat/use-conversation-browser";
 import { LiveAnswer } from "@/components/chat/live-answer";
 import {
   PromptInput,
@@ -814,6 +814,13 @@ function ChatTab() {
              * the machine is busy when it is waiting.
              */
             setThinking(step.status !== "running" && step.status !== "pending");
+            // A settled `browse` is the moment a run exists. The browser poll
+            // is off while nothing is happening, so without this a conversation
+            // opened with no browser never asks again and the panel stays shut
+            // through the whole run (found in the end-to-end run).
+            if (step.tool === "browse" && step.status !== "running" && step.status !== "pending") {
+              void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
+            }
             // Upsert by index: every step arrives twice, once running and
             // once settled, and the second is the same row changing rather
             // than a new one.
@@ -1404,8 +1411,15 @@ function ChatTab() {
               below `lg`, the only way in: there the panel is a sheet and never
               slides over the conversation by itself. While the agent is
               driving and the panel is shut, the running square sits on the
-              control, so a phone still shows that something is happening. */}
-          {browserPanel.available && (
+              control, so a phone still shows that something is happening.
+
+              Always there for the conversation's owner (Task 3.1, ruling
+              R42), even before the agent has opened a browser: the panel then
+              offers Open browser, a browser of their own to sign in to sites
+              ahead of time. The control itself only opens the panel — it never
+              rents anything. Owner-only, as the panel is: a colleague in a
+              shared conversation has no browser here to see. */}
+          {(browserPanel.available || isOwner) && (
             <HeaderAction
               label={
                 browserPanel.open

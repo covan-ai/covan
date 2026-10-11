@@ -63,6 +63,7 @@ const showVersion = vi.fn();
 const browserTasks = vi.fn();
 const browserLive = vi.fn();
 const takeoverCurrent = vi.fn();
+const takeoverOpen = vi.fn();
 vi.mock("@/lib/api-client", () => ({
   ApiError: class ApiError extends Error {
     status = 500;
@@ -76,7 +77,7 @@ vi.mock("@/lib/api-client", () => ({
     me: () => Promise.resolve({ user: { id: "user-1" }, models: ["gpt-4.1", "claude-opus-5"] }),
     sessions: { messages: listMessages, setVisibility: vi.fn(), browserTasks },
     browser: { live: browserLive, takeOver: vi.fn(), handBack: vi.fn(), stop: vi.fn() },
-    takeovers: { takeOver: vi.fn(), current: takeoverCurrent, close: vi.fn() },
+    takeovers: { takeOver: vi.fn(), open: takeoverOpen, current: takeoverCurrent, close: vi.fn() },
     messages: {
       create: createMessage,
       update: vi.fn(),
@@ -1295,12 +1296,40 @@ describe("the browser beside the conversation", () => {
     delivered: false,
   };
 
-  it("is not there, and not offered, in a conversation with no browser", async () => {
+  /**
+   * Task 3.1 (ruling R42): the header control is always there for the person
+   * who owns the conversation, so a browser can be opened to sign in ahead of
+   * time. The panel does not open by itself, and the control alone rents
+   * nothing — only the panel's Open browser does.
+   */
+  it("is offered to its owner in a conversation with no browser, and the control rents nothing", async () => {
     await renderChat();
 
     await waitFor(() => expect(browserTasks).toHaveBeenCalledWith("session-1"));
     expect(screen.queryByRole("heading", { name: "Browser" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Show the browser" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show the browser" }));
+    expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
+    expect(takeoverOpen).not.toHaveBeenCalled();
+  });
+
+  it("is not offered to somebody who does not own the conversation", async () => {
+    session.ownerId = "someone-else";
+    try {
+      render(
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <ChatTab />
+        </QueryClientProvider>,
+      );
+      await screen.findByPlaceholderText(`Message ${agent.name}`);
+      await waitFor(() => expect(browserTasks).toHaveBeenCalledWith("session-1"));
+      expect(screen.queryByRole("button", { name: "Show the browser" })).toBeNull();
+    } finally {
+      session.ownerId = "user-1";
+    }
   });
 
   it("opens beside the chat while the agent is browsing", async () => {
@@ -1309,6 +1338,63 @@ describe("the browser beside the conversation", () => {
 
     expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
     expect(await screen.findByTitle("The agent's browser")).toBeInTheDocument();
+  });
+
+  /**
+   * Found in the end-to-end run: the poll is off while nothing is happening,
+   * so a conversation opened with no browser never asked again, and the panel
+   * stayed shut through a whole run the agent started mid-turn. A `browse`
+   * step that settles is the moment a run exists, so the screen asks then.
+   */
+  it("opens by itself when the agent starts browsing in this turn", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "step", index: 0, tool: "browse", status: "running", label: "browse" },
+            { type: "step", index: 0, tool: "browse", status: "ok", label: "browse" },
+            { type: "delta", text: "A browser is on it." },
+            { type: "done", message: answer },
+          ]),
+        ),
+      ),
+    );
+    await renderChat();
+    await waitFor(() => expect(browserTasks).toHaveBeenCalledWith("session-1"));
+    expect(screen.queryByRole("heading", { name: "Browser" })).toBeNull();
+
+    browserTasks.mockResolvedValue(running);
+    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "read the page");
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
+    expect(await screen.findByTitle("The agent's browser")).toBeInTheDocument();
+  });
+
+  /**
+   * Found in the end-to-end run: the panel shut itself the moment the run
+   * finished, taking the page the agent had just read with it. The browser
+   * is still there, idle, until it is stopped; once the panel has opened by
+   * itself it stays until the person closes it.
+   */
+  it("stays open when the run finishes, until the person closes it", async () => {
+    browserTasks.mockResolvedValue(running);
+    const { client } = await renderChat();
+    expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
+
+    const finished = {
+      ...running,
+      tasks: [{ ...running.tasks[0], status: "finished", output: "the title", finishedAt: 1 }],
+      session: { ...running.session, liveState: "none" },
+    };
+    browserTasks.mockResolvedValue(finished);
+    await act(async () => {
+      client.setQueryData(["browser-tasks", "session-1"], finished);
+    });
+
+    expect(await screen.findByText("The agent is not using the browser")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Browser" })).toBeInTheDocument();
   });
 
   it("comes back from the header control after it was closed", async () => {

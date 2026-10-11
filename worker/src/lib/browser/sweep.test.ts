@@ -399,6 +399,70 @@ describe("the jar read the sweep does not trust", () => {
     expect(jar?.patch).toMatchObject({ cookie_domains: [] });
   });
 
+  /**
+   * Measured 2026-10-11, an Open browser abandoned with an httpbin cookie set
+   * in it: this read came 0.6 s before the provider wrote the profile, and
+   * recorded `["the-internet.herokuapp.com"]` — the list from before the stop.
+   * With the stop's `finishedAt` it waits for a profile written after it.
+   */
+  it("waits for a list written after the stop rather than recording the one from before", async () => {
+    stopBrowser.mockResolvedValue({
+      kind: "ok",
+      value: { id: "s-1", status: "stopped", finishedAt: "2026-10-11T12:42:34.200Z" },
+    });
+    getProfile
+      .mockResolvedValueOnce({
+        kind: "ok",
+        value: {
+          id: "p-1",
+          cookieDomains: ["the-internet.herokuapp.com"],
+          updatedAt: "2026-10-11T12:32:33.000Z",
+        },
+      })
+      .mockResolvedValue({
+        kind: "ok",
+        value: {
+          id: "p-1",
+          cookieDomains: ["the-internet.herokuapp.com", "httpbin.org"],
+          updatedAt: "2026-10-11T12:42:34.883868Z",
+        },
+      });
+    const { db, updates } = fakeDb({
+      claim: { data: [row()], error: null },
+      profileRow: { provider_profile_id: "p-1", cookie_domains: ["the-internet.herokuapp.com"] },
+    });
+    const sleep = vi.fn(async (_ms: number) => {});
+
+    await sweepAbandonedTakeovers(ENV, { ...deps(db), sleep });
+
+    expect(getProfile).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    const jar = updates.find((u) => u.table === "browser_profiles");
+    expect(jar?.patch).toMatchObject({
+      cookie_domains: ["the-internet.herokuapp.com", "httpbin.org"],
+    });
+  });
+
+  it("keeps the column when the provider never writes the profile after the stop", async () => {
+    stopBrowser.mockResolvedValue({
+      kind: "ok",
+      value: { id: "s-1", status: "stopped", finishedAt: "2026-10-11T12:42:34.200Z" },
+    });
+    getProfile.mockResolvedValue({
+      kind: "ok",
+      value: { id: "p-1", cookieDomains: [], updatedAt: "2026-10-11T12:32:33.000Z" },
+    });
+    const { db, updates } = fakeDb({
+      claim: { data: [row()], error: null },
+      profileRow: { provider_profile_id: "p-1", cookie_domains: [] },
+    });
+
+    await sweepAbandonedTakeovers(ENV, { ...deps(db), sleep: async () => {} });
+
+    expect(getProfile).toHaveBeenCalledTimes(8);
+    expect(updates.some((u) => u.table === "browser_profiles")).toBe(false);
+  });
+
   it("writes what the provider says when it says something", async () => {
     const { db, updates } = fakeDb({
       claim: { data: [row()], error: null },

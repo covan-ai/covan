@@ -37,9 +37,72 @@ export function matchesFilters(row: Row, filters: Filter[]): boolean {
         return (row[f.column] ?? null) === f.value;
       case "in":
         return (f.value as unknown[]).includes(row[f.column]);
+      case "or":
+        return matchesOr(row, String(f.value));
       default:
         throw new Error(`memoryDb: unmodelled filter ${f.kind} on ${f.column}`);
     }
+  });
+}
+
+/** Split on the commas that are not inside a `(…)` list. */
+function topLevel(expr: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expr.length; i += 1) {
+    if (expr[i] === "(") depth += 1;
+    else if (expr[i] === ")") depth -= 1;
+    else if (expr[i] === "," && depth === 0) {
+      parts.push(expr.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(expr.slice(start));
+  return parts;
+}
+
+/**
+ * PostgREST's `or=(…)` as supabase-js sends it — `col.op.value,…`, any one
+ * of which may be negated as `col.not.op.value` — for the operators in use:
+ * `eq`, `neq`, `is` (`null`, `true`, `false`) and `in.(a,b)`. Values arrive
+ * as text, as they do over the wire, so a column is compared as text too.
+ * Anything else throws, for the reason the file's header gives.
+ */
+export function matchesOr(row: Row, expr: string): boolean {
+  return topLevel(expr).some((condition) => {
+    const [column, ...rest] = condition.split(".");
+    const negated = rest[0] === "not";
+    const [op, ...valueParts] = negated ? rest.slice(1) : rest;
+    const value = valueParts.join(".");
+    const cell = row[column] ?? null;
+    let hit: boolean;
+    switch (op) {
+      case "is":
+        if (value === "null") hit = cell === null;
+        else if (value === "true" || value === "false") hit = cell === (value === "true");
+        else throw new Error(`memoryDb: unmodelled is.${value} in or(${expr})`);
+        return negated ? !hit : hit;
+      case "eq":
+        hit = String(cell) === value;
+        break;
+      case "neq":
+        hit = String(cell) !== value;
+        break;
+      case "in": {
+        if (!value.startsWith("(") || !value.endsWith(")")) {
+          throw new Error(`memoryDb: malformed in-list in or(${expr})`);
+        }
+        hit = value.slice(1, -1).split(",").includes(String(cell));
+        break;
+      }
+      default:
+        throw new Error(`memoryDb: unmodelled operator ${op} in or(${expr})`);
+    }
+    // SQL's three values: a comparison with NULL is unknown, and so is its
+    // negation — only `is` says anything about a NULL.
+    if (cell === null) return false;
+    return negated ? !hit : hit;
   });
 }
 

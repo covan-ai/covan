@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { memoryDb, type Row } from "../../test-support/memory-db";
-import { eventText, pollConversationBrowser } from "./live";
+import { eventLine, eventText, openBrowsersAmong, pollConversationBrowser } from "./live";
 import { pollDueBrowserTasks, type BrowserTaskRow, type FinishedTask } from "./poller";
 import { V4_BASE } from "./v4";
 
@@ -162,6 +162,48 @@ describe("a run still going", () => {
     ]);
     expect(live.delivered).toBe(false);
     expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("shows only the events with something to say, and the browser named by browser.attached", async () => {
+    provider.events = {
+      events: [
+        { id: 4, ts: "a", type: "llm.request", data: { model: "gpt-5.6-luna" } },
+        {
+          id: 5,
+          ts: "b",
+          type: "browser.attached",
+          data: { browser_session_id: "bu-browser-7", live_view_url: FAKE_LIVE },
+        },
+        {
+          id: 6,
+          ts: "c",
+          type: "core.event",
+          data: {
+            type: "tool_use",
+            part: {
+              type: "tool",
+              tool: "browser_execute",
+              state: { input: { description: "Open the page" } },
+            },
+          },
+        },
+        { id: 7, ts: "d", type: "llm.response", data: { model: "gpt-5.6-luna" } },
+      ],
+      nextAfter: 7,
+      hasMore: false,
+    };
+    const { mem, deps } = setup();
+
+    const live = await pollConversationBrowser(
+      ENV,
+      { chatSessionId: "chat-1", userId: "user-1" },
+      deps,
+    );
+
+    expect(live.events).toEqual([{ ts: "c", type: "core.event", text: "Open the page" }]);
+    expect(mem.tables.browser_sessions[0].events_cursor).toBe(7);
+    expect(mem.tables.browser_sessions[0].provider_browser_id).toBe("bu-browser-7");
+    expect(JSON.stringify(live)).not.toContain("bu-browser-7");
   });
 
   it("takes the cursor from the last event's id when the provider names none", async () => {
@@ -593,5 +635,190 @@ describe("eventText", () => {
   it("is empty, not absent, when there is nothing to say", () => {
     expect(eventText({})).toBe("");
     expect(eventText({ nested: { text: "deep" }, list: ["x"] })).toBe("");
+  });
+});
+
+/**
+ * Task 3.4: the lines real runs become. The shapes below are the ones the
+ * provider sent in the end-to-end runs (2026-10-11), cut to the fields read.
+ */
+describe("eventLine", () => {
+  const event = (type: string, data: Record<string, unknown>) => ({ id: 1, ts: "t", type, data });
+  const tool = (name: string, state: Record<string, unknown>) =>
+    event("core.event", { type: "tool_use", part: { type: "tool", tool: name, state } });
+
+  it("does not show the JSON answer in a code fence either", () => {
+    const said = (text: string) =>
+      event("core.event", { type: "text", part: { type: "text", text } });
+    expect(eventLine(said('```json\n{"status":"done","answer":"Submit"}\n```'))).toBeNull();
+    expect(eventLine(said('```\n{"status":"done"}\n```'))).toBeNull();
+  });
+
+  it("takes a live, CDP or socket address out of a sentence", () => {
+    const line = eventLine(
+      tool("browser_execute", {
+        input: { description: `Connect to ${FAKE_CDP} and open ${FAKE_LIVE} then example.com` },
+      }),
+    );
+    expect(line).not.toContain("cdp-secret");
+    expect(line).not.toContain("live-secret");
+    expect(line).toContain("example.com");
+  });
+
+  it("is the agent's own description of a browser step", () => {
+    expect(
+      eventLine(
+        tool("browser_execute", {
+          title: "browser_execute",
+          input: { code: "await page.goto(x)", description: "Open HN submission page" },
+          output: "<html>…</html>",
+        }),
+      ),
+    ).toBe("Open HN submission page");
+  });
+
+  it("is what the agent says it will do, but not its JSON answer", () => {
+    const said = (text: string) =>
+      event("core.event", { type: "text", part: { type: "text", text } });
+    expect(eventLine(said("I’ll open the submission page and read it."))).toBe(
+      "I’ll open the submission page and read it.",
+    );
+    expect(eventLine(said('{"status":"done","answer":"Submit"}'))).toBeNull();
+  });
+
+  it("names the saved login typed, by its host, never its alias or value", () => {
+    const typed = (alias: string) =>
+      event("secret.typed", { secret: { alias, origin: "https://news.ycombinator.com" } });
+    expect(eventLine(typed("news_ycombinator_com_username"))).toBe(
+      "Typed the saved username into news.ycombinator.com",
+    );
+    expect(eventLine(typed("news_ycombinator_com_password"))).toBe(
+      "Typed the saved password into news.ycombinator.com",
+    );
+    expect(eventLine(event("secret.typed", { secret: { alias: "x", origin: "nonsense" } }))).toBe(
+      "Typed a saved login",
+    );
+  });
+
+  it("says when the browser is ready, and when it is the same one again", () => {
+    expect(eventLine(event("browser.ready", { browser_session_id: "bu-1" }))).toBe(
+      "The browser is ready",
+    );
+    expect(eventLine(event("browser.reattached", { browser_session_id: "bu-1" }))).toBe(
+      "Back in the same browser",
+    );
+  });
+
+  it("says nothing for the provider's own machinery", () => {
+    for (const type of [
+      "run.created",
+      "run.dispatching",
+      "run.dispatched",
+      "worker.started",
+      "workspace.ready",
+      "core.spawn",
+      "llm.request",
+      "llm.response",
+      "browser.attached",
+      "outputs.promoted",
+      "state.promoted",
+      "run.completed",
+      "browser.released",
+      "worker.session_released",
+    ]) {
+      expect(eventLine(event(type, { model: "gpt-5.6-luna", status: "kept_alive" }))).toBeNull();
+    }
+    // Reasoning, step boundaries, loading a skill, and the shell the provider's
+    // agent types a secret through: none of it is the person's business.
+    expect(eventLine(event("core.event", { type: "reasoning", part: { type: "reasoning" } }))).toBe(
+      null,
+    );
+    expect(eventLine(tool("skill", { title: "Loaded skill: browser-execute", input: {} }))).toBe(
+      null,
+    );
+    expect(
+      eventLine(tool("bash", { title: 'curl -s -X POST "$V4_GATEWAY_URL/api/v4/secrets/…"' })),
+    ).toBeNull();
+    expect(eventLine(tool("browser_execute", { title: "browser_execute", input: {} }))).toBeNull();
+  });
+
+  it("falls back to the generic line for a type nobody has seen yet", () => {
+    expect(eventLine(event("agent.step", { summary: "opened the page" }))).toBe("opened the page");
+    expect(eventLine(event("agent.step", { live: FAKE_LIVE }))).toBe("");
+  });
+
+  it("keeps a description short, and never a bare URL", () => {
+    const long = eventLine(tool("browser_execute", { input: { description: "z".repeat(500) } }));
+    expect(long?.length).toBeLessThanOrEqual(120);
+    expect(eventLine(tool("browser_execute", { input: { description: FAKE_CDP } }))).toBeNull();
+  });
+});
+
+/**
+ * Settings → Browser sign-ins (Task 3.2, ruling R48): which of a person's
+ * browsers are still open, as a yes or no per row and nothing more.
+ */
+describe("openBrowsersAmong", () => {
+  const rows = [
+    sessionRow({ id: "bs-1", provider_browser_id: "bu-browser-1" }),
+    sessionRow({ id: "bs-2", provider_browser_id: null }),
+    // Somebody else's, named by id: the user id is in the predicate, not beside it.
+    sessionRow({ id: "bs-3", user_id: "user-2", provider_browser_id: "bu-browser-3" }),
+  ];
+
+  it("answers the ids whose browser has not been seen stopped, and only the caller's", async () => {
+    const mem = memoryDb({ browser_sessions: rows });
+    const open = await openBrowsersAmong(
+      ENV,
+      { userId: "user-1", browserSessionIds: ["bs-1", "bs-2", "bs-3"] },
+      { db: mem.db as unknown as SupabaseClient },
+    );
+
+    expect(open).toEqual(new Set(["bs-1"]));
+    const read = mem.calls.find((c) => c.table === "browser_sessions");
+    expect(read?.filters).toContainEqual({ column: "user_id", value: "user-1", kind: "eq" });
+    expect(read?.filters).toContainEqual({
+      column: "id",
+      value: ["bs-1", "bs-2", "bs-3"],
+      kind: "in",
+    });
+  });
+
+  it("is a set of Covan's ids — no provider id leaves", async () => {
+    const mem = memoryDb({ browser_sessions: rows });
+    const open = await openBrowsersAmong(
+      ENV,
+      { userId: "user-1", browserSessionIds: ["bs-1"] },
+      { db: mem.db as unknown as SupabaseClient },
+    );
+
+    expect(JSON.stringify([...(open ?? [])])).not.toContain("bu-");
+  });
+
+  it("asks nothing when there is nothing to ask about", async () => {
+    const mem = memoryDb({ browser_sessions: rows });
+    const open = await openBrowsersAmong(
+      ENV,
+      { userId: "user-1", browserSessionIds: [] },
+      { db: mem.db as unknown as SupabaseClient },
+    );
+
+    expect(open).toEqual(new Set());
+    expect(mem.calls).toEqual([]);
+  });
+
+  it("answers null, not an empty set, when it could not tell", async () => {
+    const mem = memoryDb({ browser_sessions: rows }, (ctx) =>
+      ctx.table === "browser_sessions"
+        ? { data: null, error: { message: "boom", code: "XX000" } }
+        : undefined,
+    );
+    const open = await openBrowsersAmong(
+      ENV,
+      { userId: "user-1", browserSessionIds: ["bs-1"] },
+      { db: mem.db as unknown as SupabaseClient },
+    );
+
+    expect(open).toBeNull();
   });
 });

@@ -45,6 +45,13 @@ import { Label } from "@/components/ui/label";
  * else saved is theirs to change, and the server says so in a sentence the
  * dialog shows as it is.
  *
+ * **A login already saved for the site (found in the 2026-10-11 e2e).** A run
+ * the model sent without `site` carries no login, meets the wall, and the
+ * card used to offer to save one — a second copy of a login that exists.
+ * When the server says one is saved and the run did not carry it
+ * (`savedLogin`), the card offers "Try again with the saved login" instead of
+ * the Saves: the same hand-back a save makes, naming that login (R35).
+ *
  * **The new tab survives as the fallback**, for the reasons it was once the
  * only path: a passkey cannot work in an iframe (WebAuthn is origin-bound), and
  * a password manager rightly refuses to fill one whose origin is the
@@ -53,6 +60,7 @@ import { Label } from "@/components/ui/label";
 export function SignInCard({
   host,
   carriedSavedLogin,
+  savedLogin = null,
   agentId,
   canShare,
   opening = false,
@@ -67,6 +75,8 @@ export function SignInCard({
    */
   host: string | null;
   carriedSavedLogin: boolean;
+  /** A login saved for this site that the run did not carry, offered instead of the Saves. */
+  savedLogin?: { id: string; label: string; siteHost: string } | null;
   /** The agent a login would be saved for. Without one, nothing can be saved. */
   agentId: string | undefined;
   /**
@@ -90,7 +100,8 @@ export function SignInCard({
   onSaved: (siteHost: string, credentialId: string) => void;
 }) {
   const [saving, setSaving] = useState<"owner" | "agent" | null>(null);
-  const canSave = !!host && !!agentId;
+  const reuse = !carriedSavedLogin && savedLogin ? savedLogin : null;
+  const canSave = !!host && !!agentId && !reuse;
   const updating = carriedSavedLogin && canSave;
 
   return (
@@ -107,11 +118,13 @@ export function SignInCard({
       <p className="mt-1 text-meta text-muted-foreground">
         Just this once: take over and sign in in the browser, then press Done. You type your
         password at the site; Covan never receives it.
-        {canSave
-          ? updating
-            ? " Or update the saved login, and the agent tries again with it."
-            : " Or save the login, and the agent signs in by itself from now on."
-          : ""}{" "}
+        {reuse
+          ? ` Or try again with your saved login, ${reuse.label}, and the agent signs in by itself.`
+          : canSave
+            ? updating
+              ? " Or update the saved login, and the agent tries again with it."
+              : " Or save the login, and the agent signs in by itself from now on."
+            : ""}{" "}
         No charge for the second attempt. Some sites tie a sign-in to one network address and will
         ask again anyway; LinkedIn is one of them.
       </p>
@@ -119,6 +132,16 @@ export function SignInCard({
         <Button variant="outline" size="sm" disabled={opening} onClick={onJustThisOnce}>
           Just this once
         </Button>
+        {reuse && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={opening}
+            onClick={() => onSaved(reuse.siteHost, reuse.id)}
+          >
+            Try again with the saved login
+          </Button>
+        )}
         {canSave && (
           <>
             <Button

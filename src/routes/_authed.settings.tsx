@@ -280,7 +280,9 @@ function SettingsPage() {
         {/* Above the account section, because it is the cheap version of the
             same request: a person who wants Covan to stop holding a login
             should find that before they find the door that also takes their
-            conversations with it. Renders nothing when no jar is held. */}
+            conversations with it. Each of its parts — the jar, the open
+            browsers, the saved logins — renders nothing when it has nothing
+            to show. */}
         <BrowserSignInsSection />
 
         {/* Last on the page, under everything it would destroy. Not gated on a

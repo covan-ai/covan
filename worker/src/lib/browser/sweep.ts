@@ -3,7 +3,8 @@ import type { RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
 import { hasBrowserKey } from "./client";
 import { refreshSessionJar, stopSessionBrowsers } from "./controls";
-import { getProfile, stopBrowser, TAKEOVER_PROVIDER_MINUTES } from "./profiles";
+import { getProfile, jarWrittenSince, stopBrowser, TAKEOVER_PROVIDER_MINUTES } from "./profiles";
+import { JAR_ATTEMPTS, JAR_DELAY_MS } from "./takeover";
 
 /**
  * One tick of the abandoned-takeover sweep.
@@ -30,9 +31,10 @@ import { getProfile, stopBrowser, TAKEOVER_PROVIDER_MINUTES } from "./profiles";
 /**
  * How many abandoned takeovers one tick may sweep.
  *
- * `poller.ts:39`'s arithmetic, for cheaper work. A tick spends 1 subrequest on
- * the claim. Each row spends at most 4: the provider stop, the row update, the
- * profile read and the jar update. So three rows is 1 + 12, nowhere near the 50
+ * `poller.ts:39`'s arithmetic. A tick spends 1 subrequest on the claim. Each
+ * row spends at most 12: the provider stop, the row update, the profile
+ * lookup, up to `JAR_ATTEMPTS` (8) reads of the jar while the provider writes
+ * it (`refreshJar`), and the jar update. So three rows is 1 + 36, inside the 50
  * a Cloudflare Free invocation gets — and the ceiling is not what sets this
  * number anyway. Three is the poller's number, and a sweep that cannot drain
  * its backlog leaves the rest for five minutes later, which for a browser
@@ -63,6 +65,8 @@ type TakeoverRow = {
 export type SweepDeps = {
   db: SupabaseClient;
   now: () => Date;
+  /** The jar read's wait between reads (`refreshJar`). A real timer unless a test passes one. */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 /**
@@ -115,7 +119,11 @@ export async function sweepAbandonedTakeovers(
   const due = (data ?? []) as TakeoverRow[];
   if (due.length === 0) return { claimed: 0, ok: 0, failed: 0 };
 
-  const results = await Promise.allSettled(due.map((row) => sweepOne(row, env, { db, now })));
+  const results = await Promise.allSettled(
+    due.map((row) =>
+      sweepOne(row, env, { db, now, ...(overrides.sleep ? { sleep: overrides.sleep } : {}) }),
+    ),
+  );
   // Spelled the way `poller.ts:132-134` spells it, including the
   // redundant-looking `=== "fulfilled"`: it is what narrows the union so
   // `r.value` is readable at all.
@@ -173,7 +181,7 @@ async function sweepOne(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): Pro
   }
 
   await settle(row, deps);
-  await refreshJar(row, env, deps);
+  await refreshJar(row, env, deps, stopped.value.finishedAt ?? null);
   return true;
 }
 
@@ -254,11 +262,24 @@ async function release(row: TakeoverRow, deps: SweepDeps): Promise<void> {
  * signed into, which is the whole of what Covan can tell them about their own
  * logins. The stop already happened; a failed read leaves the column stale
  * until the next takeover's close rewrites it. The same work
- * `takeover.ts`'s `recordStop` does, deliberately sharing nothing with it: the
- * sweep has no caller and no permission question, and a shared helper would
- * have to take both shapes.
+ * `takeover.ts`'s `recordStop` does, deliberately sharing nothing with it but
+ * `jarWrittenSince`: the sweep has no caller and no permission question, and
+ * a shared helper would have to take both shapes.
+ *
+ * `stoppedAt` is the stop's `finishedAt`. With it, this waits for the provider
+ * to write the profile since the stop, as the panel's close does — up to
+ * `JAR_ATTEMPTS` reads, which keeps a tick at 1 + 3 × 12 = 37 subrequests,
+ * inside Free's 50. On 2026-10-11 this read came 0.6 s before the write and
+ * recorded the list from before the stop, missing the one site the abandoned
+ * browser had added. Without it there is no time to compare, and it reads
+ * once, as it always has.
  */
-async function refreshJar(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): Promise<void> {
+async function refreshJar(
+  row: TakeoverRow,
+  env: RoutineEnv,
+  deps: SweepDeps,
+  stoppedAt: string | null,
+): Promise<void> {
   const { data, error: readError } = await deps.db
     .from("browser_profiles")
     .select("provider_profile_id, cookie_domains")
@@ -269,36 +290,42 @@ async function refreshJar(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): P
     return;
   }
 
-  const refreshed = await getProfile(env, String(data.provider_profile_id), {
-    signal: AbortSignal.timeout(STOP_TIMEOUT_MS),
-  });
-  if (refreshed.kind === "error") {
-    console.error("swept a takeover but could not read the jar back", row.id, refreshed.status);
-    return;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+  const attempts = stoppedAt ? JAR_ATTEMPTS : 1;
+  const signal = AbortSignal.timeout(STOP_TIMEOUT_MS);
+  let cookieDomains: string[] = [];
+  let written = false;
+  for (let attempt = 0; attempt < attempts && !written; attempt += 1) {
+    const refreshed = await getProfile(env, String(data.provider_profile_id), { signal });
+    if (refreshed.kind === "error") {
+      console.error("swept a takeover but could not read the jar back", row.id, refreshed.status);
+      return;
+    }
+    cookieDomains = refreshed.value.cookieDomains;
+    written = jarWrittenSince(refreshed.value, stoppedAt);
+    if (!written && attempt < attempts - 1) await sleep(JAR_DELAY_MS);
   }
 
   /**
-   * An empty answer over a non-empty column is dropped, and that is the one
-   * judgement in this function.
+   * Two lists are dropped rather than written.
    *
-   * The provider writes the profile SOME SECONDS AFTER reporting the browser
-   * stopped — 3.1s, measured on the first real run — so an empty list here is
-   * usually "not written yet" rather than "nothing saved".
-   * `takeover.ts`'s `JAR_ATTEMPTS` waits it out, because a person is on the
-   * other end of that request and the answer decides whether their task runs
-   * again. Nobody is waiting on this one, and holding a cron tick for it would
-   * be spending the tick's budget on a column that is display-only.
+   * One the provider has not written since the stop: it is the list from
+   * before, and says nothing about what this stop saved.
    *
-   * So the sweep declines instead. Writing the empty list is worse than
-   * leaving the column alone: it replaces a correct list of somebody's
-   * sign-ins with "none", so the settings screen says nothing has been saved
-   * while the jar at the provider still holds it, and the forget control
-   * offers nothing to forget. A jar does not empty itself — the only thing
-   * that empties one is `forgetProfile`, which deletes the row outright — so
-   * the stale list is the more truthful of the two.
+   * And an empty answer over a non-empty column. Writing the empty list is
+   * worse than leaving the column alone: it replaces a correct list of
+   * somebody's sign-ins with "none", so the settings screen says nothing has
+   * been saved while the jar at the provider still holds it. A jar does not
+   * empty itself — the only thing that empties one is `forgetProfile`, which
+   * deletes the row outright — so the stale list is the more truthful of the
+   * two.
    */
   const held = Array.isArray(data.cookie_domains) ? data.cookie_domains : [];
-  if (refreshed.value.cookieDomains.length === 0 && held.length > 0) {
+  if (!written && stoppedAt) {
+    console.log("swept a takeover but its jar was not written since; keeping what we had", row.id);
+    return;
+  }
+  if (cookieDomains.length === 0 && held.length > 0) {
     console.log("swept a takeover before its jar was written; keeping what we had", row.id);
     return;
   }
@@ -306,7 +333,7 @@ async function refreshJar(row: TakeoverRow, env: RoutineEnv, deps: SweepDeps): P
   const { error } = await deps.db
     .from("browser_profiles")
     .update({
-      cookie_domains: refreshed.value.cookieDomains,
+      cookie_domains: cookieDomains,
       last_used_at: deps.now().toISOString(),
     })
     .eq("id", row.profile_id);
@@ -501,7 +528,11 @@ async function sweepHuman(
   // claimed and human, and the lease's expiry retries it (stopping an
   // already-stopped browser is a no-op) instead of losing the refresh. The
   // failed-stop branch above waits out the same lease on purpose.
-  await refreshSessionJar(env, deps, { profileId: row.profile_id, signal: timeout() });
+  await refreshSessionJar(env, deps, {
+    profileId: row.profile_id,
+    stoppedAt: stopped.finishedAt,
+    signal: timeout(),
+  });
   await settleHuman(row, deps);
   return true;
 }
@@ -561,7 +592,11 @@ async function sweepIdle(
   }
 
   // The jar first, then the row, for `sweepHuman`'s reason.
-  await refreshSessionJar(env, deps, { profileId: row.profile_id, signal: timeout() });
+  await refreshSessionJar(env, deps, {
+    profileId: row.profile_id,
+    stoppedAt: stopped.finishedAt,
+    signal: timeout(),
+  });
   await settleIdle(row, deps);
   return true;
 }

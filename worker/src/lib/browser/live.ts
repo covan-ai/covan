@@ -6,7 +6,7 @@ import { deliverBrowserTask } from "./deliver";
 import type { BrowserTaskRow } from "./poller";
 import type { LiveState } from "./sessions";
 import { finishedRun, settleBrowserTask, type SettleDeps } from "./settle";
-import { isTerminalRun, runEvents, runStatus, runSummary } from "./v4";
+import { isTerminalRun, runEvents, runStatus, runSummary, type RunEvent } from "./v4";
 
 /**
  * The open tab's clock: what `GET /sessions/:id/browser-tasks` does on every
@@ -79,7 +79,37 @@ const TASK_COLUMNS =
 
 const SESSION_COLUMNS = "id, live_state, human_since, provider_browser_id, events_cursor";
 
-const BROWSER_EVENT_TYPES = new Set(["browser.ready", "browser.reattached"]);
+const BROWSER_EVENT_TYPES = new Set(["browser.ready", "browser.reattached", "browser.attached"]);
+
+/**
+ * The provider's own machinery, which the panel does not show (Task 3.4).
+ * Every type seen in the end-to-end runs that says nothing to the person:
+ * queueing, the worker and its workspace, each model call, the browser being
+ * handed over and back, and what the provider keeps after a run.
+ */
+const SILENT_EVENT_TYPES = new Set([
+  "run.created",
+  "run.dispatching",
+  "run.dispatched",
+  "worker.started",
+  "workspace.ready",
+  "core.spawn",
+  "llm.request",
+  "llm.response",
+  "browser.attached",
+  "outputs.promoted",
+  "state.promoted",
+  "run.completed",
+  "browser.released",
+  "worker.session_released",
+]);
+
+/**
+ * The provider agent's tools whose steps are not shown: loading a skill, and
+ * the shell it types a saved login through. Every other tool step is shown by
+ * its own description.
+ */
+const HIDDEN_TOOLS = new Set(["skill", "bash"]);
 
 /** A key naming an id — ours or the provider's — which is never the line shown. */
 const ID_KEY = /(^id$|_id$|Id$)/;
@@ -91,9 +121,10 @@ const BARE_URL = /^[a-z][a-z0-9+.-]*:\/\/\S*$/i;
  * The line an event becomes: the first string-valued field of its `data`, cut
  * to `EVENT_TEXT_MAX`.
  *
- * The provider does not publish its event catalogue, so this knows no type
- * and renders every one: an event with nothing to say is an empty line under
- * its type, not a dropped event. Two kinds of field are passed over. Ids,
+ * The fallback for a type `eventLine`'s catalogue does not know: the provider
+ * publishes none, so a new type is rendered rather than dropped, and one with
+ * nothing to say is an empty line under its type. Two kinds of field are
+ * passed over. Ids,
  * because `browser.ready`'s one remaining field is the provider's browser id,
  * granted to no client role. And bare URLs — `runEvents` already strips every
  * key known to carry a live or CDP URL, and this is the second belt: "Treat
@@ -105,9 +136,102 @@ export function eventText(data: Record<string, unknown>): string {
     if (typeof value !== "string") continue;
     const text = value.trim();
     if (!text || ID_KEY.test(key) || BARE_URL.test(text)) continue;
-    return text.length > EVENT_TEXT_MAX ? `${text.slice(0, EVENT_TEXT_MAX - 1)}…` : text;
+    return cut(text);
   }
   return "";
+}
+
+function cut(text: string): string {
+  return text.length > EVENT_TEXT_MAX ? `${text.slice(0, EVENT_TEXT_MAX - 1)}…` : text;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** A trimmed string that is neither empty nor a bare URL, cut short; else null. */
+function shown(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || BARE_URL.test(text)) return null;
+  return cut(text.replace(SOCKET_URL, "[link]").replace(LIVE_OR_CDP_URL, "[link]"));
+}
+
+/**
+ * A URL inside a sentence that could be a live view or a CDP socket. Real runs
+ * sent none in text (2026-10-11); this is the belt for the day one does.
+ */
+const SOCKET_URL = /wss?:\/\/\S+/gi;
+const LIVE_OR_CDP_URL = /https?:\/\/\S*(?:live|cdp)\S*/gi;
+
+/** The hostname of an origin such as `https://news.ycombinator.com`, or null. */
+function hostOf(origin: unknown): string | null {
+  try {
+    return new URL(String(origin)).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+/** JSON is the run's structured answer, which reaches the conversation on its own. */
+function looksLikeJson(raw: string): boolean {
+  // The answer may come in a Markdown code fence.
+  const text = raw
+    .trim()
+    .replace(/^```[a-z]*\s*/i, "")
+    .replace(/\s*```$/, "");
+  if (!/^[[{]/.test(text)) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The line an event becomes in the panel, or null for one it does not show.
+ *
+ * Task 3.4's catalogue, from the event types real v4 runs sent (recorded in
+ * `v4.ts`). The agent's steps are a `core.event` each: a browser step is shown
+ * by the provider agent's own description of it, and what the agent says it
+ * will do is shown as said, but not its JSON answer, its reasoning, its step
+ * boundaries, loading a skill or the shell it types a saved login through. A
+ * saved login typed is shown by its host and which half it was, never the
+ * alias. A type not in the catalogue keeps the generic `eventText` line, so a
+ * new one is seen rather than dropped.
+ */
+export function eventLine(event: RunEvent): string | null {
+  const { type, data } = event;
+  if (SILENT_EVENT_TYPES.has(type)) return null;
+  if (type === "browser.ready") return "The browser is ready";
+  if (type === "browser.reattached") return "Back in the same browser";
+  if (type === "secret.typed") {
+    const secret = asRecord(data.secret);
+    const host = hostOf(secret.origin);
+    if (!host) return "Typed a saved login";
+    const alias = String(secret.alias ?? "");
+    const half = alias.endsWith("_username")
+      ? "username"
+      : alias.endsWith("_password")
+        ? "password"
+        : "login";
+    return `Typed the saved ${half} into ${host}`;
+  }
+  if (type === "core.event") {
+    const part = asRecord(data.part);
+    if (part.type === "text") {
+      const text = shown(part.text);
+      return text && !looksLikeJson(String(part.text)) ? text : null;
+    }
+    if (part.type === "tool" && !HIDDEN_TOOLS.has(String(part.tool))) {
+      return shown(asRecord(asRecord(part.state).input).description);
+    }
+    return null;
+  }
+  return eventText(data);
 }
 
 function problem(error: { code?: string; message?: string } | null): {
@@ -240,11 +364,61 @@ async function drainEvents(
     }
   }
 
-  return events.slice(-EVENTS_SHOWN).map((event) => ({
-    ts: event.ts,
-    type: event.type,
-    text: eventText(event.data),
-  }));
+  const lines: BrowserEventLine[] = [];
+  for (const event of events) {
+    const text = eventLine(event);
+    if (text !== null) lines.push({ ts: event.ts, type: event.type, text });
+  }
+  return lines.slice(-EVENTS_SHOWN);
+}
+
+/**
+ * Which of a person's browsers beside a conversation are still open, as far as
+ * Covan has seen: for Settings → Browser sign-ins (Task 3.2, ruling R48),
+ * which lists the browsers somebody could still stop.
+ *
+ * `browserReady`'s reading, for many rows at once. A browser not yet seen
+ * stopped is a row naming a `provider_browser_id` — the column every confirmed
+ * stop clears and the idle sweep claims on (0078) — and that column is granted
+ * to no client role, so the route cannot ask it through `c.get("db")`. It has
+ * read the rows through the caller's own client first, and hands over only the
+ * ids RLS returned; the read here is narrowed to those ids AND the caller's
+ * own user id, so an id from anywhere else answers nothing.
+ *
+ * **Stored state, not the provider.** One read, no call to browser-use: the
+ * settings page is not where a provider call earns its subrequests, and a
+ * browser the provider's own cleanup stopped without telling us is one the
+ * sweep will find and clear on its next pass.
+ *
+ * What leaves is a set of Covan's own ids — never the browser id itself.
+ *
+ * @returns null when it could not tell, which the route treats as "show only
+ *   what the row itself says" rather than as "none open".
+ */
+export async function openBrowsersAmong(
+  env: RoutineEnv,
+  input: { userId: string; browserSessionIds: string[] },
+  overrides: { db?: SupabaseClient } = {},
+): Promise<Set<string> | null> {
+  const open = new Set<string>();
+  if (input.browserSessionIds.length === 0) return open;
+  const db = overrides.db ?? serviceClient(env);
+
+  const { data, error } = await db
+    .from("browser_sessions")
+    .select("id, provider_browser_id")
+    .eq("user_id", input.userId)
+    .in("id", input.browserSessionIds);
+  if (error) {
+    console.error("could not read which browsers are still open", problem(error));
+    return null;
+  }
+  for (const row of (data ?? []) as Array<{ id: unknown; provider_browser_id: unknown }>) {
+    if (typeof row.provider_browser_id === "string" && row.provider_browser_id) {
+      open.add(String(row.id));
+    }
+  }
+  return open;
 }
 
 /** How stale `human_since` may get before the open tab moves it to now. */

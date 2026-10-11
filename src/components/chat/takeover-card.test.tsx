@@ -62,6 +62,7 @@ function task(over: Partial<BrowserTask> = {}): BrowserTask {
     browserSessionId: null,
     signInHost: null,
     carriedSavedLogin: false,
+    savedLogin: null,
     ...over,
   };
 }
@@ -299,6 +300,25 @@ describe("the legacy card: a reloaded tab", () => {
 
     expect(await screen.findByRole("button", { name: /done, i've signed in/i })).toBeTruthy();
     expect(await screen.findByText(/9:\d\d left/)).toBeTruthy();
+  });
+
+  /**
+   * Ruling R51 (b): `current` now answers an open row past its window (the
+   * browser is still up, and Done still saves and runs the task again). The
+   * card says the window has closed rather than counting below zero, and
+   * Done still closes it.
+   */
+  it("recovers a takeover past its window, and Done still closes it", async () => {
+    browserTasks.mockResolvedValue(tasksOf([task()]));
+    current.mockResolvedValue({
+      takeover: { ...LIVE, expiresAt: new Date(Date.now() - 2 * 60_000).toISOString() },
+    });
+    renderCard();
+
+    expect(await screen.findByText(/the window has closed/)).toBeTruthy();
+    expect(screen.queryByText(/-\d+:\d\d left/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /done, i've signed in/i }));
+    await waitFor(() => expect(close).toHaveBeenCalledWith("to-1"));
   });
 });
 

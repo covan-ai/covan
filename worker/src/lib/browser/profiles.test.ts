@@ -8,6 +8,7 @@ import {
   browserState,
   stopBrowser,
   accountHeadroom,
+  jarWrittenSince,
   TAKEOVER_PROVIDER_MINUTES,
 } from "./profiles";
 import { createTask, type BrowserEnv } from "./client";
@@ -27,7 +28,7 @@ describe("profiles", () => {
   it("creates one keyed to the Covan user", async () => {
     fetchMock.mockResolvedValue(ok({ id: "p-1", cookieDomains: [] }, 201));
     const r = await createProfile(ENV, { name: "Efe", userId: "user-1" });
-    expect(r).toEqual({ kind: "ok", value: { id: "p-1", cookieDomains: [] } });
+    expect(r).toEqual({ kind: "ok", value: { id: "p-1", cookieDomains: [], updatedAt: null } });
     expect(fetchMock.mock.calls[0][0]).toBe("https://api.browser-use.com/api/v4/profiles");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ name: "Efe", userId: "user-1" });
   });
@@ -151,10 +152,21 @@ describe("browserState and stopBrowser", () => {
     for (const fn of [browserState, stopBrowser]) {
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(
-        ok({ id: "s-1", status: "stopped", liveUrl: "https://live/x", cdpUrl: "wss://secret" }),
+        ok({
+          id: "s-1",
+          status: "stopped",
+          finishedAt: "2026-10-11T12:42:34.200Z",
+          liveUrl: "https://live/x",
+          cdpUrl: "wss://secret",
+        }),
       );
       const r = await fn(ENV, "s-1");
-      expect(r).toEqual({ kind: "ok", value: { id: "s-1", status: "stopped" } });
+      // `finishedAt` is a time, not an address: it is what the jar read waits
+      // for the provider to have written the profile after.
+      expect(r).toEqual({
+        kind: "ok",
+        value: { id: "s-1", status: "stopped", finishedAt: "2026-10-11T12:42:34.200Z" },
+      });
     }
   });
 
@@ -216,5 +228,44 @@ describe("a provider that stops reporting its limit", () => {
     fetchMock.mockResolvedValue(ok({ activeSessionCount: 3 }));
     const r = await accountHeadroom(ENV);
     expect(r).toEqual({ kind: "ok", value: { active: 3, limit: null } });
+  });
+});
+
+/**
+ * Measured 2026-10-11: the sweep read the profile 0.6 s before the provider
+ * wrote it, and recorded the list from before the stop. And twice the provider
+ * saved a jar without ever moving the profile at all.
+ */
+describe("jarWrittenSince", () => {
+  const STOP = "2026-10-11T12:42:34.200Z";
+
+  it("does not take a non-empty list from before the stop as the stop's", () => {
+    expect(
+      jarWrittenSince(
+        {
+          id: "p-1",
+          cookieDomains: ["the-internet.herokuapp.com"],
+          updatedAt: "2026-10-11T12:32:00.000Z",
+        },
+        STOP,
+      ),
+    ).toBe(false);
+  });
+
+  it("takes a list written at or after the stop, an empty one included", () => {
+    const after = "2026-10-11T12:42:34.883868Z"; // the provider's own microseconds
+    expect(
+      jarWrittenSince({ id: "p-1", cookieDomains: ["httpbin.org"], updatedAt: after }, STOP),
+    ).toBe(true);
+    expect(jarWrittenSince({ id: "p-1", cookieDomains: [], updatedAt: after }, STOP)).toBe(true);
+    expect(jarWrittenSince({ id: "p-1", cookieDomains: [], updatedAt: STOP }, STOP)).toBe(true);
+  });
+
+  it("falls back to the first rule when the stop did not say when", () => {
+    expect(
+      jarWrittenSince({ id: "p-1", cookieDomains: ["a.example"], updatedAt: null }, null),
+    ).toBe(true);
+    expect(jarWrittenSince({ id: "p-1", cookieDomains: [] }, null)).toBe(false);
+    expect(jarWrittenSince({ id: "p-1", cookieDomains: ["a.example"] }, STOP)).toBe(true);
   });
 });

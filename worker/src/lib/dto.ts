@@ -1122,6 +1122,15 @@ export type BrowserTaskDTO = {
    * otherwise.
    */
   carriedSavedLogin: boolean;
+  /**
+   * A saved login this person may use for `signInHost`, when the run did not
+   * carry one — for the sign-in card's "Try again with the saved login"
+   * (found in the 2026-10-11 e2e: the model left `site` out, the run carried
+   * nothing, and "ask again" looped). Its id, which the hand-back names, its
+   * label and its host — never the username. Computed only for the wall the
+   * card shows; null otherwise.
+   */
+  savedLogin: { id: string; label: string; siteHost: string } | null;
 };
 
 /**
@@ -1136,6 +1145,7 @@ export const BROWSER_TASK_COLUMNS =
 export function mapBrowserTask(
   row: Record<string, unknown>,
   carriedSavedLogin = false,
+  savedLogin: BrowserTaskDTO["savedLogin"] = null,
 ): BrowserTaskDTO {
   return {
     id: String(row.id),
@@ -1151,5 +1161,6 @@ export function mapBrowserTask(
     browserSessionId: row.browser_session_id ? String(row.browser_session_id) : null,
     signInHost: typeof row.signin_host === "string" && row.signin_host ? row.signin_host : null,
     carriedSavedLogin,
+    savedLogin,
   };
 }

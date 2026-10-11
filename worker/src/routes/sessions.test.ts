@@ -11,11 +11,13 @@ const tasksThatCarriedALogin = vi.fn();
 // A failed read thrown by the stand-in rather than by the `vi.fn`, which vitest
 // reports as a failure even when the route catches it.
 let carryReadFails = false;
+const savedLogin = vi.fn();
 vi.mock("../lib/browser/credentials", () => ({
   tasksThatCarriedALogin: async (...args: unknown[]) => {
     if (carryReadFails) throw new Error("browser_tasks: read failed (57014)");
     return tasksThatCarriedALogin(...args);
   },
+  savedLogin: async (...args: unknown[]) => savedLogin(...args),
 }));
 
 import { sessions } from "./sessions";
@@ -396,6 +398,86 @@ describe("GET /sessions/:id/browser-tasks", () => {
     });
   });
 
+  /**
+   * Found in the 2026-10-11 e2e: a run sent without `site` met the wall with a
+   * login saved for the site, and the card offered to save another. The card
+   * now offers to try again with the saved one — for the wall it shows, and
+   * only when that run carried none.
+   */
+  describe("savedLogin", () => {
+    const WALL = {
+      ...TASK,
+      status: "failed",
+      stop_reason: "login_required",
+      signin_host: "quotes.toscrape.com",
+    };
+    const LOGIN = { id: "cred-q", label: "quotes — e2e", scope: "owner", siteHost: "toscrape.com" };
+
+    function appWithTasks(rows: Array<Record<string, unknown>>) {
+      return appWith({
+        tables: {
+          chat_sessions: {
+            select: () => ({ data: { id: "session-1", agent_id: "agent-1" }, error: null }),
+          },
+          browser_tasks: { select: () => ({ data: rows, error: null }) },
+        },
+      });
+    }
+
+    beforeEach(() => {
+      tasksThatCarriedALogin.mockReset();
+      tasksThatCarriedALogin.mockResolvedValue(new Set());
+      carryReadFails = false;
+      savedLogin.mockReset();
+      savedLogin.mockResolvedValue(LOGIN);
+    });
+
+    type Body = { tasks: Array<{ id: string; savedLogin: unknown }> };
+
+    it("offers the login saved for the wall's site, asked for this agent and this caller", async () => {
+      const { app } = appWithTasks([WALL, { ...TASK, id: "bt-0" }]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as Body;
+
+      expect(body.tasks[0].savedLogin).toEqual({
+        id: "cred-q",
+        label: "quotes — e2e",
+        siteHost: "toscrape.com",
+      });
+      expect(body.tasks[1].savedLogin).toBeNull();
+      expect(savedLogin).toHaveBeenCalledWith(undefined, {
+        agentId: "agent-1",
+        userId: "user-1",
+        host: "quotes.toscrape.com",
+      });
+    });
+
+    it("offers nothing when the run already carried a saved login", async () => {
+      tasksThatCarriedALogin.mockResolvedValue(new Set(["bt-1"]));
+      const { app } = appWithTasks([WALL]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as Body;
+
+      expect(body.tasks[0].savedLogin).toBeNull();
+      expect(savedLogin).not.toHaveBeenCalled();
+    });
+
+    it("offers nothing for the retry's own wall, which has had its one try", async () => {
+      const { app } = appWithTasks([{ ...WALL, retry_of: "bt-0" }]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as Body;
+
+      expect(body.tasks[0].savedLogin).toBeNull();
+      expect(savedLogin).not.toHaveBeenCalled();
+    });
+
+    it("asks nothing when the newest task is not at a wall", async () => {
+      const { app } = appWithTasks([TASK, { ...WALL, id: "bt-0" }]);
+      await app.request("/sessions/session-1/browser-tasks");
+      expect(savedLogin).not.toHaveBeenCalled();
+    });
+  });
+
   it("answers 404 for a conversation the caller cannot see, before touching the provider", async () => {
     const { app } = appSeeing(false);
     const res = await app.request("/sessions/session-1/browser-tasks");
@@ -430,6 +512,7 @@ describe("GET /sessions/:id/browser-tasks", () => {
           browserSessionId: "bs-1",
           signInHost: "linkedin.com",
           carriedSavedLogin: false,
+          savedLogin: null,
         },
       ],
       session: LIVE.session,

@@ -143,7 +143,15 @@ const runProfile = vi.hoisted(() =>
     } | null> => null,
   ),
 );
-vi.mock("../../browser/takeover", () => ({ profileFor, runProfile }));
+/**
+ * Ruling R44: whether the person has a browser of their own open (Task 3.1),
+ * mocked for `profileFor`'s reason; what counts as open is proved in
+ * `takeover.test.ts`. False by default — almost nobody has one open.
+ */
+const heldTakeover = vi.hoisted(() =>
+  vi.fn(async (_env: unknown, _userId: string): Promise<boolean | null> => false),
+);
+vi.mock("../../browser/takeover", () => ({ profileFor, runProfile, heldTakeover }));
 
 const affordable = vi.fn(async (_ctx: ToolContext): Promise<ToolResult | null> => null);
 const spend = vi.fn(async (_ctx: ToolContext, _tokens: number): Promise<void> => {});
@@ -268,6 +276,8 @@ beforeEach(() => {
   profileFor.mockResolvedValue(null);
   runProfile.mockReset();
   runProfile.mockResolvedValue(null);
+  heldTakeover.mockReset();
+  heldTakeover.mockResolvedValue(false);
   recordBrowserTask.mockReset();
   recordBrowserTask.mockResolvedValue("bt-1");
   ensureBrowserSession.mockReset();
@@ -638,6 +648,37 @@ describe("once approved", () => {
       expect((result as { message: string }).message).toMatch(
         /a browser task is still running in this conversation/i,
       );
+      refusedWithNothingSpent();
+    });
+
+    /**
+     * Ruling R44: the person has a browser of their own open, on the same
+     * jar, to sign in ahead of time. A run now would put the jar in two live
+     * browsers, and whichever stops last writes it — so the sign-in they are
+     * making could be overwritten. Refused before the browser row is even
+     * claimed, so there is nothing to hand back either.
+     */
+    it("refuses while the person has a browser of their own open, and says to press Done there first", async () => {
+      heldTakeover.mockResolvedValue(true);
+
+      const result = await browseTool.run({ task: TASK }, ctx());
+
+      expect(result.kind).toBe("error");
+      const message = (result as { message: string }).message;
+      expect(message).toMatch(/press Done in the browser they opened/);
+      expect(message).toMatch(/do not retry this turn/);
+      expect(heldTakeover.mock.calls[0][1]).toBe("user-1");
+      expect(ensureBrowserSession).not.toHaveBeenCalled();
+      refusedWithNothingSpent();
+    });
+
+    it("refuses, spending nothing, when it cannot tell whether one is open", async () => {
+      heldTakeover.mockResolvedValue(null);
+
+      const result = await browseTool.run({ task: TASK }, ctx());
+
+      expect(result.kind).toBe("error");
+      expect(ensureBrowserSession).not.toHaveBeenCalled();
       refusedWithNothingSpent();
     });
   });
@@ -1532,6 +1573,96 @@ describe("a saved login (Task 2.3)", () => {
       expectNoSecretIn(recordBrowserTask.mock.calls);
       expectNoSecretIn(recordRunStart.mock.calls);
       expectNoSecretIn(said);
+    });
+  });
+
+  /**
+   * Found in the 2026-10-11 e2e: gpt-4.1-mini never filled `site`, not even
+   * for "try again with my saved login", so a saved login could not be used
+   * in a new conversation. A host the task itself names stands in for it —
+   * shown on the card, and never deciding where the password may be typed.
+   */
+  describe("a site the task names, when the model names none", () => {
+    const QUOTES =
+      "Sign in at https://quotes.toscrape.com/login and report whether a Logout link is shown";
+    const quotesLogin = {
+      id: "cred-q",
+      label: "quotes — e2e",
+      scope: "owner" as const,
+      siteHost: "toscrape.com",
+    };
+
+    it("shows the login on the card, found from the task's URL", async () => {
+      savedLogin.mockImplementation(async (_env, args) =>
+        args.host === "quotes.toscrape.com" ? quotesLogin : null,
+      );
+
+      const result = await browseTool.run({ task: QUOTES }, ctxWith());
+
+      expect(result.kind).toBe("needs_confirmation");
+      const proposal = (result as { proposal: Record<string, unknown> }).proposal;
+      expect(proposal.signsInAs).toBe("toscrape.com (saved login: quotes — e2e)");
+      expect(credentialsFor).not.toHaveBeenCalled();
+    });
+
+    it("carries it once approved, typed only on the saved row's own host", async () => {
+      savedLogin.mockImplementation(async (_env, args) =>
+        args.host === "quotes.toscrape.com" ? quotesLogin : null,
+      );
+      credentialsFor.mockResolvedValue(saved("toscrape.com"));
+
+      await browseTool.run({ task: QUOTES }, ctx());
+
+      // Asked by the task's host, as a model's `site` would be; the pick walks
+      // up to the saved row, and the row's host is what the bindings allow.
+      expect(credentialsFor.mock.calls[0][1]).toEqual({
+        agentId: "agent-1",
+        userId: "user-1",
+        host: "quotes.toscrape.com",
+      });
+      for (const binding of sentRun().secretBindings as { allowedDomains: string[] }[]) {
+        expect(binding.allowedDomains).toEqual(["toscrape.com"]);
+      }
+      expect(recordBrowserTask.mock.calls[0][1].credentialId).toBe("cred-1");
+    });
+
+    it("takes the first named host that has a login, and asks about three at most", async () => {
+      savedLogin.mockImplementation(async (_env, args) =>
+        args.host === "c.example" ? { ...quotesLogin, siteHost: "c.example" } : null,
+      );
+
+      const result = await browseTool.run(
+        { task: "compare a.example, https://www.b.example/x, c.example and d.example prices" },
+        ctxWith(),
+      );
+
+      const asked = savedLogin.mock.calls.map((call) => call[1].host);
+      expect(asked.slice(0, 3)).toEqual(["a.example", "b.example", "c.example"]);
+      expect(asked).not.toContain("d.example");
+      expect((result as { proposal: Record<string, unknown> }).proposal.signsInAs).toBe(
+        "c.example (saved login: quotes — e2e)",
+      );
+    });
+
+    it("lets the model's own site win, and asks nothing about the task's hosts", async () => {
+      credentialsFor.mockResolvedValue(saved());
+
+      await browseTool.run({ task: QUOTES, site: "linkedin.com" }, ctx());
+
+      expect(savedLogin).not.toHaveBeenCalled();
+      expect(credentialsFor.mock.calls[0][1].host).toBe("linkedin.com");
+    });
+
+    it("runs without a login, as before, when the saved logins cannot be read", async () => {
+      const console_ = spyConsole();
+      savedLogin.mockRejectedValue(new Error("browser_credentials: read failed (57014)"));
+
+      const result = await browseTool.run({ task: QUOTES }, ctx());
+      console_.restore();
+
+      expect(result.kind).toBe("ok");
+      expect(credentialsFor).not.toHaveBeenCalled();
+      expect(sentRun()).not.toHaveProperty("secretBindings");
     });
   });
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { tasksThatCarriedALogin } from "../lib/browser/credentials";
+import { savedLogin, tasksThatCarriedALogin } from "../lib/browser/credentials";
 import { pollConversationBrowser } from "../lib/browser/live";
 import { deferred } from "../lib/defer";
 import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
@@ -304,7 +304,7 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
-    .select("id")
+    .select("id, agent_id")
     .eq("id", id)
     .maybeSingle();
   if (sessionError) {
@@ -358,8 +358,43 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
     }
   }
 
+  /**
+   * The saved login the sign-in card can try again with: for the wall the
+   * card shows (`signInFor` — the newest task, at a login wall, not itself
+   * the retry) when that run carried none. Found in the 2026-10-11 e2e: a run
+   * the model sent without `site` met the wall with a login saved for the
+   * site, and the card offered to save another. Through `savedLogin`, the
+   * card's and the binding's own pick, so the login offered is the one the
+   * retry binds; it names a label and a host, and opens nothing. A failure
+   * is "none", for `carried`'s reason.
+   */
+  const newest = rows[0];
+  let offered: { id: string; label: string; siteHost: string } | null = null;
+  if (
+    newest &&
+    newest.stop_reason === "login_required" &&
+    !newest.retry_of &&
+    !carried.has(String(newest.id)) &&
+    typeof newest.signin_host === "string" &&
+    newest.signin_host &&
+    session.agent_id
+  ) {
+    try {
+      const login = await savedLogin(c.env, {
+        agentId: String(session.agent_id),
+        userId: c.get("user").id,
+        host: newest.signin_host,
+      });
+      if (login) offered = { id: login.id, label: login.label, siteHost: login.siteHost };
+    } catch (err) {
+      console.error("could not tell whether a login is saved for a walled task", String(err));
+    }
+  }
+
   return c.json({
-    tasks: rows.map((row) => mapBrowserTask(row, carried.has(String(row.id)))),
+    tasks: rows.map((row) =>
+      mapBrowserTask(row, carried.has(String(row.id)), row === newest ? offered : null),
+    ),
     session: live.session,
     events: live.events,
     delivered: live.delivered,

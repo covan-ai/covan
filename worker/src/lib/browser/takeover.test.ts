@@ -10,6 +10,7 @@ import {
   type QueryContext,
   type TableHandlers,
 } from "../../test-support/fake-db";
+import { matchesOr } from "../../test-support/memory-db";
 
 /**
  * Every call this module makes, in order — the provider's and the database's
@@ -188,6 +189,18 @@ const stopSessionBrowsers = vi.fn(
     _input: { providerSessionId: string | null; storedBrowserId: string | null },
   ): Promise<boolean> => true,
 );
+/**
+ * The jar read-back after a stop, mocked for the same reason: `controls.test.ts`
+ * proves what it reads and writes, and this file asks only whether an open
+ * takeover's clearing of the way calls it, once, and how hard it may wait.
+ */
+const refreshSessionJar = vi.fn(
+  async (
+    _env: unknown,
+    _deps: unknown,
+    _input: { profileId: string | null; attempts?: number },
+  ): Promise<void> => {},
+);
 vi.mock("./controls", () => ({
   stopSessionBrowsers: (
     env: unknown,
@@ -195,6 +208,14 @@ vi.mock("./controls", () => ({
   ) => {
     log.push("provider stop session browsers");
     return stopSessionBrowsers(env, input);
+  },
+  refreshSessionJar: (
+    env: unknown,
+    deps: unknown,
+    input: { profileId: string | null; attempts?: number },
+  ) => {
+    log.push("refresh session jar");
+    return refreshSessionJar(env, deps, input);
   },
 }));
 
@@ -206,9 +227,11 @@ vi.mock("./tasks", () => ({
 }));
 
 import {
+  IDLE_BROWSER_STOPS,
   TAKEOVER_EXPIRY_MINUTES,
   closeTakeover,
   ensureProfile,
+  heldTakeover,
   openTakeover,
   profileFor,
   forgetProfile,
@@ -230,17 +253,23 @@ function at(minutes: number): string {
 }
 
 /**
- * Only `eq` is modelled, and anything else throws rather than being ignored:
- * a filter this double shrugged at is a filter the module could silently stop
- * sending — and the one that matters is `.eq("status", "open")` on the close,
- * which is the whole defence against a double-click.
+ * Only `eq` is modelled, and `or` (clearing the jar's narrowed read, M7, by
+ * `memory-db.ts`'s reading of PostgREST's syntax); anything else throws
+ * rather than being ignored: a filter this double shrugged at is a filter the
+ * module could silently stop sending — and the one that matters is
+ * `.eq("status", "open")` on the close, which is the whole defence against a
+ * double-click.
  */
 function matchesFilters(row: Row, filters: Filter[]): boolean {
   return filters.every((f) => {
+    if (f.kind === "or") return matchesOr(row, String(f.value));
     if (f.kind !== "eq") throw new Error(`takeover.test: unexpected ${f.kind} on ${f.column}`);
     return row[f.column] === f.value;
   });
 }
+
+/** PostgREST's `max-rows`: a read answers at most this many, and says nothing about the rest. */
+const MAX_ROWS = 1000;
 
 /**
  * Two clients, and keeping them apart is an assertion rather than scaffolding.
@@ -269,7 +298,7 @@ function store(
 
   const read = (name: string, rows: Row[]) => (ctx: QueryContext) => {
     log.push(`select ${name}`);
-    const found = rows.filter((r) => matchesFilters(r, ctx.filters));
+    const found = rows.filter((r) => matchesFilters(r, ctx.filters)).slice(0, MAX_ROWS);
     return { data: ctx.single ? (found[0] ?? null) : found, error: null };
   };
   const write = (name: string, rows: Row[]) => (ctx: QueryContext) => {
@@ -451,9 +480,11 @@ beforeEach(() => {
     recordBrowserTask,
     sleep,
     stopSessionBrowsers,
+    refreshSessionJar,
   ]) {
     fn.mockReset();
   }
+  refreshSessionJar.mockResolvedValue(undefined);
   stopSessionBrowsers.mockResolvedValue(true);
   accountHeadroom.mockResolvedValue({ kind: "ok", value: { active: 1, limit: 10 } });
   createProfile.mockResolvedValue({ kind: "ok", value: { id: "bu-profile", cookieDomains: [] } });
@@ -788,6 +819,48 @@ describe("openTakeover", () => {
     expect(s.takeovers).toEqual([]);
   });
 
+  /**
+   * M3: a deployment with no `BROWSER_USE_API_KEY`. `send` answers 501 before
+   * any network, and "try again shortly" would be a promise nothing keeps —
+   * so it is said as what it is, with the 501 the other routes give a missing
+   * key, before anything is rented.
+   */
+  it("says a deployment with no browser key has no browser, rather than to try again", async () => {
+    const s = store({ profiles: [profileRow()] });
+    accountHeadroom.mockResolvedValue({
+      kind: "error",
+      status: 501,
+      message: "this deployment has no BROWSER_USE_API_KEY, so it cannot run browser tasks",
+    });
+
+    const result = await openTakeover({} as RoutineEnv, input, s.deps);
+
+    expect(result).toEqual({
+      kind: "error",
+      status: 501,
+      message: "This Covan has no browser set up.",
+    });
+    expect(createProfile).not.toHaveBeenCalled();
+    expect(createBrowser).not.toHaveBeenCalled();
+    expect(s.takeovers).toEqual([]);
+  });
+
+  /**
+   * Ruling R51 (d): decided by the key, not by the status. A 501 from the
+   * provider itself, on a deployment that has a key, is a failed read like
+   * any other — not a Covan with no browser.
+   */
+  it("answers a provider's own 501 as a failed read when the deployment has a key", async () => {
+    const s = store({ profiles: [profileRow()] });
+    accountHeadroom.mockResolvedValue({ kind: "error", status: 501, message: "Not Implemented" });
+
+    const result = await openTakeover(ENV, input, s.deps);
+
+    expect(result).toMatchObject({ kind: "error", status: 502 });
+    expect((result as { message: string }).message).not.toMatch(/no browser set up/i);
+    expect(createBrowser).not.toHaveBeenCalled();
+  });
+
   it("proceeds with exactly two slots free, which are the two it keeps back", async () => {
     const s = store({ profiles: [profileRow()] });
     accountHeadroom.mockResolvedValue({ kind: "ok", value: { active: 7, limit: 10 } });
@@ -801,6 +874,10 @@ describe("openTakeover", () => {
     const result = await openTakeover(ENV, input, s.deps);
 
     expect(result).toEqual({ kind: "error", status: 409, message: expect.any(String) });
+    // A whole sentence, naming the button as the panel does (R51 e).
+    const message = (result as { message: string }).message;
+    expect(message).toMatch(/^You already have a browser open\..*\.$/);
+    expect(message).toMatch(/press Done/);
     expect(createBrowser).not.toHaveBeenCalled();
     expect(stopBrowser).not.toHaveBeenCalled();
     expect(s.takeovers[0].status).toBe("open");
@@ -959,6 +1036,310 @@ describe("openTakeover", () => {
     expect(result).toMatchObject({ kind: "error", status: 429 });
     expect((result as { message: string }).message).toContain("busy");
     expect(s.takeovers).toEqual([]);
+  });
+});
+
+/**
+ * Ruling R44, one jar and one writer: the browser a person opens for
+ * themselves from the chat header runs on the same profile as the browsers
+ * beside their conversations, and whichever of two live browsers stops last
+ * writes the jar — so a sign-in made in one can be overwritten by the other.
+ */
+describe("openTakeover with no task: one jar, one writer", () => {
+  const input = { userId: "user-1", workspaceId: "ws-1", browserTaskId: null, label: "covan" };
+
+  it.each(["agent", "human"])(
+    "refuses with 409 while a conversation's browser is in %s hands, before anything is rented",
+    async (liveState) => {
+      const s = store({
+        profiles: [profileRow()],
+        sessions: [sessionRow({ live_state: liveState, profile_id: "prof-1" })],
+      });
+
+      const result = await openTakeover(ENV, input, s.deps);
+
+      expect(result).toEqual({ kind: "error", status: 409, message: expect.any(String) });
+      const message = (result as { message: string }).message;
+      // One plain sentence: what is in the way, and what to do about it. And no
+      // more than is true: `agent` outlives a finished run until a poll or the
+      // cron settles it, so the sentence allows for a run still finishing.
+      expect(message).toMatch(/beside one of your conversations/);
+      expect(message).toMatch(/a run that is still finishing/);
+      expect(message).toMatch(/try again in a few minutes/);
+      expect(message.split(". ").length).toBeLessThanOrEqual(2);
+      // In the person's hands, Done is the hand-back and starts a run — the
+      // way out is to close that browser (M1). And a sentence a panel can show
+      // as it is, capital to period (M2).
+      expect(message).toMatch(/close it from that conversation's panel/);
+      expect(message).not.toMatch(/press Done/i);
+      expect(message).toMatch(/^[A-Z].*\.$/);
+      expect(log).not.toContain("provider accountHeadroom");
+      expect(createBrowser).not.toHaveBeenCalled();
+      expect(stopSessionBrowsers).not.toHaveBeenCalled();
+      expect(s.takeovers).toEqual([]);
+    },
+  );
+
+  it("stops an idle conversation browser, and records the stop, before renting", async () => {
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [sessionRow({ profile_id: "prof-1" })],
+    });
+
+    const result = await openTakeover(ENV, input, s.deps);
+
+    expect(result).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers.mock.calls[0][1]).toEqual({
+      providerSessionId: "bu-agent-session",
+      storedBrowserId: "bu-browser",
+    });
+    expect(log.indexOf("provider stop session browsers")).toBeLessThan(
+      log.indexOf("provider createBrowser"),
+    );
+    // Ruling R20's marker, cleared on a confirmed stop as the sweep's idle arm
+    // clears it — and the session kept, so the next browse continues it.
+    expect(s.sessions[0]).toMatchObject({
+      live_state: "none",
+      provider_browser_id: null,
+      provider_session_id: "bu-agent-session",
+    });
+    // Ruling R47: no read-back here. Straight after the stop it would read the
+    // jar before the provider has written it, and the takeover's own close
+    // rewrites `cookie_domains` anyway.
+    expect(refreshSessionJar).not.toHaveBeenCalled();
+    expect(log).not.toContain("provider getProfile");
+  });
+
+  it("leaves a browser it could not stop named on its row, and still opens", async () => {
+    stopSessionBrowsers.mockResolvedValue(false);
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [sessionRow({ profile_id: "prof-1" })],
+    });
+
+    const result = await openTakeover(ENV, input, s.deps);
+
+    // Best-effort: the sweep's idle arm still claims it on the marker.
+    expect(result).toMatchObject({ kind: "ok" });
+    expect(s.sessions[0]).toMatchObject({ provider_browser_id: "bu-browser" });
+    expect(refreshSessionJar).not.toHaveBeenCalled();
+  });
+
+  it(`stops at most ${IDLE_BROWSER_STOPS} idle browsers, which is the subrequest bound`, async () => {
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [1, 2, 3].map((n) =>
+        sessionRow({
+          id: `bs-${n}`,
+          profile_id: "prof-1",
+          provider_session_id: `bu-agent-session-${n}`,
+          provider_browser_id: `bu-browser-${n}`,
+        }),
+      ),
+    });
+
+    const result = await openTakeover(ENV, input, s.deps);
+
+    expect(result).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers).toHaveBeenCalledTimes(IDLE_BROWSER_STOPS);
+    expect(refreshSessionJar).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing of a browser already known stopped, or of somebody else's", async () => {
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [
+        sessionRow({ provider_browser_id: null }),
+        sessionRow({ id: "bs-2", user_id: "someone-else", live_state: "agent" }),
+      ],
+    });
+
+    const result = await openTakeover(ENV, input, s.deps);
+
+    expect(result).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers).not.toHaveBeenCalled();
+    expect(refreshSessionJar).not.toHaveBeenCalled();
+  });
+
+  /**
+   * M7: the read is a guard, so the database narrows it. A person with a
+   * thousand conversations whose browsers are long stopped would otherwise
+   * fill PostgREST's thousand-row answer with rows that do not matter, and a
+   * live one past them would never be seen — the second writer on the jar
+   * that R44 exists to refuse.
+   */
+  it("finds a live conversation browser past the thousandth row, because the query is narrowed", async () => {
+    const stopped = Array.from({ length: MAX_ROWS }, (_, n) =>
+      sessionRow({ id: `bs-old-${n}`, provider_browser_id: null }),
+    );
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [...stopped, sessionRow({ id: "bs-live", live_state: "human" })],
+    });
+
+    const result = await openTakeover(ENV, input, s.deps);
+
+    expect(result).toMatchObject({ kind: "error", status: 409 });
+    expect(createBrowser).not.toHaveBeenCalled();
+  });
+
+  it("still stops an idle browser past the thousandth row", async () => {
+    const stopped = Array.from({ length: MAX_ROWS }, (_, n) =>
+      sessionRow({ id: `bs-old-${n}`, provider_browser_id: null }),
+    );
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [...stopped, sessionRow({ id: "bs-idle" })],
+    });
+
+    const result = await openTakeover(ENV, input, s.deps);
+
+    expect(result).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers).toHaveBeenCalledTimes(1);
+    expect(s.sessions.at(-1)).toMatchObject({ id: "bs-idle", provider_browser_id: null });
+  });
+
+  it("refuses when the conversation browsers cannot be read, rather than guessing", async () => {
+    const s = store({ profiles: [profileRow()] });
+    const broken = fakeDb({
+      tables: {
+        browser_takeovers: { select: () => ({ data: null, error: null }) },
+        browser_sessions: {
+          select: () => ({ data: null, error: { code: "57014", message: "timeout" } }),
+        },
+      },
+    });
+
+    const result = await openTakeover(ENV, input, {
+      ...s.deps,
+      db: broken.db as unknown as SupabaseClient,
+    });
+
+    expect(result).toMatchObject({ kind: "error", status: 500 });
+    expect((result as { message: string }).message).toMatch(/^[A-Z].*\.$/);
+    expect(createBrowser).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Ruling R46: a v2 task's takeover runs on the same jar, so it is refused on
+   * the same grounds while a conversation's browser is live. It does not stop
+   * idle ones — that is the person's own browser's clearing of the way, and
+   * the ruling asks the task's takeover only to refuse.
+   */
+  it.each(["agent", "human"])(
+    "refuses a task's takeover with 409 while a conversation's browser is in %s hands",
+    async (liveState) => {
+      const s = store({
+        profiles: [profileRow()],
+        sessions: [sessionRow({ live_state: liveState, profile_id: "prof-1" })],
+      });
+
+      const result = await openTakeover(ENV, { ...input, browserTaskId: "bt-1" }, s.deps);
+
+      expect(result).toEqual({ kind: "error", status: 409, message: expect.any(String) });
+      expect((result as { message: string }).message).toMatch(/try again in a few minutes/);
+      expect(log).not.toContain("provider accountHeadroom");
+      expect(createBrowser).not.toHaveBeenCalled();
+      expect(s.takeovers).toEqual([]);
+    },
+  );
+
+  it("does not stop idle conversation browsers for a task's takeover", async () => {
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [sessionRow({ profile_id: "prof-1" })],
+    });
+
+    const result = await openTakeover(ENV, { ...input, browserTaskId: "bt-1" }, s.deps);
+
+    expect(result).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers).not.toHaveBeenCalled();
+    expect(s.sessions[0]).toMatchObject({ provider_browser_id: "bu-browser" });
+  });
+});
+
+describe("heldTakeover", () => {
+  it("answers true for the caller's open takeover still inside its window", async () => {
+    const s = store({ takeovers: [openRow({ browser_task_id: null })] });
+    await expect(heldTakeover(ENV, "user-1", s.deps)).resolves.toBe(true);
+  });
+
+  /**
+   * Ruling R49: held until it is closed, not until its window ends. Past
+   * `expires_at` the browser is still running — the provider keeps it up to
+   * fifteen minutes, and the sweep stops it within about five of the window —
+   * so for that while the jar is still live in it, and `browse`, the hand-back
+   * and a take-over (all three ask only this) must still refuse.
+   */
+  it("answers true for the caller's open takeover past its window, which nobody has closed yet", async () => {
+    const s = store({ takeovers: [openRow({ browser_task_id: null, expires_at: at(-1) })] });
+    await expect(heldTakeover(ENV, "user-1", s.deps)).resolves.toBe(true);
+  });
+
+  it("answers true for one whose window cannot be read", async () => {
+    const s = store({ takeovers: [openRow({ browser_task_id: null, expires_at: null })] });
+    await expect(heldTakeover(ENV, "user-1", s.deps)).resolves.toBe(true);
+  });
+
+  /**
+   * Ruling R51 (a): held until it is closed — or until the provider has
+   * certainly ended the browser, `TAKEOVER_PROVIDER_MINUTES` after it was
+   * rented, whichever is first. Past that there is no live jar to protect,
+   * and a cron that never ran must not refuse `browse` for ever.
+   */
+  it("answers true for an open takeover one minute inside the provider's lifetime", async () => {
+    const s = store({
+      takeovers: [
+        openRow({
+          browser_task_id: null,
+          created_at: at(-(TAKEOVER_PROVIDER_MINUTES - 1)),
+          expires_at: at(-(TAKEOVER_PROVIDER_MINUTES - 1 - TAKEOVER_EXPIRY_MINUTES)),
+        }),
+      ],
+    });
+    await expect(heldTakeover(ENV, "user-1", s.deps)).resolves.toBe(true);
+  });
+
+  it("answers false for an open takeover past the provider's lifetime, which nobody closed", async () => {
+    const s = store({
+      takeovers: [
+        openRow({
+          browser_task_id: null,
+          created_at: at(-(TAKEOVER_PROVIDER_MINUTES + 1)),
+          expires_at: at(-(TAKEOVER_PROVIDER_MINUTES + 1 - TAKEOVER_EXPIRY_MINUTES)),
+        }),
+      ],
+    });
+    await expect(heldTakeover(ENV, "user-1", s.deps)).resolves.toBe(false);
+  });
+
+  it.each([
+    ["a closed one", openRow({ status: "closed" })],
+    ["an expired one", openRow({ status: "expired" })],
+    ["somebody else's", openRow({ user_id: "someone-else" })],
+  ])("answers false for %s", async (_label, row) => {
+    const s = store({ takeovers: [row] });
+    await expect(heldTakeover(ENV, "user-1", s.deps)).resolves.toBe(false);
+  });
+
+  it("answers null when it cannot tell, logging only a code", async () => {
+    const broken = fakeDb({
+      tables: {
+        browser_takeovers: {
+          select: () => ({
+            data: null,
+            error: { code: "57014", message: "timeout", details: "Failing row contains (…)" },
+          }),
+        },
+      },
+    });
+    const answer = await heldTakeover(ENV, "user-1", {
+      db: broken.db as unknown as SupabaseClient,
+      now: () => NOW,
+    });
+
+    expect(answer).toBeNull();
+    expect(JSON.stringify(spoken)).not.toContain("Failing row contains");
   });
 });
 
@@ -1156,6 +1537,27 @@ describe("closeTakeover", () => {
     expect(stopBrowser).toHaveBeenCalledTimes(1);
     expect(createTask).not.toHaveBeenCalled();
     expect(s.profiles[0].cookie_domains).toEqual(["mail.google.com"]);
+    // Opened from the chat header to sign in ahead of time (Task 3.1): there
+    // was never a task, so the sentence does not talk about one.
+    const message = (result as { message: string }).message;
+    expect(message).toMatch(/saved/);
+    expect(message).not.toMatch(/task|nothing was run/i);
+  });
+
+  it("says an empty jar plainly for a takeover with no task, without promising a re-run", async () => {
+    const s = store({ takeovers: [openRow({ browser_task_id: null })], profiles: [profileRow()] });
+    getProfile.mockResolvedValue({ kind: "ok", value: { id: "bu-profile", cookieDomains: [] } });
+
+    const result = await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    expect(result).toMatchObject({ kind: "ok", retriedTaskId: null, cookieDomains: [] });
+    const message = (result as { message: string }).message;
+    expect(message).toMatch(/no cookies/);
+    expect(message).not.toMatch(/task/i);
   });
 });
 
@@ -1332,12 +1734,52 @@ describe("forgetProfile", () => {
       const r = await forgetProfile(ENV, "user-1", s.deps);
 
       expect(r).toMatchObject({ kind: "error", status: 409 });
+      // A whole sentence the settings screen shows as it comes (R51 e).
+      expect((r as { message: string }).message).toMatch(/^[A-Z].*\.$/);
       expect(log).not.toContain("provider deleteProfile");
       expect(stopSessionBrowsers).not.toHaveBeenCalled();
       expect(s.profiles).toHaveLength(1);
       expect(s.sessions[0]).toMatchObject({ provider_session_id: "bu-agent-session" });
     },
   );
+
+  /**
+   * Ruling R51 (e), M7's reason: this read is a guard, and PostgREST answers
+   * at most a thousand rows. Narrowed in the query, a live browser past a
+   * thousand forgotten ones is still seen, and an idle one still stopped.
+   */
+  it("refuses on a conversation's browser in use past the thousandth row", async () => {
+    const forgotten = Array.from({ length: MAX_ROWS }, (_, n) =>
+      sessionRow({ id: `bs-old-${n}`, provider_session_id: null, provider_browser_id: null }),
+    );
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [...forgotten, sessionRow({ id: "bs-live", live_state: "agent" })],
+    });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r).toMatchObject({ kind: "error", status: 409 });
+    expect(log).not.toContain("provider deleteProfile");
+    expect(s.profiles).toHaveLength(1);
+  });
+
+  it("stops an idle browser past the thousandth row before it forgets the jar", async () => {
+    const forgotten = Array.from({ length: MAX_ROWS }, (_, n) =>
+      sessionRow({ id: `bs-old-${n}`, provider_session_id: null, provider_browser_id: null }),
+    );
+    const s = store({
+      profiles: [profileRow()],
+      sessions: [...forgotten, sessionRow({ id: "bs-idle" })],
+    });
+    const r = await forgetProfile(ENV, "user-1", s.deps);
+
+    expect(r).toMatchObject({ kind: "ok" });
+    expect(stopSessionBrowsers).toHaveBeenCalledTimes(1);
+    expect(s.sessions.at(-1)).toMatchObject({
+      provider_session_id: null,
+      provider_browser_id: null,
+    });
+  });
 
   /**
    * An idle browser still carries the jar, and its agent session would hand
@@ -1643,6 +2085,106 @@ describe("the jar is written after the stop, not with it", () => {
     expect(getProfile.mock.calls.length).toBeGreaterThan(1);
     // Bounded, and the sleeps are the deps' so a test never really waits.
     expect(sleep).toHaveBeenCalled();
+  });
+
+  /**
+   * Measured 2026-10-11: twice the provider saved a jar on a stop — a later
+   * browser had the cookies — without ever moving the profile's `updatedAt`
+   * or `cookieDomains`. With the stop's `finishedAt` to compare against, a
+   * profile older than the stop says nothing about it: not "didn't stick",
+   * which would withhold the free re-run from a sign-in that worked.
+   */
+  it("does not call a jar empty when the provider never wrote it after the stop", async () => {
+    stopBrowser.mockResolvedValue({
+      kind: "ok",
+      value: { id: "bu-session", status: "stopped", finishedAt: "2026-10-10T12:00:00.500Z" },
+    });
+    getProfile.mockResolvedValue({
+      kind: "ok",
+      value: { id: "bu-profile", cookieDomains: [], updatedAt: "2026-10-10T11:57:53.634Z" },
+    });
+    const s = store({
+      takeovers: [openRow()],
+      profiles: [profileRow({ cookie_domains: [] })],
+      tasks: [taskRow()],
+    });
+
+    const r = await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    // The re-run goes ahead, as for a read the provider refused.
+    expect(r).toMatchObject({ kind: "ok", retriedTaskId: "bt-2" });
+    expect((r as { message?: string }).message ?? "").not.toMatch(/didn't stick/);
+    expect(getProfile).toHaveBeenCalledTimes(8);
+    expect(s.profiles[0].last_used_at).toBeUndefined();
+  });
+
+  it("still says an empty jar plainly when the provider wrote it empty after the stop", async () => {
+    stopBrowser.mockResolvedValue({
+      kind: "ok",
+      value: { id: "bu-session", status: "stopped", finishedAt: "2026-10-10T12:00:00.500Z" },
+    });
+    getProfile.mockResolvedValue({
+      kind: "ok",
+      value: { id: "bu-profile", cookieDomains: [], updatedAt: "2026-10-10T12:00:03.600Z" },
+    });
+    const s = store({
+      takeovers: [openRow()],
+      profiles: [profileRow({ cookie_domains: [] })],
+      tasks: [taskRow()],
+    });
+
+    const r = await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "ok", retriedTaskId: null, cookieDomains: [] });
+    expect((r as { message: string }).message).toMatch(/didn't stick/);
+    expect(getProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits past a list from before the stop for the one written after it", async () => {
+    stopBrowser.mockResolvedValue({
+      kind: "ok",
+      value: { id: "bu-session", status: "stopped", finishedAt: "2026-10-10T12:00:00.500Z" },
+    });
+    getProfile
+      .mockResolvedValueOnce({
+        kind: "ok",
+        value: {
+          id: "bu-profile",
+          cookieDomains: ["old.example"],
+          updatedAt: "2026-10-10T11:00:00Z",
+        },
+      })
+      .mockResolvedValue({
+        kind: "ok",
+        value: {
+          id: "bu-profile",
+          cookieDomains: ["old.example", "linkedin.com"],
+          updatedAt: "2026-10-10T12:00:01.100Z",
+        },
+      });
+    const s = store({
+      takeovers: [openRow()],
+      profiles: [profileRow({ cookie_domains: ["old.example"] })],
+      tasks: [taskRow()],
+    });
+
+    const r = await closeTakeover(
+      ENV,
+      { takeoverId: "to-1", userId: "user-1", callerDb: s.callerDb },
+      s.deps,
+    );
+
+    expect(r).toMatchObject({ kind: "ok", cookieDomains: ["old.example", "linkedin.com"] });
+    expect(getProfile).toHaveBeenCalledTimes(2);
+    expect(s.profiles[0].cookie_domains).toEqual(["old.example", "linkedin.com"]);
   });
 
   it("stops asking the moment it has an answer", async () => {

@@ -7,6 +7,7 @@ import {
   browserLiveUrl,
   browserState,
   getProfile,
+  jarWrittenSince,
   stopBrowser,
   stopDeclinedBrowser,
 } from "./profiles";
@@ -783,8 +784,11 @@ const UNSTOPPED: Refusal = {
  * `status: "active"` (see `sweep.ts`'s takeover arm), so the status word is
  * what is believed.
  *
- * @returns false when a browser could not be confirmed stopped. Nothing here
- *   logs more than a status: no provider id, no body.
+ * @returns false when a browser could not be confirmed stopped; otherwise the
+ *   latest `finishedAt` the provider gave for the browsers it stopped, which is
+ *   what `refreshSessionJar` waits for the jar to be written after. Null when
+ *   nothing said when — no browser left to stop, or a 404. Nothing here logs
+ *   more than a status: no provider id, no body.
  */
 export async function stopSessionBrowsers(
   env: RoutineEnv,
@@ -794,7 +798,7 @@ export async function stopSessionBrowsers(
     /** The sweep's: a hung provider must not eat a cron tick. The panel passes none. */
     signal?: AbortSignal;
   },
-): Promise<boolean> {
+): Promise<false | { finishedAt: string | null }> {
   const { providerSessionId, storedBrowserId: stored, signal } = input;
   const opts = signal ? { signal } : undefined;
   let targets: string[] = stored ? [stored] : [];
@@ -810,6 +814,7 @@ export async function stopSessionBrowsers(
     }
   }
 
+  let finishedAt: string | null = null;
   for (const browserId of targets) {
     const stopped = await stopBrowser(env, browserId, opts);
     if (stopped.kind === "error" ? stopped.status !== 404 : stopped.value.status !== "stopped") {
@@ -819,27 +824,33 @@ export async function stopSessionBrowsers(
       );
       return false;
     }
+    const at = stopped.kind === "ok" ? (stopped.value.finishedAt ?? null) : null;
+    if (at && (!finishedAt || Date.parse(at) > Date.parse(finishedAt))) finishedAt = at;
   }
-  return true;
+  return { finishedAt };
 }
 
 /**
  * Read the jar back, now that stopping the browser has saved it, and record
  * which sites it holds cookies for.
  *
- * Shared by every stop of a conversation's browser — the sweep's two arms and
- * the panel's close — so they cannot disagree about what is written. The wait
- * is the takeover close's (`JAR_ATTEMPTS`, a second apart): the provider
- * writes the profile about three seconds after reporting the browser stopped
- * (3.1 s, measured 2026-10-09), so an early empty answer is usually "not
- * written yet", and for a person who walked away this read is the only one
- * that ever happens.
+ * Shared by every stop of a conversation's browser and the takeover sweep —
+ * the sweep's arms and the panel's close — so they cannot disagree about what
+ * is written. The wait is `JAR_ATTEMPTS` reads a second apart, until
+ * `jarWrittenSince` says the provider has written the profile since the stop:
+ * it writes the profile some seconds after reporting the
+ * browser stopped, so a read straight after the stop can be the list from
+ * before it, and for a person who walked away this read is the only one that
+ * ever happens. `stoppedAt` is the stop's `finishedAt`, and is what makes the
+ * wait about time rather than about whether the list is empty.
  *
  * `cookie_domains` is what the provider's profile holds cookies for, nothing
- * more — it is not a list of sign-ins, and nothing here calls it one. An empty
- * answer over a non-empty column is dropped: a jar does not empty itself (only
- * `forgetProfile` deletes one), so after the wait the stale list is the more
- * truthful of the two.
+ * more — it is not a list of sign-ins, and nothing here calls it one. A list
+ * the provider has not written since the stop is not recorded: it is the one
+ * from before, which the column may already hold, and writing it would say
+ * nothing about what this stop saved. An empty answer over a non-empty column
+ * is dropped too: a jar does not empty itself (only `forgetProfile` deletes
+ * one), so the stale list is the more truthful of the two.
  *
  * Best-effort throughout, and it logs only statuses and database error codes:
  * the stop already happened, and a failure here leaves the column stale until
@@ -850,10 +861,17 @@ export async function stopSessionBrowsers(
 export async function refreshSessionJar(
   env: RoutineEnv,
   deps: ControlDeps,
-  input: { profileId: string | null; attempts?: number; signal?: AbortSignal },
+  input: {
+    profileId: string | null;
+    /** The stop's `finishedAt`, from `stopSessionBrowsers`. Null or absent: no stop to measure from. */
+    stoppedAt?: string | null;
+    attempts?: number;
+    signal?: AbortSignal;
+  },
 ): Promise<void> {
   const { db, now, sleep } = deps;
   const attempts = input.attempts ?? JAR_ATTEMPTS;
+  const stoppedAt = input.stoppedAt ?? null;
   if (!input.profileId) return;
 
   const { data, error: readError } = await db
@@ -868,7 +886,8 @@ export async function refreshSessionJar(
   }
 
   let domains: string[] = [];
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  let written = false;
+  for (let attempt = 0; attempt < attempts && !written; attempt += 1) {
     const read = await getProfile(
       env,
       providerProfileId,
@@ -879,12 +898,16 @@ export async function refreshSessionJar(
       return;
     }
     domains = read.value.cookieDomains;
-    if (domains.length > 0) break;
+    written = jarWrittenSince(read.value, stoppedAt);
     // Not slept after the last attempt: a second that buys no further read.
-    if (attempt < attempts - 1) await sleep(JAR_DELAY_MS);
+    if (!written && attempt < attempts - 1) await sleep(JAR_DELAY_MS);
   }
 
   const held = Array.isArray(data?.cookie_domains) ? data.cookie_domains : [];
+  if (!written && stoppedAt) {
+    console.log("stopped a browser but its jar was not written since; keeping what we had");
+    return;
+  }
   if (domains.length === 0 && held.length > 0) {
     console.log("stopped a browser before its jar was written; keeping what we had");
     return;
@@ -945,7 +968,10 @@ export async function stopConversationBrowser(
    * browsers list, one stop, the profile lookup, `JAR_ATTEMPTS` (8) jar reads,
    * the jar write and the row write — fifteen, once, inside Free's 50.
    */
-  await refreshSessionJar(env, deps, { profileId: text(row.profile_id) });
+  await refreshSessionJar(env, deps, {
+    profileId: text(row.profile_id),
+    stoppedAt: stopped.finishedAt,
+  });
 
   const { error: releaseError } = await db
     .from("browser_sessions")

@@ -4,10 +4,13 @@ import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
 import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
-import { type CompletionMessage, type CompletionUsage } from "../lib/completion";
+import { type CompletionMessage, type CompletionUsage, type ToolCall } from "../lib/completion";
 import {
   answerUnanswered,
+  NOT_RUN_FOR_A_QUESTION,
+  oneCard,
   parseArguments,
+  runToolCall,
   runWithTimeout,
   type AgentStep,
   type PassUsage,
@@ -988,6 +991,35 @@ const DECLINED_RESULT =
 
 const confirmSchema = z.object({ approve: z.boolean() });
 
+/** The calls after `id` in its batch: the last assistant turn that asked for any. */
+function laterInBatch(messages: CompletionMessage[], id: string): ToolCall[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role === "assistant" && message.toolCalls?.length) {
+      const at = message.toolCalls.findIndex((call) => call.id === id);
+      return at === -1 ? [] : message.toolCalls.slice(at + 1);
+    }
+  }
+  return [];
+}
+
+/** What `id` was answered, if anything. */
+function answerTo(messages: CompletionMessage[], id: string): string | null {
+  const found = messages.find((message) => message.role === "tool" && message.toolCallId === id);
+  return found?.role === "tool" ? found.content : null;
+}
+
+/** `messages` with the answer to `id` replaced, where it stands. */
+function answerInPlace(
+  messages: CompletionMessage[],
+  id: string,
+  content: string,
+): CompletionMessage[] {
+  return messages.map((message) =>
+    message.role === "tool" && message.toolCallId === id ? { ...message, content } : message,
+  );
+}
+
 // POST /chat/confirm/:id
 //
 // The second half of a turn that stopped to ask. Everything about it is the
@@ -1275,10 +1307,23 @@ chat.post("/chat/confirm/:id", async (c) => {
 
         // `answerUnanswered` for a turn parked before the loop answered the
         // rest of its batch itself; for one parked after, it adds nothing.
-        const messages: CompletionMessage[] = [
-          ...answerUnanswered(pause.messages, pause.toolCall.id),
-          { role: "tool", toolCallId: pause.toolCall.id, content: resolved },
-        ];
+        // The approved call's answer goes in front of its batch's later ones,
+        // where the model asked for it.
+        const later = laterInBatch(pause.messages, pause.toolCall.id);
+        const laterIds = new Set(later.map((call) => call.id));
+        const unanswered = answerUnanswered(pause.messages, pause.toolCall.id);
+        const first = unanswered.findIndex(
+          (message) => message.role === "tool" && laterIds.has(message.toolCallId),
+        );
+        const answer: CompletionMessage = {
+          role: "tool",
+          toolCallId: pause.toolCall.id,
+          content: resolved,
+        };
+        let messages: CompletionMessage[] =
+          first === -1
+            ? [...unanswered, answer]
+            : [...unanswered.slice(0, first), answer, ...unanswered.slice(first)];
 
         const { tools } = await capabilitiesFor({
           db,
@@ -1286,6 +1331,136 @@ chat.post("/chat/confirm/:id", async (c) => {
           workspaceId: pause.workspaceId,
           userId: pause.userId,
         });
+
+        /**
+         * The rest of the batch, run here rather than left to the model.
+         *
+         * The loop answered them "not run, call it again once that one is
+         * answered", and on 2026-10-11 21:32 the model was asked to look at
+         * three sites, had the first approved, and never called the other
+         * two: one browser ran and three were reported. So they run now, in
+         * order, each recorded over its own `refused` step so the numbering
+         * the person saw holds.
+         *
+         * Confirmed only when the person's card listed it
+         * (`AgentTool.approvedTogether`) and it reads the same; anything else
+         * runs unconfirmed and may ask for itself, which parks the turn again
+         * on it, with the calls after it still unanswered. A "no" declines the
+         * listed ones too, and leaves the rest as they were: a refused card
+         * must not set off what came after it.
+         */
+        const together = toolByName(pause.toolCall.name)?.approvedTogether;
+        const listed = together ? together.listed(pause.proposal) : [];
+        let asked: { call: ToolCall; summary: string; proposal: unknown } | null = null;
+        for (const [k, call] of later.entries()) {
+          // The loop records a batch's later calls right after the one that
+          // asked, in order. A pause that does not look like that (one parked
+          // before it did) is left to the model, as before.
+          const position = at === -1 ? -1 : at + 1 + k;
+          const step = steps[position];
+          if (
+            !step ||
+            step.tool !== call.name ||
+            step.status !== "refused" ||
+            answerTo(messages, call.id) !== NOT_RUN_FOR_A_QUESTION
+          ) {
+            continue;
+          }
+          const parsedCall = parseArguments(call.arguments);
+          const line =
+            together && call.name === pause.toolCall.name && parsedCall.ok
+              ? together.line(parsedCall.args)
+              : null;
+          const covered = line !== null && listed.includes(line);
+          if (!approve) {
+            if (!covered) continue;
+            const declined = `error: ${DECLINED_RESULT}`;
+            messages = answerInPlace(messages, call.id, declined);
+            steps[position] = { ...step, resultExcerpt: declined, resultChars: declined.length };
+            send({
+              type: "step",
+              index: step.index,
+              tool: call.name,
+              status: "refused",
+              label: call.name,
+            });
+            continue;
+          }
+          const run = await runToolCall(call, {
+            tools,
+            ctx: { ...ctx, confirmed: covered },
+            steps,
+            index: step.index,
+            pass: step.pass ?? 0,
+            toolTimeoutMs: TOOL_TIMEOUT_MS,
+            maxOutputChars: MAX_TOOL_OUTPUT_CHARS,
+            signal,
+            onEvent: (event) => {
+              if (event.type === "step") send(event);
+            },
+            record: (ran) => {
+              steps[position] = ran;
+            },
+          });
+          if (run.kind === "asks") {
+            // Unanswered, as the loop leaves a call that asks.
+            messages = messages.filter(
+              (message) => !(message.role === "tool" && message.toolCallId === call.id),
+            );
+            asked = {
+              call,
+              ...oneCard(
+                tools.find((tool) => tool.name === call.name),
+                { summary: run.summary, proposal: run.proposal },
+                later.slice(k + 1),
+              ),
+            };
+            break;
+          }
+          messages = answerInPlace(messages, call.id, run.message.content);
+        }
+
+        if (asked) {
+          // Parked again, before the model runs: the same stop the loop makes
+          // when a call asks mid-batch. Nothing new was said, so the reply row,
+          // if there is one, keeps its words and takes the steps.
+          if (pause.messageId) await writeSteps(service, pause.messageId, steps);
+          const nextId = await savePausedTurn(service, {
+            sessionId: pause.sessionId,
+            messageId: pause.messageId,
+            workspaceId: pause.workspaceId,
+            agentId: pause.agentId,
+            userId: pause.userId,
+            model: pause.model ?? "",
+            paused: {
+              reason: "confirmation",
+              messages,
+              call: asked.call,
+              summary: asked.summary,
+              proposal: asked.proposal,
+            },
+            steps,
+            // Carried, when no reply row holds what the turn spent so far.
+            usage: pause.messageId ? null : pause.usage,
+          });
+          persisted = true;
+          await recordSpend();
+          if (nextId) {
+            send({
+              type: "confirm",
+              id: nextId,
+              tool: asked.call.name,
+              summary: asked.summary,
+              proposal: asked.proposal ?? null,
+            });
+            send({ type: "paused", reason: "confirmation" });
+          } else {
+            send({ type: "error", error: "could not save what the agent asked to do" });
+          }
+          send({ type: "done" });
+          controller.close();
+          return;
+        }
 
         const turn = await runChatTurn({
           env,

@@ -302,6 +302,32 @@ export type AgentTool = {
    * invitation to invent a connection id. See `lib/harness/available.ts`.
    */
   needs?: "connection" | "channel";
+  /**
+   * Several calls of this tool in one batch go on ONE card, and one yes covers
+   * them all.
+   *
+   * For `browse`. A model asked for three sites asks for three browsers in one
+   * pass; the first asks the person, and until 2026-10-12 the other two were
+   * answered "not run, call it again" — and on 2026-10-11 21:32 the model
+   * never did, so one site was looked at and three were reported. Now the loop
+   * lists the later calls on the first one's card (`line` of each, at most
+   * `max`), and the confirm route runs exactly those, confirmed, once the
+   * person approves.
+   *
+   * `line` is the call as the card shows it, and what the confirm route matches
+   * verbatim before running a call as approved; null leaves the call off the
+   * card, to ask for itself. `card` widens the first call's card with the
+   * lines; `listed` reads them back out of a stored proposal.
+   */
+  approvedTogether?: {
+    max: number;
+    line(args: Record<string, unknown>): string | null;
+    card(
+      asked: { summary: string; proposal: unknown },
+      lines: string[],
+    ): { summary: string; proposal: unknown };
+    listed(proposal: unknown): string[];
+  };
   run(args: unknown, ctx: ToolContext): Promise<ToolResult>;
 };
 

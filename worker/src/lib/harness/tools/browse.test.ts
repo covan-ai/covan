@@ -837,6 +837,47 @@ describe("arguments", () => {
   });
 });
 
+describe("several tasks on one card", () => {
+  const together = browseTool.approvedTogether!;
+
+  it("holds as many as the line does", () => {
+    expect(together.max).toBe(QUEUE_MAX);
+  });
+
+  it("lists a task as one line, and leaves off what its own card has to name", () => {
+    expect(together.line({ task: "  look at\n covan.app  and its pricing " })).toBe(
+      "look at covan.app and its pricing",
+    );
+    expect(together.line({ task: "hi" })).toBeNull();
+    expect(together.line({})).toBeNull();
+    // A saved login is named on the card that uses it.
+    expect(together.line({ task: TASK, site: "linkedin.com" })).toBeNull();
+  });
+
+  it("numbers the rest under the first, and reads them back", () => {
+    const card = together.card(
+      {
+        summary: "Use a browser to do this?",
+        proposal: { kind: "browse", task: "the repo on github", cost: "about 2% of this month" },
+      },
+      ["look at covan.app", "look at tasklet.ai"],
+    );
+    expect(card.summary).toBe("Use a browser to do these 3 things?");
+    expect(card.proposal).toEqual({
+      kind: "browse",
+      task: "the repo on github",
+      thenInLine: "2. look at covan.app\n3. look at tasklet.ai",
+      cost: "about 2% of this month, for each of the 3",
+    });
+    expect(together.listed(card.proposal)).toEqual(["look at covan.app", "look at tasklet.ai"]);
+  });
+
+  it("reads nothing back from a card that listed nothing", () => {
+    expect(together.listed({ kind: "browse", task: TASK })).toEqual([]);
+    expect(together.listed(null)).toEqual([]);
+  });
+});
+
 describe("availability", () => {
   it("is not offered on a deployment with no browser-use key", () => {
     expect(browseTool.isConfigured({} as ToolEnv)).toBe(false);

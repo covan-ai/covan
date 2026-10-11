@@ -1385,6 +1385,98 @@ describe("a turn that stops to ask", () => {
     expect(turn.steps[2]).toMatchObject({ index: 2, request: { task: "covan.app" } });
   });
 
+  /**
+   * 2026-10-11 21:32: the model never asked for the other two again, so the
+   * card that asks now lists them, and the confirm route runs what it listed.
+   */
+  describe("a tool whose calls are approved together", () => {
+    const together = {
+      max: 2,
+      line: (args: Record<string, unknown>) => (typeof args.task === "string" ? args.task : null),
+      card: (asked: { summary: string; proposal: unknown }, lines: string[]) => ({
+        summary: `these ${lines.length + 1}?`,
+        proposal: { ...(asked.proposal as object), thenInLine: lines.join("|") },
+      }),
+      listed: () => [],
+    };
+    const asks = async (): Promise<ToolResult> => ({
+      kind: "needs_confirmation",
+      summary: "one?",
+      proposal: { task: "the repo" },
+    });
+
+    it("lists the later calls of the same tool on the first one's card", async () => {
+      scripted([
+        pass("", [
+          { id: "c1", name: "browse", arguments: '{"task":"the repo"}' },
+          { id: "c2", name: "search", arguments: "{}" },
+          { id: "c3", name: "browse", arguments: '{"task":"covan.app"}' },
+          { id: "c4", name: "browse", arguments: "{not json" },
+        ]),
+      ]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: [
+          { ...tool("browse", asks), approvedTogether: together },
+          tool("search", async () => ({ kind: "ok", content: "found" })),
+        ],
+      });
+      // Only the same tool, and only a call whose arguments can be read.
+      expect(turn.paused).toMatchObject({
+        call: { id: "c1" },
+        summary: "these 2?",
+        proposal: { task: "the repo", thenInLine: "covan.app" },
+      });
+      // Still answered as not run: the confirm route is what runs them.
+      const results = (turn.paused?.messages ?? []).filter((m) => m.role === "tool");
+      expect(results.map((m) => m.role === "tool" && m.content)).toEqual([
+        NOT_RUN_FOR_A_QUESTION,
+        NOT_RUN_FOR_A_QUESTION,
+        NOT_RUN_FOR_A_QUESTION,
+      ]);
+      // The pending step keeps the tool's own summary.
+      expect(turn.steps[0]).toMatchObject({ status: "pending", resultExcerpt: "one?" });
+    });
+
+    it("lists no more than the tool's max", async () => {
+      scripted([
+        pass(
+          "",
+          ["a", "b", "c", "d"].map((task, i) => ({
+            id: `c${i}`,
+            name: "browse",
+            arguments: JSON.stringify({ task }),
+          })),
+        ),
+      ]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: [{ ...tool("browse", asks), approvedTogether: together }],
+      });
+      expect(turn.paused?.proposal).toMatchObject({ thenInLine: "b|c" });
+    });
+
+    it("leaves the card as the tool wrote it when nothing else is listed", async () => {
+      scripted([pass("", [{ id: "c1", name: "browse", arguments: '{"task":"the repo"}' }])]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: [{ ...tool("browse", asks), approvedTogether: together }],
+      });
+      expect(turn.paused).toMatchObject({ summary: "one?", proposal: { task: "the repo" } });
+    });
+
+    it("lists nothing for a tool that does not say its calls go together", async () => {
+      scripted([
+        pass("", [
+          { id: "c1", name: "browse", arguments: '{"task":"the repo"}' },
+          { id: "c2", name: "browse", arguments: '{"task":"covan.app"}' },
+        ]),
+      ]);
+      const turn = await runAgentTurn({ ...base, tools: [tool("browse", asks)] });
+      expect(turn.paused).toMatchObject({ summary: "one?", proposal: { task: "the repo" } });
+    });
+  });
+
   it("answers nothing extra when the call that asks is the last of its batch", async () => {
     scripted([pass("", [{ id: "c1", name: "schedule", arguments: "{}" }])]);
     const turn = await runAgentTurn({

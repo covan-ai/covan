@@ -281,6 +281,18 @@ export const MAX_TOOL_OUTPUT_CHARS = Math.round(
 export const TRIM_ABOVE_PROMPT_TOKENS = 80_000;
 
 /**
+ * The share of `maxTurnTokens` at which the model is warned, once, that the
+ * ceiling is near (`TOKEN_WARNING` in `loop.ts`).
+ *
+ * Early enough to leave a pass or two of room — on the paid plan's 150,000 it
+ * lands at 105,000, and the two turns that reached the ceiling on 2026-10-11
+ * spent 11,000–29,000 a pass, prompt and completion together, so they would
+ * have been warned with three passes and one pass to go — and late enough
+ * that an ordinary long turn never hears it.
+ */
+export const TOKEN_WARNING_SHARE = 0.7;
+
+/**
  * How much of it is kept in `message_steps.result_excerpt` — **and how much of a
  * spent tool result survives into the prompt.**
  *

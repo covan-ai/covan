@@ -12,6 +12,7 @@ import {
   MAX_STEPS,
   MAX_STEP_EXCERPT_CHARS,
   MAX_TOOL_OUTPUT_CHARS,
+  TOKEN_WARNING_SHARE,
   TOOL_TIMEOUT_MS,
   TRIM_ABOVE_PROMPT_TOKENS,
   cap,
@@ -324,6 +325,36 @@ const TOKEN_INSTRUCTION =
   "you already have. Say plainly, in one sentence, what you were not able to finish — and " +
   "if the material you were working through was large, say so, because that is the thing " +
   "to narrow next time.";
+
+/**
+ * What the model is told, once, when the turn has spent `TOKEN_WARNING_SHARE`
+ * of its token allowance.
+ *
+ * `TOKEN_INSTRUCTION` arrives when there is nothing left to do but stop, and
+ * on 2026-10-11 both of a turn's qrucial writes reached it mid-way: the model
+ * had been retrying a long document write, with no idea the ceiling was near,
+ * until the ceiling ended the turn with the work half done. This is the same
+ * fact told while it can still change what the model does next.
+ */
+export const TOKEN_WARNING =
+  "This turn has used most of the token allowance one turn is given. Finish the step you " +
+  "are on, do not start another long write or large tool call, and then answer the person " +
+  "with what you have — saying plainly what is still left to do.";
+
+/**
+ * What a call is answered with when its arguments did not parse and the pass
+ * that wrote them hit the output limit (`finishReason: "length"`).
+ *
+ * "Not valid JSON — send them again" is the wrong advice there: the arguments
+ * were cut off, not malformed, and sending them again is sending the same
+ * thing into the same limit. On 2026-10-11 a long `http_request` body was cut
+ * at 4,096 tokens six passes in a row, each time answered with that advice —
+ * about 24,000 tokens spent writing one document that never arrived.
+ */
+export const CUT_OFF_ARGUMENTS =
+  "your reply hit the output limit while writing this call, so its arguments were " +
+  "cut off and it was not run. Do not send the same content again — it will be cut off " +
+  "the same way. Split it into several smaller calls, or shorten it.";
 
 /**
  * What the model is told when the platform is about to stop it.
@@ -820,6 +851,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   let noticedLeg = messages.filter(
     (m) => m.role === "system" && m.content.startsWith(PACE_NOTICE_OPENING),
   ).length;
+  /**
+   * Whether `TOKEN_WARNING` has been given. Read out of the transcript for
+   * `noticedLeg`'s reason: a resumed turn carries it in `paused_turns.messages`
+   * and must not be warned twice.
+   */
+  let tokensWarned = messages.some((m) => m.role === "system" && m.content === TOKEN_WARNING);
 
   for (;;) {
     const events = streamCompletion(
@@ -1003,7 +1040,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       // 404, so reading it again afterwards is the only way to see the change.
       const allowedBefore = opts.ctx.offeredSlugs ? new Set(opts.ctx.offeredSlugs) : null;
       const result: ToolResult = !parsed.ok
-        ? { kind: "error", message: parsed.message }
+        ? {
+            kind: "error",
+            // This pass's own finish reason: it is set by the `end` event above,
+            // before any of the calls it asked for runs.
+            message: finishReason === "length" ? CUT_OFF_ARGUMENTS : parsed.message,
+          }
         : !tool
           ? {
               kind: "error",
@@ -1154,6 +1196,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // `trimAbovePromptTokens`.
         if ((lastPromptTokens ?? 0) > trimAbove) trimSpentResults(messages, legSteps);
         messages.push({ role: "system", content: paceNotice(hardSteps - spentSteps()) });
+      }
+      // After the pace notice, so on a pass that crosses both the last word
+      // is the one that binds sooner. Once per turn.
+      if (maxTurnTokens && !tokensWarned && tokensSpent >= maxTurnTokens * TOKEN_WARNING_SHARE) {
+        tokensWarned = true;
+        messages.push({ role: "system", content: TOKEN_WARNING });
       }
     }
     pass += 1;

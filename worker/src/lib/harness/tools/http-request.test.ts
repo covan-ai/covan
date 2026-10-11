@@ -111,6 +111,44 @@ describe("http_request", () => {
     expect(resolvesPublicly).toHaveBeenCalledWith("api.example.com");
   });
 
+  describe("the body", () => {
+    const WRITABLE = { ...CONNECTION, allowed_methods: ["GET", "POST", "PATCH"] };
+    const sentInit = () =>
+      fetchMock.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+
+    it("sends an object as JSON, so a long document is not escaped into a string first", async () => {
+      const body = { title: "Rakip analizi", content: '# Covan\n\n- "quoted"' };
+      await httpRequestTool.run(
+        { connectionId: "conn-1", method: "PATCH", path: "/docs/1", body },
+        ctxWith(WRITABLE),
+      );
+      expect(sentInit().body).toBe(JSON.stringify(body));
+      expect(sentInit().headers["Content-Type"]).toBe("application/json");
+    });
+
+    it("sends a string exactly as it was given, as before", async () => {
+      await httpRequestTool.run(
+        { connectionId: "conn-1", method: "POST", path: "/docs", body: '{"title":"x"}' },
+        ctxWith(WRITABLE),
+      );
+      expect(sentInit().body).toBe('{"title":"x"}');
+    });
+
+    it("sends no body on a GET, whatever it was given", async () => {
+      await httpRequestTool.run(
+        { connectionId: "conn-1", method: "GET", path: "/docs", body: { title: "x" } },
+        ctxWith(WRITABLE),
+      );
+      expect(sentInit()).not.toHaveProperty("body");
+      expect(sentInit().headers).not.toHaveProperty("Content-Type");
+    });
+
+    it("tells the model it may give an object, in the schema it is shown", () => {
+      const body = (httpRequestTool.input.properties as Record<string, { anyOf?: unknown[] }>).body;
+      expect(body.anyOf).toEqual([{ type: "object" }, { type: "string" }]);
+    });
+  });
+
   it("refuses a method the team did not allow, and says not to retry", async () => {
     const result = await httpRequestTool.run(
       { connectionId: "conn-1", method: "DELETE", path: "/orders/1" },

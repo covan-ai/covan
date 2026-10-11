@@ -32,6 +32,11 @@ const me = {
 
 vi.mock("@/lib/api-client", () => ({ api: { me: () => Promise.resolve(me) } }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/saved-logins", () => ({
+  SavedLoginsList: ({ agentId }: { agentId?: string }) => (
+    <p data-testid="saved-logins">{agentId}</p>
+  ),
+}));
 vi.mock("@/components/generate-persona-button", () => ({
   GeneratePersonaButton: () => null,
 }));
@@ -143,5 +148,26 @@ describe("the tuning controls", () => {
     renderSettings();
 
     expect(await screen.findByText(/answers without a separate thinking step/)).toBeInTheDocument();
+  });
+});
+
+describe("saved logins", () => {
+  /** Task 2.4: the agent's settings show the logins it signs in with, for this agent only. */
+  it("shows this agent's saved logins", async () => {
+    renderSettings();
+
+    expect(await screen.findByText("Saved logins")).toBeInTheDocument();
+    expect(screen.getByTestId("saved-logins")).toHaveTextContent("agent-1");
+  });
+
+  /** Final review #5: scoped to what Covan controls — its own model. */
+  it("says Covan's AI model is never given them", async () => {
+    renderSettings();
+
+    expect(
+      await screen.findByText(
+        "What this agent's browser signs in with. Encrypted; Covan's AI model is never given them.",
+      ),
+    ).toBeInTheDocument();
   });
 });

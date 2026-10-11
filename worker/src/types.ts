@@ -119,6 +119,14 @@ export type RoutineEnv = {
   BROWSER_USE_API_KEY?: string;
   /** A proxy, or a self-hosted browser-use, in front of api.browser-use.com. Their framework is MIT. */
   BROWSER_USE_BASE_URL?: string;
+  /** The same, for the v4 runs API (`lib/browser/v4.ts`). `BROWSER_USE_BASE_URL` keeps applying to v2 only. */
+  BROWSER_USE_V4_BASE_URL?: string;
+  /**
+   * The model a `browse` run asks browser-use for, over `DEFAULT_MODEL` in
+   * `lib/browser/v4.ts`. Empty means unset, as for the two URLs above; a name
+   * outside the provider's list is a 422 on every run.
+   */
+  BROWSER_USE_MODEL?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   RESEND_API_KEY: string;

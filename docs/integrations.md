@@ -706,16 +706,77 @@ it one instruction in plain language — _"read the pricing tiers off
 example.com and list them"_ — and a real browser somewhere else carries it
 out. The browser and the agent loop driving it are
 [browser-use](https://browser-use.com); what Covan does is hand the sentence
-over, wait outside the conversation, and bring the answer back.
+over, wait outside the conversation, and bring the answer back. It runs on
+browser-use's V4 API, with the same key as their earlier one; a browser-use
+project with Zero Data Retention switched on cannot use V4 (the provider answers
+403, *"Zero Data Retention is enabled on the project (V4 unsupported)"*), so the
+key has to come from a project without it. A conversation keeps one browser
+across its tasks, so a follow-up ("now open the second result") continues in the
+same tabs rather than starting from a blank page.
 
 **The answer does not arrive in the same reply, and the agent will tell you
 so.** A browser task takes minutes, and a chat turn that waited minutes would
 spend its whole step budget watching a page load. So the turn ends as soon as
 the work is handed over — "I've started that, I'll come back to you" — and the
-answer appears later as a new message in the same conversation. The poller runs
-every five minutes, so "a few minutes" is the honest figure and a result can sit
-finished for up to five of them before anybody is told. If you have a delivery
-channel set up, you also get a nudge through it.
+answer appears later as a new message in the same conversation. Two clocks bring
+it back, and either one may be first. **While the conversation is open in a tab,
+the tab asks every three seconds**, so the answer lands within a few seconds of
+the browser finishing. **If the tab is closed, a poller that runs every five
+minutes is the fallback**, so a result can sit finished for up to five of them
+before anybody is told. Both go through one settle step that claims the task
+before it writes anything, so the answer is delivered once whichever of them got
+there first. If you have a delivery channel set up, you also get a nudge through
+it.
+
+**While it runs, you can watch.** A panel beside the conversation shows the
+browser live, with a short list of what the agent just did under it and a pill
+that says who has the controls. It works as follows:
+
+- **The agent drives; you watch.** The frame is read-only while the agent has the
+  browser. That is a restriction of the panel, not of the provider: the
+  provider's own words are *"View-only embeds are a UI restriction, not a
+  server-enforced permission."* So the address of the live view is treated as a
+  credential — see [Security](security.md).
+- **Take over** cancels the agent's run, waits until the provider says the run
+  has ended (so you are never typing into a field the agent is mid-way through),
+  and only then hands you the controls. The browser, its tabs and anything signed
+  in are kept.
+- **Done** gives the browser back, and the agent continues the original task in
+  the same browser — once, and for free, the same one retry as before. Done
+  refuses a task that is itself a retry, and says so.
+  While you hold the controls the agent cannot start another `browse` in this
+  conversation; it says the browser is in your hands.
+- **Close** stops the browser, which is what saves the cookies to your profile.
+  The profile is made for you on your first browser task, so there is always one
+  to save into. If you take over and walk away instead, a sweep stops it for you:
+  while the conversation is open in a tab — even in the background, as it is
+  when you work in the browser's own window — the browser stays yours, and
+  **about ten minutes after that tab is closed** it is stopped and the cookies
+  saved. Done says so beside the button.
+- **A browser nobody is using stops too.** After a task ends, nobody has taken
+  over and the browser is still open at the provider, billing. **About ten
+  minutes after the last task started** the sweep stops it and saves what its
+  pages set; the next task in the conversation continues the same session in a
+  fresh browser.
+- Both ten minutes are floors rather than deadlines: the sweep runs on the cron,
+  every five minutes, so a browser is stopped somewhere between ten and fifteen.
+  If a stop fails it is retried after fifteen minutes, and a browser older than
+  the provider's own four-hour hard timeout (counted from the take-over, or from
+  the last task) is given up on. Take over on a browser that has already been
+  stopped says so, and asks you to start the task again.
+
+**You can also sign in ahead of time**: the browser control in a conversation's
+header is always there for you, and when the conversation has no browser open the
+panel offers **Open browser** — a browser of your own on the same profile, for ten
+minutes, whose Done stops it and so saves what you signed in to. Whichever browser
+on your profile stops last writes it, so Open browser is refused while a
+conversation's browser is in use (or a run is still finishing) and tries to stop
+your idle ones first, and while yours is open the agent starts no browser task
+and a conversation's Take over and Done wait for it.
+
+The panel is yours alone. A colleague in a shared conversation sees the
+answers, which are ordinary messages, and nothing of the browser — for them the
+panel's routes answer "no such browser".
 
 **It costs about a seventh of a month's allowance per task**, and the person
 asking pays nothing extra to anybody. There is no per-member key and no second
@@ -726,12 +787,21 @@ derived from browser-use's own published figure of 17c per solved task; what
 each task really cost is recorded, so it can be corrected from invoices rather
 than from a blog post.
 
-**No password is ever given to an agent, and that is enforced rather than
-promised.** browser-use accepts a field for credentials and this build never
-fills it in, so nothing you type into Covan can be handed to a browser. What a
-browser task *can* do is carry a sign-in you performed yourself: when a task
-stops at a login wall, you are offered a real browser in a new tab, you sign in
-at the site — Covan sees nothing of it — and the task runs again, once, free.
+**No password is ever given to the model in your conversation, and that is
+enforced rather than promised.** You can save a login for a site on an agent, for
+yourself or for everyone using it, and its browser then signs in by itself:
+browser-use's browsing agent is told two alias names and the provider types the
+values — which, once typed, are reachable by the page and by anything with access
+to that browser, as the provider says (see [Security](security.md)). A login
+saved for everyone signs in inside a browser that carries nobody's profile, so
+the account it signs into is never kept in a person's cookies, and forgetting it
+stops the agent using it.
+Without a saved login, a browser task *can* carry a sign-in you performed
+yourself: when a task
+stops at a login wall, you are offered the browser — take over in the panel (or
+open it in a tab of your own from there), sign in at the site — Covan sees
+nothing of it — and press Done, and the task continues in the same browser,
+once, free.
 The cookies stay at the provider in a profile that belongs to you and no one
 else. Covan stores the list of domains that profile holds cookies for and
 nothing more, because that is all it has. **That list is longer than the places
@@ -742,7 +812,10 @@ deletes the profile at the provider. Closing your account deletes it too; you
 should not have to do the second to get the first.
 
 **The second attempt is not guaranteed to get in, and the reason is not
-Covan's.** A sign-in is saved as cookies, and a cookie jar is only as portable
+Covan's.** (The measurement below predates the panel: the re-run then opened a
+new browser. Done now continues in the same browser, which this document has not
+re-measured, so treat the LinkedIn result as the worst case rather than the
+current one.) A sign-in is saved as cookies, and a cookie jar is only as portable
 as the site allows. Covan pins the egress country so the second attempt arrives
 from where the first one did — that is what `proxy_country_code` on the profile
 is for — but a residential proxy gives a different address in that country each
@@ -775,8 +848,9 @@ are on the card too.
   the open web by design, so there is no origin to lock and this guard does not
   apply to it. What stands in its place is narrower in a different direction —
   one human sentence per task, shown to you whole and approved by you before
-  anything runs, no credentials of any kind, and nothing the browser reads is
-  ever executed. If that trade is not one you want, leave
+  anything runs, no credential in the sentence and none the conversation's model
+  is given (a login you saved is typed by the provider on its own site only), and nothing
+  the browser reads is ever executed. If that trade is not one you want, leave
   `BROWSER_USE_API_KEY` unset and the tool does not exist.
 - **It cannot choose a method you did not allow**, and it is told not to try
   another one.
@@ -816,7 +890,10 @@ approval card names the sites the browser is signed in to, so "check the FT
 front page" cannot quietly mean "inside my signed-in session" without you
 seeing it; the profile follows one person rather than a workspace, so a
 colleague's injected task cannot reach your jar; and a task may be retried
-after a takeover exactly once, ever, so a loop cannot be spun up.
+after a takeover exactly once, ever, so a loop cannot be spun up. A saved login
+adds two more: it is typed only on the site it was saved for, never on one a
+page or the task named, and the card names that site and login before anything
+runs.
 
 **What is missing is a domain allow-list**, and it is the real answer rather
 than one of these. A task should be able to say "this one may only touch

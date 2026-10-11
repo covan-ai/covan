@@ -129,13 +129,20 @@ describe("what the compose stack hands the API worker", () => {
     expect(dead).toEqual([]);
   });
 
-  /** The four that were missing, named, so a revert is loud rather than quiet. */
-  it.each(["BROWSER_USE_API_KEY", "BROWSER_USE_BASE_URL", "COMPOSIO_API_KEY", "COMPOSIO_BASE_URL"])(
-    "still passes %s",
-    (name) => {
-      expect(passedThrough.has(name)).toBe(true);
-    },
-  );
+  /**
+   * The four that were missing, and the two the v4 runs API added beside them,
+   * named, so a revert is loud rather than quiet.
+   */
+  it.each([
+    "BROWSER_USE_API_KEY",
+    "BROWSER_USE_BASE_URL",
+    "BROWSER_USE_V4_BASE_URL",
+    "BROWSER_USE_MODEL",
+    "COMPOSIO_API_KEY",
+    "COMPOSIO_BASE_URL",
+  ])("still passes %s", (name) => {
+    expect(passedThrough.has(name)).toBe(true);
+  });
 });
 
 /**
@@ -185,7 +192,12 @@ describe("what lib/env.ts forwards to the self-hosted runtime", () => {
   });
 
   /** Named, so a revert is loud. Both layers, because both were missing. */
-  it.each(["BROWSER_USE_API_KEY", "BROWSER_USE_BASE_URL"])("forwards %s", (name) => {
+  it.each([
+    "BROWSER_USE_API_KEY",
+    "BROWSER_USE_BASE_URL",
+    "BROWSER_USE_V4_BASE_URL",
+    "BROWSER_USE_MODEL",
+  ])("forwards %s", (name) => {
     expect(forwarded.has(name), `loadEnv() drops ${name}`).toBe(true);
     expect(passedThrough.has(name), `compose drops ${name}`).toBe(true);
   });

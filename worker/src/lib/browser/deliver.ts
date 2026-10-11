@@ -3,6 +3,8 @@ import type { RoutineEnv } from "../../types";
 import { complete, type CompletionMessage, type CompletionUsage } from "../completion";
 import { resolveModel } from "../models";
 import { deliver, deliveryDepsFrom, type DeliveryChannel } from "../routines/delivery";
+import { credentialCoversHost, hasSavedCredential } from "./credentials";
+import { bareHost } from "./outcome";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 
 /**
@@ -22,19 +24,35 @@ import type { BrowserTaskRow, FinishedTask } from "./poller";
  * phrasing rather than reasoning. A tool loop here would be a second agent
  * turn nobody asked for, on a Worker whose whole subrequest budget is fifty.
  *
- * **Nothing here throws.** It is called from `settle()` after the row has
+ * **Nothing here throws.** It is called from `settleBrowserTask` after the row has
  * already reached a terminal status, so a throw would lose the delivery
  * without making the task claimable again. Every failure is logged and
  * degrades to something a person can still read.
  */
 
-/** The model is told to answer the question, not to describe the browser. */
+/**
+ * The model is told to answer the question, not to describe the browser —
+ * with one exception it is told about in the brief itself: a login wall,
+ * where pointing at the browser is the whole of the answer.
+ *
+ * **"In the language of their message", and their message as the user turn.**
+ * Measured 2026-10-11 on gpt-4.1-mini: "in their own language" with only the
+ * English brief to go on answered a login wall in Spanish, and quoting the
+ * person's words inside the brief as "the language to write in" made it worse
+ * — Spanish for an English speaker in 19 of 20 runs. With the brief in the
+ * system message and the person's own words as the user message, 60 runs
+ * across English, Turkish and German, answers and login walls, all came back
+ * in the person's language. The per-case instructions in `brief` say nothing
+ * about language for the same reason: every mention of it was a cue to pick
+ * one.
+ */
 const SYSTEM = [
   "A browser agent was asked to do something on the web and has finished.",
-  "Write the answer to the person who asked, in their own language, as if you had just",
-  "looked it up yourself. Do not mention browsers, tasks, agents or tools, and do not",
-  "apologise for the delay. If the browser did not manage it, say plainly what stopped it.",
-  "Keep to what the browser actually reported — do not add facts it did not give you.",
+  "Write the answer to the person who asked, in the language of their message, as if you had just",
+  "looked it up yourself. Do not mention browsers, tasks, agents or tools unless the",
+  "brief below tells you to, and do not apologise for the delay. If the browser did",
+  "not manage it, say plainly what stopped it. Keep to what the browser actually",
+  "reported — do not add facts it did not give you.",
 ].join(" ");
 
 export async function deliverBrowserTask(
@@ -68,12 +86,16 @@ export async function deliverBrowserTask(
       .maybeSingle();
 
     const model = resolveModel((agent?.model as string | null) ?? null, env);
+    const saved = await savedLoginState(row, outcome, env, db);
+    const words = needsModel(outcome) ? await theirWords(row, db) : null;
     const { content, usage } = await phrase(
       row,
       outcome,
       env,
       model,
       agent?.temperature as number | null,
+      saved,
+      words,
     );
 
     const { data: message, error } = await db
@@ -119,13 +141,225 @@ export async function deliverBrowserTask(
 }
 
 /**
+ * The site a login wall names, or a description when the run named none.
+ *
+ * Narrowed by `bareHost` exactly as settle narrows what it stores in
+ * `signin_host`, so the message and the panel's prompt name the same site —
+ * and a model's `https://LinkedIn.com/login` is not repeated into the
+ * conversation as though it were a site's name.
+ */
+function siteOf(outcome: FinishedTask): string {
+  return bareHost(outcome.reported?.host ?? null) ?? "a site it needed";
+}
+
+/**
+ * What a login wall has to do with a saved login (Task 2.3, ruling R32):
+ *
+ * - `failed`: the run CARRIED a saved login (`browser_tasks.credential_id`)
+ *   and it was for the site that walled it. That login is what did not work —
+ *   a changed password, usually — and "sign in" is the wrong thing to ask of
+ *   somebody who already gave it. The offer is to update it.
+ * - `unused`: the run carried none for this site, but a login is saved for it
+ *   (`hasSavedCredential`, R27). It was never tried — the model named no
+ *   `site`, a hand-back ran without it, `site` named another host — so it has
+ *   not failed, and asking again is what would use it. Today's sign-in wording,
+ *   plus that.
+ * - null: anything else, including every ending that is not a login wall and a
+ *   wall with no usable host.
+ *
+ * Only `credential_id` can say `failed`. A login that is merely saved and
+ * blamed anyway sends the person to re-type a correct password and round the
+ * same wall again; that was the reason the run now writes down what it carried.
+ *
+ * **A failed read is today's wording.** Both lookups throw on a read error,
+ * and this file does not throw; the cost of not knowing is the plainer
+ * sentence, not a lost delivery. Logged as a fixed sentence and the row id.
+ * Up to four reads, all only on a login wall, through the service-role client
+ * this delivery already holds.
+ */
+type SavedLoginState = "failed" | "unused" | null;
+
+/** How much of the person's message the phrasing call is shown: enough to tell a language, no more. */
+const WORDS_SHOWN = 400;
+
+/**
+ * The person's own last message in the conversation, for the one thing the
+ * phrasing call cannot know without it: which language to answer in.
+ *
+ * `row.task` is not their words. The chat model wrote it for the browser
+ * agent, in English whatever the person wrote, so "answer in the language
+ * they asked in" with only the task to go on is a guess. On 2026-10-11 the
+ * guess for an English conversation was Spanish ("El sitio … requiere que
+ * inicies sesión"); for a Turkish one it would usually be English.
+ *
+ * The latest message the person sent and did not edit away — not the one
+ * that started the task, which this row does not name. Close enough for a
+ * language: somebody who changes language halfway through a conversation is
+ * answered in the one they changed to. Read only when a model call will
+ * happen. **A failed read is today's prompt**, never a lost delivery: nothing
+ * in this file throws.
+ */
+async function theirWords(row: BrowserTaskRow, db: SupabaseClient): Promise<string | null> {
+  try {
+    const { data, error } = await db
+      .from("messages")
+      .select("content")
+      .eq("session_id", row.session_id)
+      .eq("role", "user")
+      .is("superseded_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.warn("could not read the person's words for a browser task's answer", row.id);
+      return null;
+    }
+    const content = typeof data?.content === "string" ? data.content.trim() : "";
+    return content ? content.slice(0, WORDS_SHOWN) : null;
+  } catch {
+    console.warn("could not read the person's words for a browser task's answer", row.id);
+    return null;
+  }
+}
+
+/** Whether `phrase` will ask the model: the same test it makes before doing so. */
+function needsModel(outcome: FinishedTask): boolean {
+  return Boolean(outcome.output) || outcome.reported?.status === "login_required";
+}
+
+async function savedLoginState(
+  row: BrowserTaskRow,
+  outcome: FinishedTask,
+  env: RoutineEnv,
+  db: SupabaseClient,
+): Promise<SavedLoginState> {
+  if (outcome.reported?.status !== "login_required") return null;
+  const host = bareHost(outcome.reported.host ?? null);
+  if (!host) return null;
+  try {
+    if (
+      row.credential_id &&
+      (await credentialCoversHost(env, { credentialId: row.credential_id, host }, { db }))
+    ) {
+      return "failed";
+    }
+    const saved = await hasSavedCredential(
+      env,
+      { agentId: row.agent_id, userId: row.user_id, host },
+      { db },
+    );
+    return saved ? "unused" : null;
+  } catch {
+    console.warn("could not ask whether a login was saved for a browser task's site", row.id);
+    return null;
+  }
+}
+
+/**
+ * What the model is shown, by how the run ended.
+ *
+ * A login wall is the one ending a person can fix with their own hands while
+ * the browser is still there (Task 1.5's take-over), so that message has one
+ * job: name the site and say the panel beside the conversation is waiting. One
+ * sentence, through the same model call as every other answer — which is what
+ * puts it in the language the person asked in. A wall the run's own saved
+ * login could not get past (`saved === "failed"`, Task 2.3) is the same one
+ * sentence about a different repair: the saved login didn't get past the sign-in
+ * (it may be a code, an SMS or a passkey step), and the offer is to update it. A wall on a site whose saved login the run never
+ * carried (`"unused"`) is today's sentence and one true clause more: asking
+ * again would use it. A block says what stopped it. Everything else,
+ * including every v2 task, is answered as before.
+ */
+function brief(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginState): string {
+  const asked = [`What was asked: ${row.task}`, ""];
+  const reported = outcome.output ? ["What the browser reported:", outcome.output, ""] : [];
+
+  // Task 2.3, R32: the run carried a saved login for this site and the wall
+  // stood anyway, so the saved login is what to fix — a changed password,
+  // usually.
+  if (outcome.reported?.status === "login_required" && saved === "failed") {
+    return [
+      ...asked,
+      `The browser stopped because ${siteOf(outcome)} requires signing in, and the saved login for it didn't get past the sign-in.`,
+      "It is still open in the browser panel beside this conversation.",
+      "",
+      ...reported,
+      "Tell them in one sentence that the saved login for",
+      `${siteOf(outcome)} didn't get past the sign-in, and offer to update it.`,
+    ].join("\n");
+  }
+
+  if (outcome.reported?.status === "login_required") {
+    return [
+      ...asked,
+      `The browser stopped because ${siteOf(outcome)} requires the person to sign in, and it has no sign-in for it.`,
+      "It is still open in the browser panel beside this conversation, waiting for them to sign in there themselves.",
+      "",
+      ...reported,
+      "Tell them in one sentence which site wants them to sign in",
+      "and that the browser panel is waiting for them.",
+      ...(saved === "unused"
+        ? [
+            // The panel's button, not "ask again": a model that left `site`
+            // out once will leave it out again, and in the 2026-10-11 e2e that
+            // promise was a loop. The card's "Try again with the saved login"
+            // binds it whatever the model does.
+            `A login is saved for ${siteOf(outcome)}, but this run was not given it: add, in the same`,
+            "sentence, that the browser panel can try again with the saved login.",
+          ]
+        : []),
+    ].join("\n");
+  }
+
+  if (outcome.reported?.status === "blocked") {
+    return [
+      ...asked,
+      ...reported,
+      "It reports that something stopped it before it could finish. Say in one sentence what stopped it.",
+    ].join("\n");
+  }
+
+  return [
+    ...asked,
+    ...reported,
+    outcome.status === "finished"
+      ? "It reports that it succeeded."
+      : "It reports that it did NOT succeed. Say what stopped it.",
+  ].join("\n");
+}
+
+/**
+ * What is delivered when the model cannot be asked: the output itself, or for
+ * a login wall a sentence that still names the site and the panel, because
+ * that ending has no output to fall back on and is the one the person can act
+ * on.
+ */
+function fallback(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginState): string {
+  if (outcome.reported?.status === "login_required" && saved === "failed") {
+    return `The saved login for ${siteOf(outcome)} didn't get past the sign-in — would you like to update it?`;
+  }
+  if (outcome.reported?.status === "login_required") {
+    return saved === "unused"
+      ? `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
+          "waiting for you to do it there, or to try again there with your saved login."
+      : `${siteOf(outcome)} needs you to sign in — the browser beside this conversation is ` +
+          "waiting for you to do it there.";
+  }
+  return (
+    outcome.output ??
+    `I could not finish "${row.task}" — ${outcome.error ?? "the browser stopped without an answer"}.`
+  );
+}
+
+/**
  * The output as a sentence, or the output itself.
  *
  * No model call when there is nothing to phrase: a task that was given up on
  * has an `error` and no `output`, and paying for a completion to rewrite
- * "this took too long" is paying twice for a failure. And if the call fails,
- * the raw output is returned rather than nothing — it is what the person
- * wanted, just less polished.
+ * "this took too long" is paying twice for a failure. A login wall is the
+ * exception — it has no output and is still worth a sentence in the person's
+ * language. And if the call fails, the raw output is returned rather than
+ * nothing — it is what the person wanted, just less polished.
  */
 async function phrase(
   row: BrowserTaskRow,
@@ -133,30 +367,25 @@ async function phrase(
   env: RoutineEnv,
   model: string,
   temperature: number | null | undefined,
+  saved: SavedLoginState,
+  words: string | null,
 ): Promise<{ content: string; usage: CompletionUsage | null }> {
-  if (!outcome.output) {
-    return {
-      content: `I could not finish "${row.task}" — ${outcome.error ?? "the browser stopped without an answer"}.`,
-      usage: null,
-    };
+  if (!needsModel(outcome)) {
+    return { content: fallback(row, outcome, saved), usage: null };
   }
 
-  const messages: CompletionMessage[] = [
-    { role: "system", content: SYSTEM },
-    {
-      role: "user",
-      content: [
-        `What was asked: ${row.task}`,
-        "",
-        "What the browser reported:",
-        outcome.output,
-        "",
-        outcome.status === "finished"
-          ? "It reports that it succeeded."
-          : "It reports that it did NOT succeed. Say what stopped it.",
-      ].join("\n"),
-    },
-  ];
+  // With their words, the brief is the system message and their words are the
+  // user turn, which is what settles the language (see `SYSTEM`). Without
+  // them, the brief stands in as the message, as it always did.
+  const messages: CompletionMessage[] = words
+    ? [
+        { role: "system", content: `${SYSTEM}\n\n${brief(row, outcome, saved)}` },
+        { role: "user", content: words },
+      ]
+    : [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: brief(row, outcome, saved) },
+      ];
 
   try {
     const { text, usage } = await complete(env, {
@@ -164,10 +393,10 @@ async function phrase(
       messages,
       ...(typeof temperature === "number" ? { temperature } : {}),
     });
-    return { content: text.trim() || outcome.output, usage };
+    return { content: text.trim() || fallback(row, outcome, saved), usage };
   } catch (err) {
     console.error("could not phrase a browser task's answer; delivering it raw", row.id, err);
-    return { content: outcome.output, usage: null };
+    return { content: fallback(row, outcome, saved), usage: null };
   }
 }
 

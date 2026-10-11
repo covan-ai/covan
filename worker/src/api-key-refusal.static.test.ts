@@ -51,7 +51,7 @@ const ASKS = ["refuseIfKeyAuthenticated(", 'c.get("apiKeyId")'];
  */
 const ACTS_BEYOND_THE_KEY: Record<string, string> = {
   "routes/browser.ts":
-    "mints a live browser URL carrying the owner's own signed-in cookies, and browser-use documents that URL as full control of that browser — so it is access that outlives the key by the whole session, and revoking the key does not touch it",
+    "mints a live browser URL carrying the owner's own signed-in cookies, and browser-use documents that URL as full control of that browser — so it is access that outlives the key by the whole session, and revoking the key does not touch it; and it saves a site's password for an agent, which signs in as that person on every later run long after the key is revoked",
   "routes/api-keys.ts":
     "mints and revokes keys: a key that writes successors cannot be revoked, and a leaked one can take down the keys somebody still relies on",
   "routes/account.ts":
@@ -60,6 +60,36 @@ const ACTS_BEYOND_THE_KEY: Record<string, string> = {
     "invites people, and what comes back is a second person with their own session — access in a third party's hands that revoking the key does not touch",
   "routes/workspace.ts":
     "changes what a member may do, so a viewer promoted to admin by a key stays an admin after the key is gone",
+};
+
+/**
+ * Single handlers that create access a key must not create, checked one by one.
+ *
+ * `ACTS_BEYOND_THE_KEY` asks whether a FILE refuses a key somewhere, and that
+ * is blind inside a file: `routes/browser.ts`'s `GET .../current` handed back
+ * a live URL with no refusal of its own while `POST`'s answered for it. So the
+ * routes that hand somebody a browser are pinned by handler — the text from
+ * `.<method>("<path>"` to the next registration must itself make the call.
+ *
+ * Keyed `"<file> <METHOD> <path>"`.
+ */
+const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
+  "routes/browser.ts GET /browser/sessions/:id/live":
+    "hands back the live view URL of a browser carrying the owner's signed-in cookies — a credential the provider says gives full control of that browser, and revoking the key does not end it",
+  "routes/browser.ts POST /browser/sessions/:id/take-over":
+    "puts the owner's browser in human hands, which is the state in which the panel's live URL becomes the controls of a browser carrying their signed-in sessions",
+  "routes/browser.ts POST /browser/sessions/:id/hand-back":
+    "starts a run in the owner's signed-in browser and spends the one free retry on their behalf, an act the owner never took that outlives the key",
+  "routes/browser.ts POST /browser/sessions/:id/stop":
+    "stops somebody's browser, ending a sign-in they may be in the middle of and deciding what their cookie jar keeps",
+  "routes/browser.ts GET /browser/sessions":
+    "lists which of somebody's browsers are open right now, in which conversations and in whose hands — a map of where a signed-in browser of theirs can be found, read the way GET /browser/profile and GET /browser/credentials are refused: reconnaissance rather than work, which no key-driven caller needs",
+  "routes/browser.ts GET /browser/credentials":
+    "lists which sites somebody has a saved login for, and on which agents — reconnaissance about where their passwords are kept, which no key-driven caller needs",
+  "routes/browser.ts POST /browser/credentials":
+    "saves a site's password for an agent, so every later run signs in as that person — a login planted by a key keeps working after the key is revoked",
+  "routes/browser.ts DELETE /browser/credentials/:id":
+    "forgets a saved login, possibly a shared one the whole team's agent signs in with — a destructive act on their behalf that revoking the key does not undo",
 };
 
 /**
@@ -155,6 +185,28 @@ describe("the one thing an API key may not do", () => {
     expect(
       ACTS_BEYOND_THE_KEY[file].length,
       `${file}'s reason is too short to be one`,
+    ).toBeGreaterThan(30);
+  });
+
+  it.each(Object.keys(HANDLERS_BEYOND_THE_KEY))("is refused by the handler itself: %s", (key) => {
+    const [file, method, path] = key.split(" ");
+    expect(files, `${file} is in HANDLERS_BEYOND_THE_KEY but no longer exists`).toContain(file);
+
+    const code = codeOnly(readFileSync(join(SRC, file), "utf8"));
+    const start = code.indexOf(`.${method.toLowerCase()}("${path}"`);
+    expect(start, `${key} is no longer registered in ${file}`).toBeGreaterThanOrEqual(0);
+    // To the next handler registered on any router, or the end of the file.
+    const rest = code.slice(start + 1);
+    const next = rest.search(/\n\w+\.(get|post|put|patch|delete)\(/);
+    const handler = next === -1 ? rest : rest.slice(0, next);
+
+    expect(
+      ASKS.some((name) => handler.includes(name)),
+      `${key} creates access a revoked key would leave behind and does not refuse a key itself`,
+    ).toBe(true);
+    expect(
+      HANDLERS_BEYOND_THE_KEY[key].length,
+      `${key}'s reason is too short to be one`,
     ).toBeGreaterThan(30);
   });
 

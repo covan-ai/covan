@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
+import { savedLogin, tasksThatCarriedALogin } from "../lib/browser/credentials";
+import { pollConversationBrowser } from "../lib/browser/live";
+import { deferred } from "../lib/defer";
 import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
 
@@ -269,7 +272,8 @@ sessions.get("/sessions/:id/messages", async (c) => {
 });
 
 /**
- * GET /sessions/:id/browser-tasks — what the takeover card reads.
+ * GET /sessions/:id/browser-tasks — what the takeover card and the browser
+ * panel read, every three seconds while the tab is open.
  *
  * A card and not an SSE event, for the reason §3 gives: `ConfirmCard` is
  * driven only by a `confirm` event into in-memory state and does not survive a
@@ -277,7 +281,18 @@ sessions.get("/sessions/:id/messages", async (c) => {
  *
  * The session is read first, through the caller's own client, so RLS answers
  * "not yours" as 404 — the same shape `ideas.ts` uses against `chat_sessions`.
- * Then the tasks, whose own policy narrows them again to this caller.
+ *
+ * **Then it is the live endpoint.** `pollConversationBrowser` asks the
+ * provider about the caller's own running run in this conversation, records
+ * its progress, and settles it inline the moment it has ended — so the answer
+ * lands while the person is looking, and the five-minute cron is only the
+ * fallback. That needs columns no client role can read, so it runs with the
+ * service role in `lib/browser/live.ts`, scoped there to this conversation and
+ * this caller; nothing it answers carries a provider id.
+ *
+ * The tasks are read AFTER it, through the caller's client, whose own policy
+ * narrows them again to this caller — and so a run the poll just settled is
+ * shown settled in the same response.
  *
  * **The select names columns** because `select("*")` on `browser_tasks`
  * answers 42501 for the whole row: `provider_task_id` is granted to no client
@@ -289,13 +304,27 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
-    .select("id")
+    .select("id, agent_id")
     .eq("id", id)
     .maybeSingle();
   if (sessionError) {
     return c.json({ error: "failed to load that conversation" }, 500);
   }
   if (!session) return c.json({ error: "no such conversation" }, 404);
+
+  // Kept alive past the request as well as awaited. A poll that settles a run
+  // has already made the row terminal before its model call and message
+  // insert — claim first is what keeps the two clocks to one answer — so if
+  // the tab closes mid-delivery and the runtime cancels the request's pending
+  // work, neither clock would ever deliver that answer. `deferred` is
+  // `waitUntil` on Workers and nothing on Node, where the process outlives
+  // the request anyway.
+  const polled = pollConversationBrowser(c.env, {
+    chatSessionId: id,
+    userId: c.get("user").id,
+  });
+  deferred(c, polled);
+  const live = await polled;
 
   const { data, error } = await db
     .from("browser_tasks")
@@ -307,8 +336,68 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
     return c.json({ error: "failed to load browser tasks" }, 500);
   }
 
+  /**
+   * Which walled tasks carried a saved login (R32), for the sign-in card's
+   * "the saved login didn't work". `credential_id` is granted to no client
+   * role, so the caller's read above cannot name it; `credentials.ts` answers
+   * with the service role, scoped to this caller, and only a yes per task id
+   * comes back. Asked only when a task is at a login wall, so the ordinary
+   * three-second poll costs nothing more; and a failure is "no", because a
+   * card that offers to save a login is a smaller wrong than a poll that fails.
+   */
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  const walled = rows
+    .filter((row) => row.stop_reason === "login_required")
+    .map((row) => String(row.id));
+  let carried = new Set<string>();
+  if (walled.length > 0) {
+    try {
+      carried = await tasksThatCarriedALogin(c.env, { userId: c.get("user").id, taskIds: walled });
+    } catch (err) {
+      console.error("could not tell whether a walled task carried a saved login", String(err));
+    }
+  }
+
+  /**
+   * The saved login the sign-in card can try again with: for the wall the
+   * card shows (`signInFor` — the newest task, at a login wall, not itself
+   * the retry) when that run carried none. Found in the 2026-10-11 e2e: a run
+   * the model sent without `site` met the wall with a login saved for the
+   * site, and the card offered to save another. Through `savedLogin`, the
+   * card's and the binding's own pick, so the login offered is the one the
+   * retry binds; it names a label and a host, and opens nothing. A failure
+   * is "none", for `carried`'s reason.
+   */
+  const newest = rows[0];
+  let offered: { id: string; label: string; siteHost: string } | null = null;
+  if (
+    newest &&
+    newest.stop_reason === "login_required" &&
+    !newest.retry_of &&
+    !carried.has(String(newest.id)) &&
+    typeof newest.signin_host === "string" &&
+    newest.signin_host &&
+    session.agent_id
+  ) {
+    try {
+      const login = await savedLogin(c.env, {
+        agentId: String(session.agent_id),
+        userId: c.get("user").id,
+        host: newest.signin_host,
+      });
+      if (login) offered = { id: login.id, label: login.label, siteHost: login.siteHost };
+    } catch (err) {
+      console.error("could not tell whether a login is saved for a walled task", String(err));
+    }
+  }
+
   return c.json({
-    tasks: (data ?? []).map((row) => mapBrowserTask(row as Record<string, unknown>)),
+    tasks: rows.map((row) =>
+      mapBrowserTask(row, carried.has(String(row.id)), row === newest ? offered : null),
+    ),
+    session: live.session,
+    events: live.events,
+    delivered: live.delivered,
   });
 });
 

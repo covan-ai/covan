@@ -1097,13 +1097,56 @@ export type BrowserTaskDTO = {
   retryOf: string | null;
   createdAt: number;
   finishedAt: number | null;
+  /** `v2` for a task drained from before 0078; `v4` for a run in the browser beside the chat. */
+  apiVersion: "v2" | "v4";
+  /**
+   * Why a run ended before its answer, or null: 'handed_to_person' | 'cost_cap' |
+   * 'cancelled', or the run's own 'login_required' | 'blocked' — the panel's
+   * sign-in prompt keys on 'login_required' and nothing else.
+   */
+  stopReason: string | null;
+  /** Our `browser_sessions.id` — which browser, never the provider's. */
+  browserSessionId: string | null;
+  /**
+   * The bare host a run said it needed a sign-in on (`login_required`), or
+   * null. The panel's "linkedin.com needs you to sign in" reads it; 0078
+   * checks its shape, so it is safe to render as a hostname.
+   */
+  signInHost: string | null;
+  /**
+   * Whether this run carried a saved login (R32) — `credential_id is not
+   * null`, answered by the worker, because the column itself is granted to no
+   * client role and a screen has no use for which login it was. The sign-in
+   * card reads it: a wall after a saved login is "the saved login didn't
+   * work", not "save one". Computed only for tasks at a login wall; false
+   * otherwise.
+   */
+  carriedSavedLogin: boolean;
+  /**
+   * A saved login this person may use for `signInHost`, when the run did not
+   * carry one — for the sign-in card's "Try again with the saved login"
+   * (found in the 2026-10-11 e2e: the model left `site` out, the run carried
+   * nothing, and "ask again" looped). Its id, which the hand-back names, its
+   * label and its host — never the username. Computed only for the wall the
+   * card shows; null otherwise.
+   */
+  savedLogin: { id: string; label: string; siteHost: string } | null;
 };
 
-/** The columns `mapBrowserTask` needs, named because a wildcard is refused. */
+/**
+ * The columns `mapBrowserTask` needs, named because a wildcard is refused.
+ * The last four are the ones 0078 grants; `provider_run_id` is not, and is
+ * not here. One literal rather than a concatenation, so supabase-js can still
+ * type the select from it.
+ */
 export const BROWSER_TASK_COLUMNS =
-  "id, task, status, output, error, retry_of, created_at, finished_at";
+  "id, task, status, output, error, retry_of, created_at, finished_at, api_version, stop_reason, browser_session_id, signin_host";
 
-export function mapBrowserTask(row: Record<string, unknown>): BrowserTaskDTO {
+export function mapBrowserTask(
+  row: Record<string, unknown>,
+  carriedSavedLogin = false,
+  savedLogin: BrowserTaskDTO["savedLogin"] = null,
+): BrowserTaskDTO {
   return {
     id: String(row.id),
     task: String(row.task ?? ""),
@@ -1113,5 +1156,11 @@ export function mapBrowserTask(row: Record<string, unknown>): BrowserTaskDTO {
     retryOf: row.retry_of ? String(row.retry_of) : null,
     createdAt: toEpochMs(String(row.created_at)),
     finishedAt: row.finished_at ? toEpochMs(String(row.finished_at)) : null,
+    apiVersion: row.api_version === "v4" ? "v4" : "v2",
+    stopReason: typeof row.stop_reason === "string" && row.stop_reason ? row.stop_reason : null,
+    browserSessionId: row.browser_session_id ? String(row.browser_session_id) : null,
+    signInHost: typeof row.signin_host === "string" && row.signin_host ? row.signin_host : null,
+    carriedSavedLogin,
+    savedLogin,
   };
 }

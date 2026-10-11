@@ -10,9 +10,12 @@ import { BrowserSignInsSection } from "./browser-signins-section";
  * can say about somebody's logins at all, so saying them wrong is the whole
  * failure available to this component.
  */
-const { profile, forget, FakeApiError } = vi.hoisted(() => ({
+const { profile, forget, listLogins, openBrowsers, stop, FakeApiError } = vi.hoisted(() => ({
   profile: vi.fn(),
   forget: vi.fn(),
+  listLogins: vi.fn(),
+  openBrowsers: vi.fn(),
+  stop: vi.fn(),
   FakeApiError: class FakeApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -23,8 +26,15 @@ const { profile, forget, FakeApiError } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api-client", () => ({
-  api: { browser: { profile, forget } },
+  api: {
+    browser: { profile, forget, open: openBrowsers, stop, credentials: { list: listLogins } },
+    takeovers: { close: vi.fn() },
+  },
   ApiError: FakeApiError,
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
 }));
 
 function renderSection() {
@@ -42,6 +52,9 @@ beforeEach(() => {
     profile: { cookieDomains: ["portal.example.com"], createdAt: null, lastUsedAt: null },
   });
   forget.mockResolvedValue({ forgotten: ["portal.example.com"] });
+  listLogins.mockResolvedValue({ logins: [] });
+  openBrowsers.mockResolvedValue({ browsers: [], takeover: null });
+  stop.mockResolvedValue(undefined);
 });
 
 describe("BrowserSignInsSection", () => {
@@ -75,7 +88,8 @@ describe("BrowserSignInsSection", () => {
     });
     renderSection();
 
-    expect(await screen.findByText(/no sign-ins have been saved yet/i)).toBeTruthy();
+    // Not "nothing saved": the provider can save a jar and not report it.
+    expect(await screen.findByText(/no sites are listed yet/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /forget these sign-ins/i })).toBeTruthy();
   });
 
@@ -107,5 +121,94 @@ describe("BrowserSignInsSection", () => {
 
     expect(await screen.findByText(/a browser of yours is open right now/i)).toBeTruthy();
     expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+});
+
+/**
+ * Task 2.4: the logins a person chose to save are their own section — shown
+ * whether or not a cookie jar exists, and never with a username.
+ */
+describe("Saved logins", () => {
+  const LOGIN = {
+    id: "cred-1",
+    agentId: "agent-1",
+    label: "Supplier portal — personal",
+    siteHost: "portal.example.com",
+    scope: "owner",
+    lastUsedAt: null,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    own: true,
+    canForget: true,
+  };
+
+  it("lists them under their own heading, even with no jar", async () => {
+    profile.mockResolvedValue({ profile: null });
+    listLogins.mockResolvedValue({ logins: [LOGIN] });
+    renderSection();
+
+    expect(await screen.findByText("Saved logins")).toBeTruthy();
+    expect(screen.getByText("Supplier portal — personal")).toBeTruthy();
+    expect(listLogins).toHaveBeenCalledWith(undefined);
+  });
+
+  /**
+   * Final review #5: "the AI model never sees them" was absolute, and the
+   * provider's own browsing agent can see a typed value. What Covan controls
+   * is what Covan's model is given.
+   */
+  it("says Covan's AI model is never given them, and no more than that", async () => {
+    listLogins.mockResolvedValue({ logins: [LOGIN] });
+    const { container } = renderSection();
+
+    await screen.findByText("Saved logins");
+    expect(container.textContent).toContain("Encrypted; Covan's AI model is never given them.");
+    expect(container.textContent).not.toContain("the AI model never sees them");
+  });
+
+  it("never shows a username", async () => {
+    listLogins.mockResolvedValue({ logins: [{ ...LOGIN, username: "ada@example.com" }] });
+    const { container } = renderSection();
+
+    await screen.findByText("Supplier portal — personal");
+    expect(container.textContent).not.toContain("ada@example.com");
+  });
+});
+
+/**
+ * Task 3.2 (ruling R48): the person's open browsers, the third part. Stopping
+ * one is what saves its sign-ins, so the sites above are asked for again.
+ */
+describe("Open browsers", () => {
+  const IDLE = {
+    id: "bs-idle",
+    conversation: { id: "chat-3", title: "Compare plans" },
+    agent: { id: "agent-2", name: "Scout" },
+    liveState: "none",
+    running: false,
+    stoppable: true,
+    browserOpen: true,
+    lastUsedAt: new Date().toISOString(),
+  };
+
+  it("lists them under their own heading, even with no jar", async () => {
+    profile.mockResolvedValue({ profile: null });
+    openBrowsers.mockResolvedValue({ browsers: [IDLE], takeover: null });
+    renderSection();
+
+    expect(await screen.findByText("Open browsers")).toBeTruthy();
+    expect(screen.getByText("Compare plans")).toBeTruthy();
+  });
+
+  it("asks for the sites again after a stop, which is what saved them", async () => {
+    openBrowsers.mockResolvedValue({ browsers: [IDLE], takeover: null });
+    renderSection();
+
+    await screen.findByText("Compare plans");
+    const before = profile.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Stop it" }));
+
+    expect(stop).toHaveBeenCalledWith("bs-idle");
+    await waitFor(() => expect(profile.mock.calls.length).toBeGreaterThan(before));
   });
 });

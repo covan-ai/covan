@@ -95,6 +95,25 @@ describe("browser_tasks", () => {
     expect(error?.code).toBe("42501");
   });
 
+  /**
+   * Ruling R32 (0079): which saved login a run carried is the worker's
+   * bookkeeping for one sentence in one message, and an id that names a
+   * credential row is not something a screen needs. Withheld from the person
+   * whose task it is, so from everybody.
+   */
+  it("does not hand which saved login a run carried to any client", async () => {
+    for (const user of [owner, colleague, outsider]) {
+      const { error } = await user.db.from("browser_tasks").select("credential_id");
+      expect(error?.code, "credential_id should be withheld").toBe("42501");
+    }
+    const rows = (await sql()`
+      select grantee from information_schema.column_privileges
+      where table_schema = 'public' and table_name = 'browser_tasks'
+        and column_name = 'credential_id' and grantee in ('anon', 'authenticated')
+    `) as unknown as { grantee: string }[];
+    expect(rows).toEqual([]);
+  });
+
   it("refuses a wildcard select, so the withheld column cannot be read sideways", async () => {
     const { error } = await owner.db.from("browser_tasks").select("*");
     expect(error).not.toBeNull();

@@ -30,18 +30,28 @@
 #                           agent that works when you ask it and not overnight.
 #                           That is the one difference nobody can debug, and it
 #                           is why the two lists have to match.
-#   BROWSER_USE_API_KEY  <- REQUIRED here if the API Worker has it, and this is
-#                           the one entry on this list where THIS Worker does
-#                           the work. A chat turn only hands a browser task
-#                           over; what polls it, decides it has finished, and
-#                           writes the answer back into the conversation is the
-#                           tick in this Worker. Set there and not here and
-#                           every task starts, charges somebody's allowance,
-#                           and is never heard from again — the only sign is one
-#                           warning line per idle tick in `wrangler tail`, which
-#                           is deliberately there because nothing in the
-#                           database would explain it.
-#   BROWSER_USE_BASE_URL <- the same rule, if you set one.
+#   BROWSER_USE_API_KEY  <- REQUIRED here if the API Worker has it. This Worker
+#                           is the FALLBACK now, not the only clock: while a
+#                           conversation is open in a tab, the tab polls its
+#                           own run every three seconds and settles it, so the
+#                           answer lands inline. What this Worker's tick does
+#                           is settle the runs whose tab was closed (and the v2
+#                           tasks from before the move to V4, which only this
+#                           poll drains), and stop a browser somebody took over
+#                           and walked away from, so the sign-in they just
+#                           performed is saved. Set there and not here and a
+#                           task whose tab was closed starts, charges somebody's
+#                           allowance, and is never heard from again — the only
+#                           sign is one warning line per idle tick in
+#                           `wrangler tail`, which is deliberately there because
+#                           nothing in the database would explain it.
+#   BROWSER_USE_V4_BASE_URL <- the same rule, if you set one: this Worker polls
+#                           V4 runs and stops V4 browsers, so a proxy that the
+#                           API Worker has and this one lacks sends them to
+#                           browser-use directly.
+#   BROWSER_USE_BASE_URL <- V2 only, the same rule if you set one: this Worker
+#                           drains v2 tasks through it.
+#   (BROWSER_USE_MODEL is the API Worker's alone: this Worker starts no run.)
 #
 # Not set here, deliberately: SUPABASE_ANON_KEY. This Worker only ever uses the
 # service role, so a user-scoped key would be a credential with no caller.

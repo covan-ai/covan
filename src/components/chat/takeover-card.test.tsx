@@ -2,12 +2,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { BrowserTask, Takeover } from "@/lib/api-client";
+import type { BrowserTask, ConversationBrowser, Takeover } from "@/lib/api-client";
 import { TakeoverCard } from "./takeover-card";
+import { openInNewWindow } from "./use-conversation-browser";
 
 /**
- * What matters here is which tasks get a button and what happens to the live
- * URL, because one bounds the operator's money and the other is a credential.
+ * Two things live in this file, and both are about signing in.
+ *
+ * `openInNewWindow`, the new-tab fallback the browser panel's sign-in card
+ * (`sign-in-card.test.tsx`, which replaced Phase 1's prompt) offers, and
+ * `TakeoverCard`, the v2 card kept in the transcript for tasks drained from
+ * before 0078 and for somebody who was part-way through one when the panel
+ * shipped.
+ *
+ * What matters is which tasks get a button (one bounds the operator's
+ * money), and that the live URL — a credential — reaches an address bar and
+ * nothing else.
  */
 
 const browserTasks = vi.fn();
@@ -18,7 +28,7 @@ const close = vi.fn();
 vi.mock("@/lib/api-client", () => ({
   api: {
     sessions: { browserTasks: (...a: unknown[]) => browserTasks(...a) },
-    browser: {
+    takeovers: {
       takeOver: (...a: unknown[]) => takeOver(...a),
       current: (...a: unknown[]) => current(...a),
       close: (...a: unknown[]) => close(...a),
@@ -35,6 +45,8 @@ vi.mock("sonner", () => ({
   },
 }));
 
+const SECRET = "https://live.browser-use.com/secret-address";
+
 function task(over: Partial<BrowserTask> = {}): BrowserTask {
   return {
     id: "task-1",
@@ -45,8 +57,19 @@ function task(over: Partial<BrowserTask> = {}): BrowserTask {
     retryOf: null,
     createdAt: 0,
     finishedAt: null,
+    apiVersion: "v2",
+    stopReason: null,
+    browserSessionId: null,
+    signInHost: null,
+    carriedSavedLogin: false,
+    savedLogin: null,
     ...over,
   };
+}
+
+/** The poll's answer for a conversation with these tasks and no v4 browser. */
+function tasksOf(tasks: BrowserTask[]): ConversationBrowser {
+  return { tasks, session: null, events: [], delivered: false };
 }
 
 const LIVE: Takeover = {
@@ -74,7 +97,7 @@ let opened: {
 
 beforeEach(() => {
   toastCalls.length = 0;
-  browserTasks.mockResolvedValue({ tasks: [] });
+  browserTasks.mockResolvedValue(tasksOf([]));
   current.mockResolvedValue({ takeover: null });
   takeOver.mockResolvedValue(LIVE);
   close.mockResolvedValue({
@@ -91,9 +114,67 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("which tasks are offered", () => {
+describe("the new-window fallback", () => {
+  it("reserves the tab before the address exists, then navigates it", async () => {
+    let resolve!: (url: string) => void;
+    const done = openInNewWindow(() => new Promise<string>((r) => (resolve = r)));
+
+    // Opened empty and synchronously, because Safari blocks a window.open that
+    // is not a direct consequence of a gesture and the address does not exist
+    // until the request comes back.
+    expect(window.open).toHaveBeenCalledWith("", "_blank");
+    expect(opened.location.replace).not.toHaveBeenCalled();
+
+    resolve(SECRET);
+    await done;
+    expect(opened.location.replace).toHaveBeenCalledWith(SECRET);
+    // Nulled rather than opened with `noopener`, which would have returned
+    // null and left nothing to navigate.
+    expect(opened.opener).toBeNull();
+  });
+
+  it("closes the reserved tab when the address cannot be had", async () => {
+    await expect(
+      openInNewWindow(() => Promise.reject(new Error("no browser is open"))),
+    ).rejects.toThrow("no browser is open");
+    expect(opened.close).toHaveBeenCalled();
+  });
+
+  /**
+   * A blocked popup is not the browser failing. Throwing here is what puts a
+   * sentence in front of the person instead of a button that did nothing — and
+   * the sentence does not carry the address, which is a credential.
+   */
+  it("says so when the tab was blocked, without the address in the message", async () => {
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => null),
+    );
+    const failure = openInNewWindow(() => Promise.resolve(SECRET));
+    await expect(failure).rejects.toThrow(/blocked/i);
+    await failure.catch((err: Error) => expect(err.message).not.toContain("secret-address"));
+  });
+});
+
+describe("the legacy card: which tasks are offered", () => {
+  /**
+   * A v4 task belongs to the browser panel, whose own prompt continues it in
+   * the browser it ran in. Offering it here as well would rent a second
+   * browser for the same wall.
+   */
+  it("offers nothing for a v4 task, which the panel owns", async () => {
+    browserTasks.mockResolvedValue(tasksOf([task({ apiVersion: "v4", browserSessionId: "bs-1" })]));
+    renderCard();
+
+    // Waited on the takeover query rather than on the tasks request: it is
+    // enabled only once a render has HAD the tasks, so by the time it is asked
+    // the card has decided — `browserTasks` being called proves nothing yet.
+    await waitFor(() => expect(current).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /sign in myself/i })).toBeNull();
+  });
+
   it("offers a failed task that said something", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     renderCard();
 
     expect(await screen.findByRole("button", { name: /sign in myself/i })).toBeTruthy();
@@ -123,7 +204,7 @@ describe("which tasks are offered", () => {
     // THE bound on operator spend. A retry is never itself offerable.
     ["a task that is already a retry", task({ retryOf: "task-0" })],
   ])("offers nothing for %s", async (_label, row) => {
-    browserTasks.mockResolvedValue({ tasks: [row] });
+    browserTasks.mockResolvedValue(tasksOf([row]));
     renderCard();
 
     await waitFor(() => expect(browserTasks).toHaveBeenCalled());
@@ -131,9 +212,9 @@ describe("which tasks are offered", () => {
   });
 });
 
-describe("opening the browser", () => {
+describe("the legacy card: opening the browser", () => {
   it("reserves the tab inside the click, then navigates it", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /sign in myself/i }));
 
@@ -148,7 +229,7 @@ describe("opening the browser", () => {
   });
 
   it("says nothing is saved until done is pressed", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /sign in myself/i }));
 
@@ -156,7 +237,7 @@ describe("opening the browser", () => {
   });
 
   it("shows a countdown rather than a one-time sentence", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /sign in myself/i }));
 
@@ -167,7 +248,7 @@ describe("opening the browser", () => {
 
   it("closes the reserved tab when the request fails", async () => {
     takeOver.mockRejectedValue(new Error("every browser this deployment can run is busy"));
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /sign in myself/i }));
 
@@ -175,7 +256,7 @@ describe("opening the browser", () => {
   });
 });
 
-describe("a reloaded tab", () => {
+describe("the legacy card: a reloaded tab", () => {
   /**
    * The likeliest day-one failure without this: the URL exists only in the
    * response that minted it and one open takeover is allowed, so a reload
@@ -192,7 +273,7 @@ describe("a reloaded tab", () => {
     // This conversation HAS a browser task — otherwise the query would be
     // skipped and the absence of the panel would prove nothing — but it is a
     // different task from the one the standing takeover names.
-    browserTasks.mockResolvedValue({ tasks: [task({ id: "task-9" })] });
+    browserTasks.mockResolvedValue(tasksOf([task({ id: "task-9" })]));
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
 
@@ -213,16 +294,35 @@ describe("a reloaded tab", () => {
   });
 
   it("recovers the open takeover from the server", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
 
     expect(await screen.findByRole("button", { name: /done, i've signed in/i })).toBeTruthy();
     expect(await screen.findByText(/9:\d\d left/)).toBeTruthy();
   });
+
+  /**
+   * Ruling R51 (b): `current` now answers an open row past its window (the
+   * browser is still up, and Done still saves and runs the task again). The
+   * card says the window has closed rather than counting below zero, and
+   * Done still closes it.
+   */
+  it("recovers a takeover past its window, and Done still closes it", async () => {
+    browserTasks.mockResolvedValue(tasksOf([task()]));
+    current.mockResolvedValue({
+      takeover: { ...LIVE, expiresAt: new Date(Date.now() - 2 * 60_000).toISOString() },
+    });
+    renderCard();
+
+    expect(await screen.findByText(/the window has closed/)).toBeTruthy();
+    expect(screen.queryByText(/-\d+:\d\d left/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /done, i've signed in/i }));
+    await waitFor(() => expect(close).toHaveBeenCalledWith("to-1"));
+  });
 });
 
-describe("pressing done", () => {
+describe("the legacy card: pressing done", () => {
   /**
    * The toast says whether it worked, and nothing about domains.
    *
@@ -233,7 +333,7 @@ describe("pressing done", () => {
    * is on the account screen where there is room to say what it is.
    */
   it("reports whether it worked, without naming domains it cannot explain", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /done, i've signed in/i }));
@@ -244,7 +344,7 @@ describe("pressing done", () => {
   });
 
   it("does not resurrect the takeover from a stale server answer", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     current.mockResolvedValue({ takeover: LIVE });
     renderCard();
     await userEvent.click(await screen.findByRole("button", { name: /done, i've signed in/i }));
@@ -257,9 +357,9 @@ describe("pressing done", () => {
   });
 });
 
-describe("the live URL", () => {
+describe("the legacy card: the live URL", () => {
   it("is never rendered as plain text, only as the link's address", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     current.mockResolvedValue({ takeover: LIVE });
     const { container } = renderCard();
 
@@ -270,7 +370,7 @@ describe("the live URL", () => {
   });
 });
 
-describe("what it asks for", () => {
+describe("the legacy card: what it asks for", () => {
   /**
    * Two requests per chat open that could not produce anything: `belongsHere`
    * discards a standing takeover whose task is not in this conversation, so an
@@ -278,7 +378,7 @@ describe("what it asks for", () => {
    * with no `BROWSER_USE_API_KEY` that is every chat open there will ever be.
    */
   it("does not ask for a takeover in a conversation with no browser tasks", async () => {
-    browserTasks.mockResolvedValue({ tasks: [] });
+    browserTasks.mockResolvedValue(tasksOf([]));
     renderCard();
 
     await waitFor(() => expect(browserTasks).toHaveBeenCalled());
@@ -286,34 +386,9 @@ describe("what it asks for", () => {
   });
 
   it("asks once the conversation has one", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
+    browserTasks.mockResolvedValue(tasksOf([task()]));
     renderCard();
 
     await waitFor(() => expect(current).toHaveBeenCalled());
-  });
-});
-
-describe("what the offer promises", () => {
-  /**
-   * Added after the first real run. A hand-performed LinkedIn sign-in saved
-   * correctly, attached to the re-run correctly, ran from another address in
-   * the same country, and LinkedIn asked for the password again. The person
-   * deciding whether to go and sign in is the one who should know that before
-   * they spend the time, not after.
-   */
-  it("does not promise the second attempt gets in", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
-    const { container } = renderCard();
-
-    await screen.findByRole("button", { name: /sign in myself/i });
-    expect(container.textContent).toMatch(/tie a sign-in to one network address/i);
-  });
-
-  it("still says the second attempt is free, because it is", async () => {
-    browserTasks.mockResolvedValue({ tasks: [task()] });
-    const { container } = renderCard();
-
-    await screen.findByRole("button", { name: /sign in myself/i });
-    expect(container.textContent).toMatch(/no charge for the second attempt/i);
   });
 });

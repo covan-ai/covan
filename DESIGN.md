@@ -41,6 +41,7 @@ contract. Read it before touching a component here.**
 | **Headline scale**       | 52px assumes one headline per screenful                   | Section headlines step down to 28/32px and page titles to 38/44px, and the app's working sizes below them are the ladder in **The type ladder**. Weight, leading, tracking and the italic turn are unchanged |
 | **Row density**          | The system's rows are illustrations, not working lists    | `DataRow` keeps the §7.8 spec (10px radius, hairline border, canvas background inside a raised panel, `overflow-wrap: anywhere` on the title) at working density                                             |
 | **Other people's marks** | A marketing page draws its own logos; a catalogue cannot  | A third-party logo renders at half the width of the neutral tile it sits in and nowhere else (`AppLogo`): 22px in 44, 18px in 36, 14px in 28, and 44 is the ceiling. It is not an accent and does not spend the amber budget; a mark that fails to load becomes a monogram, never a broken image |
+| **Live-activity hairline** | A marketing page has no process running beside the reader | `.browser-live` in `src/styles.css`: a 1px amber edge on the browser panel that breathes between 40% and 100% opacity over 2.4 s, only while an agent holds the browser and its run is going; with reduced motion it is a steady hairline. It is the running square's rule (`.step-running`) at panel scale, and it is the only amber element allowed over 44px — a hairline, never a glow or a fill, and no second colour for "live" |
 
 ## The type ladder
 

@@ -81,7 +81,7 @@ RESEND_FROM=
 # which runs the browser and the agent loop. Unset, the `browse` tool is not
 # offered and the Integrations page names this variable.
 #
-# Three things to know before you set it:
+# Four things to know before you set it:
 #   1. It adds a subprocessor. A task's instruction, and whatever the browser
 #      reads on somebody's behalf, go to browser-use. See docs/security.md.
 #   2. YOU pay, not the person asking. There is no per-member key here: one
@@ -90,13 +90,25 @@ RESEND_FROM=
 #      monthly allowance, so roughly seven tasks. A self-hosted install with
 #      no allowance configured is unmetered, which here means unbounded:
 #      watch the bill or set QUOTA_MONTHLY_TOKENS.
-#   3. SET IT ON THE CRON WORKER TOO. The cron Worker is what polls a running
-#      task, so a key set here and not there starts tasks whose answers never
-#      arrive — and the only sign is a line in `wrangler tail`.
+#   3. SET IT ON THE CRON WORKER TOO. While the conversation is open in a tab,
+#      the tab settles the run; the cron Worker is the fallback for a closed
+#      tab, and it also stops a browser somebody walked away from. A key set
+#      here and not there starts tasks whose answers never arrive once the tab
+#      is closed — and the only sign is a line in `wrangler tail`.
+#   4. THE KEY MUST BE FROM A PROJECT WITHOUT ZERO DATA RETENTION. The browser
+#      runs on browser-use's V4 API (the same key as v2), and the provider
+#      answers 403 "Zero Data Retention is enabled on the project (V4
+#      unsupported)" to a project that has it on.
 # BROWSER_USE_API_KEY=
-# Optional. A proxy, or a self-hosted browser-use, in front of
-# api.browser-use.com. Their framework is MIT and they rent browsers at
-# $0.02/hour, so this is a real route rather than a courtesy.
+# Optional. The model a browser run asks for. Unset means gpt-5.6-luna, the
+# default in src/lib/browser/v4.ts.
+# BROWSER_USE_MODEL=
+# Optional. A proxy in front of api.browser-use.com/api/v4, where runs, browsers
+# and profiles go. Unset means browser-use.
+# BROWSER_USE_V4_BASE_URL=
+# Optional, and V2 ONLY: not consulted for any V4 request. It still carries the
+# v2 tasks created before the move to V4 (drained until none are left) and the
+# account headroom check, because /billing/account exists only on v2.
 # BROWSER_USE_BASE_URL=
 
 # Not set here: DOCS_DIR. Document storage on Cloudflare is the DOCS R2 binding

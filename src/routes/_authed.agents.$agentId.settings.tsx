@@ -46,6 +46,7 @@ import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAvatar } from "@/components/avatars";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
+import { SavedLoginsList } from "@/components/saved-logins";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/settings")({
   component: SettingsTab,
@@ -274,6 +275,22 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
               <dd className="min-w-0 flex-1 truncate text-sm">Shared with the whole workspace</dd>
             </div>
           </dl>
+        </SectionCard>
+      </section>
+
+      {/* The logins this agent signs in with (Task 2.4): yours and the shared
+          ones, by name — never a username. Saved from the sign-in card in the
+          browser beside a chat; forgotten here by whoever may. */}
+      <section className="mt-10">
+        <SectionHeading
+          title="Saved logins"
+          description="What this agent's browser signs in with. Encrypted; Covan's AI model is never given them."
+        />
+        <SectionCard className="mt-3">
+          <SavedLoginsList
+            agentId={agent.id}
+            empty="None yet. When a browser task stops at a login, you can save one from the browser beside the chat."
+          />
         </SectionCard>
       </section>
 

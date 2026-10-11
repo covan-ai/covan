@@ -39,6 +39,40 @@ vi.mock("../entitlements", async (importOriginal) => {
   return { ...actual, entitlementsFor: () => ({ record: () => record() }) };
 });
 
+/**
+ * Whether a saved login was there to be used (Task 2.3), mocked because the
+ * real one reads `browser_credentials` with the service role and
+ * `credentials.test.ts` is where its rules are proved. False by default: the
+ * ordinary login wall is a site nobody saved a login for.
+ */
+const hasSavedCredential = vi.fn(
+  async (
+    _env: unknown,
+    _args: { agentId: string; userId: string; host: string },
+    _overrides?: { db?: unknown },
+  ): Promise<boolean> => false,
+);
+/** Whether the login a run carried was for the walled host (R32). False by default. */
+const credentialCoversHost = vi.fn(
+  async (
+    _env: unknown,
+    _args: { credentialId: string; host: string },
+    _overrides?: { db?: unknown },
+  ): Promise<boolean> => false,
+);
+vi.mock("./credentials", () => ({
+  hasSavedCredential: (
+    env: unknown,
+    args: { agentId: string; userId: string; host: string },
+    overrides?: { db?: unknown },
+  ) => hasSavedCredential(env, args, overrides),
+  credentialCoversHost: (
+    env: unknown,
+    args: { credentialId: string; host: string },
+    overrides?: { db?: unknown },
+  ) => credentialCoversHost(env, args, overrides),
+}));
+
 import { deliverBrowserTask } from "./deliver";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 
@@ -74,6 +108,8 @@ let channelRow: Record<string, unknown> | null;
 let sessionExists: boolean;
 let inserted: Record<string, unknown>[];
 let messageInsertFails: boolean;
+/** The person's last message, as `theirWords` reads it; a string, null for none, or an Error to fail the read. */
+let theirLast: string | null | Error;
 
 function fakeDb(): SupabaseClient {
   return {
@@ -110,7 +146,18 @@ function fakeDb(): SupabaseClient {
         };
       }
       if (table === "messages") {
+        const read = {
+          eq: () => read,
+          is: () => read,
+          order: () => read,
+          limit: () => read,
+          maybeSingle: async () =>
+            theirLast instanceof Error
+              ? { data: null, error: { message: theirLast.message } }
+              : { data: theirLast === null ? null : { content: theirLast }, error: null },
+        };
         return {
+          select: () => read,
           insert: (rowIn: Record<string, unknown>) => {
             inserted.push(rowIn);
             return {
@@ -135,6 +182,7 @@ beforeEach(() => {
   sessionExists = true;
   inserted = [];
   messageInsertFails = false;
+  theirLast = null;
   complete.mockReset();
   complete.mockResolvedValue({
     text: "Example.com lists three tiers: Starter at $29/mo, Pro at $99/mo, and Enterprise on request.",
@@ -143,6 +191,10 @@ beforeEach(() => {
   });
   deliverFn.mockReset();
   record.mockReset();
+  hasSavedCredential.mockReset();
+  hasSavedCredential.mockResolvedValue(false);
+  credentialCoversHost.mockReset();
+  credentialCoversHost.mockResolvedValue(false);
 });
 
 describe("a finished task", () => {
@@ -275,5 +327,347 @@ describe("when the ground has moved", () => {
   it("does not throw when the message cannot be written", async () => {
     messageInsertFails = true;
     await expect(deliverBrowserTask(ROW, FINISHED, ENV, fakeDb())).resolves.toBeUndefined();
+  });
+});
+
+describe("a v4 run that stopped short (ruling R8's outcome)", () => {
+  const LOGIN: FinishedTask = {
+    status: "failed",
+    output: null,
+    error: null,
+    costUsd: 0.04,
+    reported: { status: "login_required", host: "linkedin.com", answer: null },
+  };
+
+  /**
+   * The one failure a person can fix with their own hands while the browser
+   * is still there. So the message names the site and points at the panel,
+   * in one sentence, through the same model call as every other answer —
+   * which is what puts it in the person's language.
+   */
+  it("asks for a sign-in on the named site, and says the browser panel is waiting", async () => {
+    complete.mockResolvedValue({
+      text: "LinkedIn wants you to sign in — the browser beside this chat is waiting for you.",
+      usage: { promptTokens: 120, completionTokens: 20 } as CompletionUsage,
+      finishReason: "stop",
+    });
+    await deliverBrowserTask(ROW, LOGIN, ENV, fakeDb());
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    const request = complete.mock.calls[0][1];
+    const prompt = request.messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("linkedin.com");
+    expect(prompt).toMatch(/sign in/i);
+    expect(prompt).toMatch(/browser panel/i);
+    expect(prompt).toMatch(/one sentence/i);
+    expect(prompt).toMatch(/language/i);
+    expect(String(inserted[0].content)).toContain("LinkedIn wants you to sign in");
+  });
+
+  it("still names the site and the panel when the model call fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    complete.mockRejectedValue(new Error("provider down"));
+    await deliverBrowserTask(ROW, LOGIN, ENV, fakeDb());
+    error.mockRestore();
+    expect(inserted).toHaveLength(1);
+    expect(String(inserted[0].content)).toContain("linkedin.com");
+    expect(String(inserted[0].content)).toMatch(/browser/i);
+  });
+
+  /**
+   * The run's `host` is a model's words, and settle already narrows it to a
+   * bare host before it stores one. The message says the same site the panel
+   * does, not the raw string — a URL with a path and capitals is not a site's
+   * name, and a sentence carrying one reads like a link.
+   */
+  it("names the site as a bare host, the way the panel does", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    complete.mockRejectedValue(new Error("provider down"));
+    await deliverBrowserTask(
+      ROW,
+      {
+        ...LOGIN,
+        reported: {
+          status: "login_required",
+          host: "https://LinkedIn.com:443/login",
+          answer: null,
+        },
+      },
+      ENV,
+      fakeDb(),
+    );
+    error.mockRestore();
+    expect(String(inserted[0].content)).toMatch(/^linkedin\.com needs you to sign in/);
+  });
+
+  it("falls back to a description when the host is not a host at all", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    complete.mockRejectedValue(new Error("provider down"));
+    await deliverBrowserTask(
+      ROW,
+      { ...LOGIN, reported: { status: "login_required", host: "the login page", answer: null } },
+      ENV,
+      fakeDb(),
+    );
+    error.mockRestore();
+    expect(String(inserted[0].content)).toMatch(/^a site it needed needs you to sign in/);
+  });
+
+  it("says what stopped it when the run was blocked", async () => {
+    await deliverBrowserTask(
+      ROW,
+      {
+        status: "failed",
+        output: "a captcha would not clear",
+        error: null,
+        costUsd: 0.04,
+        reported: { status: "blocked", host: null, answer: "a captcha would not clear" },
+      },
+      ENV,
+      fakeDb(),
+    );
+    const prompt = complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("a captcha would not clear");
+    expect(prompt).toMatch(/what stopped it/i);
+    expect(prompt).not.toMatch(/browser panel/i);
+  });
+
+  it("answers a run that said done exactly as before", async () => {
+    await deliverBrowserTask(
+      ROW,
+      {
+        ...FINISHED,
+        reported: { status: "done", host: null, answer: FINISHED.output },
+      },
+      ENV,
+      fakeDb(),
+    );
+    const prompt = complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("It reports that it succeeded.");
+    expect(prompt).not.toMatch(/browser panel/i);
+  });
+
+  /**
+   * Task 2.3, ruling R32: "the saved login didn't get past the sign-in" is said only of a
+   * login the run actually CARRIED (`browser_tasks.credential_id`) and only
+   * when it was for the site that walled it. A login that is merely saved —
+   * the model named no `site`, a hand-back before 2.4, a `site` that named
+   * another host — was never tried, and telling the person to re-enter a
+   * correct password would send them round the same wall again.
+   */
+  describe("for a site with a saved login", () => {
+    const CARRIED: BrowserTaskRow = { ...ROW, credential_id: "cred-1" };
+
+    function prompt(): string {
+      return complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
+    }
+
+    it("says the saved login the run carried didn't get past the sign-in, and offers to update it", async () => {
+      credentialCoversHost.mockResolvedValue(true);
+      const db = fakeDb();
+
+      await deliverBrowserTask(CARRIED, LOGIN, ENV, db);
+
+      // Asked of the login the row names and the host as the panel names it,
+      // through the service-role client deliver already holds.
+      expect(credentialCoversHost).toHaveBeenCalledTimes(1);
+      expect(credentialCoversHost.mock.calls[0][1]).toEqual({
+        credentialId: "cred-1",
+        host: "linkedin.com",
+      });
+      expect(credentialCoversHost.mock.calls[0][2]).toEqual({ db });
+
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(prompt()).toContain("linkedin.com");
+      expect(prompt()).toMatch(/saved login/i);
+      expect(prompt()).toMatch(/didn't get past the sign-in/i);
+      expect(prompt()).toMatch(/offer to update it/i);
+      expect(prompt()).toMatch(/one sentence/i);
+      expect(prompt()).toMatch(/language/i);
+      // Not the no-login wording: it HAD a sign-in for it.
+      expect(prompt()).not.toMatch(/has no sign-in for it/i);
+      expect(inserted).toHaveLength(1);
+    });
+
+    it("still says so when the model call fails", async () => {
+      credentialCoversHost.mockResolvedValue(true);
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      complete.mockRejectedValue(new Error("provider down"));
+
+      await deliverBrowserTask(CARRIED, LOGIN, ENV, fakeDb());
+
+      error.mockRestore();
+      const content = String(inserted[0].content);
+      expect(content).toContain("linkedin.com");
+      expect(content).toMatch(/saved login/i);
+      expect(content).toMatch(/didn't get past the sign-in/i);
+      expect(content).toMatch(/update/i);
+    });
+
+    /**
+     * The run carried a login for one site and hit the wall on another — a
+     * sign-in that hands over to a single sign-on provider, say. The carried
+     * login was never asked for there, so it is not what failed.
+     */
+    it("does not blame a carried login for a wall on a host it was not for", async () => {
+      credentialCoversHost.mockResolvedValue(false);
+
+      await deliverBrowserTask(CARRIED, LOGIN, ENV, fakeDb());
+
+      expect(prompt()).toMatch(/has no sign-in for it/i);
+      expect(prompt()).not.toMatch(/did not work|didn't get past the sign-in/i);
+    });
+
+    /**
+     * Case (a) of the finding: a login is saved, but this run never had it.
+     * Today's sign-in wording, plus the one clause that is true — asking again
+     * will use it — and never "did not work".
+     */
+    it("asks for a sign-in, and says a saved login exists, when the run carried none", async () => {
+      hasSavedCredential.mockResolvedValue(true);
+
+      await deliverBrowserTask(ROW, LOGIN, ENV, fakeDb());
+
+      expect(credentialCoversHost).not.toHaveBeenCalled();
+      expect(hasSavedCredential).toHaveBeenCalledTimes(1);
+      expect(hasSavedCredential.mock.calls[0][1]).toEqual({
+        agentId: "agent-1",
+        userId: "user-1",
+        host: "linkedin.com",
+      });
+      expect(prompt()).toMatch(/has no sign-in for it/i);
+      expect(prompt()).toMatch(/browser panel/i);
+      expect(prompt()).toMatch(/a login is saved for linkedin\.com/i);
+      // The panel's button, never "ask again", which looped (2026-10-11).
+      expect(prompt()).toMatch(/panel can try again with the saved login/i);
+      expect(prompt()).not.toMatch(/ask again/i);
+      expect(prompt()).not.toMatch(/did not work|didn't get past the sign-in/i);
+      expect(prompt()).not.toMatch(/update it/i);
+    });
+
+    it("says the same in the plain fallback when the model call fails", async () => {
+      hasSavedCredential.mockResolvedValue(true);
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      complete.mockRejectedValue(new Error("provider down"));
+
+      await deliverBrowserTask(ROW, LOGIN, ENV, fakeDb());
+
+      error.mockRestore();
+      const content = String(inserted[0].content);
+      expect(content).toMatch(/^linkedin\.com needs you to sign in/);
+      expect(content).toMatch(/saved login/i);
+      expect(content).toMatch(/try again there with your saved login/i);
+      expect(content).not.toMatch(/ask again/i);
+      expect(content).not.toMatch(/did not work|didn't get past the sign-in/i);
+    });
+
+    it("asks for a sign-in exactly as before when no login is saved for the site", async () => {
+      await deliverBrowserTask(ROW, LOGIN, ENV, fakeDb());
+
+      expect(hasSavedCredential).toHaveBeenCalledTimes(1);
+      expect(prompt()).toMatch(/has no sign-in for it/i);
+      expect(prompt()).not.toMatch(/saved login|login is saved/i);
+    });
+
+    /**
+     * Both lookups throw on a read error (2.2). That must cost the person the
+     * better sentence and nothing more: the delivery still happens, in
+     * today's words.
+     */
+    it.each([
+      [
+        "whether the carried login was for this site",
+        CARRIED,
+        () =>
+          credentialCoversHost.mockRejectedValue(
+            new Error("browser_credentials: read failed (57014)"),
+          ),
+      ],
+      [
+        "whether a login is saved",
+        ROW,
+        () =>
+          hasSavedCredential.mockRejectedValue(
+            new Error("browser_credentials: read failed (57014)"),
+          ),
+      ],
+    ])("falls back to today's sign-in wording when it cannot read %s", async (_l, row, arrange) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      arrange();
+
+      await deliverBrowserTask(row, LOGIN, ENV, fakeDb());
+
+      warn.mockRestore();
+      error.mockRestore();
+      expect(inserted).toHaveLength(1);
+      expect(prompt()).toMatch(/has no sign-in for it/i);
+      expect(prompt()).not.toMatch(/saved login|login is saved/i);
+    });
+
+    it("asks nothing when the run named no usable host, or did not stop at a login wall", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      complete.mockRejectedValue(new Error("provider down"));
+      await deliverBrowserTask(
+        CARRIED,
+        { ...LOGIN, reported: { status: "login_required", host: "the login page", answer: null } },
+        ENV,
+        fakeDb(),
+      );
+      await deliverBrowserTask(CARRIED, FINISHED, ENV, fakeDb());
+      error.mockRestore();
+      expect(hasSavedCredential).not.toHaveBeenCalled();
+      expect(credentialCoversHost).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/**
+ * Measured 2026-10-11: an English conversation got its login-wall sentence in
+ * Spanish. The prompt said "in the language they asked in" and showed only
+ * `row.task`, which the chat model writes in English whatever the person did.
+ * Quoting their words inside the brief made it worse; their words as the user
+ * turn, with the brief as the system message, is what held (see `SYSTEM`).
+ */
+describe("the language of the answer", () => {
+  const WALL: FinishedTask = {
+    status: "failed",
+    output: null,
+    error: null,
+    costUsd: 0.01,
+    reported: { status: "login_required", host: "the-internet.herokuapp.com", answer: null },
+  };
+  const sent = () => complete.mock.calls[0][1].messages;
+
+  it("gives the model the person's own words as the user turn, and the brief as the system", async () => {
+    theirLast = "Şu sayfadaki fiyat tablosunu okuyup bana özetler misin?";
+    await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
+    expect(sent()).toHaveLength(2);
+    expect(sent()[0]).toMatchObject({ role: "system" });
+    expect(String(sent()[0].content)).toContain(ROW.task);
+    expect(String(sent()[0].content)).toContain("the-internet.herokuapp.com");
+    expect(sent()[1]).toEqual({ role: "user", content: theirLast });
+  });
+
+  it("names no language anywhere but the one rule, because every mention was a cue", async () => {
+    theirLast = "Open the page and tell me what it shows.";
+    await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
+    const system = String(sent()[0].content);
+    expect(system).toContain("in the language of their message");
+    expect(system).not.toMatch(/language they asked in|own language|language to write in/);
+  });
+
+  it("shows only so much of them: enough to tell a language", async () => {
+    theirLast = "a".repeat(5_000);
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(sent()[1]).toEqual({ role: "user", content: "a".repeat(400) });
+  });
+
+  it("still delivers, with the brief as the message, when their words cannot be read", async () => {
+    theirLast = new Error("timeout");
+    await deliverBrowserTask(ROW, WALL, ENV, fakeDb());
+    expect(inserted).toHaveLength(1);
+    expect(sent()[1]).toMatchObject({ role: "user" });
+    expect(String(sent()[1].content)).toContain(ROW.task);
   });
 });

@@ -480,13 +480,18 @@ export const api = {
     rename: (id: string, title: string): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, { title }),
     /**
-     * The browser tasks of one conversation, newest first.
+     * The browser beside one conversation: its tasks newest first, the
+     * browser's own state, what the agent did since the last ask, and whether
+     * this ask is the one that delivered an answer.
      *
      * A table read rather than an SSE event, and that is the point: the
      * approval card is driven only by a `confirm` event into in-memory state
-     * and does not survive a reload, while a takeover offer has to.
+     * and does not survive a reload, while the browser panel has to. It is
+     * also the live endpoint — each call asks the provider how the run is
+     * going — so the panel polls it every three seconds while something is
+     * happening and not at all otherwise.
      */
-    browserTasks: (id: string): Promise<{ tasks: BrowserTask[] }> =>
+    browserTasks: (id: string): Promise<ConversationBrowser> =>
       request("GET", `/sessions/${id}/browser-tasks`),
   },
   messages: {
@@ -815,7 +820,14 @@ export const api = {
       request("POST", "/api-keys", { name }),
     revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/api-keys/${id}`),
   },
-  browser: {
+  /**
+   * The v2 takeover — a separate browser rented for a login wall, signed into
+   * in a new tab — kept for tasks drained from before 0078 and for anybody
+   * part-way through one when the browser panel shipped (ruling R18). A v4
+   * task is the panel's, through `browser` below. A takeover with no task is
+   * the panel's too: the person's own browser, from `open` (Task 3.1).
+   */
+  takeovers: {
     /**
      * Mint a live browser for its owner.
      *
@@ -826,6 +838,14 @@ export const api = {
      */
     takeOver: (browserTaskId: string): Promise<Takeover> =>
       request("POST", "/browser/takeovers", { browserTaskId }),
+    /**
+     * A browser of the person's own, with no task behind it — the browser
+     * panel's Open browser (Task 3.1), to sign in ahead of time so the agent's
+     * browser later finds them signed in. The same primitive and the same
+     * credential as `takeOver`; 409 says a conversation's browser is in use,
+     * or one of these is already open.
+     */
+    open: (): Promise<Takeover> => request("POST", "/browser/takeovers"),
     /** What a reloaded tab asks, so a reload does not lock somebody out of their own browser. */
     current: (): Promise<{ takeover: Takeover | null }> =>
       request("GET", "/browser/takeovers/current"),
@@ -838,6 +858,70 @@ export const api = {
      */
     close: (id: string): Promise<CloseTakeover> =>
       request("POST", `/browser/takeovers/${id}/close`),
+  },
+  browser: {
+    /**
+     * The live view of the browser beside a conversation, minted fresh.
+     *
+     * The `liveUrl` comes back here and nowhere else. browser-use is explicit
+     * about what it is — *"Treat the URL as a credential: anyone with it can
+     * interact with the active browser"* — so the panel holds it in component
+     * state for the life of the tab: never in a query key or cache, never in
+     * storage, never in a log line or an error. A reload loses it, and asking
+     * again is the recovery — the route is idempotent for the owner. 409 means
+     * there is no browser running yet.
+     */
+    live: (browserSessionId: string): Promise<{ liveUrl: string; liveState: LiveState }> =>
+      request("GET", `/browser/sessions/${browserSessionId}/live`),
+    /**
+     * The person's hands on the browser.
+     *
+     * `human` only once the provider has reported the agent's run ended — a
+     * cancel is asynchronous and the agent may still be mid-keystroke. Past the
+     * server's wait it answers 202 `cancelling`, and asking again is the whole
+     * of the follow-up: the route is idempotent.
+     */
+    takeOver: (browserSessionId: string): Promise<TakeOverResult> =>
+      request("POST", `/browser/sessions/${browserSessionId}/take-over`),
+    /**
+     * Done: the agent continues from where the person left the browser. This
+     * is the one free retry, so a 409 says it was already spent, or that there
+     * is nothing for the agent to continue.
+     *
+     * `{ site }` after a save on the sign-in card (R24): the server finds the
+     * login saved for that site and sends it with the run. A site, never a
+     * password — the binding is resolved on the server. `credentialId` is the
+     * id the save returned (R35), so the run binds that login; the server
+     * honours it only for a login the caller may use.
+     */
+    handBack: (
+      browserSessionId: string,
+      options?: { site?: string; credentialId?: string },
+    ): Promise<{ browserTaskId: string }> =>
+      request(
+        "POST",
+        `/browser/sessions/${browserSessionId}/hand-back`,
+        options?.site
+          ? {
+              site: options.site,
+              ...(options.credentialId ? { credentialId: options.credentialId } : {}),
+            }
+          : undefined,
+      ),
+    /**
+     * Close the browser and keep what was done in it. Stopping is what saves
+     * the sign-ins — *"always stop the session to persist profile state"* —
+     * and it does not cancel a run, which is why the panel only offers it when
+     * the agent is not driving.
+     */
+    stop: (browserSessionId: string): Promise<void> =>
+      request("POST", `/browser/sessions/${browserSessionId}/stop`),
+    /**
+     * The person's browsers that may still be open, for Settings (Task 3.2):
+     * where each one is, who has it, and whether its browser is still open —
+     * a boolean, never an id. No live URL: this list mints none.
+     */
+    open: (): Promise<OpenBrowsers> => request("GET", "/browser/sessions"),
     /**
      * Which sites the jar is signed into, which is the whole of what Covan can
      * say about somebody's logins: the cookies themselves are held by the
@@ -852,6 +936,30 @@ export const api = {
      * browser is open, because stopping that browser is what saves the jar.
      */
     forget: (): Promise<{ forgotten: string[] }> => request("DELETE", "/browser/profile"),
+    /**
+     * Saved logins (0079): a site's username and password, kept for one agent
+     * so its browser signs in without asking.
+     */
+    credentials: {
+      /** The caller's own and the shared ones they can see; `agentId` narrows to one agent. */
+      list: (agentId?: string): Promise<{ logins: SavedLogin[] }> =>
+        request(
+          "GET",
+          agentId
+            ? `/browser/credentials?agentId=${encodeURIComponent(agentId)}`
+            : "/browser/credentials",
+        ),
+      /**
+       * Save, or replace one's own. The one request in this client that carries
+       * a password: the caller holds it in component state and nowhere else,
+       * and nothing here logs a body. Refusals are sentences meant to be shown.
+       */
+      save: (input: SaveLoginInput): Promise<{ credential: SavedLoginReceipt }> =>
+        request("POST", "/browser/credentials", input),
+      /** The saver always; a workspace admin for a shared one. 403 otherwise. */
+      forget: (id: string): Promise<void> =>
+        request("DELETE", `/browser/credentials/${encodeURIComponent(id)}`),
+    },
   },
   providerKeys: {
     get: (): Promise<ProviderKeyHints> => request("GET", "/workspace/provider-keys"),
@@ -1174,17 +1282,128 @@ export type ApiKey = {
  */
 export type ApiKeyList = { available: boolean; keys: ApiKey[] };
 
-/** One browser task, as the takeover card reads it. Mirrors the worker's `BrowserTaskDTO`. */
+/** One browser task, as the browser panel reads it. Mirrors the worker's `BrowserTaskDTO`. */
 export type BrowserTask = {
   id: string;
   task: string;
   status: "queued" | "running" | "finished" | "failed" | "stopped";
   output: string | null;
   error: string | null;
-  /** Set when a takeover already produced a second attempt. One retry per original, ever. */
+  /** Set when a hand-back already produced a second attempt. One retry per original, ever. */
   retryOf: string | null;
   createdAt: number;
   finishedAt: number | null;
+  /** `v2` for a task drained from before 0078; `v4` for a run in the browser beside the chat. */
+  apiVersion: "v2" | "v4";
+  /**
+   * Why a run ended before its answer, or null: 'handed_to_person' | 'cost_cap' |
+   * 'cancelled', or the run's own 'login_required' | 'blocked'. The panel's
+   * sign-in prompt keys on 'login_required' and nothing else.
+   */
+  stopReason: string | null;
+  /** Which browser beside the conversation ran it — Covan's id, never the provider's. */
+  browserSessionId: string | null;
+  /** The bare host a run said it needed a sign-in on, or null. Shape-checked by 0078. */
+  signInHost: string | null;
+  /**
+   * Whether the run carried a saved login (R32) — so a wall after it is "the
+   * saved login didn't work". Answered by the server for walled tasks only.
+   */
+  carriedSavedLogin: boolean;
+  /**
+   * A saved login this person may use for `signInHost`, when the run did not
+   * carry one: the sign-in card's "Try again with the saved login". Its label
+   * and host, never its username. Only on the wall the card shows.
+   */
+  savedLogin: { id: string; label: string; siteHost: string } | null;
+};
+
+/**
+ * Who has the controls of the browser beside a conversation.
+ *
+ * `cancelling` is never stored: it is take-over's 202, the agent's run asked
+ * to stop and not yet reported stopped, and the panel stays inert through it.
+ */
+export type LiveState = "none" | "agent" | "human" | "cancelling";
+
+/** The browser beside a conversation, as the panel draws it. Mirrors `BrowserPanelSession`. */
+export type BrowserPanelSession = {
+  id: string;
+  liveState: LiveState;
+  humanSince: number | null;
+  /** Whether the provider has reported a browser yet. A boolean, never the provider's id. */
+  browserReady: boolean;
+};
+
+/** One line of what the agent did, as `lib/browser/live.ts` cuts it. */
+export type BrowserEventLine = { ts: string; type: string; text: string };
+
+export type ConversationBrowser = {
+  tasks: BrowserTask[];
+  session: BrowserPanelSession | null;
+  /** The events since the last poll — a delta, not a history. */
+  events: BrowserEventLine[];
+  /** True when this poll settled a run and put its answer in the conversation. */
+  delivered: boolean;
+};
+
+/** A takeover (`api.takeovers`): a v2 task's, or the person's own with no task (Task 3.1). */
+export type Takeover = {
+  id: string;
+  /** The task it was opened for; null for a browser the person opened themselves. */
+  browserTaskId?: string | null;
+  /** A credential. Held in component state for the life of the tab and nowhere else. */
+  liveUrl: string | null;
+  expiresAt: string;
+};
+
+export type CloseTakeover = {
+  retriedTaskId: string | null;
+  /** The domains the jar now holds cookies for. Not sign-ins: see `BrowserProfile`. */
+  cookieDomains: string[];
+  message: string;
+};
+
+export type TakeOverResult =
+  { liveState: "human"; humanSince: number } | { liveState: "cancelling" };
+
+/**
+ * Where a browser is, as the caller may see it. A conversation they can no
+ * longer open is null, and the screen says something neutral instead.
+ */
+export type BrowserPlace = {
+  conversation: { id: string; title: string | null } | null;
+  agent: { id: string; name: string } | null;
+};
+
+/** A browser beside a conversation that may still be open. Mirrors `GET /browser/sessions`. */
+export type OpenConversationBrowser = BrowserPlace & {
+  id: string;
+  liveState: "none" | "agent" | "human";
+  /** A run of the agent's is queued or going in it. Stop is not offered then (R17). */
+  running: boolean;
+  /**
+   * Whether the stop route would accept a Stop now: no run in flight, and a
+   * row the agent had last only ten minutes after its last run (R50, R51).
+   */
+  stoppable: boolean;
+  /** Whether its browser has not been seen stopped. A boolean, never the provider's id. */
+  browserOpen: boolean;
+  lastUsedAt: string | null;
+};
+
+/** The person's open takeover: their own browser (Task 3.1) or a v2 task's. */
+export type OpenTakeover = BrowserPlace & {
+  id: string;
+  /** Opened for a task, whose close runs it again. */
+  forTask: boolean;
+  openedAt: string;
+  expiresAt: string;
+};
+
+export type OpenBrowsers = {
+  browsers: OpenConversationBrowser[];
+  takeover: OpenTakeover | null;
 };
 
 export type BrowserProfile = {
@@ -1198,19 +1417,44 @@ export type BrowserProfile = {
   lastUsedAt: string | null;
 };
 
-export type Takeover = {
+/**
+ * A saved login as a screen may show it (`GET /browser/credentials`): its
+ * name, its site, who it is for. Never the username or the password — the
+ * server has no plaintext to send and grants neither ciphertext to anybody.
+ */
+export type SavedLogin = {
   id: string;
-  browserTaskId?: string | null;
-  /** A credential. Held in component state for the life of the tab and nowhere else. */
-  liveUrl: string | null;
-  expiresAt: string;
+  agentId: string;
+  label: string;
+  siteHost: string;
+  /** `owner`: only its saver's runs use it. `agent`: everyone using the agent. */
+  scope: "owner" | "agent";
+  lastUsedAt: string | null;
+  createdAt: string;
+  /** Whether the caller saved it. */
+  own: boolean;
+  /** Whether the server would let the caller forget it: their own, or a shared one as admin. */
+  canForget: boolean;
 };
 
-export type CloseTakeover = {
-  retriedTaskId: string | null;
-  /** The domains the jar now holds cookies for. Not sign-ins: see `BrowserProfile`. */
-  cookieDomains: string[];
-  message: string;
+/** What a save sends. Held only for the length of the request; see `SaveLoginDialog`. */
+export type SaveLoginInput = {
+  agentId: string;
+  scope: "owner" | "agent";
+  site: string;
+  label: string;
+  username: string;
+  password: string;
+};
+
+/** What a save answers: the saved row's public fields, nothing typed into the dialog. */
+export type SavedLoginReceipt = {
+  id: string;
+  scope: "owner" | "agent";
+  siteHost: string;
+  label: string;
+  /** True when the caller's own login for the site was overwritten in place. */
+  replaced: boolean;
 };
 
 /**

@@ -8,6 +8,8 @@ import {
   mapRoutine,
   mapRoutineRun,
   mapConnection,
+  mapBrowserTask,
+  BROWSER_TASK_COLUMNS,
 } from "./dto";
 
 describe("mapDocument", () => {
@@ -503,5 +505,30 @@ describe("mapMessage steps", () => {
   it("says null for an excerpt that arrived as something other than a string", () => {
     const [step] = mapMessage(reply([stored({ result_excerpt: 404 })])).steps!;
     expect(step.resultExcerpt).toBeNull();
+  });
+});
+
+describe("mapBrowserTask signInHost", () => {
+  const base = {
+    id: "bt-1",
+    task: "read the pricing table",
+    status: "failed",
+    created_at: "2026-10-10T12:00:00Z",
+  };
+
+  it("carries the site a run needed a sign-in on, for the panel's prompt", () => {
+    expect(mapBrowserTask({ ...base, signin_host: "linkedin.com" }).signInHost).toBe(
+      "linkedin.com",
+    );
+  });
+
+  it("is null when there is none, or when the column is empty", () => {
+    expect(mapBrowserTask(base).signInHost).toBeNull();
+    expect(mapBrowserTask({ ...base, signin_host: null }).signInHost).toBeNull();
+    expect(mapBrowserTask({ ...base, signin_host: "" }).signInHost).toBeNull();
+  });
+
+  it("is selected by name, because a wildcard is refused", () => {
+    expect(BROWSER_TASK_COLUMNS.split(", ")).toContain("signin_host");
   });
 });

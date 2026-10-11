@@ -1,16 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { runDueRoutines, runDueConnections, pollDueBrowserTasks, sweepAbandonedTakeovers } =
-  vi.hoisted(() => ({
-    runDueRoutines: vi.fn(),
-    runDueConnections: vi.fn(),
-    pollDueBrowserTasks: vi.fn(),
-    sweepAbandonedTakeovers: vi.fn(),
-  }));
+const {
+  runDueRoutines,
+  runDueConnections,
+  pollDueBrowserTasks,
+  sweepAbandonedTakeovers,
+  sweepConversationBrowsers,
+} = vi.hoisted(() => ({
+  runDueRoutines: vi.fn(),
+  runDueConnections: vi.fn(),
+  pollDueBrowserTasks: vi.fn(),
+  sweepAbandonedTakeovers: vi.fn(),
+  sweepConversationBrowsers: vi.fn(),
+}));
 vi.mock("./routines/dispatcher", () => ({ runDueRoutines }));
 vi.mock("./connections/dispatcher", () => ({ runDueConnections }));
 vi.mock("./browser/poller", () => ({ pollDueBrowserTasks }));
-vi.mock("./browser/sweep", () => ({ sweepAbandonedTakeovers }));
+vi.mock("./browser/sweep", () => ({ sweepAbandonedTakeovers, sweepConversationBrowsers }));
 
 import { runScheduledWork } from "./background";
 
@@ -43,6 +49,8 @@ describe("runScheduledWork", () => {
     pollDueBrowserTasks.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
     sweepAbandonedTakeovers.mockReset();
     sweepAbandonedTakeovers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepConversationBrowsers.mockReset();
+    sweepConversationBrowsers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
   });
 
   // The whole point of the sequencing: a busy routine tick has already spent
@@ -194,5 +202,60 @@ describe("the abandoned-takeover sweep", () => {
 
     expect(sweepAbandonedTakeovers).toHaveBeenCalledOnce();
     expect(pollDueBrowserTasks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The human-mode sweep sits in the same stage, behind the takeover sweep, so a
+ * tick spends one of the two stages' subrequests and never both.
+ */
+describe("the human-mode browser sweep", () => {
+  // Its own reset: the sibling describes above leave their last resolved values
+  // standing, and a stage that "claimed" in one of them would hide this one.
+  beforeEach(() => {
+    for (const stage of [runDueRoutines, sweepAbandonedTakeovers, sweepConversationBrowsers]) {
+      stage.mockReset();
+      stage.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    }
+    pollDueBrowserTasks.mockReset();
+    pollDueBrowserTasks.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    runDueConnections.mockReset();
+    runDueConnections.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+  });
+
+  it("is not reached when routines claimed", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(sweepConversationBrowsers).not.toHaveBeenCalled();
+  });
+
+  it("is not reached when the takeover sweep claimed", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepAbandonedTakeovers.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(sweepConversationBrowsers).not.toHaveBeenCalled();
+  });
+
+  it("runs on an idle tick, before the browser poll", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepConversationBrowsers.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(sweepConversationBrowsers).toHaveBeenCalledOnce();
+    // Short-circuits like every stage: only true if it sits above the poll.
+    expect(pollDueBrowserTasks).not.toHaveBeenCalled();
+  });
+
+  it("lets the tick go on when it found nothing", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+
+    await runScheduledWork(base as never);
+
+    expect(pollDueBrowserTasks).toHaveBeenCalledOnce();
   });
 });

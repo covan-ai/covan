@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
@@ -7,6 +7,7 @@ import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-clie
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
+  AppWindow,
   ArrowDown,
   ArrowUp,
   FileText,
@@ -38,7 +39,9 @@ import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
 import { Button } from "@/components/ui/button";
+import { BrowserPanel } from "@/components/chat/browser-panel";
 import { TakeoverCard } from "@/components/chat/takeover-card";
+import { browserKey, useBrowserPanel } from "@/components/chat/use-conversation-browser";
 import { LiveAnswer } from "@/components/chat/live-answer";
 import {
   PromptInput,
@@ -52,7 +55,7 @@ import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { runToolProposal } from "@/lib/connections-api";
 import { isAdminRole } from "@/lib/roles";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { useStableCallback } from "@/lib/use-stable-callback";
 import { FeedbackDialog } from "@/components/feedback-dialog";
@@ -373,6 +376,10 @@ function ChatTab() {
   // Enter means something different on a phone, where it is the newline key
   // and the send button is already under your thumb.
   const isMobile = useIsMobile();
+  // The browser beside the conversation: beside it at `lg` and up, a sheet
+  // over it below. The panel decides what it shows; this decides where.
+  const belowLg = useIsBelowLg();
+  const browserPanel = useBrowserPanel(active?.id, belowLg);
   // Spoken into the composer rather than typed. The transcript is appended to
   // the draft and left there — nothing is sent until the person sends it, since
   // a transcription is a guess and this is where they get to correct it.
@@ -807,6 +814,13 @@ function ChatTab() {
              * the machine is busy when it is waiting.
              */
             setThinking(step.status !== "running" && step.status !== "pending");
+            // A settled `browse` is the moment a run exists. The browser poll
+            // is off while nothing is happening, so without this a conversation
+            // opened with no browser never asks again and the panel stays shut
+            // through the whole run (found in the end-to-end run).
+            if (step.tool === "browse" && step.status !== "running" && step.status !== "pending") {
+              void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
+            }
             // Upsert by index: every step arrives twice, once running and
             // once settled, and the second is the same row changing rather
             // than a new one.
@@ -1393,6 +1407,49 @@ function ChatTab() {
               <Search className="h-4 w-4" />
             </HeaderAction>
           )}
+          {/* The way back to the browser once somebody has closed it — and,
+              below `lg`, the only way in: there the panel is a sheet and never
+              slides over the conversation by itself. While the agent is
+              driving and the panel is shut, the running square sits on the
+              control, so a phone still shows that something is happening.
+
+              Always there for the conversation's owner (Task 3.1, ruling
+              R42), even before the agent has opened a browser: the panel then
+              offers Open browser, a browser of their own to sign in to sites
+              ahead of time. The control itself only opens the panel — it never
+              rents anything. Owner-only, as the panel is: a colleague in a
+              shared conversation has no browser here to see. */}
+          {(browserPanel.available || isOwner) && (
+            <HeaderAction
+              label={
+                browserPanel.open
+                  ? "Hide the browser"
+                  : browserPanel.signIn
+                    ? "Show the browser: a site needs you to sign in"
+                    : "Show the browser"
+              }
+              active={browserPanel.open}
+              onClick={browserPanel.open ? browserPanel.hide : browserPanel.show}
+            >
+              <span className="relative">
+                <AppWindow className="h-4 w-4" />
+                {/* The two ambers `.step-running` keeps apart: the outline
+                    square while the machine is busy, the filled one while
+                    something waits on the person — here, a sign-in, which on
+                    a phone has no other cue because the sheet never opens by
+                    itself. */}
+                {!browserPanel.open && (browserPanel.signIn || browserPanel.driving) && (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "absolute -right-1 -top-1 h-1.5 w-1.5 rounded-[1px]",
+                      browserPanel.signIn ? "bg-accent-orange" : "step-running",
+                    )}
+                  />
+                )}
+              </span>
+            </HeaderAction>
+          )}
           {/* Owners get the toggle; everyone else gets the state it is in.
               One home per control (DESIGN.md §5). */}
           {isOwner && active ? (
@@ -1660,10 +1717,10 @@ function ChatTab() {
           )}
 
           {/*
-            The offer to sign in yourself, when a browser task stopped at a
-            login wall. A table read rather than a stream event, because the
-            approval card above does not survive a reload and this has to —
-            see the card's own note.
+            The v2 sign-in offer, for a task drained from before 0078 that
+            stopped at a login wall (ruling R18). A v4 task's sign-in is the
+            browser panel's; the card offers v2 tasks only, and reads the
+            panel's own poll rather than asking again.
           */}
           {active?.id && <TakeoverCard sessionId={active.id} />}
 
@@ -1881,126 +1938,177 @@ function ChatTab() {
         about={rating ? { messageId: rating.messageId, label: `${agent.name}'s answer` } : null}
         initialKind={rating?.kind ?? null}
       />
+
+      {/* Below `lg`, the browser is a full-height sheet over the conversation,
+          opened from the header control. Inside the pane for the same reason
+          the dialog above is: every layout returned below wraps this one
+          variable, so all of them get it. */}
+      {belowLg && browserPanel.open && active && (
+        <div
+          role="dialog"
+          aria-label="Browser"
+          className="fixed inset-0 z-40 flex flex-col bg-background"
+        >
+          <BrowserPanel
+            key={active.id}
+            sessionId={active.id}
+            agentId={agentId}
+            canShare={canWrite}
+            layout="sheet"
+            onHide={browserPanel.hide}
+          />
+        </div>
+      )}
     </section>
   );
 
-  // Report preview: show split layout when report content is loaded
+  /*
+   * What sits beside the conversation, if anything: the report preview (only
+   * ever open because somebody asked for it this moment), then the browser at
+   * `lg` and up (being driven, or waiting on a sign-in, it is the thing
+   * happening right now — and closing it gives the Idea board back), then a
+   * brainstorm's Idea board.
+   */
+  let side: ReactNode = null;
   if (reports.content && active) {
-    return (
-      <ResizablePanelGroup className="h-[calc(100dvh-3.5rem)] lg:h-screen">
-        <ResizablePanel defaultSize="55" minSize="35">
-          {chatPane}
-        </ResizablePanel>
-        <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
-        <ResizablePanel defaultSize="45" minSize="25">
-          <div className="flex h-full flex-col border-l border-border">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <FileText className="h-4 w-4 text-muted-foreground" /> Report preview
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={reports.download}
-                  className="font-medium text-muted-foreground"
-                >
-                  Download
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={reports.dismiss}
-                  aria-label="Close preview"
-                  className="font-medium text-muted-foreground"
-                >
-                  Close
-                </Button>
-              </div>
+    side = (
+      <div className="flex h-full flex-col border-l border-border">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <FileText className="h-4 w-4 text-muted-foreground" /> Report preview
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={reports.download}
+              className="font-medium text-muted-foreground"
+            >
+              Download
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={reports.dismiss}
+              aria-label="Close preview"
+              className="font-medium text-muted-foreground"
+            >
+              Close
+            </Button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          {reports.loadingContent ? (
+            <div className="flex items-center justify-center py-12">
+              <p className="text-sm text-muted-foreground">Loading preview...</p>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              {reports.loadingContent ? (
-                <div className="flex items-center justify-center py-12">
-                  <p className="text-sm text-muted-foreground">Loading preview...</p>
+          ) : (
+            <div className="prose prose-sm max-w-none dark:prose-invert">
+              <Markdown content={reports.content} />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  } else if (browserPanel.open && active && !belowLg) {
+    // Keyed by the conversation so a second chat never inherits the first
+    // one's live view.
+    side = (
+      <BrowserPanel
+        key={active.id}
+        sessionId={active.id}
+        agentId={agentId}
+        canShare={canWrite}
+        onHide={browserPanel.hide}
+      />
+    );
+  } else if (isBrainstorm && active) {
+    side = (
+      <div className="flex h-full flex-col border-l border-border">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Sparkles className="h-4 w-4 text-muted-foreground" /> Idea board
+          </div>
+          {/* Secondary on purpose: the composer's send is this view's one
+              primary action (DESIGN.md §2). */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => suggestMutation.mutate(active.id)}
+            disabled={suggestMutation.isPending}
+            className="font-medium"
+          >
+            {suggestMutation.isPending ? "Extracting…" : "Extract ideas"}
+          </Button>
+        </div>
+        {suggestions.length > 0 && (
+          <div className="border-b border-border bg-muted/30 p-2">
+            <div className="px-1 pb-1.5 text-xs font-medium text-muted-foreground">
+              Candidate ideas — click to add one to the board
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {suggestions.map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-start justify-between gap-2 rounded-lg border border-border bg-card p-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{s.title}</div>
+                    {s.detail && <div className="text-xs text-muted-foreground">{s.detail}</div>}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      addIdeaMutation.mutate({
+                        id: s.id,
+                        sessionId: active.id,
+                        title: s.title,
+                        detail: s.detail,
+                      })
+                    }
+                    className="shrink-0 font-medium hover:bg-secondary"
+                  >
+                    Add to board
+                  </Button>
                 </div>
-              ) : (
-                <div className="prose prose-sm max-w-none dark:prose-invert">
-                  <Markdown content={reports.content} />
-                </div>
-              )}
+              ))}
             </div>
           </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        )}
+        <div className="min-h-0 flex-1">
+          <IdeaBoard sessionId={active.id} />
+        </div>
+      </div>
     );
   }
 
-  if (!isBrainstorm || !active) return chatPane;
-
+  /*
+   * One tree, whatever is beside the conversation.
+   *
+   * This used to return `chatPane` bare when nothing was, and a split around
+   * it when something was — which React reads as a different tree, so every
+   * open and close REMOUNTED the chat column. Harmless while only a person's
+   * click opened a side panel; not once the browser opens itself mid-reply:
+   * the scroll listener stayed bound to the detached node (so "jump to the
+   * latest" never came back), and a half-written edit was lost. Now the chat
+   * is always the group's first panel, at the same position, and only the
+   * side panel comes and goes — `react-resizable-panels` keys its layouts by
+   * the set of panel ids, so each arrangement keeps its own sizes.
+   */
   return (
     <ResizablePanelGroup className="h-[calc(100dvh-3.5rem)] lg:h-screen">
-      <ResizablePanel defaultSize="55" minSize="35">
+      <ResizablePanel id="chat" minSize="35">
         {chatPane}
       </ResizablePanel>
-      <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
-      <ResizablePanel defaultSize="45" minSize="25">
-        <div className="flex h-full flex-col border-l border-border">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Sparkles className="h-4 w-4 text-muted-foreground" /> Idea board
-            </div>
-            {/* Secondary on purpose: the composer's send is this view's one
-                primary action (DESIGN.md §2). */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => suggestMutation.mutate(active.id)}
-              disabled={suggestMutation.isPending}
-              className="font-medium"
-            >
-              {suggestMutation.isPending ? "Extracting…" : "Extract ideas"}
-            </Button>
-          </div>
-          {suggestions.length > 0 && (
-            <div className="border-b border-border bg-muted/30 p-2">
-              <div className="px-1 pb-1.5 text-xs font-medium text-muted-foreground">
-                Candidate ideas — click to add one to the board
-              </div>
-              <div className="flex flex-col gap-1.5">
-                {suggestions.map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-start justify-between gap-2 rounded-lg border border-border bg-card p-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{s.title}</div>
-                      {s.detail && <div className="text-xs text-muted-foreground">{s.detail}</div>}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        addIdeaMutation.mutate({
-                          id: s.id,
-                          sessionId: active.id,
-                          title: s.title,
-                          detail: s.detail,
-                        })
-                      }
-                      className="shrink-0 font-medium hover:bg-secondary"
-                    >
-                      Add to board
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="min-h-0 flex-1">
-            <IdeaBoard sessionId={active.id} />
-          </div>
-        </div>
-      </ResizablePanel>
+      {side && (
+        <>
+          <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
+          <ResizablePanel id="side" defaultSize="45" minSize="25">
+            {side}
+          </ResizablePanel>
+        </>
+      )}
     </ResizablePanelGroup>
   );
 }

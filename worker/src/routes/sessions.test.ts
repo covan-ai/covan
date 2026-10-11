@@ -1,7 +1,25 @@
 import { Hono } from "hono";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
+
+const pollConversationBrowser = vi.fn();
+vi.mock("../lib/browser/live", () => ({
+  pollConversationBrowser: (...args: unknown[]) => pollConversationBrowser(...args),
+}));
+const tasksThatCarriedALogin = vi.fn();
+// A failed read thrown by the stand-in rather than by the `vi.fn`, which vitest
+// reports as a failure even when the route catches it.
+let carryReadFails = false;
+const savedLogin = vi.fn();
+vi.mock("../lib/browser/credentials", () => ({
+  tasksThatCarriedALogin: async (...args: unknown[]) => {
+    if (carryReadFails) throw new Error("browser_tasks: read failed (57014)");
+    return tasksThatCarriedALogin(...args);
+  },
+  savedLogin: async (...args: unknown[]) => savedLogin(...args),
+}));
+
 import { sessions } from "./sessions";
 
 const SESSION_ROW = {
@@ -277,5 +295,276 @@ describe("answers that have been regenerated", () => {
 
     const body = (await res.json()) as Array<{ versions?: string[] }>;
     expect(body[0]).not.toHaveProperty("versions");
+  });
+});
+
+describe("GET /sessions/:id/browser-tasks", () => {
+  const TASK = {
+    id: "bt-1",
+    task: "read the pricing table",
+    status: "running",
+    output: null,
+    error: null,
+    retry_of: null,
+    created_at: "2026-10-10T11:59:00.000Z",
+    finished_at: null,
+    api_version: "v4",
+    stop_reason: null,
+    browser_session_id: "bs-1",
+    signin_host: "linkedin.com",
+  };
+  const LIVE = {
+    session: { id: "bs-1", liveState: "agent", humanSince: null, browserReady: true },
+    events: [{ ts: "2026-10-10T11:59:58Z", type: "agent.step", text: "opened the page" }],
+    delivered: false,
+  };
+
+  beforeEach(() => {
+    pollConversationBrowser.mockReset();
+    pollConversationBrowser.mockResolvedValue(LIVE);
+  });
+
+  function appSeeing(visible: boolean) {
+    return appWith({
+      tables: {
+        chat_sessions: {
+          select: () => ({ data: visible ? { id: "session-1" } : null, error: null }),
+        },
+        browser_tasks: { select: () => ({ data: [TASK], error: null }) },
+      },
+    });
+  }
+
+  /**
+   * The sign-in card says "the saved login didn't work" only of a run that
+   * carried one (R32). `credential_id` is granted to no client role, so the
+   * caller's own read cannot see it; the route asks `credentials.ts` — with
+   * the service role, scoped to this caller — and only when a task is at a
+   * login wall, so the ordinary three-second poll costs nothing more.
+   */
+  describe("carriedSavedLogin", () => {
+    const WALL = { ...TASK, status: "failed", stop_reason: "login_required" };
+
+    function appWithTasks(rows: Array<Record<string, unknown>>) {
+      return appWith({
+        tables: {
+          chat_sessions: { select: () => ({ data: { id: "session-1" }, error: null }) },
+          browser_tasks: { select: () => ({ data: rows, error: null }) },
+        },
+      });
+    }
+
+    beforeEach(() => {
+      tasksThatCarriedALogin.mockReset();
+      carryReadFails = false;
+    });
+
+    it("is true of a walled task that carried a saved login, asked for the caller only", async () => {
+      tasksThatCarriedALogin.mockResolvedValue(new Set(["bt-1"]));
+      const { app, fake } = appWithTasks([WALL, { ...TASK, id: "bt-0" }]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as {
+        tasks: Array<{ id: string; carriedSavedLogin: boolean }>;
+      };
+
+      expect(body.tasks.map((t) => [t.id, t.carriedSavedLogin])).toEqual([
+        ["bt-1", true],
+        ["bt-0", false],
+      ]);
+      expect(tasksThatCarriedALogin).toHaveBeenCalledWith(undefined, {
+        userId: "user-1",
+        taskIds: ["bt-1"],
+      });
+      // Never asked of the caller's own client, which could not answer.
+      expect(String(fake.callsTo("browser_tasks")[0].columns)).not.toContain("credential_id");
+    });
+
+    it("asks nothing when no task is at a login wall", async () => {
+      const { app } = appWithTasks([TASK]);
+      await app.request("/sessions/session-1/browser-tasks");
+      expect(tasksThatCarriedALogin).not.toHaveBeenCalled();
+    });
+
+    it("answers false, not a failed poll, when the question cannot be answered", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      carryReadFails = true;
+      const { app } = appWithTasks([WALL]);
+
+      const res = await app.request("/sessions/session-1/browser-tasks");
+      const body = (await res.json()) as { tasks: Array<{ carriedSavedLogin: boolean }> };
+
+      expect(res.status).toBe(200);
+      expect(body.tasks[0].carriedSavedLogin).toBe(false);
+    });
+  });
+
+  /**
+   * Found in the 2026-10-11 e2e: a run sent without `site` met the wall with a
+   * login saved for the site, and the card offered to save another. The card
+   * now offers to try again with the saved one — for the wall it shows, and
+   * only when that run carried none.
+   */
+  describe("savedLogin", () => {
+    const WALL = {
+      ...TASK,
+      status: "failed",
+      stop_reason: "login_required",
+      signin_host: "quotes.toscrape.com",
+    };
+    const LOGIN = { id: "cred-q", label: "quotes — e2e", scope: "owner", siteHost: "toscrape.com" };
+
+    function appWithTasks(rows: Array<Record<string, unknown>>) {
+      return appWith({
+        tables: {
+          chat_sessions: {
+            select: () => ({ data: { id: "session-1", agent_id: "agent-1" }, error: null }),
+          },
+          browser_tasks: { select: () => ({ data: rows, error: null }) },
+        },
+      });
+    }
+
+    beforeEach(() => {
+      tasksThatCarriedALogin.mockReset();
+      tasksThatCarriedALogin.mockResolvedValue(new Set());
+      carryReadFails = false;
+      savedLogin.mockReset();
+      savedLogin.mockResolvedValue(LOGIN);
+    });
+
+    type Body = { tasks: Array<{ id: string; savedLogin: unknown }> };
+
+    it("offers the login saved for the wall's site, asked for this agent and this caller", async () => {
+      const { app } = appWithTasks([WALL, { ...TASK, id: "bt-0" }]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as Body;
+
+      expect(body.tasks[0].savedLogin).toEqual({
+        id: "cred-q",
+        label: "quotes — e2e",
+        siteHost: "toscrape.com",
+      });
+      expect(body.tasks[1].savedLogin).toBeNull();
+      expect(savedLogin).toHaveBeenCalledWith(undefined, {
+        agentId: "agent-1",
+        userId: "user-1",
+        host: "quotes.toscrape.com",
+      });
+    });
+
+    it("offers nothing when the run already carried a saved login", async () => {
+      tasksThatCarriedALogin.mockResolvedValue(new Set(["bt-1"]));
+      const { app } = appWithTasks([WALL]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as Body;
+
+      expect(body.tasks[0].savedLogin).toBeNull();
+      expect(savedLogin).not.toHaveBeenCalled();
+    });
+
+    it("offers nothing for the retry's own wall, which has had its one try", async () => {
+      const { app } = appWithTasks([{ ...WALL, retry_of: "bt-0" }]);
+
+      const body = (await (await app.request("/sessions/session-1/browser-tasks")).json()) as Body;
+
+      expect(body.tasks[0].savedLogin).toBeNull();
+      expect(savedLogin).not.toHaveBeenCalled();
+    });
+
+    it("asks nothing when the newest task is not at a wall", async () => {
+      const { app } = appWithTasks([TASK, { ...WALL, id: "bt-0" }]);
+      await app.request("/sessions/session-1/browser-tasks");
+      expect(savedLogin).not.toHaveBeenCalled();
+    });
+  });
+
+  it("answers 404 for a conversation the caller cannot see, before touching the provider", async () => {
+    const { app } = appSeeing(false);
+    const res = await app.request("/sessions/session-1/browser-tasks");
+    expect(res.status).toBe(404);
+    expect(pollConversationBrowser).not.toHaveBeenCalled();
+  });
+
+  it("polls the caller's own browser in this conversation, then reads the tasks after it", async () => {
+    const { app, fake } = appSeeing(true);
+    const res = await app.request("/sessions/session-1/browser-tasks");
+    expect(res.status).toBe(200);
+    expect(pollConversationBrowser).toHaveBeenCalledWith(undefined, {
+      chatSessionId: "session-1",
+      userId: "user-1",
+    });
+    // Read after the poll, so a run it just settled is shown settled.
+    expect(fake.calls.map((c) => c.table)).toEqual(["chat_sessions", "browser_tasks"]);
+    const body = await res.json();
+    expect(body).toEqual({
+      tasks: [
+        {
+          id: "bt-1",
+          task: "read the pricing table",
+          status: "running",
+          output: null,
+          error: null,
+          retryOf: null,
+          createdAt: Date.parse("2026-10-10T11:59:00.000Z"),
+          finishedAt: null,
+          apiVersion: "v4",
+          stopReason: null,
+          browserSessionId: "bs-1",
+          signInHost: "linkedin.com",
+          carriedSavedLogin: false,
+          savedLogin: null,
+        },
+      ],
+      session: LIVE.session,
+      events: LIVE.events,
+      delivered: false,
+    });
+  });
+
+  /**
+   * A poll that settles a run has made the row terminal before it delivers,
+   * so a request cancelled mid-delivery (the tab closed) would lose that
+   * answer for good. The poll is handed to the execution context's
+   * `waitUntil` — `deferred`'s job — and is still awaited for the response.
+   */
+  it("keeps the poll alive past the request, so an abandoned tab cannot lose an answer", async () => {
+    let finish!: (value: typeof LIVE) => void;
+    pollConversationBrowser.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const waitUntil = vi.fn();
+    const { app } = appSeeing(true);
+
+    const pending = app.request("/sessions/session-1/browser-tasks", {}, undefined, {
+      waitUntil,
+      passThroughOnException: () => {},
+    } as never);
+
+    await vi.waitFor(() => expect(waitUntil).toHaveBeenCalledTimes(1));
+    let kept = false;
+    void (waitUntil.mock.calls[0][0] as Promise<unknown>).then(() => {
+      kept = true;
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    // What is kept alive is the poll itself: it has not settled, so neither
+    // has this.
+    expect(kept).toBe(false);
+
+    finish(LIVE);
+    expect((await pending).status).toBe(200);
+    await vi.waitFor(() => expect(kept).toBe(true));
+  });
+
+  it("names its columns, granted ones only", async () => {
+    const { app, fake } = appSeeing(true);
+    await app.request("/sessions/session-1/browser-tasks");
+    const columns = String(fake.callsTo("browser_tasks")[0].columns);
+    expect(columns).not.toContain("*");
+    expect(columns).toContain("api_version");
+    expect(columns).toContain("stop_reason");
+    expect(columns).toContain("browser_session_id");
+    expect(columns).not.toMatch(/provider_/);
   });
 });

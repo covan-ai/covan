@@ -75,7 +75,7 @@ export type LiveDeps = SettleDeps;
 
 const TASK_COLUMNS =
   "id, workspace_id, agent_id, user_id, session_id, provider_task_id, provider_run_id, " +
-  "browser_session_id, api_version, task, status, poll_count, created_at";
+  "browser_session_id, api_version, task, status, poll_count, created_at, retry_of";
 
 const SESSION_COLUMNS = "id, live_state, human_since, provider_browser_id, events_cursor";
 

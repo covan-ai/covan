@@ -57,7 +57,8 @@ export function ComposioCard({
   agents: Array<{ id: string; name: string }>;
 }) {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
-  // The house pattern — `Me.workspace` carries no role. See settings.tsx:202.
+  // The house pattern — `Me.workspace` carries no role. See `useWorkspaceRole`
+  // in `lib/workspace-role.ts`.
   const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
   // False until `me` loads, for the reason the Supabase card gives: a control
   // that flashes into existence and then locks is worse than one that arrives a

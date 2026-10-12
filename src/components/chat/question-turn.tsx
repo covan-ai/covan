@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Pencil } from "lucide-react";
 import type { Message } from "@/lib/agents-store";
 import { cn } from "@/lib/utils";
+import { avatarSrc } from "@/lib/avatar-src";
 
 /**
  * One question in a transcript.
@@ -49,12 +50,13 @@ export function QuestionTurn({
   /** How much air goes above this turn. See `gapBefore`. */
   className?: string;
 }) {
+  const senderAvatar = avatarSrc(sender?.avatarUrl);
   return (
     <div className={cn("group flex flex-col items-end gap-1.5", className)}>
       {sender && (
         <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-          {sender.avatarUrl ? (
-            <img src={sender.avatarUrl} alt="" className="h-4 w-4 rounded-sm object-cover" />
+          {senderAvatar ? (
+            <img src={senderAvatar} alt="" className="h-4 w-4 rounded-sm object-cover" />
           ) : null}
           <span>{sender.name ?? "Someone"}</span>
         </div>

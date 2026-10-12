@@ -280,7 +280,7 @@ function IntegrationsPage() {
 
         <p className="mt-4 max-w-[620px] text-sm leading-[1.45] text-muted-foreground">
           Scheduled work lives with each agent instead — see{" "}
-          <Link to="/settings" className="text-foreground underline underline-offset-4">
+          <Link to="/settings/account" className="text-foreground underline underline-offset-4">
             delivery channels
           </Link>{" "}
           in Settings for where routines send their updates.

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { PreferencesSection } from "./preferences-section";
+import { PersonalPreferencesSection } from "./preferences-section";
 import type { Me } from "@/lib/api-client";
 
 const { preference, setPreference, notificationsGet } = vi.hoisted(() => ({
@@ -25,7 +25,7 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 /**
- * `PreferencesSection` renders the real `useTheme`, which calls
+ * `PersonalPreferencesSection` renders the real `useTheme`, which calls
  * `window.matchMedia` to resolve the "system" default. A local stub rather
  * than one in `test-setup.ts` — same reasoning
  * `_authed.agents.$agentId.chat.test.tsx` gives for its own: a global stub
@@ -60,7 +60,7 @@ function renderSection(workspacePatch: Partial<Me["workspace"]> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <PreferencesSection me={meFixture(workspacePatch)} />
+      <PersonalPreferencesSection me={meFixture(workspacePatch)} />
     </QueryClientProvider>,
   );
 }
@@ -129,7 +129,7 @@ describe("the coverage opt-out in Preferences", () => {
   });
 
   // The app switches workspaces without a reload, so the same `QueryClient`
-  // and the same mounted `PreferencesSection` carry over — only the `me`
+  // and the same mounted `PersonalPreferencesSection` carry over — only the `me`
   // prop changes. A query key that did not name the workspace would reuse
   // workspace A's cached `excluded: true` under workspace B's name, exactly
   // the leak fix round 1 closes. `rerender` on one shared client is what
@@ -142,7 +142,7 @@ describe("the coverage opt-out in Preferences", () => {
 
     const { rerender } = render(
       <QueryClientProvider client={client}>
-        <PreferencesSection me={meFixture({ id: "ws-a" })} />
+        <PersonalPreferencesSection me={meFixture({ id: "ws-a" })} />
       </QueryClientProvider>,
     );
     const toggleA = await screen.findByRole("switch", { name: SWITCH_NAME });
@@ -151,7 +151,7 @@ describe("the coverage opt-out in Preferences", () => {
     preference.mockResolvedValueOnce({ excluded: false }); // workspace B's own answer
     rerender(
       <QueryClientProvider client={client}>
-        <PreferencesSection me={meFixture({ id: "ws-b" })} />
+        <PersonalPreferencesSection me={meFixture({ id: "ws-b" })} />
       </QueryClientProvider>,
     );
 

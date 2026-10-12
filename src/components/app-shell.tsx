@@ -53,23 +53,7 @@ import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { DOCS_HOME } from "@/lib/docs";
 import { IncomingInvitesBanner } from "@/components/incoming-invites-banner";
 import { FeedbackButton } from "@/components/feedback-button";
-
-const nav = [
-  { to: "/app", label: "Home", icon: LayoutGrid },
-  // Above Team because it is the workspace's files rather than a setting about
-  // them, and because it is the answer to "what have we written down?" — a
-  // question that used to be reachable only through an agent.
-  { to: "/knowledge", label: "Knowledge", icon: FolderOpen },
-  { to: "/team", label: "Team", icon: Users },
-  { to: "/integrations", label: "Integrations", icon: Plug },
-  { to: "/settings", label: "Settings", icon: Settings },
-] as const;
-
-/** Label for the context bar. Falls back to the brand on unknown paths. */
-function pageLabel(pathname: string): string {
-  const match = nav.find((n) => pathname === n.to || pathname.startsWith(`${n.to}/`));
-  return match?.label ?? "Covan";
-}
+import { PRIMARY_NAV, pageLabel, primaryNavMatch } from "@/components/primary-nav";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -150,8 +134,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="space-y-0.5 px-4">
-          {nav.map((n) => {
-            const active = pathname === n.to || pathname.startsWith(`${n.to}/`);
+          {PRIMARY_NAV.map((n) => {
+            const active = primaryNavMatch(pathname)?.to === n.to;
             const Icon = n.icon;
             return (
               <Link
@@ -232,12 +216,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link to="/settings" onClick={() => setOpen(false)}>
+                <Link to="/settings/account" onClick={() => setOpen(false)}>
                   <User className="h-4 w-4" /> Profile
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link to="/settings" onClick={() => setOpen(false)}>
+                <Link to="/settings/workspace" onClick={() => setOpen(false)}>
                   <Settings className="h-4 w-4" /> Workspace settings
                 </Link>
               </DropdownMenuItem>
@@ -394,7 +378,7 @@ function TeamPresence({ members }: { members: WorkspaceMember[] }) {
   const extra = members.length - shown.length;
   return (
     <Link
-      to="/team"
+      to="/settings/members"
       aria-label={`${members.length} team members`}
       className="mr-1 hidden items-center transition-opacity duration-200 hover:opacity-80 sm:flex"
     >

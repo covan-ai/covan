@@ -89,6 +89,93 @@ describe("PATCH /me", () => {
     expect(res.status).toBe(500);
   });
 
+  it("writes only the fields the body carries", async () => {
+    const { db, updates } = fakeDb({
+      rows: [{ id: "user-1", name: "Efe", email: null, avatar_url: null, bio: "Hi." }],
+      error: null,
+    });
+
+    const res = await patch(appWithDb(db), { bio: "  Hi.  " });
+
+    expect(res.status).toBe(200);
+    expect(updates).toEqual([{ bio: "Hi." }]);
+    await expect(res.json()).resolves.toEqual({
+      id: "user-1",
+      name: "Efe",
+      email: "a@example.com",
+      avatarUrl: null,
+      bio: "Hi.",
+      locale: null,
+      timezone: null,
+    });
+  });
+
+  // An emptied textarea sends "", and the column's "nothing said" is null.
+  it("clears a bio or a locale sent as an empty string", async () => {
+    const { db, updates } = fakeDb({ rows: [{ id: "user-1" }], error: null });
+
+    await patch(appWithDb(db), { bio: "   ", locale: "" });
+
+    expect(updates).toEqual([{ bio: null, locale: null }]);
+  });
+
+  it("counts a bio in characters, not UTF-16 units", async () => {
+    const { db, updates } = fakeDb({ rows: [{ id: "user-1" }], error: null });
+    const app = appWithDb(db);
+
+    // 280 emoji are 560 UTF-16 units and 280 characters to Postgres.
+    expect((await patch(app, { bio: "😀".repeat(280) })).status).toBe(200);
+    expect((await patch(app, { bio: "x".repeat(281) })).status).toBe(400);
+    expect(updates).toHaveLength(1);
+  });
+
+  it("stores a time zone the way the runtime spells it", async () => {
+    const { db, updates } = fakeDb({ rows: [{ id: "user-1" }], error: null });
+
+    await patch(appWithDb(db), { timezone: "europe/istanbul" });
+
+    expect(updates).toEqual([{ timezone: "Europe/Istanbul" }]);
+  });
+
+  it("clears a time zone sent as null", async () => {
+    const { db, updates } = fakeDb({ rows: [{ id: "user-1" }], error: null });
+
+    await patch(appWithDb(db), { timezone: null });
+
+    expect(updates).toEqual([{ timezone: null }]);
+  });
+
+  it("refuses a time zone that does not exist without touching the database", async () => {
+    const { db, updates } = fakeDb({ rows: [{ id: "user-1" }], error: null });
+    const app = appWithDb(db);
+
+    expect((await patch(app, { timezone: "Mars/Olympus" })).status).toBe(400);
+    expect((await patch(app, { timezone: "+03:00" })).status).toBe(400);
+    expect(updates).toEqual([]);
+  });
+
+  it("accepts a language tag and refuses what is not one", async () => {
+    const { db, updates } = fakeDb({ rows: [{ id: "user-1" }], error: null });
+    const app = appWithDb(db);
+
+    expect((await patch(app, { locale: "tr-TR" })).status).toBe(200);
+    expect((await patch(app, { locale: "Turkish" })).status).toBe(400);
+    expect(updates).toEqual([{ locale: "tr-TR" }]);
+  });
+
+  // `email` belongs to GoTrue and the 0082 trigger, `avatar_url` to the avatar
+  // routes. Refused by name, so a client sending them learns it is wrong
+  // instead of seeing a 200 that changed nothing.
+  it("refuses fields it does not own", async () => {
+    const { db, updates } = fakeDb({ rows: [{ id: "user-1" }], error: null });
+    const app = appWithDb(db);
+
+    expect((await patch(app, { email: "b@example.com" })).status).toBe(400);
+    expect((await patch(app, { avatar_url: "https://example.com/a.png" })).status).toBe(400);
+    expect((await patch(app, { name: "Efe", email: "b@example.com" })).status).toBe(400);
+    expect(updates).toEqual([]);
+  });
+
   it("rejects an empty or oversized name without touching the database", async () => {
     const { db, updates } = fakeDb({ rows: [], error: null });
     const app = appWithDb(db);
@@ -135,7 +222,15 @@ function fakeReadDb(onboardingRow: OnboardingRow | null, gapReportEnabled = fals
             select: () => ({
               eq: () => ({
                 single: async () => ({
-                  data: { id: USER_ID, name: "Alice", avatar_url: null, email: "a@b.c" },
+                  data: {
+                    id: USER_ID,
+                    name: "Alice",
+                    avatar_url: null,
+                    email: "a@b.c",
+                    bio: "Runs support.",
+                    locale: "tr-TR",
+                    timezone: "Europe/Istanbul",
+                  },
                   error: null,
                 }),
                 // getActiveWorkspaceId's first read.
@@ -144,8 +239,18 @@ function fakeReadDb(onboardingRow: OnboardingRow | null, gapReportEnabled = fals
                   error: null,
                 }),
               }),
+              // What the route asks for: no `locale`, so none comes back.
               in: async () => ({
-                data: [{ id: USER_ID, name: "Alice", email: "a@b.c", avatar_url: null }],
+                data: [
+                  {
+                    id: USER_ID,
+                    name: "Alice",
+                    email: "a@b.c",
+                    avatar_url: null,
+                    bio: "Runs support.",
+                    timezone: "Europe/Istanbul",
+                  },
+                ],
                 error: null,
               }),
             }),
@@ -261,5 +366,32 @@ describe("GET /me workspace", () => {
     const body = (await res.json()) as MeDTO;
 
     expect(body.workspace.gapReportEnabled).toBe(false);
+  });
+});
+
+describe("GET /me profile", () => {
+  it("carries the caller's bio, locale and timezone", async () => {
+    const res = await appWithDb(fakeReadDb(null)).request("/me");
+    const body = (await res.json()) as MeDTO;
+
+    expect(body.user).toEqual({
+      id: USER_ID,
+      name: "Alice",
+      email: "a@example.com",
+      avatarUrl: null,
+      bio: "Runs support.",
+      locale: "tr-TR",
+      timezone: "Europe/Istanbul",
+    });
+  });
+
+  // A co-member's sentence and clock are for the team; their locale is a
+  // display preference of their own and is not on anybody else's copy.
+  it("carries a member's bio and timezone but not their locale", async () => {
+    const res = await appWithDb(fakeReadDb(null)).request("/me");
+    const body = (await res.json()) as MeDTO;
+
+    expect(body.members[0]).toMatchObject({ bio: "Runs support.", timezone: "Europe/Istanbul" });
+    expect(body.members[0]).not.toHaveProperty("locale");
   });
 });

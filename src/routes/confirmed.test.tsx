@@ -90,3 +90,42 @@ describe("the confirmation landing page", () => {
     expect(screen.queryByText(/address confirmed/i)).not.toBeInTheDocument();
   });
 });
+
+describe("the email change links", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  // GoTrue answers the first of the two links with a message and no token.
+  it("says one link is done and the other is still to click", async () => {
+    await renderConfirmed(
+      "/confirmed#message=Confirmation+link+accepted.+Please+proceed+to+confirm+link+sent+to+the+other+email",
+    );
+
+    expect(screen.getByText(/one more link to click/i)).toBeInTheDocument();
+    expect(getSession).not.toHaveBeenCalled();
+  });
+
+  it("says the address changed when the session arrives on the address the change waited for", async () => {
+    localStorage.setItem("covan.pendingEmail", "new@acme.test");
+    getSession.mockResolvedValue({
+      data: { session: { user: { id: "u1", email: "new@acme.test" } } },
+    });
+
+    await renderConfirmed("/confirmed");
+
+    expect(await screen.findByText(/address changed/i)).toBeInTheDocument();
+    expect(screen.getByText("new@acme.test")).toBeInTheDocument();
+    expect(localStorage.getItem("covan.pendingEmail")).toBeNull();
+  });
+
+  it("still reads as a sign-up confirmation when no change was waiting", async () => {
+    getSession.mockResolvedValue({
+      data: { session: { user: { id: "u1", email: "ada@acme.test" } } },
+    });
+
+    await renderConfirmed("/confirmed");
+
+    expect(await screen.findByText(/address confirmed/i)).toBeInTheDocument();
+  });
+});

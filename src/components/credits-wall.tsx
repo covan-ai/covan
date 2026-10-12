@@ -21,7 +21,8 @@ import { QuotaSupportForm } from "@/components/quota-support-form";
 export function CreditsWall() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
 
-  // The house pattern — `Me.workspace` carries no role. See settings.tsx.
+  // The house pattern — `Me.workspace` carries no role. See `useWorkspaceRole`
+  // in `lib/workspace-role.ts`.
   const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
   const isAdmin = me ? isAdminRole(myRole) : false;
 

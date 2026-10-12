@@ -385,7 +385,10 @@ the account that filed it, copy it somewhere before that happens.
 `covan-api` has no Cloudflare R2 binding, so `getDocStore()` falls back to the
 filesystem store rooted at `DOCS_DIR=/data/docs`, which is the `covan-docs`
 named volume. Each document is one file plus a `.meta.json` sidecar holding its
-content type.
+content type. Profile photos live in the same store, under `avatars/<user id>/`,
+so the same volume, ownership and backup advice covers them; the API serves them
+at `/avatars/…` without a token, which [security](security.md#profile-photos)
+explains.
 
 - **Ownership.** The API container runs as the unprivileged `bun` user
   (uid/gid 1000), and `Dockerfile.api` creates `/data/docs` owned by it. Docker
@@ -694,9 +697,9 @@ mounted unconditionally — it does not ask whether this deployment is metered �
 so any signed-in user who reaches it sends mail to `efe@covan.app` through
 **your** Resend account. Unset means you cannot redirect that. Set it.
 
-### The two emails Supabase sends, and where their design lives
+### The emails Supabase sends, and where their design lives
 
-Confirming an address and resetting a password are sent by Supabase, not by this
+Confirming an address, changing it, and resetting a password are sent by Supabase, not by this
 Worker, so no secret above affects them and nothing in this repository is on
 their path at runtime. Their default is unstyled — a sentence and a bare link —
 and it is the first thing a new account ever receives.
@@ -708,22 +711,34 @@ shell as every other Covan email:
 | ----------------------- | -------------------------------------------------------------------------------------------- |
 | `confirm-signup.html`   | Authentication → Emails → **Confirm signup**                                                 |
 | `reset-password.html`   | Authentication → Emails → **Reset password**                                                 |
+| `change-email.html`     | Authentication → Emails → **Change email address**                                           |
 | `password-changed.html` | Authentication → Emails → **Password changed** — and enable it; Supabase ships it turned off |
 
-The third is worth the extra click. It is the only message in the set somebody
-reads in order to discover they have been broken into: a password change nobody
-asked for is the first visible evidence of a stolen session. It carries no link,
-deliberately — it announces something already done, and a credential email with
-a link in it is the exact shape of the phishing this message exists to help
-someone notice.
+`change-email.html` is what the account page's address change sends. With
+"Secure email change" on — Supabase's default, and `double_confirm_changes` in
+`supabase/config.toml` — the same template goes to the old address and the new
+one, and nothing changes until both links are followed, so its copy names the new
+address rather than saying "this one". Once the second link lands, a trigger
+(migration 0082) copies the new address onto the profile the team page shows.
+
+The password-changed notice is worth the extra click. It is the only message in
+the set somebody reads in order to discover they have been broken into: a
+password change nobody asked for is the first visible evidence of a stolen
+session. It carries no link, deliberately — it announces something already done,
+and a credential email with a link in it is the exact shape of the phishing this
+message exists to help someone notice. The account page's password form sends
+it now, as well as a reset does; on a local CLI stack, the commented-out
+`[auth.email.notification.password_changed]` block in `supabase/config.toml` is
+what turns it on.
 
 The subject lines that go with them are in
-`worker/src/lib/emails/auth.ts`. Both files keep Supabase's
+`worker/src/lib/emails/auth.ts`. Every file with a button keeps Supabase's
 `{{ .ConfirmationURL }}` placeholder, which is what the button points at — change
 anything else you like, but not that, or the button leads nowhere.
 
-**Both links have to be allowed back in.** The app asks GoTrue to send the
-confirmation link to `/confirmed` and the reset link to `/reset-password`, and
+**Both pages have to be allowed back in.** The app asks GoTrue to send the
+confirmation link — and both links of an address change — to `/confirmed`, and
+the reset link to `/reset-password`, and
 GoTrue will only honour a `redirect_to` it has been told about. An address that
 is not on the list is not an error: the link still works, the account is still
 confirmed, and the person is dropped on the Site URL instead — which is the front
@@ -738,7 +753,10 @@ https://your-covan.example.com/reset-password
 ```
 
 A compose stack that leaves `GOTRUE_MAILER_AUTOCONFIRM` on never sends the first
-of those at all, so only the reset URL matters there.
+of those at all, so only the reset URL matters there. Autoconfirm does not cover
+an address change, though: GoTrue records the new address as pending and waits
+for the links, and a stack with no `GOTRUE_SMTP_*` never sends them, so the
+change never completes. Configure SMTP before offering it.
 
 Edit the source rather than the files: `bun run build:email-templates` in
 `worker/` rewrites them, and a test fails if the checked-in copies drift from it.

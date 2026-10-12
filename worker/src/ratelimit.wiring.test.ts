@@ -31,6 +31,25 @@ describe("the limiter as the app actually mounts it", () => {
     expect(refused.headers.get("Retry-After")).toBe("60");
   });
 
+  // The photo route is public and mounted beside the other public routers, so
+  // two things can go wrong with it quietly: mounted ahead of the limiter, like
+  // the logo proxy, it would be the one store read nobody counts; mounted after
+  // the authenticated router, every <img> would get a 401. A 404 from the
+  // route's own shape check says it was reached without a token, and the 429
+  // says the limiter saw it first. Neither needs a store.
+  it("stands in front of the public photo route, which answers without a token", async () => {
+    const call = () =>
+      app.request(
+        "/avatars/not-a-user/not-a-file.png",
+        { headers: { "CF-Connecting-IP": "8.8.8.8" } },
+        env,
+      );
+
+    expect((await call()).status).toBe(404);
+    expect((await call()).status).toBe(404);
+    expect((await call()).status).toBe(429);
+  });
+
   it("does not count the CORS preflight", async () => {
     // cors() answers OPTIONS and returns before the limiter. If that order ever
     // flips, a preflight can be refused — and a browser reports a 429 on a

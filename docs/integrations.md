@@ -806,7 +806,7 @@ else. Covan stores the list of domains that profile holds cookies for and
 nothing more, because that is all it has. **That list is longer than the places
 you signed in to**: most pages drop cookies for other companies as they load,
 so one sign-in at LinkedIn left seven domains, five of them ad-tech. It is on
-**Settings → Browser sign-ins**, labelled for what it is, and one click there
+**Settings → Account → Browser sign-ins**, labelled for what it is, and one click there
 deletes the profile at the provider. Closing your account deletes it too; you
 should not have to do the second to get the first.
 

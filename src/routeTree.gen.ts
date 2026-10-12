@@ -26,6 +26,11 @@ import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
 import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
 import { Route as AuthedAgentsAgentIdRouteImport } from './routes/_authed.agents.$agentId'
+import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed.settings.index'
+import { Route as AuthedSettingsAccountRouteImport } from './routes/_authed.settings.account'
+import { Route as AuthedSettingsMembersRouteImport } from './routes/_authed.settings.members'
+import { Route as AuthedSettingsUsageRouteImport } from './routes/_authed.settings.usage'
+import { Route as AuthedSettingsWorkspaceRouteImport } from './routes/_authed.settings.workspace'
 import { Route as AuthedAgentsAgentIdIndexRouteImport } from './routes/_authed.agents.$agentId.index'
 import { Route as AuthedAgentsAgentIdChatRouteImport } from './routes/_authed.agents.$agentId.chat'
 import { Route as AuthedAgentsAgentIdConfigurationRouteImport } from './routes/_authed.agents.$agentId.configuration'
@@ -118,6 +123,31 @@ const AuthedAgentsAgentIdRoute = AuthedAgentsAgentIdRouteImport.update({
   path: '/agents/$agentId',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedSettingsIndexRoute = AuthedSettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsAccountRoute = AuthedSettingsAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsMembersRoute = AuthedSettingsMembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsUsageRoute = AuthedSettingsUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsWorkspaceRoute = AuthedSettingsWorkspaceRouteImport.update({
+  id: '/workspace',
+  path: '/workspace',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
 const AuthedAgentsAgentIdIndexRoute =
   AuthedAgentsAgentIdIndexRouteImport.update({
     id: '/',
@@ -173,10 +203,15 @@ export interface FileRoutesByFullPath {
   '/app': typeof AuthedAppRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
-  '/settings': typeof AuthedSettingsRoute
+  '/settings': typeof AuthedSettingsRouteWithChildren
   '/team': typeof AuthedTeamRoute
   '/welcome': typeof AuthedWelcomeRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
+  '/settings/account': typeof AuthedSettingsAccountRoute
+  '/settings/members': typeof AuthedSettingsMembersRoute
+  '/settings/usage': typeof AuthedSettingsUsageRoute
+  '/settings/workspace': typeof AuthedSettingsWorkspaceRoute
+  '/settings/': typeof AuthedSettingsIndexRoute
   '/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
@@ -198,9 +233,13 @@ export interface FileRoutesByTo {
   '/app': typeof AuthedAppRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
-  '/settings': typeof AuthedSettingsRoute
   '/team': typeof AuthedTeamRoute
   '/welcome': typeof AuthedWelcomeRoute
+  '/settings/account': typeof AuthedSettingsAccountRoute
+  '/settings/members': typeof AuthedSettingsMembersRoute
+  '/settings/usage': typeof AuthedSettingsUsageRoute
+  '/settings/workspace': typeof AuthedSettingsWorkspaceRoute
+  '/settings': typeof AuthedSettingsIndexRoute
   '/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
@@ -224,10 +263,15 @@ export interface FileRoutesById {
   '/_authed/app': typeof AuthedAppRoute
   '/_authed/integrations': typeof AuthedIntegrationsRoute
   '/_authed/knowledge': typeof AuthedKnowledgeRoute
-  '/_authed/settings': typeof AuthedSettingsRoute
+  '/_authed/settings': typeof AuthedSettingsRouteWithChildren
   '/_authed/team': typeof AuthedTeamRoute
   '/_authed/welcome': typeof AuthedWelcomeRoute
   '/_authed/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
+  '/_authed/settings/account': typeof AuthedSettingsAccountRoute
+  '/_authed/settings/members': typeof AuthedSettingsMembersRoute
+  '/_authed/settings/usage': typeof AuthedSettingsUsageRoute
+  '/_authed/settings/workspace': typeof AuthedSettingsWorkspaceRoute
+  '/_authed/settings/': typeof AuthedSettingsIndexRoute
   '/_authed/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/_authed/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/_authed/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
@@ -255,6 +299,11 @@ export interface FileRouteTypes {
     | '/team'
     | '/welcome'
     | '/agents/$agentId'
+    | '/settings/account'
+    | '/settings/members'
+    | '/settings/usage'
+    | '/settings/workspace'
+    | '/settings/'
     | '/agents/$agentId/chat'
     | '/agents/$agentId/configuration'
     | '/agents/$agentId/knowledge'
@@ -276,9 +325,13 @@ export interface FileRouteTypes {
     | '/app'
     | '/integrations'
     | '/knowledge'
-    | '/settings'
     | '/team'
     | '/welcome'
+    | '/settings/account'
+    | '/settings/members'
+    | '/settings/usage'
+    | '/settings/workspace'
+    | '/settings'
     | '/agents/$agentId/chat'
     | '/agents/$agentId/configuration'
     | '/agents/$agentId/knowledge'
@@ -305,6 +358,11 @@ export interface FileRouteTypes {
     | '/_authed/team'
     | '/_authed/welcome'
     | '/_authed/agents/$agentId'
+    | '/_authed/settings/account'
+    | '/_authed/settings/members'
+    | '/_authed/settings/usage'
+    | '/_authed/settings/workspace'
+    | '/_authed/settings/'
     | '/_authed/agents/$agentId/chat'
     | '/_authed/agents/$agentId/configuration'
     | '/_authed/agents/$agentId/knowledge'
@@ -448,6 +506,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAgentsAgentIdRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/settings/': {
+      id: '/_authed/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof AuthedSettingsIndexRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/account': {
+      id: '/_authed/settings/account'
+      path: '/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof AuthedSettingsAccountRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/members': {
+      id: '/_authed/settings/members'
+      path: '/members'
+      fullPath: '/settings/members'
+      preLoaderRoute: typeof AuthedSettingsMembersRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/usage': {
+      id: '/_authed/settings/usage'
+      path: '/usage'
+      fullPath: '/settings/usage'
+      preLoaderRoute: typeof AuthedSettingsUsageRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/workspace': {
+      id: '/_authed/settings/workspace'
+      path: '/workspace'
+      fullPath: '/settings/workspace'
+      preLoaderRoute: typeof AuthedSettingsWorkspaceRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
     '/_authed/agents/$agentId/': {
       id: '/_authed/agents/$agentId/'
       path: '/'
@@ -500,6 +593,26 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthedSettingsRouteChildren {
+  AuthedSettingsAccountRoute: typeof AuthedSettingsAccountRoute
+  AuthedSettingsMembersRoute: typeof AuthedSettingsMembersRoute
+  AuthedSettingsUsageRoute: typeof AuthedSettingsUsageRoute
+  AuthedSettingsWorkspaceRoute: typeof AuthedSettingsWorkspaceRoute
+  AuthedSettingsIndexRoute: typeof AuthedSettingsIndexRoute
+}
+
+const AuthedSettingsRouteChildren: AuthedSettingsRouteChildren = {
+  AuthedSettingsAccountRoute: AuthedSettingsAccountRoute,
+  AuthedSettingsMembersRoute: AuthedSettingsMembersRoute,
+  AuthedSettingsUsageRoute: AuthedSettingsUsageRoute,
+  AuthedSettingsWorkspaceRoute: AuthedSettingsWorkspaceRoute,
+  AuthedSettingsIndexRoute: AuthedSettingsIndexRoute,
+}
+
+const AuthedSettingsRouteWithChildren = AuthedSettingsRoute._addFileChildren(
+  AuthedSettingsRouteChildren,
+)
+
 interface AuthedAgentsAgentIdRouteChildren {
   AuthedAgentsAgentIdChatRoute: typeof AuthedAgentsAgentIdChatRoute
   AuthedAgentsAgentIdConfigurationRoute: typeof AuthedAgentsAgentIdConfigurationRoute
@@ -528,7 +641,7 @@ interface AuthedRouteChildren {
   AuthedAppRoute: typeof AuthedAppRoute
   AuthedIntegrationsRoute: typeof AuthedIntegrationsRoute
   AuthedKnowledgeRoute: typeof AuthedKnowledgeRoute
-  AuthedSettingsRoute: typeof AuthedSettingsRoute
+  AuthedSettingsRoute: typeof AuthedSettingsRouteWithChildren
   AuthedTeamRoute: typeof AuthedTeamRoute
   AuthedWelcomeRoute: typeof AuthedWelcomeRoute
   AuthedAgentsAgentIdRoute: typeof AuthedAgentsAgentIdRouteWithChildren
@@ -538,7 +651,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAppRoute: AuthedAppRoute,
   AuthedIntegrationsRoute: AuthedIntegrationsRoute,
   AuthedKnowledgeRoute: AuthedKnowledgeRoute,
-  AuthedSettingsRoute: AuthedSettingsRoute,
+  AuthedSettingsRoute: AuthedSettingsRouteWithChildren,
   AuthedTeamRoute: AuthedTeamRoute,
   AuthedWelcomeRoute: AuthedWelcomeRoute,
   AuthedAgentsAgentIdRoute: AuthedAgentsAgentIdRouteWithChildren,

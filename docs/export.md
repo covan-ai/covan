@@ -1,6 +1,6 @@
 # Taking a workspace with you
 
-Settings → **Take it with you** → _Download the archive_. One zip, containing
+Settings → Workspace → **Take it with you** → _Download the archive_. One zip, containing
 everything the workspace holds and the SQL to put it back into a Covan you run
 yourself.
 
@@ -57,6 +57,12 @@ routines and their run history.
   mints a new signing secret, which means the receiver has to be updated in the
   same sitting — the same work a rotation asks for.
 
+- **Profile photos.** A profile's text comes with it — name, bio, locale and
+  timezone are columns of `profiles` and are in `data/profiles.json` like
+  everything else — but an uploaded photo is a file in the install's document
+  store, and `avatar_url` is only a path on that install's API
+  (`/avatars/<user>/<file>`). Restored elsewhere, the path points at nothing and
+  the app shows the person's initials until they upload the photo again.
 - **Invitations, notification preferences and onboarding state.** An invitation
   is an offer to somebody who has not accepted, scoped to an install's tokens.
   The other two follow a person rather than a workspace.

@@ -1,7 +1,7 @@
 import { emailShell } from "../email-layout";
 
 /**
- * The two mails Supabase sends on this product's behalf.
+ * The mails Supabase sends on this product's behalf.
  *
  * Nothing in this Worker sends them — GoTrue does, from templates stored in the
  * hosted project. They are written here anyway, in the same shell as every other
@@ -52,6 +52,31 @@ export const authEmailTemplates = [
       action: { label: "Choose a new password", url: "{{ .ConfirmationURL }}" },
       footnote:
         "If this was not you, ignore this message — your password has not changed and nobody was let in.",
+    }),
+  },
+  {
+    // Sent when somebody changes their address from the account page. With
+    // `double_confirm_changes` on — the default, and this project's setting —
+    // GoTrue sends this same template to BOTH addresses and changes nothing
+    // until both links are followed, so the copy has to read correctly to the
+    // old inbox and the new one alike. That is why it names the new address
+    // rather than saying "this address", and why it says the other link exists.
+    //
+    // The old inbox is also the one a hijacker cannot read, which makes this the
+    // mail that stops a stolen session from moving the account somewhere else.
+    // The footnote says so in the plainest terms it can.
+    filename: "change-email.html",
+    subject: "Confirm your new Covan address",
+    html: emailShell({
+      preheader: "Confirm the change to the address on your Covan account.",
+      heading: "Confirm your new address",
+      bodyHtml: [
+        `<p style="${P}">Somebody asked to move the Covan account at {{ .Email }} to <strong>{{ .NewEmail }}</strong>.</p>`,
+        `<p style="${P}">A link like this one went to both addresses. The change happens once both have been followed, and until then you keep signing in as before.</p>`,
+      ].join(""),
+      action: { label: "Confirm the change", url: "{{ .ConfirmationURL }}" },
+      footnote:
+        "If you did not ask for this, do not follow the link — without it the address stays as it is. Changing your password is the safe next step.",
     }),
   },
   {

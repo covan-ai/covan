@@ -677,10 +677,9 @@ function ChatTab() {
         // conversation isn't lost — only the reply is refused.
         toast.error(
           "This workspace is out of credits.",
-          // Settings is where the wall itself lives — a message to us, and
-          // self-hosting. See `credits-wall.tsx`. There is no `/settings/usage`
-          // route; `UsageSection` is one of several sections on `/settings`.
-          { action: { label: "Options", onClick: () => navigate({ to: "/settings" }) } },
+          // The usage page is where the wall itself lives — a message to us,
+          // and self-hosting. See `credits-wall.tsx`.
+          { action: { label: "Options", onClick: () => navigate({ to: "/settings/usage" }) } },
         );
         setThinking(false);
         setStreamText("");

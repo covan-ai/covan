@@ -39,6 +39,7 @@ import { connections, connectionsPublic } from "./routes/connections";
 import { toolConnections } from "./routes/tool-connections";
 import { composio, composioPublic } from "./routes/composio";
 import { slack, slackPublic } from "./routes/slack";
+import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
 
 const app = new Hono<AppEnv>();
@@ -169,6 +170,7 @@ api.route("/", documents);
 api.route("/", bundles);
 api.route("/", reports);
 api.route("/", me);
+api.route("/", avatars);
 api.route("/", workspace);
 api.route("/", support);
 api.route("/", invitations);
@@ -196,6 +198,15 @@ api.route("/", slack);
 // catch-all never sees it.
 app.route("/", connectionsPublic);
 app.route("/", slackPublic);
+
+// Unauthenticated for the same kind of reason as `composioPublic`: an `<img>`
+// sends no bearer token. The URL is the capability — see the route's banner.
+// Unlike the logo proxy it sits behind the limiter, in the `standard` bucket,
+// because every request here is a read from the document store, which is a
+// bill (R2 operations) or a disk the limiter is there to protect. The cost to
+// a member list is small and paid once: responses are `immutable`, so a
+// browser asks for each photo a single time.
+app.route("/", avatarsPublic);
 
 // Unauthenticated, like slackPublic and for the same reason: the sender is a
 // third-party system with no Covan session. What stands in for a caller is the

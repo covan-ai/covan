@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2 } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase/client";
+import { takePendingEmail } from "@/lib/pending-email";
 
 /**
  * Where the confirmation link in a new account's first email lands.
@@ -40,6 +41,18 @@ export const Route = createFileRoute("/confirmed")({
   component: Confirmed,
 });
 
+/**
+ * The first of an email change's two links. GoTrue answers it with a
+ * `message` in the fragment and no token — the change waits on the other link
+ * — and supabase-js leaves a fragment without a token alone, so it is still
+ * there to read.
+ */
+function readUrlMessage(): string | null {
+  if (typeof window === "undefined") return null;
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return hash.get("message");
+}
+
 /** Supabase reports a rejected link via an error in the URL hash or query. */
 function readUrlError(): string | null {
   if (typeof window === "undefined") return null;
@@ -54,12 +67,27 @@ function Confirmed() {
   // before React renders, so a state that starts as "checking" and flips to
   // "invalid" a tick later is a spinner nobody needed to see.
   const [urlError] = useState(readUrlError);
-  const [status, setStatus] = useState<"checking" | "confirmed" | "invalid" | "unknown">(
-    urlError ? "invalid" : "checking",
-  );
+  const [halfway] = useState(() => !urlError && readUrlMessage() !== null);
+  const [status, setStatus] = useState<
+    "checking" | "confirmed" | "changed" | "halfway" | "invalid" | "unknown"
+  >(urlError ? "invalid" : halfway ? "halfway" : "checking");
+  const [changedTo, setChangedTo] = useState<string | null>(null);
 
   useEffect(() => {
-    if (urlError) return;
+    if (urlError || halfway) return;
+
+    // An email change that just finished looks exactly like a confirmed
+    // sign-up from here: a session, and a fragment supabase-js has already
+    // cleared. The address the change was waiting for is what tells them
+    // apart — see `lib/pending-email.ts`.
+    const settle = (email: string | undefined) => {
+      if (takePendingEmail(email)) {
+        setChangedTo(email ?? null);
+        setStatus("changed");
+      } else {
+        setStatus((s) => (s === "changed" ? s : "confirmed"));
+      }
+    };
 
     let active = true;
 
@@ -68,19 +96,20 @@ function Confirmed() {
     // covers a token that takes a moment longer to exchange, where getSession()
     // would otherwise have already answered "none" and settled on `unknown`.
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active && session) setStatus("confirmed");
+      if (active && session) settle(session.user.email);
     });
 
     void supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
-      setStatus((s) => (data.session ? "confirmed" : s === "checking" ? "unknown" : s));
+      if (data.session) settle(data.session.user.email);
+      else setStatus((s) => (s === "checking" ? "unknown" : s));
     });
 
     return () => {
       active = false;
       subscription.subscription.unsubscribe();
     };
-  }, [urlError]);
+  }, [urlError, halfway]);
 
   if (status === "checking") {
     return (
@@ -120,6 +149,48 @@ function Confirmed() {
               <Link to="/sign-up">Send a new link</Link>
             </Button>
           </div>
+        </div>
+      </AuthLayout>
+    );
+  }
+
+  if (status === "halfway") {
+    return (
+      <AuthLayout
+        title="One more link to click"
+        subtitle="Your address changes once both links are confirmed."
+        footer={
+          <Link
+            to="/settings/account"
+            className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to your account
+          </Link>
+        }
+      >
+        <p className="py-2 text-center text-sm text-muted-foreground">
+          This one is done. Open the email we sent to your other address and click the link in it
+          too.
+        </p>
+      </AuthLayout>
+    );
+  }
+
+  if (status === "changed") {
+    return (
+      <AuthLayout title="Address changed" subtitle="You sign in with your new address from now on.">
+        <div className="flex flex-col items-center gap-3 py-2 text-center">
+          <span className="grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
+            <CheckCircle2 className="h-5 w-5" />
+          </span>
+          {changedTo ? (
+            <p className="text-sm text-muted-foreground">
+              Your account is now <span className="text-foreground">{changedTo}</span>.
+            </p>
+          ) : null}
+          <Button asChild size="sm" className="mt-1">
+            <Link to="/settings/account">Back to your account</Link>
+          </Button>
         </div>
       </AuthLayout>
     );

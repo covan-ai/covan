@@ -225,6 +225,14 @@ export async function deliverBrowserTask(
         // Nobody sent it. The same null `sender_id` an ordinary assistant
         // reply carries.
         sender_id: null,
+        // No `grounding`, on purpose, and decided rather than forgotten
+        // (covan-cloud#316). `'none'` would say a retrieval ran and nothing the
+        // team wrote came close — the coverage screen reports that as its own
+        // line — and no retrieval ran here: this row answers no question. The
+        // question that started the task was asked in the turn that called
+        // `browse`, and that turn's own row records what grounded it, so a
+        // value here would count one question twice. Null is the column's
+        // "nobody recorded one", which is the true thing to say.
         model,
         outcome: "answered",
         // Bookkeeping on the row, NOT a second charge against the allowance.

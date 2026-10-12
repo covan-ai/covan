@@ -205,6 +205,18 @@ describe("paused_turns", () => {
     expect(error).not.toBeNull();
   });
 
+  /**
+   * What grounded the turn when it parked (0083). Off the whitelist for the
+   * same reason: the reply row is where a client reads them, and a client that
+   * could write these could choose what the coverage report counts.
+   */
+  it("does not hand over what grounded the turn either", async () => {
+    const { error: grounding } = await owner.db.from("paused_turns").select("grounding");
+    expect(grounding).not.toBeNull();
+    const { error: sources } = await owner.db.from("paused_turns").select("sources");
+    expect(sources).not.toBeNull();
+  });
+
   it("cannot be approved from the browser, only through the worker", async () => {
     const { data } = await owner.db
       .from("paused_turns")

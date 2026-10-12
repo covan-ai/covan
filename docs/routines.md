@@ -342,6 +342,13 @@ to whole documents is usually still a decent answer, and it means no passage in
 anything the team wrote was close to what was asked — the question somebody
 keeps asking that nobody has written down.
 
+Two kinds of reply carry no value. A turn that stopped for a tool approval
+before it said anything wrote its reply with none until 0083, which parks what
+grounded the turn and writes it when the turn resumes. Rows written before then
+stay null. And a browser task's result, which arrives later as its own message,
+records none on purpose: it answers no question, and the turn that started the
+task already recorded what grounded it.
+
 The question is the last user message before that reply in the same session. A
 run reads the last **seven days**, and at most **150** of those questions,
 newest first — which at 120 characters each is a prompt the size the engine

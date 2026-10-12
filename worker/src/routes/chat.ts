@@ -16,6 +16,7 @@ import {
   type PassUsage,
 } from "../lib/harness/loop";
 import { capabilitiesFor } from "../lib/harness/available";
+import { egressCountry } from "../lib/browser/egress";
 import { browserTaskNote } from "../lib/browser/task-note";
 import { toolByName } from "../lib/harness/registry";
 import { cap, MAX_TOOL_OUTPUT_CHARS, TOOL_TIMEOUT_MS } from "../lib/harness/budget";
@@ -737,6 +738,7 @@ chat.post("/chat/stream", async (c) => {
             userId: c.get("user").id,
             sessionId,
             runtimeLimit,
+            egressCountry: egressCountry(c.req.header("CF-IPCountry")),
           }),
           // What the first half spent, so the second half's steps and passes are
           // numbered after it — and `stepsCharged: 0` because the budget does
@@ -1089,6 +1091,8 @@ chat.post("/chat/confirm/:id", async (c) => {
     userId: pause.userId,
     sessionId: pause.sessionId,
     runtimeLimit,
+    // The request that said yes, which is where the person is now.
+    egressCountry: egressCountry(c.req.header("CF-IPCountry")),
     confirmed: true,
     // And what the half that asked knew about the operation, which is the only
     // thing that crosses the pause: `run_tool` writes the catalogue row into

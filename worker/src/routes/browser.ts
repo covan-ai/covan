@@ -17,6 +17,7 @@ import {
   type CredentialScope,
   type SaveRefusal,
 } from "../lib/browser/credentials";
+import { egressCountry } from "../lib/browser/egress";
 import { openBrowsersAmong } from "../lib/browser/live";
 import { browserLiveUrl } from "../lib/browser/profiles";
 import { cancelWaitingTask, NOT_STARTED } from "../lib/browser/queue";
@@ -86,43 +87,6 @@ const browser = new Hono<AppEnv>();
  * writes the row, and the route answers with the row's own `expiresAt` so the
  * two cannot drift.
  */
-
-/**
- * The egress to pin a new cookie jar to.
- *
- * Cloudflare puts the request's country on `cf`, and `CF-IPCountry` carries it
- * too. It is the right value rather than a convenient one: spec §1 pins the
- * egress once and reuses it forever, because cookies are bound to the egress
- * they were set from — so the egress should be where the person actually is,
- * which makes the sign-in's risk signals look ordinary to the site and makes
- * every later task arrive from the same place.
- *
- * `T1` and `XX` are Cloudflare's own answers for Tor and for "could not tell",
- * and neither is a country to pin anything to. Null then, which leaves the
- * provider to choose — no worse than the unpinned behaviour this replaces.
- *
- * **Lowercased, and `gb` rewritten.** browser-use's `proxyCountryCode` is a
- * 240-value lowercase enum, and it is not quite ISO 3166-1: the United
- * Kingdom is spelled `uk` there, where `CF-IPCountry` says `GB`. Sent
- * unmapped it is a 422 on every takeover from the UK — a whole country
- * unable to sign in to anything, with "could not open a browser for you" as
- * the only symptom. The provider's four other absences (`cn`, `ax`, `io`,
- * `um`) are not aliases but countries it has no proxy in at all, so there is
- * nothing to rewrite them to; `openTakeover` drops the pin and opens unpinned
- * when the provider refuses one, which also covers whatever that list says
- * next year.
- */
-const PROVIDER_SPELLING: Record<string, string> = { gb: "uk" };
-
-function egressCountry(c: {
-  req: { header: (name: string) => string | undefined };
-}): string | null {
-  const raw = c.req.header("CF-IPCountry");
-  if (!raw || raw === "XX" || raw === "T1") return null;
-  const code = raw.trim().toLowerCase();
-  if (!/^[a-z]{2}$/.test(code)) return null;
-  return PROVIDER_SPELLING[code] ?? code;
-}
 
 /**
  * POST /browser/takeovers — mint a live browser for its owner.
@@ -239,7 +203,8 @@ browser.post("/browser/takeovers", async (c) => {
      * `userId` already buys the reconciliation §4 argued for.
      */
     label: "covan",
-    proxyCountryCode: egressCountry(c),
+    // Where the person is. See `lib/browser/egress.ts`.
+    proxyCountryCode: egressCountry(c.req.header("CF-IPCountry")),
   });
 
   if (opened.kind === "error") {

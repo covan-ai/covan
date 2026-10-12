@@ -53,6 +53,7 @@ describe("buildToolContext", () => {
       userId: "user-1",
       sessionId: "sess-1",
       runtimeLimit: { hit: false },
+      egressCountry: "tr",
     });
 
   it("carries the per-turn stores the catalogue tools write to", async () => {

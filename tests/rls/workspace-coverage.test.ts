@@ -202,3 +202,95 @@ describe("the per-agent coverage figures", () => {
     expect(error?.code).toBe("42501");
   });
 });
+
+/**
+ * What nobody can see any more is not counted.
+ *
+ * 0053 left out the one clause row level security would have applied for it —
+ * `chat_sessions.deleted_at is null` — so a soft-deleted session's replies were
+ * still in the coverage screen's figures. 0084 added it, to both functions, and
+ * stopped listing a deleted agent at all: its sessions go with it, and "nobody
+ * asked this one" is a false sentence about an agent nobody can see.
+ *
+ * Seeded here rather than in `beforeAll` at the top, so the exact counts the
+ * tests above assert are untouched by it.
+ */
+describe("what nobody can see any more", () => {
+  let before: { answers: number; fallback: number };
+  let deletedAgentId: string;
+
+  beforeAll(async () => {
+    const { data } = await owner.db.rpc("workspace_coverage", {
+      p_workspace_id: owner.workspaceId,
+    });
+    const row = (data ?? [])[0];
+    before = { answers: Number(row.answers), fallback: Number(row.fallback) };
+
+    // A session the owner deleted, with a `documents` reply in it.
+    const { data: doomed, error: sessionError } = await owner.db
+      .from("chat_sessions")
+      .insert({
+        agent_id: seeded.agentId,
+        user_id: owner.id,
+        workspace_id: owner.workspaceId,
+        visibility: "private",
+        title: "A session the owner deleted",
+      })
+      .select("id")
+      .single();
+    if (sessionError) throw new Error(`could not seed the session: ${sessionError.message}`);
+    await replyIn(doomed.id, "documents");
+    const { error: deleteError } = await serviceClient()
+      .from("chat_sessions")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", doomed.id);
+    if (deleteError) throw new Error(`soft-deleting the session failed: ${deleteError.message}`);
+
+    // And an agent the owner deleted, through the same function the product
+    // uses, so its sessions go with it the way they do for real.
+    const { data: gone, error: agentError } = await owner.db
+      .from("agents")
+      .insert({ workspace_id: owner.workspaceId, name: "A deleted agent", created_by: owner.id })
+      .select("id")
+      .single();
+    if (agentError) throw new Error(`could not seed the agent: ${agentError.message}`);
+    deletedAgentId = gone.id;
+    const { error: softError } = await owner.db.rpc("soft_delete_agent", {
+      p_agent_id: deletedAgentId,
+    });
+    if (softError) throw new Error(`soft-deleting the agent failed: ${softError.message}`);
+  });
+
+  it("leaves a deleted session's replies out of the workspace figure", async () => {
+    const { data, error } = await owner.db.rpc("workspace_coverage", {
+      p_workspace_id: owner.workspaceId,
+    });
+    expect(error, error?.message).toBeNull();
+
+    const row = (data ?? [])[0];
+    expect(Number(row.answers)).toBe(before.answers);
+    expect(Number(row.fallback)).toBe(before.fallback);
+  });
+
+  it("leaves them out of the agent that answered them too", async () => {
+    const { data } = await owner.db.rpc("workspace_coverage_agents", {
+      p_workspace_id: owner.workspaceId,
+    });
+    const row = (data ?? []).find((r: { agent_id: string }) => r.agent_id === seeded.agentId);
+
+    // The same four as above: the deleted session's reply is not a fifth.
+    expect(Number(row.answers)).toBe(4);
+    expect(Number(row.fallback)).toBe(2);
+  });
+
+  it("does not list a deleted agent, even at zero", async () => {
+    const { data } = await owner.db.rpc("workspace_coverage_agents", {
+      p_workspace_id: owner.workspaceId,
+    });
+    const ids = (data ?? []).map((r: { agent_id: string }) => r.agent_id);
+
+    expect(ids).not.toContain(deletedAgentId);
+    // The quiet agent is still there, so the LEFT JOIN is not what removed it.
+    expect(ids).toContain(quietAgentId);
+  });
+});

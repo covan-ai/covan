@@ -200,8 +200,9 @@ export function renderSql(tables: Collected): RenderedSql {
 /**
  * The columns a table's rows would have had, when none came back.
  *
- * `delivery_channels` is the only spec that names its columns, and
- * `secret_ciphertext` is deliberately not among them — the export cannot read
+ * Only ever reached for `delivery_channels`, the one table that can need a row
+ * written when none came back, and `secret_ciphertext` is deliberately not
+ * among its named columns — the export cannot read
  * it. The restore has to write it anyway, so it is added here.
  */
 function declaredColumns(columns: string | undefined): string[] {

@@ -32,6 +32,13 @@ import { join } from "node:path";
  *    no endpoint to close; and
  *  - the ones named in `CALLABLE` below, each of which is meant to be reachable
  *    by a signed-in client and says why.
+ *
+ * And PUBLIC is only half of it. Supabase also grants EXECUTE on every new
+ * function to `anon` BY NAME, which `revoke ... from public` does not reach —
+ * 0076 found that by reading a gap list with nothing but the anon key, and 0084
+ * swept the rest of the tree. So the second rule below is stricter than the
+ * first: triggers are not exempt from it, and of `CALLABLE` only the policy
+ * helpers in `ANON_CALLABLE` are.
  */
 const MIGRATIONS = join(process.cwd(), "..", "supabase", "migrations");
 
@@ -92,6 +99,28 @@ const CALLABLE: Record<string, string> = {
     "promoting one edit of a message to the visible one. Touches sibling rows as a set, so it is one statement rather than a client-driven sequence.",
 };
 
+/**
+ * The functions `anon` may still execute, which is a much shorter list.
+ *
+ * Only the policy helpers, and for a reason the database forces rather than one
+ * anybody chose: every policy that names a helper is `to public`, and `anon`
+ * holds table privileges through Supabase's auto-expose, so an anonymous read of
+ * any table evaluates these. Revoking one would turn "no rows" into "permission
+ * denied for function" across the whole schema without protecting anything —
+ * each answers a question about `auth.uid()`, which for `anon` is null, so each
+ * answers false.
+ *
+ * The client RPCs in `CALLABLE` are NOT here: they are for a signed-in caller,
+ * and `docs/security.md` ("Functions that run as their owner") is the rule.
+ */
+const ANON_CALLABLE = new Set([
+  "is_workspace_member",
+  "is_workspace_admin",
+  "can_write_in_workspace",
+  "session_is_visible",
+  "shares_workspace",
+]);
+
 type Fn = { name: string; file: string; returnsTrigger: boolean };
 
 /**
@@ -144,22 +173,31 @@ function definerFunctions(): Map<string, Fn> {
   return found;
 }
 
-/** Functions some migration revokes from PUBLIC. */
-function revokedFromPublic(): Set<string> {
+/**
+ * Functions some migration revokes from `role`.
+ *
+ * `from public, anon, authenticated` is the house phrasing. Revoking from the
+ * named roles alone is the mistake the first rule exists to catch: they inherit
+ * PUBLIC, so it changes nothing.
+ */
+function revokedFrom(role: "public" | "anon"): Set<string> {
   const revoked = new Set<string>();
+  const named = new RegExp(`\\b${role}\\b`, "i");
 
   for (const { sql } of readMigrations()) {
     for (const m of sql.matchAll(
       /revoke\s+(?:all|execute)[^;]*?on function public\.([a-z_]+)[^;]*?from([^;]*);/gi,
     )) {
-      // `from public, anon, authenticated` is the house phrasing. Revoking
-      // from the named roles alone is the mistake this test exists to catch:
-      // they inherit PUBLIC, so it changes nothing.
-      if (/\bpublic\b/i.test(m[2])) revoked.add(m[1]);
+      if (named.test(m[2])) revoked.add(m[1]);
     }
   }
 
   return revoked;
+}
+
+/** Functions some migration revokes from PUBLIC. */
+function revokedFromPublic(): Set<string> {
+  return revokedFrom("public");
 }
 
 describe("security definer functions", () => {
@@ -191,6 +229,36 @@ describe("security definer functions", () => {
       stale.sort(),
       "a name here that no migration defines is an exemption nobody can check",
     ).toEqual([]);
+  });
+
+  it("are revoked from anon by name unless a policy evaluates them", () => {
+    const fromPublic = revokedFromPublic();
+    const fromAnon = revokedFrom("anon");
+    const exposed: string[] = [];
+
+    for (const fn of definerFunctions().values()) {
+      if (ANON_CALLABLE.has(fn.name)) continue;
+      // Both, because each alone leaves the other door open: `anon` inherits
+      // PUBLIC, and it also holds the grant by name.
+      if (fromPublic.has(fn.name) && fromAnon.has(fn.name)) continue;
+      exposed.push(`${fn.name} (${fn.file})`);
+    }
+
+    expect(
+      exposed.sort(),
+      "Supabase grants EXECUTE on new functions to `anon` by name, so " +
+        "`revoke ... from public` is not enough. Add `revoke all on function " +
+        "... from public, anon` (and `authenticated` too if no client calls it); " +
+        "docs/security.md says which of the two grant shapes it needs.",
+    ).toEqual([]);
+  });
+
+  it("lets anon reach only policy helpers that exist and a client may call", () => {
+    const defined = definerFunctions();
+    for (const name of ANON_CALLABLE) {
+      expect(defined.has(name), `${name} is not a definer function any more`).toBe(true);
+      expect(name in CALLABLE, `${name} must also be in CALLABLE`).toBe(true);
+    }
   });
 
   // The two the plan singles out, asserted by name rather than by rule. A

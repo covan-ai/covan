@@ -1,4 +1,4 @@
-import type { Gap } from "./coverage-cluster";
+import type { Gap, WithheldReason } from "./coverage-cluster";
 
 /**
  * The report, printed rather than written.
@@ -68,6 +68,15 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  */
 const WITHHELD_TOPIC = "A topic we are not naming";
 
+/**
+ * What a bullet says when the clustering gave a topic no usable name at all
+ * (`withheld: "unprintable"`). Its own phrase rather than `WITHHELD_TOPIC`,
+ * so an admin reading a report with both kinds can tell which explanation
+ * below belongs to which row — "we are not naming" is a decision, and this
+ * one is not.
+ */
+const UNNAMED_TOPIC = "A topic our clustering could not name";
+
 export function renderCoverageReport(input: {
   totals: CoverageTotals;
   gaps: Gap[];
@@ -75,19 +84,18 @@ export function renderCoverageReport(input: {
    * Deduped questions that no surviving gap covers.
    *
    * Fix round 1, finding 3: not only "fell short of the floor". A question
-   * lands here for any of three reasons — the model never put it in any
-   * cluster at all, its cluster had too few distinct askers, or its cluster's
-   * label was refused outright (empty, unreadable, or nothing but
-   * punctuation) before a `Gap` was ever built for it. The floor is one of
-   * three ways in, not the whole of it, and the sentence this number drives
-   * must hold for all three.
+   * lands here when the model never put it in any cluster at all, or when its
+   * cluster had too few distinct askers. The floor is one of the ways in, not
+   * the whole of it, and the sentence this number drives must hold for both.
+   * (A cluster whose label was unusable used to be a third way in; since
+   * covan-cloud#303 it is a nameless row instead.)
    *
    * A different fact from a gap with no label, and the report keeps them
    * apart. This number names nobody and carries no topic — it is the one
    * thing that tells an admin an empty report means "the questions did not
    * come together into something reportable" rather than "your documents
    * are complete". A nameless gap is the opposite: a topic that cleared the
-   * floor, listed with its counts, whose name we would not print.
+   * floor, listed with its counts, whose name we did not print.
    */
   withheld: number;
 }): string {
@@ -122,25 +130,34 @@ export function renderCoverageReport(input: {
   // One pass, so the bullets and the count that explains them cannot
   // disagree about which rows have no name.
   //
-  // A label with nothing printable in it is treated exactly as `null`. That
-  // is unreachable from `enforceFloor`, which refuses an empty, whitespace or
-  // letterless label outright — so it can only arrive from a hand-built
-  // `Gap`. But this function is the last thing between a `Gap` and an admin's
-  // inbox, and `"  • — 3 questions, 3 people"` is precisely the bullet the
-  // withheld wording exists to prevent; a renderer that forbids it for `null`
-  // and not for `"   "` is only half a guard.
-  const rows = gaps.map((gap) => ({
-    name: gap.label !== null && gap.label.trim() !== "" ? gap.label : null,
-    questions: gap.questions,
-    askers: gap.askers,
-  }));
+  // A label with nothing printable in it is treated as an `unprintable`
+  // `null`. That is unreachable from `enforceFloor`, which turns an empty,
+  // whitespace or letterless label into exactly that row itself — so it can
+  // only arrive from a hand-built `Gap`. But this function is the last thing
+  // between a `Gap` and an admin's inbox, and `"  • — 3 questions, 3 people"`
+  // is precisely the bullet the withheld wording exists to prevent; a
+  // renderer that forbids it for `null` and not for `"   "` is only half a
+  // guard. `unprintable` and never `quotation`, which would claim a
+  // disclosure nobody made.
+  const rows = gaps.map((gap) => {
+    const printable = gap.label !== null && gap.label.trim() !== "";
+    const withheld: WithheldReason | null =
+      gap.label === null ? gap.withheld : printable ? null : "unprintable";
+    return {
+      name: printable ? gap.label : null,
+      withheld,
+      questions: gap.questions,
+      askers: gap.askers,
+    };
+  });
 
   if (rows.length > 0) {
     lines.push("");
     lines.push("What came up most:");
     for (const row of rows) {
       lines.push(
-        `  • ${row.name ?? WITHHELD_TOPIC} — ${plural(row.questions, "question", "questions")}, ` +
+        `  • ${row.name ?? (row.withheld === "unprintable" ? UNNAMED_TOPIC : WITHHELD_TOPIC)} — ` +
+          `${plural(row.questions, "question", "questions")}, ` +
           `${plural(row.askers, "person", "people")}`,
       );
     }
@@ -157,8 +174,14 @@ export function renderCoverageReport(input: {
     // guard contradicts, and the only sentence in this file that was not a
     // function of its input. It also asserted exactly what the design's
     // deniability depends on being unknowable.
-    const unnamed = rows.filter((row) => row.name === null).length;
-    if (unnamed === 1) {
+    //
+    // covan-cloud#303: one explanation per reason, because each is false of
+    // the other. A row the clustering could not name withheld nothing, and
+    // telling the admin its name "reproduced a question somebody had typed"
+    // would invent a disclosure; a quoted name was withheld on purpose, and
+    // calling it a naming failure would hide the guard doing its job.
+    const quoted = rows.filter((row) => row.withheld === "quotation").length;
+    if (quoted === 1) {
       lines.push("");
       lines.push(
         `One topic above is listed without a name. The name our clustering gave it ` +
@@ -166,13 +189,31 @@ export function renderCoverageReport(input: {
           `topic: you are told what came up and how many people it came from, never what ` +
           `anybody typed. Nothing has been dropped from the list.`,
       );
-    } else if (unnamed > 1) {
+    } else if (quoted > 1) {
       lines.push("");
       lines.push(
-        `${plural(unnamed, "topic", "topics")} above are listed without a name. The names ` +
+        `${plural(quoted, "topic", "topics")} above are listed without a name. The names ` +
           `our clustering gave them reproduced questions people had typed, so we withheld ` +
           `the names and kept the topics: you are told what came up and how many people it ` +
           `came from, never what anybody typed. Nothing has been dropped from the list.`,
+      );
+    }
+
+    const unprintable = rows.filter((row) => row.withheld === "unprintable").length;
+    if (unprintable === 1) {
+      lines.push("");
+      lines.push(
+        `One topic above is listed without a name. Our clustering did not give it a ` +
+          `usable one, so there was nothing to print — the topic and its counts are real, ` +
+          `only the name is missing. Nothing has been dropped from the list.`,
+      );
+    } else if (unprintable > 1) {
+      lines.push("");
+      lines.push(
+        `${plural(unprintable, "topic", "topics")} above are listed without a name. Our ` +
+          `clustering did not give them usable ones, so there was nothing to print — the ` +
+          `topics and their counts are real, only the names are missing. Nothing has been ` +
+          `dropped from the list.`,
       );
     }
   }
@@ -180,18 +221,14 @@ export function renderCoverageReport(input: {
   if (withheld > 0) {
     lines.push("");
     lines.push(
-      // Fix round 2. "Too scattered" was fix round 1's wording, and it is
-      // still one claim standing in for three causes. A question lands here
-      // when it was never put in any surviving cluster at all, when its
-      // cluster formed but had too few distinct askers
-      // (`coverage-cluster.ts:441`), OR when its cluster CLEARED the floor
-      // and was dropped anyway because its label turned out to be unusable
-      // (`:444`, `:463` — both refusals run after the floor check, not
-      // before it). "Too scattered" is true of the first two and false of
-      // the third: that cluster's questions did add up to a topic, with
-      // enough distinct people behind it. The wording below asserts only
-      // what holds for all three — not why these questions are missing,
-      // only that none of them ended up as a topic above.
+      // Fix round 2. "Too scattered" was fix round 1's wording, and it was
+      // one claim standing in for three causes: a question never put in any
+      // surviving cluster, a cluster with too few distinct askers, and a
+      // cluster that CLEARED the floor and was dropped anyway for an unusable
+      // label. covan-cloud#303 removed the third — that cluster is now an
+      // `unprintable` row above — but the wording below still asserts only
+      // what holds for every remaining cause: not why these questions are
+      // missing, only that none of them ended up as a topic above.
       rows.length > 0
         ? `${plural(withheld, "other question", "other questions")} did not come ` +
             `together into a topic we could report.`

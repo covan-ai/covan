@@ -121,7 +121,7 @@ describe("the rendered report", () => {
  * admin as a blank, a "null", or a bullet that reads like a bug.
  */
 describe("a topic the guard would not name", () => {
-  const withheldGap: Gap = { label: null, questions: 4, askers: 3 };
+  const withheldGap: Gap = { label: null, withheld: "quotation", questions: 4, askers: 3 };
 
   it("says a topic is there, how big it is, and that the name is withheld", () => {
     const text = renderCoverageReport({ totals, gaps: [withheldGap], withheld: 0 });
@@ -145,7 +145,7 @@ describe("a topic the guard would not name", () => {
   it("explains the refusal once, not once per row", () => {
     const text = renderCoverageReport({
       totals,
-      gaps: [withheldGap, { label: null, questions: 3, askers: 3 }],
+      gaps: [withheldGap, { label: null, withheld: "quotation", questions: 3, askers: 3 }],
       withheld: 0,
     });
     expect(text.match(/reproduced/g) ?? []).toHaveLength(1);
@@ -164,7 +164,7 @@ describe("a topic the guard would not name", () => {
   it("renders a report in which every topic is nameless", () => {
     const text = renderCoverageReport({
       totals,
-      gaps: [withheldGap, { label: null, questions: 3, askers: 1 }],
+      gaps: [withheldGap, { label: null, withheld: "quotation", questions: 3, askers: 1 }],
       withheld: 0,
     });
     // Two bullets, both refusals, and the list is still a list.
@@ -208,7 +208,7 @@ describe("a topic the guard would not name", () => {
       deduped,
       3,
     );
-    expect(gaps).toEqual([{ label: null, questions: 3, askers: 3 }]);
+    expect(gaps).toEqual([{ label: null, withheld: "quotation", questions: 3, askers: 3 }]);
 
     const text = renderCoverageReport({ totals, gaps, withheld: 1 });
     expect(text).not.toMatch(/behind it|behind them|behind those/i);
@@ -232,17 +232,19 @@ describe("a topic the guard would not name", () => {
    * admin's inbox, and `"  • — 3 questions, 3 people"` is the exact bullet the
    * withheld wording exists to prevent.
    */
-  it("treats a label with nothing printable in it exactly as a withheld one", () => {
+  it("treats a label with nothing printable in it as an unprintable one", () => {
     const text = renderCoverageReport({
       totals,
       gaps: [{ label: "   ", questions: 3, askers: 3 }],
       withheld: 0,
     });
     expect(text).not.toMatch(/•\s*—/);
-    expect(text).toContain("• A topic we are not naming — 3 questions");
-    // Counted as a refusal too, so the bullet is explained rather than
-    // appearing without the sentence that makes sense of it.
+    expect(text).toContain("• A topic our clustering could not name — 3 questions");
+    // Counted as a nameless row too, so the bullet is explained rather than
+    // appearing without the sentence that makes sense of it — and explained
+    // as a name that failed, never as a quotation nobody typed.
     expect(text).toMatch(/without a name/i);
+    expect(text).not.toMatch(/reproduced/);
   });
 
   it("is byte-identical for the same input with a withheld topic in it", () => {
@@ -256,24 +258,60 @@ describe("a topic the guard would not name", () => {
 });
 
 /**
+ * covan-cloud#303. A cluster that cleared the floor and came back with a
+ * label that has nothing printable in it is reported without a name, like a
+ * quotation — but the reason is different and so is what the admin is told.
+ * Saying its name "reproduced a question somebody had typed" would invent a
+ * disclosure that never happened.
+ */
+describe("a topic the clustering could not name", () => {
+  const unprintableGap: Gap = { label: null, withheld: "unprintable", questions: 4, askers: 3 };
+
+  it("lists the topic with its counts and says the name is missing, not withheld", () => {
+    const text = renderCoverageReport({ totals, gaps: [unprintableGap], withheld: 0 });
+    expect(text).toContain("• A topic our clustering could not name — 4 questions, 3 people");
+    expect(text).toMatch(/did not give it a usable one/);
+    expect(text).not.toMatch(/reproduced/);
+    expect(text).not.toMatch(/not naming/i);
+  });
+
+  it("explains each reason once, and tells the two bullets apart, in a mixed report", () => {
+    const text = renderCoverageReport({
+      totals,
+      gaps: [
+        { label: null, withheld: "quotation", questions: 6, askers: 3 },
+        unprintableGap,
+        { label: null, withheld: "unprintable", questions: 3, askers: 3 },
+      ],
+      withheld: 0,
+    });
+    expect(text).toContain("• A topic we are not naming — 6 questions");
+    expect(text.match(/A topic our clustering could not name/g) ?? []).toHaveLength(2);
+    expect(text.match(/reproduced/g) ?? []).toHaveLength(1);
+    expect(text).toContain("One topic above is listed without a name. The name our clustering");
+    expect(text).toContain("2 topics above are listed without a name. Our clustering");
+  });
+});
+
+/**
  * `withheld` is the count of distinct questions no surviving gap covers —
- * never clustered at all, clustered below the floor, or clustered but
- * refused on label grounds — and it is a different fact from a topic whose
- * name was refused. Fix round 1, finding 3: this used to say "fell BELOW THE
- * FLOOR", which is only one of the three. Fix round 2: it then said "too
- * scattered", which is still false of the third (a cluster that cleared the
- * floor and was dropped only for its label). Withheld questions are counted
- * and never listed — the count names nobody and carries no label; a
- * nameless-but-present topic is listed with its counts. The report must not
- * blur the two, because they tell an admin opposite things: one says the
- * questions did not come together into a topic to report, the other says a
- * topic is there and we would not print what it was called.
+ * never clustered at all, or clustered below the floor — and it is a
+ * different fact from a topic whose name was refused. Fix round 1, finding 3:
+ * this used to say "fell BELOW THE FLOOR", which is only one of the causes.
+ * Fix round 2: it then said "too scattered", which was false of a third cause
+ * (a cluster that cleared the floor and was dropped only for its label) —
+ * a cause covan-cloud#303 removed by keeping that cluster as a nameless row.
+ * Withheld questions are counted and never listed — the count names nobody
+ * and carries no label; a nameless-but-present topic is listed with its
+ * counts. The report must not blur the two, because they tell an admin
+ * opposite things: one says the questions did not come together into a topic
+ * to report, the other says a topic is there and we did not print its name.
  */
 describe("the withheld count and the withheld name are different facts", () => {
   it("counts withheld questions and lists nameless topics in the same report", () => {
     const text = renderCoverageReport({
       totals,
-      gaps: [{ label: null, questions: 4, askers: 3 }],
+      gaps: [{ label: null, withheld: "quotation", questions: 4, askers: 3 }],
       withheld: 6,
     });
     // The withheld count is reported as a number of questions...

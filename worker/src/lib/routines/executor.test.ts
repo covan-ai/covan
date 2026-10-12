@@ -105,6 +105,8 @@ function makeDb(
   const updates: Array<{ table: string; values: any }> = [];
   const inserts: Array<{ table: string; values: any }> = [];
   const claimed: string[] = [];
+  /** Keys handed back through `releaseItemKeys`, in the order they were. */
+  const released: string[] = [];
 
   const rowFor = async (table: string) => {
     if (over.rows && table in over.rows) return over.rows[table];
@@ -182,15 +184,18 @@ function makeDb(
         eq: () => ({
           in: async (
             _c: string,
-            _keys: string[],
-          ): Promise<{ error: { message: string } | null }> => ({ error: null }),
+            keys: string[],
+          ): Promise<{ error: { message: string } | null }> => {
+            if (table === "routine_deliveries") released.push(...keys);
+            return { error: null };
+          },
         }),
       }),
     }),
   };
   // `any`: several tests below swap in a narrower `from` for one table, and the
   // inferred shape of this literal is not the contract they are testing.
-  return { db: db as any, updates, inserts, claimed };
+  return { db: db as any, updates, inserts, claimed, released };
 }
 
 let fetchImpl: any;
@@ -1907,14 +1912,23 @@ describe("a routine that reads its own workspace", () => {
   // today (0075) — and nothing here reads it; the executor hands the whole
   // input off to `deps.coverage` and lets the dispatcher's real binding care
   // which report that is.
+  //
+  // Weekly, as the `gap-report` template is: the window is derived from the
+  // schedule (covan-cloud#307), and the fixture's own quarter-hourly default
+  // would make every run below a one-day report.
   const workspaceRoutine = (over: Partial<RoutineRow> = {}) =>
-    routine({ source_kind: "workspace", source_config: { report: "coverage_gaps" }, ...over });
+    routine({
+      source_kind: "workspace",
+      source_config: { report: "coverage_gaps" },
+      schedule_cron: "0 9 * * 1",
+      ...over,
+    });
 
   function depsForWorkspaceRun(over: Parameters<typeof makeDb>[0] = {}) {
     fetchImpl = vi.fn();
-    const { db, updates, inserts } = makeDb(over);
+    const { db, updates, inserts, claimed, released } = makeDb(over);
     const deps = makeDeps(db) as any;
-    return { deps, updates, inserts };
+    return { deps, updates, inserts, claimed, released };
   }
 
   it("delivers the rendered report and makes no summarise call", async () => {
@@ -2050,8 +2064,11 @@ describe("a routine that reads its own workspace", () => {
    * (`runOneRoutine` bypasses claiming by design) could deliver the same
    * report twice. `claimWins: () => []` models the key having already been
    * claimed by whichever run got there first.
+   *
+   * covan-cloud#308: and it now finds that out before the clustering call,
+   * not after it — a duplicate used to pay for one call and then skip.
    */
-  it("delivers nothing a second time for the same slot", async () => {
+  it("delivers nothing a second time for the same slot, and spends nothing finding out", async () => {
     const { deps, inserts } = depsForWorkspaceRun({ claimWins: () => [] });
     deps.coverage = vi.fn().mockResolvedValue({
       kind: "report",
@@ -2064,14 +2081,102 @@ describe("a routine that reads its own workspace", () => {
     const out = await runRoutine(workspaceRoutine(), deps);
 
     expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    expect(deps.coverage).not.toHaveBeenCalled();
     expect(deliverCalls).toHaveLength(0);
     const run = inserts.find((i) => i.table === "routine_runs")!.values;
     expect(run.status).toBe("skipped");
-    // The clustering call already happened and was paid for by the time the
-    // claim came back empty, so it is still metered even though nothing is
-    // sent — same as the post-call skip above.
-    expect(run.tokens).toBe(900);
-    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(320)] }]);
+    expect(run.tokens).toBe(0);
+    expect(run.model).toBeNull();
+    expect(recorded).toEqual([]);
+  });
+
+  describe("the slot key, claimed before the outcome is known (covan-cloud#308)", () => {
+    it("is claimed before the clustering call runs", async () => {
+      const { deps, claimed } = depsForWorkspaceRun();
+      let claimedWhenCalled: string[] | null = null;
+      deps.coverage = vi.fn().mockImplementation(async () => {
+        claimedWhenCalled = [...claimed];
+        return { kind: "skip", note: "nothing fell short" };
+      });
+
+      await runRoutine(workspaceRoutine(), deps);
+
+      expect(claimedWhenCalled).toEqual(["slot:2026-08-14T10:00:00.000Z"]);
+    });
+
+    it("stays claimed on a skip, which is this slot's answer", async () => {
+      const { deps, released } = depsForWorkspaceRun();
+      deps.coverage = vi.fn().mockResolvedValue({
+        kind: "skip",
+        note: "no one topic came from 3 or more different people",
+        model: "gpt-4.1-mini",
+        tokens: 640,
+        spend: [S(230)],
+      });
+
+      await runRoutine(workspaceRoutine(), deps);
+
+      expect(released).toEqual([]);
+    });
+
+    it("is handed back on a pause, which is not an answer for the slot", async () => {
+      // A webhook's key, because that is the one that outlives the run: a
+      // slot key is dead once `finish` advances `next_run_at`, and a
+      // redelivery of this event after the routine is resumed must not be
+      // refused as already handled.
+      const { deps, released, updates } = depsForWorkspaceRun();
+      deps.coverage = vi.fn().mockResolvedValue({
+        kind: "pause",
+        reason: "the coverage report is no longer on for this workspace",
+      });
+
+      await runRoutine(workspaceRoutine(), deps, { eventId: "evt-1", payload: "{}" });
+
+      expect(released).toEqual(["hook:evt-1"]);
+      expect(updates.find((u) => u.table === "routines")!.values.status).toBe("paused");
+    });
+
+    it("is handed back when the run throws", async () => {
+      const { deps, released, inserts } = depsForWorkspaceRun();
+      deps.coverage = vi.fn().mockRejectedValue(new Error("readGaps failed"));
+
+      await runRoutine(workspaceRoutine(), deps);
+
+      expect(released).toEqual(["slot:2026-08-14T10:00:00.000Z"]);
+      expect(inserts.find((i) => i.table === "routine_runs")!.values.status).toBe("failed");
+    });
+
+    it("stays claimed once the report is delivered", async () => {
+      const { deps, released } = depsForWorkspaceRun();
+      deps.coverage = vi.fn().mockResolvedValue({
+        kind: "report",
+        summary: "x",
+        model: "gpt-4.1-mini",
+        tokens: 900,
+      });
+
+      await runRoutine(workspaceRoutine(), deps);
+
+      expect(deliverCalls).toHaveLength(1);
+      expect(released).toEqual([]);
+    });
+  });
+
+  /**
+   * covan-cloud#307. The window was seven days whatever the schedule said, so
+   * an owner who edited the weekly template to daily got a daily email of the
+   * same rolling week.
+   */
+  it("reads the routine's own period, not a fixed week", async () => {
+    const { deps } = depsForWorkspaceRun();
+    deps.coverage = vi.fn().mockResolvedValue({ kind: "skip", note: "nothing fell short" });
+
+    await runRoutine(workspaceRoutine({ schedule_cron: "0 9 * * *" }), deps);
+
+    expect(deps.coverage).toHaveBeenCalledWith(
+      { workspaceId: "w1", ownerId: "u1", days: 1 },
+      expect.anything(),
+    );
   });
 
   it("fails loudly rather than silently when no coverage dep is bound", async () => {

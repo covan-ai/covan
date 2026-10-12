@@ -459,7 +459,7 @@ describe("POST /routines, creating a delivery channel inline", () => {
    * generated `id` included. `deletedIds` captures the service role's deletes
    * too, for the rollback-on-failure case below.
    */
-  function requestWith() {
+  function requestWith(options: { deleteError?: { message: string } } = {}) {
     const byTable: Record<string, Array<Record<string, unknown>>> = {};
     const deletedIds: string[] = [];
 
@@ -472,7 +472,7 @@ describe("POST /routines, creating a delivery channel inline", () => {
       delete: () => ({
         eq: async (_column: string, value: string) => {
           deletedIds.push(value);
-          return { error: null };
+          return { error: options.deleteError ?? null };
         },
       }),
     }));
@@ -520,7 +520,13 @@ describe("POST /routines, creating a delivery channel inline", () => {
     expect(channels[0].user_id).toBe(USER.id);
     expect(channels[0].workspace_id).toBe(WORKSPACE_ID);
     expect(channels[0].label).toBe(maskSecret("email", "me@example.com"));
+    // Decrypts to the address — covan-cloud#310. "Does not contain the
+    // plaintext" would also pass for a mangled value nobody could ever send
+    // to; a round trip is the only assertion that proves the channel works.
     expect(channels[0].secret_ciphertext).not.toContain("me@example.com");
+    expect(await decryptSecret(channels[0].secret_ciphertext as string, KEY)).toBe(
+      "me@example.com",
+    );
     expect(inserted("routines")[0].delivery_channel_id).toBe(channels[0].id);
   });
 
@@ -598,6 +604,32 @@ describe("POST /routines, creating a delivery channel inline", () => {
     expect(inserted("routines")).toHaveLength(0);
   });
 
+  // covan-cloud#310. The cleanup used to discard its `{ error }`, so a failed
+  // delete left an orphaned encrypted channel with no trace anywhere. The
+  // caller still gets the routine's own refusal — a cleanup failure must not
+  // replace it — but the orphan is now logged by id.
+  it("logs a rollback that could not remove the channel, and still returns the routine's error", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { request, inserted } = requestWith({ deleteError: { message: "connection reset" } });
+
+      const { status } = await request("POST", "/routines", {
+        ...ROUTINE_BODY,
+        scheduleCron: "not a cron",
+        deliveryEmail: "me@example.com",
+      });
+
+      expect(status).toBe(400);
+      const channelId = inserted("delivery_channels")[0].id as string;
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining(channelId),
+        expect.objectContaining({ message: "connection reset" }),
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   // 0074 bounds a series at 1–365 delivered runs — a year is not a series, and
   // 0 is not a bound at all. Caught by `createSchema` itself, before anything
   // is written, unlike the cron check above: no channel is minted and nothing
@@ -654,5 +686,73 @@ describe("POST /routines, creating a delivery channel inline", () => {
       expect(config.report).toBe("coverage_gaps");
       expect(String(config.report)).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
     });
+  });
+});
+
+/**
+ * covan-cloud#307. `updateSchema` offers `active` and `paused`, which an
+ * API-key caller could send to a routine whose series had already finished —
+ * restarting it for one more run before `finish` completed it again. Not a
+ * transition the product offers (the detail page hides the toggle), so the
+ * route refuses it too.
+ */
+describe("PATCH /routines/:id on a finished series", () => {
+  function patchWith(status: string) {
+    const updates: Array<Record<string, unknown>> = [];
+    const request = appWith({
+      tables: {
+        routines: {
+          select: async () => ({
+            data: { schedule_cron: "0 9 * * *", timezone: "UTC", status },
+            error: null,
+          }),
+          update: async (ctx) => {
+            updates.push(ctx.values ?? {});
+            return {
+              data: {
+                id: "routine-1",
+                visibility: "private",
+                status,
+                paused_reason: null,
+                last_run_at: null,
+                created_at: "2026-09-20T00:00:00.000Z",
+                ...ctx.values,
+              },
+              error: null,
+            };
+          },
+        },
+      },
+    });
+    return { request, updates };
+  }
+
+  it.each(["active", "paused"])("refuses status %s and writes nothing", async (next) => {
+    const { request, updates } = patchWith("completed");
+
+    const { status, body } = await request("PATCH", "/routines/routine-1", { status: next });
+
+    expect(status).toBe(409);
+    expect(body.error).toMatch(/finished/);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("still lets a finished routine be renamed", async () => {
+    const { request, updates } = patchWith("completed");
+
+    const { status } = await request("PATCH", "/routines/routine-1", { name: "Week one, done" });
+
+    expect(status).toBe(200);
+    expect(updates[0]).toMatchObject({ name: "Week one, done" });
+    expect(updates[0]).not.toHaveProperty("status");
+  });
+
+  it("still resumes a paused one (control)", async () => {
+    const { request, updates } = patchWith("paused");
+
+    const { status } = await request("PATCH", "/routines/routine-1", { status: "active" });
+
+    expect(status).toBe(200);
+    expect(updates[0]).toMatchObject({ status: "active", consecutive_failures: 0 });
   });
 });

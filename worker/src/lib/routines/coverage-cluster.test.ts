@@ -114,7 +114,7 @@ describe("enforcing the floor on what the model returned", () => {
 
   it("emits a label that is one of the questions without a name", () => {
     const gaps = enforceFloor([{ label: "Expense a flight", members: [0] }], deduped, 3);
-    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
+    expect(gaps).toEqual([{ label: null, withheld: "quotation", questions: 5, askers: 3 }]);
   });
 
   /**
@@ -137,7 +137,7 @@ describe("enforcing the floor on what the model returned", () => {
       deduped,
       3,
     );
-    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
+    expect(gaps).toEqual([{ label: null, withheld: "quotation", questions: 5, askers: 3 }]);
     expect(coveredCount).toBe(1);
   });
 
@@ -156,7 +156,7 @@ describe("enforcing the floor on what the model returned", () => {
       deduped,
       3,
     );
-    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
+    expect(gaps).toEqual([{ label: null, withheld: "quotation", questions: 5, askers: 3 }]);
   });
 
   describe("the containment rule, split (fix round 1, finding 3)", () => {
@@ -216,7 +216,7 @@ describe("enforcing the floor on what the model returned", () => {
         { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
       expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([
-        { label: null, questions: 3, askers: 3 },
+        { label: null, withheld: "quotation", questions: 3, askers: 3 },
       ]);
     });
 
@@ -232,7 +232,7 @@ describe("enforcing the floor on what the model returned", () => {
           { question: "how do i expense a flight?", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
         expect(enforceFloor([{ label: "How do I expense a flight?", members: [0] }], d, 3)).toEqual(
-          [{ label: null, questions: 3, askers: 3 }],
+          [{ label: null, withheld: "quotation", questions: 3, askers: 3 }],
         );
       });
 
@@ -246,7 +246,7 @@ describe("enforcing the floor on what the model returned", () => {
             d,
             3,
           ),
-        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
+        ).toEqual([{ label: null, withheld: "quotation", questions: 3, askers: 3 }]);
       });
 
       it("unnames when the question ends in '.'", () => {
@@ -254,7 +254,7 @@ describe("enforcing the floor on what the model returned", () => {
           { question: "how do i expense a flight.", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
         expect(enforceFloor([{ label: "How do I expense a flight.", members: [0] }], d, 3)).toEqual(
-          [{ label: null, questions: 3, askers: 3 }],
+          [{ label: null, withheld: "quotation", questions: 3, askers: 3 }],
         );
       });
 
@@ -263,7 +263,7 @@ describe("enforcing the floor on what the model returned", () => {
           { question: "how do i expense a flight", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
         expect(enforceFloor([{ label: "How do I expense a flight", members: [0] }], d, 3)).toEqual([
-          { label: null, questions: 3, askers: 3 },
+          { label: null, withheld: "quotation", questions: 3, askers: 3 },
         ]);
       });
     });
@@ -285,7 +285,7 @@ describe("enforcing the floor on what the model returned", () => {
         ];
         expect(
           enforceFloor([{ label: "経費精算はどうやるのという質問について", members: [0] }], d, 3),
-        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
+        ).toEqual([{ label: null, withheld: "quotation", questions: 3, askers: 3 }]);
       });
 
       it("unnames a label that wraps a Chinese question with no separator", () => {
@@ -294,7 +294,7 @@ describe("enforcing the floor on what the model returned", () => {
         ];
         expect(
           enforceFloor([{ label: "关于报销流程是怎样的这个问题", members: [0] }], d, 3),
-        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
+        ).toEqual([{ label: null, withheld: "quotation", questions: 3, askers: 3 }]);
       });
 
       it("unnames a label that wraps a Thai question with no separator", () => {
@@ -311,7 +311,7 @@ describe("enforcing the floor on what the model returned", () => {
             d,
             3,
           ),
-        ).toEqual([{ label: null, questions: 3, askers: 3 }]);
+        ).toEqual([{ label: null, withheld: "quotation", questions: 3, askers: 3 }]);
       });
 
       it("unnames an English label that wraps a question with a separator (control)", () => {
@@ -323,7 +323,7 @@ describe("enforcing the floor on what the model returned", () => {
           { question: "when is payday", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
         expect(enforceFloor([{ label: "FAQ: when is payday", members: [0] }], d, 3)).toEqual([
-          { label: null, questions: 3, askers: 3 },
+          { label: null, withheld: "quotation", questions: 3, askers: 3 },
         ]);
       });
 
@@ -417,7 +417,7 @@ describe("enforcing the floor on what the model returned", () => {
           expect(
             enforceFloor([{ label: "Prices and discounts", members: [0] }], withJunk(junk), 3),
             `${JSON.stringify(junk)} must unname rather than delete`,
-          ).toEqual([{ label: null, questions: 4, askers: 3 }]);
+          ).toEqual([{ label: null, withheld: "quotation", questions: 4, askers: 3 }]);
         }
       });
 
@@ -438,7 +438,7 @@ describe("enforcing the floor on what the model returned", () => {
           expect(
             enforceFloor([{ label, members: [0] }], withJunk(junk), 3),
             `${JSON.stringify(junk)} vs ${JSON.stringify(label)}`,
-          ).toEqual([{ label: null, questions: 4, askers: 3 }]);
+          ).toEqual([{ label: null, withheld: "quotation", questions: 4, askers: 3 }]);
         }
       });
     });
@@ -477,7 +477,7 @@ describe("enforcing the floor on what the model returned", () => {
           expect([...question]).toHaveLength(4);
           const d: DedupedQuestion[] = [{ question, askerKeys: new Set([1, 2, 3]), copies: 3 }];
           const gaps = enforceFloor([{ label, members: [0] }], d, 3);
-          expect(gaps).toEqual([{ label: null, questions: 3, askers: 3 }]);
+          expect(gaps).toEqual([{ label: null, withheld: "quotation", questions: 3, askers: 3 }]);
           // Belt and braces: whatever else happens, the question itself must
           // not be sitting in an emitted label. `?? ""` because a withheld
           // label is `null`, and `toContain` refuses a null subject — the
@@ -488,10 +488,11 @@ describe("enforcing the floor on what the model returned", () => {
       }
     });
 
-    describe("fix round 6: every other refusal is still a deletion", () => {
-      // The amendment turns ONE refusal into an unnamed row. The rest stay
-      // drops, and a row with no name is not a licence to emit a row with no
-      // topic behind it.
+    describe("fix round 6: every refusal about reporting is still a deletion", () => {
+      // The amendment turns the refusals about a NAME into unnamed rows. The
+      // refusals about whether a topic may be reported at all stay drops, and
+      // a row with no name is not a licence to emit a row with no topic
+      // behind it.
       it("deletes a cluster below the floor rather than unnaming it", () => {
         expect(enforceFloor([{ label: "Payroll", members: [2] }], deduped, 3)).toEqual([]);
       });
@@ -500,14 +501,22 @@ describe("enforcing the floor on what the model returned", () => {
         expect(enforceFloor([{ label: "Nothing", members: [99] }], deduped, 3)).toEqual([]);
       });
 
-      it("deletes a label with no letter or digit rather than unnaming it", () => {
-        // There is no topic here to withhold the name of — the label never
-        // named anything. Withholding it would put a nameless row in the
-        // report for a cluster whose only distinguishing feature was
-        // punctuation.
-        expect(enforceFloor([{ label: "???!!!", members: [0] }], deduped, 3)).toEqual([]);
-        expect(enforceFloor([{ label: "😀😀", members: [0] }], deduped, 3)).toEqual([]);
-        expect(enforceFloor([{ label: "   ", members: [0] }], deduped, 3)).toEqual([]);
+      it("unnames a label with no letter or digit rather than deleting it (covan-cloud#303)", () => {
+        // Round 6 deleted these on the argument that the label never named
+        // anything. But the topic is the members, not the label: three people
+        // asked, the floor cleared, and one model call producing punctuation
+        // for the name is not a reason for the admin to lose the gap. The row
+        // says why it has no name, and the reason is not "quotation".
+        const unprintable = [{ label: null, withheld: "unprintable", questions: 5, askers: 3 }];
+        expect(enforceFloor([{ label: "???!!!", members: [0] }], deduped, 3)).toEqual(unprintable);
+        expect(enforceFloor([{ label: "😀😀", members: [0] }], deduped, 3)).toEqual(unprintable);
+        expect(enforceFloor([{ label: "   ", members: [0] }], deduped, 3)).toEqual(unprintable);
+      });
+
+      it("still deletes an unprintable label below the floor", () => {
+        // The order that matters: the floor first. A nameless row is a topic
+        // that cleared it, never a way around it.
+        expect(enforceFloor([{ label: "???", members: [2] }], deduped, 3)).toEqual([]);
       });
 
       it("still refuses every cluster when the floor itself is nonsense", () => {
@@ -527,7 +536,7 @@ describe("enforcing the floor on what the model returned", () => {
         },
       ];
       expect(enforceFloor([{ label: "aa bb cc dd", members: [0] }], d, 3)).toEqual([
-        { label: null, questions: 3, askers: 3 },
+        { label: null, withheld: "quotation", questions: 3, askers: 3 },
       ]);
       expect(enforceFloor([{ label: "aa bb cc", members: [0] }], d, 3)).toEqual([
         { label: "aa bb cc", questions: 3, askers: 3 },
@@ -539,7 +548,7 @@ describe("enforcing the floor on what the model returned", () => {
         { question: `intro ${"a".repeat(40)} outro`, askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
       expect(enforceFloor([{ label: "a".repeat(40), members: [0] }], atForty, 3)).toEqual([
-        { label: null, questions: 3, askers: 3 },
+        { label: null, withheld: "quotation", questions: 3, askers: 3 },
       ]);
 
       const atThirtyNine: DedupedQuestion[] = [
@@ -555,7 +564,7 @@ describe("enforcing the floor on what the model returned", () => {
         { question: "aa bb cc dd ee", askerKeys: new Set([1, 2, 3]), copies: 3 },
       ];
       expect(enforceFloor([{ label: "aa bb cc", members: [0] }], fiveWords, 3)).toEqual([
-        { label: null, questions: 3, askers: 3 },
+        { label: null, withheld: "quotation", questions: 3, askers: 3 },
       ]);
 
       const sixWords: DedupedQuestion[] = [
@@ -579,7 +588,7 @@ describe("enforcing the floor on what the model returned", () => {
         const q = "please note, aa bb cc dd, for the record, always?";
         const d: DedupedQuestion[] = [{ question: q, askerKeys: new Set([1, 2, 3]), copies: 3 }];
         expect(enforceFloor([{ label: "aa bb cc dd", members: [0] }], d, 3)).toEqual([
-          { label: null, questions: 3, askers: 3 },
+          { label: null, withheld: "quotation", questions: 3, askers: 3 },
         ]);
         expect(enforceFloor([{ label: "aa bb cc", members: [0] }], d, 3)).toEqual([
           { label: "aa bb cc", questions: 3, askers: 3 },
@@ -595,7 +604,7 @@ describe("enforcing the floor on what the model returned", () => {
           },
         ];
         expect(enforceFloor([{ label: "a".repeat(40), members: [0] }], atForty, 3)).toEqual([
-          { label: null, questions: 3, askers: 3 },
+          { label: null, withheld: "quotation", questions: 3, askers: 3 },
         ]);
 
         const atThirtyNine: DedupedQuestion[] = [
@@ -615,7 +624,7 @@ describe("enforcing the floor on what the model returned", () => {
           { question: "aa, bb, cc, dd, ee?", askerKeys: new Set([1, 2, 3]), copies: 3 },
         ];
         expect(enforceFloor([{ label: "aa bb cc", members: [0] }], fiveWords, 3)).toEqual([
-          { label: null, questions: 3, askers: 3 },
+          { label: null, withheld: "quotation", questions: 3, askers: 3 },
         ]);
 
         const sixWords: DedupedQuestion[] = [
@@ -647,7 +656,7 @@ describe("enforcing the floor on what the model returned", () => {
     const label =
       "Questions about the expense policy, for example: how do i expense a flight to the berlin office";
     expect(enforceFloor([{ label, members: [0] }], berlin, 3)).toEqual([
-      { label: null, questions: 3, askers: 3 },
+      { label: null, withheld: "quotation", questions: 3, askers: 3 },
     ]);
   });
 
@@ -657,7 +666,7 @@ describe("enforcing the floor on what the model returned", () => {
     // own members would never see question 1 and would name this; the model
     // saw every question, so the check must too.
     const gaps = enforceFloor([{ label: "expense a train", members: [0] }], deduped, 3);
-    expect(gaps).toEqual([{ label: null, questions: 5, askers: 3 }]);
+    expect(gaps).toEqual([{ label: null, withheld: "quotation", questions: 5, askers: 3 }]);
   });
 
   it("refuses a floor that is not a positive integer rather than reporting everything (fix round 1, finding 4)", () => {
@@ -672,20 +681,35 @@ describe("enforcing the floor on what the model returned", () => {
     expect(gaps).toEqual([{ label: "Expenses", questions: 5, askers: 3 }]);
   });
 
-  /** Review Focus 4. */
-  it("drops an empty or whitespace label", () => {
-    expect(enforceFloor([{ label: "", members: [0] }], deduped, 3)).toEqual([]);
-    expect(enforceFloor([{ label: "   ", members: [0] }], deduped, 3)).toEqual([]);
+  /** Review Focus 4, and covan-cloud#303: unnamed, not dropped. */
+  it("unnames an empty or whitespace label", () => {
+    const unprintable = [{ label: null, withheld: "unprintable", questions: 5, askers: 3 }];
+    expect(enforceFloor([{ label: "", members: [0] }], deduped, 3)).toEqual(unprintable);
+    expect(enforceFloor([{ label: "   ", members: [0] }], deduped, 3)).toEqual(unprintable);
   });
 
-  it("drops a label with no letter or digit in it (fix round 3, minor)", () => {
-    // "???!!!" and an emoji string are both non-empty after trimming, so the
-    // empty-label check above does not catch them, and `isQuotation` calls
-    // either "not a quotation" — there is nothing in them to compare against
-    // a question. Without its own refusal, either survives as a blank-
-    // looking bullet in the admin's email.
-    expect(enforceFloor([{ label: "???!!!", members: [0] }], deduped, 3)).toEqual([]);
-    expect(enforceFloor([{ label: "😀😀", members: [0] }], deduped, 3)).toEqual([]);
+  it("unnames a label with no letter or digit in it (fix round 3, minor; covan-cloud#303)", () => {
+    // "???!!!" and an emoji string are both non-empty after trimming, so an
+    // emptiness check does not catch them, and `isQuotation` calls either
+    // "not a quotation" — there is nothing in them to compare against a
+    // question. Without its own check, either survives as a blank-looking
+    // bullet in the admin's email. Since covan-cloud#303 the check takes the
+    // name and keeps the topic.
+    const unprintable = [{ label: null, withheld: "unprintable", questions: 5, askers: 3 }];
+    expect(enforceFloor([{ label: "???!!!", members: [0] }], deduped, 3)).toEqual(unprintable);
+    expect(enforceFloor([{ label: "😀😀", members: [0] }], deduped, 3)).toEqual(unprintable);
+  });
+
+  it("counts an unprintable cluster's members as covered (covan-cloud#303)", () => {
+    // The other half of keeping the row: its questions are not also reported
+    // as `withheld` — they are behind a row the admin can see.
+    const { gaps, coveredCount } = enforceFloorWithCoverage(
+      [{ label: "!!!", members: [0] }],
+      deduped,
+      3,
+    );
+    expect(gaps).toEqual([{ label: null, withheld: "unprintable", questions: 5, askers: 3 }]);
+    expect(coveredCount).toBe(1);
   });
 
   describe("fix round 4: the no-letter refusal must judge the label that is emitted", () => {
@@ -694,14 +718,15 @@ describe("enforcing the floor on what the model returned", () => {
     // digits fall past character 80 therefore satisfied the check on the
     // strength of letters the admin never sees, and the report printed the
     // eighty characters that remained — a bullet of pure punctuation.
-    it("drops a label whose only letters or digits fall past the truncation boundary", () => {
+    it("unnames a label whose only letters or digits fall past the truncation boundary", () => {
+      const unprintable = [{ label: null, withheld: "unprintable", questions: 5, askers: 3 }];
       expect(
         enforceFloor(
           [{ label: "!".repeat(MAX_LABEL_CHARS) + "real topic words here", members: [0] }],
           deduped,
           3,
         ),
-      ).toEqual([]);
+      ).toEqual(unprintable);
       // Code points, not UTF-16 units: eighty emoji fill the whole budget.
       expect(
         enforceFloor(
@@ -709,7 +734,7 @@ describe("enforcing the floor on what the model returned", () => {
           deduped,
           3,
         ),
-      ).toEqual([]);
+      ).toEqual(unprintable);
     });
 
     it("keeps a label whose letters fall inside the boundary (control)", () => {
@@ -733,19 +758,18 @@ describe("enforcing the floor on what the model returned", () => {
       // parked past character 80 was always dropped — what got through was
       // only ever the punctuation, never anybody's words.
       //
-      // Round 6: still a deletion, and now for the no-letter reason rather
-      // than the quotation one. The no-letter refusal is asked first and is
-      // still a drop, so this row never reaches the containment check that
-      // would have unnamed it — which is the right order. A cluster whose
-      // emitted label is eighty exclamation marks has no topic to withhold
-      // the name of.
+      // covan-cloud#303: kept, and named for the reason that is true. The
+      // containment check is asked before the printability one, so a label
+      // whose unprintable prefix hides a quoted question is withheld as a
+      // quotation — the admin is told a name was withheld, not that the
+      // clustering failed to produce one.
       expect(
         enforceFloor(
           [{ label: "!".repeat(MAX_LABEL_CHARS) + "expense a flight", members: [0] }],
           deduped,
           3,
         ),
-      ).toEqual([]);
+      ).toEqual([{ label: null, withheld: "quotation", questions: 5, askers: 3 }]);
     });
   });
 
@@ -861,8 +885,8 @@ describe("enforcing the floor on what the model returned", () => {
         3,
       );
       expect(gaps).toEqual([
-        { label: null, questions: 2, askers: 3 },
-        { label: null, questions: 2, askers: 3 },
+        { label: null, withheld: "quotation", questions: 2, askers: 3 },
+        { label: null, withheld: "quotation", questions: 2, askers: 3 },
       ]);
     });
   });

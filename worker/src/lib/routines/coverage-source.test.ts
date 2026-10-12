@@ -9,6 +9,13 @@ function depsFor(
     memberCount?: number;
     gaps?: Array<{ question: string; asker_key: number }>;
     clusters?: unknown;
+    totals?: Partial<{
+      answers: number;
+      covered: number;
+      fallback: number;
+      ungrounded: number;
+      unrecorded: number;
+    }>;
   } = {},
 ) {
   const cluster = vi.fn().mockResolvedValue({
@@ -31,6 +38,7 @@ function depsFor(
       fallback: 3,
       ungrounded: 0,
       unrecorded: 0,
+      ...options.totals,
     }),
     readGaps: vi.fn().mockResolvedValue(
       options.gaps ?? [
@@ -78,13 +86,75 @@ describe("the three conditions that stop the routine", () => {
   });
 });
 
-describe("what costs nothing", () => {
-  it("skips a window with no sub-floor answers, before any model call", async () => {
-    const deps = depsFor({ gaps: [] });
+/**
+ * covan-cloud#310 and #316. An empty `readGaps` used to be read as "every
+ * answer found something close" — but it is also what comes back when answers
+ * found nothing and every question behind them is excluded from the read. The
+ * counts are read before anything is claimed about them; they disclose
+ * nothing, and no model call is made either way.
+ */
+describe("what an empty window says about itself", () => {
+  it("does not tell a one-member workspace whose only member opted out that everything was found", async () => {
+    // The sole member asked three questions that found nothing, then opted
+    // out. The opt-out is retroactive, so the read comes back empty — and
+    // the answers still found nothing.
+    const deps = depsFor({ memberCount: 1, gaps: [], totals: { covered: 9, fallback: 3 } });
     const result = await runCoverageReport(input, deps);
     expect(result).toMatchObject({ kind: "skip" });
+    const note = (result as { note: string }).note;
+    expect(note).not.toMatch(/every answer/);
+    expect(note).toContain("3 answers found nothing close");
+    expect(note).toMatch(/opted out/);
     expect(deps.cluster).not.toHaveBeenCalled();
-    expect(deps.readTotals).not.toHaveBeenCalled();
+    expect(deps.readTotals).toHaveBeenCalledWith("w1", 7);
+  });
+
+  it("names the replies that recorded nothing instead of leaving them out of the sentence", async () => {
+    const deps = depsFor({
+      gaps: [],
+      totals: { answers: 40, covered: 40, fallback: 0, unrecorded: 17 },
+    });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({
+      kind: "skip",
+      note: "40 answers found something close, 17 recorded nothing either way",
+    });
+  });
+
+  it("does not count a reply with nothing attached as one that found something", async () => {
+    const deps = depsFor({
+      gaps: [],
+      totals: { answers: 12, covered: 10, fallback: 0, ungrounded: 2 },
+    });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({
+      kind: "skip",
+      note: "10 answers found something close, 2 had nothing attached to search",
+    });
+  });
+
+  it("says so when no answer recorded anything", async () => {
+    const deps = depsFor({
+      gaps: [],
+      totals: { answers: 0, covered: 0, fallback: 0 },
+    });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({
+      kind: "skip",
+      note: "no answer in this window recorded what grounded it",
+    });
+  });
+});
+
+describe("what costs nothing", () => {
+  it("skips a window with no sub-floor answers, before any model call", async () => {
+    const deps = depsFor({ gaps: [], totals: { covered: 100, fallback: 0 } });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({
+      kind: "skip",
+      note: "every answer in this window found something close",
+    });
+    expect(deps.cluster).not.toHaveBeenCalled();
   });
 
   it("skips without a model call when too few people asked at all", async () => {
@@ -112,7 +182,7 @@ describe("what costs nothing", () => {
     expect(result).toMatchObject({ kind: "skip" });
     expect(result).not.toHaveProperty("model");
     expect(result).not.toHaveProperty("tokens");
-    expect(deps.readTotals).not.toHaveBeenCalled();
+    expect(deps.cluster).not.toHaveBeenCalled();
   });
 
   it("makes exactly one model call when it does report", async () => {

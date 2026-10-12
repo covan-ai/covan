@@ -40,21 +40,43 @@ export type DedupedQuestion = {
 export type RawCluster = { label: string; members: number[] };
 
 /**
+ * Why a surviving gap carries no name.
+ *
+ *   * `quotation` — the name the model gave it reproduced somebody's question
+ *     (`isQuotation`). Withheld on purpose.
+ *   * `unprintable` — the model gave it no usable name at all: empty, or
+ *     nothing but punctuation and symbols. Nothing was withheld; there was
+ *     nothing to print.
+ *
+ * Two values rather than one, because the admin is told why a row is
+ * nameless (`coverage-render.ts`), and the sentence that is true of one is
+ * false of the other: "the name reproduced a question somebody had typed" is
+ * a claim about somebody's words, and saying it of a row whose label was
+ * "???" would invent a disclosure that never happened.
+ */
+export type WithheldReason = "quotation" | "unprintable";
+
+/**
  * A gap that survived. The only shape the renderer ever sees.
  *
- * `label` is `null` when the containment check refused to name the topic. The
- * row is no less real for it: at least the floor's worth of different people
- * asked about this, the counts are the counts, and the admin is told the topic
- * is there. What is withheld is the name the model gave it, because that name
- * reproduced somebody's question.
+ * `label` is `null` when the topic is reported without a name, and `withheld`
+ * then says why. The row is no less real for it: at least the floor's worth of
+ * different people asked about this, the counts are the counts, and the admin
+ * is told the topic is there.
  *
  * Deliberately `null` rather than a display string like `"(topic withheld)"`.
  * How a refusal should read to an admin is the renderer's decision
  * (`coverage-render.ts`), and a sentinel string in the data is one that gets
  * reworded, localised, sorted as a label, or — the real risk — read as a
  * topic name. `null` cannot be mistaken for a topic.
+ *
+ * A union rather than `withheld?: WithheldReason` beside a nullable label, so
+ * that a nameless row without a reason, or a named row with one, is a type
+ * error and not a state the renderer has to guess about.
  */
-export type Gap = { label: string | null; questions: number; askers: number };
+export type Gap =
+  | { label: string; questions: number; askers: number }
+  | { label: null; withheld: WithheldReason; questions: number; askers: number };
 
 /**
  * The longest a topic label may be.
@@ -304,12 +326,17 @@ function truncateLabel(label: string): string {
  *
  * Refuses seven things a model, or a caller, can hand it — each one a way a
  * disclosure or a broken report would reach an admin without anybody having
- * chosen it. Every one of them is a drop but one. **The exception:** a label
- * that quotes a question is withheld, and the row goes out with `label: null`
- * rather than not going out at all. Reporting and naming are two decisions
- * (see `isQuotation`), and a dropped row is also indistinguishable from a
- * quiet week — so the refusal that fires on a judgement call is the one that
- * keeps the fact and loses the name.
+ * chosen it. The first four decide whether a cluster may be REPORTED, and
+ * they drop it. The last three decide only whether it may be NAMED, and they
+ * keep the row with `label: null` and a `withheld` reason rather than not
+ * sending it at all. Reporting and naming are two decisions (see
+ * `isQuotation`), and a dropped row is also indistinguishable from a quiet
+ * week — so a refusal about the name keeps the fact and loses the name.
+ *
+ * covan-cloud#303: the empty and letterless refusals used to be drops too,
+ * after the floor had already cleared the cluster — so a topic three people
+ * genuinely asked about went into `withheld` because one model call produced
+ * punctuation for its name. Both are now `unprintable` rows.
  *
  *   * a floor that is not a positive integer. `askerFloor` already answers
  *     `null` for exactly this input; refusing it again here closes the gap a
@@ -322,26 +349,27 @@ function truncateLabel(label: string): string {
  *   * a repeated member index — de-duplicated before counting, so a model
  *     repeating an index cannot inflate a gap's count and promote it.
  *   * a member index that is not in the list — a model counting past the end.
- *   * a label that quotes a question, per `isQuotation` — the one refusal
- *     that keeps the row. Checked against every question the model saw
+ *   * a label that quotes a question, per `isQuotation` — emitted as
+ *     `withheld: "quotation"`. Checked against every question the model saw
  *     (`deduped`), not just this cluster's own members, because a quoted
  *     question is the same disclosure whichever cluster it was filed under;
  *     and checked against the label both before and after truncation,
  *     because truncating first can cut a quote in half and let the surviving
- *     half through. The gap is emitted with `label: null` and the renderer
- *     prints the refusal.
+ *     half through.
  *   * a label that is empty, whitespace, or longer than `MAX_LABEL_CHARS` —
- *     the last of these is truncated rather than dropped, since a long label
- *     is usually a correct label with an explanation glued on.
+ *     the first two are emitted as `withheld: "unprintable"`; the last is
+ *     truncated, since a long label is usually a correct label with an
+ *     explanation glued on.
  *   * a label with no letter or digit in it at all — "???!!!" or an emoji
  *     string trims to something non-empty and tokenises to nothing, which
  *     `isQuotation` would otherwise call "not a quotation" for lack of
  *     anything to compare. Not a disclosure, but a blank-looking bullet in
- *     the admin's email, which the renderer must never emit. Asked of the
- *     label *after* truncation, because that is the one the report prints:
- *     a label whose only letters fall past `MAX_LABEL_CHARS` has them cut
- *     off before anybody reads it, and the eighty characters that are left
- *     are the punctuation.
+ *     the admin's email, which the renderer must never emit — so it is
+ *     emitted as `withheld: "unprintable"`. Asked of the label *after*
+ *     truncation, because that is the one the report prints: a label whose
+ *     only letters fall past `MAX_LABEL_CHARS` has them cut off before
+ *     anybody reads it, and the eighty characters that are left are the
+ *     punctuation.
  *
  * Ordered by how many questions are behind the gap, so the thing most worth
  * writing down is first. That is `0053`'s ordering choice for its own pair of
@@ -378,15 +406,15 @@ export type FloorResult = {
    * questions, once each, regardless of how many gaps they ended up under or
    * how many times any one of them was asked.
    *
-   * A label withheld as a quotation (`label: null`) still counts its members
-   * as covered — the row survived the floor and was pushed; only its name
-   * was withheld. Everything else contributes nothing, for any of three
-   * reasons, not only the one below the floor: a question the model never
-   * put in any cluster at all, a cluster that had too few distinct askers,
-   * and a cluster refused outright on label grounds (empty, unreadable, or
-   * nothing but punctuation) before a `Gap` was ever built for it. Fix round
-   * 1, finding 3: `coverage-render.ts`'s rendered sentence for `withheld`
-   * used to name only the floor as the cause, and `coverage-source.test.ts`'s
+   * A nameless row (`label: null`, for either `withheld` reason) still counts
+   * its members as covered — the row survived the floor and was pushed; only
+   * its name was not printed. Everything else contributes nothing, for either
+   * of two reasons: a question the model never put in any cluster at all, and
+   * a cluster that had too few distinct askers. (Until covan-cloud#303 there
+   * was a third — a cluster refused outright on label grounds after clearing
+   * the floor — and that is now an `unprintable` row instead.) Fix round 1,
+   * finding 3: `coverage-render.ts`'s rendered sentence for `withheld` used to
+   * name only the floor as the cause, and `coverage-source.test.ts`'s
    * duplicates-and-shortfall case has seven withheld questions that were
    * never clustered at all — the floor was never the reason for those seven.
    *
@@ -447,15 +475,46 @@ export function enforceFloorWithCoverage(
     }
     if (askers.size < floor) continue;
 
-    const fullLabel = cluster.label.trim();
-    if (fullLabel === "") continue;
+    // Everything past this line survives — named or not — so its members are
+    // covered either way. Set before the naming decisions below, which only
+    // ever change what a surviving row is called, never whether it counts.
+    //
+    // covan-cloud#303 moved this line up past the two label checks that
+    // follow. They used to be `continue`s that ran after the floor had
+    // already cleared the cluster, which contradicted this very sentence.
+    for (const i of memberIndices) covered.add(i);
 
+    const fullLabel = cluster.label.trim();
     const truncatedLabel = truncateLabel(fullLabel);
 
+    // Both the label as the model wrote it and the label as the report will
+    // show it, against every question the model saw — not just this
+    // cluster's members. See `enforceFloor`'s own comment for why each half
+    // of this matters on its own.
+    //
+    // Fix round 6: emitted without a name, not dropped. The floor has already
+    // decided this cluster may be reported; all that is in doubt here is
+    // whether the model's name for it may be printed, and the answer to that
+    // doubt should not take an admin's gap with it. `truncatedLabel` is
+    // computed and then thrown away on this path: it was needed for the
+    // check, never for the output.
+    //
+    // Asked before the printability check below, so a label that is
+    // unprintable in its first eighty characters and quotes a question after
+    // them is reported as what it is — a withheld quotation — rather than as
+    // a name that merely failed. `isQuotation` answers "not a quotation" for a
+    // label with no tokens, so the order changes which reason a nameless row
+    // carries and never whether a row is named.
+    if (isQuotation(fullLabel, deduped) || isQuotation(truncatedLabel, deduped)) {
+      gaps.push({ label: null, withheld: "quotation", questions, askers: askers.size });
+      continue;
+    }
+
     // A label can be non-empty and still carry no letter or digit — "???!!!"
-    // or an emoji string both trim to something, and `isQuotation` would
-    // call either "not a quotation" (there is nothing to compare), so this
-    // has to be its own refusal rather than falling out of that check.
+    // or an emoji string both trim to something, and `isQuotation` calls
+    // either "not a quotation" (there is nothing to compare), so this has to
+    // be its own check rather than falling out of that one. An empty label
+    // tokenises to nothing too, so the one check covers both.
     //
     // Fix round 4: asked of `truncatedLabel`, which is the value this
     // function pushes, and not of `fullLabel`, which it does not. A label
@@ -467,27 +526,8 @@ export function enforceFloorWithCoverage(
     // label is a prefix of the full one, so every letter or digit in the
     // prefix is one in the whole, and nothing the full string would have
     // refused gets through here.
-    if (tokenise(truncatedLabel).length === 0) continue;
-
-    // Everything past this line survives — named or not — so its members are
-    // covered either way. Set before the naming decision below, which only
-    // ever changes what a surviving row is called, never whether it counts.
-    for (const i of memberIndices) covered.add(i);
-
-    // Both the label as the model wrote it and the label as the report will
-    // show it, against every question the model saw — not just this
-    // cluster's members. See `enforceFloor`'s own comment for why each half
-    // of this matters on its own.
-    //
-    // Fix round 6: emitted without a name, not dropped. Deliberately NOT a
-    // `continue` — everything above this line is, and that difference is the
-    // amendment. The floor has already decided this cluster may be reported;
-    // all that is in doubt here is whether the model's name for it may be
-    // printed, and the answer to that doubt should not take an admin's gap
-    // with it. `truncatedLabel` is computed and then thrown away on this
-    // path: it was needed for the check, never for the output.
-    if (isQuotation(fullLabel, deduped) || isQuotation(truncatedLabel, deduped)) {
-      gaps.push({ label: null, questions, askers: askers.size });
+    if (tokenise(truncatedLabel).length === 0) {
+      gaps.push({ label: null, withheld: "unprintable", questions, askers: askers.size });
       continue;
     }
 

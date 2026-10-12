@@ -144,6 +144,64 @@ describe("CreateRoutineDialog", () => {
 
   // A draft the parser cannot read must not trap the user on step one retrying
   // prose; the form is always reachable.
+  /**
+   * covan-cloud#305. A list that has not answered is not an empty one: the
+   * address box used to render while channels loaded, then turn into a
+   * pre-selected Select, dropping what was typed and enabling Create for a
+   * channel nobody picked.
+   */
+  it("offers neither the address nor a channel until the channel list answers", async () => {
+    let resolveChannels!: (value: unknown) => void;
+    channelsList.mockImplementation(() => new Promise((resolve) => (resolveChannels = resolve)));
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+
+    expect(screen.queryByPlaceholderText("you@company.com")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Create routine$/i })).toBeDisabled();
+
+    resolveChannels([{ id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0 }]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Create routine$/i })).not.toBeDisabled(),
+    );
+    expect(screen.queryByPlaceholderText("you@company.com")).not.toBeInTheDocument();
+  });
+
+  /**
+   * covan-cloud#310. The schedule refusal lands on the schedule; the address
+   * refusal used to be a toast, so the one field a new account must fill
+   * reported its own rejection somewhere else.
+   */
+  it("puts an address the API refuses under the address, not in a toast", async () => {
+    channelsList.mockResolvedValue([]);
+    const { ApiError } = await import("@/lib/api-client");
+    createRoutine.mockRejectedValue(
+      new (ApiError as unknown as new (s: number, m: string) => Error)(400, "not an email address"),
+    );
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+    const field = screen.getByLabelText(/deliver to/i);
+    await user.clear(field);
+    await user.type(field, "me@nowhere");
+    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
+
+    expect(await screen.findByText(/doesn.t look like an email address/i)).toBeInTheDocument();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+
+    // Editing the field takes the refusal back down.
+    await user.type(field, ".com");
+    expect(screen.queryByText(/doesn.t look like an email address/i)).not.toBeInTheDocument();
+  });
+
   it("falls through to the editable form when the draft cannot be read", async () => {
     channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0 }]);
     draft.mockRejectedValue(Object.assign(new Error("could not read that"), { status: 422 }));

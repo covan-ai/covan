@@ -61,10 +61,14 @@ export function CreateRoutineDialog({
   /** Called once the request has been acted on, so the URL can be cleaned. */
   onTemplateConsumed?: () => void;
 }) {
-  const { data: channels = [] } = useDeliveryChannels();
+  const { data: channels = [], isPending: channelsPending } = useDeliveryChannels();
   // The one xor the "Deliver to" field turns on, named once rather than
   // repeated as `channels.length === 0` at every site that branches on it.
-  const needsNewChannel = channels.length === 0;
+  // A list that has not answered yet is not an empty one: reading `[]` as "no
+  // channels" rendered the address box on a deep-linked open and then swapped
+  // it for a pre-selected Select once the list arrived, discarding whatever
+  // had been typed and leaving Create enabled for a channel nobody chose.
+  const needsNewChannel = !channelsPending && channels.length === 0;
   const createRoutine = useCreateRoutine();
   // A connection that has never finished setting itself up has no documents to
   // report, so offering it here would create a routine that can only ever skip.
@@ -124,6 +128,9 @@ export function CreateRoutineDialog({
   // mount, often before `me` has resolved, and nothing afterwards would have
   // re-seeded a value an effect or an entry handler had already written.
   const [emailTouched, setEmailTouched] = useState(false);
+  // The address's own refusal, shown under the address. Kept apart from
+  // `fieldError` because it is cleared by editing the field it belongs to.
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [endsAfterRuns, setEndsAfterRuns] = useState<number | null>(null);
   const [fieldError, setFieldError] = useState<{
     field: "schedule";
@@ -175,6 +182,7 @@ export function CreateRoutineDialog({
     setWantedChannelKind(null);
     setDeliveryEmail("");
     setEmailTouched(false);
+    setEmailError(null);
     setEndsAfterRuns(null);
     setFieldError(null);
   };
@@ -287,6 +295,7 @@ export function CreateRoutineDialog({
 
   const save = async () => {
     setFieldError(null);
+    setEmailError(null);
     try {
       await createRoutine.mutateAsync({
         agentId,
@@ -311,12 +320,17 @@ export function CreateRoutineDialog({
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Could not create that routine";
       // The API answers with a flat { error } string, so attributing it to a
-      // field happens here. The schedule validator answers exactly "unusable
-      // schedule", which is distinctive enough to place with confidence; a
-      // toast for it would make the user hunt for which field it meant. There
-      // used to be a second branch for the URL guard's "unsafe url:", which
-      // stopped being reachable when covan#241 took the URL field out — this
-      // dialog no longer sends one.
+      // field happens here. Both answers are distinctive enough to place with
+      // confidence: the schedule validator answers exactly "unusable
+      // schedule", the address check exactly "not an email address". A toast
+      // for either would make the user hunt for which field it meant. There
+      // used to be a branch for the URL guard's "unsafe url:", which stopped
+      // being reachable when covan#241 took the URL field out — this dialog no
+      // longer sends one.
+      if (needsNewChannel && message === "not an email address") {
+        setEmailError("That doesn't look like an email address.");
+        return;
+      }
       if (message.includes("unusable schedule")) {
         setFieldError({
           field: "schedule",
@@ -503,7 +517,9 @@ export function CreateRoutineDialog({
                 <Label htmlFor={needsNewChannel ? "routine-channel-email" : "routine-channel"}>
                   Deliver to
                 </Label>
-                {needsNewChannel ? (
+                {channelsPending ? (
+                  <p className="text-sm text-muted-foreground">Loading…</p>
+                ) : needsNewChannel ? (
                   <>
                     <Input
                       id="routine-channel-email"
@@ -513,8 +529,16 @@ export function CreateRoutineDialog({
                       onChange={(e) => {
                         setEmailTouched(true);
                         setDeliveryEmail(e.target.value);
+                        setEmailError(null);
                       }}
+                      aria-invalid={emailError !== null}
+                      aria-describedby={emailError ? "routine-channel-email-error" : undefined}
                     />
+                    {emailError && (
+                      <p id="routine-channel-email-error" className="text-xs text-destructive">
+                        {emailError}
+                      </p>
+                    )}
                     <p className="text-meta leading-[1.45] text-muted-foreground">
                       The result arrives here. You can add Slack or another address in Settings
                       later.

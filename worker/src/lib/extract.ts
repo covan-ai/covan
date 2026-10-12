@@ -36,6 +36,18 @@ const TYPE_BY_EXT: Record<string, string> = {
 export const ALLOWED_EXT: Set<string> = new Set(Object.keys(TYPE_BY_EXT));
 
 /**
+ * The most an upload request may carry, file and browser-extracted text
+ * together. `src/lib/uploads.ts` declares the same number as `MAX_SIZE` and
+ * `src/lib/uploads.test.ts` reads both files to keep them equal: this one is
+ * the authority, that one only saves a person a round trip.
+ *
+ * The bytes are not what it protects. Every 850 characters of text becomes a
+ * chunk row of about 7 KB (`vector(1536)` plus the passage), so the database
+ * holds roughly 8.5x what was uploaded, and the database is the ceiling.
+ */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+/**
  * The content type a document of this name is stored and served as.
  *
  * Never the client's `file.type`, and never the type recorded in the store

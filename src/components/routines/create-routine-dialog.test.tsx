@@ -210,14 +210,14 @@ describe("opened from a link", () => {
       <QueryClientProvider client={client}>
         <CreateRoutineDialog
           agentId="a1"
-          openTemplate="weekly-digest"
+          openTemplate="first-week"
           onTemplateConsumed={onConsumed}
         />
       </QueryClientProvider>,
     );
 
     // Straight to step 2, with the template's own name in the field.
-    expect(await screen.findByDisplayValue("Weekly digest")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("First week")).toBeInTheDocument();
     // And the request is taken back out of the URL exactly once.
     expect(onConsumed).toHaveBeenCalledTimes(1);
   });
@@ -232,16 +232,9 @@ describe("opened from a link", () => {
    * channel kind against the live list on every render; this is the
    * regression test for it.
    *
-   * `gap-report`, not `weekly-digest` (the brief's suggested target, right
-   * above): `weekly-digest`'s Create is disabled for an unrelated,
-   * pre-existing reason this fix wave is not touching — there is no URL
-   * input anywhere in this dialog for `sourceKind: "rss"` (removed in
-   * b4f4521, two days before the templates were added in d30ce94), so its
-   * Create cannot be enabled through this UI at all, with or without this
-   * fix. `gap-report`'s `workspace` source needs no url — which is also why
-   * the next test below exists for it already, with zero channels and the
-   * email path. This one gives it one channel instead, which is the only
-   * way to reach the Select this fix is about.
+   * The next test below covers `gap-report` with zero channels and the email
+   * path. This one gives it one channel instead, which is the only way to
+   * reach the Select this fix is about.
    */
   it("selects the one channel immediately for a template opened from a link", async () => {
     channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "me@example.com" }]);
@@ -294,17 +287,15 @@ describe("opened from a link", () => {
    * link was shared. The dialog opens on step 1 — the normal thing — rather
    * than crashing or landing on an empty step 2.
    */
-  it("opens normally for a template id that does not exist", async () => {
+  // `weekly-digest` is here because it used to exist: links to it are out in
+  // the world, and it was retired with the URL field (covan#241).
+  it.each(["no-such-template", "weekly-digest"])("opens normally for %s", async (id) => {
     channelsList.mockResolvedValue([]);
     const onConsumed = vi.fn();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
-        <CreateRoutineDialog
-          agentId="a1"
-          openTemplate="no-such-template"
-          onTemplateConsumed={onConsumed}
-        />
+        <CreateRoutineDialog agentId="a1" openTemplate={id} onTemplateConsumed={onConsumed} />
       </QueryClientProvider>,
     );
 
@@ -341,7 +332,7 @@ describe("opened from a link", () => {
 
     render(
       <QueryClientProvider client={client}>
-        <CreateRoutineDialog agentId="a1" openTemplate="weekly-digest" />
+        <CreateRoutineDialog agentId="a1" openTemplate="first-week" />
       </QueryClientProvider>,
     );
 

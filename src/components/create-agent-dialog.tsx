@@ -26,15 +26,8 @@ import {
 } from "@/lib/agent-meta";
 import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { cn } from "@/lib/utils";
+import { validateUpload } from "@/lib/uploads";
 import { toast } from "sonner";
-
-const ALLOWED_EXT = ["md", "markdown", "txt", "csv", "json", "pdf"];
-const MAX_SIZE = 10 * 1024 * 1024;
-
-function extOf(name: string) {
-  const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return m ? m[1] : "";
-}
 
 /**
  * The dialog itself owns nothing but whether it is open.
@@ -109,12 +102,9 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
     if (!files) return;
     const accepted: { id: string; name: string; size: number; file: File }[] = [];
     for (const f of Array.from(files)) {
-      if (!ALLOWED_EXT.includes(extOf(f.name))) {
-        toast.error(`${f.name}: unsupported type (md, txt, csv, json, pdf)`);
-        continue;
-      }
-      if (f.size > MAX_SIZE) {
-        toast.error(`${f.name}: too large (max 10 MB)`);
+      const check = validateUpload(f);
+      if (!check.ok) {
+        toast.error(check.reason);
         continue;
       }
       accepted.push({

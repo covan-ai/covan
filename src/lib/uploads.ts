@@ -3,11 +3,16 @@
 // that was never going to be accepted is refused before it is sent, with a
 // sentence naming the file rather than a status code.
 //
-// Shared by the Knowledge tab and the chat composer so the two surfaces cannot
-// drift into disagreeing about what an acceptable file is.
+// Shared by the Knowledge tab, the chat composer and the create-agent dialog so
+// the three surfaces cannot drift into disagreeing about what an acceptable
+// file is.
 
 export const ALLOWED_EXT = ["md", "markdown", "txt", "csv", "json", "pdf"] as const;
 
+// The same number as `MAX_UPLOAD_BYTES` in `worker/src/lib/extract.ts`, which is
+// the one that is enforced. `uploads.test.ts` reads both files and fails when
+// they disagree; this copy exists because the frontend cannot import from the
+// worker's tree.
 export const MAX_SIZE = 10 * 1024 * 1024;
 
 // What the extension list is called when a person has to read it. `markdown` is

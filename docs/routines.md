@@ -14,20 +14,26 @@ overlaps it deliberately wherever the mechanism changes what you would do.
 ## Setting one up
 
 The dialog opens on a text box rather than a form. What you type there goes to
-the model once, and comes back as a definition — a name, a source kind and URL,
-a cron expression, an instruction, and which kind of channel to use. Nothing is
-saved at that point: the second step is the same definition as editable fields,
-and you confirm it before anything is written. "Set it up myself" skips the
-model entirely.
+the model once, and comes back as a definition — a name, a cron expression, an
+instruction, and which kind of channel to use. Nothing is saved at that point:
+the second step is the same definition as editable fields, and you confirm it
+before anything is written. "Set it up myself" skips the model entirely.
+
+A drafted routine is always a scheduled task: the agent runs the instruction
+with its own tools and knowledge. The dialog does not offer a feed or a page as
+a source, so the draft does not propose one either; if you name a URL in your
+request, it ends up in the instruction instead. A feed or page watcher is still
+a routine the [API](api.md) can create, and one made that way is shown and
+edited like any other.
 
 The draft never proposes a connected source, and cannot: it would have to name a
 connection by id, and the model has no way to know one. Pick that kind on the
 second step, where the connections your workspace has are a list you choose
 from.
 
-The draft is validated against the same guards the engine runs on — the cron
-parser and the URL guard — so a routine the engine could never execute is
-refused while you are still looking at it. If the model cannot read the request
+The draft's schedule is validated against the same cron parser the engine runs
+on, so a schedule the engine could never execute is refused while you are still
+looking at it. If the model cannot read the request
 at all, the dialog does not trap you retrying prose; it says so and moves you to
 the form.
 
@@ -39,7 +45,7 @@ routine behave differently today?" is not a question anyone has to answer.
 ## Starting from a template
 
 The box above is a good second step and a poor first one: it asks you to have
-imagined the routine already. So the first step also offers three to pick
+imagined the routine already. So the first step also offers templates to pick
 instead, and **picking one makes no model call.** A template is the same set of
 fields a draft produces, written down in advance, so choosing it does exactly
 what accepting a draft does — it fills step 2 and leaves you looking at the
@@ -52,9 +58,6 @@ same editable form, with nothing fetched and nothing billed on the way.
   on for the workspace, and is unavailable only for a workspace of exactly two —
   it works alone and it works again from three people up. See
   [The coverage report](#the-coverage-report).
-- **Weekly digest of a feed** — point it at a feed or a page; once a week, what
-  changed. Needs nothing, and arrives with the URL blank, because that is the
-  one field a template cannot know.
 
 "One document on this agent" means this agent's, not the workspace's. The
 routines screen is scoped to one agent and the series reads that agent's
@@ -69,8 +72,8 @@ admin does not also need telling that the report is off.
 **A workspace with no delivery channel is no longer sent to Settings and back.**
 When there are none, "Deliver to" is an address field pre-filled with your own
 address, and the channel is created from it in the same request that creates the
-routine. If the routine is then refused — an unreadable schedule, a URL the
-guard will not have — the channel is deleted again, so correcting the field and
+routine. If the routine is then refused — an unreadable schedule, say — the
+channel is deleted again, so correcting the field and
 pressing Create a second time does not leave a stack of encrypted addresses
 nothing points at.
 

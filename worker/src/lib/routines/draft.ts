@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { isValidCron } from "./schedule";
-import { assertFetchableUrl } from "./url-guard";
 
 export const draftSchema = z.object({
   name: z.string().min(1),
@@ -11,12 +10,20 @@ export const draftSchema = z.object({
   channelKind: z.enum(["slack", "email"]),
 });
 
-export type RoutineDraft = z.infer<typeof draftSchema> & { timezone: string };
+/**
+ * Always a scheduled task. The create dialog stopped offering a feed or a page
+ * as a source (covan#241), so a draft naming one would land on a form with no
+ * field showing the URL it was about to watch.
+ */
+export type RoutineDraft = Omit<z.infer<typeof draftSchema>, "sourceKind" | "sourceUrl"> & {
+  sourceKind: "none";
+  sourceUrl: null;
+  timezone: string;
+};
 
 export type DraftDeps = {
   complete: (prompt: string) => Promise<string>;
   timezone: string;
-  ownHosts: string[];
 };
 
 const SYSTEM = `Convert the user's request into a routine definition.
@@ -34,8 +41,8 @@ Rules:
  * afterwards is deterministic, which is why "why did my routine behave
  * differently today?" is never a question anyone has to answer.
  *
- * The draft is validated against the same guards the engine uses, so an
- * impossible routine is rejected while the user is still looking at it.
+ * The draft is validated against the same cron parser the engine uses, so an
+ * impossible schedule is rejected while the user is still looking at it.
  */
 export async function parseDraft(text: string, deps: DraftDeps): Promise<RoutineDraft> {
   const raw = await deps.complete(`${SYSTEM}\n\nRequest: ${text}`);
@@ -52,10 +59,20 @@ export async function parseDraft(text: string, deps: DraftDeps): Promise<Routine
   if (!isValidCron(draft.cron, deps.timezone)) {
     throw new Error(`unusable cron expression: ${draft.cron}`);
   }
-  if (draft.sourceKind !== "none") {
-    if (!draft.sourceUrl) throw new Error(`a ${draft.sourceKind} routine needs a url`);
-    assertFetchableUrl(draft.sourceUrl, deps.ownHosts);
-  }
 
-  return { ...draft, timezone: deps.timezone };
+  // The prompt asks for `none` every time, and the schema still accepts `rss`
+  // and `web` so a model that answers otherwise does not cost the person their
+  // whole draft. It is folded into a scheduled task instead, and the URL moves
+  // into the instruction rather than being dropped: it is usually the one thing
+  // in the request the instruction would not otherwise carry.
+  const url = draft.sourceKind !== "none" ? draft.sourceUrl?.trim() : "";
+  const instruction = url ? `${draft.instruction}\n\nSource: ${url}` : draft.instruction;
+
+  return {
+    ...draft,
+    sourceKind: "none",
+    sourceUrl: null,
+    instruction,
+    timezone: deps.timezone,
+  };
 }

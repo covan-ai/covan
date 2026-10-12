@@ -11,6 +11,13 @@
  */
 export type RoutineSourceKind = "rss" | "web" | "none" | "connection" | "workspace";
 
+/**
+ * The kinds the create dialog can produce. `rss` and `web` are left out on
+ * purpose: covan#241 took the feed and page sources out of the dialog, and a
+ * routine of either kind made elsewhere is still shown and edited as one.
+ */
+export type CreatableSourceKind = Exclude<RoutineSourceKind, "rss" | "web">;
+
 export type Routine = {
   id: string;
   agentId: string;
@@ -111,8 +118,13 @@ export type CreatedDeliveryChannel = DeliveryChannel & { signingSecret?: string 
  */
 export type RoutineDraft = {
   name: string;
-  sourceKind: "rss" | "web" | "none";
-  sourceUrl: string | null;
+  /**
+   * Always a scheduled task. A feed or a page is still a routine the API can
+   * create, but not one the dialog offers (covan#241), so the drafter folds one
+   * into the instruction rather than proposing it — see `parseDraft`.
+   */
+  sourceKind: "none";
+  sourceUrl: null;
   cron: string;
   instruction: string;
   channelKind: "slack" | "email";

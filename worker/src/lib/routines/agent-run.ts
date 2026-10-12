@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { routineMaterial } from "./material";
 import type { RoutineEnv } from "../../types";
 import { complete, totalTokens, type CompletionMessage } from "../completion";
-import { weighTokens } from "../entitlements";
+import { completionSpend, spends } from "../entitlements";
 import { resolveModel } from "../models";
 import { temperatureFor, reasoningEffortFor, maxTokensFor, whenAndWhere } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
@@ -169,11 +169,10 @@ export function runRoutineWithTools(
     });
 
     let tokens = totalTokens(turn.usage);
-    // The same spend in the unit the allowance is denominated in. Kept beside
-    // the raw figure rather than replacing it: `routine_runs.tokens` is the
-    // durable record of how many tokens moved, which is what the run history
-    // shows, and only the counter cares what they cost. See `weighTokens`.
-    let weightedTokens = weighTokens(turn.usage);
+    // What was consumed, for the ledger. Kept beside the raw figure rather
+    // than replacing it: `routine_runs.tokens` is the durable record of how
+    // many tokens moved, which is what the run history shows.
+    const spend = spends(completionSpend(model, turn.usage, "routine"));
     let text = turn.text;
     let declined = false;
 
@@ -200,7 +199,7 @@ export function runRoutineWithTools(
         ],
       });
       tokens += totalTokens(decision.usage);
-      weightedTokens += weighTokens(decision.usage);
+      spend.push(...spends(completionSpend(model, decision.usage, "routine")));
       const read = readDecision(decision.text);
       text = read.text;
       declined = read.declined;
@@ -218,7 +217,7 @@ export function runRoutineWithTools(
     return {
       text,
       tokens,
-      weightedTokens,
+      spend,
       declined,
       // What the row will say about the call, through the same `replyOutcome`
       // the chat path uses rather than a second mapping. `parked: false` is a

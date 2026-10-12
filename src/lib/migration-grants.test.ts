@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -27,6 +27,17 @@ import { join } from "node:path";
 const MIGRATIONS = join(process.cwd(), "supabase", "migrations");
 
 /**
+ * The hosted build's own migrations, which exist only in that tree.
+ *
+ * Read when present, so the same file holds in both repositories. Named
+ * `cloud/<file>` in everything below: the prefix keeps them apart from the
+ * shared files they share numbers with, and it sorts after every shared name,
+ * so the "starts at 0023" cutoff never exempts them — a cloud file was written
+ * long after the rule was.
+ */
+const CLOUD = join(process.cwd(), "supabase", "cloud");
+
+/**
  * Tables that are deliberately reachable by no client role.
  *
  * `routine_deliveries` is written and read only by the scheduled Worker through
@@ -48,7 +59,12 @@ const NO_CLIENT_GRANT = new Set(["routine_deliveries"]);
  * somebody chose to split a table from its grant, which is the arrangement 0023
  * wrote its closing paragraph against.
  */
-const GRANTED_LATE = new Map([["0033_a_key_that_is_a_person.sql", "granted by 0034"]]);
+const GRANTED_LATE = new Map([
+  ["0033_a_key_that_is_a_person.sql", "granted by 0034"],
+  // The hosted metering table, which granted nothing and survived only on the
+  // platform default. Repaired by the hosted build's next file.
+  ["cloud/0001_user_usage.sql", "granted by cloud/0002"],
+]);
 
 /**
  * Tables no `service_role` will ever touch.
@@ -89,6 +105,7 @@ const SERVICE_GRANTED_LATE = new Map([
   ["0033_a_key_that_is_a_person.sql", "granted by 0034"],
   ["0043_a_bundle_that_keeps_itself_current.sql", "granted by 0045"],
   ["0044_an_agent_you_can_ask_from_a_channel.sql", "granted by 0045"],
+  ["cloud/0001_user_usage.sql", "granted by cloud/0002"],
 ]);
 
 /** `create table [if not exists] [public.]<name>`, across every migration. */
@@ -137,9 +154,25 @@ function migrationFiles(): string[] {
     .sort();
 }
 
-/** Every migration, oldest first, as `[filename, contents]`. */
+function cloudFiles(): string[] {
+  if (!existsSync(CLOUD)) return [];
+  return readdirSync(CLOUD)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+}
+
+/** Every migration, shared then hosted, oldest first, as `[name, contents]`. */
 function migrations(): [string, string][] {
-  return migrationFiles().map((f) => [f, readFileSync(join(MIGRATIONS, f), "utf8")]);
+  return [
+    ...migrationFiles().map((f): [string, string] => [
+      f,
+      readFileSync(join(MIGRATIONS, f), "utf8"),
+    ]),
+    ...cloudFiles().map((f): [string, string] => [
+      `cloud/${f}`,
+      readFileSync(join(CLOUD, f), "utf8"),
+    ]),
+  ];
 }
 
 describe("table grants", () => {
@@ -250,10 +283,13 @@ describe("table grants", () => {
   it("keeps the late-grant list to the one mistake it records", () => {
     // The exception above is a record, not a door. If this list grows, the rule
     // it is an exception to has stopped being a rule.
-    expect([...GRANTED_LATE.keys()]).toEqual(["0033_a_key_that_is_a_person.sql"]);
+    expect([...GRANTED_LATE.keys()]).toEqual([
+      "0033_a_key_that_is_a_person.sql",
+      "cloud/0001_user_usage.sql",
+    ]);
   });
 
-  it("keeps the late service-grant list to the three files it records", () => {
+  it("keeps the late service-grant list to the files it records", () => {
     // Same door, same reason it stays shut. 0043 and 0044 shipped together and
     // are repaired together by 0045; a fourth entry means somebody chose to
     // split a table from its grant again rather than write the grant.
@@ -261,6 +297,7 @@ describe("table grants", () => {
       "0033_a_key_that_is_a_person.sql",
       "0043_a_bundle_that_keeps_itself_current.sql",
       "0044_an_agent_you_can_ask_from_a_channel.sql",
+      "cloud/0001_user_usage.sql",
     ]);
   });
 

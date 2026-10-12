@@ -17,11 +17,9 @@ import { anonClient, closeSql, sql } from "./harness";
  * dangerous one — but it must be a decision rather than an oversight, which is
  * what this list records. These rows are written and read only by the Worker
  * through the service-role client, which bypasses RLS: `routine_deliveries` by
- * the scheduled sync, `workspace_provider_keys` because a policy that let a
- * workspace's own admin read it would still hand out a live credential (see
- * 0046_a_wall_with_two_doors.sql).
+ * the scheduled sync.
  */
-const SERVICE_ROLE_ONLY = new Set(["routine_deliveries", "workspace_provider_keys"]);
+const SERVICE_ROLE_ONLY = new Set(["routine_deliveries"]);
 
 let tables: string[] = [];
 

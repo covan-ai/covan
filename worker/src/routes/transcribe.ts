@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
-import { transcriptionCost } from "../lib/entitlements";
-import { transcribeAudio } from "../lib/transcribe";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
+import { TRANSCRIPTION_MODEL, transcribeAudio } from "../lib/transcribe";
 
 const transcribe = new Hono<AppEnv>();
 
@@ -24,13 +23,10 @@ function extOf(name: string): string {
 transcribe.post("/transcribe", async (c) => {
   // Before the audio goes anywhere. The spend happens at OpenAI, and there is
   // no way to un-transcribe a recording once it has been sent.
-  const denied = await guardQuota(c);
+  const denied = await guardCredits(c);
   if (denied) return denied;
 
-  // Whose key answers. `guardQuota` sets this only when the caller is past
-  // their allowance and the workspace is carrying it from here; undefined is
-  // the normal case and means the operator's.
-  const env = c.get("providerEnv") ?? c.env;
+  const env = c.env;
 
   const contentLength = parseInt(c.req.header("content-length") ?? "", 10);
   if (Number.isFinite(contentLength) && contentLength > MAX_SIZE) {
@@ -54,7 +50,13 @@ transcribe.post("/transcribe", async (c) => {
 
   // Charged before the answer is shaped, and charged either way: the audio was
   // sent and billed whether or not there turned out to be a sentence in it.
-  await recordQuota(c, transcriptionCost(result.audioTokens));
+  if (result.audioTokens > 0) {
+    await recordCredits(c, {
+      kind: "transcription",
+      model: TRANSCRIPTION_MODEL,
+      audioTokens: Math.round(result.audioTokens),
+    });
+  }
 
   // Heard nothing. A 200 with an empty string would leave the composer
   // unchanged and the button looking broken, so the silence is stated instead.

@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { chunkText, embedTexts } from "../lib/embeddings";
+import { chunkText, embedTexts, embeddingModel } from "../lib/embeddings";
 import { contentTypeFor, EXCERPT_LIMIT, extractDocumentText } from "../lib/extract";
 import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
-import { embeddingCost } from "../lib/entitlements";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
+import { embeddingSpend } from "../lib/entitlements";
 import { insertChunkRows } from "../lib/chunk-store";
 import { callDeletionFn } from "../lib/deletion";
 
@@ -230,15 +230,7 @@ documents.post("/documents/:id/reindex", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
-  // Re-embedding a large document is real spend, and this endpoint can be
-  // called repeatedly on the same one.
-  const denied = await guardQuota(c);
-  if (denied) return denied;
-
-  // Whose key answers. `guardQuota` sets this only when the caller is past
-  // their allowance and the workspace is carrying it from here; undefined is
-  // the normal case and means the operator's.
-  const env = c.get("providerEnv") ?? c.env;
+  const env = c.env;
 
   const { data: doc, error } = await db
     .from("documents")
@@ -251,6 +243,11 @@ documents.post("/documents/:id/reindex", async (c) => {
   const workspaceId = (doc as { knowledge_bundles?: { workspace_id?: string } | null })
     .knowledge_bundles?.workspace_id;
   if (!workspaceId) return c.json({ error: "document has no workspace" }, 400);
+
+  // Re-embedding a large document is real spend, and this endpoint can be
+  // called repeatedly on the same one. The document's workspace pays.
+  const denied = await guardCredits(c, workspaceId);
+  if (denied) return denied;
 
   // Re-decode the full text from R2 for text formats. PDFs can't be parsed
   // server-side (extractDocumentText returns ""), so fall back to the stored
@@ -281,7 +278,7 @@ documents.post("/documents/:id/reindex", async (c) => {
   try {
     const embedded = await embedTexts(env, chunks);
     vectors = embedded.vectors;
-    await recordQuota(c, embeddingCost(embedded.tokens));
+    await recordCredits(c, embeddingSpend(embeddingModel(env), embedded.tokens, "reindex"));
   } catch (e) {
     console.error("reindex embed failed", id, e);
     return c.json({ error: "failed to embed document" }, 502);

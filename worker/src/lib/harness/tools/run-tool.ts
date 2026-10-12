@@ -1,5 +1,4 @@
 import { composioConfigured, executeTool, type ComposioTool } from "../../composio/client";
-import { COMPOSIO_CALL_TOKENS } from "../../entitlements";
 import { MAX_TOOL_OUTPUT_CHARS } from "../budget";
 import { compactForModel } from "../compact";
 import { loadConnection, unavailableTools, type ToolConnection } from "../connections";
@@ -33,9 +32,9 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
  *      made on somebody's behalf.
  *   3. **A person said yes.** Once per connection per turn, or in advance
  *      through a `tool_connection_grants` row set to `always` (0063).
- *   4. **The allowance is checked before the network**, because this is the one
- *      thing in Covan that spends the operator's money outside the model bill
- *      and cannot be covered by a workspace's own key. See `lib/harness/spend.ts`.
+ *   4. **Credits are checked before the network**, because this is one of the
+ *      things in Covan that spends the operator's money outside the model
+ *      bill, decided by the model mid-turn. See `lib/harness/spend.ts`.
  *
  * WHY THE DESCRIPTION TALKS ABOUT TRIMMING. The first real use of this tool —
  * "list my last five meetings" — spent five calls on one question, and four of
@@ -572,11 +571,11 @@ export const runToolTool: AgentTool = {
       { signal: ctx.signal },
     );
     // Recorded whether it worked or not. Composio bills for the attempt, and a
-    // counter that only counts successes is a counter that can be run up by
+    // ledger that only counts successes is a counter that can be run up by
     // failing — `wasBilled` is what keeps the two failures that never reached
     // them out of it.
     if (result.kind === "ok" || wasBilled(result.status)) {
-      await spend(ctx, COMPOSIO_CALL_TOKENS);
+      await spend(ctx, [{ kind: "composio_call", toolSlug: slug }]);
     }
 
     if (result.kind === "error") {

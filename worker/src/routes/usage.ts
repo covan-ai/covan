@@ -3,7 +3,7 @@ import type { AppEnv } from "../types";
 import { getActiveWorkspaceId } from "../lib/workspace";
 import { resolveModel, type ModelEnv } from "../lib/models";
 import { estimateCostUsd } from "../lib/pricing";
-import { weighTokens } from "../lib/entitlements";
+import type { CreditSnapshot } from "../lib/entitlements";
 
 const usage = new Hono<AppEnv>();
 
@@ -101,7 +101,6 @@ const emptyTotals = {
   cacheWriteTokens: 0,
   measuredPromptTokens: 0,
   totalTokens: 0,
-  weightedTokens: 0,
   estCostUsd: 0,
 };
 
@@ -143,17 +142,6 @@ function mapAgent(r: UsageRow, env?: ModelEnv) {
     cacheWriteTokens,
     measuredPromptTokens,
     totalTokens: promptTokens + completionTokens,
-    // What those tokens cost the allowance, as against how many of them moved.
-    // Sent rather than left for the client to work out, so the screen that
-    // turns an allowance into "replies left" divides by the same number the
-    // counter is charged — see `weighTokens`, and `src/lib/quota.ts` for what
-    // the two disagreeing looked like.
-    weightedTokens: weighTokens({
-      promptTokens,
-      completionTokens,
-      cachedTokens,
-      cacheWriteTokens,
-    }),
     // Priced by what answered, not by `model` above — which is what the agent
     // is set to now, and therefore what it will answer with NEXT. The two
     // disagreeing on a row is the fact rather than a glitch: see `costOf`.
@@ -179,7 +167,6 @@ function sumTotals(agents: ReturnType<typeof mapAgent>[]) {
       cacheWriteTokens: acc.cacheWriteTokens + a.cacheWriteTokens,
       measuredPromptTokens: acc.measuredPromptTokens + a.measuredPromptTokens,
       totalTokens: acc.totalTokens + a.totalTokens,
-      weightedTokens: acc.weightedTokens + a.weightedTokens,
       estCostUsd: acc.estCostUsd + a.estCostUsd,
     }),
     { ...emptyTotals },
@@ -193,18 +180,12 @@ usage.get("/usage", async (c) => {
   const db = c.get("db");
   const user = c.get("user");
 
-  // What this user may still spend. `limit: null` on an unmetered install, and
-  // the interface renders nothing for it.
-  const quota = await c
-    .get("entitlements")
-    .snapshot(user.id)
-    .catch((err) => {
-      console.error("quota snapshot failed", err);
-      return { used: 0, limit: null, resetsAt: null };
-    });
-
   const workspaceId = await getActiveWorkspaceId(db, user.id);
-  if (!workspaceId) return c.json({ agents: [], totals: emptyTotals, quota });
+  if (!workspaceId) {
+    return c.json({ agents: [], totals: emptyTotals, credits: { metered: false } });
+  }
+
+  const credits = await creditsOf(c.get("entitlements"), workspaceId);
 
   const { data, error } = await db.rpc("workspace_usage", { p_workspace_id: workspaceId });
   if (error) {
@@ -213,7 +194,85 @@ usage.get("/usage", async (c) => {
   }
 
   const agents = ((data ?? []) as UsageRow[]).map((r) => mapAgent(r, c.env));
-  return c.json({ agents, totals: sumTotals(agents), quota });
+  return c.json({ agents, totals: sumTotals(agents), credits });
+});
+
+/**
+ * What the active workspace has left. `metered: false` on an unmetered install
+ * and on a failed read, and the interface renders nothing for it: a balance
+ * nobody could read is not a balance of zero.
+ */
+async function creditsOf(
+  entitlements: { snapshot(workspaceId: string): Promise<CreditSnapshot> },
+  workspaceId: string,
+): Promise<CreditSnapshot> {
+  try {
+    return await entitlements.snapshot(workspaceId);
+  } catch (err) {
+    console.error("credit snapshot failed", err);
+    return { metered: false };
+  }
+}
+
+/** How many ledger rows one request may ask for. */
+const LEDGER_MAX = 100;
+
+/** The hosted ledger's unit: a credit is a million of them. */
+const MICRO = 1_000_000;
+
+type LedgerRow = {
+  id: number;
+  created_at: string;
+  kind: string;
+  model: string | null;
+  purpose: string | null;
+  delta_micro: number | string;
+  balance_after: number | string;
+};
+
+// GET /usage/credits/ledger — the active workspace's recent charges and grants.
+//
+// Only the hosted build keeps a ledger; everywhere else this answers an empty
+// list rather than probing for a table that was never created. Read through
+// the caller's own client, so the policy decides who may see it — admins only —
+// and the columns are named, because the person who caused a charge is
+// withheld from every reader: a workspace's figures are never reported per
+// person (see 0032).
+usage.get("/usage/credits/ledger", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  if (!workspaceId) return c.json({ entries: [] });
+
+  const credits = await creditsOf(c.get("entitlements"), workspaceId);
+  if (!credits.metered) return c.json({ entries: [] });
+
+  const asked = Number(c.req.query("limit"));
+  const limit = Number.isFinite(asked) && asked > 0 ? Math.min(Math.floor(asked), LEDGER_MAX) : 50;
+
+  const { data, error } = await db
+    .from("credit_ledger")
+    .select("id, created_at, kind, model, purpose, delta_micro, balance_after")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("credit ledger read failed", error);
+    return c.json({ error: "failed to load the ledger" }, 500);
+  }
+
+  const entries = ((data ?? []) as LedgerRow[]).map((r) => ({
+    id: r.id,
+    at: r.created_at,
+    kind: r.kind,
+    model: r.model,
+    purpose: r.purpose,
+    credits: Number(r.delta_micro) / MICRO,
+    balanceAfter: Number(r.balance_after) / MICRO,
+  }));
+  return c.json({ entries });
 });
 
 /**

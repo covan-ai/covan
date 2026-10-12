@@ -93,14 +93,20 @@ describe("runRoutineWithTools", () => {
 
   it("runs the loop and reports what the whole turn cost", async () => {
     const out = await runRoutineWithTools(env, db)(input, env);
-    // Two figures, and they differ on purpose. `tokens` is how many moved —
-    // 100 prompt + 40 completion. `weightedTokens` is what they cost the
-    // allowance: the prompt was all fresh, and output is charged five times
-    // input, so 100 + 40x5. See `weighTokens`.
+    // Two answers, on purpose. `tokens` is how many moved — 100 prompt + 40
+    // completion — and `spend` is what the ledger is told.
     expect(out).toEqual({
       text: "Forty orders.",
       tokens: 140,
-      weightedTokens: 300,
+      spend: [
+        {
+          kind: "completion",
+          model: "gpt-4.1",
+          promptTokens: 100,
+          completionTokens: 40,
+          purpose: "routine",
+        },
+      ],
       declined: false,
       // And the two facts the row keeps about the call itself — see 0070 and
       // the describe at the foot of this file.
@@ -205,9 +211,13 @@ describe("runRoutineWithTools", () => {
     });
     const out = await runRoutineWithTools(env, db)({ ...input, mayDecline: true }, env);
 
-    // 140 from the turn plus 25 from the decision call; weighted, 300 plus
-    // (20 + 5x5).
-    expect(out).toMatchObject({ declined: true, tokens: 165, weightedTokens: 345 });
+    // 140 from the turn plus 25 from the decision call, and both calls reach
+    // the ledger.
+    expect(out).toMatchObject({ declined: true, tokens: 165 });
+    expect(out?.spend).toEqual([
+      expect.objectContaining({ promptTokens: 100, completionTokens: 40 }),
+      expect.objectContaining({ promptTokens: 20, completionTokens: 5 }),
+    ]);
     // The turn that did the work was never asked for JSON, and the turn that
     // decided was never offered a tool.
     expect(runAgentTurn.mock.calls[0][0].request.json).toBeUndefined();

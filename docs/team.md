@@ -284,39 +284,15 @@ This is the third thing admin governs, and the list above says two. Read it as
 "the workspace row, the people in it, and what the workspace costs" — the first
 two are what admin _controls_, and this one is only something it can _see_.
 
-That figure is a read, not a lever. Admin has one beside it: an admin may set
-the workspace's own OpenAI key — and, if they want it, an Anthropic one too —
-under Settings, on the same Usage screen. From the moment an individual
-member's allowance runs out, the workspace's key answers for that member
-instead, still per member, so one person spending through theirs first shortens
-nobody else's month. Once set, the key is stored encrypted and is never shown
-again — only a short hint, like `sk-…4f2a`, in its place.
-
-**The OpenAI one is the key that carries it.** Embeddings, dictation and the
-default model all run on OpenAI, so a workspace that sets only the Anthropic key
-has not set up anything — its people keep running out, exactly as before. The
-Anthropic field is optional in the sense that Claude models need it and nothing
-else does, not in the sense that either one will do. Setting it alone is the one
-way to leave this half-done, so the Usage screen says so on the spot rather than
-letting somebody find out from a wall that never lifts.
-
-**The field is there before anybody needs it, and that is deliberate.** The
-allowance is per member, so the person who hits the wall is almost never the
-person who can do anything about it: they tell an admin, and that admin still
-has replies of their own left. An admin who could only see the key field once
-they had personally run out would be told too late every time — and could not
-remove a key already stored until they had burned a month to reach the button.
-So the field is on the Usage screen for every admin of a hosted workspace,
-whether or not anybody has run out yet. A member or viewer sees no field; at
-the wall they are told which role to ask.
-
-**One limitation worth stating plainly.** The key that pays is the *caller's
-active workspace's* key, not necessarily the workspace the work belongs to.
-For almost everybody these are the same thing. For somebody who belongs to two
-workspaces, a scheduled routine, a connected-source sync or a Slack question
-that belongs to workspace A can be funded by workspace B's key — whichever one
-that person had active. Nothing crosses a tenancy boundary in what is read or
-written; it is only whose key is billed. Known, and not yet fixed.
+That figure is a read, not a lever. On the hosted service it sits beside the
+workspace's credits: one balance every member spends from, charged to the
+workspace the work belongs to — a conversation's, a routine's, a connection's
+— regardless of which workspace the person has open. An admin also sees the
+ledger behind it, the last fifty charges and top-ups by kind and model and never
+by person.
+There is no key to bring: Covan is the only model provider on the hosted
+service, and a workspace that runs out asks for more credits from the same
+screen.
 
 The figures also now account for prompt caching. Most of what Covan sends the
 model on any given turn is the same bytes as last turn — the persona, the
@@ -354,8 +330,8 @@ routine may point at any channel belonging to its own owner, so a channel create
 in one workspace can back a routine in another. Keeping a channel in the
 workspace whose routines use it is the arrangement the schema expects.
 
-Which notices the engine sends you — a routine pausing itself, a run skipped for
-a spent allowance — is also yours alone, a row in `notification_preferences` with
+Which notices the engine sends you — a routine pausing itself, a run skipped
+because the workspace is out of credits — is also yours alone, a row in `notification_preferences` with
 your user id as its primary key. A missing row means everything is on, which is
 why turning a notice off is an update rather than a delete.
 

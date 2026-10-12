@@ -204,7 +204,7 @@ profile at the provider as well — the first because stopping Covan from holdin
 a login should not cost somebody their account, the second because erasure has
 to be complete. The key is the deployment's,
 not a member's: nobody is asked to pay a third party to use the feature, and a
-task is metered against the allowance they already have. Unset the variable and
+task is charged to the credits their workspace already has. Unset the variable and
 the tool does not exist. The public list for covan.app is on the
 [subprocessor page](https://covan.app/subprocessors).
 
@@ -521,10 +521,10 @@ limited per account rather than per address, because after authentication there
 is an account, and a per-address limit punishes a shared office for one person's
 runaway loop.
 
-Above the per-minute limit sits the monthly allowance, and the two are not
-substitutes: an allowance bounds the bill, a rate limit bounds how fast it is
-reached. A self-hosted install ships no allowance at all, which is correct — it
-is your OpenAI key and your ceiling to set.
+Above the per-minute limit sit the workspace's credits, and the two are not
+substitutes: a balance bounds the bill, a rate limit bounds how fast it is
+reached. A self-hosted install ships no credits at all, which is correct — it
+is your provider key and your ceiling to set.
 
 ## What Covan does not have
 

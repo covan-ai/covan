@@ -3,24 +3,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AppEnv } from "../types";
 import type { Entitlements } from "../lib/entitlements";
 
-const { transcribeAudio, keysForUser } = vi.hoisted(() => ({
+const { transcribeAudio } = vi.hoisted(() => ({
   transcribeAudio: vi.fn(),
-  keysForUser: vi.fn(),
 }));
 vi.mock("../lib/transcribe", async (orig) => ({
   ...(await orig<typeof import("../lib/transcribe")>()),
   transcribeAudio,
 }));
-// Delegates to the real resolver by default, so every existing test below
-// exercises the same fallback-to-house behaviour it always has. Only the
-// workspace-key test overrides a single call, with `mockResolvedValueOnce` —
-// this is `guardQuota`'s own seam (Task 4/5), not something this file has to
-// re-derive from a fake database and real ciphertext.
-vi.mock("../lib/keys/resolve", async (orig) => {
-  const actual = await orig<typeof import("../lib/keys/resolve")>();
-  keysForUser.mockImplementation(actual.keysForUser);
-  return { ...actual, keysForUser };
-});
+// A transcription has no row of its own, so the caller's active workspace
+// pays. Resolved here rather than against a fake database.
+vi.mock("../lib/workspace", () => ({ getActiveWorkspaceId: async () => "ws-1" }));
 
 const { transcribe } = await import("./transcribe");
 
@@ -32,7 +24,7 @@ function appWith(entitlements: Partial<Entitlements> = {}) {
     c.set("entitlements", {
       check: async () => ({ allowed: true }),
       record,
-      snapshot: async () => ({ used: 0, limit: null, resetsAt: null }),
+      snapshot: async () => ({ metered: false }),
       ...entitlements,
     } as Entitlements);
     c.env = { OPENAI_API_KEY: "sk-test" } as never;
@@ -69,15 +61,8 @@ describe("POST /transcribe", () => {
 
   // Before the audio is sent anywhere, for the same reason the chat stream
   // checks first: the spend happens at OpenAI, not here.
-  it("refuses a caller who is out of allowance, and transcribes nothing", async () => {
-    const { app } = appWith({
-      check: async () => ({
-        allowed: false,
-        used: 1200,
-        limit: 1000,
-        resetsAt: "2026-09-01T00:00:00.000Z",
-      }),
-    });
+  it("refuses a workspace that is out of credits, and transcribes nothing", async () => {
+    const { app } = appWith({ check: async () => ({ allowed: false, balance: 0 }) });
 
     const res = await post(app, recording());
 
@@ -85,13 +70,16 @@ describe("POST /transcribe", () => {
     expect(transcribeAudio).not.toHaveBeenCalled();
   });
 
-  it("charges the caller for the audio it transcribed", async () => {
+  it("charges the caller's workspace for the audio it transcribed", async () => {
     const { app, record } = appWith();
 
     await post(app, recording());
 
-    // 2400 audio tokens weighted at 0.32 — see transcriptionCost.
-    expect(record).toHaveBeenCalledWith("user-1", 768);
+    expect(record).toHaveBeenCalledWith(
+      "ws-1",
+      [{ kind: "transcription", model: "gpt-4o-mini-transcribe", audioTokens: 2400 }],
+      { userId: "user-1" },
+    );
   });
 
   it("refuses a request carrying no recording", async () => {
@@ -166,7 +154,11 @@ describe("POST /transcribe", () => {
 
     await post(app, recording());
 
-    expect(record).toHaveBeenCalledWith("user-1", 13);
+    expect(record).toHaveBeenCalledWith(
+      "ws-1",
+      [{ kind: "transcription", model: "gpt-4o-mini-transcribe", audioTokens: 40 }],
+      { userId: "user-1" },
+    );
   });
 
   it("reports a failure at OpenAI as a failure, not as silence", async () => {
@@ -176,31 +168,5 @@ describe("POST /transcribe", () => {
     const res = await post(app, recording());
 
     expect(res.status).toBe(502);
-  });
-
-  // The point of Task 6: once `guardQuota` has decided the workspace is
-  // carrying this caller past their allowance, the route has to actually spend
-  // on that key rather than the operator's — not just let the request through.
-  it("transcribes on the workspace key when the caller is out of allowance", async () => {
-    keysForUser.mockResolvedValueOnce({
-      openai: "ws-openai",
-      anthropic: undefined,
-      source: "workspace",
-    });
-    const { app, record } = appWith({
-      check: async () => ({
-        allowed: false,
-        used: 1200,
-        limit: 1000,
-        resetsAt: "2026-09-01T00:00:00.000Z",
-      }),
-    });
-
-    const res = await post(app, recording());
-
-    expect(res.status).toBe(200);
-    expect(transcribeAudio).toHaveBeenCalledWith("ws-openai", expect.anything());
-    // Spent on the workspace's key, so the operator's counter must not move.
-    expect(record).not.toHaveBeenCalled();
   });
 });

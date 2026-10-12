@@ -85,8 +85,8 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
             <p className="text-xs text-muted-foreground">
               This is the only time it is shown. Covan stores a hash of it, so nobody — including us
               — can show it again. Anyone who has this URL can start this routine, which spends your
-              allowance, so treat it the way you would a password. Lost it? Make a new one here; the
-              old one stops working at once.
+              workspace's credits, so treat it the way you would a password. Lost it? Make a new one
+              here; the old one stops working at once.
             </p>
           </div>
         ) : configured ? (

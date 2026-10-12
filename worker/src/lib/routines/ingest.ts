@@ -25,9 +25,9 @@
  * The run happens as the routine's owner anyway, and by construction rather
  * than by impersonation: `runRoutine` never resolves a caller. Every id it uses
  * comes off the routine row, and it re-checks `workspace_members` before it
- * does anything. The owner's allowance is charged for the same reason — the
- * executor already asks `entitlements.check(routine.user_id)`, so a poked run
- * costs its owner exactly what a scheduled one does, with no new code.
+ * does anything. The routine's workspace is charged for the same reason — the
+ * executor already asks `entitlements.check(routine.workspace_id)`, so a poked
+ * run costs exactly what a scheduled one does, with no new code.
  */
 
 import type { RoutineEnv } from "../../types";

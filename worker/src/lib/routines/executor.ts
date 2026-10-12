@@ -17,24 +17,21 @@ import {
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
 import type { CoverageRunInput, CoverageRunResult } from "./coverage-source";
-import { embeddingCost, type Entitlements } from "../entitlements";
-import { WARN_AT, sameInstant } from "../entitlements/warn";
-import {
-  billsTheOperator,
-  keysForUser,
-  withProviderKeys,
-  type ProviderKeys,
-} from "../keys/resolve";
+import { embeddingSpend, spends, type Entitlements, type Spend } from "../entitlements";
+import { embeddingModel } from "../embeddings";
 
 export const MAX_FAILURES = 5;
 
 /**
- * Written to `routine_runs.error` when a run is skipped for quota, and matched
- * exactly on the next tick to decide whether the owner has already been told.
- * Kept free of anything variable — a reset date in here would make every run
+ * Written to `routine_runs.error` when a run is skipped for credits, and
+ * matched exactly on the next tick to decide whether the owner has already been
+ * told. Kept free of anything variable — a balance in here would make every run
  * look like a new one and the notice would repeat.
+ *
+ * The name is older than credits and is kept: it is compared by value, and a
+ * rename would buy nothing.
  */
-export const QUOTA_SKIP_REASON = "skipped: the owner's monthly token quota is used up";
+export const QUOTA_SKIP_REASON = "skipped: this workspace has no credits left";
 
 /**
  * Written to `routine_runs.error` when the model read what arrived and judged
@@ -187,8 +184,8 @@ export type AgentRunResult = {
   text: string;
   /** How many tokens moved. The durable record, and what the run history shows. */
   tokens: number;
-  /** What they cost, in the unit the allowance counts in. See `weighTokens`. */
-  weightedTokens: number;
+  /** What was consumed, for the ledger. */
+  spend: Spend[];
   declined: boolean;
 } & ModelCall;
 
@@ -219,12 +216,7 @@ export type RetrievalInput = { agentId: string; query: string };
 export type ExecutorDeps = {
   /** Service-role client — bypasses RLS. See the scoping note below. */
   db: SupabaseClient;
-  /**
-   * The house env, before any per-owner key overlay. Kept alongside
-   * `entitlements` so `runRoutine` can ask `keysForUser` whose key answers this
-   * run — the same question `guardQuota` asks on a request, asked here because
-   * a scheduled run has no request to guard.
-   */
+  /** The deployment's env. Every model call a run makes goes through it. */
   env: RoutineEnv;
   summarise: (
     input: SummariseInput,
@@ -233,8 +225,8 @@ export type ExecutorDeps = {
     ModelCall & {
       text: string;
       tokens: number;
-      /** What they cost, in the unit the allowance counts in. See `weighTokens`. */
-      weightedTokens: number;
+      /** What was consumed, for the ledger. */
+      spend: Spend[];
       /**
        * The model read the material and judged none of it to be what the
        * instruction asked for, so this run delivers nothing. Only ever true
@@ -447,19 +439,16 @@ export async function runRoutine(
       return { status: "skipped", itemsNew: 0 };
     }
 
-    // Quota is checked here — after membership, before anything is fetched or
-    // claimed. It cannot move further down: past `claimItemKeys` a skipped run
-    // leaves delivery keys reserved, and `claimItemKeys` only ever returns
+    // Credits are checked here — after membership, before anything is fetched
+    // or claimed. It cannot move further down: past `claimItemKeys` a skipped
+    // run leaves delivery keys reserved, and `claimItemKeys` only ever returns
     // newly-inserted ones, so those items could never be delivered again. The
-    // cursor is deliberately left unadvanced, so once the quota resets the run
-    // picks up exactly what it would have reported.
-    const verdict = await deps.entitlements.check(routine.user_id);
-    // The routine's owner may be past their allowance while their workspace
-    // carries it. Resolved here rather than in `guardQuota` because a scheduled
-    // run has no request to guard.
-    const keys = await keysForUser(deps.env, deps.db, routine.user_id, verdict.allowed);
-    const runEnv = withProviderKeys(deps.env, keys);
-    if (!verdict.allowed && billsTheOperator(keys)) {
+    // cursor is deliberately left unadvanced, so once credits are added the run
+    // picks up exactly what it would have reported. The routine's workspace
+    // pays, whoever triggered it — a scheduled run has no caller at all.
+    const verdict = await deps.entitlements.check(routine.workspace_id);
+    const runEnv = deps.env;
+    if (!verdict.allowed) {
       // Read before `finish` writes this run: the question is whether the
       // PREVIOUS one was also a quota skip.
       const alreadyTold = await lastRunWasQuotaSkip(deps.db, routine.id);
@@ -470,7 +459,7 @@ export async function runRoutine(
         error: QUOTA_SKIP_REASON,
       });
       if (!alreadyTold) {
-        await announceQuotaSkip(routine, deps, verdict.resetsAt);
+        await announceQuotaSkip(routine, deps);
       }
       return { status: "skipped", itemsNew: 0 };
     }
@@ -526,20 +515,13 @@ export async function runRoutine(
         // both at once, which is what lets the branch below read them as
         // required rather than optional; the type does not say the two are
         // always set together, but `coverage-source.ts` guarantees they are.
-        //
-        // `weightedTokens` is the real weighted figure now that
-        // `clusterQuestions` reports it (fix round 1, finding B2/B3) — the
-        // `?? result.tokens` fallback is only for a `coverage` dependency that
-        // has not been updated to send it, which would otherwise undercharge
-        // nothing truer than the raw count it already had.
         if (result.model !== undefined && result.tokens !== undefined) {
           await finish(routine, deps, startedAt, {
             status: "skipped",
             itemsNew: 0,
             error: result.note,
             tokens: result.tokens,
-            weightedTokens: result.weightedTokens ?? result.tokens,
-            keys,
+            spend: result.spend ?? [],
             modelCall: { model: result.model, modelOutcome: "answered" },
           });
         } else {
@@ -577,8 +559,7 @@ export async function runRoutine(
           status: "skipped",
           itemsNew: 0,
           tokens: result.tokens,
-          weightedTokens: result.weightedTokens ?? result.tokens,
-          keys,
+          spend: result.spend,
           modelCall: { model: result.model, modelOutcome: "answered" },
         });
         return { status: "skipped", itemsNew: 0 };
@@ -610,8 +591,7 @@ export async function runRoutine(
         summary: result.summary,
         modelCall: { model: result.model, modelOutcome: "answered" },
         tokens: result.tokens,
-        weightedTokens: result.weightedTokens ?? result.tokens,
-        keys,
+        spend: result.spend,
       });
       return { status: "ok", itemsNew: 1 };
     }
@@ -796,9 +776,6 @@ export async function runRoutine(
     // has been shown to exist — so a tick that will send nothing does not pay
     // to embed a query, which on a healthy feed is most ticks.
     //
-    // Through `runEnv`, so an owner who brought their own key pays for the
-    // embedding as well as the completion.
-    //
     // Best-effort, for the reason `retrieval.ts` gives about a chat turn: an
     // ungrounded answer beats no answer. That module already falls back to
     // persona-only on its own failures, so reaching this catch means something
@@ -888,13 +865,19 @@ export async function runRoutine(
         // on the row to answer.
         itemsNew: items.length,
         itemsOverflow: overflow,
-        tokens: summary.tokens + embeddingCost(embeddingTokens),
-        // Embedding cost is already in the counter's unit — see
-        // `EMBEDDING_TOKEN_WEIGHT` — so it is added to both without reweighing.
-        weightedTokens: summary.weightedTokens + embeddingCost(embeddingTokens),
+        tokens: summary.tokens,
+        spend: [
+          ...summary.spend,
+          ...spends(
+            embeddingSpend(
+              embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
+              embeddingTokens,
+              "retrieval",
+            ),
+          ),
+        ],
         cursor: nextCursor,
         error: NOTHING_RELEVANT_REASON,
-        keys,
         // A declined run made the call — two of them, in fact, since the
         // decision is a turn of its own. The columns describe the request, not
         // the delivery, so a `skipped` run that spent real money still says
@@ -946,23 +929,29 @@ export async function runRoutine(
       documentId: filing.documentId,
       filingNote: filing.note,
       modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
-      // One counter write for the run, so the embeddings this run paid for are
+      // One ledger write for the run, so the embeddings this run paid for are
       // charged with the completion rather than in a second place that a later
-      // change could forget — including the decision about whose key paid,
-      // which `finish` makes once from `keys`.
-      //
-      // `filing.indexTokens` joins the retrieval embeddings in the same sum for
-      // exactly that reason: filing buys embeddings too, and a second
-      // `record()` call for them would be a second place to forget whose key
-      // paid. A 3,000-character summary is about two chunks — roughly 800
-      // embedding tokens, which `embeddingCost` weights down to single figures
-      // against a chat token. Filing is opt-in because of what it means, not
-      // because of what it costs.
-      tokens: summary.tokens + embeddingCost(embeddingTokens + filing.indexTokens),
-      weightedTokens: summary.weightedTokens + embeddingCost(embeddingTokens + filing.indexTokens),
+      // change could forget. `filing.indexTokens` joins them for the same
+      // reason: filing buys embeddings too. `tokens` stays the model's count,
+      // which is what the run history shows.
+      tokens: summary.tokens,
+      spend: [
+        ...summary.spend,
+        ...spends(
+          embeddingSpend(
+            embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
+            embeddingTokens,
+            "retrieval",
+          ),
+          embeddingSpend(
+            embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
+            filing.indexTokens,
+            "index",
+          ),
+        ),
+      ],
       cursor: nextCursor,
       summary: summary.text,
-      keys,
     });
     return { status: "ok", itemsNew: items.length };
   } catch (err) {
@@ -1115,15 +1104,10 @@ async function fileOutput(
  * What a run turned out to be.
  *
  * Split into a common half and a discriminated one so the money question cannot
- * be answered by omission. Only an `"ok"` run ever spends, so only `"ok"` may
- * carry a non-zero `tokens` — and, having spent, it is *required* to name whose
- * key it spent. The alternative shape, an optional `keys?`, compiles for a
- * future caller who forgets it and then quietly bills the operator for tokens
- * somebody else's key paid for; that is a mistake worth spending a type on.
- *
- * `tokens: 0` as a literal on the other branch is the same idea from the other
- * end: a skipped or failed run that wanted to report a spend would have to
- * become an `"ok"` one first, and would then have to say who paid.
+ * be answered by omission. A branch that can have spent is *required* to say
+ * what it spent (`spend`), so a future caller that forgets does not compile —
+ * and a skipped or failed run that wanted to report a spend would have to
+ * become one of the spending branches first.
  */
 type RunOutcome = {
   itemsNew: number;
@@ -1145,7 +1129,7 @@ type RunOutcome = {
    * The model call this run made, when it made one.
    *
    * Absent on every branch that never reached a model — a feed that had not
-   * moved, an allowance already spent, an upstream that failed before the
+   * moved, credits already spent, an upstream that failed before the
    * request. Absent means null in both columns, which is the truth rather than
    * a default: there is no model and no outcome for a request nobody sent.
    */
@@ -1155,30 +1139,26 @@ type RunOutcome = {
       status: "ok";
       tokens: number;
       /**
-       * The same spend in the unit the allowance counts in, which is what the
-       * counter is charged. `tokens` stays the record of how many moved, and
-       * the run history shows that one. See `weighTokens`.
+       * What was consumed, which is what the ledger is charged. `tokens` stays
+       * the record of how many moved, and the run history shows that one.
+       * Required, and that is the point.
        */
-      weightedTokens: number;
-      /** Whose key paid for `tokens`. Required, and that is the point. */
-      keys: ProviderKeys;
+      spend: Spend[];
     }
   | {
       /**
        * A run that paid for a model call and then decided not to send.
        *
        * It is not an `"ok"` run — nothing was delivered — and it is not free
-       * either, so it carries the same answer about who paid. This branch
-       * exists so that widening "skipped" to admit a spend could not be done
-       * without also answering that question: `keys` is required here for the
-       * same reason it is required above.
+       * either, so it says what it spent. This branch exists so that widening
+       * "skipped" to admit a spend could not be done without also saying so:
+       * `spend` is required here for the same reason it is required above.
        */
       status: "skipped";
       tokens: number;
-      weightedTokens: number;
-      keys: ProviderKeys;
+      spend: Spend[];
     }
-  | { status: "skipped" | "failed"; tokens: 0; weightedTokens?: 0; keys?: undefined }
+  | { status: "skipped" | "failed"; tokens: 0; spend?: undefined }
 );
 
 async function finish(
@@ -1194,63 +1174,52 @@ async function finish(
   // would leave claimed_at set with next_run_at and the cursor unadvanced —
   // which for a web or none routine means re-delivering the same content on
   // every tick. Both have to be loud.
-  const { error: runError } = await deps.db.from("routine_runs").insert({
-    routine_id: routine.id,
-    started_at: startedAt.toISOString(),
-    finished_at: finishedAt.toISOString(),
-    status: outcome.status,
-    // What the run delivered, and — separately — what the model did. See 0070
-    // for why these are two columns: `status` answers "did my routine send
-    // anything?" for a person reading the history, and these answer "and what
-    // happened to the request", which a run can get wrong while still
-    // delivering. Null together, from one optional field, so a branch cannot
-    // record one and forget the other.
-    model: outcome.modelCall?.model ?? null,
-    outcome: outcome.modelCall?.modelOutcome ?? null,
-    items_new: outcome.itemsNew,
-    items_overflow: outcome.itemsOverflow ?? 0,
-    tokens: outcome.tokens,
-    duration_ms: finishedAt.getTime() - startedAt.getTime(),
-    error: outcome.error ?? null,
-    summary: outcome.summary ?? null,
-    document_id: outcome.documentId ?? null,
-    filing_note: outcome.filingNote ?? null,
-  });
+  const { data: runRows, error: runError } = await deps.db
+    .from("routine_runs")
+    .insert({
+      routine_id: routine.id,
+      started_at: startedAt.toISOString(),
+      finished_at: finishedAt.toISOString(),
+      status: outcome.status,
+      // What the run delivered, and — separately — what the model did. See 0070
+      // for why these are two columns: `status` answers "did my routine send
+      // anything?" for a person reading the history, and these answer "and what
+      // happened to the request", which a run can get wrong while still
+      // delivering. Null together, from one optional field, so a branch cannot
+      // record one and forget the other.
+      model: outcome.modelCall?.model ?? null,
+      outcome: outcome.modelCall?.modelOutcome ?? null,
+      items_new: outcome.itemsNew,
+      items_overflow: outcome.itemsOverflow ?? 0,
+      tokens: outcome.tokens,
+      duration_ms: finishedAt.getTime() - startedAt.getTime(),
+      error: outcome.error ?? null,
+      summary: outcome.summary ?? null,
+      document_id: outcome.documentId ?? null,
+      filing_note: outcome.filingNote ?? null,
+    })
+    // The id is what the ledger files this run's charge against.
+    .select("id");
   if (runError) throw new Error(`routine_runs insert failed: ${runError.message}`);
+  const runId = (Array.isArray(runRows) ? runRows[0]?.id : undefined) as string | undefined;
 
-  // Charged to the routine's owner, not to whoever happened to trigger it — a
-  // scheduled run has no caller at all. Best-effort: the run is finished and
-  // delivered, and `routine_runs.tokens` above is the durable record, so a
-  // counter that cannot be written must not turn a successful run into a failed
+  // Charged to the routine's workspace, not to whoever happened to trigger it
+  // — a scheduled run has no caller at all. Best-effort: the run is finished
+  // and delivered, and `routine_runs.tokens` above is the durable record, so a
+  // ledger that cannot be written must not turn a successful run into a failed
   // one that retries and pays twice.
-  // Only what the operator is billed for — same rule as `recordQuota` on a
-  // request, asked through the same predicate. `outcome.keys` is what makes the
-  // type narrow rather than a second guard: the branches that can have spent
-  // anything are exactly the branches carrying the answer to who paid, so a
-  // spend the union let through without one would not compile.
   //
-  // Not keyed on `status === "ok"` any more. A run that paid for a model call
-  // and then declined to send is a skipped run that spent real money, and
-  // billing it as if it were free would make a filtered routine free to run.
-  // Guarded on the number that is actually recorded, not on the one beside it.
-  // `record` is called directly here rather than through `recordQuota`, so it
-  // has none of that function's own `Number.isFinite` check — and `> 0` is
-  // false for both `undefined` and `NaN`, which is the whole of what is needed.
-  if (
-    outcome.weightedTokens &&
-    outcome.weightedTokens > 0 &&
-    outcome.keys &&
-    billsTheOperator(outcome.keys)
-  ) {
+  // Not keyed on `status === "ok"`. A run that paid for a model call and then
+  // declined to send is a skipped run that spent real money, and charging it
+  // as if it were free would make a filtered routine free to run.
+  if (outcome.spend && outcome.spend.length > 0) {
     try {
-      // The weighted figure, not the raw one — the counter is denominated in
-      // what tokens cost, and `routine_runs.tokens` above already keeps what
-      // moved. `outcome.keys` being required on exactly the branches that can
-      // spend is what makes this reachable only where there is one.
-      await deps.entitlements.record(routine.user_id, outcome.weightedTokens);
-      await warnOwnerIfLow(routine, deps);
+      await deps.entitlements.record(routine.workspace_id, outcome.spend, {
+        userId: routine.user_id,
+        routineRunId: runId,
+      });
     } catch (err) {
-      console.error("failed to record routine token usage", err);
+      console.error("failed to record routine credits", err);
     }
   }
 
@@ -1392,103 +1361,23 @@ async function announceCoveragePause(
 }
 
 /**
- * Tell the owner a run was skipped because their allowance is spent.
+ * Tell the owner a run was skipped because the workspace is out of credits.
  *
  * Sent once, not once per tick. Ticks are minutes apart — five on the
  * Cloudflare trigger in wrangler.cron.toml, ROUTINE_TICK_MS on Node — so a
- * routine left waiting on a monthly allowance would otherwise mail its owner
- * thousands of times before the month turned over. `lastRunWasQuotaSkip` below
- * is what makes it once.
+ * routine left waiting on credits would otherwise mail its owner thousands of
+ * times before anybody topped up. `lastRunWasQuotaSkip` below is what makes it
+ * once.
  */
-/**
- * Say something before the allowance is gone, for somebody whose spend is all
- * scheduled.
- *
- * `lib/entitlements/warn.ts` does this on a request, and it is reached from
- * `recordQuota` — which a routine never calls, because a scheduled run has no
- * request to hang one off. So an account whose routines quietly spend a month's
- * allowance got no warning at all, and the first news of the limit was a run
- * skipped for being out of it. That is the failure `warnIfLow` was written to
- * remove, left open on the one path where nobody is watching.
- *
- * It shares the column rather than adding one, and that is deliberate:
- * `quota_warned_for` means "this period has been warned about", not "chat has
- * warned about it". Whichever side notices first sends the one message, and the
- * other stays quiet.
- *
- * `quota_exhausted` is the preference it asks, for the same reason — it is the
- * owner's switch for hearing about their allowance, and inventing a second one
- * would mean a migration to split a question nobody asked to have split.
- *
- * Best-effort throughout, like every notice from this engine: the run is
- * finished and delivered, and a message that cannot be sent must not turn a
- * successful run into a failed one.
- */
-async function warnOwnerIfLow(routine: RoutineRow, deps: ExecutorDeps): Promise<void> {
-  try {
-    const { used, limit, resetsAt } = await deps.entitlements.snapshot(routine.user_id);
-    // `limit: null` is the open build answering "unmetered" — a self-hosted
-    // Covan brings its own key and has no allowance to run low on.
-    if (limit === null || limit <= 0 || !resetsAt) return;
-    if (used / limit < WARN_AT) return;
 
-    const { data: prefs } = await deps.db
-      .from("notification_preferences")
-      .select("quota_warned_for")
-      .eq("user_id", routine.user_id)
-      .maybeSingle();
-    if (sameInstant(prefs?.quota_warned_for as string | null | undefined, resetsAt)) return;
-
-    // Stamped before the send, not after. The two orders fail differently: this
-    // way a dead delivery channel costs one missed warning, the other way round
-    // it costs a message per run for the rest of the period.
-    const { error } = await deps.db.from("notification_preferences").upsert(
-      {
-        user_id: routine.user_id,
-        quota_warned_for: resetsAt,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" },
-    );
-    if (error) return;
-
-    const when = new Date(resetsAt);
-    const readable = Number.isNaN(when.getTime())
-      ? "when your allowance resets"
-      : when.toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
-
-    await notifyOwner(routine, deps, "quota_exhausted", {
-      subject: "Your monthly allowance is running low",
-      body:
-        `Your routines have used ${Math.round((used / limit) * 100)}% of this month's token ` +
-        `allowance, and "${routine.name}" is one of them.\n\n` +
-        `Nothing has stopped. This is early notice rather than a problem: once the ` +
-        `allowance is gone, routines wait instead of running, and they start again by ` +
-        `themselves on ${readable}.\n\n` +
-        `You will not get this message again this month.`,
-    });
-  } catch {
-    // Nothing left to do. The spend is already recorded and the run is done.
-  }
-}
-
-async function announceQuotaSkip(
-  routine: RoutineRow,
-  deps: ExecutorDeps,
-  resetsAt: string,
-): Promise<void> {
-  const when = new Date(resetsAt);
-  const readable = Number.isNaN(when.getTime())
-    ? "when your allowance resets"
-    : when.toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
-
+async function announceQuotaSkip(routine: RoutineRow, deps: ExecutorDeps): Promise<void> {
   await notifyOwner(routine, deps, "quota_exhausted", {
-    subject: `Routine waiting on your allowance: ${routine.name}`,
+    subject: `Routine waiting on credits: ${routine.name}`,
     body:
-      `"${routine.name}" did not run: your monthly token allowance is used up.\n\n` +
+      `"${routine.name}" did not run: this workspace has no credits left.\n\n` +
       `Nothing has been lost. The routine was stopped before it read anything, so ` +
       `whatever it would have reported is still waiting, and it will run by itself ` +
-      `once the allowance resets on ${readable}.\n\n` +
+      `once a workspace admin adds credits.\n\n` +
       `You will not get this message again for this routine until then.`,
   });
 }
@@ -1566,7 +1455,7 @@ async function wantsNotice(
  * The engine has no memory between ticks, so the run history is where it looks.
  * A failure to read is treated as "already told" — the cost of staying quiet
  * once is a missed notice; the cost of guessing the other way is a mailbox
- * filled once per tick until the allowance resets.
+ * filled once per tick until credits are added.
  */
 async function lastRunWasQuotaSkip(db: SupabaseClient, routineId: string): Promise<boolean> {
   try {

@@ -2,7 +2,7 @@
  * Proving a request really came from Slack.
  *
  * The events endpoint is a public URL that runs an agent and spends the
- * workspace's allowance, so this is the only thing standing between it and
+ * workspace's credits, so this is the only thing standing between it and
  * anybody who can type a curl command. Slack signs every delivery; the check is
  * an HMAC over a fixed string, and the two ways to get it wrong are both quiet.
  *

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { RoutineEnv } from "../../types";
 import {
-  embeddingCost,
-  transcriptionCost,
-  weighTokens,
+  completionSpend,
+  embeddingSpend,
+  spends,
   entitlementsFor,
   resetEntitlements,
   unlimitedEntitlements,
@@ -31,58 +31,79 @@ afterEach(() => {
 describe("unlimitedEntitlements", () => {
   // The open build's default has to be a working implementation, not a stub
   // that throws or a licence check. A self-hoster gets the whole product.
-  it("allows everything and reports no limit", async () => {
-    await expect(unlimitedEntitlements.check("u1")).resolves.toEqual({ allowed: true });
-    await expect(unlimitedEntitlements.record("u1", 5_000_000)).resolves.toBeUndefined();
-    await expect(unlimitedEntitlements.snapshot("u1")).resolves.toEqual({
-      used: 0,
-      limit: null,
-      resetsAt: null,
+  it("allows everything and reports that nothing is metered", async () => {
+    await expect(unlimitedEntitlements.check("w1")).resolves.toEqual({ allowed: true });
+    await expect(
+      unlimitedEntitlements.record("w1", [{ kind: "composio_search" }], {}),
+    ).resolves.toBeUndefined();
+    await expect(unlimitedEntitlements.snapshot("w1")).resolves.toEqual({ metered: false });
+  });
+});
+
+describe("completionSpend", () => {
+  it("reports the counts the provider gave, and the purpose", () => {
+    expect(
+      completionSpend(
+        "claude-sonnet-5",
+        {
+          promptTokens: 1_000,
+          completionTokens: 200,
+          cachedTokens: 800,
+          cacheWriteTokens: null,
+          reasoningTokens: null,
+          webSearches: 2,
+        },
+        "reply",
+      ),
+    ).toEqual({
+      kind: "completion",
+      model: "claude-sonnet-5",
+      promptTokens: 1_000,
+      completionTokens: 200,
+      cachedTokens: 800,
+      webSearches: 2,
+      purpose: "reply",
+    });
+  });
+
+  it("is null for a call that reported nothing, which cost nothing", () => {
+    expect(completionSpend("gpt-4.1", null)).toBeNull();
+    expect(completionSpend("gpt-4.1", { promptTokens: null, completionTokens: null })).toBeNull();
+    expect(completionSpend("gpt-4.1", { promptTokens: 0, completionTokens: 0 })).toBeNull();
+  });
+
+  it("never reports a negative or fractional count", () => {
+    expect(completionSpend("gpt-4.1", { promptTokens: -5, completionTokens: 2.6 })).toEqual({
+      kind: "completion",
+      model: "gpt-4.1",
+      promptTokens: 0,
+      completionTokens: 3,
     });
   });
 });
 
-describe("embeddingCost", () => {
-  // The counter is denominated in chat tokens because that is where the money
-  // goes. Embeddings cost roughly a two-hundredth as much, so charging them at
-  // par would let a single upload — a tenth of a cent — eat a third of a small
-  // monthly allowance.
-  it("charges an embedding at a hundredth of a chat token", () => {
-    expect(embeddingCost(100_000)).toBe(1_000);
-    expect(embeddingCost(50_000)).toBe(500);
+describe("embeddingSpend", () => {
+  it("reports tokens, model and purpose", () => {
+    expect(embeddingSpend("text-embedding-3-small", 120, "index")).toEqual({
+      kind: "embedding",
+      model: "text-embedding-3-small",
+      tokens: 120,
+      purpose: "index",
+    });
   });
 
-  it("never rounds a real cost down to nothing", () => {
-    expect(embeddingCost(1)).toBe(1);
-    expect(embeddingCost(150)).toBe(2);
-  });
-
-  it("charges nothing for nothing", () => {
-    expect(embeddingCost(0)).toBe(0);
-    expect(embeddingCost(-5)).toBe(0);
-    expect(embeddingCost(Number.NaN)).toBe(0);
+  it("is null for nothing embedded", () => {
+    expect(embeddingSpend("m", 0)).toBeNull();
+    expect(embeddingSpend("m", Number.NaN)).toBeNull();
+    expect(embeddingSpend("m", undefined)).toBeNull();
   });
 });
 
-describe("transcriptionCost", () => {
-  // Unlike an embedding, dictation is genuinely expensive, so it is charged
-  // close to par. gpt-4o-mini-transcribe bills audio input at $1.25/M against a
-  // mixed chat token's ~$4.00/M — a minute of speech is roughly 2400 audio
-  // tokens, so a minute of dictation costs about 768 of the caller's tokens.
-  it("charges a minute of speech at roughly a chat turn", () => {
-    expect(transcriptionCost(2400)).toBe(768);
-    expect(transcriptionCost(1200)).toBe(384);
-  });
-
-  it("never rounds a real cost down to nothing", () => {
-    expect(transcriptionCost(1)).toBe(1);
-    expect(transcriptionCost(10)).toBe(4);
-  });
-
-  it("charges nothing for nothing", () => {
-    expect(transcriptionCost(0)).toBe(0);
-    expect(transcriptionCost(-5)).toBe(0);
-    expect(transcriptionCost(Number.NaN)).toBe(0);
+describe("spends", () => {
+  it("drops the empties so a call site stays one line", () => {
+    expect(spends(null, { kind: "composio_search" }, undefined, false)).toEqual([
+      { kind: "composio_search" },
+    ]);
   });
 });
 
@@ -96,23 +117,23 @@ describe("entitlementsFor", () => {
     const factory = vi.fn(() => fake);
     registerEntitlements(factory);
 
-    const e = entitlementsFor(env({ QUOTA_MONTHLY_TOKENS: "1000" }));
+    const e = entitlementsFor(env({ CREDITS_ENABLED: "1" }));
 
     expect(e).toBe(fake);
-    expect(factory).toHaveBeenCalledWith(expect.objectContaining({ QUOTA_MONTHLY_TOKENS: "1000" }));
+    expect(factory).toHaveBeenCalledWith(expect.objectContaining({ CREDITS_ENABLED: "1" }));
   });
 
   // The failure this guards against is silent: a hosted deploy that points at
-  // the plain entry point still serves every request and simply stops counting.
-  it("complains when a quota is configured but no implementation is registered", () => {
+  // the plain entry point still serves every request and simply stops charging.
+  it("complains when credits are enabled but no implementation is registered", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    entitlementsFor(env({ QUOTA_MONTHLY_TOKENS: "1000" }));
+    entitlementsFor(env({ CREDITS_ENABLED: "1" }));
 
-    expect(err).toHaveBeenCalledWith(expect.stringContaining("NOT being metered"));
+    expect(err).toHaveBeenCalledWith(expect.stringContaining("NOT being charged"));
   });
 
-  it("says nothing when there is no quota to enforce", () => {
+  it("says nothing when there is nothing to charge", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
 
     entitlementsFor(env());
@@ -123,59 +144,10 @@ describe("entitlementsFor", () => {
   it("logs the misconfiguration once, not on every request", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    entitlementsFor(env({ QUOTA_MONTHLY_TOKENS: "1000" }));
-    entitlementsFor(env({ QUOTA_MONTHLY_TOKENS: "1000" }));
-    entitlementsFor(env({ QUOTA_MONTHLY_TOKENS: "1000" }));
+    entitlementsFor(env({ CREDITS_ENABLED: "1" }));
+    entitlementsFor(env({ CREDITS_ENABLED: "1" }));
+    entitlementsFor(env({ CREDITS_ENABLED: "1" }));
 
     expect(err).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("what a chat token costs the allowance", () => {
-  it("charges a fresh input token at par, which is the unit", () => {
-    expect(weighTokens({ promptTokens: 1_000, completionTokens: 0 })).toBe(1_000);
-  });
-
-  it("charges a cache read a tenth, because that is what it costs", () => {
-    // `promptTokens` arrives with the cache read already inside it — see
-    // `anthropicUsage`. So this is 1,000 prompt tokens of which 900 came from
-    // cache: 100 fresh at par, plus 900 at a tenth.
-    expect(weighTokens({ promptTokens: 1_000, completionTokens: 0, cachedTokens: 900 })).toBe(
-      100 + 90,
-    );
-  });
-
-  it("charges the storage premium on a cache write, rather than the discount", () => {
-    // A write is dearer than a fresh token, not cheaper. Reading it as a
-    // discount is how a caching change that costs money looks like a saving.
-    expect(weighTokens({ promptTokens: 1_000, completionTokens: 0, cacheWriteTokens: 400 })).toBe(
-      600 + 500,
-    );
-  });
-
-  it("charges output five times input, which is most of what a short reply is", () => {
-    expect(weighTokens({ promptTokens: 0, completionTokens: 100 })).toBe(500);
-  });
-
-  it("makes a cache-heavy tool turn markedly cheaper than face value", () => {
-    // The shape of the turn this work came from: 88% of its prompt served from
-    // cache, and charged as if none of it had been.
-    const heavy = { promptTokens: 100_000, completionTokens: 2_000, cachedTokens: 88_000 };
-    expect(weighTokens(heavy)).toBeLessThan(heavy.promptTokens + heavy.completionTokens);
-  });
-
-  it("makes a short chatty reply dearer, which is the same rule and not an exception", () => {
-    // Worth pinning because it is the direction nobody expects. Weighting was
-    // argued from cache reads, but on ordinary traffic the output premium is
-    // the larger correction: measured across 30 days of this deployment, the
-    // median turn gets 1.46x dearer while the aggregate moves 1.04x.
-    const short = { promptTokens: 400, completionTokens: 600 };
-    expect(weighTokens(short)).toBeGreaterThan(short.promptTokens + short.completionTokens);
-  });
-
-  it("never charges a negative amount, however the provider reports itself", () => {
-    // A subset larger than its own total is a provider bug, not a refund.
-    expect(weighTokens({ promptTokens: 100, completionTokens: 0, cachedTokens: 900 })).toBe(90);
-    expect(weighTokens({ promptTokens: null, completionTokens: null })).toBe(0);
   });
 });

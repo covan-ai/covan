@@ -29,7 +29,7 @@ import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
-import { useQuota, quotaSentence } from "@/lib/quota";
+import { useCredits, creditsSentence } from "@/lib/credits";
 import { startersFor } from "@/lib/chat-starters";
 import { modelsFor } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
@@ -142,14 +142,14 @@ function ChatTab() {
   );
 
   // Only the hosted service meters anything; self-hosted installs answer with
-  // `limit: null` and nothing below renders. Refetched by the invalidation that
+  // `metered: false` and nothing below renders. Refetched by the invalidation that
   // already follows every reply, which is exactly when the number moves.
-  // An allowance nobody can see is a trap: the first a user hears of it is the
+  // A balance nobody can see is a trap: the first a user hears of it is the
   // reply that doesn't come. So it is on screen from the first message — as a
   // quiet line in the composer footer while there is room, and as a banner once
-  // it is nearly gone. `useQuota` returns null on a self-hosted install, where
-  // there is no allowance and none of this renders.
-  const quota = useQuota();
+  // it is nearly gone. `useCredits` returns null on a self-hosted install, where
+  // there are no credits and none of this renders.
+  const credits = useCredits();
 
   const agentSessions = useMemo(
     () => sessions.filter((s) => s.agentId === agentId).sort((a, b) => b.updatedAt - a.updatedAt),
@@ -673,23 +673,13 @@ function ChatTab() {
       );
 
       if (res.status === 402) {
-        // Out of allowance. The user's message is already saved, so the
+        // Out of credits. The user's message is already saved, so the
         // conversation isn't lost — only the reply is refused.
-        const body = (await res.json().catch(() => null)) as { resetsAt?: string } | null;
-        const resets = body?.resetsAt
-          ? new Date(body.resetsAt).toLocaleDateString(undefined, {
-              month: "long",
-              day: "numeric",
-            })
-          : null;
         toast.error(
-          resets
-            ? `You've used this month's allowance. It resets on ${resets}.`
-            : "You've used this month's allowance.",
-          // Settings is where the wall itself lives — the workspace's own key,
-          // a message to us, and self-hosting, nearest first. See
-          // `quota-wall.tsx`. There is no `/settings/usage` route; `UsageSection`
-          // is one of several sections on the single `/settings` page.
+          "This workspace is out of credits.",
+          // Settings is where the wall itself lives — a message to us, and
+          // self-hosting. See `credits-wall.tsx`. There is no `/settings/usage`
+          // route; `UsageSection` is one of several sections on `/settings`.
           { action: { label: "Options", onClick: () => navigate({ to: "/settings" }) } },
         );
         setThinking(false);
@@ -867,10 +857,8 @@ function ChatTab() {
             // survivable at all — see `truncated` above.
             ranLong = true;
           } else if (event.type === "notice" && typeof event.text === "string") {
-            // The worker sends this at most once, when the agent's stored
-            // model was Claude but this reply ran on a workspace key with no
-            // Anthropic half and quietly answered from the default instead.
-            // A toast, like the 402 above, because it is a fact about this one
+            // A one-off fact the worker wants said about this reply. A toast,
+            // like the 402 above, because it is a fact about this one
             // reply — not a banner that should still be sitting there next turn.
             toast.message(event.text);
           } else if (event.type === "done") {
@@ -1762,10 +1750,10 @@ function ChatTab() {
           </Button>
         )}
         <div className="mx-auto max-w-3xl">
-          {quota && quota.level !== "fine" && (
+          {credits && credits.level !== "fine" && (
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
               <span className="h-2 w-2 shrink-0 bg-accent-orange" />
-              <span>{quotaSentence(quota)}</span>
+              <span>{creditsSentence(credits)}</span>
             </div>
           )}
           {followUps.length > 0 && !busy && (
@@ -1919,7 +1907,7 @@ function ChatTab() {
             {agent.name} · {agent.model} ·{" "}
             {isShared ? "shared with your workspace" : "private to you"} · grounded in{" "}
             {agent.documents.length} team {agent.documents.length === 1 ? "document" : "documents"}
-            {quota?.level === "fine" && <> · {quotaSentence(quota)}</>}
+            {credits?.level === "fine" && <> · {creditsSentence(credits)}</>}
           </p>
         </div>
       </div>

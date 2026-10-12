@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import type { BrowserResult } from "../../browser/client";
 import type { BrowserSessionRef } from "../../browser/sessions";
-import type { QuotaSnapshot } from "../../entitlements";
+import type { CreditSnapshot } from "../../entitlements";
 import { DEFAULT_MODEL, RUN_COST_CAP_USD, V4_BASE } from "../../browser/v4";
 import { OUTCOME_SCHEMA } from "../../browser/outcome";
 
@@ -173,24 +173,27 @@ const heldTakeover = vi.hoisted(() =>
 vi.mock("../../browser/takeover", () => ({ profileFor, runProfile, heldTakeover }));
 
 const affordable = vi.fn(async (_ctx: ToolContext): Promise<ToolResult | null> => null);
-const spend = vi.fn(async (_ctx: ToolContext, _tokens: number): Promise<void> => {});
+const spend = vi.fn(
+  async (_ctx: ToolContext, _spent: unknown, _ref?: unknown): Promise<void> => {},
+);
 vi.mock("../spend", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../spend")>();
   return {
     ...actual,
     affordable: (ctx: ToolContext) => affordable(ctx),
-    spend: (ctx: ToolContext, tokens: number) => spend(ctx, tokens),
+    spend: (...args: [ToolContext, unknown, unknown?]) => spend(...args),
   };
 });
 
-const snapshot = vi.fn(async (_userId: string): Promise<QuotaSnapshot> => ({
-  used: 0,
-  limit: 1_000_000,
-  resetsAt: "2026-11-01T00:00:00Z",
+const snapshot = vi.fn(async (_workspaceId: string): Promise<CreditSnapshot> => ({
+  metered: false,
 }));
 vi.mock("../../entitlements", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../entitlements")>();
-  return { ...actual, entitlementsFor: () => ({ snapshot: (userId: string) => snapshot(userId) }) };
+  return {
+    ...actual,
+    entitlementsFor: () => ({ snapshot: (workspaceId: string) => snapshot(workspaceId) }),
+  };
 });
 
 /**
@@ -229,7 +232,7 @@ vi.mock("../../browser/credentials", async (importOriginal) => {
 });
 
 import { credentialAliases, type CredentialBinding } from "../../browser/credentials";
-import { browseTool, BROWSER_TASK_TOKENS } from "./browse";
+import { browseTool } from "./browse";
 import { QUEUE_MAX } from "../../browser/queue";
 
 /**
@@ -327,7 +330,14 @@ beforeEach(() => {
   affordable.mockResolvedValue(null);
   spend.mockReset();
   snapshot.mockReset();
-  snapshot.mockResolvedValue({ used: 0, limit: 1_000_000, resetsAt: "2026-11-01T00:00:00Z" });
+  snapshot.mockResolvedValue({
+    metered: true,
+    balance: 412.5,
+    granted: 500,
+    spent: 87.5,
+    unlimited: false,
+    replies: 20,
+  });
   credentialsFor.mockReset();
   credentialsFor.mockResolvedValue(null);
   savedLogin.mockReset();
@@ -398,28 +408,35 @@ describe("asking first", () => {
     expect(proposal.task).toBe(long.trim());
   });
 
-  it("tells the person what the task costs against their allowance", async () => {
-    snapshot.mockResolvedValue({
-      used: 300_000,
-      limit: 1_000_000,
-      resetsAt: "2026-11-01T00:00:00Z",
-    });
+  it("tells the person the workspace's credit balance, and no per-task price", async () => {
     const result = await browseTool.run({ task: TASK }, ctxWith());
     const proposal = (result as { proposal: Record<string, string> }).proposal;
-    // 137,000 of 1,000,000 is ~14%; 700,000 left is 5 more whole tasks.
-    expect(proposal.cost).toContain("14%");
-    expect(proposal.cost).toContain("5");
+    expect(proposal.cost).toBe("uses credits; this workspace has 412 credits left");
   });
 
-  it("says nothing about cost on an unmetered deployment rather than inventing a share", async () => {
-    snapshot.mockResolvedValue({ used: 0, limit: null, resetsAt: null });
+  it("says nothing about credits on a house workspace", async () => {
+    snapshot.mockResolvedValue({
+      metered: true,
+      balance: 0,
+      granted: 0,
+      spent: 0,
+      unlimited: true,
+      replies: 0,
+    });
     const result = await browseTool.run({ task: TASK }, ctxWith());
     const proposal = (result as { proposal: Record<string, unknown> }).proposal;
     expect(proposal.cost).toBeUndefined();
   });
 
-  it("does not let a failed allowance read stop a person being asked", async () => {
-    snapshot.mockRejectedValue(new Error("quota backend down"));
+  it("says nothing about credits on an unmetered deployment rather than inventing one", async () => {
+    snapshot.mockResolvedValue({ metered: false });
+    const result = await browseTool.run({ task: TASK }, ctxWith());
+    const proposal = (result as { proposal: Record<string, unknown> }).proposal;
+    expect(proposal.cost).toBeUndefined();
+  });
+
+  it("does not let a failed balance read stop a person being asked", async () => {
+    snapshot.mockRejectedValue(new Error("ledger down"));
     const result = await browseTool.run({ task: TASK }, ctxWith());
     expect(result.kind).toBe("needs_confirmation");
   });
@@ -542,16 +559,27 @@ describe("once approved", () => {
     expect(result.kind).toBe("ok");
   });
 
-  it("charges the allowance once, after the provider accepted the task", async () => {
+  it("holds credits once, after the provider accepted the task, against the recorded row", async () => {
     await browseTool.run({ task: TASK }, ctx());
     expect(spend).toHaveBeenCalledTimes(1);
-    expect(spend).toHaveBeenCalledWith(expect.anything(), BROWSER_TASK_TOKENS);
+    expect(spend).toHaveBeenCalledWith(
+      expect.anything(),
+      [
+        {
+          kind: "browser_task",
+          stage: "started",
+          browserTaskId: expect.any(String),
+          costUsd: null,
+        },
+      ],
+      { browserTaskId: expect.any(String) },
+    );
   });
 
-  it("refuses before the network when the allowance is spent", async () => {
-    affordable.mockResolvedValue({ kind: "error", message: "no allowance left" });
+  it("refuses before the network when the credits are spent", async () => {
+    affordable.mockResolvedValue({ kind: "error", message: "no credits left" });
     const result = await browseTool.run({ task: TASK }, ctx());
-    expect(result).toEqual({ kind: "error", message: "no allowance left" });
+    expect(result).toEqual({ kind: "error", message: "no credits left" });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(ensureBrowserSession).not.toHaveBeenCalled();
     expect(spend).not.toHaveBeenCalled();
@@ -585,7 +613,9 @@ describe("once approved", () => {
     providerAnswers(500);
     await browseTool.run({ task: TASK }, ctx());
     expect(spend).toHaveBeenCalledTimes(1);
-    expect(spend).toHaveBeenCalledWith(expect.anything(), BROWSER_TASK_TOKENS);
+    expect(spend).toHaveBeenCalledWith(expect.anything(), [
+      { kind: "browser_task", stage: "started", browserTaskId: null, costUsd: null },
+    ]);
   });
 
   /**
@@ -609,7 +639,9 @@ describe("once approved", () => {
     expect(runCalls()).toHaveLength(1);
     expect(ensureBrowserSession).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
-    expect(spend).toHaveBeenCalledWith(expect.anything(), BROWSER_TASK_TOKENS);
+    expect(spend).toHaveBeenCalledWith(expect.anything(), [
+      { kind: "browser_task", stage: "started", browserTaskId: null, costUsd: null },
+    ]);
     expect(recordBrowserTask).not.toHaveBeenCalled();
     expect(recordRunStart).not.toHaveBeenCalled();
     // The row names a live browser; handing it back would orphan it.
@@ -858,7 +890,11 @@ describe("several tasks on one card", () => {
     const card = together.card(
       {
         summary: "Use a browser to do this?",
-        proposal: { kind: "browse", task: "the repo on github", cost: "about 2% of this month" },
+        proposal: {
+          kind: "browse",
+          task: "the repo on github",
+          cost: "uses credits; this workspace has 40 credits left",
+        },
       },
       ["look at covan.app", "look at tasklet.ai"],
     );
@@ -867,7 +903,7 @@ describe("several tasks on one card", () => {
       kind: "browse",
       task: "the repo on github",
       thenInLine: "2. look at covan.app\n3. look at tasklet.ai",
-      cost: "about 2% of this month, for each of the 3",
+      cost: "uses credits; this workspace has 40 credits left",
     });
     expect(together.listed(card.proposal)).toEqual(["look at covan.app", "look at tasklet.ai"]);
   });
@@ -1331,7 +1367,9 @@ describe("a saved login (Task 2.3)", () => {
       // Still one run, still capped, still metered once.
       expect(body.maxCostUsd).toBe(RUN_COST_CAP_USD);
       expect(spend).toHaveBeenCalledTimes(1);
-      expect(spend).toHaveBeenCalledWith(expect.anything(), BROWSER_TASK_TOKENS);
+      expect(spend.mock.calls[0][1]).toEqual([
+        expect.objectContaining({ kind: "browser_task", stage: "started" }),
+      ]);
     });
 
     it("names the aliases in the task text, in the plan's words, with the aliases the bindings use", async () => {

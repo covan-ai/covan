@@ -82,8 +82,8 @@ function PrivacyPage() {
           </LegalItem>
           <LegalItem>
             <strong className="font-medium text-foreground">Usage counts</strong> — tokens spent per
-            reply, used to show you what you have used and, on a metered install, to apply an
-            allowance.
+            reply, used to show you what you have used and, on a metered install, to keep the
+            workspace's credit ledger.
           </LegalItem>
           <LegalItem>
             <strong className="font-medium text-foreground">

@@ -252,8 +252,8 @@ export function conversationRun(
     // `||`, as `v4BaseOf`: `docker-compose.yml` hands an unset variable over
     // as an empty string, and an empty model is a 422.
     model: env.BROWSER_USE_MODEL || DEFAULT_MODEL,
-    // The ceiling `BROWSER_TASK_TOKENS` was priced against, enforced by the
-    // provider rather than hoped for. The person never pays browser-use; this
+    // A ceiling on what one run may cost, enforced by the provider rather than
+    // hoped for. The person never pays browser-use; this
     // is what keeps the operator's side of that bounded — the hand-back's
     // free retry included.
     maxCostUsd: RUN_COST_CAP_USD,

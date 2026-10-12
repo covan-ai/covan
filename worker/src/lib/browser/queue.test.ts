@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { fakeDb, type QueryContext, type QueryResult } from "../../test-support/fake-db";
-import { BROWSER_TASK_TOKENS } from "../entitlements";
 import {
   advanceBrowserQueue,
   cancelledNotice,
@@ -214,7 +213,11 @@ describe("advanceBrowserQueue", () => {
       ]),
     );
     expect(d.finish).toHaveBeenCalledTimes(1);
-    expect(d.entitlements.record).toHaveBeenCalledWith("user-1", BROWSER_TASK_TOKENS);
+    expect(d.entitlements.record).toHaveBeenCalledWith(
+      "ws-1",
+      [{ kind: "browser_task", stage: "started", browserTaskId: WAITING.id, costUsd: null }],
+      { userId: "user-1", sessionId: "sess-1", browserTaskId: WAITING.id },
+    );
   });
 
   it("cancels the run, and charges nothing, when the task left the line while it started", async () => {
@@ -273,7 +276,11 @@ describe("advanceBrowserQueue", () => {
 
     await advanceBrowserQueue(ENV, "bs-1", d);
 
-    expect(d.entitlements.record).toHaveBeenCalledWith("user-1", BROWSER_TASK_TOKENS);
+    expect(d.entitlements.record).toHaveBeenCalledWith(
+      "ws-1",
+      [{ kind: "browser_task", stage: "started", browserTaskId: WAITING.id, costUsd: null }],
+      { userId: "user-1", sessionId: "sess-1", browserTaskId: WAITING.id },
+    );
     expect(updates(calls)[0].values).toMatchObject({
       status: "failed",
       error: "the browser could not start it (400 Bad Request)",
@@ -281,20 +288,17 @@ describe("advanceBrowserQueue", () => {
     expect(rpcCalls).toHaveLength(2);
   });
 
-  it("gives up, without starting, a task whose person used their allowance while it waited", async () => {
+  it("gives up, without starting, a task whose workspace ran out of credits while it waited", async () => {
     claims = [[WAITING]];
     const { deps: d } = deps();
-    vi.mocked(d.entitlements.check).mockResolvedValueOnce({
-      allowed: false,
-      resetsAt: "2026-11-01",
-    } as never);
+    vi.mocked(d.entitlements.check).mockResolvedValueOnce({ allowed: false, balance: 0 });
 
     await advanceBrowserQueue(ENV, "bs-1", d);
 
     expect(d.begin).not.toHaveBeenCalled();
     expect(d.deliver).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ error: expect.stringMatching(/allowance/) }),
+      expect.objectContaining({ error: expect.stringMatching(/out of credits/) }),
       ENV,
       d.db,
     );

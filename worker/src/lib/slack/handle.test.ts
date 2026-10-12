@@ -47,16 +47,6 @@ const { createOpenAI } = vi.hoisted(() => ({
 }));
 vi.mock("../openai", () => ({ createOpenAI }));
 
-// `keysForUser` opens the workspace's stored key through `lib/keys/store`,
-// which builds a service-role Supabase client of its own rather than using the
-// `deps.db` fake. Mocked to "no key set" — what every test wants but the
-// workspace-funded ones at the bottom.
-const { readWorkspaceKeys } = vi.hoisted(() => ({
-  readWorkspaceKeys: vi.fn(async () => ({ openai: null, anthropic: null }) as WorkspaceKeys),
-}));
-vi.mock("../keys/store", () => ({ readWorkspaceKeys }));
-
-import type { WorkspaceKeys } from "../keys/store";
 import { fakeDb, type QueryContext } from "../../test-support/fake-db";
 import { handleSlackEvent, shouldAnswer, stripMention, type InstallationRow } from "./handle";
 import { encryptSecret } from "../secret-box";
@@ -78,7 +68,7 @@ const env = {
 const unlimited = {
   check: vi.fn(async () => ({ allowed: true }) as const),
   record: vi.fn(async () => {}),
-  snapshot: vi.fn(async () => ({ used: 0, limit: null, resetsAt: null })),
+  snapshot: vi.fn(async () => ({ metered: false as const })),
 };
 
 async function installation(overrides: Partial<InstallationRow> = {}): Promise<InstallationRow> {
@@ -184,7 +174,6 @@ beforeEach(() => {
   // test installed in place, so both of these are re-asserted rather than
   // assumed.
   createOpenAI.mockImplementation(() => ({ chat: { completions: { create } } }));
-  readWorkspaceKeys.mockResolvedValue({ openai: null, anthropic: null });
   create.mockResolvedValue({
     choices: [{ message: { content: "Twenty days a year." }, finish_reason: "stop" }],
     usage: { prompt_tokens: 500, completion_tokens: 20 },
@@ -412,93 +401,18 @@ describe("answering in a thread", () => {
     expect(fake.callsTo("slack_identities").some((c) => c.op === "delete")).toBe(false);
   });
 
-  it("spends nothing once the asker's allowance is used up", async () => {
+  it("spends nothing once the workspace's credits are gone", async () => {
     const fake = db({ identity: true });
     const spent = {
       ...unlimited,
-      check: vi.fn(async () => ({
-        allowed: false as const,
-        used: 300000,
-        limit: 300000,
-        resetsAt: "2026-10-01T00:00:00Z",
-      })),
+      check: vi.fn(async () => ({ allowed: false as const, balance: 0 })),
     };
 
     await handleSlackEvent(await installation(), mention(), deps(fake, spent));
 
+    expect(spent.check).toHaveBeenCalledWith("ws-1");
     expect(create).not.toHaveBeenCalled();
-    expect(posted().text).toMatch(/allowance/i);
-  });
-
-  /**
-   * The workspace-funded branch, on a path with no request to guard.
-   *
-   * `guardQuota` covers this for every route that has a request; a Slack event
-   * arrives without one, so the same three-branch decision is made here by
-   * hand. Both halves matter: answering on the operator's key spends money the
-   * allowance already refused, and recording a workspace-funded answer against
-   * the operator's counter bills them for money they did not spend.
-   */
-  describe("when the asker is out but their workspace has a key", () => {
-    const spent = () => ({
-      ...unlimited,
-      check: vi.fn(async () => ({
-        allowed: false as const,
-        used: 100_000,
-        limit: 100_000,
-        resetsAt: "2026-10-01T00:00:00Z",
-      })),
-    });
-
-    it("answers on the workspace's key rather than refusing", async () => {
-      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
-      const fake = db({ identity: true, activeWorkspace: "ws-1" });
-
-      await handleSlackEvent(await installation(), mention(), deps(fake, spent()));
-
-      expect(create).toHaveBeenCalled();
-      expect(posted().text).toContain("Twenty days a year.");
-      // Whose key the model call was actually made on. The operator's here
-      // would be the operator paying for a reply their allowance refused.
-      expect(createOpenAI.mock.calls[0][0]).toMatchObject({ OPENAI_API_KEY: "ws-openai" });
-      // And the retrieval that runs before it — the embedding is a spend too.
-      expect(retrieveForAgent.mock.calls[0][1]).toMatchObject({ OPENAI_API_KEY: "ws-openai" });
-    });
-
-    it("writes nothing to the operator's counter for what the workspace paid", async () => {
-      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
-      const fake = db({ identity: true, activeWorkspace: "ws-1" });
-      const entitlements = spent();
-
-      await handleSlackEvent(await installation(), mention(), deps(fake, entitlements));
-
-      expect(entitlements.record).not.toHaveBeenCalled();
-    });
-
-    it("writes nothing either when the model call fails mid-turn", async () => {
-      // The embedding was already paid for by then, and it was paid for by the
-      // workspace — the failure path has its own `record` call, and it has to
-      // ask the same question the success path asks.
-      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
-      create.mockRejectedValue(new Error("OpenAI is down"));
-      const fake = db({ identity: true, activeWorkspace: "ws-1" });
-      const entitlements = spent();
-
-      await handleSlackEvent(await installation(), mention(), deps(fake, entitlements));
-
-      expect(entitlements.record).not.toHaveBeenCalled();
-      expect(posted().text).toMatch(/went wrong/i);
-    });
-
-    it("refuses when the workspace has no key of its own", async () => {
-      // The control. Same denied verdict, same lookup, nothing found.
-      const fake = db({ identity: true, activeWorkspace: "ws-1" });
-
-      await handleSlackEvent(await installation(), mention(), deps(fake, spent()));
-
-      expect(create).not.toHaveBeenCalled();
-      expect(posted().text).toMatch(/allowance/i);
-    });
+    expect(posted().text).toMatch(/no Covan credits left/i);
   });
 
   it("says which choice is missing when no agent is set", async () => {
@@ -510,13 +424,24 @@ describe("answering in a thread", () => {
     expect(posted().text).toMatch(/no agent is set/i);
   });
 
-  it("charges the asker for the turn, embedding included", async () => {
+  it("charges the installation's workspace for the turn, embedding included", async () => {
     const fake = db({ identity: true });
 
     await handleSlackEvent(await installation(), mention(), deps(fake));
 
-    // 500 prompt + 20 completion + ceil(40 * 0.01) embedding tokens.
-    expect(unlimited.record).toHaveBeenCalledWith("user-1", 521);
+    expect(unlimited.record).toHaveBeenCalledWith(
+      "ws-1",
+      [
+        { kind: "embedding", model: "text-embedding-3-small", tokens: 40, purpose: "retrieval" },
+        expect.objectContaining({
+          kind: "completion",
+          promptTokens: 500,
+          completionTokens: 20,
+          purpose: "slack",
+        }),
+      ],
+      { userId: "user-1" },
+    );
   });
 
   it("still charges for the embedding when the model call fails", async () => {
@@ -525,7 +450,11 @@ describe("answering in a thread", () => {
 
     await handleSlackEvent(await installation(), mention(), deps(fake));
 
-    expect(unlimited.record).toHaveBeenCalledWith("user-1", 1);
+    expect(unlimited.record).toHaveBeenCalledWith(
+      "ws-1",
+      [{ kind: "embedding", model: "text-embedding-3-small", tokens: 40, purpose: "retrieval" }],
+      { userId: "user-1" },
+    );
     expect(posted().text).toMatch(/went wrong/i);
   });
 });

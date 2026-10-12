@@ -81,6 +81,7 @@ const createOpenAIKeys: Array<string | undefined> = [];
 
 vi.mock("../lib/embeddings", () => ({
   embedTexts: (...args: unknown[]) => embedTexts(...args),
+  embeddingModel: () => "text-embedding-3-small",
 }));
 
 vi.mock("../lib/openai", () => ({
@@ -94,15 +95,15 @@ vi.mock("../lib/anthropic", () => ({
   createAnthropic: () => ({ messages: { create: anthropicCreate } }),
 }));
 
-/** Every `recordQuota` call's token count. This file is not about quota — but
- * a turn that fails after several real model passes still has to bill them, and
- * `recordQuota` refuses a zero, so "what number reached it" is the only way to
- * tell billing nothing from billing something. */
-const quotaRecorded = vi.fn();
+/** Every `recordCredits` call's spends. This file is not about credits — but
+ * a turn that fails after several real model passes still has to charge them,
+ * so "what reached it" is the only way to tell charging nothing from charging
+ * something. */
+const creditsRecorded = vi.fn();
 vi.mock("../lib/entitlements/guard", () => ({
-  guardQuota: async () => null,
-  recordQuota: async (_c: unknown, tokens: number) => {
-    quotaRecorded(tokens);
+  guardCredits: async () => null,
+  recordCredits: async (_c: unknown, spent: unknown) => {
+    creditsRecorded(spent);
   },
 }));
 
@@ -335,19 +336,8 @@ function appWith(spec: {
   matches?: Match[];
   /** The name the session already has. Null — the default — is a new chat. */
   sessionTitle?: string | null;
-  /**
-   * Stands in for what the real `guardQuota` sets on `c` when a workspace key
-   * is carrying the caller past their allowance. `guardQuota` itself is mocked
-   * out above (this file is not about quota), so this is how a test reaches
-   * the one seam Task 6 actually owns: whether the route reads `providerEnv`
-   * off the context and passes it to every provider call.
-   *
-   * Typed as a partial `Bindings` rather than just the OpenAI key so Task 9's
-   * tests can say whether the workspace's overlay also carries an Anthropic
-   * key — that presence or absence is the whole of what `resolveModel` reads
-   * to decide whether a Claude pick survives.
-   */
-  providerEnv?: { OPENAI_API_KEY: string; ANTHROPIC_API_KEY?: string; RAG_LEXICAL?: string };
+  /** Bindings this request adds to `ENV`, for a test about a deployment setting. */
+  env?: Record<string, string>;
   /** The agent's stored model. Defaults to `AGENT.model` (null → the default). */
   agentModel?: string | null;
   /** The agent's own tuning (0048). Undefined leaves both on Auto. */
@@ -458,7 +448,7 @@ function appWith(spec: {
     // `{}` rather than ENV: the only thing the meter reads is WORKER_PLAN, and
     // absent means Free — which is the deployment these tests describe.
     c.set("subrequests", subrequestMeter({}, runtimeLimit) as never);
-    if (spec.providerEnv) c.set("providerEnv", spec.providerEnv as never);
+    if (spec.env) c.env = { ...(c.env as object), ...spec.env } as never;
     await next();
   });
   app.route("/", chat);
@@ -801,7 +791,7 @@ describe("the lexical arm (Task 5)", () => {
     const { app, rpcCalls } = appWith({
       question,
       documents: [HANDBOOK],
-      providerEnv: { OPENAI_API_KEY: "ws-openai", RAG_LEXICAL: "off" },
+      env: { RAG_LEXICAL: "off" },
     });
     await ask(app);
 
@@ -955,106 +945,6 @@ describe("the assembled prompt", () => {
     const { app } = appWith({ question: "hello", documents: [HANDBOOK], matches: [] });
     await ask(app);
     expect(sentMessages()[0].content).toContain("handbook.md");
-  });
-});
-
-describe("whose key answers (Task 6)", () => {
-  it("completes on the workspace key once guardQuota has set one", async () => {
-    const { app } = appWith({
-      question: "How many vacation days do I get?",
-      providerEnv: { OPENAI_API_KEY: "ws-openai" },
-    });
-
-    const res = await ask(app);
-
-    expect(res.status).toBe(200);
-    expect(createOpenAIKeys.length).toBeGreaterThan(0);
-    expect(createOpenAIKeys.every((k) => k === "ws-openai")).toBe(true);
-  });
-
-  it("completes on the operator's key when guardQuota set nothing", async () => {
-    const { app } = appWith({ question: "How many vacation days do I get?" });
-
-    await ask(app);
-
-    // `every` over an empty array is `true`, so without this the assertion
-    // below would go on passing if the route stopped calling the provider at
-    // all — which is the failure it is here to catch, not one to shrug at. Its
-    // sibling above already guards the same way.
-    expect(createOpenAIKeys.length).toBeGreaterThan(0);
-    // `c.env` carries no OPENAI_API_KEY in this fixture; the point is only that
-    // it is what answered, not the overlay's.
-    expect(createOpenAIKeys.every((k) => k === undefined)).toBe(true);
-  });
-});
-
-describe("saying so when a Claude pick is dropped (Task 9)", () => {
-  // `resolveModel` (lib/models.ts) already drops a keyless Claude pick to the
-  // default, silently — that fallback is correct and pre-existing, and none
-  // of these tests touch it. What they cover is the one line that announces
-  // it: a `notice` event, at most once per reply, and only when all three of
-  // "running on a workspace key", "the agent asked for Claude" and "the
-  // answer came from somewhere else" are true at once.
-  it("says so when a Claude agent falls back under a workspace key", async () => {
-    const { app } = appWith({
-      question: "How many vacation days do I get?",
-      agentModel: "claude-sonnet-4-6",
-      // The workspace's overlay carries an OpenAI key but no Anthropic one —
-      // exactly the gap `resolveModel` falls through on.
-      providerEnv: { OPENAI_API_KEY: "ws-openai" },
-    });
-
-    const { body } = await ask(app);
-
-    expect(body).toContain('"type":"notice"');
-    expect(body).toMatch(/gpt-4\.1/);
-  });
-
-  it("says nothing when the workspace has an Anthropic key too", async () => {
-    // With both halves of the overlay set, `resolveModel` keeps the Claude
-    // pick and the reply is actually served by the (mocked) Anthropic client
-    // — the one case in this file that reaches it. `sessionTitle` is set so
-    // the titling call, which would otherwise also go through that client,
-    // never fires; it has nothing to do with what this test is checking.
-    anthropicCreate.mockResolvedValue(anthropicStreamOf("Twenty days."));
-    const { app } = appWith({
-      question: "How many vacation days do I get?",
-      agentModel: "claude-sonnet-4-6",
-      sessionTitle: "Already named",
-      providerEnv: { OPENAI_API_KEY: "ws-openai", ANTHROPIC_API_KEY: "ws-anthropic" },
-    });
-
-    const { body } = await ask(app);
-
-    expect(body).not.toContain('"type":"notice"');
-    expect(body).toContain("Twenty days.");
-  });
-
-  it("says nothing on the operator's keys", async () => {
-    // No `providerEnv` at all — the same shape as every ordinary reply, on
-    // whichever keys the operator configured. `c.get("providerEnv")` being
-    // unset is on its own enough to keep this silent, whatever the agent's
-    // model is or however it would have resolved.
-    const { app } = appWith({
-      question: "How many vacation days do I get?",
-      agentModel: "claude-sonnet-4-6",
-    });
-
-    const { body } = await ask(app);
-
-    expect(body).not.toContain('"type":"notice"');
-  });
-
-  it("says nothing when the agent was never on Claude", async () => {
-    const { app } = appWith({
-      question: "How many vacation days do I get?",
-      agentModel: "gpt-4o-mini",
-      providerEnv: { OPENAI_API_KEY: "ws-openai" },
-    });
-
-    const { body } = await ask(app);
-
-    expect(body).not.toContain('"type":"notice"');
   });
 });
 
@@ -1287,7 +1177,7 @@ describe("a turn that stops to ask", () => {
   it("parks what the turn spent when it asked before saying anything", async () => {
     // There is no assistant row yet, so the row cannot be the accumulator —
     // and until 0065 nothing else was either: the passes before the pause were
-    // charged to the allowance and then dropped from `messages` on resume.
+    // charged and then dropped from `messages` on resume.
     extraTool = ASKS_FIRST;
     const { app } = appWith({ question: "book a room" });
     completionCreate.mockImplementation(asksFor("book_the_room"));
@@ -1568,7 +1458,7 @@ describe("finishing a reply that stopped mid-sentence", () => {
     it("records what the continuation spent before it stopped to ask", async () => {
       // Once a row is named on the parked turn, the row is the accumulator and
       // `announcePause` writes no second copy. So the row has to actually hold
-      // those passes, or they are charged to the allowance and then lost.
+      // those passes, or they are charged and then lost.
       priorSteps = firstHalfSteps;
       extraTool = ASKS_FIRST;
       const { app } = appWith({ question: "book a room", cutOffReply: CUT_OFF });
@@ -2368,9 +2258,9 @@ describe("POST /chat/confirm/:id", () => {
     });
 
     it("bills only the resumed half, because the first half was billed when it asked", async () => {
-      // The row is the record of the whole turn; the allowance was already
-      // charged for the first half by `/chat/stream` when it parked. Feeding
-      // the merged total to `recordQuota` would charge it twice.
+      // The row is the record of the whole turn; the first half was already
+      // charged by `/chat/stream` when it parked. Feeding the merged total to
+      // `recordCredits` would charge it twice.
       parked = {
         ...PARKED,
         message_id: null,
@@ -2388,8 +2278,14 @@ describe("POST /chat/confirm/:id", () => {
 
       await (await confirm(app, false)).text();
 
-      // 100 fresh prompt plus 20 completion at 5x. See `weighTokens`.
-      expect(quotaRecorded).toHaveBeenCalledWith(200);
+      expect(creditsRecorded).toHaveBeenCalledWith([
+        expect.objectContaining({
+          kind: "completion",
+          promptTokens: 100,
+          completionTokens: 20,
+          purpose: "reply",
+        }),
+      ]);
     });
 
     it("keeps the first half's totals when the resumed half dies before its first pass", async () => {
@@ -2509,7 +2405,7 @@ describe("POST /chat/confirm/:id", () => {
 
     it("writes what the dead turn cost, and bills it", async () => {
       // `turn.usage` only exists once the loop returns, so this row went in
-      // with five NULL columns and `recordQuota` — handed a zero, which it
+      // with five NULL columns and `recordCredits` — handed a zero, which it
       // refuses — charged nothing for model passes that really happened.
       parked = PARKED;
       const { app } = appWith({ question: "every monday", documents: [HANDBOOK] });
@@ -2521,10 +2417,9 @@ describe("POST /chat/confirm/:id", () => {
       expect(row.role).toBe("assistant");
       expect(row.prompt_tokens).toBe(40);
       expect(row.completion_tokens).toBe(8);
-      // 80, not the 48 those two numbers add up to: the allowance is charged
-      // what they cost, and output is five times input. 40 prompt, all fresh,
-      // plus 8 completion at 5x. See `weighTokens`.
-      expect(quotaRecorded).toHaveBeenCalledWith(80);
+      expect(creditsRecorded).toHaveBeenCalledWith([
+        expect.objectContaining({ kind: "completion", promptTokens: 40, completionTokens: 8 }),
+      ]);
     });
 
     it("keeps the step it carried in, which nothing else will ever write", async () => {

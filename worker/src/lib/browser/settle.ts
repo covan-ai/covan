@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
+import { entitlementsFor, type Entitlements } from "../entitlements";
 import { serviceClient } from "../supabase";
 import { deliverBrowserTask } from "./deliver";
 import { bareHost, OUTCOME_STATUSES, type OutcomeStatus } from "./outcome";
@@ -181,6 +182,8 @@ export type SettleDeps = {
    * to `advanceBrowserQueue` through the same client.
    */
   advance?: (browserSessionId: string) => Promise<unknown>;
+  /** Where the provider's own figure is charged. Defaults to `entitlementsFor(env)`. */
+  entitlements?: Pick<Entitlements, "record">;
 };
 
 function problem(error: { code?: string; message?: string } | null): {
@@ -245,6 +248,8 @@ export async function settleBrowserTask(
     return false;
   }
   if (!claimed) return false;
+
+  await chargeSettled(env, row, outcome, overrides.entitlements);
 
   /**
    * Ruling R4: the agent lets go of the browser, so the panel stops showing it
@@ -378,4 +383,37 @@ async function recordOpenBrowser(
   // what the panel's `browserReady` says. A row a tab named meanwhile is
   // named all the same, so the update matching nothing is no reason to say no.
   return open.id;
+}
+
+/**
+ * True the start's hold up to what the provider says the run cost.
+ *
+ * After the claim, so a task settled twice (two clocks, a take-over) is
+ * charged once — and the hosted ledger makes the TOTAL for this task equal the
+ * figure, so even a second call would add nothing.
+ *
+ * Nothing when the provider gave no figure: the hold stands, which errs
+ * towards the operator. Nothing for the one free retry after a login wall
+ * (`retry_of`, see `retryBrowserTask`): the person did nothing wrong, and the
+ * run still carries the original's `maxCostUsd`.
+ *
+ * Never throws: the run is over and its answer is on its way.
+ */
+async function chargeSettled(
+  env: RoutineEnv,
+  row: BrowserTaskRow,
+  outcome: FinishedTask,
+  entitlements: Pick<Entitlements, "record"> | undefined,
+): Promise<void> {
+  if (typeof outcome.costUsd !== "number" || !Number.isFinite(outcome.costUsd)) return;
+  if (row.retry_of) return;
+  try {
+    await (entitlements ?? entitlementsFor(env)).record(
+      row.workspace_id,
+      [{ kind: "browser_task", stage: "settled", browserTaskId: row.id, costUsd: outcome.costUsd }],
+      { userId: row.user_id, sessionId: row.session_id, browserTaskId: row.id },
+    );
+  } catch (err) {
+    console.error("failed to charge a finished browser task", row.id, err);
+  }
 }

@@ -1,0 +1,21 @@
+-- The only key is ours: workspaces no longer bring their own model keys.
+--
+-- 0046 let a workspace admin paste an OpenAI (and optionally an Anthropic) key
+-- so members past the hosted allowance could carry on at the workspace's own
+-- expense. The hosted service now sells credits instead: Covan is the only
+-- model provider, a workspace spends from one prepaid pool, and nobody is
+-- asked to bring a key. With no code left that reads or writes this table, its
+-- ciphertext is a credential with no purpose, and the honest thing to do with
+-- one of those is to delete it.
+--
+-- A self-hosted install was never affected by the table's absence: there the
+-- operator's own keys in the environment answer every call, as they always did.
+--
+-- Rows are lost by design. Before applying this on a deployment that offered
+-- the feature, `select count(*) from public.workspace_provider_keys` says who
+-- to tell.
+--
+-- `if exists`, and no `cascade`: nothing references this table, and a cascade
+-- here would be a silent removal of anything that someday did — the same
+-- reasoning 0068 gives for `supabase_accounts`.
+drop table if exists public.workspace_provider_keys;

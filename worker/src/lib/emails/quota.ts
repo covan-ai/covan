@@ -1,68 +1,49 @@
 import { emailShell } from "../email-layout";
+import { escapeHtml } from "../escape-html";
 import { paragraphs } from "./prose";
 
 /**
- * The allowance is running low.
+ * A workspace's credits are running low. Sent to its admins, because they are
+ * the remedy — the member whose reply crossed the line usually is not.
  *
- * Written in replies rather than tokens, because nobody budgets in tokens. The
- * conversion is deliberately rough and says so: what a reply costs varies by
- * more than an order of magnitude between a bare question and a long
- * conversation grounded in uploads, so a precise-looking number here would be a
- * worse lie than an approximate one. `src/lib/quota.ts` does the same sum on
- * screen using the person's own measured average; this has no such average to
- * hand, so it rounds to something honest.
+ * Sent by the hosted build, once per top-up: the open build has no credits and
+ * never calls this. It lives here, beside the other mail, so the wording is
+ * reviewed with them.
  *
- * No alarm. The allowance resets on its own, running out is not a failure, and
- * a mail that reads like an incident about a number that fixes itself would
- * teach people to ignore the next one.
+ * Written in credits and nothing else. What a reply costs varies by more than
+ * an order of magnitude between a bare question and a long grounded turn, so a
+ * "replies left" figure here would be a worse lie than none.
  */
-const ASSUMED_TOKENS_PER_REPLY = 3700;
-
-export function quotaLowEmail(args: {
+export function creditsLowEmail(args: {
   email: string;
-  used: number;
-  limit: number;
-  resetsAt: string;
+  workspaceName: string;
+  balance: number;
   appUrl: string;
 }) {
-  const left = Math.max(0, Math.floor((args.limit - args.used) / ASSUMED_TOKENS_PER_REPLY));
-  const resets = new Date(args.resetsAt).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "long",
-  });
-
-  const roughly =
-    left === 0
-      ? "That is enough for very little else this period."
-      : `That leaves roughly ${left} more ${left === 1 ? "reply" : "replies"}, depending on how much your agents are asked to read.`;
+  const left = Math.max(0, Math.floor(args.balance));
+  const amount = `${left} ${left === 1 ? "credit" : "credits"}`;
+  const subject = `${args.workspaceName} has ${amount} left on Covan`;
 
   return {
     to: args.email,
-    subject: "Your Covan allowance is running low",
+    subject,
     text: [
-      `You have used about three quarters of this period's allowance.`,
+      `${args.workspaceName} has ${amount} left.`,
       "",
-      roughly,
+      "When it reaches zero, replies, routines and connected-app calls stop until",
+      "credits are added. Nothing is lost in the meantime — agents, documents and",
+      "conversations all stay exactly as they are.",
       "",
-      `It resets on ${resets}, and nothing is lost in the meantime — your`,
-      "agents, documents and conversations all stay exactly as they are.",
-      "",
-      "If you would rather not wait, an admin can point the workspace at its own key",
-      "and it will carry on from where the allowance stops — or tell us what you",
-      "need and we will look at it.",
-      "",
-      "If you would rather not hear about this, the switch is in Settings under",
-      "notifications.",
+      "Top-ups are handled by hand for now: reply to this email, or use the form",
+      "under Settings → Usage, and tell us how many you need.",
     ].join("\n"),
     html: emailShell({
-      preheader: `About three quarters spent. Resets on ${resets}.`,
-      heading: "Your allowance is running low",
+      preheader: `${amount} left.`,
+      heading: "Your workspace's credits are running low",
       bodyHtml: paragraphs(
-        "You have used about three quarters of this period's allowance.",
-        roughly,
-        `It resets on <strong>${resets}</strong>, and nothing is lost in the meantime — your agents, documents and conversations all stay exactly as they are.`,
-        "If you would rather not wait, an admin can point the workspace at its own key and it will carry on from where the allowance stops — or tell us what you need and we will look at it.",
-        "If you would rather not hear about this, the switch is in Settings under notifications.",
+        `<strong>${escapeHtml(args.workspaceName)}</strong> has <strong>${amount}</strong> left.`,
+        "When it reaches zero, replies, routines and connected-app calls stop until credits are added. Nothing is lost in the meantime — agents, documents and conversations all stay exactly as they are.",
+        "Top-ups are handled by hand for now: reply to this email, or use the form under Settings → Usage, and tell us how many you need.",
       ),
       action: { label: "Open Covan", url: args.appUrl },
     }),

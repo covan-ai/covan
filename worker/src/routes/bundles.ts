@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapBundle, mapDocument } from "../lib/dto";
 import { getActiveWorkspaceId } from "../lib/workspace";
-import { chunkText, embedTexts } from "../lib/embeddings";
+import { chunkText, embedTexts, embeddingModel } from "../lib/embeddings";
 import {
   ALLOWED_EXT,
   contentTypeFor,
@@ -13,8 +13,8 @@ import {
   safeName,
 } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
-import { embeddingCost } from "../lib/entitlements";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
+import { embeddingSpend } from "../lib/entitlements";
 import { insertChunkRows } from "../lib/chunk-store";
 import { callDeletionFn } from "../lib/deletion";
 
@@ -254,15 +254,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   const db = c.get("db");
   const bundleId = c.req.param("id");
 
-  // Refused outright rather than stored-but-unindexed: a document the agent
-  // cannot retrieve from looks uploaded and behaves as if it were never there.
-  const denied = await guardQuota(c);
-  if (denied) return denied;
-
-  // Whose key answers. `guardQuota` sets this only when the caller is past
-  // their allowance and the workspace is carrying it from here; undefined is
-  // the normal case and means the operator's.
-  const env = c.get("providerEnv") ?? c.env;
+  const env = c.env;
 
   const contentLength = parseInt(c.req.header("content-length") ?? "", 10);
   if (Number.isFinite(contentLength) && contentLength > MAX_SIZE) {
@@ -283,8 +275,8 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   // Read the text before anything is stored, and refuse a file there is no text
   // in. A scan and a renamed binary both used to upload successfully and land
   // as a document that is listed, named to the model on every turn, and
-  // impossible to retrieve a sentence of. Same reasoning as the quota refusal
-  // above: the failure that looks like success is the expensive one.
+  // impossible to retrieve a sentence of. Same reasoning as the credit refusal
+  // below: the failure that looks like success is the expensive one.
   const bytes = await file.arrayBuffer();
   const fullText = providedText || extractDocumentText(file.name, bytes);
   if (!hasIndexableText(fullText)) {
@@ -307,6 +299,12 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
     .maybeSingle();
   if (bErr) return c.json({ error: "failed to load bundle" }, 500);
   if (!bundle) return c.json({ error: "not found" }, 404);
+
+  // Refused outright rather than stored-but-unindexed: a document the agent
+  // cannot retrieve from looks uploaded and behaves as if it were never there.
+  // The bundle's workspace pays.
+  const denied = await guardCredits(c, bundle.workspace_id as string);
+  if (denied) return denied;
 
   // Derived from the extension that was just validated, never from the
   // client's own `file.type`: that value used to be stored here and served
@@ -355,7 +353,7 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
     if (chunks.length > 0) {
       const embedded = await embedTexts(env, chunks);
       const vectors = embedded.vectors;
-      await recordQuota(c, embeddingCost(embedded.tokens));
+      await recordCredits(c, embeddingSpend(embeddingModel(env), embedded.tokens, "index"));
       const rows = chunks.map((ch, i) => ({
         document_id: doc.id,
         bundle_id: bundleId,
@@ -425,7 +423,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
       continue;
     }
     try {
-      // Not charged to anyone's quota: this is the operator repairing their own
+      // Not charged to anyone's credits: this is the operator repairing their own
       // data, not a user asking for work. It is gated by ADMIN_API_KEY above.
       const { vectors } = await embedTexts(c.env, chunks);
       const rows = chunks.map((ch, i) => ({

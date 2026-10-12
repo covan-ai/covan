@@ -188,7 +188,7 @@ composio.get("/composio/toolkits", async (c) => {
  *
  * NOT METERED, and deliberately. `spend()` is the agent's, not the browser's —
  * `/composio/toolkits` and `/composio/categories` spend nothing for the same
- * reason, and charging a workspace's token allowance to *read about* an
+ * reason, and charging a workspace's credits to *read about* an
  * application would be a new and surprising rule on the one page whose whole job
  * is browsing. A card open is at most two upstream requests against a grid page
  * that already costs one per forty tiles. `rateLimit("standard")` sits in front

@@ -142,9 +142,11 @@ exactly the set of endpoints that do — so adding it there would have made that
 check state something untrue. It is bounded the same; it just says so in the
 route.
 
-A hosted workspace also has a monthly token allowance, which is a ceiling on the
-bill rather than on the rate. A self-hosted install has none: the operator brings
-their own OpenAI key and decides what to spend on it.
+A hosted workspace also has a balance of credits, which is a ceiling on the bill
+rather than on the rate. A request that would spend from a workspace with none
+left answers `402` with `{ "error": "credits_exhausted", "balance": <number> }`.
+A self-hosted install has no credits: the operator brings their own provider
+keys and decides what to spend on them.
 
 ## The endpoints
 
@@ -304,7 +306,8 @@ and could not.
 
 |                                           |                                                                                      |
 | ----------------------------------------- | ------------------------------------------------------------------------------------ |
-| `GET /usage`                              | Your own totals and what is left of your allowance                                   |
+| `GET /usage`                              | Your own totals, and the active workspace's credits                                  |
+| `GET /usage/credits/ledger?limit=50`      | The workspace's recent charges and top-ups. Admin. Never by person.                  |
 | `GET /usage/workspace`                    | Everyone's, by agent and by month. Admin. Never by person.                           |
 | `GET /coverage/workspace?days=30`         | How answers were grounded, by agent. Admin. Never by person, and never the question. |
 | `GET /api-keys`                           | Your own live keys. Never anyone else's.                                             |

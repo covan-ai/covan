@@ -1,4 +1,5 @@
-import { complete, totalTokens, type CompletionEnv } from "./completion";
+import { complete, type CompletionEnv } from "./completion";
+import { completionSpend, type Spend } from "./entitlements";
 
 const FOLLOWUP_TIMEOUT_MS = 8_000;
 const FOLLOWUP_MAX_TOKENS = 256;
@@ -47,7 +48,7 @@ export async function generateFollowUps(
   model: string,
   question: string,
   answer: string,
-): Promise<{ questions: string[]; tokens: number }> {
+): Promise<{ questions: string[]; spend: Spend | null }> {
   try {
     const { text, usage } = await complete(
       env,
@@ -60,9 +61,9 @@ export async function generateFollowUps(
       },
       { signal: AbortSignal.timeout(FOLLOWUP_TIMEOUT_MS) },
     );
-    return { questions: parseFollowUps(text), tokens: totalTokens(usage) };
+    return { questions: parseFollowUps(text), spend: completionSpend(model, usage, "follow_ups") };
   } catch (err) {
     console.error("follow-up generation failed", err);
-    return { questions: [], tokens: 0 };
+    return { questions: [], spend: null };
   }
 }

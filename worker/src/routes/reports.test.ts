@@ -35,8 +35,8 @@ const MESSAGES = [
 const completionCreate = vi.fn();
 const embedTexts = vi.fn();
 const retrieveForAgent = vi.fn();
-const guardQuota = vi.fn();
-const recordQuota = vi.fn();
+const guardCredits = vi.fn();
+const recordCredits = vi.fn();
 const storePut = vi.fn();
 const storeDelete = vi.fn();
 
@@ -49,8 +49,8 @@ vi.mock("../lib/anthropic", () => ({
 }));
 
 vi.mock("../lib/entitlements/guard", () => ({
-  guardQuota: (...args: unknown[]) => guardQuota(...args),
-  recordQuota: (...args: unknown[]) => recordQuota(...args),
+  guardCredits: (...args: unknown[]) => guardCredits(...args),
+  recordCredits: (...args: unknown[]) => recordCredits(...args),
 }));
 
 vi.mock("../lib/retrieval", () => ({
@@ -116,8 +116,8 @@ function modelAnswers(markdown: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  guardQuota.mockResolvedValue(null);
-  recordQuota.mockResolvedValue(undefined);
+  guardCredits.mockResolvedValue(null);
+  recordCredits.mockResolvedValue(undefined);
   storePut.mockResolvedValue(undefined);
   storeDelete.mockResolvedValue(undefined);
   embedTexts.mockImplementation(async (_env: unknown, texts: string[]) => ({
@@ -136,11 +136,13 @@ beforeEach(() => {
 });
 
 describe("POST /sessions/:id/report", () => {
-  it("refuses before generating anything when the allowance is gone", async () => {
+  it("refuses before generating anything when the credits are gone", async () => {
     // The whole reason this route can keep chat's metering shape is that there
     // is one model call and the refusal lands before it. If the guard ever
     // moves below the generation, the user is billed for a 402.
-    guardQuota.mockResolvedValue(new Response(JSON.stringify({ error: "quota" }), { status: 402 }));
+    guardCredits.mockResolvedValue(
+      new Response(JSON.stringify({ error: "credits_exhausted" }), { status: 402 }),
+    );
 
     const res = await post(appWith().app, ask);
 
@@ -248,9 +250,22 @@ describe("POST /sessions/:id/report", () => {
   it("charges the turn for the generation, the retrieval and the indexing", async () => {
     await post(appWith().app, ask);
 
-    // 3000 prompt + 1200 completion + ceil(200 * 0.01) retrieval embedding
-    // + ceil(100 * 0.01) for embedding the one passage this report cut into.
-    expect(recordQuota).toHaveBeenCalledWith(expect.anything(), 4203);
+    // The retrieval, the passage this report was cut into, and the generation —
+    // in one write, against the session.
+    expect(recordCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      [
+        { kind: "embedding", model: "text-embedding-3-small", tokens: 200, purpose: "retrieval" },
+        { kind: "embedding", model: "text-embedding-3-small", tokens: 100, purpose: "report" },
+        expect.objectContaining({
+          kind: "completion",
+          promptTokens: 3000,
+          completionTokens: 1200,
+          purpose: "report",
+        }),
+      ],
+      { sessionId: expect.any(String) },
+    );
   });
 
   it("still charges for the retrieval when the generation fails", async () => {
@@ -261,7 +276,11 @@ describe("POST /sessions/:id/report", () => {
     const res = await post(appWith().app, ask);
 
     expect(res.status).toBe(502);
-    expect(recordQuota).toHaveBeenCalledWith(expect.anything(), 2);
+    expect(recordCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      [{ kind: "embedding", model: "text-embedding-3-small", tokens: 200, purpose: "retrieval" }],
+      { sessionId: expect.any(String) },
+    );
     expect(storePut).not.toHaveBeenCalled();
   });
 
@@ -302,6 +321,6 @@ describe("POST /sessions/:id/report", () => {
     const res = await post(appWith().app, { bundleId: "bundle-1" });
 
     expect(res.status).toBe(400);
-    expect(guardQuota).not.toHaveBeenCalled();
+    expect(guardCredits).not.toHaveBeenCalled();
   });
 });

@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { quotaFrom, approximateReplies } from "@/lib/quota";
+import { creditsFrom, approximateReplies, wholeCredits } from "@/lib/credits";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
-import { QuotaWall } from "@/components/quota-wall";
-import { WorkspaceProviderKeys } from "@/components/workspace-provider-keys";
+import { CreditsWall } from "@/components/credits-wall";
 
 const compact = (n: number) =>
   n >= 1_000_000
@@ -20,64 +19,33 @@ const compact = (n: number) =>
 const usd = (n: number) => (n === 0 ? "$0.00" : n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
 
 /**
- * What this account has used, on the one screen with room to say it properly.
+ * What this workspace has left, and what this person has used.
  *
- * Two different windows are shown, and they are labelled apart on purpose: the
- * allowance is a calendar month, while the per-agent figures below cover every
- * conversation ever. Putting both under one heading would make the numbers look
- * like they should add up, and they never will.
+ * Two different things, labelled apart on purpose. Credits belong to the
+ * workspace — one pool every member spends from — while the per-agent figures
+ * below are the caller's own conversations, ever. Putting both under one
+ * heading would make the numbers look like they should add up, and they never
+ * will.
  *
- * Every figure is the caller's own, and `workspace_usage` says so in its own
- * join (`0022`). It used to rely on RLS for that instead — sessions were
- * private per user, so the select policy did the scoping by itself — and when
- * `0008` added shared sessions the totals quietly began including colleagues'
- * conversations while this heading still said "Yours alone". A policy answers
- * "may this person see this row", which stopped being the same question as
- * "is this row theirs" the moment sharing existed.
+ * Every per-agent figure is the caller's own, and `workspace_usage` says so in
+ * its own join (`0022`). It used to rely on RLS for that instead — sessions
+ * were private per user — and when `0008` added shared sessions the totals
+ * quietly began including colleagues' conversations while this heading still
+ * said "Yours alone". A policy answers "may this person see this row", which
+ * stopped being the same question as "is this row theirs" the moment sharing
+ * existed.
  */
 export function UsageSection() {
   const { data: usage, isLoading } = useQuery({ queryKey: ["usage"], queryFn: api.usage });
-  const quota = quotaFrom(usage);
+  const credits = creditsFrom(usage);
   // Rounded the same way the composer's banner rounds it, so the two surfaces
   // cannot disagree by a digit that neither of them means.
-  const shown = quota ? approximateReplies(quota.repliesLeft) : 0;
+  const shown = credits ? approximateReplies(credits.repliesLeft) : 0;
   const agents = usage?.agents ?? [];
   const used = agents.filter((a) => a.messageCount > 0);
 
-  // `/usage` has no notion of a workspace provider key — `entitlements.snapshot`
-  // (`worker/src/routes/usage.ts`) answers purely from the account's own
-  // allowance, so it cannot say replies continue past it. Read here so the
-  // sentence below can stop calling replies "paused" once an admin has made
-  // that false. Shared by query key rather than passed down as a prop — the
-  // same choice `["usage"]` itself makes — so this, `QuotaWall` and
-  // `WorkspaceProviderKeys` all agree without any of them owning the others.
-  //
-  // No longer gated on being *spent*. It was, and that was the same mistake as
-  // gating the key field itself: an admin with replies left needs the hint to
-  // know whether their workspace already has a key, and the allowance is per
-  // member, so "spent" is not a fact about the workspace at all.
-  //
-  // Still gated on the deployment being metered, which is the honest version of
-  // what that gate was reaching for. `quota` is null on a self-hosted install,
-  // where nothing below this line renders and a workspace key would fund
-  // nothing — the same condition the whole card is behind. It is null while
-  // `["usage"]` is in flight too, so this simply starts a moment later.
-  const { data: keys } = useQuery({
-    queryKey: ["provider-keys"],
-    queryFn: () => api.providerKeys.get(),
-    enabled: quota !== null,
-  });
-  // The OpenAI half alone, not `openai || anthropic`. `keysForUser` refuses to
-  // take over without it — embeddings, dictation and the default model all need
-  // one — so a workspace that set only the optional Anthropic key is still
-  // being refused, and saying "carries on from here" would be this screen
-  // telling somebody their wall is gone while they watch it turn them away.
-  // `workspace-provider-keys.tsx` is where that workspace is told what is
-  // missing; here it is enough not to claim otherwise.
-  const hasWorkspaceKey = Boolean(keys?.openai);
-
-  // Share of measured input that OpenAI served from its prompt cache. The
-  // denominator is measuredPromptTokens, not promptTokens: replies stored
+  // Share of measured input that the provider served from its prompt cache.
+  // The denominator is measuredPromptTokens, not promptTokens: replies stored
   // before the count existed report nothing, and dividing by every prompt ever
   // sent would show a rate that rises on its own as those age out rather than
   // because the cache improved. Null until there is a measured reply, and the
@@ -89,74 +57,51 @@ export function UsageSection() {
     <section className="mt-16">
       <SectionHeading
         title="Usage"
-        description="Yours alone — your conversations are private, and so are these figures."
+        description="Credits are the workspace's. The figures below them are yours alone."
       />
 
-      {quota && (
+      {credits && (
         <SectionCard className="mt-6">
           <div className="flex items-baseline justify-between gap-4">
-            <span className="text-sm text-muted-foreground">This month</span>
+            <span className="text-sm text-muted-foreground">Workspace credits</span>
             <span className="text-sm font-medium">
-              {compact(quota.used)} of {compact(quota.limit)}
+              {wholeCredits(credits.balance).toLocaleString()} of{" "}
+              {wholeCredits(credits.granted).toLocaleString()}
             </span>
           </div>
 
           {/* Squares, not pills — the bar follows the same rule as the rest of
-              the system's marks (DESIGN.md §3). */}
+              the system's marks (DESIGN.md §3). Amber once it is worth a look. */}
           <div className="mt-3 h-1.5 w-full bg-muted" aria-hidden>
             <div
               className={
-                quota.level === "fine" ? "h-full bg-foreground" : "h-full bg-accent-orange"
+                credits.level === "fine" ? "h-full bg-foreground" : "h-full bg-accent-orange"
               }
-              style={{ width: `${Math.max(2, Math.round(quota.ratio * 100))}%` }}
+              style={{ width: `${Math.max(2, Math.round(credits.ratio * 100))}%` }}
             />
           </div>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            {quota.level === "spent"
-              ? // "Paused" stopped being true the moment an admin saved a
-                // workspace key below — echoing `quota-wall.tsx`'s own
-                // "carries on from here" rather than inventing a second phrase
-                // for the same fact.
-                hasWorkspaceKey
-                ? "Used up — the workspace's own key carries on from here"
-                : "Used up — new replies are paused"
-              : `About ${shown} ${shown === 1 ? "reply" : "replies"} left`}
-            {quota.resetsOn ? ` · resets on ${quota.resetsOn}` : null}
+            {credits.level === "spent"
+              ? "Out of credits — new replies are paused until more are added"
+              : `About ${shown.toLocaleString()} ${shown === 1 ? "reply" : "replies"} left`}
           </p>
-          {/* Door one, in both states, and only for an admin — the component
-              decides that for itself. It cannot hang off `level` the way the
-              wall below does: the allowance is per member, so the person who
-              hits the wall and the person who can do something about it are
-              usually not the same person. An admin who is told about this only
-              after burning their own month is an admin who is told too late,
-              and until they are, the key their workspace already stored cannot
-              be removed either. */}
-          <WorkspaceProviderKeys />
 
           {/* The rest of the wall, only once it is actually spent. Somebody
-              with replies left does not need to be told there is somewhere
-              else to go, and this is a fact rather than a nudge: the allowance
-              exists because the operator is paying OpenAI, and an install
-              running on your own key does not have one. Waiting used to be
-              weighed against exactly one other option — self-hosting — and is
-              now weighed against three: the workspace's own key, a message to
-              us, and self-hosting still, nearest first. See `quota-wall.tsx`. */}
-          {quota.level === "spent" && <QuotaWall />}
+              with credits left does not need to be told there is somewhere
+              else to go. See `credits-wall.tsx`. */}
+          {credits.level === "spent" && <CreditsWall />}
 
-          {/* The conversion stays on the screen — it is what makes the reply
-              count above mean anything. Where the number came from and why it
-              drifts is the part somebody reads once. */}
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
-            Counted in tokens, the unit the model is billed in, and converted to replies at about{" "}
-            {compact(quota.perReply)} tokens each.
+            A credit is a cent of what the models and connected services cost us, with nothing
+            marked up inside it. Every member of the workspace spends from the same balance.
           </p>
-          <Disclosure className="mt-2" label="Where that number comes from">
-            {quota.repliesSeen === 0
-              ? "It is a starting assumption until you have sent something, and shifts towards what your own replies actually cost as you go."
-              : "It is mostly what your own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
-            A long conversation with documents attached costs more than a short question, so the
-            estimate moves.
+          <Disclosure className="mt-2" label="Where the reply estimate comes from">
+            {credits.repliesSeen === 0
+              ? "It is a starting assumption until this workspace has sent something, and shifts towards what its own replies actually cost as you go."
+              : "It is mostly what this workspace's own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
+            A long conversation with documents attached costs more than a short question, and a
+            browser task or a connected app costs credits of its own, so the estimate moves.
           </Disclosure>
         </SectionCard>
       )}
@@ -192,11 +137,10 @@ export function UsageSection() {
         )}
       </SectionCard>
       {/* Both sentences stay: the first is why these figures do not reconcile
-          with the allowance above, which is the whole reason the two windows
-          are labelled apart, and the second is what backs the money. */}
+          with the credits above, and the second is what backs the money. */}
       <p className="mt-3 text-xs text-muted-foreground">
-        Per-agent figures cover every conversation you have had, not just this month, so they will
-        not add up to the allowance above. Costs are estimates from list prices.
+        Per-agent figures cover every conversation you have had, and are estimates from list prices.
+        Credits are what is actually charged, to the whole workspace.
       </p>
       {cacheRate !== null && (
         <Disclosure

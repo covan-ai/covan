@@ -580,7 +580,9 @@ receiver has to notice.
 `event` is what to switch on, and there are four: `routine.delivered` is a
 result; `routine.paused` and `routine.quota_exhausted` are the engine's own
 notices, which go through the routine's channel the same way they go to a
-person; `routine.test` is the Send test button. A `routine.test` carries no
+person — `routine.quota_exhausted` keeps its older name and now means the
+workspace is out of credits, and carries no reset date because there is none;
+`routine.test` is the Send test button. A `routine.test` carries no
 `routine` and no `run`, because no routine sent it.
 
 There is no `run.id`, deliberately. The POST happens before the run row is
@@ -737,7 +739,7 @@ The limit is counted **per routine**, not per address. An address is the wrong
 key in both directions: one sender behind one address is what a webhook is, and
 several routines sharing that address would be counted as one caller, while
 many senders behind one NAT would be too. The routine is the thing being
-protected, because it is the row that spends its owner's allowance.
+protected, because it is the row that spends its workspace's credits.
 
 ### Sending the same thing twice
 
@@ -771,7 +773,7 @@ so the interface can answer "is this actually wired up".
 The run happens as the routine's owner — not by impersonation but by
 construction. The engine never resolves a caller: every id it uses comes off
 the routine row, and it re-checks the owner's workspace membership before doing
-anything. The owner's allowance is charged exactly as for a scheduled run.
+anything. The routine's workspace is charged exactly as for a scheduled run.
 
 No session is minted for the owner, deliberately. It would not work — the four
 tables the engine writes have no policy for `authenticated` at all — and it
@@ -1147,11 +1149,11 @@ pause from repeated failures its owner is not told — membership is re-checked 
 every run precisely because the engine holds a service-role client that row
 level security does not constrain, and an ex-member's routine would otherwise
 keep piping a workspace agent's output to their personal Slack. And on
-the hosted service, a run whose owner has spent their monthly token allowance is
-skipped before anything is fetched, leaving the cursor unadvanced so that
-whatever it would have reported is still waiting when the allowance resets. Its
-owner is told once, not once per tick. A self-hosted install has no allowance and
-never takes that path.
+the hosted service, a run whose workspace is out of credits is skipped before
+anything is fetched, leaving the cursor unadvanced so that whatever it would
+have reported is still waiting once credits are added. Its owner is told once,
+not once per tick. A self-hosted install has no credits and never takes that
+path.
 
 ## For the operator: one key, two deployments
 

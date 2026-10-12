@@ -33,16 +33,6 @@ vi.mock("../embeddings", async (importOriginal) => {
   };
 });
 
-// `keysForUser` opens the workspace's stored key through `lib/keys/store`,
-// which builds a service-role Supabase client of its own rather than using the
-// `deps.db` fake — there is nothing here to point it at. Mocked to "no key
-// set", which is what every test wants except the workspace-funded ones.
-const { readWorkspaceKeys } = vi.hoisted(() => ({
-  readWorkspaceKeys: vi.fn(async () => ({ openai: null, anthropic: null }) as WorkspaceKeys),
-}));
-vi.mock("../keys/store", () => ({ readWorkspaceKeys }));
-
-import type { WorkspaceKeys } from "../keys/store";
 import { fakeDb, type QueryContext } from "../../test-support/fake-db";
 import { embedTexts } from "../embeddings";
 import { runConnection, isNarrowing, MAX_DOCUMENTS_PER_RUN, type ConnectionRow } from "./sync";
@@ -68,7 +58,7 @@ const env = () => ({
 const unlimited = {
   check: vi.fn(async () => ({ allowed: true }) as const),
   record: vi.fn(async () => {}),
-  snapshot: vi.fn(async () => ({ used: 0, limit: null, resetsAt: null })),
+  snapshot: vi.fn(async () => ({ metered: false as const })),
 };
 
 async function connection(overrides: Partial<ConnectionRow> = {}): Promise<ConnectionRow> {
@@ -163,9 +153,6 @@ const deps = (fake: ReturnType<typeof fakeDb>) => ({
 beforeEach(() => {
   docsDir = mkdtempSync(join(tmpdir(), "covan-sync-"));
   vi.clearAllMocks();
-  // clearAllMocks wipes call history but leaves a mockResolvedValue installed
-  // by an earlier test in place as the new default. Re-assert it.
-  readWorkspaceKeys.mockResolvedValue({ openai: null, anthropic: null });
   fakeProvider.isConfigured.mockReturnValue(true);
   fakeProvider.refresh.mockImplementation(async (_env: unknown, token: unknown) => token);
 });
@@ -455,18 +442,13 @@ describe("syncing a connection", () => {
     });
   });
 
-  it("spends nothing once the owner's allowance is used up", async () => {
+  it("spends nothing once the workspace's credits are gone", async () => {
     const fake = db();
     const withQuota = {
       ...deps(fake),
       entitlements: {
         ...unlimited,
-        check: vi.fn(async () => ({
-          allowed: false as const,
-          used: 300000,
-          limit: 300000,
-          resetsAt: "2026-10-01T00:00:00Z",
-        })),
+        check: vi.fn(async () => ({ allowed: false as const, balance: 0 })),
       },
     };
 
@@ -474,77 +456,28 @@ describe("syncing a connection", () => {
 
     expect(outcome.status).toBe("skipped");
     expect(fakeProvider.listFiles).not.toHaveBeenCalled();
-    // Left active on purpose: the allowance resets, and a cursor-free sync
+    // Left active on purpose: credits can be added, and a cursor-free sync
     // picks up exactly what it would have done.
     expect(fake.callsTo("connections").find((c) => c.op === "update")?.values).toMatchObject({
       status: "active",
     });
   });
 
-  /**
-   * The workspace-funded branch, on a path with no request to guard.
-   *
-   * `guardQuota` covers this for every route that has a request; a scheduled
-   * sync has none, so the same three-branch decision is made here by hand.
-   * Both halves matter and neither implies the other: embedding on the
-   * operator's key spends money the allowance already refused, and recording a
-   * workspace-funded sync against the operator's counter bills them for money
-   * they did not spend.
-   */
-  describe("when the owner is out but their workspace has a key", () => {
-    const outOfAllowance = (fake: ReturnType<typeof fakeDb>) => ({
-      ...deps(fake),
-      entitlements: {
-        ...unlimited,
-        check: vi.fn(async () => ({
-          allowed: false as const,
-          used: 100_000,
-          limit: 100_000,
-          resetsAt: "2026-10-01T00:00:00Z",
-        })),
-      },
-    });
+  it("asks about, and charges, the connection's workspace — attributed to its owner", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
+    fakeProvider.readFile.mockResolvedValue("Twenty days of leave a year.");
+    const fake = db();
+    const d = deps(fake);
+    const row = await connection();
 
-    it("imports on the workspace's key rather than skipping", async () => {
-      fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
-      fakeProvider.readFile.mockResolvedValue("Twenty days of leave a year.");
-      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
-      const fake = db({ activeWorkspace: "ws-1" });
-      const withQuota = outOfAllowance(fake);
+    await runConnection(row, d);
 
-      const outcome = await runConnection(await connection(), withQuota);
-
-      expect(outcome).toMatchObject({ status: "ok", added: 1 });
-      // The env the embedding call was actually made with. `deps.env` here
-      // would be the operator paying for a sync their allowance refused.
-      expect(vi.mocked(embedTexts).mock.calls[0][0]).toMatchObject({
-        OPENAI_API_KEY: "ws-openai",
-      });
-    });
-
-    it("writes nothing to the operator's counter for what the workspace paid", async () => {
-      fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
-      fakeProvider.readFile.mockResolvedValue("Twenty days of leave a year.");
-      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
-      const fake = db({ activeWorkspace: "ws-1" });
-      const withQuota = outOfAllowance(fake);
-
-      await runConnection(await connection(), withQuota);
-
-      expect(withQuota.entitlements.record).not.toHaveBeenCalled();
-    });
-
-    it("skips when the workspace has no key of its own", async () => {
-      // The control. Same denied verdict, same lookup, nothing found — and the
-      // sync is skipped rather than quietly funded by the operator.
-      fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
-      const fake = db({ activeWorkspace: "ws-1" });
-
-      const outcome = await runConnection(await connection(), outOfAllowance(fake));
-
-      expect(outcome.status).toBe("skipped");
-      expect(fakeProvider.listFiles).not.toHaveBeenCalled();
-    });
+    expect(d.entitlements.check).toHaveBeenCalledWith(row.workspace_id);
+    expect(d.entitlements.record).toHaveBeenCalledWith(
+      row.workspace_id,
+      [{ kind: "embedding", model: "text-embedding-3-small", tokens: 100, purpose: "sync" }],
+      { connectionId: row.id, userId: row.user_id },
+    );
   });
 
   it("pauses a connection whose provider this deployment no longer offers", async () => {

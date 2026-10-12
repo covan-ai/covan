@@ -3,6 +3,7 @@ import { api, type UsageMonth } from "@/lib/api-client";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
+import { CreditLedger } from "@/components/credit-ledger";
 
 const compact = (n: number) =>
   n >= 1_000_000
@@ -27,7 +28,7 @@ const monthLabel = (iso: string) =>
  *
  * The section above it is the caller's own and says so. This one is everyone's,
  * and says that too — two figures on one screen that mean different things have
- * to be labelled apart, which is the same reason the allowance and the lifetime
+ * to be labelled apart, which is the same reason the credits and the lifetime
  * totals above are under separate headings.
  *
  * **By agent and by month, never by person.** That is not a rule this component
@@ -102,6 +103,8 @@ export function WorkspaceUsageSection() {
         sent — changing an agent's model re-prices its history, because a reply does not record
         which model wrote it.
       </Disclosure>
+
+      <CreditLedger />
     </section>
   );
 }

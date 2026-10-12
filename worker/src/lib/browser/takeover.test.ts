@@ -1616,9 +1616,9 @@ describe("retryBrowserTask", () => {
 
   /**
    * Asserted against the source rather than a mock, because the invariant is
-   * that nothing in this file ever reaches for the allowance — not that one
+   * that nothing in this file ever reaches for credits — not that one
    * path happens to miss it. The free re-run is the point: `browse` charged
-   * `BROWSER_TASK_TOKENS` once already, and a login wall is not something the
+   * a hold on credits once already, and a login wall is not something the
    * person did wrong.
    */
   /**

@@ -1,46 +1,19 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { guardQuota, recordQuota } from "./guard";
+import { guardCredits, recordCredits } from "./guard";
 import type { Entitlements } from "./index";
-import { keysForUser } from "../keys/resolve";
+import { getActiveWorkspaceId } from "../workspace";
 
-// Defaults to the house-keys shape so tests that never touch this mock (the
-// pre-existing 402 case above all) still get an answer `guardQuota` can read
-// `.source` off of, instead of the `undefined` a bare `vi.fn()` returns.
-vi.mock("../keys/resolve", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../keys/resolve")>()),
-  keysForUser: vi
-    .fn()
-    .mockResolvedValue({ openai: "house", anthropic: undefined, source: "house" }),
-}));
+vi.mock("../workspace", () => ({ getActiveWorkspaceId: vi.fn() }));
 
 /** The things the guard touches on a Hono context, and nothing else. */
-function ctx(
-  entitlements: Partial<Entitlements>,
-  extra: {
-    db?: unknown;
-    env?: unknown;
-    providerEnv?: unknown;
-    providerKeys?: unknown;
-    set?: (k: string, v: unknown) => void;
-  } = {},
-) {
-  const store: Record<string, unknown> = {
-    user: { id: "u1" },
-    entitlements,
-    db: extra.db ?? {},
-    // Undefined unless a test says otherwise — the normal case, and the one
-    // the old helper got wrong by answering every key with `entitlements`.
-    providerEnv: extra.providerEnv,
-    providerKeys: extra.providerKeys,
-  };
+function ctx(entitlements: Partial<Entitlements>, store: Record<string, unknown> = {}) {
+  const values: Record<string, unknown> = { user: { id: "u1" }, entitlements, db: {}, ...store };
   return {
-    env: extra.env ?? { OPENAI_API_KEY: "house" },
-    get: (key: string) => store[key],
-    set:
-      extra.set ??
-      ((k: string, v: unknown) => {
-        store[k] = v;
-      }),
+    values,
+    get: (key: string) => values[key],
+    set: (k: string, v: unknown) => {
+      values[k] = v;
+    },
     json: (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), {
         status,
@@ -51,215 +24,90 @@ function ctx(
 
 afterEach(() => {
   vi.restoreAllMocks();
-  // restoreAllMocks only touches spies made with vi.spyOn — a vi.fn() from a
-  // vi.mock() factory, like keysForUser above, is "silently ignored" by it.
-  // Without this, call counts from one test's mockResolvedValue leak into the
-  // next test's "was this even called" assertions.
-  //
-  // mockClear() alone is not enough either: it wipes call history but leaves
-  // whatever mockResolvedValue the previous test installed in place as the new
-  // de-facto default, so a later test that forgets to reconfigure it silently
-  // inherits "workspace" instead of the documented "house". mockReset() drops
-  // that installed implementation too, so re-asserting the factory default
-  // below is what actually makes every test start from the same place.
-  vi.mocked(keysForUser).mockReset().mockResolvedValue({
-    openai: "house",
-    anthropic: undefined,
-    source: "house",
-  });
+  vi.mocked(getActiveWorkspaceId).mockReset();
 });
 
-describe("guardQuota", () => {
-  it("lets an allowed caller through", async () => {
-    const denied = await guardQuota(ctx({ check: async () => ({ allowed: true }) }));
-    expect(denied).toBeNull();
+describe("guardCredits", () => {
+  it("charges the workspace it was given, and remembers it", async () => {
+    const check = vi.fn().mockResolvedValue({ allowed: true });
+    const c = ctx({ check });
+
+    await expect(guardCredits(c, "w-session")).resolves.toBeNull();
+
+    expect(check).toHaveBeenCalledWith("w-session");
+    expect(c.values.workspaceId).toBe("w-session");
+    expect(getActiveWorkspaceId).not.toHaveBeenCalled();
   });
 
-  it("answers 402 with what the client needs to explain itself", async () => {
-    const denied = await guardQuota(
-      ctx({
-        check: async () => ({
-          allowed: false,
-          used: 1200,
-          limit: 1000,
-          resetsAt: "2026-09-01T00:00:00.000Z",
-        }),
-      }),
-    );
+  it("falls back to the caller's active workspace when the route has no row", async () => {
+    vi.mocked(getActiveWorkspaceId).mockResolvedValue("w-active");
+    const check = vi.fn().mockResolvedValue({ allowed: true });
+    const c = ctx({ check });
 
-    expect(denied).not.toBeNull();
-    expect(denied!.status).toBe(402);
-    await expect(denied!.json()).resolves.toEqual({
-      error: "quota_exceeded",
-      used: 1200,
-      limit: 1000,
-      resetsAt: "2026-09-01T00:00:00.000Z",
-    });
+    await guardCredits(c);
+
+    expect(check).toHaveBeenCalledWith("w-active");
+    expect(c.values.workspaceId).toBe("w-active");
   });
 
-  // Deliberate: the counter lives in the same database as everything else, so a
-  // read failure means the app is already in trouble. Refusing every reply on
-  // top of that turns a billing inconvenience into an outage.
-  it("lets the request through — loudly — when the quota cannot be read", async () => {
+  it("answers 402 with the balance when the workspace is out of credits", async () => {
+    const c = ctx({ check: vi.fn().mockResolvedValue({ allowed: false, balance: -0.4 }) });
+
+    const res = await guardCredits(c, "w1");
+
+    expect(res?.status).toBe(402);
+    await expect(res?.json()).resolves.toEqual({ error: "credits_exhausted", balance: -0.4 });
+  });
+
+  it("lets the request through — loudly — when the balance cannot be read", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const c = ctx({ check: vi.fn().mockRejectedValue(new Error("db down")) });
 
-    const denied = await guardQuota(
-      ctx({
-        check: async () => {
-          throw new Error("database unreachable");
-        },
-      }),
-    );
-
-    expect(denied).toBeNull();
+    await expect(guardCredits(c, "w1")).resolves.toBeNull();
     expect(err).toHaveBeenCalled();
   });
 });
 
-describe("recordQuota", () => {
-  it("charges whole tokens to the caller", async () => {
-    const record = vi.fn(async () => {});
-    await recordQuota(ctx({ record }), 812.4);
-    expect(record).toHaveBeenCalledWith("u1", 812);
+describe("recordCredits", () => {
+  it("charges the guarded workspace, attributed to the caller", async () => {
+    const record = vi.fn().mockResolvedValue(undefined);
+    const c = ctx({ record }, { workspaceId: "w1" });
+
+    await recordCredits(c, [{ kind: "composio_search" }], { sessionId: "s1" });
+
+    expect(record).toHaveBeenCalledWith("w1", [{ kind: "composio_search" }], {
+      userId: "u1",
+      sessionId: "s1",
+    });
   });
 
-  it("writes nothing for a free operation", async () => {
-    const record = vi.fn(async () => {});
-    await recordQuota(ctx({ record }), 0);
-    await recordQuota(ctx({ record }), Number.NaN);
+  it("writes nothing for an operation that consumed nothing", async () => {
+    const record = vi.fn();
+    const c = ctx({ record }, { workspaceId: "w1" });
+
+    await recordCredits(c, []);
+    await recordCredits(c, null);
+
     expect(record).not.toHaveBeenCalled();
   });
 
-  // The work is already done and the reply already sent. A counter that cannot
-  // be written must not turn a successful operation into a failed one.
-  it("never throws when the counter write fails", async () => {
+  it("charges nobody, and says so, when the guard never ran", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const record = vi.fn();
 
-    await expect(
-      recordQuota(
-        ctx({
-          record: async () => {
-            throw new Error("write failed");
-          },
-        }),
-        100,
-      ),
-    ).resolves.toBeUndefined();
+    await recordCredits(ctx({ record }), { kind: "composio_search" });
+
+    expect(record).not.toHaveBeenCalled();
     expect(err).toHaveBeenCalled();
   });
-});
 
-const DENIED = {
-  allowed: false as const,
-  used: 100_000,
-  limit: 100_000,
-  resetsAt: "2026-10-01T00:00:00.000Z",
-};
-
-describe("guardQuota with a workspace key", () => {
-  it("lets the request through and stashes the workspace env", async () => {
-    vi.mocked(keysForUser).mockResolvedValue({
-      openai: "ws-openai",
-      anthropic: undefined,
-      source: "workspace",
-    });
-
-    const set = vi.fn();
-    const c = ctx({ check: async () => DENIED }, { set, env: { OPENAI_API_KEY: "house" } });
-
-    expect(await guardQuota(c)).toBeNull();
-    expect(set).toHaveBeenCalledWith(
-      "providerEnv",
-      expect.objectContaining({ OPENAI_API_KEY: "ws-openai" }),
-    );
-    // And whose they are, alongside. `recordQuota` reads this rather than the
-    // presence of the env, so that the money question is asked as
-    // `billsTheOperator(keys)` here exactly as it is on the three paths that
-    // have no request context.
-    expect(set).toHaveBeenCalledWith(
-      "providerKeys",
-      expect.objectContaining({ source: "workspace" }),
-    );
-  });
-
-  it("still answers 402 when the workspace has no key", async () => {
-    vi.mocked(keysForUser).mockResolvedValue({
-      openai: "house",
-      anthropic: undefined,
-      source: "house",
-    });
-
-    const set = vi.fn();
-    const c = ctx({ check: async () => DENIED }, { set, env: { OPENAI_API_KEY: "house" } });
-
-    const denied = await guardQuota(c);
-    expect(denied?.status).toBe(402);
-    expect(set).not.toHaveBeenCalledWith("providerEnv", expect.anything());
-    expect(set).not.toHaveBeenCalledWith("providerKeys", expect.anything());
-  });
-
-  it("does not look for a key at all while the caller is within allowance", async () => {
-    const c = ctx({ check: async () => ({ allowed: true }) }, { set: vi.fn(), env: {} });
-    expect(await guardQuota(c)).toBeNull();
-    expect(keysForUser).not.toHaveBeenCalled();
-  });
-});
-
-describe("recordQuota under a workspace key", () => {
-  it("counts nothing when the workspace is paying", async () => {
-    const record = vi.fn();
+  it("never throws when the ledger write fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const c = ctx(
-      { check: async () => DENIED, record },
-      {
-        set: vi.fn(),
-        env: {},
-        providerEnv: { OPENAI_API_KEY: "ws-openai" },
-        providerKeys: { openai: "ws-openai", anthropic: undefined, source: "workspace" },
-      },
+      { record: vi.fn().mockRejectedValue(new Error("db down")) },
+      { workspaceId: "w1" },
     );
 
-    await recordQuota(c, 5_000);
-    expect(record).not.toHaveBeenCalled();
-  });
-
-  // The predicate is `source === "house"`, not `source !== "workspace"`, and
-  // this is what that difference buys: a source nobody has taught the counter
-  // about is not written to it. Under-counting is reconstructible from
-  // `messages`; over-counting is a bill for tokens the operator never bought.
-  it("counts nothing for a key source it has never heard of", async () => {
-    const record = vi.fn();
-    const c = ctx(
-      { check: async () => DENIED, record },
-      {
-        set: vi.fn(),
-        env: {},
-        providerKeys: { openai: "k", anthropic: undefined, source: "reseller" },
-      },
-    );
-
-    await recordQuota(c, 5_000);
-    expect(record).not.toHaveBeenCalled();
-  });
-
-  it("still counts when the operator is paying", async () => {
-    const record = vi.fn();
-    const c = ctx({ check: async () => ({ allowed: true }), record }, { set: vi.fn(), env: {} });
-
-    await recordQuota(c, 5_000);
-    expect(record).toHaveBeenCalledWith(expect.any(String), 5_000);
-  });
-
-  // Nothing was resolved, because nothing needed to be: the caller was inside
-  // their allowance and `guardQuota` never went looking. That absence means the
-  // operator's own keys answered, which is precisely what the counter is for.
-  it("counts when no keys were ever resolved", async () => {
-    const record = vi.fn();
-    const c = ctx(
-      { check: async () => ({ allowed: true }), record },
-      { set: vi.fn(), env: { OPENAI_API_KEY: "house" } },
-    );
-
-    await recordQuota(c, 1_000);
-    expect(record).toHaveBeenCalledWith("u1", 1_000);
+    await expect(recordCredits(c, { kind: "composio_search" })).resolves.toBeUndefined();
   });
 });

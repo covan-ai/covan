@@ -438,7 +438,7 @@ async function giveBack(db: SupabaseClient, input: Owned, now: Date): Promise<vo
  * original task in the same browser, once, for free.
  *
  * **The one free retry, `retryBrowserTask`'s rule.** `browse` charged
- * `BROWSER_TASK_TOKENS` when the task was first asked for, and a login wall is
+ * a hold on credits when the task was first asked for, and a login wall is
  * not something the person did wrong — so nothing here touches `spend`,
  * `affordable` or `lib/entitlements`. What bounds the operator's money is
  * `retry_of`: the route refuses an original that already has a successor, this

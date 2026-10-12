@@ -666,6 +666,11 @@ chat.post("/chat/stream", async (c) => {
           // accumulator — a second copy here would be added to it twice when
           // the turn resumes. Same rule the appended text already follows.
           usage: messageId ? null : spentTurnUsage(spend),
+          // Same rule, and the only place they are in scope: the resume runs
+          // in another request, and with no row to read them from it would
+          // write a reply that says nothing about what grounded it (0083).
+          grounding: messageId ? null : grounding,
+          sources: messageId ? null : sources,
         });
         if (!id) {
           send({ type: "error", error: "could not save what the agent asked to do" });
@@ -1196,6 +1201,11 @@ chat.post("/chat/confirm/:id", async (c) => {
                 role: "assistant",
                 content: text || "(no reply)",
                 sender_id: null,
+                // What the half that asked was grounded on, parked with it
+                // because this request never ran the retrieval (0083). Null on
+                // a turn parked before then, which is what it always was.
+                sources: pause.sources,
+                grounding: pause.grounding,
                 ...usageColumns(addUsage(pause.usage ?? emptyUsage(), delta)),
                 model,
                 outcome: usage.outcome,
@@ -1432,8 +1442,11 @@ chat.post("/chat/confirm/:id", async (c) => {
               proposal: asked.proposal,
             },
             steps,
-            // Carried, when no reply row holds what the turn spent so far.
+            // Carried, when no reply row holds what the turn spent so far —
+            // and what grounded it, for the same reason.
             usage: pause.messageId ? null : pause.usage,
+            grounding: pause.messageId ? null : pause.grounding,
+            sources: pause.messageId ? null : pause.sources,
           });
           persisted = true;
           await recordSpend();

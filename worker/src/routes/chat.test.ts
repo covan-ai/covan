@@ -1193,6 +1193,59 @@ describe("a turn that stops to ask", () => {
     expect(serviceInsert).not.toHaveBeenCalled();
   });
 
+  it("parks what grounded the turn when it asked before saying anything", async () => {
+    // covan-cloud#316. The resume runs in another request and has no row to
+    // read these from, so the parked turn is the only place they survive.
+    extraTool = ASKS_FIRST;
+    const { app } = appWith({
+      question: "book a room",
+      documents: [HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    completionCreate.mockImplementation(asksFor("book_the_room"));
+
+    await ask(app);
+
+    const row = pausedWritten.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(row.grounding).toBe("chunks");
+    expect(row.sources).toEqual([{ id: "d1", name: "handbook.md" }]);
+  });
+
+  it("parks a miss as none, which is the value the gap report counts", async () => {
+    extraTool = ASKS_FIRST;
+    const { app } = appWith({ question: "book a room", documents: [HANDBOOK], matches: [] });
+    completionCreate.mockImplementation(asksFor("book_the_room"));
+
+    await ask(app);
+
+    const row = pausedWritten.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(row.grounding).toBe("none");
+    expect(row.sources).toBeNull();
+  });
+
+  it("parks no grounding when the reply row already holds it", async () => {
+    // `usage`'s rule. The resume UPDATEs that row and leaves both columns as
+    // the insert wrote them.
+    extraTool = ASKS_FIRST;
+    const { app } = appWith({
+      question: "book a room",
+      documents: [HANDBOOK],
+      matches: [
+        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+      ],
+    });
+    completionCreate.mockImplementation(asksFor("book_the_room", "Let me book that."));
+
+    await ask(app);
+
+    expect(serviceInsert.mock.calls.at(-1)?.[0].grounding).toBe("chunks");
+    const row = pausedWritten.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(row.grounding).toBeNull();
+    expect(row.sources).toBeNull();
+  });
+
   it("does not call an abandoned turn paused, when nothing was parked", async () => {
     // `announcePause` is only reached on the non-aborted branch. A turn that
     // asked and was abandoned in the same moment writes its row and parks
@@ -2084,7 +2137,7 @@ describe("POST /chat/confirm/:id", () => {
     });
 
     it("parks again on a call the card did not list, before the model runs", async () => {
-      parked = parkedWith("covan.app");
+      parked = { ...parkedWith("covan.app"), grounding: "none" };
       const { app } = appWith({ question: "look at all three" });
 
       const body = await (await confirm(app, true)).text();
@@ -2094,6 +2147,9 @@ describe("POST /chat/confirm/:id", () => {
       expect(completionCreate.mock.calls.find((c) => c[0].stream)).toBeUndefined();
       const row = pausedWritten.mock.calls.at(-1)?.[0];
       expect(row.tool_call).toEqual(CALLS[2]);
+      // Still no reply row, so what grounded the turn rides along again
+      // (covan-cloud#316) — or the resume after this one writes it as null.
+      expect(row.grounding).toBe("none");
       // The call that asked is left unanswered; the ones that ran are answered.
       const answered = (
         row.messages as Array<{ role: string; toolCallId?: string; content?: string }>
@@ -2204,6 +2260,53 @@ describe("POST /chat/confirm/:id", () => {
       expect(row.completion_tokens).toBe(70);
       expect((row.pass_usage as Array<{ index: number }>).map((e) => e.index)).toEqual([0, 1]);
       expect(row.model).toBe(PARKED.model);
+    });
+
+    it("writes what grounded the half that asked into the row it resumes into", async () => {
+      // covan-cloud#316: this insert was the one assistant row in the product
+      // written with no `grounding`, so 13 of the 17 unrecorded answers in the
+      // workspace that found it came from here.
+      parked = {
+        ...PARKED,
+        message_id: null,
+        grounding: "documents",
+        sources: [{ id: "d1", name: "handbook.md" }],
+      };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, true)).text();
+
+      const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row.grounding).toBe("documents");
+      expect(row.sources).toEqual([{ id: "d1", name: "handbook.md" }]);
+    });
+
+    it("writes null for a turn parked before the columns existed, not a guess", async () => {
+      parked = { ...PARKED, message_id: null };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, true)).text();
+
+      const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row.grounding).toBeNull();
+      expect(row.sources).toBeNull();
+    });
+
+    it("leaves the grounding of a reply that already exists alone", async () => {
+      // The UPDATE branch. The row was written with its grounding by the
+      // request that parked; a resume that rewrote it would be guessing.
+      priorMessage = { id: "m1", content: "Let me book that.", grounding: "chunks" };
+      parked = { ...PARKED, message_id: "m1" };
+      const { app } = appWith({ question: "every monday" });
+      answersWith(streamOf("Done."));
+
+      await (await confirm(app, true)).text();
+
+      const row = serviceUpdate.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(row).not.toHaveProperty("grounding");
+      expect(row).not.toHaveProperty("sources");
     });
 
     it("ends a turn that paused three times with one row that is the sum of its four halves", async () => {

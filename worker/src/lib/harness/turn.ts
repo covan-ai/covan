@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompletionMessage, ToolCall } from "../completion";
+import type { Retrieval, RetrievedSource } from "../retrieval";
 import type { AgentStep, PausedTurn } from "./loop";
 import type { PassUsage } from "./loop";
 import type { TurnUsage } from "./usage";
@@ -25,6 +26,15 @@ function usageOfParked(raw: unknown): TurnUsage {
   };
 }
 import { MAX_STEP_EXCERPT_CHARS, cap } from "./budget";
+
+/**
+ * A parked turn's `grounding`, or null. The column's check (0083) already
+ * holds it to these three, so this is the type being made true rather than a
+ * second validation.
+ */
+function groundingOfParked(raw: unknown): Retrieval["grounding"] | null {
+  return raw === "chunks" || raw === "documents" || raw === "none" ? raw : null;
+}
 
 /**
  * The bookkeeping either end of a turn: writing down what it did, and parking
@@ -66,6 +76,19 @@ export type StoredPause = {
    * it is the accumulator, the same rule the appended text already follows.
    */
   usage: TurnUsage | null;
+  /**
+   * What grounded the turn when it parked, and what it cited — or null when
+   * the reply row holds them already, which is `usage`'s rule and for its
+   * reason (0083).
+   *
+   * A turn that asked before it said anything has no row, so the resume
+   * INSERTs one, and nothing else at resume time knows what the retrieval
+   * found: it ran in the request that parked. Without these the row landed
+   * with `grounding` null, which the coverage screen and the gap report count
+   * as "unrecorded" — 30% of the answers in the workspace that found it.
+   */
+  grounding: Retrieval["grounding"] | null;
+  sources: RetrievedSource[] | null;
   status: string;
   expiresAt: string;
 };
@@ -140,6 +163,9 @@ export async function savePausedTurn(
     steps: AgentStep[];
     /** See `StoredPause.usage`. Null when a reply row already holds it. */
     usage?: TurnUsage | null;
+    /** See `StoredPause.grounding`. Same rule as `usage`. */
+    grounding?: Retrieval["grounding"] | null;
+    sources?: RetrievedSource[] | null;
   },
 ): Promise<string | null> {
   if (!input.paused.call) return null;
@@ -159,6 +185,9 @@ export async function savePausedTurn(
       steps: input.steps,
       model: input.model,
       usage: input.usage ?? null,
+      grounding: input.grounding ?? null,
+      // Null rather than `[]` for nothing cited, as `messages.sources` is.
+      sources: input.sources && input.sources.length > 0 ? input.sources : null,
     })
     .select("id")
     .single();
@@ -210,6 +239,10 @@ export async function loadPausedTurn(
       // rather than cast: this is jsonb, so the shape is whatever was written,
       // and `addUsage` is entitled to a real `passes` array.
       usage: data.usage ? usageOfParked(data.usage) : null,
+      // A row parked before 0083 has neither column, and reads as null: the
+      // reply it resumes into says "nobody recorded one", which is the truth.
+      grounding: groundingOfParked(data.grounding),
+      sources: Array.isArray(data.sources) ? (data.sources as RetrievedSource[]) : null,
       status: String(data.status),
       expiresAt: String(data.expires_at),
     },

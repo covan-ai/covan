@@ -20,7 +20,7 @@ import { useDeliveryChannels, useCreateRoutine } from "@/hooks/use-routines";
 import { useConnections } from "@/hooks/use-connections";
 import { SchedulePicker, scheduleError } from "@/components/routines/schedule-picker";
 import { TemplatePicker } from "@/components/routines/template-picker";
-import type { RoutineSourceKind, RoutineTriggerKind } from "@/lib/routines-api";
+import type { CreatableSourceKind, RoutineTriggerKind } from "@/lib/routines-api";
 import { templateById, type RoutineTemplate } from "@/lib/routine-templates";
 
 /**
@@ -91,9 +91,8 @@ export function CreateRoutineDialog({
   const [drafting, setDrafting] = useState(false);
 
   const [name, setName] = useState("");
-  const [sourceKind, setSourceKind] = useState<RoutineSourceKind>("none");
+  const [sourceKind, setSourceKind] = useState<CreatableSourceKind>("none");
   const [triggerKind, setTriggerKind] = useState<RoutineTriggerKind>("schedule");
-  const [sourceUrl, setSourceUrl] = useState("");
   const [connectionId, setConnectionId] = useState("");
   const [instruction, setInstruction] = useState("");
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
@@ -127,7 +126,7 @@ export function CreateRoutineDialog({
   const [emailTouched, setEmailTouched] = useState(false);
   const [endsAfterRuns, setEndsAfterRuns] = useState<number | null>(null);
   const [fieldError, setFieldError] = useState<{
-    field: "schedule" | "url";
+    field: "schedule";
     message: string;
   } | null>(null);
 
@@ -167,7 +166,6 @@ export function CreateRoutineDialog({
     setName("");
     setSourceKind("none");
     setTriggerKind("schedule");
-    setSourceUrl("");
     setConnectionId("");
     setInstruction("");
     setScheduleCron("0 * * * *");
@@ -192,7 +190,6 @@ export function CreateRoutineDialog({
       const draft = await api.routines.draft(prose.trim(), browserTimezone());
       setName(draft.name);
       setSourceKind(draft.sourceKind);
-      setSourceUrl(draft.sourceUrl ?? "");
       setInstruction(draft.instruction);
       // The draft calls it `cron`; the create endpoint calls it `scheduleCron`.
       setScheduleCron(draft.cron);
@@ -227,7 +224,6 @@ export function CreateRoutineDialog({
     const d = template.draft;
     setName(d.name);
     setSourceKind(d.sourceKind);
-    setSourceUrl(d.sourceUrl ?? "");
     setInstruction(d.instruction);
     setScheduleCron(d.scheduleCron);
     setTimezone(browserTimezone());
@@ -301,7 +297,6 @@ export function CreateRoutineDialog({
         // `schedule` for every other kind, which is also what the state says —
         // the control that sets it is not rendered for them.
         triggerKind: sourceKind === "none" ? triggerKind : "schedule",
-        sourceUrl: sourceKind === "rss" || sourceKind === "web" ? sourceUrl.trim() : null,
         connectionId: sourceKind === "connection" ? connectionId : null,
         instruction: instruction.trim(),
         ...(needsNewChannel
@@ -316,19 +311,17 @@ export function CreateRoutineDialog({
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Could not create that routine";
       // The API answers with a flat { error } string, so attributing it to a
-      // field happens here. Both are distinctive enough to place with
-      // confidence: the schedule validator answers exactly "unusable schedule",
-      // and every SSRF-guard rejection is prefixed "unsafe url:". A toast for
-      // one of these would make the user hunt for which field it meant.
+      // field happens here. The schedule validator answers exactly "unusable
+      // schedule", which is distinctive enough to place with confidence; a
+      // toast for it would make the user hunt for which field it meant. There
+      // used to be a second branch for the URL guard's "unsafe url:", which
+      // stopped being reachable when covan#241 took the URL field out — this
+      // dialog no longer sends one.
       if (message.includes("unusable schedule")) {
         setFieldError({
           field: "schedule",
           message: "That schedule can't be read. Try 0 9 * * * for every day at 09:00.",
         });
-        return;
-      }
-      if (message.startsWith("unsafe url:")) {
-        setFieldError({ field: "url", message });
         return;
       }
       toast.error(message);
@@ -343,14 +336,11 @@ export function CreateRoutineDialog({
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
     scheduleError(scheduleCron) === null &&
-    // A `workspace` routine needs no url and no connection, exactly like
-    // `none` — it reads its own workspace, which is not a field on this
-    // screen. Without this branch it falls through to the url check below,
-    // and the `gap-report` template's `sourceUrl: null` leaves Create
-    // permanently disabled with no field the person could fill in to clear it.
-    (sourceKind === "none" ||
-      sourceKind === "workspace" ||
-      (sourceKind === "connection" ? connectionId !== "" : sourceUrl.trim() !== ""));
+    // Only a connected source has anything left to pick. `none` and `workspace`
+    // need no further field, and the dialog cannot produce `rss` or `web` — it
+    // used to require a URL for them with no input to type one into, which
+    // left Create disabled with nothing the person could do about it.
+    (sourceKind !== "connection" || connectionId !== "");
 
   return (
     <>
@@ -411,7 +401,7 @@ export function CreateRoutineDialog({
                   <Label htmlFor="routine-source">Source</Label>
                   <Select
                     value={sourceKind}
-                    onValueChange={(v) => setSourceKind(v as RoutineSourceKind)}
+                    onValueChange={(v) => setSourceKind(v as CreatableSourceKind)}
                   >
                     <SelectTrigger id="routine-source">
                       <SelectValue />

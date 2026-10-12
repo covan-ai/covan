@@ -16,25 +16,13 @@ describe("the template picker", () => {
     render(<TemplatePicker facts={ready} onPick={vi.fn()} />);
     expect(screen.getByRole("button", { name: /Somebody's first week/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /What nobody wrote down/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Weekly digest of a feed/ })).toBeInTheDocument();
   });
 
   it("hands the whole template back when one is picked", async () => {
-    // Not `weekly-digest`: the adjudication pass gives it a permanent
-    // `feedUrl` requirement (the dialog has no input for `sourceUrl` right
-    // now), so its card is disabled under every `TemplateFacts` — see the
-    // dedicated test below for that. `first-week` has no such gap.
     const onPick = vi.fn();
     render(<TemplatePicker facts={ready} onPick={onPick} />);
     await userEvent.click(screen.getByRole("button", { name: /Somebody's first week/ }));
     expect(onPick).toHaveBeenCalledWith(templateById("first-week"));
-  });
-
-  it("explains the weekly digest's missing url field instead of offering a dead end", () => {
-    render(<TemplatePicker facts={ready} onPick={vi.fn()} />);
-    const card = screen.getByRole("button", { name: /Weekly digest of a feed/ });
-    expect(card).toBeDisabled();
-    expect(screen.getByText(/place to enter the feed's URL/)).toBeInTheDocument();
   });
 
   /**

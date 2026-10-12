@@ -1,7 +1,7 @@
-import type { RoutineSourceKind } from "./routines-api";
+import type { CreatableSourceKind } from "./routines-api";
 
 /**
- * Three routines to start from, for somebody who has never had one.
+ * Routines to start from, for somebody who has never had one.
  *
  * The create dialog has always opened on an empty box: you describe what you
  * want, a model turns it into a definition, and you confirm it. That is a good
@@ -16,10 +16,10 @@ import type { RoutineSourceKind } from "./routines-api";
  *
  * Three decisions worth not re-deriving:
  *
- * **`draft` is nested rather than flattened.** It holds exactly the seven
- * fields the dialog's step 2 holds, in exactly the shape `runDraft` already
- * sets them from — so applying a template is the same six assignments with no
- * model call in front of them, and the two ways into step 2 stay one code path.
+ * **`draft` is nested rather than flattened.** It holds the fields the
+ * dialog's step 2 holds, in exactly the shape `runDraft` already sets them
+ * from — so applying a template is the same assignments with no model call in
+ * front of them, and the two ways into step 2 stay one code path.
  *
  * **No timezone.** The browser answers it. A timezone baked in here is wrong
  * for everybody outside it.
@@ -41,8 +41,7 @@ export type RoutineTemplate = {
   /** Exactly the fields step 2 holds. */
   draft: {
     name: string;
-    sourceKind: RoutineSourceKind;
-    sourceUrl: string | null;
+    sourceKind: CreatableSourceKind;
     instruction: string;
     scheduleCron: string;
     /** A hint only — the dialog resolves it to a channel id, as `runDraft` does. */
@@ -58,7 +57,7 @@ export type RoutineTemplate = {
   endsAfterRuns: number | null;
 };
 
-export type TemplateRequirement = "documents" | "admin" | "gapReport" | "enoughPeople" | "feedUrl";
+export type TemplateRequirement = "documents" | "admin" | "gapReport" | "enoughPeople";
 
 /**
  * Facts the picker reads off state its screen already holds.
@@ -92,6 +91,10 @@ export type TemplateFacts = {
  */
 export const GAP_REPORT_MIN_MEMBERS = 3;
 
+// There was a third, `weekly-digest`: a feed, once a week. It needed the URL
+// field covan#241 took out of the dialog on purpose, so it could only ever be
+// shown as unavailable. An old `?template=weekly-digest` link opens step 1,
+// which is what any unknown id does.
 export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
   {
     id: "first-week",
@@ -101,7 +104,6 @@ export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
     draft: {
       name: "First week",
       sourceKind: "none",
-      sourceUrl: null,
       scheduleCron: "0 9 * * *",
       channelKind: "email",
       // The curriculum, and the whole reason this series varies. The engine
@@ -134,7 +136,6 @@ Write it as a short note to one new person: what it is, why it matters here, and
     draft: {
       name: "Coverage gaps",
       sourceKind: "workspace",
-      sourceUrl: null,
       scheduleCron: "0 9 * * 1",
       channelKind: "email",
       // Read by nothing. A `workspace` run renders its own report in code
@@ -146,30 +147,6 @@ Write it as a short note to one new person: what it is, why it matters here, and
         "Report the topics this workspace asked about that its own documents did not cover. Clustered, never named, and never anybody's question text.",
     },
     requires: ["admin", "gapReport", "enoughPeople"],
-    endsAfterRuns: null,
-  },
-  {
-    id: "weekly-digest",
-    label: "Weekly digest of a feed",
-    blurb: "Point it at a feed or a page; once a week, what changed.",
-    emoji: "📰",
-    draft: {
-      name: "Weekly digest",
-      sourceKind: "rss",
-      // Blank on purpose: this is the one field a template cannot know, and a
-      // form with one field left to fill is what a template should be.
-      sourceUrl: "",
-      scheduleCron: "0 9 * * 1",
-      channelKind: "email",
-      instruction:
-        "Summarise what is new since the last run. Lead with anything that changes what the team should do, name the source of each item, and skip the rest rather than padding.",
-    },
-    // `create-routine-dialog.tsx` has no input bound to `sourceUrl` right
-    // now — main's b4f4521 removed it before this branch started, and
-    // restoring it is a separate piece of work. Until then `canSave` can
-    // never be satisfied for this template, so it says so here instead of
-    // offering a card that leads nowhere with no explanation.
-    requires: ["feedUrl"],
     endsAfterRuns: null,
   },
 ];
@@ -208,11 +185,6 @@ export function unmetRequirements(
         // workspace of one has nobody to protect from and the engine's floor
         // for it is already 1.
         return facts.memberCount === 2;
-      case "feedUrl":
-        // No fact in `TemplateFacts` decides this one — the dialog has
-        // nowhere to put a `sourceUrl` for anybody, so it is unmet always,
-        // not depending on workspace state.
-        return true;
       default:
         return assertNever(r);
     }
@@ -236,8 +208,6 @@ export function requirementReason(requirement: TemplateRequirement): string {
       return "An admin has to turn the coverage report on in Settings before a routine can read it.";
     case "enoughPeople":
       return "Not available for a workspace of exactly two — any topic the report named would tell one of you about the other, and no setting changes that. One person alone is fine: there is nobody to protect from.";
-    case "feedUrl":
-      return "This dialog doesn't have a place to enter the feed's URL right now — that's a field waiting to come back, not a limit of this template.";
     default:
       return assertNever(requirement);
   }

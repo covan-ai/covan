@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { bundles } from "./bundles";
+import { MAX_UPLOAD_BYTES } from "../lib/extract";
 
 // Real chunking, fake vectors: these tests are about what the route does with
 // the chunks, and nothing here should reach OpenAI.
@@ -338,6 +339,80 @@ describe("POST /bundles/:id/documents/upload — files with no readable text", (
     // fakeDb returns a null document row, so the insert path 500s — the point
     // here is only that the text gate let it through to that path at all.
     expect(res.status).not.toBe(422);
+  });
+});
+
+describe("POST /bundles/:id/documents/upload — the size of the whole body", () => {
+  // The file used to be the only thing measured. The `text` field beside it —
+  // which is what gets chunked and embedded — was not, and a body sent without
+  // `Content-Length` was read in full before anything was compared.
+  async function send(form: FormData, { withLength }: { withLength: boolean }) {
+    const root = await mkdtemp(join(tmpdir(), "covan-upload-size-"));
+    roots.push(root);
+    const { db, wasDocumentsTouched } = fakeDb({ id: "bundle-1", workspace_id: "ws-1" });
+    const app = appWithDb(db);
+
+    // Serialised once so the same bytes can go out with or without a length.
+    const encoded = new Response(form);
+    const contentType = encoded.headers.get("content-type") ?? "";
+    const bytes = new Uint8Array(await encoded.arrayBuffer());
+    const body = withLength
+      ? bytes
+      : new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+
+    const res = await app.request(
+      "/bundles/bundle-1/documents/upload",
+      {
+        method: "POST",
+        body,
+        headers: { "content-type": contentType },
+        // Required by undici for a stream body; it is what leaves the length off.
+        duplex: "half",
+      } as RequestInit,
+      { DOCS_DIR: root } as never,
+    );
+    return { res, wasDocumentsTouched };
+  }
+
+  const oversizedText = "a".repeat(MAX_UPLOAD_BYTES + 1);
+
+  it("refuses a small file carrying more extracted text than the limit", async () => {
+    const form = new FormData();
+    form.append("file", new File(["%PDF-1.7 ..."], "report.pdf", { type: "application/pdf" }));
+    form.append("text", oversizedText);
+
+    const { res, wasDocumentsTouched } = await send(form, { withLength: true });
+
+    expect(res.status).toBe(413);
+    expect(wasDocumentsTouched()).toBe(false);
+  });
+
+  it("refuses the same body when it arrives without a Content-Length", async () => {
+    const form = new FormData();
+    form.append("file", new File(["%PDF-1.7 ..."], "report.pdf", { type: "application/pdf" }));
+    form.append("text", oversizedText);
+
+    const { res, wasDocumentsTouched } = await send(form, { withLength: false });
+
+    expect(res.status).toBe(413);
+    expect(wasDocumentsTouched()).toBe(false);
+  });
+
+  it("lets a body under the limit through without a Content-Length", async () => {
+    const form = new FormData();
+    form.append("file", new File(["%PDF-1.7 ..."], "report.pdf", { type: "application/pdf" }));
+    form.append("text", "Quarterly report. Revenue grew across every region.");
+
+    const { res } = await send(form, { withLength: false });
+
+    // fakeDb returns a null document row, so the insert path 500s — the point
+    // is only that the limit did not refuse it.
+    expect(res.status).not.toBe(413);
   });
 });
 

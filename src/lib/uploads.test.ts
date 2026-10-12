@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { ALLOWED_EXT, MAX_SIZE, extOf, validateUpload } from "./uploads";
 
@@ -53,5 +54,29 @@ describe("validateUpload", () => {
     const result = validateUpload(file("empty.md", 0));
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.reason).toContain("empty");
+  });
+});
+
+/**
+ * The worker enforces the upload ceiling; this file only repeats it so a person
+ * is told before the bytes go anywhere. Read out of both source files rather
+ * than imported, for `agent-meta.test.ts`'s reason: what has to hold is that
+ * the two files say the same thing, and the failure is somebody editing one.
+ */
+describe("MAX_SIZE and the worker's MAX_UPLOAD_BYTES", () => {
+  const declared = (path: string, name: string) => {
+    const m = readFileSync(path, "utf8").match(new RegExp(`export const ${name} = ([0-9 *]+);`));
+    expect(m, `${name} in ${path}`).not.toBeNull();
+    return m![1].split("*").reduce((product, factor) => product * Number(factor.trim()), 1);
+  };
+
+  it("are the same number", () => {
+    expect(declared("src/lib/uploads.ts", "MAX_SIZE")).toBe(
+      declared("worker/src/lib/extract.ts", "MAX_UPLOAD_BYTES"),
+    );
+  });
+
+  it("read the value the module actually exports, so the parse cannot rot", () => {
+    expect(declared("src/lib/uploads.ts", "MAX_SIZE")).toBe(MAX_SIZE);
   });
 });

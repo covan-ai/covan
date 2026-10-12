@@ -71,7 +71,6 @@ routines.post("/routines/draft", async (c) => {
     const draft = await parseDraft(parsed.data.text, {
       complete: completeOne,
       timezone: parsed.data.timezone,
-      ownHosts: ownHostsFrom(c.env),
     });
     return c.json(draft);
   } catch (err) {

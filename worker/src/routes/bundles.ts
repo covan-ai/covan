@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapBundle, mapDocument } from "../lib/dto";
@@ -10,6 +11,7 @@ import {
   EXCERPT_LIMIT,
   extractDocumentText,
   hasIndexableText,
+  MAX_UPLOAD_BYTES,
   safeName,
 } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
@@ -44,8 +46,6 @@ const createSchema = z.object({
 const updateSchema = z
   .object({ name: z.string().min(1).optional(), description: z.string().optional() })
   .refine((b) => Object.keys(b).length > 0, { message: "at least one field required" });
-
-const MAX_SIZE = 10 * 1024 * 1024;
 
 function extOf(name: string): string {
   const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -250,23 +250,33 @@ bundles.delete("/agents/:id/bundles/:bundleId", async (c) => {
 });
 
 // POST /bundles/:id/documents/upload — multipart `file`; chunks+embeds best-effort.
+//
+// The limit is on the whole body, not on the file. It used to be a
+// `Content-Length` comparison followed by `file.size`, which bounded the file
+// and nothing else: a request sent without the header was read in full, and
+// the browser-extracted `text` field beside the file was never measured at all
+// — and that text, not the file, is what gets chunked and embedded. `bodyLimit`
+// counts the stream as it arrives, so a body with no header is cut off at the
+// limit rather than believed.
+bundles.use(
+  "/bundles/:id/documents/upload",
+  bodyLimit({
+    maxSize: MAX_UPLOAD_BYTES,
+    onError: (c) => c.json({ error: "file too large (max 10 MB)" }, 413),
+  }),
+);
 bundles.post("/bundles/:id/documents/upload", async (c) => {
   const db = c.get("db");
   const bundleId = c.req.param("id");
 
   const env = c.env;
 
-  const contentLength = parseInt(c.req.header("content-length") ?? "", 10);
-  if (Number.isFinite(contentLength) && contentLength > MAX_SIZE) {
-    return c.json({ error: "file too large (max 10 MB)" }, 413);
-  }
-
   const body = await c.req.parseBody();
   const file = body["file"];
   if (!(file instanceof File)) return c.json({ error: "no file provided" }, 400);
   if (!ALLOWED_EXT.has(extOf(file.name))) return c.json({ error: "unsupported file type" }, 400);
   if (file.size === 0) return c.json({ error: "empty file" }, 400);
-  if (file.size > MAX_SIZE) return c.json({ error: "file too large (max 10 MB)" }, 413);
+  if (file.size > MAX_UPLOAD_BYTES) return c.json({ error: "file too large (max 10 MB)" }, 413);
 
   // Optional client-extracted text (PDFs are parsed in the browser and sent
   // here, since pdf.js can't run reliably on the Workers runtime).

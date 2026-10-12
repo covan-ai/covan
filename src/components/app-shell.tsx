@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { CreditsBadge } from "@/components/credits-badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -293,6 +294,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <div className="ml-auto flex items-center gap-2">
             <TeamPresence members={members} />
+            <CreditsBadge />
             <button
               onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
               className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-accent hover:text-foreground"

@@ -7,8 +7,8 @@ to an answer that names the file it came from.
 
 If you would rather run the whole thing on your own machine, start at
 [Self-hosting](self-hosting.md) instead. Everything below is the same once you
-are signed in, except the monthly allowance described at the end, which a
-self-hosted install does not have.
+are signed in, except the credits described at the end, which a self-hosted
+install does not have.
 
 ## Create an account
 
@@ -135,9 +135,9 @@ Put it through OCR elsewhere and upload the text.
 Indexing happens at upload and is best-effort. If chunking or embedding fails,
 the document still exists; it is listed as **Not indexed**, and the refresh
 control beside it re-embeds it. On the hosted service, an upload made when the
-month's allowance is already spent is refused outright rather than stored
-unindexed — a document the agent cannot retrieve from looks uploaded and behaves
-as though it were never there.
+workspace is out of credits is refused outright rather than stored unindexed —
+a document the agent cannot retrieve from looks uploaded and behaves as though
+it were never there.
 
 ## Ask it something
 
@@ -171,17 +171,29 @@ fails, the turn falls back to a persona-only answer instead of failing.
 
 ## What it costs, on the hosted service
 
-Each reply is metered against a monthly token allowance, counted per user, and
-the counter resets at the start of the next UTC month. Nobody budgets in tokens,
-so the app converts it: under the composer you get roughly how many replies are
-left, and once you are close to the end that becomes a banner above it, with the
-date the allowance comes back. The conversion uses what your own replies have
-averaged so far, which is why the figure can move after a long grounded
-conversation — before you have sent anything there is no average to use, and it
-assumes a middling one.
+Every workspace starts with 500 free credits, once, and spends them from one
+pool that every member shares. A credit is a cent of what Covan pays for the
+work — the model, the embeddings behind search and uploads, dictation, a
+connected-app call, a browser task — with nothing marked up inside it. There
+is no monthly reset: the balance goes down when your agents work and up when
+credits are added. An ordinary reply costs a fraction of a credit to a couple
+of credits, so 500 lasts a long time.
 
-A self-hosted install has no allowance and no counter, because it brings its own
-OpenAI key and whatever it spends is between it and OpenAI.
+Nobody budgets in credits until they have seen what a reply costs, so the app
+converts: under the composer you get the balance and roughly how many replies it
+is worth, and once it runs low that becomes a banner above it. The conversion
+uses what your workspace's replies have averaged so far, which is why the figure
+can move after a long grounded conversation.
+
+When the balance reaches zero, replies, routines and connected-app calls stop
+until credits are added. There is no checkout yet: Settings → Usage has a form
+that reaches us, and we add credits by hand.
+
+You never bring a provider key on the hosted service. Covan is the only model
+provider there, and every call is paid for from the workspace's credits.
+
+A self-hosted install has no credits at all, because it brings its own provider
+keys and whatever it spends is between it and the provider.
 
 ## Where to go next
 

@@ -60,11 +60,9 @@ export async function getActiveWorkspaceId(
 /**
  * The caller's role in a workspace, or null if they are not a member.
  *
- * Three routes were each asking this question with their own copy of the same
- * four lines — `provider-keys.ts` to decide whether to show a key hint,
- * `tool-connections.ts` to keep a viewer from connecting a service, and
- * `supabase-account.ts` to keep anyone but an admin from pasting an
- * account-wide token. One copy, so "what counts as a member" cannot drift
+ * Several routes were each asking this question with their own copy of the
+ * same four lines — `tool-connections.ts` to keep a viewer from connecting a
+ * service among them. One copy, so "what counts as a member" cannot drift
  * between them.
  *
  * Through the caller's own client, so RLS answers it. Not a permission check

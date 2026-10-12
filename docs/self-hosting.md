@@ -129,8 +129,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `KONG_HTTP_PORT` / `COVAN_API_PORT` / `COVAN_WEB_PORT`             | `8000` / `8787` / `3000`        | Host ports. Change them if something already owns those, and update the `VITE_` URLs to match.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `ROUTINE_TICK_MS`                                                  | `60000`                         | How often the Node entry point asks whether there is background work due — a routine to deliver, or a connected source to re-read. Per-item frequency lives in the database, not here.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `RESEND_API_KEY` / `RESEND_FROM`                                   | _empty_                         | Optional. Email for routine deliveries and team invitations, via [Resend](https://resend.com). Blank means neither is sent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `PROVIDER_KEY_SECRET`                                              | _empty — feature off_           | Optional. AES-GCM key, 32 bytes base64, for a workspace's own stored provider key. Blank means the feature is not offered rather than broken. Inert on an ordinary self-host — see below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `SUPPORT_EMAIL`                                                    | _empty — means `efe@covan.app`_ | Optional. Where the quota wall's message form delivers. Blank sends to Covan's own inbox through **your** Resend account — see below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `SUPPORT_EMAIL`                                                    | _empty — means `efe@covan.app`_ | Optional. Where the "ask for more credits" form delivers. Blank sends to Covan's own inbox through **your** Resend account — see below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                              | _empty_                         | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `COVAN_VERSION`                                                    | `latest`                        | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.4.0` pins one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET`                        | _empty_                         | Optional. Lets a bundle sync from Notion. Blank means the source is offered but not configured. See [Integrations](integrations.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -138,7 +137,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | _empty_                         | Optional. Lets people ask an agent from Slack. All three or none: a client pair without the signing secret installs and then rejects every event.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `COMPOSIO_API_KEY`                                                 | _empty_                         | Optional. Lets agents search about 1500 applications and call the ones somebody has connected — Gmail, HubSpot, Linear — through Composio, which holds the credentials. 1437 of the 1596 can be connected from the Integrations page: 123 with a sign-in alone, 1280 with a key the person connecting gets from the application itself, and the rest need a client registered in Composio's dashboard first. **Set your own branding** in Composio's project settings before pointing anybody at this — the page that collects a key carries Composio's name and logo until you do. Blank means the feature is not offered and the Integrations page names this variable. Set it on the cron Worker too, or a scheduled run and a chat turn disagree about what exists. Composio bills per tool call; see [Integrations](integrations.md).                                                                                                                                                                                                                                                                                                     |
 | `COMPOSIO_BASE_URL`                                                | _empty — means Composio_        | Optional. Points the catalogue and the execute call at a proxy or a self-hosted Composio instead of `backend.composio.dev`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `BROWSER_USE_API_KEY`                                              | _empty_                         | Optional. Gives an agent the `browse` tool: one plain-language instruction, carried out by a real browser at [browser-use](https://browser-use.com), for the pages `http_request` cannot reach — HTML behind JavaScript, a supplier portal with no API. Runs on browser-use's **V4** API; it is the same key as the v2 one, so an existing key keeps working. **You pay, not the person asking.** There is no per-member key: one deployment key, billed to you, metered against the same monthly allowance a chat turn spends at **137,000 tokens a task** — roughly seven tasks per 1M allowance — and every run carries a $0.25 ceiling that the provider enforces. **No password is ever given to the model in the conversation**, and that is enforced rather than documented: a login a person saves is encrypted under `ROUTINE_SECRET_KEY` and handed to the provider only as a run-scoped secret binding it types on that site itself. What the provider's own browsing agent can reach once a value is typed is a different question; see [Security](security.md). While the agent browses, a panel beside the conversation shows its browser live, and the person can take the controls, sign in themselves, and press Done; the cookies live in a per-person profile at the provider and are deleted when that account closes. The answer does not arrive in the same turn — the agent says it has started, and a new message appears when the run ends: within a few seconds if the conversation is open in a tab (the tab asks every three seconds), and within five minutes if it is not (the cron Worker's poll). **A browser-use project with Zero Data Retention enabled cannot use V4** — the provider answers 403 "Zero Data Retention is enabled on the project (V4 unsupported)" — so use a key from a project without it. Blank means the tool is not offered and the Integrations page names this variable. **Set it on the cron Worker too**: that Worker settles runs whose tab was closed and stops a browser somebody walked away from; set here alone, an answer is delivered only while the conversation is open, and a browser left in somebody's hands is not stopped until the provider's own timeout. Adds a subprocessor; see [Security](security.md) and [Integrations](integrations.md). |
+| `BROWSER_USE_API_KEY`                                              | _empty_                         | Optional. Gives an agent the `browse` tool: one plain-language instruction, carried out by a real browser at [browser-use](https://browser-use.com), for the pages `http_request` cannot reach — HTML behind JavaScript, a supplier portal with no API. Runs on browser-use's **V4** API; it is the same key as the v2 one, so an existing key keeps working. **You pay, not the person asking.** There is no per-member key: one deployment key, billed to you, and every run carries a $0.25 ceiling that the provider enforces. **No password is ever given to the model in the conversation**, and that is enforced rather than documented: a login a person saves is encrypted under `ROUTINE_SECRET_KEY` and handed to the provider only as a run-scoped secret binding it types on that site itself. What the provider's own browsing agent can reach once a value is typed is a different question; see [Security](security.md). While the agent browses, a panel beside the conversation shows its browser live, and the person can take the controls, sign in themselves, and press Done; the cookies live in a per-person profile at the provider and are deleted when that account closes. The answer does not arrive in the same turn — the agent says it has started, and a new message appears when the run ends: within a few seconds if the conversation is open in a tab (the tab asks every three seconds), and within five minutes if it is not (the cron Worker's poll). **A browser-use project with Zero Data Retention enabled cannot use V4** — the provider answers 403 "Zero Data Retention is enabled on the project (V4 unsupported)" — so use a key from a project without it. Blank means the tool is not offered and the Integrations page names this variable. **Set it on the cron Worker too**: that Worker settles runs whose tab was closed and stops a browser somebody walked away from; set here alone, an answer is delivered only while the conversation is open, and a browser left in somebody's hands is not stopped until the provider's own timeout. Adds a subprocessor; see [Security](security.md) and [Integrations](integrations.md). |
 | `BROWSER_USE_MODEL`                                                | _empty — means `gpt-5.6-luna`_  | Optional. The model a browser run asks browser-use for. Blank means `gpt-5.6-luna`, the default in `worker/src/lib/browser/v4.ts`, sent explicitly rather than left to the provider's own default. A name the provider does not offer is a 422 on every run. Only the API Worker needs it: the cron Worker never starts a run. |
 | `BROWSER_USE_V4_BASE_URL`                                          | _empty — means browser-use_     | Optional. Points V4 runs, browsers and profiles at a proxy instead of `api.browser-use.com/api/v4`. Blank means browser-use. Set it on the cron Worker too, which polls those runs. |
 | `BROWSER_USE_BASE_URL`                                             | _empty — means browser-use_     | Optional, and **V2 only**. It is not consulted for any V4 request. Two things still go to the V2 API: draining browser tasks created before the move to V4 (the cron Worker finishes them there), and the account headroom check made before a sign-in browser is rented (`/billing/account` exists only on v2). A proxy for V4 is `BROWSER_USE_V4_BASE_URL`, a separate setting. |
@@ -158,39 +157,30 @@ does nothing: the Compose stack passes an explicit list of variables to
 `ADMIN_API_KEY: ${ADMIN_API_KEY:-}` to that service's `environment:` block
 first.
 
-### The last two rows, and why `SUPPORT_EMAIL` is the one to think about
+### The last row, and why `SUPPORT_EMAIL` is worth setting
 
-`PROVIDER_KEY_SECRET` and `SUPPORT_EMAIL` back the two doors somebody finds
-beside a spent monthly allowance. On this stack there is no such allowance:
-Covan ships only `unlimitedEntitlements`
-(`worker/src/lib/entitlements/index.ts`), so nothing here ever runs out and
-nobody ever arrives at that wall. Both variables are reachable on this runtime
-all the same — the Node entry point forwards them (`worker/src/lib/env.ts`) and
-`docker-compose.yml` passes them through — because a variable an operator
-cannot set is also a variable they cannot turn off, and one of these two has a
-default worth turning off.
+`SUPPORT_EMAIL` backs the form somebody finds when their workspace is out of
+credits. On this stack there are no credits: Covan ships only
+`unlimitedEntitlements` (`worker/src/lib/entitlements/index.ts`), so nothing
+here ever runs out and nobody ever arrives at that wall. The variable is
+reachable on this runtime all the same — the Node entry point forwards it
+(`worker/src/lib/env.ts`) and `docker-compose.yml` passes it through — because
+a variable an operator cannot set is also a variable they cannot turn off, and
+this one has a default worth turning off.
 
-**`PROVIDER_KEY_SECRET`** is what lets a workspace store its own OpenAI key so
-its members carry on past their allowance on it. 32 random bytes, base64 —
-`openssl rand -base64 32`, the same shape as `ROUTINE_SECRET_KEY`. Leave it
-unset and the feature is not offered rather than broken: `PUT
-/workspace/provider-keys` answers `501` and no key field is rendered anywhere.
-Setting it here does not switch anything on either, for the reason above:
-`guardQuota` never answers anything but "allowed", so no workspace key is ever
-consulted, and the usage screen's quota card — the only screen that carries the
-key field — does not render at all when `limit` is `null`
-(`src/lib/quota.ts`). An admin could reach the route directly and have a key
-stored and encrypted; nothing would ever read it. Set it if you have registered
-a metered entitlements implementation of your own. Otherwise leave it blank.
+`POST /support/quota` is mounted on every deployment, not only metered ones,
+and its recipient defaults to `efe@covan.app` — Covan's own inbox. Any
+signed-in user of your install who reaches that endpoint therefore mails
+**us**, through **your** Resend account, and blank means you have no way to
+point it elsewhere. The message names the deployment it came from (`APP_URL`),
+so one arriving from somewhere other than covan.app is at least legible as
+such; that is not a reason to leave it. Set `SUPPORT_EMAIL` to an address of
+your own.
 
-**`SUPPORT_EMAIL` is different, and worth two minutes.** `POST /support/quota`
-is mounted on every deployment, not only metered ones, and its recipient
-defaults to `efe@covan.app` — Covan's own inbox. Any signed-in user of your
-install who reaches that endpoint therefore mails **us**, through **your**
-Resend account, and blank means you have no way to point it elsewhere. The
-message names the deployment it came from (`APP_URL`), so one arriving from
-somewhere other than covan.app is at least legible as such; that is not a
-reason to leave it. Set `SUPPORT_EMAIL` to an address of your own.
+There is no variable for a workspace's own provider key any more. A
+self-hosted install answers every call with the operator's keys in the
+environment, which is what it always did; the hosted service sells credits
+instead, and Covan is the only model provider there.
 
 ### Offering the Anthropic models as well
 
@@ -691,39 +681,15 @@ invitation checks for both and quietly reports that nothing was emailed, while a
 routine posts anyway and records whatever Resend answers as a failed run. So if
 you set one, set both.
 
-Two more secrets are optional the same way, and they back the two doors a
-member finds once their monthly allowance is spent rather than anything an
-ordinary self-hosted install needs. `wrangler secret put PROVIDER_KEY_SECRET`
-— 32 random bytes, base64, the same shape as `ROUTINE_SECRET_KEY` above — is
-what a deployment needs before it can store a workspace's own key at all.
-Leave it unset and the feature is not offered, not broken: `PUT
-/workspace/provider-keys` answers `501`, and the interface never renders the
-field that would have asked for one. `SUPPORT_EMAIL` is narrower — it only
-changes where the quota wall's own message form delivers, defaulting to
-`efe@covan.app`, the address already named in `src/routes/license.tsx`.
+One more secret is optional the same way. `SUPPORT_EMAIL` only changes where
+the "ask for more credits" form delivers, defaulting to `efe@covan.app`, the
+address already named in `src/routes/license.tsx`. The Docker stack sets the
+same variable in `.env`, and
+[The last row](#the-last-row-and-why-support_email-is-worth-setting) covers it
+there.
 
-**Neither is specific to this runtime.** `wrangler secret put` is how you set
-them here; the Docker stack sets the same two in `.env`, and
-[The last two rows](#the-last-two-rows-and-why-support_email-is-the-one-to-think-about)
-covers them there. What follows is true of both paths.
-
-Setting either one does not switch anything on, and that is not a gap to
-close. This repository ships only `unlimitedEntitlements`
-(`worker/src/lib/entitlements/index.ts`) — a self-hosted Covan has no monthly
-allowance to spend, so `guardQuota` never answers anything but "allowed" and
-never goes looking for a workspace key to fall back on. Set
-`PROVIDER_KEY_SECRET` anyway and `PUT /workspace/provider-keys` still
-answers — an admin could reach it directly and have a key stored and
-encrypted — but there is no screen that gets them there. The form and its
-hint live inside the usage screen's quota card, and that card only mounts once
-`limit` is a number rather than `null` (`src/lib/quota.ts`);
-`unlimitedEntitlements.snapshot()` always answers `limit: null`, so the card
-itself never renders here, key or no key. The feature is inert on both paths
-rather than disabled: the route, the encryption and the storage are all
-present, and the one screen that would ever ask for a key never appears.
-
-`SUPPORT_EMAIL` is the exception to all of that, and the one of the two worth
-setting on a self-hosted install of either kind. `POST /support/quota` is
+It switches nothing on: this repository ships only `unlimitedEntitlements`, so
+a self-hosted Covan has no credits to run out of. But `POST /support/quota` is
 mounted unconditionally — it does not ask whether this deployment is metered —
 so any signed-in user who reaches it sends mail to `efe@covan.app` through
 **your** Resend account. Unset means you cannot redirect that. Set it.

@@ -175,16 +175,6 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     RAG_MIN_SIMILARITY: source.RAG_MIN_SIMILARITY,
     RAG_LEXICAL: source.RAG_LEXICAL,
     ROUTINE_SECRET_KEY: source.ROUTINE_SECRET_KEY!,
-    // Optional, and absent is a supported configuration: without it a workspace
-    // cannot store its own provider key at all, `PUT /workspace/provider-keys`
-    // answers 501 and the interface never renders the field. Forwarded here
-    // rather than left out because the Node runtime is a place somebody may
-    // deliberately want the feature — a self-hoster who has registered a metered
-    // entitlements implementation of their own has the same wall to offer doors
-    // beside. Unlike `ROUTINE_SECRET_KEY` it is not validated at boot: it is
-    // optional, and refusing to start over a key nothing may ever use would turn
-    // an unused feature into an outage.
-    PROVIDER_KEY_SECRET: source.PROVIDER_KEY_SECRET,
     // Composio's catalogue, on the same terms as the OAuth pairs below:
     // optional, and absent means the feature is simply not offered. This list
     // is an explicit allowlist rather than a spread of `source`, which is the

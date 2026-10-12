@@ -3,9 +3,10 @@ import { selectHistory, HISTORY_CHAR_BUDGET, PER_MESSAGE_CHAR_CAP } from "../lib
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
-import { complete, totalTokens } from "../lib/completion";
+import { complete } from "../lib/completion";
+import { completionSpend } from "../lib/entitlements";
 import { buildIdeaExtractionMessages, parseIdeaSuggestions } from "../lib/idea-suggest";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 
 const brainstorm = new Hono<AppEnv>();
 
@@ -29,13 +30,7 @@ export const EXTRACT_MSG_LIMIT = 30;
 brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
   const db = c.get("db");
 
-  const denied = await guardQuota(c);
-  if (denied) return denied;
-
-  // Whose key answers. `guardQuota` sets this only when the caller is past
-  // their allowance and the workspace is carrying it from here; undefined is
-  // the normal case and means the operator's.
-  const env = c.get("providerEnv") ?? c.env;
+  const env = c.env;
 
   const parsed = suggestSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -45,7 +40,7 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
-    .select("agent_id")
+    .select("agent_id, workspace_id")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) {
@@ -54,6 +49,10 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
   if (!session) {
     return c.json({ error: "not found" }, 404);
   }
+
+  // The session's workspace pays, whichever one the caller has open.
+  const denied = await guardCredits(c, session.workspace_id as string);
+  if (denied) return denied;
 
   const { data: agent } = await db
     .from("agents")
@@ -87,8 +86,9 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
     .join("\n");
 
   try {
+    const model = resolveModel(agent?.model ?? null, env);
     const { text, usage } = await complete(env, {
-      model: resolveModel(agent?.model ?? null, env),
+      model,
       messages: buildIdeaExtractionMessages(transcript),
       json: true,
       // Distilling a transcript into cards is the same kind of task as the
@@ -96,7 +96,7 @@ brainstorm.post("/brainstorm/ideas/suggest", async (c) => {
       reasoningEffort: "minimal",
       maxTokens: 800,
     });
-    await recordQuota(c, totalTokens(usage));
+    await recordCredits(c, completionSpend(model, usage, "brainstorm"), { sessionId });
     return c.json({ ideas: parseIdeaSuggestions(text) });
   } catch (err) {
     console.error("idea extraction failed", err);

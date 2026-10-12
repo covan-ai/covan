@@ -24,8 +24,9 @@ import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { createRoutine } from "../lib/routines/create";
 import { resolveModel } from "../lib/models";
-import { complete, totalTokens } from "../lib/completion";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
+import { complete } from "../lib/completion";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
+import { completionSpend, spends, type Spend } from "../lib/entitlements";
 
 const routines = new Hono<AppEnv>();
 
@@ -41,29 +42,28 @@ const draftBodySchema = z.object({
 // This is the only place in this file that touches an LLM: setup reasons once,
 // every execution afterwards is deterministic.
 routines.post("/routines/draft", async (c) => {
-  const denied = await guardQuota(c);
+  // No routine exists yet, so the caller's active workspace pays.
+  const denied = await guardCredits(c);
   if (denied) return denied;
 
-  // Whose key answers. `guardQuota` sets this only when the caller is past
-  // their allowance and the workspace is carrying it from here; undefined is
-  // the normal case and means the operator's.
-  const env = c.get("providerEnv") ?? c.env;
+  const env = c.env;
 
   const parsed = draftBodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
   // parseDraft may call the model more than once. Totalled here and recorded
   // once, whether the draft parses or is rejected — a failed parse still spent.
-  let spent = 0;
+  const spent: Array<Spend | null> = [];
+  // Drafting has no agent behind it, so there is no per-agent model to honour
+  // — `null` takes the default, or OPENAI_MODEL when one is set.
+  const model = resolveModel(null, env);
   const completeOne = async (prompt: string) => {
     const { text, usage } = await complete(env, {
-      // Drafting has no agent behind it, so there is no per-agent model to
-      // honour — `null` takes the default, or OPENAI_MODEL when one is set.
-      model: resolveModel(null, env),
+      model,
       messages: [{ role: "user", content: prompt }],
       json: true,
     });
-    spent += totalTokens(usage);
+    spent.push(completionSpend(model, usage, "routine_draft"));
     return text;
   };
 
@@ -77,7 +77,7 @@ routines.post("/routines/draft", async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "could not read that" }, 422);
   } finally {
-    await recordQuota(c, spent);
+    await recordCredits(c, spends(...spent));
   }
 });
 
@@ -618,11 +618,6 @@ routines.patch("/routines/:id", async (c) => {
 routines.post("/routines/:id/run", async (c) => {
   const db = c.get("db");
 
-  // The executor checks quota too, but it can only record the refusal as a
-  // skipped run. Checking here turns "nothing happened" into a 402 the person
-  // who pressed the button can read.
-  const denied = await guardQuota(c);
-  if (denied) return denied;
   // Read through the caller's own client first. RLS already limits this to
   // routines they can see; the ownership check then narrows it to their own,
   // because running a routine spends the owner's LLM budget and delivers to
@@ -638,6 +633,12 @@ routines.post("/routines/:id/run", async (c) => {
   if (routine.user_id !== c.get("user").id) {
     return c.json({ error: "only the owner can run this routine" }, 403);
   }
+
+  // The executor checks credits too, but it can only record the refusal as a
+  // skipped run. Checking here turns "nothing happened" into a 402 the person
+  // who pressed the button can read. The routine's workspace pays.
+  const denied = await guardCredits(c, routine.workspace_id as string);
+  if (denied) return denied;
 
   // Email delivery goes through Resend, whose key is a secret on whichever
   // account this Worker runs on. Saying so beats a run that fails with a bare

@@ -234,7 +234,7 @@ function NotificationToggles() {
     },
     {
       key: "quotaExhausted" as const,
-      label: "A routine is waiting on your allowance",
+      label: "A routine is waiting on credits",
       hint: "Sent once, not every time it tries.",
     },
   ];

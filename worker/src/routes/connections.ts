@@ -313,8 +313,8 @@ connectionsPublic.get("/connections/callback", async (c) => {
       .from("connections")
       .update({
         // The new grant holder, which is the point of the whole route: whoever
-        // just granted access is whose view the sync now has and whose
-        // allowance it now spends.
+        // just granted access is whose view the sync now has and who its
+        // spending is attributed to.
         user_id: state.userId,
         account_label: exchanged.accountLabel,
         config: keptConfig,
@@ -513,8 +513,8 @@ connections.post("/connections/:id/sync", async (c) => {
     return c.json({ error: "this connection is paused" }, 409);
   }
 
-  // A sync writes documents into the workspace and spends the owner's
-  // allowance, and it runs as the service role from here on.
+  // A sync writes documents into the workspace and spends its credits, and it
+  // runs as the service role from here on.
   const refused = await mayChangeConnection(c, connection, "sync");
   if (refused) return refused;
 

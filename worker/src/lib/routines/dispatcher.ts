@@ -14,7 +14,7 @@ import { runRoutineWithTools } from "./agent-run";
 import { ownHostsFrom } from "./url-guard";
 import { deliveryDepsFrom } from "./delivery";
 import { fileRoutineOutput } from "./filing";
-import { entitlementsFor, weighTokens } from "../entitlements";
+import { completionSpend, entitlementsFor, spends, type Spend } from "../entitlements";
 import { retrieveForAgent } from "../retrieval";
 import { runCoverageReport, type CoverageDeps } from "./coverage-source";
 import { resolveModel } from "../models";
@@ -145,10 +145,8 @@ function executorDeps(
     //
     // Both envs are spread, in that order, and neither alone would do. `env` is
     // the one `canFileDocuments` narrowed, so it is what carries the storage
-    // binding into the type. `runEnv` is the one this particular run resolved,
-    // so it carries whichever provider key is paying — and filing embeds, which
-    // is a paid call. An owner who brought their own key pays for the filing
-    // half of their run as well as the answering half.
+    // binding into the type. `runEnv` is the one this particular run was
+    // handed; filing embeds, which is a paid call, and is charged with the run.
     file: canFileDocuments(env)
       ? (input, runEnv) => fileRoutineOutput(db, { ...env, ...runEnv }, input)
       : undefined,
@@ -312,7 +310,7 @@ const CLUSTER_INSTRUCTION =
 export async function clusterQuestions(
   questions: string[],
   env: RoutineEnv,
-): Promise<{ raw: unknown; model: string; tokens: number; weightedTokens: number }> {
+): Promise<{ raw: unknown; model: string; tokens: number; spend: Spend[] }> {
   const model = resolveModel("gpt-4.1-mini", env);
   const { text, usage } = await complete(env, {
     model,
@@ -334,13 +332,13 @@ export async function clusterQuestions(
     console.error("coverage clustering reply was not JSON", err);
   }
 
-  // What the allowance is actually charged, as against what moved — same
-  // `usage` breakdown, two different functions, the same pattern
-  // `summarise.ts` uses. Fix round 1, finding B2/B3: this call's completion
-  // share used to go unweighted (charged at `TOKEN_WEIGHTS.fresh`, 1x,
-  // instead of `TOKEN_WEIGHTS.completion`, 5x) because nothing threaded the
-  // real breakdown past `tokens` — see `weighTokens`.
-  return { raw, model, tokens: totalTokens(usage), weightedTokens: weighTokens(usage) };
+  // What was consumed, for the ledger, as against how many tokens moved.
+  return {
+    raw,
+    model,
+    tokens: totalTokens(usage),
+    spend: spends(completionSpend(model, usage, "coverage")),
+  };
 }
 
 /**

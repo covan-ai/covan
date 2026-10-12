@@ -5,12 +5,11 @@ import type { AppEnv } from "../types";
 import { canSendEmail, sendEmail } from "../lib/email";
 import { quotaSupportEmail } from "../lib/emails/support";
 import { appUrlOf } from "../lib/emails/send";
-import { readKeyHints } from "../lib/keys/store";
 import { getRateLimiter } from "../lib/ratelimit";
 import { getActiveWorkspaceId } from "../lib/workspace";
 
 /**
- * Where the second door at the quota wall leads.
+ * Where somebody out of credits asks for more.
  *
  * Sent rather than deferred, unlike every other mail in this Worker. `notify`
  * (`lib/emails/send.ts`) exists for courtesies — somebody has been removed, an
@@ -88,8 +87,7 @@ support.post("/support/quota", async (c) => {
     { data: workspace, error: workspaceError },
     { data: profile, error: profileError },
     { data: members, error: membersError },
-    hints,
-    quota,
+    credits,
   ] = await Promise.all([
     db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
     // The same lookup `notifyInvitee` (`routes/invitations.ts`) makes for the
@@ -101,21 +99,20 @@ support.post("/support/quota", async (c) => {
     // workspace has a handful of members, not a table's worth, so paying for a
     // second aggregate query buys nothing a `.length` does not already give.
     db.from("workspace_members").select("user_id").eq("workspace_id", workspaceId),
-    readKeyHints(c.env, workspaceId),
     // The odd one out, and the one that could have swallowed the message.
-    // postgrest-js resolves `{ data, error }` and the three reads above degrade
+    // postgrest-js resolves `{ data, error }` and the reads above degrade
     // to "unknown" on their own; `snapshot` *rejects*, and sitting uncaught in
     // the same `Promise.all` it turned a metered adapter having a bad minute
     // into a 500 — on the one route whose whole premise is that a message which
     // does not arrive must be refused loudly rather than lost. Caught to the
-    // same shape the other three degrade to, for the same reason: a gap that
+    // same shape the others degrade to, for the same reason: a gap that
     // says so beats a plausible number nobody checked, and neither is worth
     // losing the sentence somebody actually typed.
     c
       .get("entitlements")
-      .snapshot(user.id)
+      .snapshot(workspaceId)
       .catch((err: unknown) => {
-        console.error("could not read the allowance for a quota support message", err);
+        console.error("could not read the credits for a quota support message", err);
         return null;
       }),
   ]);
@@ -126,7 +123,7 @@ support.post("/support/quota", async (c) => {
   // itself in the fact block rather than quietly render a number nobody
   // checked. It does not refuse the send: the message itself, which the
   // person actually typed, is what the sender is waiting on, and one missing
-  // fact should not swallow it. The allowance read follows the same rule; its
+  // fact should not swallow it. The credits read follows the same rule; its
   // `.catch` is above, next to the call, because it rejects rather than
   // resolving an error.
   if (workspaceError) {
@@ -150,12 +147,16 @@ support.post("/support/quota", async (c) => {
       name: workspaceError ? "unknown" : ((workspace?.name as string | null) ?? "unnamed"),
       memberCount: membersError ? "unknown" : (members ?? []).length,
     },
-    quota: quota ? { used: quota.used, limit: quota.limit } : "unknown",
-    // Not `openai || anthropic`. An Anthropic key alone does not carry a
-    // workspace past its allowance — see `keysForUser` — so reporting it as a
-    // key would tell the reader this person is funding themselves when they are
-    // still hitting the wall.
-    workspaceKey: hints.openai ? "openai" : hints.anthropic ? "anthropic-only" : "none",
+    credits: !credits
+      ? "unknown"
+      : credits.metered
+        ? {
+            metered: true,
+            balance: credits.balance,
+            granted: credits.granted,
+            unlimited: credits.unlimited,
+          }
+        : { metered: false },
     appUrl: appUrlOf(c),
     message: parsed.data.message,
   });

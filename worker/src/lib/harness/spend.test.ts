@@ -3,7 +3,7 @@ import { runtimeLimitFlag } from "../runtime-limit";
 import type { ToolContext } from "./registry";
 
 /**
- * The allowance check in front of a connected-service call, and the one
+ * The credit check in front of a connected-service call, and the one
  * failure it is not allowed to forgive.
  *
  * `affordable` deliberately lets a broken quota read through: the counter
@@ -23,9 +23,10 @@ vi.mock("../entitlements", async (importOriginal) => {
   return {
     ...actual,
     entitlementsFor: () => ({
-      check: (userId: string) => check(userId),
-      record: (userId: string, tokens: number) => record(userId, tokens),
-      snapshot: async () => ({ used: 0, limit: null, resetsAt: null }),
+      check: (workspaceId: string) => check(workspaceId),
+      record: (workspaceId: string, spent: unknown, ref: unknown) =>
+        record(workspaceId, spent, ref),
+      snapshot: async () => ({ metered: false }),
     }),
   };
 });
@@ -36,12 +37,14 @@ function ctxWith(): ToolContext {
   return {
     env: {},
     userId: "user-1",
+    workspaceId: "ws-1",
+    sessionId: "s-1",
     runtimeLimit: runtimeLimitFlag(),
   } as unknown as ToolContext;
 }
 
 const SUBREQUESTS = new Error(
-  "user_usage read failed: Error: Too many subrequests by single Worker invocation.",
+  "workspace_credits read failed: Error: Too many subrequests by single Worker invocation.",
 );
 
 beforeEach(() => {
@@ -50,19 +53,20 @@ beforeEach(() => {
 });
 
 describe("affordable", () => {
-  it("says nothing and goes ahead when there is allowance left", async () => {
+  it("asks about the turn's workspace and goes ahead when it has credits", async () => {
     check.mockResolvedValue({ allowed: true });
     expect(await affordable(ctxWith())).toBeNull();
+    expect(check).toHaveBeenCalledWith("ws-1");
   });
 
-  it("refuses in words a model can repeat when the allowance is gone", async () => {
-    check.mockResolvedValue({ allowed: false, used: 10, limit: 10, resetsAt: "2026-10-01" });
+  it("refuses in words a model can repeat when the credits are gone", async () => {
+    check.mockResolvedValue({ allowed: false, balance: 0 });
     const out = await affordable(ctxWith());
     expect(out?.kind).toBe("error");
-    expect(out?.kind === "error" && out.message).toContain("used its allowance");
+    expect(out?.kind === "error" && out.message).toContain("no credits left");
   });
 
-  it("forgives a broken quota read, which is the older and still-right rule", async () => {
+  it("forgives a broken balance read, which is the older and still-right rule", async () => {
     check.mockRejectedValue(new Error("relation does not exist"));
     const ctx = ctxWith();
     expect(await affordable(ctx)).toBeNull();
@@ -83,27 +87,36 @@ describe("affordable", () => {
 
   it("survives a turn that carries no flag, which a scheduled run does not", async () => {
     check.mockRejectedValue(SUBREQUESTS);
-    const ctx = { env: {}, userId: "user-1" } as unknown as ToolContext;
+    const ctx = { env: {}, userId: "user-1", workspaceId: "ws-1" } as unknown as ToolContext;
     expect((await affordable(ctx))?.kind).toBe("error");
   });
 });
 
 describe("spend", () => {
-  it("records what the call cost", async () => {
+  it("charges the turn's workspace with what was consumed, attributed to the member", async () => {
     record.mockResolvedValue(undefined);
-    await spend(ctxWith(), 1000);
-    expect(record).toHaveBeenCalledWith("user-1", 1000);
+    await spend(ctxWith(), [{ kind: "composio_call", toolSlug: "GMAIL_SEND" }]);
+    expect(record).toHaveBeenCalledWith(
+      "ws-1",
+      [{ kind: "composio_call", toolSlug: "GMAIL_SEND" }],
+      { userId: "user-1", sessionId: "s-1" },
+    );
+  });
+
+  it("writes nothing for nothing", async () => {
+    await spend(ctxWith(), []);
+    expect(record).not.toHaveBeenCalled();
   });
 
   it("never throws, because the money is already spent", async () => {
     record.mockRejectedValue(new Error("write failed"));
-    await expect(spend(ctxWith(), 1000)).resolves.toBeUndefined();
+    await expect(spend(ctxWith(), [{ kind: "composio_search" }])).resolves.toBeUndefined();
   });
 
   it("raises the flag when the write could not be made for the same reason", async () => {
     record.mockRejectedValue(SUBREQUESTS);
     const ctx = ctxWith();
-    await spend(ctx, 1000);
+    await spend(ctx, [{ kind: "composio_search" }]);
     expect(ctx.runtimeLimit?.hit).toBe(true);
   });
 });

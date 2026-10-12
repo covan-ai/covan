@@ -1,9 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TokenUser } from "./lib/jwt";
 import type { Entitlements } from "./lib/entitlements";
-// Type-only, and therefore erased: `lib/keys/resolve` imports `RoutineEnv` back
-// out of this file, and a value import either way would be a real cycle.
-import type { ProviderKeys } from "./lib/keys/resolve";
 // Type-only for the same reason: `lib/subrequests.ts` imports `RoutineEnv` back.
 import type { SubrequestMeter } from "./lib/subrequests";
 import type { RuntimeLimitFlag } from "./lib/runtime-limit";
@@ -64,25 +61,9 @@ export type RoutineEnv = {
    */
   ANTHROPIC_BASE_URL?: string;
   /**
-   * Key material for `workspace_provider_keys`, 32 bytes base64.
-   *
-   * On `RoutineEnv` rather than `Bindings` because the cron Worker needs it as
-   * much as the API one does: a scheduled routine whose owner has run out of
-   * allowance has to be able to open their workspace's key, and it has no
-   * request to carry one in on.
-   *
-   * Optional, and its absence is a supported configuration rather than a
-   * misconfiguration: a deployment that has not set it does not offer workspace
-   * keys at all. It does not offer a broken version of them — `PUT
-   * /workspace/provider-keys` answers 501 and the interface never renders the
-   * field. `wrangler secret put PROVIDER_KEY_SECRET`.
-   */
-  PROVIDER_KEY_SECRET?: string;
-  /**
    * Composio's API key, and the switch that makes the catalogue exist.
    *
-   * On `RoutineEnv` rather than `Bindings` for `PROVIDER_KEY_SECRET`'s reason:
-   * a scheduled routine may call a connected service, and the cron Worker has
+   * On `RoutineEnv` rather than `Bindings` because a scheduled routine may call a connected service, and the cron Worker has
    * no request to carry a key in on. It is a DEPLOYMENT secret — one Composio
    * project serves every workspace on this deployment — which is why
    * `tool_connections.connected_account_id` is withheld from every client role
@@ -136,20 +117,16 @@ export type RoutineEnv = {
   /** This worker's own domain, once a custom domain fronts it (unset on workers.dev). */
   WORKER_HOST?: string;
   /**
-   * Monthly token allowance per user, **in weighted tokens** — see
-   * `weighTokens` in `lib/entitlements`. Not the raw count the provider
-   * reports: a cache read spends a tenth of this and an output token spends
-   * five, because that is what they cost. A number chosen against raw counts
-   * will not mean what its author thought.
+   * `"1"` on the hosted build, which charges workspaces credits. Unset on every
+   * self-hosted deployment, which charges nobody: the operator brings their own
+   * provider keys and decides what to spend on them.
    *
-   * Unset means unmetered, which is what a
-   * self-hosted Covan is: the operator brings their own OPENAI_API_KEY and
-   * decides what to spend on it. A hosted deployment sets this and registers a
-   * metering implementation — see `lib/entitlements`. Declared here, in the
-   * shared type, because shared code checks for its presence to catch a hosted
-   * deploy that forgot to register one.
+   * The value enables nothing by itself — metering is enabled by an entry point
+   * that registers an implementation (see `lib/entitlements`). Declared here, in
+   * the shared type, because shared code checks for its presence to catch a
+   * hosted deploy that forgot to register one.
    */
-  QUOTA_MONTHLY_TOKENS?: string;
+  CREDITS_ENABLED?: string;
   /**
    * Which Cloudflare plan this deployment runs on, which decides how much one
    * invocation is allowed to spend. See `lib/limits.ts` for what moves with it.
@@ -171,7 +148,7 @@ export type RoutineEnv = {
    * something none of them care about.
    *
    * Always absent on the bindings themselves. It is added to an OVERLAY, per
-   * request, the way `withProviderKeys` adds a key — the bindings object is
+   * request — the bindings object is
    * shared between the requests an isolate serves and must never be written to.
    */
   SUBREQUESTS?: SubrequestMeter;
@@ -376,26 +353,10 @@ export type Variables = {
   /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
   entitlements: Entitlements;
   /**
-   * The environment this request's model calls should use, when it is not the
-   * operator's.
-   *
-   * Set by `guardQuota` only when the caller is out of allowance and their
-   * workspace has its own key. Undefined is the normal case and means "use
-   * `c.env`" — which is why every route reads it as
-   * `c.get("providerEnv") ?? c.env` rather than branching.
+   * The workspace this request's spending is charged to. Set by `guardCredits`
+   * and read by `recordCredits`, so the two cannot disagree.
    */
-  providerEnv?: Bindings;
-  /**
-   * Whose keys those are — the same resolution `providerEnv` was built from,
-   * kept in the shape the money question is asked in.
-   *
-   * `recordQuota` reads this rather than the presence of `providerEnv`, so that
-   * every site in the codebase that decides whether the operator is billed asks
-   * `billsTheOperator(keys)` and none of them asks the inverse. Set alongside
-   * `providerEnv` and only where `guardQuota` actually resolved a key; absent
-   * means the operator's own keys answered.
-   */
-  providerKeys?: ProviderKeys;
+  workspaceId?: string;
   /**
    * Set only when the caller proved themselves with an API key rather than a
    * browser session. Routes read it to refuse the things a key must not do —
@@ -413,7 +374,7 @@ export type Variables = {
    */
   runtimeLimit: RuntimeLimitFlag;
   /**
-   * What this request has spent of its platform allowance.
+   * What this request has spent of its platform budget.
    *
    * Set by the auth middleware, which is where the caller's own Supabase client
    * is built and therefore the first thing that can spend one. See

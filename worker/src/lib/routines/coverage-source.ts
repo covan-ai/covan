@@ -4,6 +4,7 @@ import {
   enforceFloorWithCoverage,
   type RawCluster,
 } from "./coverage-cluster";
+import type { Spend } from "../entitlements";
 import { renderCoverageReport, type CoverageTotals } from "./coverage-render";
 
 /**
@@ -49,17 +50,12 @@ export type CoverageDeps = {
    * message and never in a system one, which is the argument `summarise.ts`
    * makes at length for a watched page and which applies with more force here.
    *
-   * `weightedTokens` is optional because this type cannot require a caller to
-   * compute it — but `tokens` alone is not what the allowance is charged
-   * (fix round 1, finding B2/B3): a clustering call's completion share is
-   * weighted 5x everywhere else `weighTokens` is used, and `tokens` on its
-   * own has no cache/completion breakdown left to weight. The real binding
-   * sets it from `weighTokens(usage)`; a caller that does not is read as
-   * unweighted, same as before this field existed.
+   * `spend` is what the call consumed, for the ledger: `tokens` alone is a
+   * count, and says nothing about which model or how much was cached.
    */
   cluster: (
     questions: string[],
-  ) => Promise<{ raw: unknown; model: string; tokens: number; weightedTokens?: number }>;
+  ) => Promise<{ raw: unknown; model: string; tokens: number; spend: Spend[] }>;
 };
 
 export type CoverageRunResult =
@@ -71,12 +67,12 @@ export type CoverageRunResult =
    * both before `deps.cluster` is ever called. The one skip that follows the
    * model call (every cluster fell short of the floor) sets both: the call
    * was made and paid for even though there is nothing to report, and the
-   * executor's quota block is keyed on tokens spent, not on `kind`. Fix round
+   * executor's credit block is keyed on what was spent, not on `kind`. Fix round
    * 1, finding 2 — this type used to have no field to carry them in, so that
    * comment was aspirational rather than true.
    */
-  | { kind: "skip"; note: string; model?: string; tokens?: number; weightedTokens?: number }
-  | { kind: "report"; summary: string; model: string; tokens: number; weightedTokens?: number };
+  | { kind: "skip"; note: string; model?: string; tokens?: number; spend?: Spend[] }
+  | { kind: "report"; summary: string; model: string; tokens: number; spend: Spend[] };
 
 /**
  * The three conditions, re-asked on every run — and the facts, and the asker
@@ -244,7 +240,7 @@ export async function runCoverageReport(
       note: `no one topic came from ${floor} or more different people`,
       model: answer.model,
       tokens: answer.tokens,
-      weightedTokens: answer.weightedTokens,
+      spend: answer.spend,
     };
   }
 
@@ -265,6 +261,6 @@ export async function runCoverageReport(
     summary: renderCoverageReport({ totals, gaps, withheld }),
     model: answer.model,
     tokens: answer.tokens,
-    weightedTokens: answer.weightedTokens,
+    spend: answer.spend,
   };
 }

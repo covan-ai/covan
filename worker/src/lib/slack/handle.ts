@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bindings } from "../../types";
-import type { Entitlements } from "../entitlements";
-import { embeddingCost } from "../entitlements";
+import {
+  completionSpend,
+  embeddingSpend,
+  spends,
+  type Entitlements,
+  type Spend,
+} from "../entitlements";
+import { embeddingModel } from "../embeddings";
 import { retrieveForAgent } from "../retrieval";
 import {
   selectHistory,
@@ -14,7 +20,6 @@ import { resolveModel } from "../models";
 import { complete, type CompletionMessage } from "../completion";
 import { replyOutcome } from "../harness/usage";
 import { decryptSecret } from "../secret-box";
-import { billsTheOperator, keysForUser, withProviderKeys } from "../keys/resolve";
 import { lookupEmail, postMessage } from "./api";
 import { toMrkdwn } from "./mrkdwn";
 
@@ -136,15 +141,24 @@ export async function handleSlackEvent(
     return;
   }
 
-  const verdict = await deps.entitlements.check(userId);
-  // This asker's workspace may be carrying their allowance from here. Resolved
-  // next to the check because a Slack event has no request to guard.
-  const keys = await keysForUser(deps.env, deps.db, userId, verdict.allowed);
-  const runEnv = withProviderKeys(deps.env, keys);
-  if (!verdict.allowed && billsTheOperator(keys)) {
-    await say("Your monthly Covan allowance is used up, so I can't answer this one.");
+  // The installation's workspace pays — the one this Slack team is connected
+  // to — and the asker is who the charge is attributed to.
+  const verdict = await deps.entitlements.check(installation.workspace_id);
+  const runEnv = deps.env;
+  if (!verdict.allowed) {
+    await say("This workspace has no Covan credits left, so I can't answer this one.");
     return;
   }
+  // Never throws: by the time anything is charged the provider has been paid,
+  // and a ledger that cannot be written must not turn into a silent thread.
+  const charge = async (spent: Spend[]) => {
+    if (spent.length === 0) return;
+    try {
+      await deps.entitlements.record(installation.workspace_id, spent, { userId });
+    } catch (err) {
+      console.error("failed to record slack credits", err);
+    }
+  };
 
   const { data: agent, error: agentError } = await deps.db
     .from("agents")
@@ -263,12 +277,9 @@ export async function handleSlackEvent(
   } catch (err) {
     console.error("slack completion failed", err);
     // The spend still happened up to the failure — the embedding, at least.
-    // Counted only where the operator is the one billed for it, asked through
-    // the shared predicate so a third key source does not quietly land on the
-    // operator's counter.
-    if (billsTheOperator(keys)) {
-      await deps.entitlements.record(userId, embeddingCost(retrieval.embeddingTokens));
-    }
+    await charge(
+      spends(embeddingSpend(embeddingModel(runEnv), retrieval.embeddingTokens, "retrieval")),
+    );
     await say("Something went wrong reaching the model. Try again in a moment.");
     return;
   }
@@ -289,16 +300,13 @@ export async function handleSlackEvent(
   // make the column mean "chat only" without saying so anywhere.
   const reasoningTokens = completion.usage.reasoningTokens;
 
-  // One counter write per turn, whichever way the rest of this goes — but only
-  // where the operator is the one being billed. Somebody else's key spent
-  // somebody else's money, and the operator's counter is not the place to say
-  // so.
-  if (billsTheOperator(keys)) {
-    await deps.entitlements.record(
-      userId,
-      embeddingCost(retrieval.embeddingTokens) + promptTokens + completionTokens,
-    );
-  }
+  // One ledger write per turn, whichever way the rest of this goes.
+  await charge(
+    spends(
+      embeddingSpend(embeddingModel(runEnv), retrieval.embeddingTokens, "retrieval"),
+      completionSpend(model, completion.usage, "slack"),
+    ),
+  );
 
   if (!answer) {
     await say("I don't have an answer for that one.");

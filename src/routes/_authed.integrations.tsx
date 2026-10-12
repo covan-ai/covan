@@ -246,7 +246,7 @@ function IntegrationsPage() {
         <section className="mt-16">
           <SectionHeading
             title="Where the answers go"
-            description="The same retrieval, the same citations and the same allowance, asked for somewhere other than here."
+            description="The same retrieval, the same citations and the same credits, asked for somewhere other than here."
           />
           <div className="mt-6 grid gap-2.5">
             {slack.isPending ? (

@@ -45,27 +45,19 @@ describe("loadEnv", () => {
     expect(() => loadEnv(rest)).not.toThrow();
   });
 
-  // Both back the quota wall's two doors, and both were unreachable on this
-  // runtime until they were forwarded here. The second is the sharper one:
-  // `POST /support/quota` is mounted unconditionally and falls back to
-  // efe@covan.app, so an operator who cannot set this has their own users
-  // mailing us through their own Resend account.
-  it("carries the quota-wall variables through to the Node runtime", () => {
-    const env = loadEnv({
-      ...complete,
-      PROVIDER_KEY_SECRET: "cHJvdmlkZXIta2V5LXNlY3JldC0zMi1ieXRlcy10ZXN0",
-      SUPPORT_EMAIL: "help@example.com",
-    });
-    expect(env.PROVIDER_KEY_SECRET).toBe("cHJvdmlkZXIta2V5LXNlY3JldC0zMi1ieXRlcy10ZXN0");
+  // The support form's recipient, unreachable on this runtime until it was
+  // forwarded here. `POST /support/quota` is mounted unconditionally and falls
+  // back to efe@covan.app, so an operator who cannot set this has their own
+  // users mailing us through their own Resend account.
+  it("carries SUPPORT_EMAIL through to the Node runtime", () => {
+    const env = loadEnv({ ...complete, SUPPORT_EMAIL: "help@example.com" });
     expect(env.SUPPORT_EMAIL).toBe("help@example.com");
   });
 
-  // Absent is a supported configuration, not a misconfiguration: no workspace
-  // key field is offered at all, and the support form keeps its default
-  // recipient. Neither is in REQUIRED and neither may refuse to boot.
-  it("starts without either of them", () => {
+  // Absent is a supported configuration: the support form keeps its default
+  // recipient. Not in REQUIRED, and may not refuse to boot.
+  it("starts without it", () => {
     const env = loadEnv(complete);
-    expect(env.PROVIDER_KEY_SECRET).toBeUndefined();
     expect(env.SUPPORT_EMAIL).toBeUndefined();
   });
 

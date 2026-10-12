@@ -30,18 +30,16 @@ vi.mock("../secrets", () => ({
 }));
 
 const entitlements = { allowed: true as boolean };
-const recordSpy = vi.fn(async (_userId: string, _tokens: number) => {});
+const recordSpy = vi.fn(async (_workspaceId: string, _spent: unknown[]) => {});
 vi.mock("../../entitlements", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../entitlements")>();
   return {
     ...actual,
     entitlementsFor: () => ({
       check: async () =>
-        entitlements.allowed
-          ? { allowed: true }
-          : { allowed: false, used: 10, limit: 10, resetsAt: "2026-11-01T00:00:00Z" },
-      record: (userId: string, tokens: number) => recordSpy(userId, tokens),
-      snapshot: async () => ({ used: 0, limit: null, resetsAt: null }),
+        entitlements.allowed ? { allowed: true } : { allowed: false, balance: 0 },
+      record: (workspaceId: string, spent: unknown[]) => recordSpy(workspaceId, spent),
+      snapshot: async () => ({ metered: false }),
     }),
   };
 });
@@ -469,14 +467,11 @@ describe("run_tool", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses before the network when the account has no allowance left", async () => {
-    // The check `guardQuota` cannot do for us: it lets an exhausted caller
-    // through on their workspace's own OpenAI key, which pays for completions
-    // and does not pay for this.
+  it("refuses before the network when the workspace has no credits left", async () => {
     entitlements.allowed = false;
     const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
     expect(out.kind).toBe("error");
-    expect(out.kind === "error" && out.message).toContain("allowance");
+    expect(out.kind === "error" && out.message).toContain("no credits left");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -516,21 +511,21 @@ describe("run_tool", () => {
   });
 
   it("charges for a call the far end refused, because they charge for it too", async () => {
-    const recorded: number[] = [];
-    recordSpy.mockImplementation(async (_user: string, tokens: number) => {
-      recorded.push(tokens);
+    const recorded: unknown[] = [];
+    recordSpy.mockImplementation(async (_workspace: string, spent: unknown[]) => {
+      recorded.push(...spent);
     });
     fetchMock.mockResolvedValue(new Response("bad request", { status: 400 }));
     await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
-    expect(recorded).toEqual([1000]);
+    expect(recorded).toEqual([expect.objectContaining({ kind: "composio_call" })]);
   });
 
   it("charges nothing for a failure that never reached them", async () => {
     // A deployment misconfiguration is not the account's to pay for. The 501
     // is raised by the client before any request is made.
-    const recorded: number[] = [];
-    recordSpy.mockImplementation(async (_user: string, tokens: number) => {
-      recorded.push(tokens);
+    const recorded: unknown[] = [];
+    recordSpy.mockImplementation(async (_workspace: string, spent: unknown[]) => {
+      recorded.push(...spent);
     });
     const ctx = ctxWith({ grant: { mode: "always" } });
     await runToolTool.run(CALL, { ...ctx, env: { ...ctx.env, COMPOSIO_API_KEY: "" } as ToolEnv });
@@ -561,7 +556,7 @@ describe("run_tool", () => {
  * Four guards stood between a model and somebody else's mailbox and none of them
  * read the arguments, so a malformed call was discovered by Composio and billed.
  * `wasBilled` returns true for everything but 501 and 502, so a
- * `400 Invalid request data provided` costs a full `COMPOSIO_CALL_TOKENS` — the
+ * `400 Invalid request data provided` costs a full call — the
  * same as a call that worked.
  *
  * Measured on 2026-09-26: ten billed rejections across three sessions putting one

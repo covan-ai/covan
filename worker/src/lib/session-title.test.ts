@@ -110,7 +110,16 @@ describe("generateSessionTitle", () => {
 
     const result = await generateSessionTitle(ENV, "gpt-4o", "How do we price teams?");
 
-    expect(result).toEqual({ title: "Team plan pricing", tokens: 91 });
+    expect(result).toEqual({
+      title: "Team plan pricing",
+      spend: {
+        kind: "completion",
+        model: "gpt-4o",
+        promptTokens: 70,
+        completionTokens: 21,
+        purpose: "title",
+      },
+    });
     expect(complete).toHaveBeenCalledTimes(1);
     expect(complete.mock.calls[0][1]).toMatchObject({ model: "gpt-4o", json: true });
   });
@@ -141,13 +150,19 @@ describe("generateSessionTitle", () => {
   });
 
   // The tokens were spent whether or not the reply was usable, so they are
-  // still reported: the caller charges them to the same allowance as the turn.
+  // still reported: the caller charges them with the turn.
   it("reports the cost of a reply it could not parse, with no title", async () => {
     answers("not json at all", 30, 14);
 
     await expect(generateSessionTitle(ENV, "gpt-4o", "hi")).resolves.toEqual({
       title: null,
-      tokens: 44,
+      spend: {
+        kind: "completion",
+        model: "gpt-4o",
+        promptTokens: 30,
+        completionTokens: 14,
+        purpose: "title",
+      },
     });
   });
 
@@ -160,7 +175,7 @@ describe("generateSessionTitle", () => {
 
     await expect(generateSessionTitle(ENV, "gpt-4o", "hi")).resolves.toEqual({
       title: null,
-      tokens: 0,
+      spend: null,
     });
   });
 });

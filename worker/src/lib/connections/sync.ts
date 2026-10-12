@@ -1,13 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SyncEnv } from "../../types";
-import type { Entitlements } from "../entitlements";
-import { embeddingCost } from "../entitlements";
-import { chunkText, embedTexts } from "../embeddings";
+import { embeddingSpend, spends, type Entitlements } from "../entitlements";
+import { chunkText, embedTexts, embeddingModel } from "../embeddings";
 import { insertChunkRows } from "../chunk-store";
 import { getDocStore } from "../docstore";
 import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
 import { decryptSecret, encryptSecret } from "../secret-box";
-import { billsTheOperator, keysForUser, withProviderKeys } from "../keys/resolve";
 import { providerFor } from "./registry";
 import {
   ProviderError,
@@ -256,7 +254,7 @@ export async function runConnection(
 
   // Nobody holds the grant any more: they closed their Covan account, and
   // 0057's `on delete set null` is what let the connection outlive them. There
-  // is no token that will work and no allowance to charge, so this stops before
+  // is no token that will work and nobody to charge it to, so this stops before
   // the membership question, which has no subject.
   //
   // Paused rather than failed. Nothing is broken — the row is waiting for
@@ -300,17 +298,27 @@ export async function runConnection(
     });
   }
 
-  // Before anything is fetched or embedded. A sync spends the owner's
-  // allowance, and the cursor-free design means a run skipped for quota costs
-  // nothing to repeat: the next one lists the same files and finds the same
-  // ones changed.
-  const verdict = await deps.entitlements.check(connection.user_id);
-  // The connection's owner may be past their allowance while their workspace
-  // carries it. Resolved here rather than upstream because a sync has no
-  // request to guard.
-  const keys = await keysForUser(deps.env, deps.db, connection.user_id, verdict.allowed);
-  const runEnv = withProviderKeys(deps.env, keys);
-  if (!verdict.allowed && billsTheOperator(keys)) {
+  // Before anything is fetched or embedded. A sync spends the connection's
+  // workspace's credits, and the cursor-free design means a run skipped for
+  // credits costs nothing to repeat: the next one lists the same files and
+  // finds the same ones changed.
+  const verdict = await deps.entitlements.check(connection.workspace_id);
+  const runEnv = deps.env;
+  // Never throws: the embeddings are bought, and a ledger that cannot be
+  // written must not turn a finished sync into a failed one.
+  const charge = async (embedded: number) => {
+    const spent = spends(embeddingSpend(embeddingModel(runEnv), embedded, "sync"));
+    if (spent.length === 0) return;
+    try {
+      await deps.entitlements.record(connection.workspace_id, spent, {
+        connectionId: connection.id,
+        userId: connection.user_id ?? undefined,
+      });
+    } catch (err) {
+      console.error("failed to record sync credits", err);
+    }
+  };
+  if (!verdict.allowed) {
     return finish(connection, deps, startedAt, {
       status: "skipped",
       added: 0,
@@ -384,7 +392,7 @@ export async function runConnection(
     if (!approved && isNarrowing(vanished.length, live)) {
       // Nothing is removed and nothing is imported. Stopping before the import
       // half matters: a reconnect with a narrower grant would otherwise spend
-      // the new holder's allowance re-embedding the files it can still see,
+      // the workspace's credits re-embedding the files it can still see,
       // while the bundle waits to find out whether the rest are really gone.
       // Both numbers, because "some documents are missing" is not something
       // anybody can act on. The sentence deliberately names neither button:
@@ -442,13 +450,7 @@ export async function runConnection(
     // interval — three and a half days on the default cadence — having
     // already said yes.
     const more = changed.length > MAX_DOCUMENTS_PER_RUN || vanished.length > MAX_REMOVALS_PER_RUN;
-    // Only what the operator is billed for reaches the counter. Asked through
-    // the shared predicate rather than as `!== "workspace"`, so that a third
-    // key source added later stops being counted here by default instead of
-    // silently landing on the operator's bill.
-    if (tokens > 0 && billsTheOperator(keys)) {
-      await deps.entitlements.record(connection.user_id, tokens);
-    }
+    await charge(tokens);
 
     return finish(connection, deps, startedAt, {
       // Nothing changed is not nothing happening. `skipped` is what stops a
@@ -468,10 +470,8 @@ export async function runConnection(
       clearApproval: approved && vanished.length <= MAX_REMOVALS_PER_RUN,
     });
   } catch (err) {
-    // Same question as the success path above, asked the same way.
-    if (tokens > 0 && billsTheOperator(keys)) {
-      await deps.entitlements.record(connection.user_id, tokens);
-    }
+    // What was embedded before the failure was still bought.
+    await charge(tokens);
 
     const message = err instanceof Error ? err.message : String(err);
     const retryable = err instanceof ProviderError ? err.retryable : true;
@@ -497,8 +497,8 @@ export async function runConnection(
   }
 }
 
-/** Written to `connection_runs.error` when a run is skipped for quota. */
-export const QUOTA_SKIP_REASON = "skipped: the owner's monthly token quota is used up";
+/** Written to `connection_runs.error` when a run is skipped for credits. */
+export const QUOTA_SKIP_REASON = "skipped: this workspace has no credits left";
 
 /**
  * Re-attach documents this connection imported before it existed.
@@ -669,7 +669,8 @@ async function importOne(
   // uses, and the reason a half-synced document still answers questions.
   const chunks = chunkText(text);
   const embedded = await embedTexts(runEnv, chunks);
-  const tokens = embeddingCost(embedded.tokens);
+  // Raw embedding tokens: what the ledger is charged and what the run row keeps.
+  const tokens = embedded.tokens;
 
   const { error: clearError } = await deps.db
     .from("document_chunks")

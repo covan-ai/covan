@@ -15,27 +15,25 @@ describe("errorMessage", () => {
 
   // 402 is the one refusal with a machine-readable shape, and its `error` field
   // is a code rather than a sentence. Every caller — dictation, upload, persona,
-  // routine draft — has to report it the same way without knowing about quotas.
-  it("turns a quota refusal into a sentence, with the date it lifts", () => {
+  // routine draft — has to report it the same way without knowing about credits.
+  it("turns a credits refusal into a sentence", () => {
     const message = errorMessage(
       402,
-      { error: "quota_exceeded", used: 1200, limit: 1000, resetsAt: "2026-09-01T00:00:00.000Z" },
+      { error: "credits_exhausted", balance: -0.3 },
       "Payment Required",
     );
 
-    expect(message).toContain("You've used this month's allowance");
-    expect(message).toContain("September 1");
-  });
-
-  it("still says what happened when there is no date to give", () => {
-    const message = errorMessage(402, { error: "quota_exceeded" }, "Payment Required");
-
     expect(message).toBe(
-      "You've used this month's allowance, or your workspace can continue on its own key.",
+      "This workspace is out of credits. An admin can ask for more from Settings.",
     );
   });
 
-  it("leaves a 402 that is not about quota alone", () => {
+  it("never offers a key of the workspace's own, which no longer exists", () => {
+    const message = errorMessage(402, { error: "credits_exhausted" }, "Payment Required");
+    expect(message).not.toMatch(/own key/);
+  });
+
+  it("leaves a 402 that is not about credits alone", () => {
     expect(errorMessage(402, { error: "card declined" }, "Payment Required")).toBe("card declined");
   });
 });

@@ -29,8 +29,8 @@ const USER = { id: "user-1", email: "a@example.com" };
 const SESSION = { agent_id: "agent-1" };
 
 const completionCreate = vi.fn();
-const guardQuota = vi.fn();
-const recordQuota = vi.fn();
+const guardCredits = vi.fn();
+const recordCredits = vi.fn();
 const selectHistoryOptions = vi.fn();
 
 vi.mock("../lib/openai", () => ({
@@ -42,8 +42,8 @@ vi.mock("../lib/anthropic", () => ({
 }));
 
 vi.mock("../lib/entitlements/guard", () => ({
-  guardQuota: (...args: unknown[]) => guardQuota(...args),
-  recordQuota: (...args: unknown[]) => recordQuota(...args),
+  guardCredits: (...args: unknown[]) => guardCredits(...args),
+  recordCredits: (...args: unknown[]) => recordCredits(...args),
 }));
 
 vi.mock("../lib/history", async (importOriginal) => {
@@ -121,8 +121,8 @@ function markersSent(): number[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  guardQuota.mockResolvedValue(null);
-  recordQuota.mockResolvedValue(undefined);
+  guardCredits.mockResolvedValue(null);
+  recordCredits.mockResolvedValue(undefined);
   completionCreate.mockResolvedValue({
     choices: [
       {
@@ -165,7 +165,7 @@ describe("POST /brainstorm/ideas/suggest", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ideas: [] });
     expect(completionCreate).not.toHaveBeenCalled();
-    expect(recordQuota).not.toHaveBeenCalled();
+    expect(recordCredits).not.toHaveBeenCalled();
   });
 });
 
@@ -205,7 +205,16 @@ describe("what a long brainstorm sends", () => {
         { title: "Drop step three", detail: "Nobody finishes onboarding." },
       ],
     });
-    expect(recordQuota).toHaveBeenCalledWith(expect.anything(), 9240);
+    expect(recordCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        kind: "completion",
+        promptTokens: 9000,
+        completionTokens: 240,
+        purpose: "brainstorm",
+      }),
+      { sessionId: expect.any(String) },
+    );
   });
 
   it("keeps oldest-first order after the budget cuts the transcript", async () => {
@@ -272,13 +281,13 @@ describe("what the route refuses", () => {
     expect(completionCreate).not.toHaveBeenCalled();
   });
 
-  it("spends nothing when the quota has already been refused", async () => {
+  it("spends nothing when the credits have already been refused", async () => {
     const { app } = appWith(conversation(4, 40));
-    guardQuota.mockResolvedValue(new Response("over", { status: 402 }));
+    guardCredits.mockResolvedValue(new Response("over", { status: 402 }));
     const res = await suggest(app);
 
     expect(res.status).toBe(402);
     expect(completionCreate).not.toHaveBeenCalled();
-    expect(recordQuota).not.toHaveBeenCalled();
+    expect(recordCredits).not.toHaveBeenCalled();
   });
 });

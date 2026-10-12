@@ -32,7 +32,7 @@ import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
  * runtime-agnostic — `lib/routines/agent-run.ts` imports it from the cron
  * Worker, and `registry.ts` takes `RoutineEnv` rather than `Bindings` for
  * exactly that reason. What is in this file needs a request: an SSE `send`, and
- * (at its callers) `recordQuota` and `deferred`. `lib/harness/turn.ts` is the
+ * (at its callers) `recordCredits` and `deferred`. `lib/harness/turn.ts` is the
  * counter-example and stays where it is — it takes a bare `SupabaseClient` and
  * is already shared correctly.
  */
@@ -199,7 +199,7 @@ export function turnSpend(): TurnSpend {
  * What the passes cost, summed the way the loop sums them.
  *
  * Null rather than zero when nothing was reported, and that distinction is
- * load-bearing in both directions: `recordQuota` refuses a zero and would bill
+ * load-bearing in both directions: `completionSpend` drops a zero and would bill
  * nothing, and a row written with zeros claims a turn was free when the truth
  * is that nobody counted. A turn that made no model call at all is the only
  * one that should read null.
@@ -346,7 +346,7 @@ export function explainTurnFailure(err: unknown, runtimeLimit: RuntimeLimitFlag)
  * **The token columns are the half that was missing**, and they were missing on
  * both routes for the same reason: the totals only exist once `runAgentTurn`
  * returns. `spentUsage` reads them off the passes instead, so a salvaged row
- * says what it cost and `recordQuota` has a number to bill rather than a zero
+ * says what it cost and `recordCredits` has something to bill rather than a zero
  * it refuses.
  */
 export async function salvagePartial(input: {

@@ -31,6 +31,7 @@ import {
   sumOverPasses,
 } from "../lib/harness/usage";
 import { retrieveForAgent } from "../lib/retrieval";
+import { embeddingModel } from "../lib/embeddings";
 import {
   selectHistory,
   MSG_HISTORY_LIMIT,
@@ -48,8 +49,8 @@ import { effectiveMode } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
 import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
-import { embeddingCost, weighTokens } from "../lib/entitlements";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
+import { completionSpend, embeddingSpend, spends, type Spend } from "../lib/entitlements";
 import { subrequestReport, withMeter } from "../lib/subrequests";
 import {
   buildToolContext,
@@ -123,23 +124,13 @@ const CONTINUE_INSTRUCTION =
 chat.post("/chat/stream", async (c) => {
   const db = c.get("db");
 
-  // Before anything is loaded, embedded or generated. Once the stream is open
-  // the response is a 200 with an SSE body, and there is no honest way to turn
-  // that back into a 402.
-  const denied = await guardQuota(c);
-  if (denied) return denied;
-
-  // Whose key answers. `guardQuota` sets this only when the caller is past
-  // their allowance and the workspace is carrying it from here; undefined is
-  // the normal case and means the operator's.
-  //
   // Wrapped so every outbound call this turn makes is counted against what the
   // platform allows one invocation — the model calls, the tools, the
   // persistence. The auth middleware started the count with the caller's own
   // client; this is what carries it the rest of the way. See
   // `lib/subrequests.ts`.
   const meter = c.get("subrequests");
-  const env = withMeter(c.get("providerEnv") ?? c.env, meter);
+  const env = withMeter(c.env, meter);
 
   const parsed = streamChatSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -160,6 +151,13 @@ chat.post("/chat/stream", async (c) => {
   if (!session) {
     return c.json({ error: "not found" }, 404);
   }
+
+  // The session's workspace pays, whichever workspace the caller has open.
+  // Before anything is embedded or generated: once the stream is open the
+  // response is a 200 with an SSE body, and there is no honest way to turn
+  // that back into a 402.
+  const denied = await guardCredits(c, session.workspace_id as string);
+  if (denied) return denied;
 
   const { data: agent, error: agentError } = await db
     .from("agents")
@@ -353,27 +351,6 @@ chat.post("/chat/stream", async (c) => {
     requested && (availableModels(env) as string[]).includes(requested) ? requested : agent.model;
   const model = resolveModel(picked, env);
 
-  // `availableModels` (`lib/models.ts`) is computed from the deployment's own
-  // environment and carried to the frontend once, by `/me` — it has no idea
-  // which key is about to answer *this* particular reply. So the picker can
-  // still be showing Claude to someone who is, this turn, running on a
-  // workspace key that only covers OpenAI. `resolveModel` above already does
-  // the right thing about it: a Claude pick with no key for it quietly falls
-  // through to the default rather than failing the reply. That fallback is
-  // correct and already shipped — nothing here changes it. What was missing
-  // is that it happened without a word, and the reply that comes back is from
-  // a different model than the one on screen.
-  //
-  // Making `/me` aware of which key answers for which caller would be the
-  // real fix, and is deliberately not this: it is a response every screen
-  // reads, and reworking it would be a lot of surface to close an edge that
-  // only exists for a workspace that set one key and not the other. Saying so
-  // once, here, is the whole scope.
-  const claudeDroppedForWorkspaceKey =
-    Boolean(c.get("providerEnv")) &&
-    modelSpec(picked)?.provider === "anthropic" &&
-    model !== picked;
-
   const signal = c.req.raw.signal;
   // On the metered overlay, so the reply's own writes are counted too.
   const service = serviceClient(env);
@@ -410,16 +387,6 @@ chat.post("/chat/stream", async (c) => {
       const send = (event: Record<string, unknown>) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
-
-      // Computed once, above, from `agent.model` and the env this reply is
-      // actually using — not re-derived per delta — so this can only ever
-      // fire once per reply.
-      if (claudeDroppedForWorkspaceKey) {
-        send({
-          type: "notice",
-          text: `Your workspace key has no Anthropic key, so this reply came from ${model}.`,
-        });
-      }
 
       /**
        * What the turn has produced so far, filled as it runs.
@@ -459,6 +426,9 @@ chat.post("/chat/stream", async (c) => {
       let passUsage: PassUsage[] = [];
       let persisted = false;
       let spendRecorded = false;
+      // The row the charge is filed against, once it exists. A turn aborted
+      // before its row is written is charged all the same, against no row.
+      let assistantMessageId: string | undefined;
       // What the turn did, and whether it stopped to ask. Both are filled by
       // `runAgentTurn` below and read after the reply is persisted, because a
       // step belongs to a message and the message does not exist until then.
@@ -481,9 +451,9 @@ chat.post("/chat/stream", async (c) => {
       // starting and this landing, the user may have renamed the session
       // themselves — the filter means the generated name loses that race
       // rather than silently overwriting a name somebody chose.
-      const settleTitle = async (): Promise<number> => {
-        if (!titling) return 0;
-        const { title, tokens } = await titling;
+      const settleTitle = async (): Promise<Spend | null> => {
+        if (!titling) return null;
+        const { title, spend: titleSpend } = await titling;
         if (title) {
           const { error: titleError } = await service
             .from("chat_sessions")
@@ -492,10 +462,10 @@ chat.post("/chat/stream", async (c) => {
             .is("title", null);
           if (titleError) console.error("failed to write session title", titleError);
         }
-        return tokens;
+        return titleSpend;
       };
 
-      // One counter write per turn, on every way this stream can end — a reply
+      // One ledger write per turn, on every way this stream can end — a reply
       // that was cut off still cost what it cost. Guarded because several of
       // those endings overlap (an abort mid-loop also lands in the catch).
       //
@@ -506,18 +476,26 @@ chat.post("/chat/stream", async (c) => {
       const recordSpend = async () => {
         if (spendRecorded) return;
         spendRecorded = true;
-        const titleTokens = await settleTitle();
-        await recordQuota(
+        const titleSpend = await settleTitle();
+        await recordCredits(
           c,
-          embeddingCost(embeddingTokens) +
-            // Weighted, not summed. `promptTokens` has the cache reads inside
-            // it and a cache read costs a tenth of a fresh token, so face value
-            // charged a long tool turn — which is mostly re-read transcript —
-            // as if every pass were new. See `weighTokens`.
-            weighTokens({ promptTokens, completionTokens, cachedTokens, cacheWriteTokens }) +
-            // Unweighted: the titler is one short unstreamed call on the cheap
-            // model and reports no cache split to weigh.
-            titleTokens,
+          spends(
+            embeddingSpend(embeddingModel(env), embeddingTokens, "retrieval"),
+            completionSpend(
+              model,
+              {
+                promptTokens,
+                completionTokens,
+                cachedTokens,
+                cacheWriteTokens,
+                reasoningTokens,
+                webSearches: sumOverPasses(passUsage, (p) => p.searches),
+              },
+              "reply",
+            ),
+            titleSpend,
+          ),
+          { sessionId, messageId: assistantMessageId },
         );
       };
 
@@ -542,7 +520,7 @@ chat.post("/chat/stream", async (c) => {
         // CONTINUATION already has its row, and one that spent passes and then
         // stopped to ask has tokens that belong in it. `announcePause` records
         // usage only when no row holds it, so without this those passes are
-        // charged to the allowance and then absent from `messages`. The update
+        // charged and then absent from `messages`. The update
         // below appends nothing, which is the truth: nothing was said.
         if (text.trim().length === 0 && !continuing) return null;
         persisted = true;
@@ -640,6 +618,7 @@ chat.post("/chat/stream", async (c) => {
               .select("*")
               .single();
         if (insertError || !inserted) return null;
+        assistantMessageId = inserted.id as string;
         // Bump updated_at via the service client (RLS-bypassing) so ordering is
         // correct regardless of who drove the reply.
         const { error: bumpError } = await service
@@ -865,7 +844,7 @@ chat.post("/chat/stream", async (c) => {
           // (the user needs "Continue" not new questions).
           if (!continuing && !regenerate && finishReason !== "length" && !signal.aborted) {
             try {
-              const { questions, tokens: fuTokens } = await generateFollowUps(
+              const { questions, spend: followUpSpend } = await generateFollowUps(
                 env,
                 titleModelFor(model, env),
                 question,
@@ -874,7 +853,10 @@ chat.post("/chat/stream", async (c) => {
               if (questions.length > 0) {
                 send({ type: "suggestions", questions });
               }
-              if (fuTokens > 0) await recordQuota(c, fuTokens);
+              await recordCredits(c, followUpSpend, {
+                sessionId,
+                messageId: assistantMessageId,
+              });
             } catch {
               // Suggestions are optional — a failure here must not break the
               // stream or leave the user staring at a spinner.
@@ -934,7 +916,7 @@ chat.post("/chat/stream", async (c) => {
         // totals only by returning, so on this path the counters above are
         // still null and every one of them is a real number that was really
         // billed — see `onPass` in `lib/harness/loop.ts`. Read here, before
-        // `recordSpend`, because a zero is a number `recordQuota` refuses.
+        // `recordSpend`, because a zero is a spend `completionSpend` drops.
         const spent = spentUsage(spend);
         promptTokens = spent.promptTokens;
         completionTokens = spent.completionTokens;
@@ -1028,11 +1010,8 @@ function answerInPlace(
 // comes from: `paused_turns.messages` rather than the `messages` table, so the
 // model sees exactly what it saw when it asked.
 chat.post("/chat/confirm/:id", async (c) => {
-  const denied = await guardQuota(c);
-  if (denied) return denied;
-
   const meter = c.get("subrequests");
-  const env = withMeter(c.get("providerEnv") ?? c.env, meter);
+  const env = withMeter(c.env, meter);
   const db = c.get("db");
   const service = serviceClient(env);
 
@@ -1060,6 +1039,11 @@ chat.post("/chat/confirm/:id", async (c) => {
     .eq("id", pause.sessionId)
     .maybeSingle();
   if (!session) return c.json({ error: "not found" }, 404);
+
+  // The paused turn's workspace pays for the rest of it. Before the claim, so a
+  // refusal leaves the question standing for when there are credits again.
+  const denied = await guardCredits(c, pause.workspaceId);
+  if (denied) return denied;
 
   // The agent's own tuning, read again rather than carried in the parked row.
   //
@@ -1135,14 +1119,18 @@ chat.post("/chat/confirm/:id", async (c) => {
        *
        * Read off the passes rather than off the returned turn, which is the
        * whole of what was wrong here: the catch used to charge
-       * `{promptTokens: null, completionTokens: null}`, `recordQuota` refuses a
+       * `{promptTokens: null, completionTokens: null}`, `completionSpend` drops a
        * zero, and so a resume that failed after several real model calls billed
        * nothing at all for them.
        */
       const recordSpend = async () => {
         if (spendRecorded) return;
         spendRecorded = true;
-        await recordQuota(c, weighTokens(spentUsage(spend)));
+        const model = pause.model ?? resolveModel(null, env);
+        await recordCredits(c, spends(completionSpend(model, spentUsage(spend), "reply")), {
+          sessionId: pause.sessionId,
+          messageId: pause.messageId ?? undefined,
+        });
       };
 
       /**
@@ -1181,7 +1169,7 @@ chat.post("/chat/confirm/:id", async (c) => {
         // Which half holds the "already" depends on whether the model said
         // anything before it asked: with a row, the row; without one, the
         // parked turn, because nothing else recorded those passes and they
-        // were charged to the allowance when it parked.
+        // were charged when it parked.
         const { data } = existing
           ? await (async () => {
               const prior = await priorReply(service, existing);

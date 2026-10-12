@@ -76,7 +76,7 @@ describe("RoutineWebhookCard", () => {
     renderCard();
     await user.click(await screen.findByRole("button", { name: /Make a webhook URL/i }));
 
-    expect(await screen.findByText(/spends your allowance/i)).toBeInTheDocument();
+    expect(await screen.findByText(/spends your workspace's credits/i)).toBeInTheDocument();
   });
 
   it("reports an existing one without showing it", async () => {

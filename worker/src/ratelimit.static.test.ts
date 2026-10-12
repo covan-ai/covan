@@ -189,10 +189,11 @@ describe("the expensive rate limit", () => {
     const hooks = readFileSync(join(ROUTES, "routine-hooks.ts"), "utf8");
     expect(hooks).toContain("resolveIngestToken");
     expect(hooks).toContain('getRateLimiter(c.env, "expensive")');
-    // And the allowance itself: a poked run is charged to the routine's owner
-    // by the executor, with no new code, because every id comes off the row.
+    // And the credits themselves: a poked run is charged to the routine's
+    // workspace by the executor, with no new code, because every id comes off
+    // the row.
     expect(readFileSync(join(SRC, "lib", "routines", "executor.ts"), "utf8")).toContain(
-      "entitlements.check(routine.user_id)",
+      "entitlements.check(routine.workspace_id)",
     );
 
     // The third thing that spends where this file cannot see it, and the one
@@ -203,17 +204,14 @@ describe("the expensive rate limit", () => {
     // can make; the allowance is what bounds how many an account can.
     //
     // So both halves are pinned. `affordable` must be asked BEFORE the network
-    // in each tool, and it must be the thing that asks the allowance — and
-    // deliberately NOT through `guardQuota`, which lets an exhausted caller
-    // through on a workspace's own OpenAI key. That key pays for completions
-    // and does not pay for this, which is why the check is unconditional here
-    // and gated everywhere else.
+    // in each tool, and it must ask about the turn's workspace — the one the
+    // route charged.
     const spend = readFileSync(join(SRC, "lib", "harness", "spend.ts"), "utf8");
-    expect(spend).toContain("entitlementsFor(ctx.env).check(ctx.userId)");
-    expect(spend).toContain("entitlementsFor(ctx.env).record(ctx.userId");
+    expect(spend).toContain("entitlementsFor(ctx.env).check(ctx.workspaceId)");
+    expect(spend).toContain("entitlementsFor(ctx.env).record(ctx.workspaceId");
     for (const tool of ["run-tool.ts", "find-tool.ts", "browse.ts"]) {
       const src = readFileSync(join(SRC, "lib", "harness", "tools", tool), "utf8");
-      expect(src, `${tool} must check the allowance before it spends`).toContain("affordable(ctx)");
+      expect(src, `${tool} must check the credits before it spends`).toContain("affordable(ctx)");
       expect(src, `${tool} must record what it spent`).toContain("spend(ctx,");
     }
   });

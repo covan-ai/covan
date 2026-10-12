@@ -10,7 +10,7 @@ import {
 } from "./executor";
 import { encryptSecret } from "../secret-box";
 import { serialiseWebhookSecret } from "./webhook";
-import type { WorkspaceKeys } from "../keys/store";
+import type { Spend } from "../entitlements";
 
 // Task 11 wires a real DNS lookup into the Node fetch path so a hostname that
 // merely resolves to a private address is still caught. That lookup is a
@@ -22,15 +22,24 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
 }));
 
-// `keysForUser` reaches the workspace's stored key through `lib/keys/store`,
-// which opens a service-role Supabase client of its own rather than taking the
-// `deps.db` stub below — there is nothing here to point it at. Mocked to "no
-// key set", which is what every test in this file wants except the
-// workspace-funded one at the bottom, which says otherwise for itself.
-const { readWorkspaceKeys } = vi.hoisted(() => ({
-  readWorkspaceKeys: vi.fn(async () => ({ openai: null, anthropic: null }) as WorkspaceKeys),
-}));
-vi.mock("../keys/store", () => ({ readWorkspaceKeys }));
+/**
+ * A completion a producer reports, marked by its prompt count so each test can
+ * tell which spend reached the ledger. The executor never prices anything; it
+ * only passes these on.
+ */
+const S = (n: number): Spend => ({
+  kind: "completion",
+  model: "gpt-4o",
+  promptTokens: n,
+  completionTokens: 0,
+  purpose: "routine",
+});
+const E = (tokens: number, purpose: "retrieval" | "index" = "retrieval"): Spend => ({
+  kind: "embedding",
+  model: "text-embedding-3-small",
+  tokens,
+  purpose,
+});
 
 // Same fixture key used in delivery.test.ts. The stubbed `delivery_channels`
 // row below must round-trip through the real decryptSecret (this module does
@@ -188,27 +197,25 @@ let fetchImpl: any;
 let summarise: any;
 let retrieve: any;
 let deliverCalls: any[];
-/** Tokens charged through `entitlements.record`, per run. */
-let recorded: Array<{ userId: string; tokens: number }>;
+/** What reached `entitlements.record`, per run. */
+let recorded: Array<{ workspaceId: string; spend: Spend[] }>;
 
 function makeDeps(db: any) {
   deliverCalls = [];
   recorded = [];
   return {
     db,
-    // A plain house env — none of these tests exercise a workspace key, so this
-    // only has to be a shape `keysForUser` can read without a workspace lookup.
     env: { OPENAI_API_KEY: "sk-test" },
     summarise,
     retrieve,
-    // Unmetered by default, like a self-hosted install. The quota tests
+    // Unmetered by default, like a self-hosted install. The credit tests
     // override `check` on the returned object.
     entitlements: {
-      check: vi.fn(async () => ({ allowed: true })),
-      record: vi.fn(async (userId: string, tokens: number) => {
-        recorded.push({ userId, tokens });
+      check: vi.fn(async (_workspaceId: string) => ({ allowed: true })),
+      record: vi.fn(async (workspaceId: string, spend: Spend[]) => {
+        recorded.push({ workspaceId, spend });
       }),
-      snapshot: vi.fn(async () => ({ used: 0, limit: null, resetsAt: null })),
+      snapshot: vi.fn(async () => ({ metered: false })),
     },
     fetchDeps: { fetchImpl, ownHosts: ["api.example.com"] },
     deliveryDeps: {
@@ -230,19 +237,15 @@ beforeEach(() => {
     text: "summary",
     tokens: 120,
     // Deliberately not 120. Every assertion on `recorded` below is then a
-    // statement about WHICH of the two numbers the allowance is charged —
-    // equal ones would pass whichever it read. See `weighTokens`.
-    weightedTokens: 45,
+    // statement about which of the two the ledger is told — the spend, never
+    // the raw count beside it.
+    spend: [S(45)],
     declined: false,
   }));
   // Ungrounded by default, so the assertions below are about what the executor
   // does with a block rather than about whether one was produced. The tests
   // that care override this.
   retrieve = vi.fn(async () => ({ ragBlock: "", embeddingTokens: 0 }));
-  // Reset rather than clear: a mockResolvedValue installed by one test would
-  // otherwise become the de-facto default for every test after it.
-  readWorkspaceKeys.mockReset();
-  readWorkspaceKeys.mockResolvedValue({ openai: null, anthropic: null });
 });
 
 describe("runRoutine", () => {
@@ -307,7 +310,7 @@ describe("runRoutine", () => {
     expect(deliverCalls).toHaveLength(1);
   });
 
-  it("charges the routine's owner for what the run cost", async () => {
+  it("charges the routine's workspace for what the run cost", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     const { db } = makeDb();
     const r = routine({
@@ -317,83 +320,17 @@ describe("runRoutine", () => {
     const deps = makeDeps(db) as any;
     await runRoutine(r, deps);
 
-    // The owner, not whoever triggered it — a scheduled run has no caller.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 45 }]);
+    // The routine's workspace, not whoever triggered it — a scheduled run has
+    // no caller. The owner is who the charge is attributed to.
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(45)] }]);
+    expect(deps.entitlements.record.mock.calls[0][2]).toMatchObject({ userId: "u1" });
   });
 
-  /**
-   * The warning an account whose spend is all scheduled never used to get.
-   *
-   * `warnIfLow` is reached from `recordQuota`, which a routine never calls —
-   * there is no request to hang one off. So the first news of the limit was a
-   * run skipped for being past it, which is the failure the warning exists to
-   * remove, left open on the one path where nobody is watching.
-   */
-  describe("telling the owner the allowance is running low", () => {
-    const lowSnapshot = () => ({ used: 800, limit: 1000, resetsAt: "2026-09-01T00:00:00.000Z" });
-    const withItems = { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null };
-
-    it("says so once the allowance is three quarters gone", async () => {
-      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
-      const { db } = makeDb();
-      const deps = makeDeps(db) as any;
-      deps.entitlements.snapshot = vi.fn(async () => lowSnapshot());
-
-      await runRoutine(routine({ cursor: withItems }), deps);
-
-      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
-      expect(bodies.some((b: string) => /running low/.test(b))).toBe(true);
-      // And it still delivered what it was for. The notice sits beside the
-      // run's own result, never instead of it.
-      expect(bodies.length).toBeGreaterThan(1);
-    });
-
-    it("stays quiet on a self-hosted install, which has no allowance at all", async () => {
-      // `limit: null` is `unlimitedEntitlements` answering. Warning there would
-      // be a message about a number that does not exist.
-      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
-      const { db } = makeDb();
-      const deps = makeDeps(db) as any;
-
-      await runRoutine(routine({ cursor: withItems }), deps);
-
-      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
-      expect(bodies.some((b: string) => /running low/.test(b))).toBe(false);
-    });
-
-    it("says it once a period, not once a run", async () => {
-      // Being past the threshold stays true for every run afterwards, so a
-      // message per run is what the naive version does — and a routine on a
-      // five-minute schedule would mail its owner all month.
-      //
-      // The stored stamp is the same moment spelled the way PostgREST returns
-      // it, not the way `toISOString` writes it. Comparing the text would make
-      // the two differ and fire the warning on every run for the rest of the
-      // month, which is exactly what the column was added to prevent.
-      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
-      const { db } = makeDb({
-        rows: { notification_preferences: { quota_warned_for: "2026-09-01T00:00:00+00:00" } },
-      });
-      const deps = makeDeps(db) as any;
-      deps.entitlements.snapshot = vi.fn(async () => lowSnapshot());
-
-      await runRoutine(routine({ cursor: withItems }), deps);
-
-      const bodies = deliverCalls.map((d: any) => JSON.stringify(d.init.body));
-      expect(bodies.some((b: string) => /running low/.test(b))).toBe(false);
-    });
-  });
-
-  it("skips without spending or claiming anything when the owner is out of quota", async () => {
+  it("skips without spending or claiming anything when the workspace is out of credits", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     const { db, claimed, inserts } = makeDb();
     const deps = makeDeps(db) as any;
-    deps.entitlements.check = vi.fn(async () => ({
-      allowed: false,
-      used: 1000,
-      limit: 1000,
-      resetsAt: "2026-09-01T00:00:00.000Z",
-    }));
+    deps.entitlements.check = vi.fn(async () => ({ allowed: false, balance: 0 }));
 
     const out = await runRoutine(
       routine({
@@ -407,36 +344,34 @@ describe("runRoutine", () => {
     // The one delivery is the notice explaining the skip, never a summary —
     // there is nothing to summarise, because the model was never called.
     expect(deliverCalls).toHaveLength(1);
-    expect(JSON.stringify(deliverCalls[0].init.body)).toMatch(/allowance is used up/);
+    expect(JSON.stringify(deliverCalls[0].init.body)).toMatch(/no credits left/);
     // The important half: nothing was reserved. A delivery key claimed by a run
     // that then skips can never be claimed again, so those items would be lost
-    // for good rather than reported once the allowance resets.
+    // for good rather than reported once credits are added.
     expect(claimed).toEqual([]);
     const run = inserts.find((i: any) => i.table === "routine_runs")!;
     expect(run.values.status).toBe("skipped");
-    expect(run.values.error).toMatch(/quota/i);
+    expect(run.values.error).toBe(QUOTA_SKIP_REASON);
+    expect(run.values.error).toMatch(/credits/i);
+    // Asked of the routine's workspace, whoever owns the routine.
+    expect(deps.entitlements.check).toHaveBeenCalledWith("w1");
   });
 
-  it("tells the owner the first time a run is skipped for quota", async () => {
+  it("tells the owner the first time a run is skipped for credits", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     // No prior run: rowFor("routine_runs") falls through to null.
     const { db } = makeDb();
     const deps = makeDeps(db) as any;
-    deps.entitlements.check = vi.fn(async () => ({
-      allowed: false,
-      used: 60000,
-      limit: 60000,
-      resetsAt: "2026-09-01T00:00:00.000Z",
-    }));
+    deps.entitlements.check = vi.fn(async () => ({ allowed: false, balance: 0 }));
 
     await runRoutine(routine(), deps);
 
     expect(deliverCalls).toHaveLength(1);
     const sent = JSON.parse(deliverCalls[0].init.body);
     const text = JSON.stringify(sent);
-    expect(text).toMatch(/allowance is used up/);
-    // Says when it comes back, and that waiting costs them nothing.
-    expect(text).toMatch(/1 September/);
+    expect(text).toMatch(/no credits left/);
+    // Says what brings it back, and that waiting costs them nothing.
+    expect(text).toMatch(/admin adds credits/);
     expect(text).toMatch(/Nothing has been lost/);
   });
 
@@ -448,12 +383,7 @@ describe("runRoutine", () => {
       },
     });
     const deps = makeDeps(db) as any;
-    deps.entitlements.check = vi.fn(async () => ({
-      allowed: false,
-      used: 60000,
-      limit: 60000,
-      resetsAt: "2026-09-01T00:00:00.000Z",
-    }));
+    deps.entitlements.check = vi.fn(async () => ({ allowed: false, balance: 0 }));
 
     const out = await runRoutine(routine(), deps);
 
@@ -463,8 +393,8 @@ describe("runRoutine", () => {
     expect(deliverCalls).toHaveLength(0);
   });
 
-  // Ticks are minutes apart. Told once per tick, a routine waiting on a
-  // monthly allowance would mail its owner thousands of times.
+  // Ticks are minutes apart. Told once per tick, a routine waiting on credits
+  // would mail its owner thousands of times.
   it("stays quiet when the previous run was already a quota skip", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     const { db } = makeDb({
@@ -476,110 +406,11 @@ describe("runRoutine", () => {
       },
     });
     const deps = makeDeps(db) as any;
-    deps.entitlements.check = vi.fn(async () => ({
-      allowed: false,
-      used: 60000,
-      limit: 60000,
-      resetsAt: "2026-09-01T00:00:00.000Z",
-    }));
+    deps.entitlements.check = vi.fn(async () => ({ allowed: false, balance: 0 }));
 
     await runRoutine(routine(), deps);
 
     expect(deliverCalls).toHaveLength(0);
-  });
-
-  /**
-   * The workspace-funded branch, on the path with no request to guard.
-   *
-   * `guardQuota` covers this for every route that has a request; a scheduled
-   * routine has none, so the same three-branch decision is made here by hand
-   * and is the one a refactor is most likely to get wrong quietly. The two
-   * halves are a pair on purpose: running on the wrong key spends the wrong
-   * person's money, and recording a workspace-funded run against the operator's
-   * counter bills the operator for money they did not spend. Either alone is
-   * still a defect.
-   */
-  describe("when the owner is out but their workspace has a key", () => {
-    /** A db where `getActiveWorkspaceId` resolves, so a key can be looked up. */
-    const workspaceDb = () =>
-      makeDb({
-        rows: {
-          profiles: { active_workspace_id: "w1" },
-          workspace_members: { user_id: "u1", workspace_id: "w1" },
-        },
-      });
-
-    const outOfAllowance = (deps: any) => {
-      deps.entitlements.check = vi.fn(async () => ({
-        allowed: false,
-        used: 100_000,
-        limit: 100_000,
-        resetsAt: "2026-10-01T00:00:00.000Z",
-      }));
-      return deps;
-    };
-
-    it("runs the summary on the workspace's key rather than skipping", async () => {
-      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
-      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
-      const { db } = workspaceDb();
-      const deps = outOfAllowance(makeDeps(db) as any);
-
-      const out = await runRoutine(
-        routine({
-          cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
-        }),
-        deps,
-      );
-
-      expect(out).toEqual({ status: "ok", itemsNew: 2 });
-      // The second argument is the env the model call is made with. It has to
-      // be the overlay, not `deps.env` — the operator's key answering here
-      // would be the operator paying for a run their allowance already refused.
-      expect(summarise.mock.calls[0][1].OPENAI_API_KEY).toBe("ws-openai");
-      // And nothing about the skip: no quota notice, one real delivery.
-      expect(deliverCalls).toHaveLength(1);
-    });
-
-    it("writes nothing to the operator's counter for what the workspace paid", async () => {
-      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
-      readWorkspaceKeys.mockResolvedValue({ openai: "ws-openai", anthropic: null });
-      const { db, inserts } = workspaceDb();
-      const deps = outOfAllowance(makeDeps(db) as any);
-
-      await runRoutine(
-        routine({
-          cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
-        }),
-        deps,
-      );
-
-      expect(deps.entitlements.record).not.toHaveBeenCalled();
-      expect(recorded).toEqual([]);
-      // Still durably recorded where the team can see it, though — the counter
-      // is not the only record of a spend, and `routine_runs.tokens` is what
-      // the usage screen's per-agent figures are built from.
-      const run = inserts.find((i) => i.table === "routine_runs")!;
-      expect(run.values.tokens).toBe(120);
-    });
-
-    it("still charges the operator when the key came from the operator", async () => {
-      // The control. Same denied verdict, same code path, no workspace key —
-      // and the run is skipped rather than quietly funded by anybody.
-      fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
-      const { db } = workspaceDb();
-      const deps = outOfAllowance(makeDeps(db) as any);
-
-      const out = await runRoutine(
-        routine({
-          cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
-        }),
-        deps,
-      );
-
-      expect(out).toEqual({ status: "skipped", itemsNew: 0 });
-      expect(summarise).not.toHaveBeenCalled();
-    });
   });
 
   // Without this the run history can say "Sent · 2 new items" but not what was
@@ -624,7 +455,7 @@ describe("runRoutine", () => {
       summarise = vi.fn(async () => ({
         text: "summary",
         tokens: 120,
-        weightedTokens: 45,
+        spend: [S(45)],
         declined: false,
         model: "gpt-4.1",
         modelOutcome: "answered" as const,
@@ -649,7 +480,7 @@ describe("runRoutine", () => {
       summarise = vi.fn(async () => ({
         text: "summary",
         tokens: 120,
-        weightedTokens: 45,
+        spend: [S(45)],
         declined: false,
         model: "gpt-4.1",
         modelOutcome: "truncated" as const,
@@ -688,7 +519,7 @@ describe("runRoutine", () => {
       summarise = vi.fn(async () => ({
         text: "",
         tokens: 120,
-        weightedTokens: 45,
+        spend: [S(45)],
         declined: true,
         model: "gpt-4.1",
         modelOutcome: "answered" as const,
@@ -1287,7 +1118,12 @@ describe("runRoutine", () => {
     db.from = (t: string) => {
       const table = originalFrom(t);
       if (t === "routine_runs") {
-        return { ...table, insert: () => ({ error: { message: "runs insert boom" } }) };
+        return {
+          ...table,
+          insert: () => ({
+            select: async () => ({ data: null, error: { message: "runs insert boom" } }),
+          }),
+        };
       }
       return table;
     };
@@ -1384,8 +1220,8 @@ describe("runRoutine", () => {
 
     await runRoutine(r, makeDeps(db) as any);
 
-    // 120 from the completion, plus 900 embedding tokens at EMBEDDING_TOKEN_WEIGHT.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 45 + 9 }]);
+    // The completion and the embedding, in one write.
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(45), E(900)] }]);
   });
 
   it("still delivers, ungrounded, when retrieval throws", async () => {
@@ -1545,7 +1381,7 @@ describe("runRoutine", () => {
   // read, which is the failure that does not show up anywhere.
 
   const declines = () => {
-    summarise = vi.fn(async () => ({ text: "", tokens: 120, weightedTokens: 45, declined: true }));
+    summarise = vi.fn(async () => ({ text: "", tokens: 120, spend: [S(45)], declined: true }));
   };
 
   it("sends nothing when the model found nothing worth sending", async () => {
@@ -1609,7 +1445,7 @@ describe("runRoutine", () => {
 
     // Silence is cheaper in noise, not in tokens: the model call that decided
     // this is the model call that cost money.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 45 }]);
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(45)] }]);
   });
 
   it("does not count as a failure", async () => {
@@ -1726,12 +1562,9 @@ describe("runRoutine filing", () => {
 
     await runRoutine(filed(), depsWithFile(db, file) as any);
 
-    // One record() call for the whole run. 120 completion tokens plus
-    // ceil(800 x 0.01) for the embeddings — which is the point of the
-    // weighting: filing a 3,000-character summary costs single figures against
-    // a chat turn, so filing is opt-in because of what it means rather than
-    // because of what it costs.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 45 + 8 }]);
+    // One record() call for the whole run: the completion and the filing
+    // embeddings together.
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(45), E(800, "index")] }]);
   });
 
   it("keeps delivering and stops filing when the owner is only a viewer", async () => {
@@ -1803,7 +1636,7 @@ describe("runRoutine filing", () => {
   it("files nothing when the model declined to send anything", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     const { db } = makeDb();
-    summarise = vi.fn(async () => ({ text: "", tokens: 90, weightedTokens: 30, declined: true }));
+    summarise = vi.fn(async () => ({ text: "", tokens: 90, spend: [S(30)], declined: true }));
     const file = vi.fn();
 
     await runRoutine(filed(), depsWithFile(db, file) as any);
@@ -1887,7 +1720,7 @@ describe("a run that can use tools", () => {
     const runWithTools = vi.fn(async () => ({
       text: "",
       tokens: 90,
-      weightedTokens: 30,
+      spend: [S(30)],
       declined: true,
     }));
 
@@ -1900,7 +1733,7 @@ describe("a run that can use tools", () => {
     expect(deliverCalls).toHaveLength(0);
     // Charged anyway. A run that read its material and decided against
     // sending has spent what it spent.
-    expect(recorded[0]).toMatchObject({ tokens: 30 });
+    expect(recorded[0]).toEqual({ workspaceId: "w1", spend: [S(30)] });
   });
 
   it("charges what the whole loop cost, not what one call did", async () => {
@@ -1909,7 +1742,7 @@ describe("a run that can use tools", () => {
     const runWithTools = vi.fn(async () => ({
       text: "done",
       tokens: 940,
-      weightedTokens: 310,
+      spend: [S(310)],
       declined: false,
     }));
 
@@ -1918,7 +1751,7 @@ describe("a run that can use tools", () => {
       runWithTools,
     } as never);
 
-    expect(recorded[0]).toMatchObject({ userId: "u1", tokens: 310 });
+    expect(recorded[0]).toEqual({ workspaceId: "w1", spend: [S(310)] });
   });
 });
 
@@ -1935,7 +1768,7 @@ describe("a routine that ends", () => {
     summarise = vi.fn(async () => ({
       text: "summary",
       tokens: 120,
-      weightedTokens: 45,
+      spend: [S(45)],
       declined: false,
     }));
     const { db, updates } = makeDb();
@@ -1958,7 +1791,7 @@ describe("a routine that ends", () => {
     summarise = vi.fn(async () => ({
       text: "",
       tokens: 120,
-      weightedTokens: 45,
+      spend: [S(45)],
       declined: true,
     }));
     const { db, updates } = makeDb();
@@ -2114,11 +1947,8 @@ describe("a routine that reads its own workspace", () => {
       summary: "x",
       model: "gpt-4.1-mini",
       tokens: 900,
-      // Deliberately not 900 — see `executor.test.ts:231-234`'s own comment
-      // on why an equal pair would pass whichever field `finish` read. Fix
-      // round 1, finding B2/B3: the weighted figure is now real, not a copy
-      // of `tokens`.
-      weightedTokens: 320,
+      // Deliberately not 900 — see the default `summarise` above.
+      spend: [S(320)],
     });
 
     await runRoutine(workspaceRoutine(), deps);
@@ -2126,8 +1956,8 @@ describe("a routine that reads its own workspace", () => {
     const run = inserts.find((i) => i.table === "routine_runs")!.values;
     // `routine_runs.tokens` is the raw count that moved.
     expect(run).toMatchObject({ status: "ok", model: "gpt-4.1-mini", tokens: 900 });
-    // The allowance is charged the weighted figure, not the raw one.
-    expect(recorded).toEqual([{ userId: "u1", tokens: 320 }]);
+    // The ledger is told what was consumed, not the raw count.
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(320)] }]);
   });
 
   it("pauses the routine when the run says it may not continue", async () => {
@@ -2201,14 +2031,14 @@ describe("a routine that reads its own workspace", () => {
       model: "gpt-4.1-mini",
       tokens: 640,
       // Deliberately not 640 — see the comment on the test above.
-      weightedTokens: 230,
+      spend: [S(230)],
     });
 
     await runRoutine(workspaceRoutine(), deps);
 
     const run = inserts.find((i) => i.table === "routine_runs")!.values;
     expect(run).toMatchObject({ status: "skipped", model: "gpt-4.1-mini", tokens: 640 });
-    expect(recorded).toEqual([{ userId: "u1", tokens: 230 }]);
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(230)] }]);
     expect(deliverCalls).toHaveLength(0);
   });
 
@@ -2228,7 +2058,7 @@ describe("a routine that reads its own workspace", () => {
       summary: "Over the last 7 days…",
       model: "gpt-4.1-mini",
       tokens: 900,
-      weightedTokens: 320,
+      spend: [S(320)],
     });
 
     const out = await runRoutine(workspaceRoutine(), deps);
@@ -2241,7 +2071,7 @@ describe("a routine that reads its own workspace", () => {
     // claim came back empty, so it is still metered even though nothing is
     // sent — same as the post-call skip above.
     expect(run.tokens).toBe(900);
-    expect(recorded).toEqual([{ userId: "u1", tokens: 320 }]);
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(320)] }]);
   });
 
   it("fails loudly rather than silently when no coverage dep is bound", async () => {

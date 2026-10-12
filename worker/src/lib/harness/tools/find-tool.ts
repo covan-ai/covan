@@ -5,7 +5,6 @@ import {
   searchTools,
   type ComposioTool,
 } from "../../composio/client";
-import { COMPOSIO_SEARCH_TOKENS } from "../../entitlements";
 import { listConnections, unavailableTools, type ToolConnection } from "../connections";
 import { cap } from "../budget";
 import { affordable, spend, wasBilled } from "../spend";
@@ -794,7 +793,7 @@ export const findToolTool: AgentTool = {
     // match, and billing somebody twice for that is billing them for our
     // brittleness.
     if (found.kind === "ok" || wasBilled(found.status)) {
-      await spend(ctx, COMPOSIO_SEARCH_TOKENS);
+      await spend(ctx, [{ kind: "composio_search" }]);
     }
 
     // What the workspace can run, then the rest of the catalogue, deduplicated.
@@ -900,7 +899,7 @@ export const findToolTool: AgentTool = {
 
       const full = await getTool(ctx.env, chosen, { signal: ctx.signal });
       if (full.kind === "ok" || wasBilled(full.status)) {
-        await spend(ctx, COMPOSIO_SEARCH_TOKENS);
+        await spend(ctx, [{ kind: "composio_search" }]);
       }
       if (full.kind === "error") {
         return { kind: "error", message: `${chosen} could not be described: ${full.message}` };

@@ -1,29 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { UsageSection } from "./usage-section";
-import type { UsageResponse } from "@/lib/api-client";
+import type { CreditSnapshot, UsageResponse } from "@/lib/api-client";
 
 const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
 
 vi.mock("@tanstack/react-query", () => ({ useQuery }));
-vi.mock("@/lib/api-client", () => ({ api: { usage: vi.fn(), providerKeys: { get: vi.fn() } } }));
+vi.mock("@/lib/api-client", () => ({ api: { usage: vi.fn() } }));
 
-// `QuotaWall` reads `["me"]` and `["provider-keys"]` and its own children write
-// through `useMutation` — none of which this file's blanket `useQuery` mock (one
-// answer for every query, whatever the key) can support. Its own contract has
-// its own test, `quota-wall.test.tsx`; this file only needs to know whether
+// `CreditsWall` reads `["me"]` and its form writes through `useMutation` — none
+// of which this file's blanket `useQuery` mock can support. Its own contract is
+// in `credits-wall.test.tsx`; this file only needs to know whether
 // `UsageSection` decided to render it.
-vi.mock("@/components/quota-wall", () => ({
-  QuotaWall: () => <div data-testid="quota-wall" />,
-}));
-
-// Door one's field, for the same reason: it reads `["me"]` and writes through
-// `useMutation`, and its own contract is in `workspace-provider-keys.test.tsx`.
-// What this file owns is the decision *this* component makes — that the field
-// is mounted whether or not the reader's allowance is spent, and the wall only
-// when it is.
-vi.mock("@/components/workspace-provider-keys", () => ({
-  WorkspaceProviderKeys: () => <div data-testid="workspace-provider-keys" />,
+vi.mock("@/components/credits-wall", () => ({
+  CreditsWall: () => <div data-testid="credits-wall" />,
 }));
 
 const TOTALS = {
@@ -34,115 +24,72 @@ const TOTALS = {
   cacheWriteTokens: 0,
   measuredPromptTokens: 0,
   totalTokens: 37_000,
-  weightedTokens: 65_000,
   estCostUsd: 0.2,
 };
 
-function usage(quota: UsageResponse["quota"]): UsageResponse {
-  return { agents: [], totals: TOTALS, quota } as UsageResponse;
+function usage(credits: CreditSnapshot): UsageResponse {
+  return { agents: [], totals: TOTALS, credits };
 }
 
-function renderWith(
-  data: UsageResponse,
-  keys?: { openai: string | null; anthropic: string | null },
-) {
-  // `UsageSection` now runs two queries — `["usage"]` and `["provider-keys"]`
-  // — so the old one-answer-for-every-call mock would hand the usage fixture
-  // back as the key hints too. Dispatching on `queryKey[0]` is the same fix
-  // `_authed.app.test.tsx` uses for the same shape of problem.
-  useQuery.mockImplementation((opts: { queryKey: readonly unknown[] }) => {
-    if (opts.queryKey[0] === "provider-keys") {
-      return {
-        data: keys ? { configured: true, updatedAt: null, ...keys } : undefined,
-        isLoading: false,
-        isPending: false,
-      };
-    }
-    return { data, isLoading: false, isPending: false };
+const metered = (balance: number, over: Partial<Extract<CreditSnapshot, { metered: true }>> = {}) =>
+  usage({
+    metered: true,
+    balance,
+    granted: 500,
+    spent: 500 - balance,
+    unlimited: false,
+    replies: 20,
+    ...over,
   });
+
+function renderWith(data: UsageResponse) {
+  useQuery.mockImplementation(() => ({ data, isLoading: false, isPending: false }));
   render(<UsageSection />);
 }
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("UsageSection", () => {
-  it("offers the way out only once the allowance is actually spent", () => {
-    // The state nobody sees while building the thing: replies are paused and
-    // there is no paid tier to sell, so the honest answer is the open build.
-    renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
+  it("shows the workspace's balance against what it was given", () => {
+    renderWith(metered(412.7));
 
-    expect(screen.getByText(/Used up/)).toBeInTheDocument();
-    // The three answers themselves — the workspace's own key, a message to us,
-    // self-hosting still — are `QuotaWall`'s contract, proven in
-    // `quota-wall.test.tsx`. This only has to show up.
-    expect(screen.getByTestId("quota-wall")).toBeInTheDocument();
-  });
-
-  it("does not send somebody away while they still have replies left", () => {
-    renderWith(usage({ used: 1_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
-
-    expect(screen.queryByTestId("quota-wall")).not.toBeInTheDocument();
+    expect(screen.getByText("Workspace credits")).toBeInTheDocument();
+    expect(screen.getByText(/412 of 500/)).toBeInTheDocument();
     expect(screen.getByText(/replies left/)).toBeInTheDocument();
+    // What a credit is, said on the screen that shows them.
+    expect(screen.getByText(/A credit is a cent/)).toBeInTheDocument();
   });
 
-  // The defect this pair exists to catch. The allowance is per member, so the
-  // person who hits the wall and the admin who can do something about it are
-  // usually different people — and the admin, by construction, still has
-  // replies left. Mounting the key field only at `level === "spent"` meant that
-  // admin opened Settings, found no field anywhere, and the journey the whole
-  // feature was designed around dead-ended. It also made a stored key
-  // unrevocable until somebody burned a month to reach the button.
-  it("offers the workspace key field while there are still replies left", () => {
-    renderWith(usage({ used: 1_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
+  it("offers the way out only once the credits are actually spent", () => {
+    renderWith(metered(0));
 
-    expect(screen.getByTestId("workspace-provider-keys")).toBeInTheDocument();
+    expect(screen.getByText(/Out of credits/)).toBeInTheDocument();
+    expect(screen.getByTestId("credits-wall")).toBeInTheDocument();
   });
 
-  it("offers it once the allowance is spent as well", () => {
-    renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }));
+  it("does not send somebody away while there are credits left", () => {
+    renderWith(metered(120));
 
-    expect(screen.getByTestId("workspace-provider-keys")).toBeInTheDocument();
+    expect(screen.queryByTestId("credits-wall")).not.toBeInTheDocument();
   });
 
-  it("says replies continue once an admin has set a workspace key", () => {
-    // `/usage` (`entitlements.snapshot`) has no notion of a workspace provider
-    // key at all, so this reads the same `["provider-keys"]` cache
-    // `QuotaWall` populates rather than waiting on a response that structurally
-    // cannot say replies continue.
-    renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }), {
-      openai: "sk-…4f2a",
-      anthropic: null,
-    });
+  it("never mentions a reset, because credits do not reset", () => {
+    renderWith(metered(10));
 
-    expect(screen.queryByText(/new replies are paused/)).not.toBeInTheDocument();
-    expect(screen.getByText(/workspace's own key carries on from here/)).toBeInTheDocument();
+    expect(screen.queryByText(/resets/)).not.toBeInTheDocument();
   });
 
-  it("still says paused when the only key set is an Anthropic one", () => {
-    // `keysForUser` refuses to take over without an OpenAI key — embeddings,
-    // dictation and the default model all need it, so an Anthropic key alone
-    // funds nothing and the 402 keeps coming. Saying "carries on from here"
-    // here would be the screen telling somebody their wall is gone while they
-    // watch it refuse them.
-    renderWith(usage({ used: 200_000, limit: 200_000, resetsAt: "2026-09-01T00:00:00.000Z" }), {
-      openai: null,
-      anthropic: "sk-ant-…9c1d",
-    });
+  it("shows no credits at all on an install that does not meter", () => {
+    renderWith(usage({ metered: false }));
 
-    expect(screen.getByText(/new replies are paused/)).toBeInTheDocument();
-    expect(screen.queryByText(/carries on from here/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Workspace credits")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("credits-wall")).not.toBeInTheDocument();
   });
 
-  it("shows no allowance at all on an install that does not meter", () => {
-    // limit: null is how the API says "self-hosted". The whole card, including
-    // the wall itself, would be nonsense to somebody already there.
-    renderWith(usage({ used: 0, limit: null, resetsAt: null }));
+  it("shows no balance for a house workspace", () => {
+    renderWith(metered(0, { unlimited: true }));
 
-    expect(screen.queryByText(/Used up/)).not.toBeInTheDocument();
-    expect(screen.queryByTestId("quota-wall")).not.toBeInTheDocument();
-    // The key field goes with it. A self-hosted install has no allowance for
-    // anybody to run past, so a workspace key would fund nothing — and the
-    // whole card it lives in is behind `limit` being a number.
-    expect(screen.queryByTestId("workspace-provider-keys")).not.toBeInTheDocument();
+    expect(screen.queryByText("Workspace credits")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("credits-wall")).not.toBeInTheDocument();
   });
 });

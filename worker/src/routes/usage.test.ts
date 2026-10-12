@@ -37,16 +37,17 @@ function fakeDb(rpcs: Record<string, RpcResult>) {
   return { db, calls };
 }
 
-function appWithDb(db: unknown) {
+function appWithDb(
+  db: unknown,
+  snapshot: () => Promise<unknown> = async () => ({ metered: false }),
+) {
   const app = new Hono<AppEnv>();
   app.use("/*", async (c, next) => {
     c.set("user", { id: USER_ID, email: "a@example.com" } as never);
     c.set("db", db as never);
-    // `GET /usage` asks what the caller may still spend before it reads a row.
-    // An unmetered install answers `limit: null`, which is what this is.
-    c.set("entitlements", {
-      snapshot: async () => ({ used: 0, limit: null, resetsAt: null }),
-    } as never);
+    // `GET /usage` asks what the workspace has left. An unmetered install
+    // answers `metered: false`, which is the default here.
+    c.set("entitlements", { snapshot } as never);
     await next();
   });
   app.route("/", usage);
@@ -368,5 +369,106 @@ describe("pricing by the model that answered", () => {
     const res = await appWithDb(db).request("/usage/workspace");
     const body = (await res.json()) as { months: Record<string, unknown>[] };
     expect(body.months[0]).not.toHaveProperty("estCostUsd");
+  });
+});
+
+const METERED = {
+  metered: true,
+  balance: 412.5,
+  granted: 500,
+  spent: 87.5,
+  unlimited: false,
+  replies: 40,
+};
+
+describe("GET /usage credits", () => {
+  it("reports nothing to show on an unmetered install", async () => {
+    const { db } = fakeDb({});
+    const res = await appWithDb(db).request("/usage");
+    expect(((await res.json()) as { credits: unknown }).credits).toEqual({ metered: false });
+  });
+
+  it("reports the active workspace's balance on a metered one", async () => {
+    const { db } = fakeDb({});
+    let asked: string | undefined;
+    const app = appWithDb(db, async (...args: unknown[]) => {
+      asked = args[0] as string;
+      return METERED;
+    });
+    const res = await app.request("/usage");
+    expect(((await res.json()) as { credits: unknown }).credits).toEqual(METERED);
+    expect(asked).toBe(WORKSPACE_ID);
+  });
+
+  it("shows nothing rather than a zero when the balance cannot be read", async () => {
+    const { db } = fakeDb({});
+    const app = appWithDb(db, async () => {
+      throw new Error("ledger down");
+    });
+    const res = await app.request("/usage");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { credits: unknown }).credits).toEqual({ metered: false });
+  });
+});
+
+describe("GET /usage/credits/ledger", () => {
+  /** `fakeDb`, plus the one ledger read, which is recorded. */
+  function ledgerDb(rows: unknown[]) {
+    const base = fakeDb({});
+    const reads: Array<{ columns: string }> = [];
+    const db = {
+      ...base.db,
+      from(table: string) {
+        if (table !== "credit_ledger") return base.db.from(table);
+        const chain = {
+          select: (columns: string) => {
+            reads.push({ columns });
+            return chain;
+          },
+          eq: () => chain,
+          order: () => chain,
+          limit: async () => ({ data: rows, error: null }),
+        };
+        return chain;
+      },
+    };
+    return { db, reads };
+  }
+
+  it("answers an empty list on an unmetered install without reading anything", async () => {
+    const { db, reads } = ledgerDb([]);
+    const res = await appWithDb(db).request("/usage/credits/ledger");
+    expect(await res.json()).toEqual({ entries: [] });
+    expect(reads).toEqual([]);
+  });
+
+  it("returns the rows in credits, and never asks who caused them", async () => {
+    const { db, reads } = ledgerDb([
+      {
+        id: 7,
+        created_at: "2026-10-12T10:00:00Z",
+        kind: "completion",
+        model: "claude-sonnet-5",
+        purpose: "reply",
+        delta_micro: -2_500_000,
+        balance_after: 497_500_000,
+      },
+    ]);
+    const res = await appWithDb(db, async () => METERED).request("/usage/credits/ledger");
+    expect(await res.json()).toEqual({
+      entries: [
+        {
+          id: 7,
+          at: "2026-10-12T10:00:00Z",
+          kind: "completion",
+          model: "claude-sonnet-5",
+          purpose: "reply",
+          credits: -2.5,
+          balanceAfter: 497.5,
+        },
+      ],
+    });
+    // A workspace's figures are never reported per person (0032).
+    expect(reads[0].columns).not.toMatch(/user_id/);
   });
 });

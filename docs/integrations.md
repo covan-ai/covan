@@ -60,8 +60,9 @@ A connection belongs to the workspace. Everybody can see it, and what it imports
 lands in a shared bundle.
 
 What belongs to a person is the **grant**: the OAuth access it carries. That
-decides three things — which files are visible, whose monthly allowance the
-embeddings are charged to, and who the provider thinks is reading. So a
+decides three things — which files are visible, who the embeddings are
+attributed to on the workspace's credit ledger, and who the provider thinks is
+reading. So a
 connection has a _grant holder_ rather than an owner, and the two can come apart.
 
 They come apart most obviously when somebody closes their Covan account. The
@@ -317,7 +318,7 @@ somebody has granted this app before: remove Covan from
 
 Mention the app in a channel, or send it a direct message, and the agent answers
 in the thread — with the same retrieval, the same citations and the same
-allowance as a question asked in Covan.
+credits as a question asked in Covan.
 
 **Whoever asks is answered as themselves.** A Slack message carries a Slack user
 id and nothing else, so Covan matches it to a Covan account by email, once, and
@@ -549,7 +550,7 @@ own against an API shape nobody here has described.
 So Covan buys that half. **Composio** describes about 1500 services in a
 machine-readable form, and keeps a registered application for the common ones,
 and Covan uses both. What it does not use is their dispatch: the call is still made
-here, under the same step budget, the same allowance and the same approval as
+here, under the same step budget, the same credits and the same approval as
 everything else.
 
 Set `COMPOSIO_API_KEY` and a **Connected apps** card appears under _Services an
@@ -689,10 +690,9 @@ Composio before the row goes, so does closing the account.
   application you just connected, the key is the first thing to check.
 - **The consent screen shows Composio's brand** unless the workspace supplies
   its own OAuth application for that service.
-- **Calls cost money** — Composio bills per tool call — so they are metered
-  against the same allowance a chat turn spends, at roughly one turn per call.
-  A self-hosted deployment with no allowance configured is unmetered, as it is
-  for everything else.
+- **Calls cost money** — Composio bills per tool call — so on the hosted service
+  each one costs the workspace credits, as a reply does. A self-hosted
+  deployment charges nobody credits, as for everything else.
 
 ### A real browser
 
@@ -778,14 +778,13 @@ The panel is yours alone. A colleague in a shared conversation sees the
 answers, which are ordinary messages, and nothing of the browser — for them the
 panel's routes answer "no such browser".
 
-**It costs about a seventh of a month's allowance per task**, and the person
+**On the hosted service a task costs the workspace credits**, and the person
 asking pays nothing extra to anybody. There is no per-member key and no second
-bill: the deployment holds one key, and a task is metered at 137,000 tokens
-against the same allowance a chat turn spends — so roughly seven browser tasks
-in a 1M month, fewer mixed with ordinary chat. That number is provisional and
-derived from browser-use's own published figure of 17c per solved task; what
-each task really cost is recorded, so it can be corrected from invoices rather
-than from a blog post.
+bill: the deployment holds one key. A hold is charged when the task starts, and
+once the run ends it is trued up to what the provider says the run really cost
+— so the ledger shows a task twice, and the two rows add up to the provider's
+own figure. The confirmation card shows the workspace's balance before anybody
+says yes.
 
 **No password is ever given to the model in your conversation, and that is
 enforced rather than promised.** You can save a login for a site on an agent, for

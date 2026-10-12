@@ -5,7 +5,7 @@ import { ensureBrowserSession, releaseBrowserSession } from "../../browser/sessi
 import { beginConversationRun, finishRunStart } from "../../browser/start";
 import { recordBrowserTask } from "../../browser/tasks";
 import { heldTakeover, profileFor } from "../../browser/takeover";
-import { BROWSER_TASK_TOKENS, entitlementsFor } from "../../entitlements";
+import { entitlementsFor } from "../../entitlements";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 
@@ -138,12 +138,10 @@ const CANNOT_TELL =
   "could not check whether the person's own browser is open, so the browser was not started. " +
   "Say so plainly and offer to try again; do not retry this turn.";
 
-export { BROWSER_TASK_TOKENS };
-
 /**
  * What the card says this browser carries, or nothing.
  *
- * One human sentence, for `allowanceNote`'s reason: the card renders fields
+ * One human sentence, for `creditNote`'s reason: the card renders fields
  * as rows, and a row reading `cookieDomains: ["mail.google.com"]` is a row
  * that tells nobody what it means.
  *
@@ -188,33 +186,30 @@ async function jarNote(ctx: ToolContext, profile: { id: string } | null): Promis
 }
 
 /**
- * What the card says a task costs, or nothing at all.
+ * What the card says about credits, or nothing at all.
  *
  * Returned as one human sentence rather than a number, because the proposal
- * card renders fields as rows and "cost: 137000" is a row that tells nobody
- * anything. A task is about 14% of a month, which is a big enough bite that
- * somebody should see it before saying yes.
+ * card renders fields as rows and "balance: 412.3" is a row that tells nobody
+ * anything. A browser task is the dearest single thing an agent can do, so the
+ * balance is worth seeing before saying yes. What one task costs is not said:
+ * it is the provider's figure, known only when the run ends.
  *
- * Null on an unmetered deployment — `limit: null` is the interface's way of
- * saying no quota exists — and null if the read fails. Never a guess: a made
- * up share on a self-hosted install would be a sentence about a ceiling that
- * is not there.
+ * Null on an unmetered deployment and on a house workspace — there is no
+ * balance to show — and null if the read fails. Never a guess: a made-up
+ * figure on a self-hosted install would be a sentence about a ceiling that is
+ * not there.
  */
-async function allowanceNote(ctx: ToolContext): Promise<string | null> {
+async function creditNote(ctx: ToolContext): Promise<string | null> {
   try {
-    const { used, limit } = await entitlementsFor(ctx.env).snapshot(ctx.userId);
-    if (!limit) return null;
-    const share = Math.round((BROWSER_TASK_TOKENS / limit) * 100);
-    const left = Math.max(0, Math.floor((limit - used) / BROWSER_TASK_TOKENS));
-    return (
-      `about ${share}% of this month's allowance ` +
-      `(${left} browser ${left === 1 ? "task" : "tasks"} left after this one)`
-    );
+    const credits = await entitlementsFor(ctx.env).snapshot(ctx.workspaceId);
+    if (!credits.metered || credits.unlimited) return null;
+    const left = Math.max(0, Math.floor(credits.balance));
+    return `uses credits; this workspace has ${left} ${left === 1 ? "credit" : "credits"} left`;
   } catch (err) {
-    // Advisory. A person who cannot be told the price should still be asked
+    // Advisory. A person who cannot be told the balance should still be asked
     // the question — the alternative is a tool that stops working because a
-    // counter is down.
-    console.error("could not read the allowance for a browser task", err);
+    // ledger is down.
+    console.error("could not read the credit balance for a browser task", err);
     return null;
   }
 }
@@ -373,10 +368,9 @@ export const browseTool: AgentTool = {
         summary: `Use a browser to do these ${lines.length + 1} things?`,
         proposal: {
           ...proposal,
+          // `cost` rides along unchanged: it is the workspace's balance, which
+          // is one figure however many tasks are approved.
           thenInLine: lines.map((line, i) => `${i + 2}. ${line}`).join("\n"),
-          ...(typeof proposal.cost === "string"
-            ? { cost: `${proposal.cost}, for each of the ${lines.length + 1}` }
-            : {}),
         },
       };
     },
@@ -451,7 +445,7 @@ export const browseTool: AgentTool = {
     const profile = await profileFor(ctx.env, ctx.userId);
 
     if (ctx.confirmed !== true) {
-      const cost = await allowanceNote(ctx);
+      const cost = await creditNote(ctx);
       /**
        * Which sites this browser is signed into, on the card.
        *
@@ -543,7 +537,7 @@ export const browseTool: AgentTool = {
      * runs — a line held by a sign-in, or between one settle and the next
      * start — so the order is the order they were asked in.
      *
-     * Nothing is charged here. The allowance was asked above; the charge is
+     * Nothing is charged here. The balance was asked above; the charge is
      * made when the task starts (`lib/browser/queue.ts`), and a task that
      * never starts costs nothing.
      */
@@ -613,7 +607,9 @@ export const browseTool: AgentTool = {
       // every other provider error does (ruling R12): this is the path it
       // has always taken, with only the sentence changed.
       if (wasBilled(begun.status) && begun.status !== 0) {
-        await spend(ctx, BROWSER_TASK_TOKENS);
+        await spend(ctx, [
+          { kind: "browser_task", stage: "started", browserTaskId: null, costUsd: null },
+        ]);
       }
       // Not retried, and never a second session: the busy one is this
       // conversation's browser, mid-run.
@@ -669,7 +665,13 @@ export const browseTool: AgentTool = {
     // stopped (R41). See `finishRunStart`.
     await finishRunStart(ctx.env, session.value, begun.value, { signal: ctx.signal });
 
-    await spend(ctx, BROWSER_TASK_TOKENS);
+    // A hold, not the price: the provider's own figure is known only when the
+    // run ends, and `settleTask` trues this up to it by `browserTaskId`.
+    await spend(
+      ctx,
+      [{ kind: "browser_task", stage: "started", browserTaskId: recorded, costUsd: null }],
+      { browserTaskId: recorded },
+    );
 
     return {
       kind: "ok",

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapDocument } from "../lib/dto";
 import { resolveModel } from "../lib/models";
-import { complete, totalTokens } from "../lib/completion";
+import { complete } from "../lib/completion";
 import type { CompletionMessage } from "../lib/completion";
 import { retrieveForAgent } from "../lib/retrieval";
 import {
@@ -18,8 +18,9 @@ import { EXCERPT_LIMIT, safeName } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
 import { chunkText, embedTexts } from "../lib/embeddings";
 import { insertChunkRows } from "../lib/chunk-store";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
-import { embeddingCost } from "../lib/entitlements";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
+import { completionSpend, embeddingSpend, spends } from "../lib/entitlements";
+import { embeddingModel } from "../lib/embeddings";
 
 /**
  * How a report is cut for retrieval, and why it is not how an upload is cut.
@@ -80,13 +81,7 @@ reports.post("/sessions/:id/report", async (c) => {
   }
   const { instruction, bundleId } = parsed.data;
 
-  // Before anything is loaded, embedded or generated.
-  const denied = await guardQuota(c);
-  if (denied) return denied;
-
-  // Whose key answers. `guardQuota` sets this only when the caller is past their
-  // allowance and the workspace is carrying it from here.
-  const env = c.get("providerEnv") ?? c.env;
+  const env = c.env;
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
@@ -95,6 +90,10 @@ reports.post("/sessions/:id/report", async (c) => {
     .maybeSingle();
   if (sessionError) return c.json({ error: "failed to load session" }, 500);
   if (!session) return c.json({ error: "not found" }, 404);
+
+  // Before anything is embedded or generated. The session's workspace pays.
+  const denied = await guardCredits(c, session.workspace_id as string);
+  if (denied) return denied;
 
   const { data: agent, error: agentError } = await db
     .from("agents")
@@ -169,11 +168,14 @@ reports.post("/sessions/:id/report", async (c) => {
 
   let markdown: string;
   let usage;
+  const model = resolveModel(agent.model, env);
+  const embedModel = embeddingModel(env);
+  const ref = { sessionId: session.id as string };
   try {
     const result = await complete(
       env,
       {
-        model: resolveModel(agent.model, env),
+        model,
         messages,
         maxTokens: maxTokensFor("report"),
         temperature: temperatureFor("report", agent.temperature),
@@ -187,12 +189,19 @@ reports.post("/sessions/:id/report", async (c) => {
     console.error("report generation failed", e);
     // The embedding above was really bought. Charging only for it is the honest
     // answer to a turn that got that far and no further.
-    await recordQuota(c, embeddingCost(embeddingTokens));
+    await recordCredits(c, spends(embeddingSpend(embedModel, embeddingTokens, "retrieval")), ref);
     return c.json({ error: "failed to write the report" }, 502);
   }
 
   if (markdown.length === 0) {
-    await recordQuota(c, embeddingCost(embeddingTokens) + totalTokens(usage));
+    await recordCredits(
+      c,
+      spends(
+        embeddingSpend(embedModel, embeddingTokens, "retrieval"),
+        completionSpend(model, usage, "report"),
+      ),
+      ref,
+    );
     return c.json({ error: "the model returned an empty report" }, 502);
   }
 
@@ -212,7 +221,14 @@ reports.post("/sessions/:id/report", async (c) => {
     await getDocStore(c.env).put(r2Key, bytes, { contentType: "text/markdown" });
   } catch (e) {
     console.error("failed to store report", e);
-    await recordQuota(c, embeddingCost(embeddingTokens) + totalTokens(usage));
+    await recordCredits(
+      c,
+      spends(
+        embeddingSpend(embedModel, embeddingTokens, "retrieval"),
+        completionSpend(model, usage, "report"),
+      ),
+      ref,
+    );
     return c.json({ error: "failed to store the report; check the server logs" }, 500);
   }
 
@@ -238,7 +254,14 @@ reports.post("/sessions/:id/report", async (c) => {
       console.error("r2 rollback failed", e);
     }
     console.error("failed to insert report row", error);
-    await recordQuota(c, embeddingCost(embeddingTokens) + totalTokens(usage));
+    await recordCredits(
+      c,
+      spends(
+        embeddingSpend(embedModel, embeddingTokens, "retrieval"),
+        completionSpend(model, usage, "report"),
+      ),
+      ref,
+    );
     return c.json({ error: "failed to save the report" }, 500);
   }
 
@@ -271,7 +294,15 @@ reports.post("/sessions/:id/report", async (c) => {
     console.error("report embedding failed (report saved without chunks)", e);
   }
 
-  await recordQuota(c, embeddingCost(embeddingTokens + indexTokens) + totalTokens(usage));
+  await recordCredits(
+    c,
+    spends(
+      embeddingSpend(embedModel, embeddingTokens, "retrieval"),
+      embeddingSpend(embedModel, indexTokens, "report"),
+      completionSpend(model, usage, "report"),
+    ),
+    ref,
+  );
 
   return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunkCount }] }), 201);
 });

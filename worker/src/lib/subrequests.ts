@@ -78,7 +78,7 @@ export function subrequestMeter(
 /**
  * The environment a metered request runs in.
  *
- * An overlay, in the shape `withProviderKeys` already established: the bindings
+ * An overlay: the bindings
  * object is shared across every request an isolate serves, so the meter is
  * added to a copy and never written onto it.
  */

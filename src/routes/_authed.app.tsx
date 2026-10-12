@@ -11,7 +11,7 @@ import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { Badge, Headline, SectionHeading } from "@/components/page-container";
 import { Chip, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar, UserAvatar } from "@/components/avatars";
-import { useQuota, quotaSentence } from "@/lib/quota";
+import { useCredits, creditsSentence } from "@/lib/credits";
 import { CoverageNotice } from "@/components/coverage-notice";
 import { FirstWeekChecklist } from "@/components/first-week-checklist";
 import { firstWeekSteps, firstWeekRemaining, useChecklistDismissed } from "@/lib/first-week";
@@ -57,7 +57,7 @@ function Home() {
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const members = me?.members ?? [];
-  const quota = useQuota();
+  const credits = useCredits();
 
   // The one fact the checklist needs that the home screen does not already
   // hold. Asked for only while it could still change the answer, so a
@@ -130,10 +130,10 @@ function Home() {
         {/* Directly under the composer, because this is the moment before
             spending — not buried in settings, where nobody looks until the
             replies have already stopped. Renders nothing when self-hosted. */}
-        {quota && (
+        {credits && (
           <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-            {quota.level !== "fine" && <span className="h-2 w-2 shrink-0 bg-accent-orange" />}
-            {quotaSentence(quota)}
+            {credits.level !== "fine" && <span className="h-2 w-2 shrink-0 bg-accent-orange" />}
+            {creditsSentence(credits)}
           </p>
         )}
         {/* Above the checklist, for the same reason the checklist itself sits

@@ -286,9 +286,8 @@ export type AgentTurnOptions = {
    * the eleven model calls that already happened and were already paid for.
    *
    * That is not a cosmetic loss. The route's salvage writes an assistant row
-   * with every token column null, and `recordQuota` is handed a zero and
-   * early-returns, so the passes are neither recorded against the message nor
-   * billed. Production, 2026-09-25: four turns saved with all token columns
+   * with every token column null, and the ledger is handed nothing, so the
+   * passes are neither recorded against the message nor billed. Production, 2026-09-25: four turns saved with all token columns
    * NULL and nothing charged. This is the only copy of those numbers that
    * survives the throw.
    *
@@ -932,8 +931,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
   /**
    * What the turn has spent so far, prompt plus completion.
    *
-   * Counted the way `recordQuota` counts it, so the number the ceiling is
-   * compared against is the number the person is billed.
+   * Prompt plus completion, raw. A runaway guard, not a price.
    */
   let tokensSpent = 0;
   /**
@@ -1066,9 +1064,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // `onPass` gives: what the caller cannot reach is what a throw takes
         // with it, and everything after this line can throw.
         opts.onPass?.(spent);
-        // And the running total the cost ceiling is measured against, counted
-        // the way `recordQuota` counts it so the number that stops the turn is
-        // the number the person is billed. Checked here rather than before the
+        // And the running total the cost ceiling is measured against. Checked here rather than before the
         // next request because this is where it changes — a pass that has
         // already been paid for is not un-spent by noticing late.
         lastPromptTokens = event.usage.promptTokens ?? lastPromptTokens;

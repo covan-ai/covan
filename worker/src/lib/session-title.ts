@@ -1,4 +1,5 @@
-import { complete, totalTokens, type CompletionEnv } from "./completion";
+import { complete, type CompletionEnv } from "./completion";
+import { completionSpend, type Spend } from "./entitlements";
 
 /**
  * How wide a generated title may be. The sidebar truncates with an ellipsis
@@ -9,8 +10,8 @@ export const TITLE_MAX_CHARS = 60;
 /**
  * How much of the opening message is worth sending to be titled. A title comes
  * out of the first sentence or two; the rest of a pasted wall of text only adds
- * input tokens. Titling is charged against the same monthly allowance as the
- * reply, so this cap is a real saving and not a stylistic one.
+ * input tokens. Titling is charged with the reply, so this cap is a real
+ * saving and not a stylistic one.
  */
 const SOURCE_MAX_CHARS = 1000;
 
@@ -100,15 +101,15 @@ export function buildTitleMessages(
  * the session keeps the name it had. The caller writes a title only when one
  * arrives.
  *
- * `tokens` is reported separately from `title` and is deliberately not zeroed
+ * `spend` is reported separately from `title` and is deliberately not zeroed
  * when the reply is unusable: OpenAI charged for it either way, and the caller
- * folds it into the same allowance write as the turn it rode along with.
+ * folds it into the same ledger write as the turn it rode along with.
  */
 export async function generateSessionTitle(
   env: CompletionEnv,
   model: string,
   firstMessage: string,
-): Promise<{ title: string | null; tokens: number }> {
+): Promise<{ title: string | null; spend: Spend | null }> {
   try {
     const { text, usage } = await complete(
       env,
@@ -125,9 +126,9 @@ export async function generateSessionTitle(
       },
       { signal: AbortSignal.timeout(TITLE_TIMEOUT_MS) },
     );
-    return { title: parseTitleSuggestion(text), tokens: totalTokens(usage) };
+    return { title: parseTitleSuggestion(text), spend: completionSpend(model, usage, "title") };
   } catch (err) {
     console.error("session titling failed", err);
-    return { title: null, tokens: 0 };
+    return { title: null, spend: null };
   }
 }

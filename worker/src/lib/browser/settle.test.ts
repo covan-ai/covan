@@ -690,3 +690,61 @@ describe("settleBrowserTask", () => {
     expect(spoken.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The provider's own figure, charged once the run is over. `browse` held a
+ * provisional amount when the run started; this is what trues it up, so the
+ * total a workspace pays for a task is what the provider says it cost.
+ */
+describe("charging what the run really cost", () => {
+  const charged = () => {
+    const record = vi.fn(async () => {});
+    return { record };
+  };
+
+  it("charges the task's workspace the provider's figure, against the task", async () => {
+    const { deps } = setup();
+    const entitlements = charged();
+
+    await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, { ...deps, entitlements });
+
+    expect(entitlements.record).toHaveBeenCalledWith(
+      "ws-1",
+      [{ kind: "browser_task", stage: "settled", browserTaskId: "bt-1", costUsd: 0.12 }],
+      { userId: "user-1", sessionId: "chat-1", browserTaskId: "bt-1" },
+    );
+  });
+
+  it("charges nothing more when the provider gave no figure, so the hold stands", async () => {
+    const { deps } = setup();
+    const entitlements = charged();
+
+    await settleBrowserTask(
+      ENV,
+      taskRow() as BrowserTaskRow,
+      { ...DONE, costUsd: null },
+      { ...deps, entitlements },
+    );
+
+    expect(entitlements.record).not.toHaveBeenCalled();
+  });
+
+  it("charges nothing for the one free retry after a login wall", async () => {
+    const retry = taskRow({ id: "bt-2", retry_of: "bt-1" });
+    const { deps } = setup([retry]);
+    const entitlements = charged();
+
+    await settleBrowserTask(ENV, retry as BrowserTaskRow, DONE, { ...deps, entitlements });
+
+    expect(entitlements.record).not.toHaveBeenCalled();
+  });
+
+  it("charges nothing for a task another clock already settled", async () => {
+    const { deps } = setup([taskRow({ status: "finished" })]);
+    const entitlements = charged();
+
+    await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, { ...deps, entitlements });
+
+    expect(entitlements.record).not.toHaveBeenCalled();
+  });
+});

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
-import { BROWSER_TASK_TOKENS, entitlementsFor } from "../entitlements";
+import { entitlementsFor } from "../entitlements";
 import { wasBilled } from "../harness/spend";
 import { serviceClient } from "../supabase";
 import { hasBrowserKey } from "./client";
@@ -26,7 +26,7 @@ import { cancelRun } from "./v4";
  * and still start each task once, in order, one per browser.
  *
  * **What a waiting task costs.** Nothing until it starts. `browse` checks the
- * allowance when it queues one, and the charge is made here, when the provider
+ * balance when it queues one, and the charge is made here, when the provider
  * has taken the run — the same moment `browse` charges its own. A task that
  * never starts (cancelled, expired, given up) is never charged, except where
  * the provider took a request and failed it, which `browse` charges too (R12).
@@ -226,21 +226,21 @@ async function startWaiting(
   deps: QueueDeps,
 ): Promise<StartOutcome> {
   try {
-    // The allowance, asked again: it was asked when the task was queued, and
+    // The balance, asked again: it was asked when the task was queued, and
     // the tasks in front of it have spent since. A failed check lets the start
     // through, `affordable`'s rule.
     try {
-      const verdict = await deps.entitlements.check(row.user_id);
+      const verdict = await deps.entitlements.check(row.workspace_id);
       if (!verdict.allowed) {
         return giveUp(
           env,
           row,
           deps,
-          `this account used its allowance for the period while it waited (it resets on ${verdict.resetsAt})`,
+          "this workspace ran out of credits while it waited; a workspace admin can add more",
         );
       }
     } catch {
-      console.warn("could not check the allowance for a waiting browser task; starting it", row.id);
+      console.warn("could not check the credits for a waiting browser task; starting it", row.id);
     }
 
     // Ruling R44: the person's own browser carries the same jar, and the one
@@ -389,7 +389,12 @@ function failed(reason: string): FinishedTask {
 
 async function charge(row: WaitingRow, deps: QueueDeps): Promise<void> {
   try {
-    await deps.entitlements.record(row.user_id, BROWSER_TASK_TOKENS);
+    // A hold, trued up to the provider's figure when the run settles.
+    await deps.entitlements.record(
+      row.workspace_id,
+      [{ kind: "browser_task", stage: "started", browserTaskId: row.id, costUsd: null }],
+      { userId: row.user_id, sessionId: row.session_id, browserTaskId: row.id },
+    );
   } catch (err) {
     console.error("failed to record a browser task's start", row.id, err);
   }

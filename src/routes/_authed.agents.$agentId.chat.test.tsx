@@ -100,7 +100,7 @@ vi.mock("sonner", () => ({
   toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), message: vi.fn() }),
 }));
 
-vi.mock("@/lib/quota", () => ({ useQuota: () => null, quotaSentence: () => "" }));
+vi.mock("@/lib/credits", () => ({ useCredits: () => null, creditsSentence: () => "" }));
 vi.mock("@/lib/use-chat-uploads", () => ({
   useChatUploads: () => ({ receipts: [], destinations: [], addFiles: vi.fn() }),
 }));

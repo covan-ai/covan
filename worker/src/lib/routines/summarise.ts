@@ -3,7 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { routineMaterial } from "./material";
 import { resolveModel } from "../models";
 import { complete, totalTokens } from "../completion";
-import { weighTokens } from "../entitlements";
+import { completionSpend, spends, type Spend } from "../entitlements";
 import { temperatureFor, reasoningEffortFor, whenAndWhere } from "../prompt";
 import { replyOutcome } from "../harness/usage";
 import type { ModelCall, SummariseInput } from "./executor";
@@ -48,9 +48,7 @@ type Decision = { relevant?: unknown; summary?: unknown };
 export function summariseWithModel(env: RoutineEnv) {
   return async (
     input: SummariseInput,
-  ): Promise<
-    ModelCall & { text: string; tokens: number; weightedTokens: number; declined: boolean }
-  > => {
+  ): Promise<ModelCall & { text: string; tokens: number; spend: Spend[]; declined: boolean }> => {
     const body = routineMaterial(input);
 
     // Named rather than inlined, because the row has to say which model
@@ -146,8 +144,8 @@ export function summariseWithModel(env: RoutineEnv) {
     });
 
     const tokens = totalTokens(usage);
-    // What the allowance is charged, as against what moved. See `weighTokens`.
-    const weightedTokens = weighTokens(usage);
+    // What was consumed, for the ledger, as against how many tokens moved.
+    const spend = spends(completionSpend(model, usage, "routine"));
     // How the call ended, through the same function the chat path uses rather
     // than a second mapping. `said` is read off the RAW reply, not off the text
     // that survives `readDecision`: a run that declined to send still had the
@@ -161,9 +159,9 @@ export function summariseWithModel(env: RoutineEnv) {
       said: text.trim().length > 0,
     });
     const call = { model, modelOutcome };
-    if (!input.mayDecline) return { ...call, text, tokens, weightedTokens, declined: false };
+    if (!input.mayDecline) return { ...call, text, tokens, spend, declined: false };
 
-    return { ...call, ...readDecision(text), tokens, weightedTokens };
+    return { ...call, ...readDecision(text), tokens, spend };
   };
 }
 

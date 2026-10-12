@@ -202,7 +202,7 @@ application for the common ones: 1,437 of 1,596 were connectable on 2026-10-05,
 123 of them by signing in at the application and most of the rest by pasting a
 key on a page Composio hosts. Covan never sees that credential; it stores a
 reference to one. The call is still made here, under the same budget, the same
-allowance and the same approval as everything else — and a standing
+credits and the same approval as everything else — and a standing
 "always allow" is an admin's decision, per agent, per app, per operation, which
 any writer can take back.
 
@@ -224,17 +224,16 @@ nobody opens.
 
 ### Work as a team
 
-| What you get                            | How                                                                                                | Needs                        |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------- |
-| Shared sessions and brainstorm boards   | bring the team into one conversation, or an idea board with stages                                 | —                            |
-| Roles                                   | owner, admin, member, viewer — a SQL predicate, not a disabled button                              | —                            |
-| An activity log                         | who did what in the workspace, paginated                                                           | —                            |
-| A coverage report                       | how answers were grounded, by agent and bucket — never a person, never a question                  | admin                        |
-| Recoverable deletion                    | an agent, a bundle or a document comes back for thirty days; the audit row is written by a trigger | —                            |
-| Usage priced by the model that answered | per reply, rather than by whatever the agent is set to today                                       | —                            |
-| Your own provider key                   | a workspace key for OpenAI or Anthropic, covering completions                                      | `PROVIDER_KEY_SECRET`, admin |
-| API keys                                | hashed with SHA-256 and shown once; a key acts as its owner                                        | `SUPABASE_JWT_SECRET`        |
-| Take it with you                        | one archive — agents, documents and their files, chats, routines — plus SQL to replay it           | —                            |
+| What you get                            | How                                                                                                | Needs                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------- |
+| Shared sessions and brainstorm boards   | bring the team into one conversation, or an idea board with stages                                 | —                     |
+| Roles                                   | owner, admin, member, viewer — a SQL predicate, not a disabled button                              | —                     |
+| An activity log                         | who did what in the workspace, paginated                                                           | —                     |
+| A coverage report                       | how answers were grounded, by agent and bucket — never a person, never a question                  | admin                 |
+| Recoverable deletion                    | an agent, a bundle or a document comes back for thirty days; the audit row is written by a trigger | —                     |
+| Usage priced by the model that answered | per reply, rather than by whatever the agent is set to today                                       | —                     |
+| API keys                                | hashed with SHA-256 and shown once; a key acts as its owner                                        | `SUPABASE_JWT_SECRET` |
+| Take it with you                        | one archive — agents, documents and their files, chats, routines — plus SQL to replay it           | —                     |
 
 "Nothing is held hostage" should be checkable by the team rather than only by
 whoever runs the server, which is why the export is a button in Settings and not
@@ -344,10 +343,11 @@ is the real one.
 Agents, retrieval over your own documents, the tool loop and every tool in it,
 connected apps, routines, chat, workspaces, sharing, roles, the activity log and
 the full data export are all in this repository, with no feature flags, no plan
-tiers and no licence keys. The quota interface the hosted product needs is here
-too, and the open build satisfies it with `unlimitedEntitlements` — a real
-implementation rather than a stub that throws, so nothing phones home and
-nothing counts. Nothing that works today will move behind a paywall later.
+tiers and no licence keys. The interface the hosted product's credits hang off
+is here too — it reports what was consumed and never what it costs — and the
+open build satisfies it with `unlimitedEntitlements`, a real implementation
+rather than a stub that throws, so nothing phones home and nothing counts.
+Nothing that works today will move behind a paywall later.
 
 There is a hosted Covan, and what it sells is not features: it is somebody else
 running the database, the backups and the upgrades. If paid capabilities do

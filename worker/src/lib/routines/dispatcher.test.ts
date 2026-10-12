@@ -280,7 +280,7 @@ describe("a workspace routine gets the gap report bound to its real dependencies
 
   /**
    * Fix round 1, finding B7. `coverage`'s second argument is the run's
-   * resolved env — the one that may carry an owner's own key — not the
+   * run's env — not the
    * dispatcher's own `env` closed over at construction. `expect.anything()`
    * on the second argument (as the test above uses) passes whichever one
    * reaches `coverageDeps`, so it cannot catch a regression that swaps
@@ -566,10 +566,16 @@ describe("clusterQuestions", () => {
     ]);
     expect(result.model).toBe("gpt-4.1-mini");
     expect(result.tokens).toBe(160);
-    // Fix round 1, finding B2/B3. 120 prompt + 40 completion, weighted via
-    // `weighTokens`: 120 fresh (×1) + 40 completion (×5) = 320 — not 160,
-    // which is what the unweighted figure used to be charged as.
-    expect(result.weightedTokens).toBe(320);
+    // What the ledger is told: the counts and the model, never a price.
+    expect(result.spend).toEqual([
+      {
+        kind: "completion",
+        model: "gpt-4.1-mini",
+        promptTokens: 120,
+        completionTokens: 40,
+        purpose: "coverage",
+      },
+    ]);
   });
 
   // Fix round 1, finding B6. This test's old name — "would have parsed to

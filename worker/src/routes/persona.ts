@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { resolveModel } from "../lib/models";
-import { complete, totalTokens } from "../lib/completion";
+import { complete } from "../lib/completion";
+import { completionSpend } from "../lib/entitlements";
 import { buildPersonaMessages, parsePersonaSuggestion } from "../lib/persona-suggest";
-import { guardQuota, recordQuota } from "../lib/entitlements/guard";
+import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 
 const persona = new Hono<AppEnv>();
 
@@ -17,13 +18,10 @@ const suggestSchema = z.object({
 // Nothing is persisted: the client drops the text into the persona field, and
 // the user saves (or discards) it like anything else they typed.
 persona.post("/persona/suggest", async (c) => {
-  const denied = await guardQuota(c);
+  const denied = await guardCredits(c);
   if (denied) return denied;
 
-  // Whose key answers. `guardQuota` sets this only when the caller is past
-  // their allowance and the workspace is carrying it from here; undefined is
-  // the normal case and means the operator's.
-  const env = c.get("providerEnv") ?? c.env;
+  const env = c.env;
 
   const parsed = suggestSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -32,8 +30,9 @@ persona.post("/persona/suggest", async (c) => {
   const { name, model } = parsed.data;
 
   try {
+    const resolved = resolveModel(model ?? null, env);
     const { text, usage } = await complete(env, {
-      model: resolveModel(model ?? null, env),
+      model: resolved,
       messages: buildPersonaMessages(name),
       json: true,
       // A title in, three sentences out: shaping, not thinking. Without this a
@@ -41,7 +40,7 @@ persona.post("/persona/suggest", async (c) => {
       reasoningEffort: "minimal",
       maxTokens: 400,
     });
-    await recordQuota(c, totalTokens(usage));
+    await recordCredits(c, completionSpend(resolved, usage, "persona"));
     const drafted = parsePersonaSuggestion(text);
     if (!drafted) {
       return c.json({ error: "failed to draft persona" }, 502);

@@ -86,8 +86,8 @@ export type ChatLimits = {
    * What one turn may spend, prompt plus completion, whatever the plan.
    *
    * **The same on both, and deliberately so: this is a runaway-loop guard, not
-   * a billing one.** Billing is the monthly allowance, which already knows who
-   * is paying and already lets a workspace carry its own key past it. This is
+   * a billing one.** Billing is the workspace's credits, which already know who
+   * is paying. This is
    * the stop for the turn that goes wrong — and a turn going wrong costs a
    * self-hoster their own OpenAI bill exactly as it costs the operator theirs.
    *

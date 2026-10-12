@@ -27,7 +27,7 @@ vi.mock("@tanstack/react-query", () => ({
   }),
 }));
 vi.mock("@/lib/api-client", () => ({ api: { me: vi.fn(), routines: { list: vi.fn() } } }));
-vi.mock("@/lib/quota", () => ({ useQuota: () => null, quotaSentence: () => "" }));
+vi.mock("@/lib/credits", () => ({ useCredits: () => null, creditsSentence: () => "" }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/components/app-shell", () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,

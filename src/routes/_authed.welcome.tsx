@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Me } from "@/lib/api-client";
-import { useIsHosted } from "@/lib/quota";
+import { useIsHosted } from "@/lib/credits";
 import {
   resolveStep,
   nextStep,

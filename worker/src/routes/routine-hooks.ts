@@ -75,7 +75,7 @@ routineHooks.post("/routine-hooks/:token", async (c) => {
   // address — which is what a webhook is — would be counted as many if several
   // routines shared it, and many senders behind one NAT would be counted as
   // one. The routine is the thing being protected: it is the row that spends
-  // its owner's allowance every time this fires.
+  // its workspace's credits every time this fires.
   const verdict = await getRateLimiter(c.env, "expensive").check(`routine-hook:${routine.id}`);
   if (!verdict.allowed) {
     c.header("Retry-After", String(verdict.retryAfterSeconds));

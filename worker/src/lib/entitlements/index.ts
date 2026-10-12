@@ -1,230 +1,198 @@
+import type { CompletionUsage } from "../completion";
 import type { RoutineEnv } from "../../types";
 
 /**
- * What a caller is allowed to spend.
+ * What a workspace is allowed to spend, and what it spent.
  *
  * Covan is open-core on hosting, not on features: everything a self-hoster runs
  * is the whole product. The one thing a hosted service needs and a repository
- * does not is a way to stop one account from spending the operator's OpenAI
- * budget without limit. That — and only that — lives behind this interface.
+ * does not is a way to stop one workspace from spending the operator's money
+ * without limit. That — and only that — lives behind this interface.
  *
  * The open build ships `unlimitedEntitlements` below, and it is a real
  * implementation rather than a stub that throws: no licence key, no phone-home,
  * no "community edition". A metered implementation is registered by the hosted
- * build's entry point via `registerEntitlements`, and nothing else in the codebase
- * knows the difference.
+ * build's entry point via `registerEntitlements`, and nothing else in the
+ * codebase knows the difference.
  *
- * Accounting is in tokens, not messages, because tokens are what the operator
- * is actually billed for. A single turn late in a long conversation with
- * retrieved documents attached can cost fifty times what the first turn cost,
- * and a message counter would price both at one.
+ * **This file reports what was consumed; it never says what that costs.** A
+ * `Spend` is a model id and its token counts, an embedding's token count, a
+ * connected-app call, a browser task and the provider's own figure for it. The
+ * price book that turns those into credits belongs to the hosted build. Prices
+ * do not belong in a public tree, and `boundary.test.ts` fails if they come back.
+ *
+ * Credits belong to a workspace, not a person: one pool, any member spends it,
+ * an admin tops it up. Every method is keyed by the workspace the work belongs
+ * to — a session's, a routine's, a connection's — which is not necessarily the
+ * caller's active one.
  */
 
-export type QuotaVerdict =
-  | { allowed: true }
+/** Why a completion happened. Lets a ledger reader tell a title from an answer. */
+export type CompletionPurpose =
+  | "reply"
+  | "title"
+  | "follow_ups"
+  | "persona"
+  | "brainstorm"
+  | "routine_draft"
+  | "routine"
+  | "report"
+  | "summary"
+  | "coverage"
+  | "slack";
+
+export type EmbeddingPurpose = "retrieval" | "index" | "reindex" | "sync" | "report";
+
+/** What was consumed. Reported by open code; priced by the hosted build. */
+export type Spend =
   | {
-      allowed: false;
-      /** Tokens spent in the current period. */
-      used: number;
-      /** Tokens allowed in the current period. */
-      limit: number;
-      /** ISO timestamp when the counter resets. */
-      resetsAt: string;
+      kind: "completion";
+      /** The model id as sent to the provider. */
+      model: string;
+      promptTokens: number;
+      completionTokens: number;
+      /** Inside `promptTokens`. */
+      cachedTokens?: number;
+      /** Inside `promptTokens`. */
+      cacheWriteTokens?: number;
+      /** Inside `completionTokens`. */
+      reasoningTokens?: number;
+      /** Server-side web searches the provider ran during the call. */
+      webSearches?: number;
+      purpose?: CompletionPurpose;
+    }
+  | { kind: "embedding"; model: string; tokens: number; purpose?: EmbeddingPurpose }
+  | { kind: "transcription"; model: string; audioTokens: number }
+  | { kind: "composio_call"; toolSlug?: string }
+  | { kind: "composio_search" }
+  | {
+      kind: "browser_task";
+      /**
+       * `browser_tasks.id`; `null` for an attempt the provider billed but this
+       * deployment never recorded (a refused start — see `wasBilled`).
+       */
+      browserTaskId: string | null;
+      /**
+       * `started`: accepted, cost unknown, so the hosted build holds a
+       * provisional amount. `settled`: the run ended and `costUsd` is the
+       * provider's own figure, which the hosted build trues the hold up to.
+       */
+      stage: "started" | "settled";
+      costUsd: number | null;
     };
 
-export type QuotaSnapshot = {
-  used: number;
-  /** `null` means unmetered — the interface's way of saying "no quota exists". */
-  limit: number | null;
-  resetsAt: string | null;
+/**
+ * What to hang a ledger row on. Advisory: a turn that aborts mid-stream is
+ * charged before its assistant row exists, and deleting a message must not
+ * delete its charge.
+ */
+export type SpendRef = {
+  /** The member who caused it — attribution, not the payer. */
+  userId?: string;
+  sessionId?: string;
+  messageId?: string;
+  routineRunId?: string;
+  browserTaskId?: string;
+  connectionId?: string;
 };
+
+export type CreditVerdict =
+  | { allowed: true }
+  /** `balance` is in credits, and zero or below. */
+  | { allowed: false; balance: number };
+
+export type CreditSnapshot =
+  /** The open build, and any read failure: there is nothing to show. */
+  | { metered: false }
+  | {
+      metered: true;
+      /** Credits left. May be below zero by the last operation. */
+      balance: number;
+      /** Credits ever added. */
+      granted: number;
+      /** Credits ever spent. */
+      spent: number;
+      /**
+       * A house workspace: `check` never refuses and the UI shows no balance,
+       * but the deployment is still a hosted one.
+       */
+      unlimited: boolean;
+      /** Replies ever charged — what lets the UI say "about N replies left". */
+      replies: number;
+    };
 
 export interface Entitlements {
   /**
-   * Pre-flight. Called before work that will spend tokens. Answering `allowed`
-   * is a statement about the past, not a reservation: the cost of the work
-   * about to be done is unknowable until it is done, so a caller can overshoot
-   * its limit by one operation. That is deliberate — reserving an estimate up
-   * front would either refuse work that would have fit or hold budget that is
-   * never spent.
+   * Pre-flight. Called before work that will spend. Answering `allowed` is a
+   * statement about the past, not a reservation: the cost of the work about to
+   * be done is unknowable until it is done, so a caller can overshoot by one
+   * operation. Concurrent callers can each overshoot by one, and that is
+   * accepted — reserving an estimate up front would either refuse work that
+   * would have fit or hold credits that are never spent.
    */
-  check(userId: string): Promise<QuotaVerdict>;
+  check(workspaceId: string): Promise<CreditVerdict>;
 
-  /** Post-flight. Called once per operation with the tokens it actually cost. */
-  record(userId: string, tokens: number): Promise<void>;
+  /**
+   * Post-flight. One call per operation with everything it consumed, so the
+   * hosted build can write it in one go.
+   */
+  record(workspaceId: string, spends: Spend[], ref: SpendRef): Promise<void>;
 
-  /** For display. `limit: null` tells the UI there is nothing to show. */
-  snapshot(userId: string): Promise<QuotaSnapshot>;
+  /** For display. `metered: false` tells the UI there is nothing to show. */
+  snapshot(workspaceId: string): Promise<CreditSnapshot>;
 }
 
 export type EntitlementsFactory = (env: RoutineEnv) => Entitlements;
 
-/**
- * What an embedding token costs relative to a chat token.
- *
- * A counter has to be denominated in something, and this one is denominated in
- * chat tokens — because that is where the money goes. `text-embedding-3-small`
- * is $0.02 per million; `gpt-4o` is $2.50 in and $10.00 out, so a mixed chat
- * token runs around $4.00 per million. That is a factor of roughly 200, rounded
- * here to 100 in the counter's favour.
- *
- * Counting embeddings at face value would have a hundred-page upload — a tenth
- * of a cent of real spend — eat a third of a small monthly allowance, and
- * uploading documents is the one behaviour this product exists to encourage.
- * Charging it at par would price the core loop like the expensive one.
- */
-export const EMBEDDING_TOKEN_WEIGHT = 0.01;
-
-/** Embedding tokens expressed in chat tokens, for the counter. */
-export function embeddingCost(tokens: number): number {
-  if (!Number.isFinite(tokens) || tokens <= 0) return 0;
-  return Math.ceil(tokens * EMBEDDING_TOKEN_WEIGHT);
+function count(n: number | null | undefined): number {
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }
 
 /**
- * What each kind of chat token costs, relative to a fresh input token.
- *
- * The same idea as `EMBEDDING_TOKEN_WEIGHT` above, applied inside a chat turn
- * rather than beside it. Until now the counter added prompt and completion at
- * face value, and `promptTokens` INCLUDES cache reads and cache writes — see
- * `anthropicUsage` in `lib/completion.ts`, which folds all three into it. So a
- * token served from cache, which costs a tenth of a fresh one, spent the same
- * allowance as a fresh one.
- *
- * That is not a rounding error on the turns this product is now built for. A
- * long tool turn re-sends its whole transcript on every pass, and the provider
- * serves almost all of it from cache: one measured turn was 88% cache reads,
- * and it was charged as if none of it were.
- *
- * The ratios are `lib/pricing.ts`'s, for `claude-sonnet-5` — $3 in, $0.30
- * cached, $15 out, and `CACHE_WRITE_MULTIPLIER` for the storage premium. They
- * are not identical on every model, and one set is used for all of them on
- * purpose: an allowance that moved when somebody changed their agent's model
- * would be a pricing surface rather than a limit, and the spread between the
- * models this deployment offers is far smaller than the spread between a
- * cache-heavy turn and a fresh one.
+ * One provider call as a `Spend`. `null` when the call reported no usage at
+ * all, which is a call that never reached the provider and cost nothing.
  */
-export const TOKEN_WEIGHTS = Object.freeze({
-  fresh: 1,
-  cached: 0.1,
-  written: 1.25,
-  completion: 5,
-});
-
-/**
- * One turn's usage in the unit the counter is denominated in.
- *
- * `prompt` arrives with `cached` and `written` already inside it, so the fresh
- * share is what is left after taking both out — floored at zero, because a
- * provider that reports a subset larger than its total is a provider bug and
- * not a reason to hand somebody a negative bill.
- *
- * **This changes what a turn costs against the allowance, and not by a little
- * in either direction.** Measured over 30 days of real traffic: the aggregate
- * barely moves (1.04x), but the median turn gets 1.46x DEARER while the
- * cache-heavy tool turns get as low as 0.21x. That is the point rather than a
- * side effect — a short reply is mostly output, which really does cost five
- * times its input, and a long tool turn really is mostly re-read cache.
- */
-export function weighTokens(usage: {
-  promptTokens: number | null;
-  completionTokens: number | null;
-  cachedTokens?: number | null;
-  cacheWriteTokens?: number | null;
-}): number {
-  const prompt = Math.max(0, usage.promptTokens ?? 0);
-  const completion = Math.max(0, usage.completionTokens ?? 0);
-  const cached = Math.max(0, usage.cachedTokens ?? 0);
-  const written = Math.max(0, usage.cacheWriteTokens ?? 0);
-  const fresh = Math.max(0, prompt - cached - written);
-  return Math.round(
-    fresh * TOKEN_WEIGHTS.fresh +
-      cached * TOKEN_WEIGHTS.cached +
-      written * TOKEN_WEIGHTS.written +
-      completion * TOKEN_WEIGHTS.completion,
-  );
+export function completionSpend(
+  model: string,
+  usage: Partial<CompletionUsage> | null | undefined,
+  purpose?: CompletionPurpose,
+): Spend | null {
+  if (!usage) return null;
+  const prompt = count(usage.promptTokens);
+  const completion = count(usage.completionTokens);
+  const searches = count(usage.webSearches);
+  if (prompt === 0 && completion === 0 && searches === 0) return null;
+  const spend: Extract<Spend, { kind: "completion" }> = {
+    kind: "completion",
+    model,
+    promptTokens: prompt,
+    completionTokens: completion,
+  };
+  if (count(usage.cachedTokens)) spend.cachedTokens = count(usage.cachedTokens);
+  if (count(usage.cacheWriteTokens)) spend.cacheWriteTokens = count(usage.cacheWriteTokens);
+  if (count(usage.reasoningTokens)) spend.reasoningTokens = count(usage.reasoningTokens);
+  if (searches) spend.webSearches = searches;
+  if (purpose) spend.purpose = purpose;
+  return spend;
 }
 
-/**
- * What an audio token costs relative to a chat token.
- *
- * The opposite call to the one above. Embeddings are discounted because they
- * are cheap and uploading is the behaviour the product exists to encourage;
- * dictation is neither. `gpt-4o-mini-transcribe` bills audio input at $1.25 per
- * million against a mixed chat token's ~$4.00, so it is charged near par — a
- * minute of speech is roughly 2400 audio tokens, about the cost of a chat turn.
- *
- * Rounded up from 0.3125 so the counter errs towards the operator: a weight
- * that undercharges is a bill nobody notices until it arrives.
- */
-export const AUDIO_TOKEN_WEIGHT = 0.32;
-
-/** Audio tokens expressed in chat tokens, for the counter. */
-export function transcriptionCost(audioTokens: number): number {
-  if (!Number.isFinite(audioTokens) || audioTokens <= 0) return 0;
-  return Math.ceil(audioTokens * AUDIO_TOKEN_WEIGHT);
+/** An embedding call as a `Spend`, or `null` when it embedded nothing. */
+export function embeddingSpend(
+  model: string,
+  tokens: number | null | undefined,
+  purpose?: EmbeddingPurpose,
+): Spend | null {
+  const n = count(tokens);
+  if (n === 0) return null;
+  return purpose
+    ? { kind: "embedding", model, tokens: n, purpose }
+    : { kind: "embedding", model, tokens: n };
 }
 
-/**
- * What one Composio tool call costs, in chat tokens.
- *
- * Named so the difference from the two weights above is visible: those are
- * MULTIPLIERS applied to a token count somebody else produced, and this is an
- * ABSOLUTE price for one event. A tool call has no tokens of its own to scale.
- *
- * The arithmetic: Composio bills $4.00 per thousand tool calls on accounts
- * created after 2026-08-15, so one call is $0.004. A mixed chat token runs
- * around $4.00 per million, the same figure `EMBEDDING_TOKEN_WEIGHT` is derived
- * from. $0.004 ÷ $0.000004 is a thousand chat tokens, which is roughly one
- * ordinary turn — so "a connected app call costs about what a reply costs" is
- * both the number and a sentence somebody can hold in their head.
- */
-export const COMPOSIO_CALL_TOKENS = 1_000;
-
-/**
- * What one catalogue search costs.
- *
- * A tenth of a call, because searching is cheaper for them and because the
- * failure mode of charging it at par is the one thing this feature cannot
- * afford: a model that has to find an operation before it can run one would pay
- * twice for every action, and the allowance would be spent on looking rather
- * than doing. Not free, because a turn that searches eight times still costs
- * the operator something and a counter that says zero is a counter that cannot
- * show it.
- */
-export const COMPOSIO_SEARCH_TOKENS = 100;
-
-/**
- * What one browser task costs, in chat tokens.
- *
- * An ABSOLUTE price for one event, like `COMPOSIO_CALL_TOKENS` above — but
- * **derived at a different rate, and the difference is the whole point.**
- *
- * That constant's comment converts dollars to tokens at $4.00 per million,
- * which is the LIST blended rate. Covan's REALIZED rate is about $1.24 per
- * million, because prompt caching works and most of a turn's input is cached.
- * A browser task is none of that: it is uncached money leaving the building
- * for a third party. Priced at the list rate it would be under-charged by
- * 3.2x — a person spending their whole allowance on browsing would cost
- * $4.00 against a ceiling the quota believes is $1.24, and the per-user
- * ceiling would silently triple (21 users: $26/month becomes ~$84).
- *
- * So the rate here is the realized one: $0.17 / $0.00000124 ~= 137,000. That
- * holds the ceiling at $1.24/user/month and buys roughly seven browser tasks
- * a month, or fewer mixed with chat.
- *
- * **Provisional.** 17c is browser-use's own published figure — 17c per solved
- * task at 82% on their 106-task benchmark — and it is not Covan's workload.
- * `browser_tasks.cost_usd` records what was really charged, read back from
- * the provider's own status endpoint, so this is re-derivable from invoices
- * after the first twenty production tasks rather than from a blog post.
- * Shipping without that re-derivation is how a ceiling moves without anybody
- * deciding to move it.
- *
- * The same 3.2x gap applies to `COMPOSIO_CALL_TOKENS` itself (1,000 should be
- * ~3,226). Smaller stakes, its own issue.
- */
-export const BROWSER_TASK_TOKENS = 137_000;
+/** Drops the `null`s the two helpers above return, so a call site stays one line. */
+export function spends(...items: Array<Spend | null | undefined | false>): Spend[] {
+  return items.filter((s): s is Spend => Boolean(s));
+}
 
 export const unlimitedEntitlements: Entitlements = {
   async check() {
@@ -234,7 +202,7 @@ export const unlimitedEntitlements: Entitlements = {
     // Nothing to count.
   },
   async snapshot() {
-    return { used: 0, limit: null, resetsAt: null };
+    return { metered: false };
   },
 };
 
@@ -262,15 +230,15 @@ export function entitlementsFor(env: RoutineEnv): Entitlements {
   // A tripwire for one specific deployment mistake. The hosted build enables
   // metering by pointing wrangler at an entry point that registers it; a deploy
   // that points at the plain entry point instead still boots, still serves, and
-  // silently stops counting anyone's usage. QUOTA_MONTHLY_TOKENS is only ever
-  // set on the hosted build, so its presence next to an unregistered factory
-  // means exactly that mistake. Logged rather than fatal: refusing to serve
-  // would turn a billing leak into an outage.
-  if (factory === unmeteredFactory && env.QUOTA_MONTHLY_TOKENS && !misconfigurationLogged) {
+  // silently stops charging anyone. CREDITS_ENABLED is only ever set on the
+  // hosted build, so its presence next to an unregistered factory means exactly
+  // that mistake. Logged rather than fatal: refusing to serve would turn a
+  // billing leak into an outage.
+  if (factory === unmeteredFactory && env.CREDITS_ENABLED && !misconfigurationLogged) {
     misconfigurationLogged = true;
     console.error(
-      "QUOTA_MONTHLY_TOKENS is set but no entitlements implementation is registered — " +
-        "usage is NOT being metered. Check that the deployed entry point registers one.",
+      "CREDITS_ENABLED is set but no entitlements implementation is registered — " +
+        "credits are NOT being charged. Check that the deployed entry point registers one.",
     );
   }
   return factory(env);

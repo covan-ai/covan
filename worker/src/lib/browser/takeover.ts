@@ -1861,8 +1861,8 @@ const CLOSE_FAILED =
 /**
  * Run the original task once more, with the jar attached, for free.
  *
- * **Nothing here consults the allowance, and that is the whole point.**
- * `browse` charged `BROWSER_TASK_TOKENS` when the task was first asked for,
+ * **Nothing here consults credits, and that is the whole point.**
+ * `browse` charged a hold on credits when the task was first asked for,
  * and a login wall is not something the person did wrong — so this path
  * deliberately touches neither `spend` nor `affordable` nor anything in
  * `lib/entitlements`. What keeps that from being an unbounded operator spend

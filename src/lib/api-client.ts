@@ -799,6 +799,9 @@ export const api = {
     remove: (id: string): Promise<void> => request("DELETE", `/delivery-channels/${id}`),
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
+  /** The active workspace's recent charges and grants. Admins only, by policy. */
+  creditLedger: (limit = 50): Promise<{ entries: CreditLedgerEntry[] }> =>
+    request("GET", `/usage/credits/ledger?limit=${limit}`),
   workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
   coverage: {
     /** Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. */
@@ -967,17 +970,6 @@ export const api = {
         request("DELETE", `/browser/credentials/${encodeURIComponent(id)}`),
     },
   },
-  providerKeys: {
-    get: (): Promise<ProviderKeyHints> => request("GET", "/workspace/provider-keys"),
-    /** Admin only; 403 otherwise, 501 on a deployment with no `PROVIDER_KEY_SECRET`. */
-    set: (input: {
-      provider: "openai" | "anthropic";
-      key: string;
-    }): Promise<{ ok: true; hint: string }> => request("PUT", "/workspace/provider-keys", input),
-    /** Admin only; 403 otherwise. */
-    clear: (provider: "openai" | "anthropic"): Promise<{ ok: true }> =>
-      request("DELETE", `/workspace/provider-keys/${provider}`),
-  },
   account: {
     /**
      * Closes the caller's own account. The path carries no id — the server
@@ -1013,9 +1005,9 @@ export const api = {
   },
   support: {
     /**
-     * The other door at the quota wall. Only the message travels — who is
-     * asking, which workspace, and how much it has spent are read by the API
-     * from the caller's own session and tables, never from this body.
+     * Asking for more credits. Only the message travels — who is asking,
+     * which workspace, and what it has left are read by the API from the
+     * caller's own session and tables, never from this body.
      */
     quota: (message: string): Promise<{ ok: true }> =>
       request("POST", "/support/quota", { message }),
@@ -1135,28 +1127,49 @@ export type AgentUsage = {
   measuredPromptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  /**
-   * What those tokens cost the allowance, as against how many of them moved.
-   *
-   * `totalTokens` is the honest count of traffic and is what the usage figures
-   * are built from. This is the same traffic priced the way the quota counter
-   * prices it — cache reads at a tenth, output at five times input — and it is
-   * the only one of the two that can be divided into a remaining allowance to
-   * get an answer in replies. See `weighTokens` in the worker.
-   */
-  weightedTokens: number;
   estCostUsd: number;
 };
 
 /**
- * What the caller may still spend this period. `limit: null` means unmetered —
- * a self-hosted Covan brings its own OpenAI key and has no allowance to show,
- * so the interface renders nothing at all for this.
+ * What the active workspace has left. `metered: false` means there is nothing
+ * to show — a self-hosted Covan charges nobody, and the interface renders
+ * nothing at all for it. `unlimited` is a house workspace on the hosted build:
+ * still hosted, with no balance to show.
  */
-export type QuotaSnapshot = {
-  used: number;
-  limit: number | null;
-  resetsAt: string | null;
+export type CreditSnapshot =
+  | { metered: false }
+  | {
+      metered: true;
+      /** Credits left. May be just below zero after the last operation. */
+      balance: number;
+      /** Credits ever added. */
+      granted: number;
+      /** Credits ever spent. */
+      spent: number;
+      unlimited: boolean;
+      /** Replies ever charged, for the "about N replies left" estimate. */
+      replies: number;
+    };
+
+/** One row of the workspace's credit ledger. Never names who caused it. */
+export type CreditLedgerEntry = {
+  id: number;
+  /** ISO timestamp. */
+  at: string;
+  kind:
+    | "signup_grant"
+    | "grant"
+    | "completion"
+    | "embedding"
+    | "transcription"
+    | "composio_call"
+    | "composio_search"
+    | "browser_task";
+  model: string | null;
+  purpose: string | null;
+  /** Positive for a grant, negative for a charge. */
+  credits: number;
+  balanceAfter: number;
 };
 
 export type UsageTotals = {
@@ -1167,22 +1180,12 @@ export type UsageTotals = {
   measuredPromptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  /**
-   * What those tokens cost the allowance, as against how many of them moved.
-   *
-   * `totalTokens` is the honest count of traffic and is what the usage figures
-   * are built from. This is the same traffic priced the way the quota counter
-   * prices it — cache reads at a tenth, output at five times input — and it is
-   * the only one of the two that can be divided into a remaining allowance to
-   * get an answer in replies. See `weighTokens` in the worker.
-   */
-  weightedTokens: number;
   estCostUsd: number;
 };
 
 export type UsageResponse = {
   agents: AgentUsage[];
-  quota: QuotaSnapshot;
+  credits: CreditSnapshot;
   totals: UsageTotals;
 };
 
@@ -1462,26 +1465,4 @@ export type SavedLoginReceipt = {
   label: string;
   /** True when the caller's own login for the site was overwritten in place. */
   replaced: boolean;
-};
-
-/**
- * What the workspace's own provider keys look like from here — hints, never
- * the keys themselves. There is no endpoint that answers with a stored key, so
- * there is nothing this type could carry that would let an interface prefill
- * an input with one.
- *
- * Two shapes, by role, which is why these are not simply `string | null`. An
- * admin gets a `hintFor()` fragment such as `sk-…4f2a`, or `null` for a
- * provider with nothing set. A member or viewer gets `true`/`false`: they are
- * shown *that* the workspace has a key so the wall can say "ask your admin",
- * and four characters of a live credential are none of their business. Read it
- * with `keyHint` below rather than by hand.
- */
-export type ProviderKeyHints = {
-  /** False on a deployment with no `PROVIDER_KEY_SECRET` — nothing here can be set. */
-  configured: boolean;
-  openai: string | boolean | null;
-  anthropic: string | boolean | null;
-  /** Admins only; `null` for everybody else, and for a provider never set. */
-  updatedAt: string | null;
 };

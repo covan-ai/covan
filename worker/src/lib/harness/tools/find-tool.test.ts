@@ -21,7 +21,7 @@ vi.mock("../../entitlements", async (importOriginal) => {
     entitlementsFor: () => ({
       check: async () => ({ allowed: true }),
       record: recordSpy,
-      snapshot: async () => ({ used: 0, limit: null, resetsAt: null }),
+      snapshot: async () => ({ metered: false }),
     }),
   };
 });

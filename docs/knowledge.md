@@ -274,7 +274,7 @@ agent could see in its list and never read a word of. If a report ever does show
 **Reindex** in its row menu is the way back.
 
 A report is one model call, capped at roughly eight pages, and it takes up to a
-minute. It is charged to your monthly allowance like a reply, and costs about
+minute. It is charged to the workspace's credits like a reply, and costs about
 what two to seven replies do — more than a chat turn, because the length is the
 point.
 

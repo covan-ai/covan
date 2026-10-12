@@ -27,17 +27,30 @@ export type TableSpec = {
   /** Sorted by this, so two exports of unchanged data can be diffed. */
   order: string;
   /**
-   * Explicit column list, where `*` would be refused.
+   * Explicit column list, where `*` would be refused or would carry too much.
    *
-   * Only `delivery_channels` needs one. `0023` granted `authenticated` select
+   * `delivery_channels` was the first. `0023` granted `authenticated` select
    * on six of its seven columns and withheld `secret_ciphertext`, so a `select
    * *` expands to a column the caller may not read and Postgres answers 42501
    * for the whole row. Naming the six is what makes the read succeed — and the
    * seventh being absent is not a gap in the export, it is the point: the
    * ciphertext is bound to this install's `ROUTINE_SECRET_KEY` and would be
    * undecryptable noise anywhere else.
+   *
+   * `workspaces` names its columns for the other reason: every column is
+   * readable, and one of them must not travel.
    */
   columns?: string;
+  /**
+   * The columns `columns` leaves out on purpose, each with its reason.
+   *
+   * A list of columns has the weakness the table lists in this file were
+   * written against: a column added next year is simply not exported, and
+   * nothing fails. So `tables.test.ts` walks the migrations and requires every
+   * column of a table that names its columns to be in exactly one of
+   * `columns` or here.
+   */
+  withheld?: Record<string, string>;
 };
 
 /**
@@ -52,7 +65,16 @@ export type TableSpec = {
  * That is the whole reason the two orders can stay one list.
  */
 export const EXPORTED: TableSpec[] = [
-  { table: "workspaces", scope: { kind: "workspace", column: "id" }, order: "created_at" },
+  {
+    table: "workspaces",
+    scope: { kind: "workspace", column: "id" },
+    order: "created_at",
+    columns: "id,name,slug,created_by,created_at,default_model",
+    withheld: {
+      gap_report_enabled:
+        "a consent control, and its other half cannot travel. 0076's report is off until a workspace turns it on, and the member opt-outs that make turning it on acceptable are in coverage_opt_outs, which is excluded below because its SELECT policy is self-only even for admins. Exporting the switch without them would bring a workspace back with the report on and every opt-out gone. Left out, a restored workspace starts with the switch at its default of false and somebody has to choose again, which is what the column's default exists to guarantee.",
+    },
+  },
   {
     table: "workspace_members",
     scope: { kind: "workspace", column: "workspace_id" },
@@ -92,6 +114,14 @@ export const EXPORTED: TableSpec[] = [
       "id,workspace_id,bundle_id,user_id,provider,account_label,config,status," +
       "paused_reason,paused_code,sync_interval_minutes,next_sync_at,last_sync_at," +
       "consecutive_failures,created_at,updated_at",
+    withheld: {
+      secret_ciphertext:
+        "the OAuth token, which 0043 grants to no client role; see the comment above.",
+      claimed_at:
+        "the engine's claim on a due sync, granted to no client role (0043) and meaningless to another install's scheduler.",
+      removals_approved_at:
+        "engine bookkeeping for one resumed access_narrowed pause, granted to no client role (0057): a decision the next run consumes, not something a restore should replay.",
+    },
   },
   {
     table: "connection_runs",
@@ -149,6 +179,10 @@ export const EXPORTED: TableSpec[] = [
     },
     order: "created_at",
     columns: "id,workspace_id,user_id,kind,label,created_at",
+    withheld: {
+      secret_ciphertext:
+        "the webhook URL or address, encrypted with this install's ROUTINE_SECRET_KEY and withheld from authenticated by 0023; see TableSpec.columns.",
+    },
   },
   {
     // BELOW `routines`, which is not where it reads most naturally — a document
@@ -245,5 +279,5 @@ export const EXCLUDED: Record<string, string> = {
   workspace_provider_keys:
     "a table that no longer exists — 0081 dropped it when Covan became the only model provider on the hosted service — and the entry stays for supabase_accounts' reason: its `create table` is still on disk. While it existed it held credentials, and worse than api_keys above. An API key at least means something on its own; this table's ciphertext opens only under PROVIDER_KEY_SECRET, an operator secret the archive does not and must not contain, so an export of it would be simultaneously useless to whoever downloaded it and a live credential if that secret ever leaked. openai_hint would travel with it — a small disclosure with no compensating use once the ciphertext it identifies cannot be read anyway. 0046 already withholds this table from every client but service_role for the same reason; carrying it into an archive a workspace admin can download would undo that through the back door.",
   coverage_opt_outs:
-    "the same shape as feedback above, and nearly the same argument. 0076's SELECT policy on this table is `user_id = auth.uid()` with no admin exception — self-only, including for admins, by the migration's own account — so that nobody can learn who excluded themselves from the coverage gap report; a workspace archive an admin downloads is exactly the back door that policy exists to close. It would also not merely be wrong but unworkable: this file's own header says every read goes through the caller's own client, so RLS decides what comes back, and an admin exporting a self-only table gets back only rows where they are the user — in practice none. An EXPORTED entry would therefore be a table that always exports empty while making the archive look complete, which is precisely the failure this file's tripwire test exists to catch. One consequence is worth naming rather than losing to a ledger nobody reads: 0076 also added `gap_report_enabled` to workspaces, which IS exported, so replaying an archive brings a workspace back with the gap report switched on and every opt-out gone. The opt-outs do not travel; the switch does; and that mismatch is why somebody restoring a workspace has to ask again rather than assume anybody's choice came back with it.",
+    "the same shape as feedback above, and nearly the same argument. 0076's SELECT policy on this table is `user_id = auth.uid()` with no admin exception — self-only, including for admins, by the migration's own account — so that nobody can learn who excluded themselves from the coverage gap report; a workspace archive an admin downloads is exactly the back door that policy exists to close. It would also not merely be wrong but unworkable: this file's own header says every read goes through the caller's own client, so RLS decides what comes back, and an admin exporting a self-only table gets back only rows where they are the user — in practice none. An EXPORTED entry would therefore be a table that always exports empty while making the archive look complete, which is precisely the failure this file's tripwire test exists to catch. One consequence follows, and it is handled on the workspaces entry rather than here: since the opt-outs cannot travel, the switch they qualify (`workspaces.gap_report_enabled`) does not travel either, so a restored workspace comes back with the report off and has to choose again.",
 };

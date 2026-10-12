@@ -169,3 +169,101 @@ describe("the order the tables are written in", () => {
     expect(channels?.columns).not.toContain("secret_ciphertext");
   });
 });
+
+/**
+ * The columns a table names, kept honest the same way the tables are.
+ *
+ * A spec with `columns` exports exactly those, so a column added to that table
+ * next year is silently left behind — the brittleness that made naming
+ * `workspaces`' columns (covan-cloud#304) look like a trade rather than a fix.
+ * Walking the migrations turns it back into a question: every column of such a
+ * table is in `columns` or in `withheld` with a reason, never neither.
+ */
+function columnsInSchema(): Map<string, Set<string>> {
+  const tables = new Map<string, Set<string>>();
+  for (const file of readdirSync(MIGRATIONS).sort()) {
+    if (!file.endsWith(".sql")) continue;
+    // Comments stripped, so a sentence that mentions `add column` is not one.
+    const sql = readFileSync(join(MIGRATIONS, file), "utf8").replace(/--[^\n]*/g, "");
+
+    for (const m of sql.matchAll(
+      /create table (?:if not exists )?public\.([a-z_]+) \(([\s\S]*?)\n\);/g,
+    )) {
+      const columns = new Set<string>();
+      for (const line of m[2].split("\n")) {
+        const name = line.trim().match(/^([a-z_][a-z0-9_]*)\s/)?.[1];
+        if (name && !/^(constraint|primary|unique|foreign|check|exclude)$/.test(name)) {
+          columns.add(name);
+        }
+      }
+      tables.set(m[1], columns);
+    }
+
+    for (const m of sql.matchAll(
+      /alter table (?:if exists )?(?:only )?public\.([a-z_]+)([^;]*);/g,
+    )) {
+      const columns = tables.get(m[1]);
+      if (!columns) continue;
+      for (const a of m[2].matchAll(/add column (?:if not exists )?([a-z_]+)/g)) columns.add(a[1]);
+      for (const a of m[2].matchAll(/drop column (?:if exists )?([a-z_]+)/g)) columns.delete(a[1]);
+      for (const a of m[2].matchAll(/rename column ([a-z_]+) to ([a-z_]+)/g)) {
+        columns.delete(a[1]);
+        columns.add(a[2]);
+      }
+    }
+  }
+  return tables;
+}
+
+describe("the columns a table names", () => {
+  const schema = columnsInSchema();
+  const named = EXPORTED.filter((spec) => spec.columns);
+
+  it("found the columns at all", () => {
+    expect(schema.get("workspaces")).toContain("gap_report_enabled");
+    expect(named.map((spec) => spec.table)).toContain("workspaces");
+  });
+
+  it("has decided about every column of each", () => {
+    for (const spec of named) {
+      const listed = spec.columns!.split(",").map((c) => c.trim());
+      const withheld = Object.keys(spec.withheld ?? {});
+      const decided = new Set([...listed, ...withheld]);
+      const actual = [...(schema.get(spec.table) ?? [])];
+
+      expect(
+        actual.filter((c) => !decided.has(c)).sort(),
+        `${spec.table} has columns the export neither takes nor withholds. ` +
+          "Add each to `columns`, or to `withheld` with a reason.",
+      ).toEqual([]);
+      expect(
+        [...decided].filter((c) => !actual.includes(c)).sort(),
+        `${spec.table} names columns the schema does not have`,
+      ).toEqual([]);
+      expect(
+        listed.filter((c) => withheld.includes(c)),
+        `${spec.table} both takes and withholds a column`,
+      ).toEqual([]);
+    }
+  });
+
+  it("gives every withheld column a reason", () => {
+    for (const spec of EXPORTED) {
+      for (const [column, reason] of Object.entries(spec.withheld ?? {})) {
+        expect(
+          spec.columns,
+          `${spec.table} withholds ${column} without naming columns`,
+        ).toBeTruthy();
+        expect(reason.length, `${spec.table}.${column}'s reason is too short`).toBeGreaterThan(40);
+      }
+    }
+  });
+
+  it("does not carry the gap report's switch", () => {
+    // covan-cloud#304. The opt-outs cannot travel, so neither may the switch
+    // they qualify: a restored workspace starts with the report off.
+    const workspaces = EXPORTED.find((spec) => spec.table === "workspaces")!;
+    expect(workspaces.columns!.split(",")).not.toContain("gap_report_enabled");
+    expect(workspaces.withheld).toHaveProperty("gap_report_enabled");
+  });
+});

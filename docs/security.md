@@ -58,6 +58,40 @@ embedded in the client bundle, and every file that touches it is on the
 allowlist above. **If you are self-hosting, this is the one secret whose leak is
 unrecoverable** — anybody holding it can read every row of every workspace.
 
+## Functions that run as their owner
+
+A few database functions are `security definer`: they run with their owner's
+rights rather than the caller's, because the question they answer crosses rows
+the caller cannot see (how a workspace's answers were grounded) or because no
+policy could express it (creating the workspace you are about to be the first
+member of). Row level security does not filter them, so each one is only as
+safe as two things: the check it makes in its own body, and who may call it at
+all.
+
+Every one of them follows one of two shapes:
+
+- **It derives the caller from `auth.uid()` and takes no identity as an
+  argument.** It is granted to `authenticated`, and its body refuses anybody
+  who is not a member (or an admin) of the workspace they named. Most of them
+  are this shape.
+- **It takes a user id as an argument, and is granted to `service_role`
+  only.** A new one should also refuse, in its body, any caller whose
+  `auth.role()` is not `service_role`, as the coverage report's reads do, so
+  the grant is not the only thing standing in the way. These exist for the routine engine, which runs on
+  behalf of somebody with no session to read `auth.uid()` from. A function that
+  takes a user id and is callable by a signed-in client would let anybody ask
+  on behalf of anybody, which is why the two are never mixed.
+
+In neither case may `anon` — the role behind the public key that ships in the
+browser — execute it. Supabase grants new functions to `anon` by name, so
+`revoke ... from public` is not enough and every definer function is revoked
+from both. The exceptions are the five helpers that row level security
+policies call (`is_workspace_member` and its siblings): a policy is evaluated
+as the caller, so revoking them would turn every anonymous read from "no rows"
+into an error without protecting anything, since each answers false when
+`auth.uid()` is null. A static test and a live database test both fail if a
+sixth appears.
+
 ## Who can do what
 
 Three roles, and they answer two different questions.

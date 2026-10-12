@@ -142,4 +142,35 @@ describe("security definer functions", () => {
 
     expect(rows.map((r) => r.name)).toEqual([]);
   });
+
+  /**
+   * The catalog half of `worker/src/definer-grant.static.test.ts`'s anon rule,
+   * and the half that cannot be fooled by a revoke the static test reads but a
+   * later `drop function` undid.
+   *
+   * Supabase grants EXECUTE on new functions to `anon` by name, so this asks
+   * the database rather than the migrations. The five that remain are the
+   * policy helpers: policies are evaluated as the caller, every policy naming
+   * one is `to public`, and each answers false for a null `auth.uid()`. 0084
+   * has the argument; docs/security.md has the rule.
+   */
+  it("are not executable by anon, apart from the policy helpers", async () => {
+    const rows = await sql()<{ name: string }[]>`
+      select p.proname as name
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.prosecdef = true
+        and has_function_privilege('anon', p.oid, 'execute')
+      order by p.proname
+    `;
+
+    expect(rows.map((r) => r.name)).toEqual([
+      "can_write_in_workspace",
+      "is_workspace_admin",
+      "is_workspace_member",
+      "session_is_visible",
+      "shares_workspace",
+    ]);
+  });
 });

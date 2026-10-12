@@ -1789,22 +1789,21 @@ describe("the totals, in step with 0053", () => {
   });
 
   /**
-   * The duplication, checked rather than promised — and checked in the one
-   * shape that is actually true.
+   * The duplication, checked rather than promised.
    *
-   * 0076 says the two functions' BUCKET DEFINITIONS must stay in step, which is
-   * narrower than "identical" and is the whole claim: the five
-   * `count(*) filter (...)` expressions, the denominator and the window are the
-   * same, and the WHERE clause deliberately is not. So this asserts equality on
-   * four buckets and the one known delta on the other two — the soft-deleted
-   * session's single `documents` reply, which 0053 counts and this does not.
+   * 0076 restated 0053's aggregation with one filter 0053 did not have —
+   * `s.deleted_at is null` — and this test used to assert "equal but for the
+   * soft-deleted session's one `documents` reply". 0084 gave 0053's function
+   * the same filter, so the two now count the same rows and this asserts the
+   * whole row. The soft-deleted session seeded above is still in the fixture,
+   * which is what makes the equality mean something: a function that lost the
+   * filter again would be one higher in `answers` and `fallback`.
    *
-   * 0053's missing filter is a defect in 0053 and is recorded as a follow-up
-   * beyond this phase. It is deliberately NOT fixed here: that function is what
-   * the live coverage screen calls, and this migration is not the place to
-   * change what that screen reports.
+   * The window is the same only because both are given `p_days: 7`; the
+   * defaults still differ (7 here, 30 there), and this does not check either
+   * clamp.
    */
-  it("agrees with public.workspace_coverage but for the deleted session", async () => {
+  it("agrees with public.workspace_coverage row for row", async () => {
     const mine = await readTotals();
     // 0053's function still checks `is_workspace_admin(auth.uid())`, so it has
     // to be asked as the admin rather than as the service role.
@@ -1819,14 +1818,11 @@ describe("the totals, in step with 0053", () => {
     const ours = (mine.data ?? [])[0];
     const theirRow = (theirs.data ?? [])[0];
 
-    // One `documents` reply lives in the soft-deleted session, so it is in both
-    // the denominator and the fallback bucket over there and in neither here.
-    expect(Number(theirRow.answers) - Number(ours.answers)).toBe(1);
-    expect(Number(theirRow.fallback) - Number(ours.fallback)).toBe(1);
-    // And nothing else may differ. If a bucket definition drifts, this fails.
-    expect(Number(ours.covered)).toBe(Number(theirRow.covered));
-    expect(Number(ours.ungrounded)).toBe(Number(theirRow.ungrounded));
-    expect(Number(ours.unrecorded)).toBe(Number(theirRow.unrecorded));
+    for (const bucket of ["answers", "covered", "fallback", "ungrounded", "unrecorded"]) {
+      expect(Number(ours[bucket]), `${bucket} drifted between the two functions`).toBe(
+        Number(theirRow[bucket]),
+      );
+    }
   });
 });
 

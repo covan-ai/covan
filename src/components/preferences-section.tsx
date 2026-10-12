@@ -21,37 +21,16 @@ import {
 const NO_DEFAULT = "__none__";
 
 /**
- * Two preferences that look alike and are not.
+ * Yours, and nobody else's.
  *
- * Appearance is stored in this browser and applies to nobody else. The default
- * model is stored on the workspace and applies to everyone in it. Saying so on
- * the labels is cheaper than explaining it after someone changes the model
- * expecting it to be personal.
+ * Appearance is stored in this browser and applies to nobody else; the two
+ * notification switches and the coverage opt-out are stored against you. The
+ * workspace's default model used to share this card, and the labels had to
+ * explain that one of the four applied to everyone — it now lives on the
+ * workspace page as `DefaultModelSection`, where that is what the page means.
  */
-export function PreferencesSection({ me }: { me: Me | undefined }) {
-  const queryClient = useQueryClient();
+export function PersonalPreferencesSection({ me }: { me: Me | undefined }) {
   const { preference, mounted, setPreference } = useTheme();
-  const [savingModel, setSavingModel] = useState(false);
-
-  const defaultModel = me?.workspace.defaultModel ?? null;
-  const models = modelsFor(me?.models, defaultModel);
-
-  const saveDefaultModel = async (value: string) => {
-    const next = value === NO_DEFAULT ? null : value;
-    setSavingModel(true);
-    try {
-      await api.workspace.update({ defaultModel: next });
-      toast.success(next ? `New agents will start on ${next}` : "Default model cleared");
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
-    } catch (err) {
-      // RLS lets only admins write this, and the API turns that into a 403 with
-      // a sentence rather than a silent no-op.
-      const message = err instanceof ApiError ? err.message : "Failed to save the default";
-      toast.error(message);
-    } finally {
-      setSavingModel(false);
-    }
-  };
 
   return (
     <section className="mt-16">
@@ -80,7 +59,46 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
           </p>
         </div>
 
-        <div className="space-y-2 border-t border-hairline pt-5">
+        <NotificationToggles />
+        <CoverageOptOut workspaceId={me?.workspace.id} />
+      </SectionCard>
+    </section>
+  );
+}
+
+/**
+ * Stored on the workspace and applies to everyone in it, which is why it sits
+ * on the workspace page and not beside the personal preferences above.
+ */
+export function DefaultModelSection({ me }: { me: Me | undefined }) {
+  const queryClient = useQueryClient();
+  const [savingModel, setSavingModel] = useState(false);
+
+  const defaultModel = me?.workspace.defaultModel ?? null;
+  const models = modelsFor(me?.models, defaultModel);
+
+  const saveDefaultModel = async (value: string) => {
+    const next = value === NO_DEFAULT ? null : value;
+    setSavingModel(true);
+    try {
+      await api.workspace.update({ defaultModel: next });
+      toast.success(next ? `New agents will start on ${next}` : "Default model cleared");
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
+    } catch (err) {
+      // RLS lets only admins write this, and the API turns that into a 403 with
+      // a sentence rather than a silent no-op.
+      const message = err instanceof ApiError ? err.message : "Failed to save the default";
+      toast.error(message);
+    } finally {
+      setSavingModel(false);
+    }
+  };
+
+  return (
+    <section className="mt-16">
+      <SectionHeading title="Default model" />
+      <SectionCard className="mt-6 space-y-5">
+        <div className="space-y-2">
           <Label className="text-xs">Default model for new agents</Label>
           <Select
             value={defaultModel ?? NO_DEFAULT}
@@ -115,9 +133,6 @@ export function PreferencesSection({ me }: { me: Me | undefined }) {
             Where the picker starts when anyone here creates an agent, and only admins can set it.
           </p>
         </div>
-
-        <NotificationToggles />
-        <CoverageOptOut workspaceId={me?.workspace.id} />
       </SectionCard>
     </section>
   );

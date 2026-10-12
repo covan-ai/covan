@@ -367,8 +367,60 @@ export type IncomingInvitationDTO = {
   createdAt: number;
 };
 
+/**
+ * The caller's own profile, as `PATCH /me` and the avatar routes return it.
+ *
+ * `avatarUrl` is either an absolute URL a sign-in provider handed over, or a
+ * path on this API (`/avatars/<user>/<file>`) for a photo uploaded here; the
+ * client resolves the second against the API's origin. `locale` and `timezone`
+ * are null for "follow the browser", which is what everybody had before they
+ * could be set.
+ */
+export type ProfileDTO = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  bio: string | null;
+  locale: string | null;
+  timezone: string | null;
+};
+
+/** The columns `mapProfile` reads, for every route that returns a ProfileDTO. */
+export const PROFILE_COLUMNS = "id, name, email, avatar_url, bio, locale, timezone";
+
+export type ProfileRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatar_url: string | null;
+  bio?: string | null;
+  locale?: string | null;
+  timezone?: string | null;
+};
+
+/**
+ * One profile row as the client sees it.
+ *
+ * The email comes from the verified token first, as it always has: the row's
+ * copy is a mirror the trigger in 0082 keeps, and the token is what GoTrue says
+ * right now. The three newer fields default to null so a row read before 0082
+ * is applied still has every key the client expects.
+ */
+export function mapProfile(row: ProfileRow, tokenEmail?: string | null): ProfileDTO {
+  return {
+    id: row.id,
+    name: row.name ?? null,
+    email: tokenEmail ?? row.email ?? null,
+    avatarUrl: row.avatar_url ?? null,
+    bio: row.bio ?? null,
+    locale: row.locale ?? null,
+    timezone: row.timezone ?? null,
+  };
+}
+
 export type MeDTO = {
-  user: { id: string; name: string | null; email: string | null; avatarUrl: string | null };
+  user: ProfileDTO;
   workspace: {
     id: string;
     name: string;
@@ -384,6 +436,13 @@ export type MeDTO = {
     email: string | null;
     role: string;
     avatarUrl: string | null;
+    bio: string | null;
+    /**
+     * A co-member's zone, so the list can say what time it is for them. Their
+     * `locale` is deliberately absent: it is a display preference for the
+     * person themselves, not something about them the team needs.
+     */
+    timezone: string | null;
   }>;
   /**
    * The model ids this deployment can actually serve, in picker order.

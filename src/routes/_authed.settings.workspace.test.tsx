@@ -42,6 +42,7 @@ describe("/settings/workspace", () => {
     expect(name).toBeEnabled();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
     expect(screen.getByTestId("coverage")).toBeInTheDocument();
+    expect(screen.getByTestId("default-model")).toBeInTheDocument();
     expect(screen.getByTestId("export")).toBeInTheDocument();
   });
 
@@ -53,6 +54,7 @@ describe("/settings/workspace", () => {
     expect(screen.getByText("The name and slug are an admin's to change.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("coverage")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("default-model")).not.toBeInTheDocument();
     expect(screen.getByTestId("recently-deleted")).toBeInTheDocument();
   });
 

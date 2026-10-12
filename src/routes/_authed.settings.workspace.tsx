@@ -52,7 +52,10 @@ function WorkspaceSettingsPage() {
         />
       </section>
 
-      <DefaultModelSection me={me} />
+      {/* Admin only: RLS lets only an admin write it, and a picker anybody can
+          open that answers 403 is the "you did something wrong" this page
+          stopped doing to the form above. */}
+      {isAdmin && <DefaultModelSection me={me} />}
 
       {/* Whether the team had written anything for the questions it asked.
           Admin only, and the functions behind it refuse anybody else in their

@@ -52,28 +52,37 @@ describe("avatarKey", () => {
 
   it("round-trips through the path stored on the profile", () => {
     const key = avatarKey(USER, "image/webp");
-    expect(avatarKeyFromUrl(avatarPath(key))).toBe(key);
+    expect(avatarKeyFromUrl(avatarPath(key), USER)).toBe(key);
   });
 });
 
 describe("avatarKeyFromUrl", () => {
+  // A co-member's photo path is visible in /me and the column is the user's
+  // own to write, so a path under another id must never become a delete.
+  it("refuses a path under somebody else's id", () => {
+    const other = "11111111-2222-4333-8444-555555555555";
+    expect(avatarKeyFromUrl(`/avatars/${other}/${FILE}`, USER)).toBeNull();
+  });
+
   it("finds the key behind a path of ours", () => {
-    expect(avatarKeyFromUrl(`/avatars/${USER}/${FILE}`)).toBe(`avatars/${USER}/${FILE}`);
+    expect(avatarKeyFromUrl(`/avatars/${USER}/${FILE}`, USER)).toBe(`avatars/${USER}/${FILE}`);
   });
 
   // Each of these decides a store delete, so anything looser than the exact
   // shape `avatarPath` writes is somebody else's URL.
   it("finds nothing behind anything else", () => {
-    expect(avatarKeyFromUrl(null)).toBeNull();
-    expect(avatarKeyFromUrl("")).toBeNull();
-    expect(avatarKeyFromUrl(`https://cdn.example.com/avatars/${USER}/${FILE}`)).toBeNull();
-    expect(avatarKeyFromUrl(`/avatars/../${FILE}`)).toBeNull();
-    expect(avatarKeyFromUrl(`/avatars/${USER}/../../secret.png`)).toBeNull();
-    expect(avatarKeyFromUrl(`/avatars/${USER.toUpperCase()}/${FILE}`)).toBeNull();
-    expect(avatarKeyFromUrl(`/avatars/${USER}/${FILE.toUpperCase()}`)).toBeNull();
-    expect(avatarKeyFromUrl(`/avatars/${USER}/0123456789abcdef0123456789abcdef`)).toBeNull();
-    expect(avatarKeyFromUrl(`/avatars/${USER}/0123456789abcdef0123456789abcdef.svg`)).toBeNull();
-    expect(avatarKeyFromUrl(`avatars/${USER}/${FILE}`)).toBeNull();
+    expect(avatarKeyFromUrl(null, USER)).toBeNull();
+    expect(avatarKeyFromUrl("", USER)).toBeNull();
+    expect(avatarKeyFromUrl(`https://cdn.example.com/avatars/${USER}/${FILE}`, USER)).toBeNull();
+    expect(avatarKeyFromUrl(`/avatars/../${FILE}`, USER)).toBeNull();
+    expect(avatarKeyFromUrl(`/avatars/${USER}/../../secret.png`, USER)).toBeNull();
+    expect(avatarKeyFromUrl(`/avatars/${USER.toUpperCase()}/${FILE}`, USER)).toBeNull();
+    expect(avatarKeyFromUrl(`/avatars/${USER}/${FILE.toUpperCase()}`, USER)).toBeNull();
+    expect(avatarKeyFromUrl(`/avatars/${USER}/0123456789abcdef0123456789abcdef`, USER)).toBeNull();
+    expect(
+      avatarKeyFromUrl(`/avatars/${USER}/0123456789abcdef0123456789abcdef.svg`, USER),
+    ).toBeNull();
+    expect(avatarKeyFromUrl(`avatars/${USER}/${FILE}`, USER)).toBeNull();
   });
 });
 

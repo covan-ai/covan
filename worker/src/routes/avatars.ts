@@ -56,7 +56,7 @@ async function forget(env: AppEnv["Bindings"], key: string | null, why: string) 
 /** The caller's current `avatar_url`, read so the object behind it can go. */
 async function currentAvatarKey(db: AppEnv["Variables"]["db"], userId: string) {
   const { data } = await db.from("profiles").select("avatar_url").eq("id", userId).maybeSingle();
-  return avatarKeyFromUrl((data?.avatar_url as string | null | undefined) ?? null);
+  return avatarKeyFromUrl((data?.avatar_url as string | null | undefined) ?? null, userId);
 }
 
 // PUT /me/avatar — multipart `file`; PNG, JPEG or WebP, at most 2 MB.

@@ -4,7 +4,8 @@ import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
 import { account, planWorkspaces } from "./account";
 
-const USER = { id: "user-1", email: "a@example.com" };
+// A real uuid, because the photo cleanup only deletes a key under the caller's own id.
+const USER = { id: "0b6f3c1e-2a4d-4e8f-9a1b-3c5d7e9f1a2b", email: "a@example.com" };
 
 const deleteUser = vi.fn();
 
@@ -431,8 +432,7 @@ describe("DELETE /account", () => {
   // Its key lives on the profile row, which goes with the user, so it has to
   // be read first and deleted with the rest once the account is really gone.
   it("removes an uploaded profile photo, after the user is gone", async () => {
-    const avatar =
-      "avatars/0b6f3c1e-2a4d-4e8f-9a1b-3c5d7e9f1a2b/0123456789abcdef0123456789abcdef.png";
+    const avatar = `avatars/${USER.id}/0123456789abcdef0123456789abcdef.png`;
     const order: string[] = [];
     deleteUser.mockImplementation(async () => {
       order.push("deleteUser");
@@ -451,8 +451,14 @@ describe("DELETE /account", () => {
     expect(order).toEqual(["deleteUser", avatar]);
   });
 
-  it("deletes no photo for somebody without one, or with a provider's", async () => {
-    for (const avatarUrl of [null, "https://lh3.example.com/a/photo.jpg"]) {
+  it("deletes no photo for somebody without one, with a provider's, or with somebody else's", async () => {
+    for (const avatarUrl of [
+      null,
+      "https://lh3.example.com/a/photo.jpg",
+      // A co-member's photo path, written into this row by hand: theirs, not
+      // this account's, so closing this account must not delete it.
+      "/avatars/11111111-2222-4333-8444-555555555555/0123456789abcdef0123456789abcdef.png",
+    ]) {
       const app = appWith({
         members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],
         avatarUrl,

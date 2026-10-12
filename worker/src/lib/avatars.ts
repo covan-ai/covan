@@ -103,19 +103,29 @@ export function avatarPath(key: string): string {
 }
 
 /**
- * The store key behind an `avatar_url`, or null when the URL is not one of ours.
+ * The store key behind `ownerId`'s `avatar_url`, or null when the URL is not a
+ * photo of theirs that we stored.
  *
  * An absolute URL is a provider's photo and there is nothing of ours to delete;
  * anything that does not match the exact shape `avatarPath` produces is treated
  * the same way, because this answer decides what gets deleted from the store,
  * and a key built from a looser match is a delete somebody else steered.
+ *
+ * **The owner is part of the answer.** `avatar_url` is the user's own column to
+ * write — the grant in 0082 has to allow it, because the upload route writes it
+ * through their client — so nothing stops somebody writing a co-member's photo
+ * path (which `/me` shows them) into their own row. Without this check, their
+ * next upload, removal or account closure would delete the co-member's photo.
+ * A path under another user's id is somebody else's object, and is never ours
+ * to delete on this caller's behalf.
  */
-export function avatarKeyFromUrl(url: string | null | undefined): string | null {
+export function avatarKeyFromUrl(url: string | null | undefined, ownerId: string): string | null {
   if (!url) return null;
   const match = /^\/avatars\/([^/]+)\/([^/]+)$/.exec(url);
   if (!match) return null;
   const [, userId, file] = match;
   if (!USER_ID_RE.test(userId) || !FILE_RE.test(file)) return null;
+  if (userId !== ownerId) return null;
   return `avatars/${userId}/${file}`;
 }
 

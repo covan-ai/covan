@@ -235,6 +235,20 @@ describe("DELETE /me/avatar", () => {
     expect((await app.request("/me/avatar", { method: "DELETE" })).status).toBe(200);
     expect(storeDelete).not.toHaveBeenCalled();
   });
+  // `avatar_url` is the caller's own column to write, and a co-member's photo
+  // path is right there in /me. Copied into your own row, it must not turn
+  // your removal (or your next upload) into a delete of their photo.
+  it("deletes nothing for a co-member's photo path written into the caller's row", async () => {
+    const theirs = `/avatars/11111111-2222-4333-8444-555555555555/${OLD_FILE}`;
+    const { app } = appWith({ current: theirs });
+
+    expect((await app.request("/me/avatar", { method: "DELETE" })).status).toBe(200);
+    expect(storeDelete).not.toHaveBeenCalled();
+
+    const again = appWith({ current: theirs });
+    expect((await upload(again.app, PNG)).status).toBe(200);
+    expect(storeDelete).not.toHaveBeenCalled();
+  });
 });
 
 describe("GET /avatars/:userId/:file", () => {

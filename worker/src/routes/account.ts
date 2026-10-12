@@ -201,8 +201,9 @@ account.delete("/account", async (c) => {
   // (`routes/avatars.ts`). The profile row goes with `auth.users` below, and
   // with it the only record of the key, so it is read now and joins the list
   // the store deletes at the end. Through the caller's own client, because it
-  // is their own row. A provider's photo is not ours, and `avatarKeyFromUrl`
-  // answers null for it; a failed read costs a photo nobody can reach, which is
+  // is their own row. A provider's photo is not ours, and neither is a
+  // co-member's path written into this row by hand; `avatarKeyFromUrl` answers
+  // null for both; a failed read costs a photo nobody can reach, which is
   // the same judgement the document listing makes.
   const { data: ownProfile, error: ownProfileError } = await db
     .from("profiles")
@@ -215,7 +216,10 @@ account.delete("/account", async (c) => {
       ownProfileError,
     );
   }
-  const avatar = avatarKeyFromUrl((ownProfile?.avatar_url as string | null | undefined) ?? null);
+  const avatar = avatarKeyFromUrl(
+    (ownProfile?.avatar_url as string | null | undefined) ?? null,
+    user.id,
+  );
   if (avatar) keys.push(avatar);
 
   // The same ordering problem as the object keys, with a sharper consequence.

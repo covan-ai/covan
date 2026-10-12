@@ -101,6 +101,8 @@ function appWith(spec: {
   names?: Record<string, string>;
   apiKeyId?: string;
   membershipsError?: boolean;
+  /** The caller's own `profiles.avatar_url`; null for somebody with no photo. */
+  avatarUrl?: string | null;
 }) {
   const dbSpec: FakeDbSpec = {
     tables: {
@@ -122,6 +124,9 @@ function appWith(spec: {
             []) as string[];
           return { data: spec.members.filter((m) => ids.includes(m.workspace_id)), error: null };
         },
+      },
+      profiles: {
+        select: () => ({ data: { avatar_url: spec.avatarUrl ?? null }, error: null }),
       },
       workspaces: {
         select: (ctx: QueryContext) => {
@@ -420,6 +425,41 @@ describe("DELETE /account", () => {
     expect(status).toBe(200);
     // A row with no key is a document that was never uploaded, not a bug.
     expect(storeDelete.mock.calls.map((c) => c[0])).toEqual(["doc/one", "doc/two"]);
+  });
+
+  // The one stored object that belongs to a person rather than a workspace.
+  // Its key lives on the profile row, which goes with the user, so it has to
+  // be read first and deleted with the rest once the account is really gone.
+  it("removes an uploaded profile photo, after the user is gone", async () => {
+    const avatar =
+      "avatars/0b6f3c1e-2a4d-4e8f-9a1b-3c5d7e9f1a2b/0123456789abcdef0123456789abcdef.png";
+    const order: string[] = [];
+    deleteUser.mockImplementation(async () => {
+      order.push("deleteUser");
+      return { data: null, error: null };
+    });
+    storeDelete.mockImplementation(async (key: string) => {
+      order.push(key);
+    });
+    const app = appWith({
+      members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],
+      avatarUrl: `/${avatar}`,
+    });
+    const { status } = await close(app);
+
+    expect(status).toBe(200);
+    expect(order).toEqual(["deleteUser", avatar]);
+  });
+
+  it("deletes no photo for somebody without one, or with a provider's", async () => {
+    for (const avatarUrl of [null, "https://lh3.example.com/a/photo.jpg"]) {
+      const app = appWith({
+        members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],
+        avatarUrl,
+      });
+      expect((await close(app)).status).toBe(200);
+    }
+    expect(storeDelete).not.toHaveBeenCalled();
   });
 
   it("still closes the account when the storage listing fails", async () => {

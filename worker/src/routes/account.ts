@@ -7,6 +7,7 @@ import { notify } from "../lib/emails/send";
 import { connectedAccountsIn, revokeConnectedAccounts } from "../lib/composio/revoke";
 import { deleteProfile } from "../lib/browser/profiles";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { avatarKeyFromUrl } from "../lib/avatars";
 
 /**
  * Closing an account.
@@ -25,9 +26,10 @@ import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
  * opened it left.
  *
  * The exception is object storage, and it is the one thing here that has to be
- * done by hand. No stored object belongs to a *person* — `documents.r2_key` is
- * the only key in the schema and `documents` hangs off a bundle, which hangs
- * off a workspace — but this route deletes workspaces too, and a workspace
+ * done by hand. Only one stored object belongs to a *person* — an uploaded
+ * profile photo, whose key is in `profiles.avatar_url` — and the rest are
+ * documents: `documents.r2_key` hangs off a bundle, which hangs off a
+ * workspace. But this route deletes workspaces too, and a workspace
  * cascade takes the rows that name the keys while leaving the bytes. For an
  * ordinary delete `documents.ts` calls that an acceptable storage cost. For
  * erasure it is not a cost, it is the files still being there. So the keys are
@@ -194,6 +196,27 @@ account.delete("/account", async (c) => {
   // Two hops rather than a join, because the cascade is two hops: a document
   // names a bundle and a bundle names the workspace.
   const keys = await collectDocumentKeys(admin, deletable);
+
+  // The one stored object that does belong to a person: an uploaded photo
+  // (`routes/avatars.ts`). The profile row goes with `auth.users` below, and
+  // with it the only record of the key, so it is read now and joins the list
+  // the store deletes at the end. Through the caller's own client, because it
+  // is their own row. A provider's photo is not ours, and `avatarKeyFromUrl`
+  // answers null for it; a failed read costs a photo nobody can reach, which is
+  // the same judgement the document listing makes.
+  const { data: ownProfile, error: ownProfileError } = await db
+    .from("profiles")
+    .select("avatar_url")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (ownProfileError) {
+    console.error(
+      "account deletion: could not read the profile photo to clean up",
+      ownProfileError,
+    );
+  }
+  const avatar = avatarKeyFromUrl((ownProfile?.avatar_url as string | null | undefined) ?? null);
+  if (avatar) keys.push(avatar);
 
   // The same ordering problem as the object keys, with a sharper consequence.
   // `tool_connections.workspace_id` cascades (0059) and a cascade runs no code,

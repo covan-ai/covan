@@ -27,7 +27,7 @@ export function CreditsBadge() {
 
   return (
     <Link
-      to="/settings"
+      to="/settings/usage"
       className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-accent hover:text-foreground"
       aria-label={raw.unlimited ? "Unlimited credits" : `${label} left in this workspace`}
       title="Workspace credits"

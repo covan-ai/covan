@@ -640,6 +640,14 @@ exist rather than returning what it can, so deploying the frontend ahead of
 those three migrations does not degrade the one section that depends on
 them — it turns every page behind sign-in into a 500.
 
+`0077` has the same shape and a smaller blast radius, worth knowing because the
+symptom is confusing rather than fatal. It adds `browser_tasks.retry_of`, and
+the takeover card asks `GET /sessions/:id/browser-tasks` — which names that
+column — the first time a conversation has a browser task in it. Without the
+migration that request 500s. The chat page survives it (the card reads a failed
+query as "no tasks" and renders nothing), so what you get is a working install
+quietly logging an error, which is harder to diagnose than a broken one.
+
 ### 3. Configure and deploy the API Worker
 
 Steps 3 and 4 all run from `worker/`.

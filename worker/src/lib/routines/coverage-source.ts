@@ -187,6 +187,56 @@ export function parseClusters(raw: unknown): RawCluster[] {
   return clusters;
 }
 
+/**
+ * What a run with no question to cluster says about its window.
+ *
+ * `readGaps` returning nothing used to be read as "every answer found
+ * something close" — but an empty list is also what comes back when answers
+ * DID find nothing and every question behind them is excluded from the read:
+ * asked by a member who opted out of the report (the opt-out is retroactive,
+ * 0076), or a stray one-character keystroke. covan-cloud#310 found the case
+ * that makes it concrete: a one-member workspace whose only member opts out is
+ * told "every answer found something close" about a week in which nothing
+ * did. And covan-cloud#316 found the other half — the claim was made over the
+ * answers that recorded a grounding, while the ones that recorded none were
+ * left out of the sentence altogether.
+ *
+ * So the counts are read before anything is claimed about them. They disclose
+ * nothing (no question text, no asker), and the read is spent only on this
+ * path, where the alternative is a sentence that may be false.
+ */
+async function emptyWindowNote(input: CoverageRunInput, deps: CoverageDeps): Promise<string> {
+  const totals = await deps.readTotals(input.workspaceId, input.days);
+
+  if (totals.fallback > 0) {
+    return (
+      `${plural(totals.fallback, "answer", "answers")} found nothing close, but none of the ` +
+      `questions behind them can be reported — they were asked by members who opted out of ` +
+      `this report, or were too short to count`
+    );
+  }
+
+  // Only the unqualified sentence when it is true of every reply in the
+  // window. Otherwise each bucket is named with its own count — `answers` is
+  // the replies that recorded a grounding at all, and it includes the `none`
+  // ones, which found nothing because there was nothing to search.
+  if (totals.ungrounded === 0 && totals.unrecorded === 0) {
+    return totals.answers === 0
+      ? "no answer in this window recorded what grounded it"
+      : "every answer in this window found something close";
+  }
+  const parts = [`${plural(totals.covered, "answer", "answers")} found something close`];
+  if (totals.ungrounded > 0) {
+    parts.push(`${totals.ungrounded} had nothing attached to search`);
+  }
+  if (totals.unrecorded > 0) {
+    parts.push(`${totals.unrecorded} recorded nothing either way`);
+  }
+  return parts.join(", ");
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
 export async function runCoverageReport(
   input: CoverageRunInput,
   deps: CoverageDeps,
@@ -202,7 +252,7 @@ export async function runCoverageReport(
 
   const rows = await deps.readGaps(input.workspaceId, input.days);
   if (rows.length === 0) {
-    return { kind: "skip", note: "every answer in this window found something close" };
+    return { kind: "skip", note: await emptyWindowNote(input, deps) };
   }
 
   const deduped = dedupeQuestions(

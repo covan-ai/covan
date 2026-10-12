@@ -2,7 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MessageOutcome } from "../harness/usage";
 import type { RoutineEnv } from "../../types";
-import { nextRunAt } from "./schedule";
+import { nextRunAt, windowDays } from "./schedule";
 import { fetchSource, type FetchDeps, type SourceResult } from "./source";
 import { UpstreamError } from "./upstream-error";
 import { fetchConnectionItems } from "./connection-source";
@@ -483,12 +483,72 @@ export async function runRoutine(
         return { status: "failed", itemsNew: 0 };
       }
 
+      // Claimed BEFORE the model call — covan-cloud#308. `claim_due_routines`
+      // reclaims a routine whose `claimed_at` is stale (0055:82), so a worker
+      // that dies between here and `finish` re-runs; `runOneRoutine` bypasses
+      // claiming entirely by design, resting on exactly this backstop (see its
+      // own docstring). Claimed after the call, as this branch was until
+      // #308, a duplicate on an already-handled slot paid for one clustering
+      // call before finding out. Claimed first, it costs nothing but the round
+      // trip, which is what the `none` path below has always promised.
+      //
+      // The key shape is the `none` path's own (`keysToClaim`, below): no
+      // cursor and no diff here either, so the run's identity is the trigger
+      // that produced it, not anything about what was read.
+      //
+      // What a claim taken before the outcome is known means for each outcome:
+      //
+      //   * report — delivered, and the key stays: that is what it is for.
+      //   * skip   — the key stays. A skip is this slot's answer, reached
+      //     deliberately ("nothing to report", or the clustering ran and no
+      //     topic cleared the floor); a duplicate that re-asked would pay to
+      //     reach the same answer. The `none` path keeps its claims on a
+      //     declined run for the same reason.
+      //   * pause  — the key is handed back. A pause is not an answer for the
+      //     slot but a refusal to run at all (the switch went off, the owner
+      //     stopped being an admin, the workspace shrank to two), and the claim
+      //     must not outlive it: a slot key is dead anyway once `finish`
+      //     advances `next_run_at`, but a webhook's `hook:` key is not, and a
+      //     redelivery of that event after the routine is resumed would
+      //     otherwise be refused as already handled.
+      //   * throw  — the `catch` at the bottom of this function hands the key
+      //     back, as it does on every path: `delivered` is still false.
+      const reportKeysToClaim = trigger
+        ? [`hook:${trigger.eventId}`]
+        : deps.trigger === "manual"
+          ? [`manual:${routine.id}@${startedAt.toISOString()}`]
+          : [`slot:${routine.next_run_at}`];
+      claimedKeys = await claimItemKeys(deps.db, routine.id, reportKeysToClaim);
+      if (claimedKeys.length === 0) {
+        // Already handled for this slot, and found out before anything was
+        // spent — nothing to meter.
+        await finish(routine, deps, startedAt, {
+          status: "skipped",
+          itemsNew: 0,
+          tokens: 0,
+        });
+        return { status: "skipped", itemsNew: 0 };
+      }
+
+      // The window is the routine's own period — covan-cloud#307. It was
+      // seven days whatever the schedule said, so the weekly template was
+      // right and an owner who edited it to daily got a daily email of the
+      // same rolling week.
       const result = await deps.coverage(
-        { workspaceId: routine.workspace_id, ownerId: routine.user_id, days: 7 },
+        {
+          workspaceId: routine.workspace_id,
+          ownerId: routine.user_id,
+          days: windowDays(routine.schedule_cron, routine.timezone, startedAt),
+        },
         runEnv,
       );
 
       if (result.kind === "pause") {
+        // Handed back before `finish`, so a release that fails lands in the
+        // `catch` below — which tries again and records why — rather than
+        // leaving a key held by a run that reports itself as a clean pause.
+        await releaseItemKeys(deps.db, routine.id, claimedKeys);
+        claimedKeys = [];
         await finish(routine, deps, startedAt, {
           status: "skipped",
           itemsNew: 0,
@@ -535,36 +595,10 @@ export async function runRoutine(
         return { status: "skipped", itemsNew: 0 };
       }
 
-      // `result.kind === "report"`. Claimed before delivering — fix round 1,
-      // finding A3. `claim_due_routines` reclaims a routine whose `claimed_at`
-      // is stale (0055:82), so a worker that dies between this and `finish`
-      // re-runs and would otherwise re-send; `runOneRoutine` bypasses claiming
-      // entirely by design, resting on exactly this backstop (see its own
-      // docstring). Every other kind gets a key before sending for the same
-      // reason — this is the "none" path's own key shape, just below
-      // (`:699-703` as of this writing): no cursor and no diff here either, so
-      // the run's identity is the trigger that produced it, not anything about
-      // what was read.
-      const reportKeysToClaim = trigger
-        ? [`hook:${trigger.eventId}`]
-        : deps.trigger === "manual"
-          ? [`manual:${routine.id}@${startedAt.toISOString()}`]
-          : [`slot:${routine.next_run_at}`];
-      claimedKeys = await claimItemKeys(deps.db, routine.id, reportKeysToClaim);
-      if (claimedKeys.length === 0) {
-        // Already sent for this slot. The clustering call was still made and
-        // paid for before this claim was ever checked, so it is still
-        // metered — same accounting as the post-call skip above.
-        await finish(routine, deps, startedAt, {
-          status: "skipped",
-          itemsNew: 0,
-          tokens: result.tokens,
-          spend: result.spend,
-          modelCall: { model: result.model, modelOutcome: "answered" },
-        });
-        return { status: "skipped", itemsNew: 0 };
-      }
-
+      // `result.kind === "report"`, and this run holds the slot's key — it
+      // was claimed above, before the model call (fix round 1, finding A3, and
+      // covan-cloud#308).
+      //
       // Delivered the same way every other routine is — the same channel
       // lookup, the same `deliver`, the same event — because nothing about
       // sending a message is specific to this source; only how the text was

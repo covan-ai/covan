@@ -350,17 +350,20 @@ records none on purpose: it answers no question, and the turn that started the
 task already recorded what grounded it.
 
 The question is the last user message before that reply in the same session. A
-run reads the last **seven days**, and at most **150** of those questions,
+run reads **one period of its own schedule** — seven days for the weekly
+template — and at most **150** of those questions,
 newest first — which at 120 characters each is a prompt the size the engine
 already pays for elsewhere. Questions of one character are dropped as stray
 keystrokes, a reply that was regenerated is not counted twice, and a session
 somebody deleted is not read at all: a deletion that left the text of a question
 reachable here would be cosmetic.
 
-That seven days is fixed, not derived from the routine's own schedule. The
-template runs weekly, so the window and the cadence agree today — but an owner
-who edits the schedule to run daily gets a daily email of the same rolling
-seven-day window, not a one-day slice of it.
+The period is the distance between the schedule's two most recent firings, in
+whole days: an owner who edits the template to run daily gets a one-day report,
+a routine that runs Mondays and Thursdays reads the three or four days since
+the previous run, and anything more often than daily reads one day, the
+smallest window the database read takes. A run that starts a few minutes after
+its slot still reads a whole period, not one day more.
 
 ### What it never contains
 
@@ -390,6 +393,12 @@ in its own words that a name was withheld and nothing was dropped. Keeping the
 topic and losing the name is deliberate — a dropped row is indistinguishable
 from a quiet week, and an admin who cannot tell those apart stops trusting the
 report.
+
+A label with nothing printable in it — empty, or only punctuation and symbols —
+is treated the same way: the topic is reported unnamed, with its counts. The
+report says the clustering did not give it a usable name rather than that a
+name was withheld, because nothing was; the two kinds of nameless row read
+differently in the email so an admin can tell which explanation is which.
 
 **The honest limit of that check is containment, not meaning.** It refuses a
 label that quotes a question; it cannot refuse a label that paraphrases one. So
@@ -479,8 +488,11 @@ than one that does not.
 
 A quiet week is cheap on purpose. If the whole window has fewer distinct askers
 than the floor, no grouping of it could produce a reportable topic, so the run
-skips without a model call at all — and so does a window where every answer
-found something. The one case that pays and reports nothing is a window whose
+skips without a model call at all — and so does a window with no question to
+read. That skip says which it was: every answer found something; or answers
+found nothing but every question behind them was asked by somebody who opted
+out; or some replies recorded no grounding either way. It never claims the
+first when it is one of the others. The one case that pays and reports nothing is a window whose
 questions came back grouped and no group cleared the floor: the call was made,
 so it is billed, and the run is recorded as a skip rather than as an email
 saying "here is nothing".
@@ -1051,8 +1063,11 @@ Pause/Resume button is rendered at all. Both halves of that matter. "Resume" on
 a finished series reads as an invitation to restart it, and resuming would start
 morning eight of a seven-morning week; and the reason a routine paused is kept
 for what the engine writes there after repeated failures, rather than widened to
-also mean "your first week is over". Running the series again for the next new
-starter is a new routine from the same template.
+also mean "your first week is over". The API refuses it too: a `PATCH` that
+sets `status` on a finished routine answers 409, so a caller with an API key
+cannot restart a series the product does not offer to restart. Its other fields
+stay editable. Running the series again for the next new starter is a new
+routine from the same template.
 
 ## When a run fails
 

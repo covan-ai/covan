@@ -510,7 +510,19 @@ routines.post("/routines", async (c) => {
   );
   if (!created.ok) {
     if (createdChannelId) {
-      await serviceClient(c.env).from("delivery_channels").delete().eq("id", createdChannelId);
+      // Logged, not returned: the caller's error is the routine's, and a
+      // failed cleanup must not replace it. But it must leave a trace —
+      // covan-cloud#310 — or the orphaned encrypted address is invisible.
+      const { error: rollbackError } = await serviceClient(c.env)
+        .from("delivery_channels")
+        .delete()
+        .eq("id", createdChannelId);
+      if (rollbackError) {
+        console.error(
+          `routine create failed and its new delivery channel ${createdChannelId} could not be removed`,
+          rollbackError,
+        );
+      }
     }
     return c.json({ error: created.message }, created.status);
   }
@@ -525,12 +537,23 @@ routines.patch("/routines/:id", async (c) => {
   const db = c.get("db");
   const { data: current, error: loadError } = await db
     .from("routines")
-    .select("schedule_cron, timezone")
+    .select("schedule_cron, timezone, status")
     .eq("id", c.req.param("id"))
     .maybeSingle();
 
   if (loadError) return c.json({ error: "failed to load routine" }, 500);
   if (!current) return c.json({ error: "routine not found" }, 404);
+
+  // A finished series stays finished — covan-cloud#307. `updateSchema` offers
+  // `active` and `paused`, which is right for a running routine and wrong for
+  // one that completed: resuming it would restart a series the product has
+  // no way to restart, and `finish` would re-complete it after one more
+  // delivery. Refused here rather than in the schema, because whether the
+  // transition is allowed depends on the row, not on the request. Every
+  // other field stays editable — renaming a finished routine is harmless.
+  if (body.status !== undefined && current.status === "completed") {
+    return c.json({ error: "this routine has finished its series and cannot be resumed" }, 409);
+  }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (body.name !== undefined) patch.name = body.name;

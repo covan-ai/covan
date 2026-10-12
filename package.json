@@ -27,7 +27,7 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/rls/tsconfig.json",
     "check:rls": "node scripts/check-rls.mjs",
     "//check:self-host": "Boots the built self-host server and asks it for four pages. Needs a build first: `NITRO_PRESET=node-server bun run build`. Kept separate from `build` so a build failure reads as a build failure. This is the only check that runs the artifact rather than reading the source, which is why it is the only one that could have caught #101.",
     "check:self-host": "node scripts/check-self-host.mjs",

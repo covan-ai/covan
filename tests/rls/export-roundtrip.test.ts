@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestUser, serviceClient, sql, closeSql, type TestUser } from "./harness";
 import { seedWorkspace } from "./fixtures";
-import { collectWorkspace, type Collected } from "../../worker/src/lib/export/collect";
+import { collectWorkspace as collectWith, type Collected } from "../../worker/src/lib/export/collect";
 import { renderSql, MISSING_SECRET } from "../../worker/src/lib/export/sql";
 
 /**
@@ -24,6 +24,15 @@ import { renderSql, MISSING_SECRET } from "../../worker/src/lib/export/sql";
  * substitution is done here so the suite needs no `psql` binary; the shape of
  * what psql would produce — a quoted literal — is what is written in.
  */
+
+/**
+ * The worker's own `collectWorkspace`, handed this suite's client. The root and
+ * `worker/` each install their own `@supabase/supabase-js`, and the two versions
+ * drift apart (a newer worker copy grew `getOpenApiSpec`), so the types refuse a
+ * client that is identical at runtime. The cast says that once, here.
+ */
+const collectWorkspace = (db: TestUser["db"], id: string) =>
+  collectWith(db as unknown as Parameters<typeof collectWith>[0], id);
 
 let owner: TestUser;
 let restorer: TestUser;

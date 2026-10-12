@@ -62,7 +62,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await destroyTestUsers([owner, colleague, outsider]);
+  await destroyTestUsers();
   await closeSql();
 });
 

@@ -183,7 +183,7 @@ describe("deleting a workspace a delivery channel was added from", () => {
     // And the routine still delivers somewhere.
     const [{ count: routines }] = await db<{ count: string }[]>`
       select count(*) from public.routines
-      where id = ${routine.id} and delivery_channel_id = ${channel.id}`;
+      where id = ${routine!.id} and delivery_channel_id = ${channel.id}`;
     expect(Number(routines)).toBe(1);
   });
 

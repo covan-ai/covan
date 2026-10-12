@@ -146,6 +146,40 @@ describe("what an empty window says about itself", () => {
   });
 });
 
+/**
+ * The one-member path as a composition, not only `askerFloor(1) === 1` on its
+ * own: a solo workspace became reachable from the product with the gap-report
+ * template, and nothing else here runs `memberCount: 1` through the pause
+ * check, the pre-call asker count and the post-call floor together.
+ */
+describe("a workspace of one", () => {
+  const solo = [
+    { question: "how do I expense a flight", asker_key: 1 },
+    { question: "who approves expenses", asker_key: 1 },
+  ];
+
+  it("runs rather than pausing, and reports a topic only its one member asked", async () => {
+    const deps = depsFor({
+      memberCount: 1,
+      gaps: solo,
+      clusters: [{ label: "Expenses", members: [0, 1] }],
+    });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({ kind: "report" });
+    expect(deps.cluster).toHaveBeenCalledTimes(1);
+    if (result.kind === "report") {
+      expect(result.summary).toContain("Expenses");
+    }
+  });
+
+  it("still skips before the model call when nothing fell short", async () => {
+    const deps = depsFor({ memberCount: 1, gaps: [] });
+    const result = await runCoverageReport(input, deps);
+    expect(result).toMatchObject({ kind: "skip" });
+    expect(deps.cluster).not.toHaveBeenCalled();
+  });
+});
+
 describe("what costs nothing", () => {
   it("skips a window with no sub-floor answers, before any model call", async () => {
     const deps = depsFor({ gaps: [], totals: { covered: 100, fallback: 0 } });

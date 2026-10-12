@@ -146,8 +146,8 @@ describe("a member still builds", () => {
 
     expect(error, "a member can no longer build").toBeNull();
 
-    await member.db.from("agents").delete().eq("id", made.id);
-    expect(await stillThere("agents", made.id)).toBe(false);
+    await member.db.from("agents").delete().eq("id", made!.id);
+    expect(await stillThere("agents", made!.id)).toBe(false);
   });
 
   it("attaches knowledge to an agent", async () => {
@@ -177,7 +177,7 @@ describe("a viewer still uses what is there", () => {
     expect(sessionError, "a viewer cannot start a conversation").toBeNull();
 
     const { error: messageError } = await viewer.db.from("messages").insert({
-      session_id: session.id,
+      session_id: session!.id,
       sender_id: viewer.id,
       role: "user",
       content: "What did we decide about the roadmap?",
@@ -185,7 +185,7 @@ describe("a viewer still uses what is there", () => {
     expect(messageError, "a viewer cannot speak in their own session").toBeNull();
 
     const { error: ideaError } = await viewer.db.from("ideas").insert({
-      session_id: session.id,
+      session_id: session!.id,
       workspace_id: owner.workspaceId,
       title: "A viewer's idea",
       created_by: viewer.id,

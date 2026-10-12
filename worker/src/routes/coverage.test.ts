@@ -18,7 +18,17 @@ type Role = "admin" | "member";
  * what the earlier ones wrote, the way a real connection would. `fakeDb`
  * mutates this object in place rather than owning its own copy of it.
  */
-type SettingsState = { optedOut: boolean; lastWorkspaceUpdate: Record<string, unknown> | null };
+type SettingsState = {
+  optedOut: boolean;
+  lastWorkspaceUpdate: Record<string, unknown> | null;
+  /**
+   * Every filter and row the settings routes sent, in order, the way `calls`
+   * records the RPCs. Without it the fake discarded its `eq()` arguments, so
+   * dropping `.eq("id", workspaceId)` from the switch's UPDATE — or filtering
+   * on an id taken from the body — still passed every test here.
+   */
+  writes: { table: string; op: string; eq: [string, unknown][]; values?: unknown }[];
+};
 
 /**
  * Enough of the request-scoped client for `getActiveWorkspaceId` to resolve and
@@ -54,17 +64,29 @@ function fakeDb(
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const db = {
     from(table: string) {
+      // One entry per statement, its `eq()` pairs appended as the route chains
+      // them — see `SettingsState.writes`.
+      const record = (op: string, values?: unknown) => {
+        const write = { table, op, eq: [] as [string, unknown][], values };
+        state?.writes.push(write);
+        return write;
+      };
+
       if (table === "workspaces" && state) {
         return {
           update: (values: Record<string, unknown>) => {
             state.lastWorkspaceUpdate = values;
+            const write = record("update", values);
             return {
-              eq: () => ({
-                select: async () => ({
-                  data: role === "admin" ? [{ id: WORKSPACE_ID, ...values }] : [],
-                  error: null,
-                }),
-              }),
+              eq: (column: string, value: unknown) => {
+                write.eq.push([column, value]);
+                return {
+                  select: async () => ({
+                    data: role === "admin" ? [{ id: WORKSPACE_ID, ...values }] : [],
+                    error: null,
+                  }),
+                };
+              },
             };
           },
         };
@@ -72,31 +94,48 @@ function fakeDb(
 
       if (table === "coverage_opt_outs" && state) {
         return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: state.optedOut ? { user_id: USER_ID } : null,
-                  error: null,
-                }),
-              }),
-            }),
-          }),
+          select: () => {
+            const write = record("select");
+            return {
+              eq: (first: string, firstValue: unknown) => {
+                write.eq.push([first, firstValue]);
+                return {
+                  eq: (second: string, secondValue: unknown) => {
+                    write.eq.push([second, secondValue]);
+                    return {
+                      maybeSingle: async () => ({
+                        data: state.optedOut ? { user_id: USER_ID } : null,
+                        error: null,
+                      }),
+                    };
+                  },
+                };
+              },
+            };
+          },
           // An upsert IS an insert with a conflict target — the options object
           // is how PostgREST is asked for `ON CONFLICT DO NOTHING`, not a
           // detail this fake needs to branch on.
-          upsert: async () => {
+          upsert: async (values: Record<string, unknown>) => {
+            record("upsert", values);
             state.optedOut = true;
             return { data: null, error: null };
           },
-          delete: () => ({
-            eq: () => ({
-              eq: async () => {
-                state.optedOut = false;
-                return { data: null, error: null };
+          delete: () => {
+            const write = record("delete");
+            return {
+              eq: (first: string, firstValue: unknown) => {
+                write.eq.push([first, firstValue]);
+                return {
+                  eq: async (second: string, secondValue: unknown) => {
+                    write.eq.push([second, secondValue]);
+                    state.optedOut = false;
+                    return { data: null, error: null };
+                  },
+                };
               },
-            }),
-          }),
+            };
+          },
         };
       }
 
@@ -158,7 +197,7 @@ function updated(table: "workspaces") {
   return table === "workspaces" ? settingsState.lastWorkspaceUpdate : null;
 }
 
-let settingsState: SettingsState = { optedOut: false, lastWorkspaceUpdate: null };
+let settingsState: SettingsState = { optedOut: false, lastWorkspaceUpdate: null, writes: [] };
 
 const TOTALS_ROW = {
   answers: 100,
@@ -329,13 +368,30 @@ describe("GET /coverage/workspace", () => {
 
 describe("the switch", () => {
   beforeEach(() => {
-    settingsState = { optedOut: false, lastWorkspaceUpdate: null };
+    settingsState = { optedOut: false, lastWorkspaceUpdate: null, writes: [] };
   });
 
   it("lets an admin turn the report on", async () => {
     const res = await request("PATCH", "/coverage/settings", { enabled: true }, asAdmin);
     expect(res.status).toBe(200);
     expect(updated("workspaces")).toMatchObject({ gap_report_enabled: true });
+    expect(settingsState.writes).toEqual([
+      expect.objectContaining({ table: "workspaces", op: "update", eq: [["id", WORKSPACE_ID]] }),
+    ]);
+  });
+
+  // The workspace is the caller's active one, never one the body names. The
+  // schema strips the extra key; this holds the UPDATE's filter to that.
+  it("ignores a workspace id in the body", async () => {
+    const res = await request(
+      "PATCH",
+      "/coverage/settings",
+      { enabled: true, workspaceId: "somebody-elses", id: "somebody-elses" },
+      asAdmin,
+    );
+    expect(res.status).toBe(200);
+    expect(settingsState.writes.map((w) => w.eq)).toEqual([[["id", WORKSPACE_ID]]]);
+    expect(updated("workspaces")).toEqual({ gap_report_enabled: true });
   });
 
   // This proves the route turns a zero-row UPDATE into a 403 — the fake
@@ -354,9 +410,21 @@ describe("the switch", () => {
   });
 });
 
+/**
+ * These prove the routes send the caller's own id and active workspace, and
+ * nothing a body supplied. They cannot prove that a member is unable to
+ * exclude, read or restore anybody else — a fake does what it is told. That is
+ * proved against a live database by `tests/rls/coverage-gaps.test.ts`, in its
+ * describe block "the opt-out nobody can read".
+ */
 describe("a member's own choice", () => {
+  const own: [string, unknown][] = [
+    ["workspace_id", WORKSPACE_ID],
+    ["user_id", USER_ID],
+  ];
+
   beforeEach(() => {
-    settingsState = { optedOut: false, lastWorkspaceUpdate: null };
+    settingsState = { optedOut: false, lastWorkspaceUpdate: null, writes: [] };
   });
 
   it("excludes them, and says so afterwards", async () => {
@@ -365,6 +433,13 @@ describe("a member's own choice", () => {
     ).toBe(200);
     const res = await request("GET", "/coverage/preference", undefined, asMember);
     expect(await res.json()).toEqual({ excluded: true });
+    expect(settingsState.writes).toEqual([
+      expect.objectContaining({
+        op: "upsert",
+        values: { workspace_id: WORKSPACE_ID, user_id: USER_ID },
+      }),
+      expect.objectContaining({ op: "select", eq: own }),
+    ]);
   });
 
   it("takes it back", async () => {
@@ -372,6 +447,7 @@ describe("a member's own choice", () => {
     await request("PUT", "/coverage/preference", { excluded: false }, asMember);
     const res = await request("GET", "/coverage/preference", undefined, asMember);
     expect(await res.json()).toEqual({ excluded: false });
+    expect(settingsState.writes.find((w) => w.op === "delete")?.eq).toEqual(own);
   });
 
   it("is idempotent, so a double click is not a 409", async () => {

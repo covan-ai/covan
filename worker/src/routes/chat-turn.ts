@@ -95,6 +95,11 @@ export async function buildToolContext(input: {
   sessionId: string;
   runtimeLimit: RuntimeLimitFlag;
   /**
+   * Where the request came from, for `browse`'s first jar. Required, as
+   * `runtimeLimit` is, so a caller cannot forget it. See `ToolContext`.
+   */
+  egressCountry: string | null;
+  /**
    * Whether a person has already said yes to the one call about to run.
    *
    * Only ever true for the single approved call on the resume path, and only
@@ -130,6 +135,7 @@ export async function buildToolContext(input: {
     userId: input.userId,
     sessionId: input.sessionId,
     runtimeLimit: input.runtimeLimit,
+    egressCountry: input.egressCountry,
     ...(input.confirmed ? { confirmed: true } : {}),
     // One per turn, so the same catalogue search asked twice is answered from
     // the first one. See `searchMemo` in `registry.ts`.

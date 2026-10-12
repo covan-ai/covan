@@ -580,6 +580,7 @@ export const browseTool: AgentTool = {
       site,
       browser: session.value,
       profile,
+      egressCountry: ctx.egressCountry ?? null,
       signal: ctx.signal,
     });
     const opening = session.value.providerSessionId === null;

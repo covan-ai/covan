@@ -335,9 +335,14 @@ export async function profileFor(
  * about the deployment rather than the person.
  *
  * The label is `routes/browser.ts`'s constant, for its reason: a label, not an
- * identity. No egress is pinned, because a tool call carries no request
- * country to pin it to — so the jar is pinned to none, which is the provider's
- * "no proxy", and stays so (see `ensureProfile`'s `proxyCountryCode`).
+ * identity. **The egress is the person's**, read off the chat request that
+ * approved the run (`ToolContext.egressCountry`, `lib/browser/egress.ts`), and
+ * it only matters on the call that creates the jar: an existing row keeps the
+ * country it was made with (see `ensureProfile`'s `proxyCountryCode`). Before
+ * 2026-10-12 this pinned nothing, and "nothing" is not "no proxy": a row with
+ * a null country sends no `proxyCountryCode` at all, which is the provider's
+ * default — a US residential IP — for every task the jar is ever used on.
+ * Null still when the request could not say (the hand-back, or `XX`).
  *
  * Called by `browse` only after its refusals (ruling R13: nothing is spent on
  * a refusal) and before `createRun`, and by the hand-back, which can be the
@@ -347,8 +352,14 @@ export async function runProfile(
   env: RoutineEnv,
   userId: string,
   overrides: Partial<TakeoverDeps> = {},
+  proxyCountryCode: string | null = null,
 ): Promise<TakeoverProfile | null> {
-  const ensured = await ensureProfile(env, userId, { label: RUN_PROFILE_LABEL }, overrides);
+  const ensured = await ensureProfile(
+    env,
+    userId,
+    { label: RUN_PROFILE_LABEL, proxyCountryCode },
+    overrides,
+  );
   if (ensured.kind === "ok") return ensured.value;
   console.error(
     "could not provision a browser profile for a run; running without one",

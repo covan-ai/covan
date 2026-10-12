@@ -81,6 +81,15 @@ export type ToolContext = {
   /** The routine run this turn belongs to, when nobody is. */
   routineRunId?: string;
   /**
+   * The country the person's request came from (`CF-IPCountry`, normalised by
+   * `lib/browser/egress.ts`), or null when it could not say. Read for one
+   * thing: the proxy a browser jar made by `browse` is pinned to, so a site
+   * they sign in to sees them arrive from where they are. Set by the route
+   * from the request, never from anything the model wrote; a scheduled run
+   * has none, and cannot browse anyway.
+   */
+  egressCountry?: string | null;
+  /**
    * Whether a person has already said yes to this exact call.
    *
    * False on the first attempt, so a tool that wants confirmation asks for it.

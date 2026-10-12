@@ -78,11 +78,13 @@ export async function beginConversationRun(
     site: string | null;
     browser: RunBrowser;
     profile?: TakeoverProfile | null;
+    /** Where the person is, for a jar made now. See `lib/browser/egress.ts`. */
+    egressCountry?: string | null;
     signal?: AbortSignal;
   },
 ): Promise<BrowserResult<BegunRun>> {
   const known = input.profile === undefined ? await profileFor(env, input.userId) : input.profile;
-  const jar = known ?? (await runProfile(env, input.userId));
+  const jar = known ?? (await runProfile(env, input.userId, {}, input.egressCountry ?? null));
 
   const continuing = input.browser.providerSessionId;
   const opening = continuing === null;

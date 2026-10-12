@@ -762,6 +762,28 @@ describe("runProfile", () => {
     expect(createProfile.mock.calls[0][1]).toEqual({ name: "covan", userId: "user-1" });
   });
 
+  it("pins the jar it makes to the country the run was asked from", async () => {
+    const s = store();
+
+    const profile = await runProfile(ENV, "user-1", s.deps, "tr");
+
+    expect(profile).toEqual({
+      id: "prof-1",
+      providerProfileId: "bu-profile",
+      proxyCountryCode: "tr",
+    });
+    expect(s.profiles[0].proxy_country_code).toBe("tr");
+  });
+
+  it("keeps the country a jar was made with, whatever the run was asked from", async () => {
+    const s = store({ profiles: [profileRow({ proxy_country_code: "de" })] });
+
+    const profile = await runProfile(ENV, "user-1", s.deps, "tr");
+
+    expect(profile?.proxyCountryCode).toBe("de");
+    expect(createProfile).not.toHaveBeenCalled();
+  });
+
   it("makes one profile at the provider when two first runs race", async () => {
     const s = store();
 

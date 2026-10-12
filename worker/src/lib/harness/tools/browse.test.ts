@@ -1141,7 +1141,8 @@ describe("a person with no jar yet", () => {
 
     expect(result.kind).toBe("ok");
     expect(order).toEqual(["session", "provision", "run"]);
-    expect(runProfile).toHaveBeenCalledWith(expect.anything(), "user-1");
+    // No country on this context, so none to pin: the provider's default.
+    expect(runProfile).toHaveBeenCalledWith(expect.anything(), "user-1", {}, null);
     expect(sentRun().browserSettings).toEqual({ profileId: "prov-new" });
     // The claim named no jar, because there was none yet; the run's start is
     // where the row learns it, so the sweep can refresh it after a stop.
@@ -1150,6 +1151,14 @@ describe("a person with no jar yet", () => {
       providerSessionId: PROVIDER_SESSION,
       profileId: "prof-new",
     });
+  });
+
+  it("pins the new jar to the country the approving request came from", async () => {
+    runProfile.mockResolvedValue(null);
+
+    await browseTool.run({ task: TASK }, ctxWith({ confirmed: true, egressCountry: "tr" }));
+
+    expect(runProfile).toHaveBeenCalledWith(expect.anything(), "user-1", {}, "tr");
   });
 
   it("still runs, with no jar, when one cannot be provisioned", async () => {

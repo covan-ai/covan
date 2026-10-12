@@ -231,12 +231,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link to="/settings" onClick={() => setOpen(false)}>
+                <Link to="/settings/account" onClick={() => setOpen(false)}>
                   <User className="h-4 w-4" /> Profile
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link to="/settings" onClick={() => setOpen(false)}>
+                <Link to="/settings/workspace" onClick={() => setOpen(false)}>
                   <Settings className="h-4 w-4" /> Workspace settings
                 </Link>
               </DropdownMenuItem>

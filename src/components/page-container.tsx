@@ -1,15 +1,8 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { PAGE_WIDTHS } from "@/lib/page-widths";
 
-// Container width tiers by page role. Keeps every in-app page on the same
-// rhythm so screens don't drift apart. All tiers share the same padding.
-const WIDTHS = {
-  dashboard: "max-w-[1200px]",
-  list: "max-w-4xl",
-  form: "max-w-2xl",
-} as const;
-
-export type PageWidth = keyof typeof WIDTHS;
+export type PageWidth = keyof typeof PAGE_WIDTHS;
 
 export function PageContainer({
   width = "list",
@@ -21,7 +14,9 @@ export function PageContainer({
   children: ReactNode;
 }) {
   return (
-    <div className={cn("mx-auto px-5 py-14 lg:px-8", WIDTHS[width], className)}>{children}</div>
+    <div className={cn("mx-auto px-5 py-14 lg:px-8", PAGE_WIDTHS[width], className)}>
+      {children}
+    </div>
   );
 }
 

@@ -1,4 +1,4 @@
-import { Gauge, Settings, User } from "lucide-react";
+import { Gauge, Settings, User, Users } from "lucide-react";
 
 /**
  * The settings area's pages, in the order the rail lists them.
@@ -11,6 +11,7 @@ import { Gauge, Settings, User } from "lucide-react";
 export const SETTINGS_PAGES = [
   { to: "/settings/account", label: "Account", icon: User },
   { to: "/settings/workspace", label: "Workspace", icon: Settings },
+  { to: "/settings/members", label: "Members", icon: Users },
   { to: "/settings/usage", label: "Usage", icon: Gauge },
 ] as const;
 

@@ -197,8 +197,8 @@ of domains it holds, nothing else — a list longer than the places you signed i
 to, because a page drops cookies for other companies as it loads. Whether the
 saved sign-in still works on the second attempt is the site's decision rather
 than ours: Covan pins the egress country, and a site that binds a session to a
-single address will ask again (measured on LinkedIn). **Settings → Browser
-sign-ins** names those
+single address will ask again (measured on LinkedIn). **Settings → Account →
+Browser sign-ins** names those
 domains and forgets them on one click, and closing your account deletes the
 profile at the provider as well — the first because stopping Covan from holding
 a login should not cost somebody their account, the second because erasure has
@@ -329,7 +329,7 @@ agent signing in as that account. A personal login is different on purpose: it
 signs in inside your own profile, as a sign-in by hand does, so after Forget the
 site may stay signed in inside your own browser profile until its cookies
 expire. There is no per-site removal: to sign out completely, forget your
-browser sign-ins in **Settings → Browser sign-ins**, which signs you out of
+browser sign-ins in **Settings → Account → Browser sign-ins**, which signs you out of
 every site.
 
 **What this does not cover.** Say it plainly, because for some readers it is

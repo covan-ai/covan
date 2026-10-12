@@ -28,6 +28,7 @@ import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
 import { Route as AuthedAgentsAgentIdRouteImport } from './routes/_authed.agents.$agentId'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed.settings.index'
 import { Route as AuthedSettingsAccountRouteImport } from './routes/_authed.settings.account'
+import { Route as AuthedSettingsMembersRouteImport } from './routes/_authed.settings.members'
 import { Route as AuthedSettingsUsageRouteImport } from './routes/_authed.settings.usage'
 import { Route as AuthedSettingsWorkspaceRouteImport } from './routes/_authed.settings.workspace'
 import { Route as AuthedAgentsAgentIdIndexRouteImport } from './routes/_authed.agents.$agentId.index'
@@ -132,6 +133,11 @@ const AuthedSettingsAccountRoute = AuthedSettingsAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => AuthedSettingsRoute,
 } as any)
+const AuthedSettingsMembersRoute = AuthedSettingsMembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
 const AuthedSettingsUsageRoute = AuthedSettingsUsageRouteImport.update({
   id: '/usage',
   path: '/usage',
@@ -202,6 +208,7 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof AuthedWelcomeRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/settings/account': typeof AuthedSettingsAccountRoute
+  '/settings/members': typeof AuthedSettingsMembersRoute
   '/settings/usage': typeof AuthedSettingsUsageRoute
   '/settings/workspace': typeof AuthedSettingsWorkspaceRoute
   '/settings/': typeof AuthedSettingsIndexRoute
@@ -229,6 +236,7 @@ export interface FileRoutesByTo {
   '/team': typeof AuthedTeamRoute
   '/welcome': typeof AuthedWelcomeRoute
   '/settings/account': typeof AuthedSettingsAccountRoute
+  '/settings/members': typeof AuthedSettingsMembersRoute
   '/settings/usage': typeof AuthedSettingsUsageRoute
   '/settings/workspace': typeof AuthedSettingsWorkspaceRoute
   '/settings': typeof AuthedSettingsIndexRoute
@@ -260,6 +268,7 @@ export interface FileRoutesById {
   '/_authed/welcome': typeof AuthedWelcomeRoute
   '/_authed/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/_authed/settings/account': typeof AuthedSettingsAccountRoute
+  '/_authed/settings/members': typeof AuthedSettingsMembersRoute
   '/_authed/settings/usage': typeof AuthedSettingsUsageRoute
   '/_authed/settings/workspace': typeof AuthedSettingsWorkspaceRoute
   '/_authed/settings/': typeof AuthedSettingsIndexRoute
@@ -291,6 +300,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/agents/$agentId'
     | '/settings/account'
+    | '/settings/members'
     | '/settings/usage'
     | '/settings/workspace'
     | '/settings/'
@@ -318,6 +328,7 @@ export interface FileRouteTypes {
     | '/team'
     | '/welcome'
     | '/settings/account'
+    | '/settings/members'
     | '/settings/usage'
     | '/settings/workspace'
     | '/settings'
@@ -348,6 +359,7 @@ export interface FileRouteTypes {
     | '/_authed/welcome'
     | '/_authed/agents/$agentId'
     | '/_authed/settings/account'
+    | '/_authed/settings/members'
     | '/_authed/settings/usage'
     | '/_authed/settings/workspace'
     | '/_authed/settings/'
@@ -508,6 +520,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsAccountRouteImport
       parentRoute: typeof AuthedSettingsRoute
     }
+    '/_authed/settings/members': {
+      id: '/_authed/settings/members'
+      path: '/members'
+      fullPath: '/settings/members'
+      preLoaderRoute: typeof AuthedSettingsMembersRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
     '/_authed/settings/usage': {
       id: '/_authed/settings/usage'
       path: '/usage'
@@ -576,6 +595,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthedSettingsRouteChildren {
   AuthedSettingsAccountRoute: typeof AuthedSettingsAccountRoute
+  AuthedSettingsMembersRoute: typeof AuthedSettingsMembersRoute
   AuthedSettingsUsageRoute: typeof AuthedSettingsUsageRoute
   AuthedSettingsWorkspaceRoute: typeof AuthedSettingsWorkspaceRoute
   AuthedSettingsIndexRoute: typeof AuthedSettingsIndexRoute
@@ -583,6 +603,7 @@ interface AuthedSettingsRouteChildren {
 
 const AuthedSettingsRouteChildren: AuthedSettingsRouteChildren = {
   AuthedSettingsAccountRoute: AuthedSettingsAccountRoute,
+  AuthedSettingsMembersRoute: AuthedSettingsMembersRoute,
   AuthedSettingsUsageRoute: AuthedSettingsUsageRoute,
   AuthedSettingsWorkspaceRoute: AuthedSettingsWorkspaceRoute,
   AuthedSettingsIndexRoute: AuthedSettingsIndexRoute,

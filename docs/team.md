@@ -238,7 +238,7 @@ another person's name.
 
 ### Usage figures are yours alone
 
-The usage breakdown on Settings counts your conversations and nobody else's.
+The usage breakdown on Settings → Usage counts your conversations and nobody else's.
 `workspace_usage` still lists every agent in the workspace — at zero for ones
 you have not used — but the tokens against each are yours.
 
@@ -393,7 +393,7 @@ did nothing.
 
 ### The trash
 
-Settings → **Recently deleted**, for anyone who can write. It reads
+Settings → Workspace → **Recently deleted**, for anyone who can write. It reads
 `workspace_trash()` — `security definer`, checking `can_write_in_workspace` for
 itself and raising `42501`, the arrangement `workspace_usage_all` already uses —
 because the policies above hide the rows from the ordinary path. A viewer gets
@@ -535,7 +535,7 @@ pause outlives the rejoining, and only its owner can clear it.
 ## Taking a workspace with you
 
 Before the section below, because it is the thing to do first. Settings →
-**Take it with you** downloads the workspace as one archive: agents, bundles,
+Workspace → **Take it with you** downloads the workspace as one archive: agents, bundles,
 documents and their original files, chats and messages, ideas, routines — plus
 the SQL to replay all of it into a Covan you run yourself. Not gated on a role,
 because it is a read: your archive holds what you could already see, and
@@ -605,7 +605,7 @@ to leave un-owned.
 
 ## Deleting a person
 
-Unlike a workspace, this one has a door. **Settings → Close account** calls
+Unlike a workspace, this one has a door. **Settings → Account → Close account** calls
 `DELETE /account`, and it is immediate rather than a request somebody processes.
 The operator path below still exists and still works, and what follows describes
 both, because the schema is what decides most of it either way.

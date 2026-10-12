@@ -96,7 +96,7 @@ function StepLink({ step, agentId }: { step: FirstWeekStep; agentId: string }) {
       );
     case "team":
       return (
-        <Link to="/team" className={className}>
+        <Link to="/settings/members" className={className}>
           Invite someone
         </Link>
       );

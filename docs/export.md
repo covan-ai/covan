@@ -1,6 +1,6 @@
 # Taking a workspace with you
 
-Settings → **Take it with you** → _Download the archive_. One zip, containing
+Settings → Workspace → **Take it with you** → _Download the archive_. One zip, containing
 everything the workspace holds and the SQL to put it back into a Covan you run
 yourself.
 

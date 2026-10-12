@@ -7,7 +7,7 @@ sign in — a script, a scheduled job, another service.
 
 ## Getting a key
 
-Settings → **API keys** → **New key**. Give it a name you will recognise later,
+Settings → Account → **API keys** → **New key**. Give it a name you will recognise later,
 and copy the key when it is shown. It is shown once. Covan stores a SHA-256 hash
 of it and nothing else, so there is no screen — and no support request — that can
 produce it again. If you lose one, revoke it and make another.

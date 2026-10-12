@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestUser, serviceClient, sql, closeSql, type TestUser } from "./harness";
 import { seedWorkspace } from "./fixtures";
-import { collectWorkspace as collectWith, type Collected } from "../../worker/src/lib/export/collect";
+import {
+  collectWorkspace as collectWith,
+  type Collected,
+} from "../../worker/src/lib/export/collect";
 import { renderSql, MISSING_SECRET } from "../../worker/src/lib/export/sql";
 
 /**

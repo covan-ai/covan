@@ -17,13 +17,14 @@ describe("authEmailTemplates", () => {
     expect(authEmailTemplates.map((t) => t.filename)).toEqual([
       "confirm-signup.html",
       "reset-password.html",
+      "change-email.html",
       "password-changed.html",
     ]);
   });
 
   // Supabase substitutes this server-side. Get the name wrong and the button
   // renders as an empty href — a mail that looks finished and goes nowhere.
-  it.each(["confirm-signup.html", "reset-password.html"])(
+  it.each(["confirm-signup.html", "reset-password.html", "change-email.html"])(
     "%s asks somebody to follow a link, so it carries one",
     (filename) => {
       const template = authEmailTemplates.find((t) => t.filename === filename);
@@ -44,6 +45,15 @@ describe("authEmailTemplates", () => {
     const changed = authEmailTemplates.find((t) => t.filename === "password-changed.html");
     expect(changed?.html).not.toContain("{{ .ConfirmationURL }}");
     expect(changed?.html).toContain("Forgot password");
+  });
+
+  // GoTrue sends the same template to the old address and the new one, so the
+  // copy names the new address outright; "this address" would be wrong in one
+  // of the two inboxes. `.NewEmail` is GoTrue's variable, substituted like the
+  // link — misspelt, it renders empty.
+  it("names the address the account is moving to", () => {
+    const change = authEmailTemplates.find((t) => t.filename === "change-email.html");
+    expect(change?.html).toContain("{{ .NewEmail }}");
   });
 
   it("renders each one in the Covan shell", () => {

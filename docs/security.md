@@ -461,6 +461,33 @@ That behaviour is newer than the product and it was a deliberate decision rather
 than a bug fix. [What removal leaves behind](team.md#what-removal-leaves-behind)
 covers the whole of it, including the two things that survive on purpose.
 
+## Profile photos
+
+A photo somebody uploads is served from a URL anyone holding it can open —
+`/avatars/<user>/<file>` on the API, with no sign-in — because an `<img>` tag
+cannot send a token. The URL is the permission, which makes it a capability
+rather than a secret path, and three properties are what make that acceptable:
+
+- **Unguessable.** The file name is 128 random bits chosen by the server. It is
+  handed out only where the profile already is: to the person, and to the people
+  who share a workspace with them.
+- **Immutable.** A new upload is a new URL; nothing ever changes behind an old
+  one. Replacing or removing a photo deletes the old file, so a URL somebody
+  kept stops working rather than showing the photo you took down.
+- **Erased with the account.** Closing an account deletes the photo along with
+  the uploaded documents of the workspaces that go with it.
+
+What gets stored is decided from the file's own bytes: PNG, JPEG or WebP, at
+most 2 MB, whatever the browser claimed. An SVG is refused outright, because it
+is a document that can carry script rather than a picture. Each response is
+served with its type fixed by the server, `nosniff`, and a sandboxing content
+security policy, so a photo opened as a page cannot run anything.
+
+The profile's email address is not yours to write directly: it follows the
+address Supabase Auth has confirmed, through a database trigger, and the column
+is withheld from every client's update grant. Changing it goes through Supabase's
+own confirmation, sent to both the old address and the new one.
+
 ## API keys
 
 A key is not a second permission system. It looks the key up, mints a

@@ -2,7 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader, SectionHeading } from "@/components/page-container";
 import { SettingsPage } from "@/components/settings/settings-page";
-import { ProfileForm } from "@/components/settings/profile-form";
+import { ProfileForm } from "@/components/account/profile-form";
+import { EmailCard } from "@/components/account/email-card";
+import { PasswordCard } from "@/components/account/password-card";
 import { PersonalPreferencesSection } from "@/components/preferences-section";
 import { DeliveryChannelsCard } from "@/components/routines/delivery-channels-card";
 import { ApiKeysSection } from "@/components/api-keys-section";
@@ -36,6 +38,14 @@ function AccountSettingsPage() {
         <SectionHeading title="Profile" />
         {/* `key` is the seeding — see `ProfileForm`. */}
         <ProfileForm key={me?.user.id ?? "pending"} user={me?.user} />
+      </section>
+
+      <section className="mt-16">
+        <SectionHeading title="Signing in" />
+        {/* Keyed on the address, so a finished change (which refetches `me`)
+            clears the "we sent a link" note along with the input. */}
+        <EmailCard key={me?.user.email ?? "pending"} email={me?.user.email} />
+        <PasswordCard />
       </section>
 
       <PersonalPreferencesSection me={me} />

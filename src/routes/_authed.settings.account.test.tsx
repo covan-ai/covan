@@ -10,10 +10,15 @@ vi.mock("@tanstack/react-router", () => ({
 
 const me = meFixture({ user: { name: "Ada Lovelace" } });
 vi.mock("@/lib/api-client", () => ({
-  api: { me: () => Promise.resolve(me), profile: { update: vi.fn() } },
-  ApiError: class ApiError extends Error {},
+  api: { me: () => Promise.resolve(me) },
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/account/profile-form", () => ({
+  ProfileForm: ({ user }: { user?: { name: string | null } }) => (
+    <div data-testid="profile">{user?.name}</div>
+  ),
+}));
+vi.mock("@/components/account/email-card", () => ({ EmailCard: stub("email") }));
+vi.mock("@/components/account/password-card", () => ({ PasswordCard: stub("password") }));
 vi.mock("@/components/preferences-section", () => ({
   PersonalPreferencesSection: stub("preferences"),
 }));
@@ -31,16 +36,22 @@ vi.mock("@/components/close-account-section", () => ({
 const { Route } = await import("./_authed.settings.account");
 
 describe("/settings/account", () => {
-  it("fills your display name in once `me` arrives", async () => {
+  it("hands your profile to the form once `me` arrives", async () => {
     renderRoute(Route);
-    expect(await screen.findByDisplayValue("Ada Lovelace")).toBeInTheDocument();
+    expect(await screen.findByText("Ada Lovelace")).toBeInTheDocument();
   });
 
   it("holds what is yours, and closing the account comes last", async () => {
     renderRoute(Route);
-    const sections = ["preferences", "delivery-channels", "api-keys", "browser-signins"].map((id) =>
-      screen.getByTestId(id),
-    );
+    const sections = [
+      "profile",
+      "email",
+      "password",
+      "preferences",
+      "delivery-channels",
+      "api-keys",
+      "browser-signins",
+    ].map((id) => screen.getByTestId(id));
     const close = screen.getByTestId("close-account");
     for (const section of sections) {
       expect(

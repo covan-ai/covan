@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { avatarSrc } from "@/lib/avatar-src";
 
 /** "Ada Lovelace" -> "AL". Falls back to a dash so a row never looks broken. */
 export function getInitials(name: string | null | undefined, fallback = "–"): string {
@@ -29,10 +30,11 @@ export function UserAvatar({
   url?: string | null;
   className?: string;
 }) {
-  if (url) {
+  const src = avatarSrc(url);
+  if (src) {
     return (
       <img
-        src={url}
+        src={src}
         alt={name ?? ""}
         className={cn("shrink-0 rounded-md object-cover", className)}
       />

@@ -1,5 +1,6 @@
 import { supabase } from "./supabase/client";
 import { ApiError, errorMessage } from "./api-error";
+import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
@@ -53,10 +54,41 @@ export type WorkspaceMember = {
   email: string | null;
   role: string;
   avatarUrl: string | null;
+  /** Optional because an API older than profile fields sends neither. */
+  bio?: string | null;
+  timezone?: string | null;
+};
+
+/**
+ * You, as `PATCH /me` and the avatar routes answer. `bio`, `locale` and
+ * `timezone` are optional for the same reason they are on `WorkspaceMember`.
+ */
+export type Profile = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  bio?: string | null;
+  /** BCP 47, e.g. "tr-TR". Null follows the browser. */
+  locale?: string | null;
+  /** IANA, e.g. "Europe/Istanbul". Null follows the device. */
+  timezone?: string | null;
+};
+
+/**
+ * What `PATCH /me` accepts. Only the keys present are written; null clears a
+ * field. Email and avatar are not here: email changes through Supabase Auth,
+ * which owns the address, and the avatar through its own upload route.
+ */
+export type ProfilePatch = {
+  name?: string;
+  bio?: string | null;
+  locale?: string | null;
+  timezone?: string | null;
 };
 
 export type Me = {
-  user: { id: string; name: string | null; email: string | null; avatarUrl: string | null };
+  user: Profile;
   workspace: Workspace;
   members: WorkspaceMember[];
   /**
@@ -197,19 +229,9 @@ async function fetchDocumentBytes(id: string): Promise<{ blob: Blob; contentType
   return { blob: await res.blob(), contentType: res.headers.get("Content-Type") ?? "" };
 }
 
-/**
- * An `<img src>` for something this API serves without a token.
- *
- * The one caller is the toolkit logo, and the reason it needs a helper at all
- * is that `request()` cannot be it: an `<img>` sends no `Authorization`
- * header, so the address has to be built rather than fetched. What comes back
- * from the catalogue is a path and never a third-party URL, so this cannot be
- * pointed off-origin by anything the API says — see `allowedLogoUrl` in the
- * worker for the other half.
- */
-export function assetSrc(path: string): string {
-  return path ? `${import.meta.env.VITE_API_URL}${path}` : "";
-}
+// Defined in asset-src.ts, which imports nothing, so the avatar helper that
+// builds on it can be tested without this module's Supabase client.
+export { assetSrc };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = await getAccessToken();
@@ -248,6 +270,34 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
 
   return JSON.parse(text) as T;
+}
+
+/**
+ * One file as multipart, with the same errors `request()` throws.
+ *
+ * Not `uploadWithProgress`, which is POST-only and built around a progress
+ * bar; an avatar is a few kilobytes by the time it is sent and replaces
+ * whatever was there, so it is a PUT and there is nothing to watch.
+ */
+async function sendForm<T>(method: string, path: string, file: Blob): Promise<T> {
+  const token = await getAccessToken();
+  const form = new FormData();
+  form.append("file", file, file instanceof File ? file.name : "upload");
+  const res = await fetch(`${import.meta.env.VITE_API_URL}${path}`, {
+    method,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      message = errorMessage(res.status, await res.json(), res.statusText);
+    } catch {
+      // ignore JSON parse failure, fall back to statusText
+    }
+    throw new ApiError(res.status, message);
+  }
+  return (await res.json()) as T;
 }
 
 // XHR-based upload with progress. Kept separate from `request()` because the
@@ -546,7 +596,10 @@ export const api = {
       ),
   },
   profile: {
-    update: (patch: { name: string }): Promise<Me["user"]> => request("PATCH", "/me", patch),
+    update: (patch: ProfilePatch): Promise<Profile> => request("PATCH", "/me", patch),
+    /** Already resized by `resizeAvatar`; the server still checks it is an image. */
+    uploadAvatar: (image: Blob): Promise<Profile> => sendForm("PUT", "/me/avatar", image),
+    removeAvatar: (): Promise<Profile> => request("DELETE", "/me/avatar"),
   },
   workspaces: {
     list: (): Promise<WorkspaceSummary[]> => request("GET", "/workspaces"),

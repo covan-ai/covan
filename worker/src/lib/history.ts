@@ -61,6 +61,18 @@ function capContent(content: string, cap: number): string {
 }
 
 /**
+ * Where a trim cuts back to, as a share of the ceiling it was triggered by.
+ *
+ * A window that trims to exactly its ceiling drops the oldest message on every
+ * turn once a conversation sits just over the line, and the oldest message is
+ * the front of the transcript — the part prompt caching keys on. Every turn then
+ * pays a cache write on the whole history to make room for one short message
+ * (#250). Cutting back to three quarters leaves a quarter of the budget as slack
+ * — 8,000 chars at the default — and the front stays put until that is spent.
+ */
+export const HISTORY_LOW_WATER_SHARE = 0.75;
+
+/**
  * Select the newest slice of conversation history that fits within a character
  * budget, cutting the per-turn cost of long chats. Without this, every turn
  * re-sends the entire history, so cost grows quadratically over a conversation.
@@ -74,29 +86,64 @@ function capContent(content: string, cap: number): string {
  * - `rows` arrive oldest-first and are returned oldest-first.
  * - Each message is first capped to `perMessageCap` chars so one giant paste
  *   can't dominate (or get re-sent in full on every subsequent turn).
- * - Messages are then admitted newest-first until `maxChars` is exhausted; the
- *   most recent turns matter most. The newest message is always kept even if it
- *   alone exceeds the budget, so there is always something to respond to.
+ * - Under `maxChars` in total, everything is sent.
+ * - Over it, the front is cut — but to `lowWater`, not to `maxChars`, and in
+ *   bands. The newest message is always kept even if it alone exceeds the
+ *   budget, so there is always something to respond to.
+ *
+ * THE BANDED CUT, AND WHY A STATELESS FUNCTION CAN HOLD THE FRONT STILL. There
+ * is nowhere to remember where the last turn cut, and there does not need to be.
+ * Let `T` be the capped total and `slack = maxChars - lowWater`. The cut offset
+ * is the excess rounded *up* to a whole number of slacks:
+ *
+ *     cutAt = slack * ceil((T - maxChars) / slack)
+ *
+ * and the front is the first message that starts at or after `cutAt` chars into
+ * the conversation. Two facts make that stable across turns. Appending a message
+ * never changes where any earlier message starts — the prefix sums of an
+ * append-only list are fixed. And `cutAt` only changes when `T` crosses into the
+ * next band of `slack` chars. So between those crossings every turn computes the
+ * same `cutAt` over the same prefix sums and lands on the same front: the
+ * transcript the provider sees starts with the same bytes, and the cache entry
+ * the last turn wrote is still a prefix of this one. The front moves at most once
+ * per `slack` chars appended, instead of on every turn.
+ *
+ * What is sent is never more than `maxChars` (bar the newest-message exception):
+ * the kept suffix is `T - start(front) <= T - cutAt <= maxChars`. Right after a
+ * cut it is just over `lowWater`, and it grows back towards `maxChars` until the
+ * next band cuts again — the same window on average, a fraction of the writes.
+ *
+ * `lowWater` at or above `maxChars` leaves no slack, and the cut is then the
+ * plain one this function always made: the longest newest suffix that fits.
  */
 export function selectHistory(
   rows: HistoryTurn[],
   {
     maxChars = HISTORY_CHAR_BUDGET,
     perMessageCap = PER_MESSAGE_CHAR_CAP,
-  }: { maxChars?: number; perMessageCap?: number } = {},
+    lowWater = Math.round(maxChars * HISTORY_LOW_WATER_SHARE),
+  }: { maxChars?: number; perMessageCap?: number; lowWater?: number } = {},
 ): HistoryTurn[] {
   if (rows.length === 0) return [];
 
   const capped = rows.map((r) => ({ role: r.role, content: capContent(r.content, perMessageCap) }));
 
-  const kept: HistoryTurn[] = [];
-  let used = 0;
-  for (let i = capped.length - 1; i >= 0; i--) {
-    const len = capped[i].content.length;
-    // Always keep the newest message; admit older ones only while they fit.
-    if (kept.length > 0 && used + len > maxChars) break;
-    kept.push(capped[i]);
-    used += len;
+  const total = capped.reduce((n, m) => n + m.content.length, 0);
+  if (total <= maxChars) return capped;
+
+  const excess = total - maxChars;
+  const slack = maxChars - lowWater;
+  const cutAt = slack > 0 ? slack * Math.ceil(excess / slack) : excess;
+
+  // The first message that starts at or past the cut; the newest at the latest.
+  let front = capped.length - 1;
+  let start = 0;
+  for (let i = 0; i < capped.length - 1; i++) {
+    if (start >= cutAt) {
+      front = i;
+      break;
+    }
+    start += capped[i].content.length;
   }
-  return kept.reverse();
+  return capped.slice(front);
 }

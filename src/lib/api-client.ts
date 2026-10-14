@@ -2,7 +2,7 @@ import { supabase } from "./supabase/client";
 import { ApiError, errorMessage } from "./api-error";
 import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
-import type { Agent, ChatSession, Idea, Message } from "./agents-store";
+import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-store";
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
   Connection,
@@ -538,6 +538,15 @@ export const api = {
       request("PATCH", `/sessions/${id}`, { visibility }),
     rename: (id: string, title: string): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, { title }),
+    /**
+     * Turn the dial on one conversation: its model, how hard it thinks, its
+     * mode, and whether it may search the web. Only the fields named are
+     * sent; a null puts that one back to the agent's own. Owner-only, by the
+     * same policy that guards rename and share — the server refuses anyone
+     * else whether or not the control was showing.
+     */
+    tune: (id: string, patch: SessionTuning): Promise<ChatSession> =>
+      request("PATCH", `/sessions/${id}`, patch),
     /**
      * The browser beside one conversation: its tasks newest first, the
      * browser's own state, what the agent did since the last ask, and whether

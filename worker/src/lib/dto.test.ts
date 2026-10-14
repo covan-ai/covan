@@ -257,6 +257,56 @@ describe("mapChatSession visibility/owner", () => {
   });
 });
 
+describe("mapChatSession dial (0099)", () => {
+  const row = {
+    id: "s1",
+    agent_id: "a1",
+    user_id: "u1",
+    title: "T",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("sends null for every setting a row does not have, meaning the agent's", () => {
+    expect(mapChatSession(row, [])).toMatchObject({
+      model: null,
+      reasoningEffort: null,
+      webSearch: null,
+      mode: null,
+    });
+    expect(
+      mapChatSession(
+        { ...row, model: null, reasoning_effort: null, web_search: null, mode: null },
+        [],
+      ),
+    ).toMatchObject({ model: null, reasoningEffort: null, webSearch: null, mode: null });
+  });
+
+  it("surfaces the session's own choices in camelCase", () => {
+    expect(
+      mapChatSession(
+        {
+          ...row,
+          model: "claude-opus-5",
+          reasoning_effort: "minimal",
+          web_search: false,
+          mode: "brainstorm",
+        },
+        [],
+      ),
+    ).toMatchObject({
+      model: "claude-opus-5",
+      reasoningEffort: "minimal",
+      webSearch: false,
+      mode: "brainstorm",
+    });
+  });
+
+  it("narrows a value the client cannot name to null", () => {
+    const s = mapChatSession({ ...row, reasoning_effort: "extreme", mode: "loud", model: "" }, []);
+    expect(s).toMatchObject({ reasoningEffort: null, mode: null, model: null });
+  });
+});
+
 describe("mapIdea", () => {
   const base = {
     id: "i1",

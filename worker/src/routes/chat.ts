@@ -46,7 +46,7 @@ import {
   reasoningEffortFor,
   promptParts,
 } from "../lib/prompt";
-import { effectiveMode } from "../lib/session-mode";
+import { effectiveMode, effectiveTuning } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
 import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
@@ -214,6 +214,13 @@ chat.post("/chat/stream", async (c) => {
   const turns = regenerate ? rows.slice(0, -1) : rows;
 
   const mode: "normal" | "brainstorm" = effectiveMode(session, agent);
+  // The model, effort and web search this conversation answers with: the
+  // session's own where the person turned the dial in the composer, the
+  // agent's where they did not (`lib/session-mode.ts`, 0099). Every place
+  // below that used to read the agent's setting reads this instead, so the
+  // prompt that tells the model it may search and the request that lets it
+  // cannot disagree.
+  const tuning = effectiveTuning(session, agent, availableModels(env));
 
   // What the agent knows, assembled for this question: the manifest of document
   // names, the grounding block, what grounded it, and which path found it. This
@@ -266,7 +273,7 @@ chat.post("/chat/stream", async (c) => {
       persona: agent.persona,
       mode,
       docNames,
-      webSearchEnabled: agent.web_search ?? false,
+      webSearchEnabled: tuning.webSearch,
       now: new Date(),
       timezone: visitorZone,
     }) + (manifest ? `\n\n${manifest}` : "");
@@ -337,11 +344,12 @@ chat.post("/chat/stream", async (c) => {
     history,
     question,
     toolNames: tools.map((t) => t.name),
-    webSearch: agent.web_search ?? false,
+    webSearch: tuning.webSearch,
     mode,
   });
 
-  // The agent's model, unless this one reply asked for another.
+  // The conversation's model, unless this one reply asked for another — the
+  // session's when somebody chose one for this thread, otherwise the agent's.
   //
   // Checked against what this deployment can actually serve rather than taken
   // on trust: an id nobody offers falls back to the agent's own, which is the
@@ -351,7 +359,7 @@ chat.post("/chat/stream", async (c) => {
   // something stronger" has no business overwriting it.
   const requested = parsed.data.model;
   const picked =
-    requested && (availableModels(env) as string[]).includes(requested) ? requested : agent.model;
+    requested && (availableModels(env) as string[]).includes(requested) ? requested : tuning.model;
   const model = resolveModel(picked, env);
 
   const signal = c.req.raw.signal;
@@ -734,12 +742,12 @@ chat.post("/chat/stream", async (c) => {
             messages,
             maxTokens: maxTokensFor(mode),
             temperature: temperatureFor(mode, agent.temperature),
-            reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
+            reasoningEffort: reasoningEffortFor(tuning.reasoningEffort),
             // The one caller that shows it. On a model and an effort that
             // deliberate, the alternative is a long pause with nothing on
             // screen, which reads as a product that has stopped working.
             showThinking: true,
-            webSearch: agent.web_search ?? false,
+            webSearch: tuning.webSearch,
           },
           tools,
           ctx: await buildToolContext({
@@ -1075,6 +1083,11 @@ chat.post("/chat/confirm/:id", async (c) => {
     .eq("id", pause.agentId)
     .maybeSingle();
   const mode: "normal" | "brainstorm" = effectiveMode(session, agent ?? {});
+  // And the thread's own dial over the agent's, as on the question that paused
+  // (`lib/session-mode.ts`). The session row above is `select("*")`, so its
+  // 0099 columns are already here. Only effort and web search are taken from
+  // it: the model is the parked one, for the reason given above.
+  const tuning = effectiveTuning(session, agent ?? {});
 
   // Claimed before anything runs, and the claim is what makes a double-click
   // safe: the second request finds nothing pending and is refused here rather
@@ -1494,9 +1507,9 @@ chat.post("/chat/confirm/:id", async (c) => {
             messages,
             maxTokens: maxTokensFor(mode),
             temperature: temperatureFor(mode, agent?.temperature),
-            reasoningEffort: reasoningEffortFor(agent?.reasoning_effort),
+            reasoningEffort: reasoningEffortFor(tuning.reasoningEffort),
             showThinking: true,
-            webSearch: agent?.web_search ?? false,
+            webSearch: tuning.webSearch,
           },
           tools,
           // Not `ctx`: the approval covered one call, and a tool the model

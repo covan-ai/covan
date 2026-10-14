@@ -147,6 +147,153 @@ describe("PATCH /sessions/:id", () => {
   });
 });
 
+// The dial a conversation turns for itself (0099). Null is a value here — it
+// hands the setting back to the agent — so it has to reach the column rather
+// than be dropped as "not sent".
+describe("PATCH /sessions/:id — the dial", () => {
+  it("writes each setting to its own column and returns it", async () => {
+    const { app, fake } = appWith();
+
+    const res = await patch(app, {
+      model: "gpt-5",
+      reasoningEffort: "high",
+      webSearch: true,
+      mode: "brainstorm",
+    });
+
+    expect(res.status).toBe(200);
+    expect(fake.callsTo("chat_sessions")[0].values).toEqual({
+      model: "gpt-5",
+      reasoning_effort: "high",
+      web_search: true,
+      mode: "brainstorm",
+    });
+    await expect(res.json()).resolves.toMatchObject({
+      model: "gpt-5",
+      reasoningEffort: "high",
+      webSearch: true,
+      mode: "brainstorm",
+    });
+  });
+
+  it("clears a setting back to the agent's with null", async () => {
+    const { app, fake } = appWith();
+
+    const res = await patch(app, { model: null, reasoningEffort: null });
+
+    expect(res.status).toBe(200);
+    expect(fake.callsTo("chat_sessions")[0].values).toEqual({
+      model: null,
+      reasoning_effort: null,
+    });
+  });
+
+  it("names only the setting that was sent", async () => {
+    const { app, fake } = appWith();
+
+    await patch(app, { reasoningEffort: "minimal" });
+
+    expect(fake.callsTo("chat_sessions")[0].values).toEqual({ reasoning_effort: "minimal" });
+  });
+
+  it("refuses a model this deployment cannot answer on", async () => {
+    const { app, fake } = appWith();
+
+    // No Anthropic key in this env, so a Claude id is as unserved as a made-up one.
+    for (const model of ["not-a-model", "claude-opus-5"]) {
+      const res = await patch(app, { model });
+      expect(res.status).toBe(400);
+    }
+    expect(fake.callsTo("chat_sessions")).toHaveLength(0);
+  });
+
+  it("accepts a Claude model where the deployment has the key", async () => {
+    const { app, fake } = appWith();
+
+    const res = await app.request(
+      "/sessions/session-1",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "claude-opus-5" }),
+      },
+      { ANTHROPIC_API_KEY: "sk-test" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(fake.callsTo("chat_sessions")[0].values).toEqual({ model: "claude-opus-5" });
+  });
+
+  it("refuses an effort or a mode outside the four and the two", async () => {
+    const { app, fake } = appWith();
+
+    expect((await patch(app, { reasoningEffort: "extreme" })).status).toBe(400);
+    expect((await patch(app, { mode: "loud" })).status).toBe(400);
+    expect((await patch(app, { webSearch: "yes" })).status).toBe(400);
+    expect(fake.callsTo("chat_sessions")).toHaveLength(0);
+  });
+});
+
+describe("POST /sessions — the dial", () => {
+  function appCreating() {
+    return appWith({
+      tables: {
+        agents: { select: () => ({ data: { workspace_id: "ws-1" }, error: null }) },
+        chat_sessions: {
+          insert: (ctx: QueryContext) => ({
+            data: { ...SESSION_ROW, ...ctx.values },
+            error: null,
+          }),
+        },
+      },
+    });
+  }
+  const post = (app: Hono<AppEnv>, body: unknown) =>
+    app.request("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("starts a session with the dial already turned", async () => {
+    const { app, fake } = appCreating();
+
+    const res = await post(app, { agentId: "agent-1", model: "gpt-4.1", webSearch: false });
+
+    expect(res.status).toBe(201);
+    const values = fake.callsTo("chat_sessions")[0].values;
+    expect(values).toMatchObject({ model: "gpt-4.1", web_search: false });
+    expect(values).not.toHaveProperty("reasoning_effort");
+    expect(values).not.toHaveProperty("mode");
+    await expect(res.json()).resolves.toMatchObject({
+      model: "gpt-4.1",
+      webSearch: false,
+      reasoningEffort: null,
+      mode: null,
+    });
+  });
+
+  it("writes none of the dial's columns when none was sent", async () => {
+    const { app, fake } = appCreating();
+
+    await post(app, { agentId: "agent-1" });
+
+    const values = fake.callsTo("chat_sessions")[0].values ?? {};
+    for (const column of ["model", "reasoning_effort", "web_search", "mode"]) {
+      expect(values).not.toHaveProperty(column);
+    }
+  });
+
+  it("refuses a model this deployment cannot answer on", async () => {
+    const { app, fake } = appCreating();
+
+    const res = await post(app, { agentId: "agent-1", model: "not-a-model" });
+
+    expect(res.status).toBe(400);
+    expect(fake.callsTo("chat_sessions")).toHaveLength(0);
+  });
+});
+
 describe("GET /sessions/:id/messages", () => {
   const row = (id: string, at: string) => ({
     id,

@@ -2,7 +2,12 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
+import {
+  useAgentsStore,
+  type ChatSession,
+  type Message,
+  type SessionTuning,
+} from "@/lib/agents-store";
 import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
@@ -31,13 +36,14 @@ import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
 import { useCredits, creditsSentence } from "@/lib/credits";
 import { startersFor } from "@/lib/chat-starters";
-import { modelsFor } from "@/lib/agent-meta";
+import { dialLabel, modelsFor, specFor } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
 import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
 import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
+import { TurnDial } from "@/components/chat/turn-dial";
 import { Button } from "@/components/ui/button";
 import { BrowserPanel } from "@/components/chat/browser-panel";
 import { TakeoverCard } from "@/components/chat/takeover-card";
@@ -176,12 +182,17 @@ function ChatTab() {
   const canGrantStanding = me
     ? isAdminRole(me.members?.find((m) => m.id === me.user.id)?.role)
     : false;
+  // The model this conversation is answered on: its own pick from the dial in
+  // the composer, or the agent's when it has none. Everything on this screen
+  // that names a model reads this one, so the chip, the sentence under the
+  // composer and the retry menu cannot disagree about what is answering.
+  const effectiveModel = active?.model ?? agent.model;
   // What "try that again on something else" can offer: what this deployment
-  // can actually serve, minus the model the agent is already on. Offering that
-  // one back is not an offer.
+  // can actually serve, minus the model this conversation is already on.
+  // Offering that one back is not an offer.
   const pickableModels = useMemo(
-    () => modelsFor(me?.models, agent.model).filter((m) => m !== agent.model),
-    [me?.models, agent.model],
+    () => modelsFor(me?.models, agent.model).filter((m) => m !== effectiveModel),
+    [me?.models, agent.model, effectiveModel],
   );
   const isOwner = !!active && active.ownerId === currentUserId;
   const isShared = active?.visibility === "shared";
@@ -190,6 +201,44 @@ function ChatTab() {
     mutationFn: ({ id, visibility }: { id: string; visibility: "private" | "shared" }) =>
       api.sessions.setVisibility(id, visibility),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+  // The dial in the composer. Optimistic, like a rename: the chip is the thing
+  // somebody just pressed, and a chip that keeps its old value for a round trip
+  // reads as the press not having taken. A refusal puts the list back as it
+  // was and says so; either way the list is re-read, so what the screen shows
+  // is what the server stored.
+  const tuneMutation = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: SessionTuning }) =>
+      api.sessions.tune(id, patch),
+    onMutate: async ({ id, patch }) => {
+      await queryClient.cancelQueries({ queryKey: ["sessions"] });
+      const previous = queryClient.getQueryData<ChatSession[]>(["sessions"]);
+      queryClient.setQueryData<ChatSession[]>(["sessions"], (old) =>
+        old?.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      );
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(["sessions"], context.previous);
+      toast.error("Couldn't change that.");
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+  // Stable, so the memoised dial is not redrawn by every streamed token.
+  const dialModels = useMemo(() => modelsFor(me?.models, agent.model), [me?.models, agent.model]);
+  // The write in flight, if one is. `submit` waits on it before it asks for a
+  // reply: a chip changes the moment it is pressed, and a question sent in the
+  // same second would otherwise be answered on the setting the chip no longer
+  // shows. Settled either way — a refused turn of the dial is a toast, not a
+  // reason to hold the question.
+  const tuneInFlight = useRef<Promise<unknown> | null>(null);
+  const onTune = useStableCallback((patch: SessionTuning) => {
+    if (!active) return;
+    const write = tuneMutation.mutateAsync({ id: active.id, patch }).catch(() => undefined);
+    tuneInFlight.current = write;
+    void write.finally(() => {
+      if (tuneInFlight.current === write) tuneInFlight.current = null;
+    });
   });
 
   // Candidate ideas carry a local id rather than being keyed by their title.
@@ -1023,6 +1072,8 @@ function ChatTab() {
         return;
       }
       invalidateMessages(sessionId);
+      // See `tuneInFlight`: the dial's write lands before the reply is asked for.
+      if (tuneInFlight.current) await tuneInFlight.current;
       await streamReply(sessionId);
     } finally {
       sending.current = false;
@@ -1635,7 +1686,7 @@ function ChatTab() {
                         }
                         time={formatTime(m.createdAt)}
                         busy={busy}
-                        model={agent.model || "gpt-4.1"}
+                        model={effectiveModel || "gpt-4.1"}
                         uploadedAt={uploadedAt}
                         canRegenerate={isLast && !!prevUser && isOwner}
                         pickableModels={pickableModels}
@@ -1856,10 +1907,23 @@ function ChatTab() {
               className="min-h-[48px] overflow-y-auto px-4 pt-3.5 text-base"
             />
             <PromptInputActions className="justify-between px-3 pb-2.5">
-              <div className="flex items-center gap-1">
+              <div className="flex min-w-0 items-center gap-1">
                 <ChatAttach uploads={uploads} canWrite={canWrite} />
                 <ChatReport reports={reports} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
+                {active && (
+                  <TurnDial
+                    session={active}
+                    agent={agent}
+                    models={dialModels}
+                    modelCosts={me?.modelCosts}
+                    modelSpecs={me?.modelSpecs}
+                    canTune={isOwner}
+                    busy={busy}
+                    compact={isMobile}
+                    onChange={onTune}
+                  />
+                )}
               </div>
               {/* Stop belongs to the conversation that is actually streaming.
                   There is one stream at a time, so opening a second
@@ -1904,8 +1968,15 @@ function ChatTab() {
               it is read before you type rather than every time you look up. */}
           <p className="mt-2 flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted-foreground">
             {isShared ? <Users className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-            {agent.name} · {agent.model} ·{" "}
-            {isShared ? "shared with your workspace" : "private to you"} · grounded in{" "}
+            {/* The model in force, not the agent's, or this sentence would
+                contradict the chip a few pixels above it. */}
+            {agent.name} ·{" "}
+            {dialLabel(
+              effectiveModel,
+              active?.reasoningEffort ?? agent.reasoningEffort,
+              specFor(me?.modelSpecs, effectiveModel).reasoning,
+            )}{" "}
+            · {isShared ? "shared with your workspace" : "private to you"} · grounded in{" "}
             {agent.documents.length} team {agent.documents.length === 1 ? "document" : "documents"}
             {credits?.level === "fine" && <> · {creditsSentence(credits)}</>}
           </p>

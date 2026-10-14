@@ -107,6 +107,70 @@ export const REASONING_EFFORT_HINTS: Record<ReasoningEffort, string> = {
 export type ModelSpec = { temperature: boolean; reasoning: boolean };
 
 /**
+ * The three levels the composer's Thinking menu offers once thinking is on.
+ *
+ * Three of the four efforts, and the missing one is not an omission. A
+ * conversation stores ONE value for both of its controls — Thinking and how
+ * hard — because the server has one column and one knob, and `"minimal"` is
+ * what that knob calls "do not deliberate" (`lib/completion.ts`). So the menu
+ * spells `"minimal"` as Thinking Off, and these are what is left to call On.
+ * The hints are the agent settings' own sentences, so the same level is not
+ * described two ways in two places.
+ */
+export const DIAL_EFFORTS = ["low", "medium", "high"] as const;
+
+export type DialEffort = (typeof DIAL_EFFORTS)[number];
+
+export const DIAL_EFFORT_HINTS: Record<DialEffort, string> = {
+  low: REASONING_EFFORT_HINTS.low,
+  medium: REASONING_EFFORT_HINTS.medium,
+  high: REASONING_EFFORT_HINTS.high,
+};
+
+/**
+ * Which way the Thinking control reads for a stored effort.
+ *
+ * `"auto"` for null, and null is a choice rather than a gap: it is "whatever
+ * the agent is set to", which is what every conversation did before it could
+ * say otherwise. Collapsing it into Off or Medium would make the person's
+ * not-having-chosen look like a choice they made.
+ */
+export function thinkingOf(effort: ReasoningEffort | null | undefined): "auto" | "off" | "on" {
+  if (effort == null) return "auto";
+  return effort === "minimal" ? "off" : "on";
+}
+
+/** The level Thinking is on at, or null when it is off or not chosen. */
+export function effortLevelOf(effort: ReasoningEffort | null | undefined): DialEffort | null {
+  return effort === "low" || effort === "medium" || effort === "high" ? effort : null;
+}
+
+/** "medium" → "Medium", for a chip and a sentence. */
+export function effortWord(effort: ReasoningEffort): string {
+  return effort === "minimal" ? "Thinking off" : effort[0].toUpperCase() + effort.slice(1);
+}
+
+/**
+ * What a conversation is answered with, in the few words a chip has room for:
+ * `claude-opus-5 · Medium`, or `gpt-4.1` alone.
+ *
+ * The effort is dropped on a model that does not reason, and not because it
+ * would be untidy: the worker ignores an effort it cannot send, so printing
+ * one there would describe a setting that is doing nothing — a claim the code
+ * cannot back, which is DESIGN.md's first failure mode. Dropped too when there
+ * is no effort at all, where the model's own default is the honest reading
+ * and a word for it would be a guess.
+ */
+export function dialLabel(
+  model: string,
+  effort: ReasoningEffort | null | undefined,
+  reasons: boolean,
+): string {
+  if (!reasons || effort == null) return model;
+  return `${model} · ${effortWord(effort)}`;
+}
+
+/**
  * What a model costs per reply, as the server priced it, or `null`.
  *
  * `null` is a real answer with two causes, and neither is a gap to fill in with

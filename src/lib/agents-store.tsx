@@ -158,7 +158,31 @@ export type ChatSession = {
   visibility: "private" | "shared";
   ownerId: string;
   kind: "chat" | "brainstorm";
+  /*
+   * How THIS conversation is answered, where it differs from its agent: the
+   * dial in the composer. Every one is null until somebody turns it, and null
+   * means "the agent's" — not "none" — which is how a conversation that has
+   * never been tuned keeps behaving exactly as it did before there was a dial,
+   * and how it follows the agent when the agent's settings change later.
+   *
+   * Per conversation rather than per person or per agent because that is the
+   * unit the choice is about: the hard question goes to a bigger model in the
+   * thread where it was asked, and the agent everybody else talks to is left
+   * alone. The server applies these to every reply in the conversation —
+   * a new question, Continue, Regenerate and an approval resuming a turn.
+   * Optional in the type only so a session built before the server sent them
+   * (and every test fixture) still reads as "all inherited".
+   */
+  model?: string | null;
+  reasoningEffort?: ReasoningEffort | null;
+  webSearch?: boolean | null;
+  mode?: "normal" | "brainstorm" | null;
 };
+
+/** What the composer's dial may change about a conversation. Null clears. */
+export type SessionTuning = Partial<
+  Pick<ChatSession, "model" | "reasoningEffort" | "webSearch" | "mode">
+>;
 
 export type IdeaStage = "review" | "promising" | "in_progress" | "parked";
 

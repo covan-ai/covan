@@ -1,8 +1,8 @@
 name: Release
 
-# Publishes the two images to GitHub's registry, so self-hosting is `docker
-# compose pull` rather than compiling a frontend on every machine that wants to
-# try it. It is also the only measurement we get: the repository is deliberately
+# Publishes the two images to GitHub's registry, so a self-hoster can set
+# `COVAN_PULL=always` rather than compile a frontend on every machine that wants
+# to try it. It is also the only measurement we get: the repository is deliberately
 # free of analytics, so image pulls are the one honest signal of whether anyone
 # is running this.
 #

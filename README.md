@@ -59,7 +59,6 @@ No accounts, no cloud setup. You need Docker and an OpenAI API key.
 git clone https://github.com/covan-ai/covan
 cd covan
 cp .env.docker.example .env     # set OPENAI_API_KEY
-docker compose pull             # published images instead of a local build
 docker compose up
 ```
 
@@ -68,13 +67,16 @@ there is no mail server in the stack, so confirmation is off. Upload a document,
 ask a question about it, and the reply carries a chip naming the file it came
 from. That is the whole loop, and it is the thing to check first.
 
-`docker compose pull` is worth the extra line: without it the first run compiles
-the frontend on your machine, and with it both images come from
-[`ghcr.io/covan-ai`](https://github.com/orgs/covan-ai/packages), prebuilt for
-amd64 and arm64. Pin a release with `COVAN_VERSION=0.4.0` in `.env` — no leading
-`v`, since the image tags are semver — or track the branch with
-`COVAN_VERSION=edge`. Stop with `docker compose down`, and add `-v` to throw
-away the database and the uploaded documents too.
+The first run compiles both Covan images from the checkout you just cloned, so
+the app is always the same commit as the migrations the stack applies from it.
+To skip the build, set `COVAN_PULL=always` in `.env` and both images come from
+[`ghcr.io/covan-ai`](https://github.com/orgs/covan-ai/packages) instead,
+prebuilt for amd64 and arm64. They track the branch (`COVAN_VERSION=edge`) by
+default; to run a release, check out its tag and set `COVAN_VERSION=0.4.0` — no
+leading `v`, since the image tags are semver. A bare `docker compose pull` does
+nothing for the two Covan images while they build. Stop with
+`docker compose down`, and add `-v` to throw away the database and the uploaded
+documents too.
 
 **What a fresh stack does not have.** The acting half of Covan needs keys the
 example file leaves empty: `COMPOSIO_API_KEY` for connected apps,

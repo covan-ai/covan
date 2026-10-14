@@ -2,10 +2,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { complete, type CompletionMessage, type CompletionUsage } from "../completion";
 import { resolveModel } from "../models";
-import { deliver, deliveryDepsFrom, type DeliveryChannel } from "../routines/delivery";
+import { deliver, deliveryDepsFrom } from "../routines/delivery";
 import { credentialCoversHost, hasSavedCredential } from "./credentials";
 import { bareHost } from "./outcome";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
+import {
+  CONFIRMABLE_COLUMNS,
+  readyForDelivery,
+  type ConfirmableChannel,
+} from "../routines/address-confirmation";
+import { completionSpend, entitlementsFor, spends } from "../entitlements";
 
 /**
  * The answer, arriving in the conversation minutes after the turn that asked
@@ -235,11 +241,7 @@ export async function deliverBrowserTask(
         // "nobody recorded one", which is the true thing to say.
         model,
         outcome: "answered",
-        // Bookkeeping on the row, NOT a second charge against the allowance.
-        // The 137,000 tokens taken when the task was created already stand
-        // for $0.17, which dwarfs this completion; recording it against the
-        // quota again would bill twice for one piece of work. What this does
-        // is stop the row claiming it cost nothing.
+        // What the row cost, and below, what the workspace is charged for it.
         prompt_tokens: usage?.promptTokens ?? null,
         completion_tokens: usage?.completionTokens ?? null,
       })
@@ -249,6 +251,26 @@ export async function deliverBrowserTask(
     if (error || !message) {
       console.error("could not write a browser task's answer into the conversation", row.id, error);
       return;
+    }
+
+    // Charged. This used to be left off on the reasoning that the task's
+    // provisional hold already stood for far more — but the hold is settled
+    // to the provider's own figure (`settle_credits`), which knows nothing of
+    // these two completions, so after settling nobody paid for them. Filed
+    // against the message and NOT the task: a ledger row carrying the task's
+    // id would be folded into what the settle makes equal the provider's bill,
+    // and refunded.
+    const charge = spends(completionSpend(model, usage, "summary"));
+    if (charge.length > 0) {
+      try {
+        await entitlementsFor(env).record(row.workspace_id, charge, {
+          userId: row.user_id,
+          sessionId: row.session_id,
+          messageId: message.id as string,
+        });
+      } catch (err) {
+        console.error("could not charge for a browser task's answer", row.id, err);
+      }
     }
 
     // So the conversation sorts to the top of somebody's list, which is the
@@ -574,17 +596,19 @@ async function notify(
   content: string,
 ): Promise<void> {
   try {
-    const { data: channel } = await db
+    const { data: first } = await db
       .from("delivery_channels")
-      .select("id, kind, secret_ciphertext")
+      .select(CONFIRMABLE_COLUMNS)
       .eq("user_id", row.user_id)
+      .is("disabled_at", null)
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
-    if (!channel) return;
+    if (!first) return;
+    const channel = await readyForDelivery(env, first as ConfirmableChannel);
 
     await deliver(
-      channel as DeliveryChannel,
+      channel,
       { subject: "Your browser task is done", body: content },
       deliveryDepsFrom(env),
       { event: "agent.browser_task" },

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 
 const feedback = new Hono<AppEnv>();
 
@@ -70,7 +70,7 @@ feedback.post("/feedback", async (c) => {
 
   // Null is a normal answer, not a failure: somebody mid-onboarding, or who
   // has just left their last workspace, still has something to say.
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
 
   const { data, error } = await db
     .from("feedback")

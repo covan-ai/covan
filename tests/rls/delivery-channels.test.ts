@@ -171,3 +171,59 @@ describe("a webhook channel's secret", () => {
     expect(error).toBeNull();
   });
 });
+
+/**
+ * 0096: an email channel sends only to an address that said yes, and the
+ * owner can neither say it for the address nor read the link's hash.
+ */
+describe("an email address's confirmation", () => {
+  let channelId: string;
+
+  beforeAll(async () => {
+    const { data } = await seedChannel(owner, "email");
+    channelId = data!.id as string;
+    await serviceClient()
+      .from("delivery_channels")
+      .update({ confirmation_hash: "f".repeat(64), confirmation_sent_at: new Date().toISOString() })
+      .eq("id", channelId);
+  });
+
+  it("starts unconfirmed, and the owner can see that", async () => {
+    const { data, error } = await owner.db
+      .from("delivery_channels")
+      .select("id, confirmed_at")
+      .eq("id", channelId)
+      .single();
+
+    expect(error).toBeNull();
+    expect(data?.confirmed_at).toBeNull();
+  });
+
+  it("cannot be confirmed by the owner on the address's behalf", async () => {
+    const { error } = await owner.db
+      .from("delivery_channels")
+      .update({ confirmed_at: new Date().toISOString() })
+      .eq("id", channelId);
+
+    expect(error?.code).toBe("42501");
+  });
+
+  it("keeps the link's hash from the owner, who could otherwise confirm with it", async () => {
+    const { error } = await owner.db
+      .from("delivery_channels")
+      .select("id, confirmation_hash")
+      .eq("id", channelId);
+
+    expect(error?.code).toBe("42501");
+  });
+
+  it("names one channel per link", async () => {
+    const other = await seedChannel(owner, "email");
+    const { error } = await serviceClient()
+      .from("delivery_channels")
+      .update({ confirmation_hash: "f".repeat(64) })
+      .eq("id", other.data!.id as string);
+
+    expect(error?.code).toBe("23505");
+  });
+});

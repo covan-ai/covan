@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
+import { MAX_REQUEST_BYTES, tooLarge } from "./lib/body-limit";
 import type { AppEnv, Bindings } from "./types";
 import { authMiddleware } from "./middleware/auth";
 import { entitlementsMiddleware } from "./middleware/entitlements";
@@ -35,19 +37,25 @@ import { feedback } from "./routes/feedback";
 import { trash } from "./routes/trash";
 import { events } from "./routes/events";
 import { runPurge } from "./lib/purge";
+import { unfitToServe } from "./lib/env";
 import { connections, connectionsPublic } from "./routes/connections";
 import { toolConnections } from "./routes/tool-connections";
 import { composio, composioPublic } from "./routes/composio";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
+import { addressConfirmationsPublic } from "./routes/address-confirmations";
 
 const app = new Hono<AppEnv>();
 
 // Reflect the caller's Origin ONLY when it's on the operator-approved allowlist, so
 // credentialed requests get an exact ACAO match without opening the door to origin
-// spoofing. Allowed = exact origins in ALLOWED_ORIGIN (comma-separated), or localhost
-// for dev. We deliberately do NOT pattern-match `*.vercel.app`: because Vercel serves
+// spoofing. Allowed = exact origins in ALLOWED_ORIGIN (comma-separated), or any
+// localhost port when ALLOWED_ORIGIN itself names localhost — a dev setup, where
+// the frontend's port moves. A deployed API never answers a page on somebody's
+// own machine with credentials: any program they run can serve one there.
+//
+// We deliberately do NOT pattern-match `*.vercel.app`: because Vercel serves
 // project-name subdomains first-come on a shared apex, a broad regex (even one anchored
 // to this account's slug) can be satisfied by an attacker who names their own project to
 // embed that slug — e.g. `your-project-evil-your-team.vercel.app`. With
@@ -58,7 +66,8 @@ const normalizeOrigin = (o: string): string => o.trim().replace(/\/+$/, "");
 const isAllowedOrigin = (origin: string, allowed: string): boolean => {
   const list = allowed.split(",").map(normalizeOrigin).filter(Boolean);
   if (list.includes(normalizeOrigin(origin))) return true;
-  if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return true;
+  const localhost = /^http:\/\/localhost(:\d+)?$/;
+  if (list.some((o) => localhost.test(o)) && localhost.test(origin)) return true;
   return false;
 };
 
@@ -77,7 +86,7 @@ app.use(
   }),
 );
 
-// Ahead of the limiter, deliberately, and the only route that is. A catalogue
+// Ahead of the limiter, deliberately. A catalogue
 // grid asks for forty logos in one burst; counted in the `standard` bucket
 // those would spend a third of an address's minute on static images, and the
 // visible symptom would be a 429 on somebody's chat message. That tier exists
@@ -85,6 +94,19 @@ app.use(
 // reads no database, holds no secret, and will only fetch from the two hosts
 // `allowedLogoUrl` names. See the banner on the route itself.
 app.route("/", composioPublic);
+
+// Ahead of the limiter too, and for the opposite reason: these are the doors
+// that check their own proof. Slack and GitHub deliver for all their customers
+// from a few shared addresses, so a per-address count lumped every tenant's
+// deliveries together and one tenant's flood refused everybody's. Each counts
+// by what its proof names instead — the Slack team, the routine — and charges
+// an address only for proofs that fail. See `countMiss` in
+// `middleware/ratelimit.ts`.
+//
+// `slackPublic` also carries the OAuth callback, which reads no database: it
+// opens the state, seals the grant and redirects.
+app.route("/", slackPublic);
+app.route("/", routineHooks);
 
 // After cors, so a preflight is answered rather than counted: an OPTIONS that
 // gets a 429 makes the browser report the real request as a CORS failure, which
@@ -95,6 +117,15 @@ app.route("/", composioPublic);
 // every request, valid or not, so without this the cheapest thing to attack is
 // the check that stands in front of everything else.
 app.use("/*", rateLimit("standard"));
+
+// A ceiling on every request body, before anything reads one. Nothing in this
+// API takes more than an upload's 10 MB file plus the text a browser extracted
+// from it; the routes that take files set their own, tighter limits. Without
+// it, the Node entry buffers whatever a client streams — Workers stop at their
+// platform's limit, Node has none — and a chunked body has no Content-Length
+// for a route to refuse up front. `hono/body-limit` counts the bytes as they
+// arrive and stops at the limit.
+app.use("/*", bodyLimit({ maxSize: MAX_REQUEST_BYTES, onError: tooLarge }));
 
 // Unauthenticated — used for uptime checks / boot verification.
 app.get("/health", (c) => c.json({ ok: true }));
@@ -197,7 +228,6 @@ api.route("/", slack);
 // explains why that is safe. Mounted before `api` so the authenticated
 // catch-all never sees it.
 app.route("/", connectionsPublic);
-app.route("/", slackPublic);
 
 // Unauthenticated for the same kind of reason as `composioPublic`: an `<img>`
 // sends no bearer token. The URL is the capability — see the route's banner.
@@ -208,12 +238,10 @@ app.route("/", slackPublic);
 // browser asks for each photo a single time.
 app.route("/", avatarsPublic);
 
-// Unauthenticated, like slackPublic and for the same reason: the sender is a
-// third-party system with no Covan session. What stands in for a caller is the
-// ingest token, resolved in lib/routines/ingest.ts. The standard per-address
-// tier above still applies; the per-routine one is inside the route, because
-// the routine rather than the address is the thing that spends.
-app.route("/", routineHooks);
+// Unauthenticated for the reason the invite page is public: the person saying
+// yes to routine results at their address may have no Covan account. The
+// token from their email is the credential. Behind the limiter.
+app.route("/", addressConfirmationsPublic);
 
 app.route("/", api);
 
@@ -225,9 +253,34 @@ export { app };
 // `scheduled` is the routine engine: it wakes on the cron trigger, asks which
 // routines are due, and runs them. Per-routine frequency lives in
 // routines.next_run_at, not in the cron expression.
+// The Worker's half of `loadEnv`, asked once per isolate (per bindings object).
+//
+// Node refuses to start with a published default key or a short signing
+// secret; the Worker had no start to refuse, so a Cloudflare deploy configured
+// from `.env.docker.example` served with keys anybody can read on GitHub. It
+// refuses every request instead — 503, and the reason in the log, never in the
+// response.
+const fitness = new WeakMap<object, string | null>();
+function unfit(env: Bindings): Response | null {
+  let problem = fitness.get(env as object);
+  if (problem === undefined) {
+    problem = unfitToServe(env as unknown as Record<string, unknown>);
+    fitness.set(env as object, problem);
+    if (problem) console.error(`Refusing to serve: ${problem}`);
+  }
+  return problem
+    ? new Response(JSON.stringify({ error: "misconfigured" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      })
+    : null;
+}
+
 export default {
-  fetch: app.fetch,
+  fetch: (request: Request, env: Bindings, ctx: ExecutionContext) =>
+    unfit(env) ?? app.fetch(request, env, ctx),
   scheduled: (_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) => {
+    if (unfit(env)) return;
     ctx.waitUntil(
       // Log and re-throw. Swallowing the error would have Cloudflare record a
       // broken tick as a successful invocation, so the engine could be dead for

@@ -110,10 +110,19 @@ export async function fetchConnectionItems(
   // A routine still reads its OWN previous output through retrieval when its
   // agent has the bundle attached. That is narrower, it does not compound, and
   // closing it needs a sixth `match_chunks` parameter — see `filing.ts`.
+  //
+  // The workspace join is the same SCOPING rule as the lookup above, applied
+  // to the documents. `connection_id` is a column on a row somebody else's
+  // client once could write, so a document in another workspace's bundle that
+  // names this connection is not this connection's document, and its text
+  // would otherwise be summarised and mailed out from here.
   const { data, error } = await db
     .from("documents")
-    .select("id, name, content, external_url, external_version, synced_at")
+    .select(
+      "id, name, content, external_url, external_version, synced_at, knowledge_bundles!inner(workspace_id)",
+    )
     .eq("connection_id", connectionId)
+    .eq("knowledge_bundles.workspace_id", workspaceId)
     .is("routine_id", null)
     .is("deleted_at", null)
     .order("synced_at", { ascending: false })

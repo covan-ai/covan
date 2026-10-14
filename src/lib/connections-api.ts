@@ -58,6 +58,14 @@ export type ToolConnection = {
    * for an application connected before the catalogue started recording one.
    */
   logoPath: string;
+  /**
+   * `owner`: only the person who connected it, and their agents' turns, can
+   * use it. `workspace`: shared with every member. Personal unless shared
+   * (migration 0098).
+   */
+  scope: "owner" | "workspace";
+  /** Whether you connected it — the one person who can share it or take it back. */
+  mine: boolean;
   createdAt: number;
 };
 
@@ -425,6 +433,10 @@ export const CONNECT_ERRORS: Record<string, string> = {
   wrong_provider:
     "That grant is for a different provider than the connection you were reconnecting. " +
     "Nothing was changed.",
+  not_yours:
+    "That connection was started by somebody else, or in another tab, so nothing was " +
+    "connected. If someone sent you that link, do not use it — start the connection yourself.",
+  try_again: "We could not check that with the provider just now. Try again in a moment.",
 };
 
 export function connectErrorMessage(code: string): string {

@@ -72,6 +72,8 @@ let updated: Record<string, unknown> | null = null;
 /** A row somebody abandoned, when a test wants the retry path. */
 let abandoned: Record<string, unknown> | null = null;
 let deleted = false;
+/** Every `.eq` the service client was asked for, in order. */
+let serviceEqs: Array<[string, unknown]> = [];
 
 function appWith(spec: { role?: string; row?: Record<string, unknown> | null } = {}) {
   const dbSpec: FakeDbSpec = {
@@ -140,7 +142,10 @@ function serviceTables(row: Record<string, unknown> = ROW) {
         return link;
       },
       select: () => link,
-      eq: () => link,
+      eq: (column: string, value: unknown) => {
+        serviceEqs.push([column, value]);
+        return link;
+      },
       neq: () => {
         lookingForAbandoned = true;
         return link;
@@ -183,6 +188,7 @@ beforeEach(() => {
   updated = null;
   abandoned = null;
   deleted = false;
+  serviceEqs = [];
   revokeConnectedAccounts.mockClear();
   serviceFrom.mockReset();
   serviceFrom.mockImplementation(serviceTables());
@@ -311,10 +317,20 @@ describe("POST /composio/connect", () => {
     expect(inserted?.secret_ciphertext).toBeNull();
   });
 
-  it("sends the person back to the integrations page afterwards", async () => {
-    await call(appWith(), "POST", "/composio/connect", { toolkit: "gmail" });
+  it("sends the person back with a nonce only the consenting browser will hold", async () => {
+    const { body } = await call(appWith(), "POST", "/composio/connect", { toolkit: "gmail" });
     const link = createLink.mock.calls[0][1] as { callbackUrl: string };
-    expect(link.callbackUrl).toBe("https://app.example.com/integrations?connected=gmail");
+    const back = new URL(link.callbackUrl);
+    expect(back.origin + back.pathname).toBe("https://app.example.com/integrations");
+    expect(back.searchParams.get("composio")).toBe("gmail");
+    const nonce = back.searchParams.get("nonce")!;
+    expect(nonce).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    // Stored only by hash (0093), and never in the response: the person who
+    // started the connection learns it only by being sent back.
+    const { nonceHashOf } = await import("../lib/connections/oauth-state");
+    expect(inserted?.completion_nonce_hash).toBe(await nonceHashOf(nonce));
+    expect(JSON.stringify(body)).not.toContain(nonce);
   });
 
   /**
@@ -408,6 +424,9 @@ describe("POST /composio/connect", () => {
     // the only column that names the account, and an account nothing points at
     // is what `lib/composio/revoke.ts` exists to prevent.
     expect(revokeConnectedAccounts).toHaveBeenCalledWith(expect.anything(), ["ca_half_made"]);
+    // Only the caller's own: a colleague's half-finished connection to the same
+    // application was replaced too, and its grant revoked mid-consent.
+    expect(serviceEqs).toContainEqual(["created_by", USER.id]);
   });
 
   it("refuses an application nobody has set up, and creates nothing anywhere", async () => {
@@ -467,11 +486,25 @@ describe("POST /composio/connect", () => {
 });
 
 describe("GET /composio/connections/:id/status", () => {
-  it("settles a pending row once and says so", async () => {
-    const { status, body } = await call(appWith(), "GET", "/composio/connections/conn-1/status");
+  it("does not activate a row, however Composio answers", async () => {
+    // Activating on a poll is what let a link forwarded to somebody else land
+    // their account here: Composio says "active" whoever authorised it. That
+    // takes `POST /composio/complete` now, from the browser sent back.
+    const { status, body } = await call(
+      appWith({ row: { ...ROW, created_at: new Date(Date.now() - 60_000).toISOString() } }),
+      "GET",
+      "/composio/connections/conn-1/status",
+    );
     expect(status).toBe(200);
-    expect(body.status).toBe("active");
-    expect(updated).toEqual({ status: "active" });
+    expect(body.status).toBe("pending");
+    expect(updated).toBeNull();
+  });
+
+  it("settles a consent that failed at Composio", async () => {
+    getConnectedAccount.mockResolvedValue({ kind: "ok", status: "failed" });
+    const { body } = await call(appWith(), "GET", "/composio/connections/conn-1/status");
+    expect(body.status).toBe("failed");
+    expect(updated).toEqual({ status: "failed", completion_nonce_hash: null });
   });
 
   it("does not ask Composio again about a row that is already settled", async () => {
@@ -511,7 +544,7 @@ describe("GET /composio/connections/:id/status", () => {
       "/composio/connections/conn-1/status",
     );
     expect(body.status).toBe("failed");
-    expect(updated).toEqual({ status: "failed" });
+    expect(updated).toEqual({ status: "failed", completion_nonce_hash: null });
   });
 
   it("leaves a flow somebody is still in the middle of alone", async () => {
@@ -539,6 +572,42 @@ describe("GET /composio/connections/:id/status", () => {
       "/composio/connections/conn-1/status",
     );
     expect(body.status).toBe("pending");
+    expect(updated).toBeNull();
+  });
+});
+
+describe("POST /composio/complete", () => {
+  const NONCE = "the-nonce-composio-sent-back-0123456789";
+
+  it("activates the row for the person who started it", async () => {
+    const { status, body } = await call(appWith(), "POST", "/composio/complete", { nonce: NONCE });
+
+    expect(status).toBe(200);
+    expect(body.status).toBe("active");
+    expect(updated).toEqual({ status: "active", completion_nonce_hash: null });
+    // Found by the nonce's hash, which is all the database keeps.
+    const { nonceHashOf } = await import("../lib/connections/oauth-state");
+    expect(serviceEqs).toContainEqual(["completion_nonce_hash", await nonceHashOf(NONCE)]);
+  });
+
+  it("revokes the account when anybody else brings the nonce back", async () => {
+    // The forwarded link: somebody else consented, and their browser came back
+    // here signed in as themselves. Their account must not land in the
+    // starter's workspace, and should not stay granted at Composio either.
+    serviceFrom.mockImplementation(serviceTables({ ...ROW, created_by: "user-who-started" }));
+
+    const { status, body } = await call(appWith(), "POST", "/composio/complete", { nonce: NONCE });
+
+    expect(status).toBe(403);
+    expect(body).toEqual({ error: "not_yours" });
+    expect(revokeConnectedAccounts).toHaveBeenCalledWith(expect.anything(), ["ca_1"]);
+    expect(updated).toEqual({ status: "failed", completion_nonce_hash: null });
+  });
+
+  it("answers 404 for a nonce that finishes nothing", async () => {
+    serviceFrom.mockImplementation(serviceTables({ ...ROW, status: "active" }));
+    const { status } = await call(appWith(), "POST", "/composio/complete", { nonce: NONCE });
+    expect(status).toBe(404);
     expect(updated).toBeNull();
   });
 });

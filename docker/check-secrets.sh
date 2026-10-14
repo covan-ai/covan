@@ -64,8 +64,21 @@ localhost_only() {
   return 0
 }
 
-if localhost_only "${ALLOWED_ORIGIN:-}"; then
-  echo "check-secrets: ALLOWED_ORIGIN is localhost-only — this is a laptop, skipping."
+# The other half of "is this facing a network": where the ports are published.
+# A localhost ALLOWED_ORIGIN with BIND_ADDR=0.0.0.0 is a laptop whose Postgres,
+# Kong and API answer the whole network — with the published password, if
+# nobody changed it. ALLOWED_ORIGIN alone used to be the only signal, so that
+# stack passed. Loopback is 127.0.0.0/8, ::1 and the name localhost; unset
+# means the compose default, 127.0.0.1.
+loopback_bind() {
+  case "${1:-127.0.0.1}" in
+    127.* | ::1 | "[::1]" | localhost) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if localhost_only "${ALLOWED_ORIGIN:-}" && loopback_bind "${BIND_ADDR:-}"; then
+  echo "check-secrets: ALLOWED_ORIGIN is localhost-only and ports bind to loopback — this is a laptop, skipping."
   exit 0
 fi
 
@@ -94,14 +107,32 @@ add_offender() {
   add_offender SERVICE_ROLE_KEY
 [ "${ROUTINE_SECRET_KEY:-}" = "Y292YW4tbG9jYWwtZGV2LXJvdXRpbmUta2V5LTAwMDE=" ] &&
   add_offender ROUTINE_SECRET_KEY
+# Realtime's key for the secrets it stores, defaulted in docker-compose.yml
+# rather than in the example file, which is why it was missed here.
+[ "${REALTIME_DB_ENC_KEY:-supabaserealtime}" = "supabaserealtime" ] &&
+  add_offender REALTIME_DB_ENC_KEY
 
 if [ -n "$offenders" ]; then
   echo "check-secrets: refusing to start: $offenders still hold the values" >&2
-  echo ".env.docker.example ships. That file is in a public repository, so" >&2
-  echo "these are not secrets — see docs/self-hosting.md. Regenerate them," >&2
-  echo "or set ALLOWED_ORIGIN to a localhost URL if this really is a local" >&2
-  echo "stack." >&2
+  echo ".env.docker.example and docker-compose.yml ship. Those files are in a" >&2
+  echo "public repository, so these are not secrets — see docs/self-hosting.md." >&2
+  echo "Regenerate them, or set ALLOWED_ORIGIN to a localhost URL and BIND_ADDR" >&2
+  echo "to 127.0.0.1 if this really is a local stack." >&2
   exit 1
 fi
 
-echo "check-secrets: ALLOWED_ORIGIN is not localhost-only, and no published defaults remain — continuing."
+# Not a published secret, but the same kind of mistake: a setting that is right
+# on a laptop and wrong the moment anybody else can reach the sign-up form.
+# With auto-confirm on, GoTrue marks every new address confirmed on sight, so
+# anybody can hold an account under anybody's email — the address on an
+# invitation, a colleague's, the CEO's. docs/self-hosting.md has said to turn
+# it off before facing a network; this is that sentence, enforced.
+if [ "${MAILER_AUTOCONFIRM:-true}" = "true" ]; then
+  echo "check-secrets: refusing to start: MAILER_AUTOCONFIRM is true, so every sign-up" >&2
+  echo "is confirmed without anybody proving they own the address. Configure" >&2
+  echo "GOTRUE_SMTP_* and set MAILER_AUTOCONFIRM=false before this stack faces a" >&2
+  echo "network — see docs/self-hosting.md." >&2
+  exit 1
+fi
+
+echo "check-secrets: this stack faces a network, and no published defaults remain — continuing."

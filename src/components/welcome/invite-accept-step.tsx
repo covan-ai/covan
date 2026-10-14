@@ -1,9 +1,7 @@
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "@/lib/api-client";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
-import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
-import { toast } from "sonner";
+import { OPEN_THE_EMAIL, useAcceptInvitation } from "@/lib/accept-invitation";
 
 /**
  * Someone who was invited already has a workspace waiting, so the setup steps
@@ -12,30 +10,13 @@ import { toast } from "sonner";
  * banner on a screen they have not learned to read yet.
  */
 export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
-  const queryClient = useQueryClient();
   const { data: incoming = [] } = useQuery({
     queryKey: ["invitations", "incoming"],
     queryFn: () => api.invitations.incoming(),
   });
-  const [busy, setBusy] = useState(false);
-
-  const accept = async (id: string) => {
-    setBusy(true);
-    try {
-      await api.invitations.accept(id);
-      // The same invalidation IncomingInvitesBanner does, and now literally the
-      // same call: accepting changes which workspace the whole app is looking
-      // at. Both were hand-written copies of the list, and both were missing
-      // `bundles` — so a new member arrived to the workspace's agents with none
-      // of its knowledge behind them.
-      await invalidateWorkspaceScoped(queryClient);
-      toast.success("You've joined the workspace");
-      onDone();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't accept the invite.");
-      setBusy(false);
-    }
-  };
+  // The same accept the banner over the app uses, token and all: the two used
+  // to be hand-written copies, and drifted.
+  const { accept, canAccept, busy } = useAcceptInvitation();
 
   if (incoming.length === 0) {
     // The invitation was accepted or revoked in another tab. Nothing to do here.
@@ -58,9 +39,17 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
             <strong className="font-medium">{invite.workspaceName}</strong>
             <span className="text-muted-foreground"> · as {invite.role}</span>
           </span>
-          <Button size="sm" disabled={busy} onClick={() => void accept(invite.id)}>
-            Join
-          </Button>
+          {canAccept(invite.id) ? (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => void accept(invite.id).then((joined) => joined && onDone())}
+            >
+              Join
+            </Button>
+          ) : (
+            <span className="text-meta text-muted-foreground">{OPEN_THE_EMAIL}</span>
+          )}
         </div>
       ))}
       <button

@@ -21,6 +21,7 @@ import {
 import { toolSpecs, type AgentTool, type ToolContext, type ToolResult } from "./registry";
 import { addCounts } from "./usage";
 import { headroom } from "../subrequests";
+import type { RunApproval } from "./registry";
 
 /**
  * The loop that turns one question into however many model calls it takes.
@@ -44,6 +45,13 @@ export type StepStatus = "ok" | "failed" | "refused" | "pending";
 export type AgentStep = {
   index: number;
   tool: string;
+  /**
+   * Who let a `run_tool` call through, when it succeeded. Recorded so that
+   * `approvedConnectionsFrom` can count a person's yes and nothing else.
+   * Absent on every other tool, and on steps that crossed a pause before it
+   * existed — which then count as nobody's yes, the safe reading.
+   */
+  approval?: RunApproval;
   /** The arguments the model sent, parsed. Never anything a person typed. */
   request: unknown;
   resultExcerpt: string;
@@ -174,10 +182,10 @@ export type PausedTurn = {
    * returns this value straight into `messages.outcome`, which carries a check
    * constraint — so a value the database has not been told about fails the
    * insert and the person gets "failed to persist assistant message" instead of
-   * the reply. `runtime` is in `0067`. It is also sent to the browser, where
-   * the chat screen writes a different sentence per reason.
+   * the reply. `runtime` is in `0067`, `credits` in `0097`. It is also sent to
+   * the browser, where the chat screen writes a different sentence per reason.
    */
-  reason: "confirmation" | "budget" | "tokens" | "runtime";
+  reason: "confirmation" | "budget" | "tokens" | "runtime" | "credits";
   messages: CompletionMessage[];
   call?: ToolCall;
   summary?: string;
@@ -295,6 +303,21 @@ export type AgentTurnOptions = {
    * ends up holding — neither is authoritative over the other.
    */
   onPass?: (usage: PassUsage) => void;
+  /**
+   * Asked before every pass after the first: may the turn take another step?
+   *
+   * The workspace's credit is checked once, before a turn starts, and a turn
+   * can then run two dozen passes — so the check said nothing about most of
+   * what a turn spent, and concurrent turns each spent as though they were
+   * alone. A caller that answers this from the ledger (`Entitlements.hold`)
+   * bounds the turn by what is left, step by step.
+   *
+   * `false` ends the turn the way a spent budget does: one last pass to answer
+   * with what it has. An answer that throws is taken as "carry on", for the
+   * reason `guardCredits` lets a request through when the balance cannot be
+   * read.
+   */
+  mayContinue?: () => Promise<boolean>;
 };
 
 /**
@@ -319,6 +342,16 @@ const BUDGET_INSTRUCTION =
  * them to ask for less material. Saying the first when the second is true is
  * how somebody retries four times.
  */
+/**
+ * What the model is told when the workspace has no credit left for another
+ * step. A spent turn still owes the person an answer, and this is the cheapest
+ * one: the last pass, with what the turn already has.
+ */
+const CREDITS_INSTRUCTION =
+  "This workspace has run out of credits, so this is your last step. Answer now with what you " +
+  "already have. Say plainly, in one sentence, what you were not able to finish — do not " +
+  "pretend the work is complete.";
+
 const TOKEN_INSTRUCTION =
   "This turn has used the whole token allowance one turn is given. Answer now with what " +
   "you already have. Say plainly, in one sentence, what you were not able to finish — and " +
@@ -651,10 +684,14 @@ function labelFor(tool: string, args: unknown): string {
  * out of `routes/chat.ts`: a resumed turn already arrives with `stepsSoFar`,
  * and a step already records the tool, the parsed arguments and how it ended.
  *
- * **`ok` and nothing else.** A `run_tool` step can only reach `ok` by having
- * actually executed, and it can only execute with an approval behind it — a
- * person's yes, a standing `always` grant, or a connection already in this set.
- * So `ok` implies authorised, and that implication is the whole mechanism.
+ * **A person's yes, and nothing else.** A `run_tool` step reaches `ok` with
+ * one of three approvals behind it — a person's yes on a card, a standing
+ * `always` grant, or a connection already in this set — and `step.approval`
+ * says which. Any `ok` used to count, so a single
+ * always-allowed read unlocked the whole connection for the rest of the turn,
+ * including in a scheduled run that nobody was watching. A grant is consent to
+ * one operation; it is not somebody looking at this turn, and only that may
+ * stand in for them on the next call.
  *
  * `failed` deliberately does not count, and the cost is known: a call somebody
  * approved that then errored at the far end makes the model ask once more. That
@@ -666,7 +703,7 @@ function labelFor(tool: string, args: unknown): string {
 export function approvedConnectionsFrom(steps: AgentStep[]): string[] {
   const out = new Set<string>();
   for (const step of steps) {
-    if (step.tool !== "run_tool" || step.status !== "ok") continue;
+    if (step.tool !== "run_tool" || step.status !== "ok" || step.approval !== "person") continue;
     const id = (step.request as { connectionId?: unknown } | null)?.connectionId;
     if (typeof id === "string" && id) out.add(id);
   }
@@ -684,7 +721,7 @@ export function approvedConnectionsFrom(steps: AgentStep[]): string[] {
 export function approvedSlugsFrom(steps: AgentStep[]): string[] {
   const out = new Set<string>();
   for (const step of steps) {
-    if (step.tool !== "run_tool" || step.status !== "ok") continue;
+    if (step.tool !== "run_tool" || step.status !== "ok" || step.approval !== "person") continue;
     const slug = (step.request as { slug?: unknown } | null)?.slug;
     if (typeof slug === "string" && slug) out.add(slug);
   }
@@ -829,6 +866,7 @@ export async function runToolCall(
     // column stays null for the tools that never offer anything. See
     // `AgentStep.offered`.
     ...(addedSlugs(allowedBefore, o.ctx.offeredSlugs) ?? {}),
+    ...(result.kind === "ok" && result.approval ? { approval: result.approval } : {}),
     status,
     durationMs,
   };
@@ -914,7 +952,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * `paused.reason` says — is decided in one place and cannot disagree with
    * itself. Null while the turn is still allowed to work.
    */
-  let stopped: "budget" | "tokens" | "runtime" | null = null;
+  let stopped: "budget" | "tokens" | "runtime" | "credits" | null = null;
   /**
    * Whether the platform is about to stop this turn whatever we do.
    *
@@ -1126,7 +1164,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
       // `outOfRoom` is re-asked per call rather than once for the batch: a pass
       // asking for eight connected-app calls spends eight subrequests running
       // them, so the answer genuinely changes between the first and the last.
-      const out: "budget" | "tokens" | "runtime" | null =
+      const out: "budget" | "tokens" | "runtime" | "credits" | null =
         stopped ??
         (spentSteps() >= hardSteps ? "budget" : null) ??
         (outOfRoom() ? "runtime" : null);
@@ -1138,7 +1176,9 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
             ? "refused: this turn has used the whole token allowance one turn is given"
             : out === "runtime"
               ? "refused: this deployment cannot make another outbound call in this turn"
-              : "refused: this turn has used every tool call it is allowed";
+              : out === "credits"
+                ? "refused: this workspace has run out of credits"
+                : "refused: this turn has used every tool call it is allowed";
         messages.push({ role: "tool", toolCallId: call.id, content: refusal });
         const refused = parseArguments(call.arguments);
         record({
@@ -1151,7 +1191,9 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
               ? "refused: token ceiling"
               : out === "runtime"
                 ? "refused: runtime ceiling"
-                : "refused: tool budget exhausted",
+                : out === "credits"
+                  ? "refused: out of credits"
+                  : "refused: tool budget exhausted",
           // What the model was shown, which is the refusal and not the
           // excerpt above — the two differ here, and the point of recording
           // this at all is that they can.
@@ -1239,6 +1281,15 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     // spends the count: eight connected-app calls is eight subrequests that
     // were not there when this pass began.
     if (!stopped && outOfRoom()) stopped = "runtime";
+    // Last, and only for a turn that would otherwise go on: the ledger is a
+    // round trip, and a turn already stopping needs no answer from it.
+    if (!stopped && opts.mayContinue) {
+      try {
+        if (!(await opts.mayContinue())) stopped = "credits";
+      } catch (err) {
+        console.error("could not ask whether the turn may continue (continuing)", err);
+      }
+    }
     if (stopped) {
       messages.push({
         role: "system",
@@ -1247,7 +1298,9 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
             ? TOKEN_INSTRUCTION
             : stopped === "runtime"
               ? RUNTIME_INSTRUCTION
-              : BUDGET_INSTRUCTION,
+              : stopped === "credits"
+                ? CREDITS_INSTRUCTION
+                : BUDGET_INSTRUCTION,
       });
     } else {
       // Past the soft ceiling with a leg still in hand. Said once per boundary

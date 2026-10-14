@@ -132,6 +132,7 @@ every line in `.env.docker.example`, in the order it appears there.
 | `SUPPORT_EMAIL`                                                    | _empty — means `efe@covan.app`_ | Optional. Where the "ask for more credits" form delivers. Blank sends to Covan's own inbox through **your** Resend account — see below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `VITE_TERMS_URL` / `VITE_PRIVACY_URL`                              | _empty_                         | Optional. Where the sign-up form's two links point. Blank uses the built-in `/terms` and `/privacy`. See below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `COVAN_VERSION`                                                    | `latest`                        | Which published image tag to run. `latest` follows releases; `edge` follows `main`; a semver like `0.4.0` pins one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `WORKER_HOST`                                                      | _empty_                         | The API's public host, like `api.example.com` (no scheme). Required once any of the OAuth client IDs below is set: every redirect URI is built from it, never from a request's `Host` header, which the caller chooses. The API refuses to start without it then. |
 | `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET`                        | _empty_                         | Optional. Lets a bundle sync from Notion. Blank means the source is offered but not configured. See [Integrations](integrations.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`                        | _empty_                         | Optional. Lets a bundle sync from a Google Drive folder. Read the scope warning in [Integrations](integrations.md) first — `drive.readonly` is a restricted scope.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | _empty_                         | Optional. Lets people ask an agent from Slack. All three or none: a client pair without the signing secret installs and then rejects every event.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -445,8 +446,11 @@ docker compose exec db psql -U postgres
 
 ## Runtime versions
 
-- The API image runs **Bun** (`oven/bun:1.3.0-alpine`), matching
-  `bun run start:node`.
+- The API image runs **Bun** (`oven/bun:1.3.14-alpine`), matching
+  `bun run start:node`. 1.3.14 is the first Bun on which an outbound request
+  to an address somebody chose (a routine's feed, a webhook, a connected API)
+  is pinned to the address the URL guard checked; on an older one, or on plain
+  Node, the check still runs but DNS is asked again to connect.
 - The web image runs **Node 22**, not Node 20. `@supabase/supabase-js` builds a
   realtime client inside `createClient()`, and that constructor throws
   `Node.js detected but native WebSocket not found` on anything below Node 22 —
@@ -468,7 +472,9 @@ Before the stack faces a network:
 1. Regenerate `JWT_SECRET` and both API keys, `POSTGRES_PASSWORD`,
    `SECRET_KEY_BASE` and `ROUTINE_SECRET_KEY`.
 2. Turn `GOTRUE_MAILER_AUTOCONFIRM` off and configure `GOTRUE_SMTP_*`, or
-   anyone can register any address.
+   anyone can register any address. The stack refuses to start without this
+   once it faces a network — a non-localhost `ALLOWED_ORIGIN`, or a `BIND_ADDR`
+   other than loopback — and likewise on the default `REALTIME_DB_ENC_KEY`.
 3. Put TLS in front of ports 3000, 8787 and 8000, and set
    `SUPABASE_PUBLIC_URL`, `VITE_API_URL`, `SITE_URL` and `ALLOWED_ORIGIN` to
    the public URLs — then rebuild `covan-web`.
@@ -569,6 +575,21 @@ Deploy without them and the Worker falls back to the in-process counter, which
 on Cloudflare is close to no limit at all: isolates are many and short-lived, so
 each keeps its own. It logs an error saying exactly that, but it will not refuse
 to start, so check `wrangler.toml` against the example rather than the logs.
+
+**Who "the caller's address" is.** On Cloudflare it is `CF-Connecting-IP`,
+which the edge sets. Under `docker compose` it is the address the connection
+came from, and `X-Forwarded-For` and `CF-Connecting-IP` are ignored, because any
+client can send them. Behind a reverse proxy every request then comes from the
+proxy and shares one allowance, so set `TRUST_PROXY` to the number of proxies in
+front of the API that append to `X-Forwarded-For` — `1` for a single nginx,
+Caddy or Traefik. The caller is then that many entries from the right of the
+header, and anything a client wrote further left is ignored. Set it higher than
+the real number of proxies and a client can choose its own address again.
+
+Slack's event deliveries and routine webhooks are outside the per-address count:
+the senders deliver for all their customers from shared addresses. They are
+counted per Slack team and per routine instead, and an address is charged only
+for signatures or tokens that fail.
 
 **Limit at your proxy as well.** Nothing above sees a request that never reaches
 the API, and everything above runs after TLS termination and inside your

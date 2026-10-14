@@ -10,6 +10,7 @@ vi.mock("openai", () => ({
 const {
   chunkText,
   embedTexts,
+  tokensSpentBefore,
   embeddingModel,
   embeddingDimensions,
   EMBED_BATCH_SIZE,
@@ -198,6 +199,34 @@ describe("embedTexts batching", () => {
     for (const call of create.mock.calls) {
       expect(call[0].input.length).toBeLessThanOrEqual(EMBED_BATCH_SIZE);
     }
+  });
+
+  // The provider bills each batch as it returns. A failure on the third used
+  // to leave the first two paid for and charged to nobody: every caller
+  // catches it, keeps the document unindexed, and recorded nothing.
+  it("says what the batches before a failure spent", async () => {
+    let call = 0;
+    create.mockImplementation(async ({ input }: { input: string[] }) => {
+      call += 1;
+      if (call === 3) throw new Error("provider fell over");
+      return {
+        data: input.map((t, i) => ({ index: i, embedding: [Number(t)] })),
+        usage: { total_tokens: input.length },
+      };
+    });
+
+    const failure = await embedTexts(
+      env(),
+      Array.from({ length: 300 }, (_, i) => String(i)),
+    ).catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(tokensSpentBefore(failure)).toBe(256);
+  });
+
+  it("says nothing was spent for an error that is not one of these", () => {
+    expect(tokensSpentBefore(new Error("unrelated"))).toBe(0);
+    expect(tokensSpentBefore("a string")).toBe(0);
   });
 
   it("still makes exactly one request when the input fits in one batch", async () => {

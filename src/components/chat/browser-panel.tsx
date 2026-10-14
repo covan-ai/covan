@@ -23,6 +23,7 @@ import {
   useConversationBrowser,
   waitingFor,
 } from "./use-conversation-browser";
+import { safeNavigationUrl } from "@/lib/safe-url";
 
 /**
  * The browser beside the conversation.
@@ -136,7 +137,7 @@ export function BrowserPanel({
     let current = true;
     api.browser.live(browserId).then(
       (minted) => {
-        if (current) setLive({ url: minted.liveUrl, problem: null });
+        if (current) setLive({ url: safeNavigationUrl(minted.liveUrl), problem: null });
       },
       (err: unknown) => {
         if (!current) return;
@@ -182,7 +183,11 @@ export function BrowserPanel({
     api.takeovers.current().then(
       ({ takeover }) => {
         if (!current || !takeover || takeover.browserTaskId) return;
-        setOwn({ id: takeover.id, liveUrl: takeover.liveUrl, expiresAt: takeover.expiresAt });
+        setOwn({
+          id: takeover.id,
+          liveUrl: safeNavigationUrl(takeover.liveUrl),
+          expiresAt: takeover.expiresAt,
+        });
       },
       () => {},
     );
@@ -514,7 +519,11 @@ export function BrowserPanel({
 
             No `sandbox`: the provider's viewer needs scripts, its own origin
             and its socket, and which tokens it needs cannot be verified without
-            a key. A sandbox that silently breaks the view is worse than none.
+            a key. A sandbox that silently breaks the view is worse than none —
+            and `allow-scripts allow-same-origin`, the least it could run under,
+            takes nothing from a cross-origin frame. What would make the frame
+            dangerous is its address, so that is what is checked: `src` is only
+            ever an https URL (`safeNavigationUrl`, where it is set).
           */}
           <div
             data-testid="browser-frame"
@@ -694,7 +703,11 @@ function OwnBrowserView({
       const opened = await api.takeovers.open();
       if (!alive.current) return;
       setNow(Date.now());
-      onChange({ id: opened.id, liveUrl: opened.liveUrl, expiresAt: opened.expiresAt });
+      onChange({
+        id: opened.id,
+        liveUrl: safeNavigationUrl(opened.liveUrl),
+        expiresAt: opened.expiresAt,
+      });
     } catch (err) {
       if (!alive.current) return;
       /**
@@ -713,7 +726,11 @@ function OwnBrowserView({
         if (!alive.current) return;
         if (already) {
           setNow(Date.now());
-          onChange({ id: already.id, liveUrl: already.liveUrl, expiresAt: already.expiresAt });
+          onChange({
+            id: already.id,
+            liveUrl: safeNavigationUrl(already.liveUrl),
+            expiresAt: already.expiresAt,
+          });
           return;
         }
       }

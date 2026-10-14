@@ -22,22 +22,30 @@ of that workspace, and that `invited_by` is the caller — so a member cannot
 invite anybody, and nobody can post an invitation with somebody else's name on
 it. The address is lowercased before it is stored.
 
-**The email is a courtesy, and the row is the invitation.** After the row is
-written, the API emails the invitee through the same Resend account routine
-deliveries use — naming who invited them, which workspace, and which address the
-invitation is matched to. It deliberately carries no link that accepts anything:
-acceptance is matched against the address, so a token in a URL would be a second
-and weaker key to the same door.
+**The email carries the invitation.** After the row is written, the API emails
+the invitee through the same Resend account routine deliveries use — naming who
+invited them, which workspace, and which address the invitation is for, in the
+body rather than the subject — with
+one button: a link to `/invite#id=…&token=…`. The token is 32 random bytes the
+API mints for this invitation; the database keeps only its SHA-256, and
+accepting asks for the token itself. Holding the email is what proves the
+invitee is the invitee.
 
-What it does carry is two ordinary links, to `/sign-up` and to `/sign-in`, and
-it carries both because the sending route cannot tell which one the recipient
-needs: `profiles` is behind a policy scoped to the caller's own workspaces, and
-somebody who has not joined yet is not in one. The button used to be a single
-_Sign in to accept_ pointing at the bare origin, which is a marketing page on a
-hosted Covan and a redirect on a self-hosted one — so an invited person with no
-account landed on a page about the product, holding no password, having just
-been told to sign in. Neither link pre-fills the address, for the reason under
-_Tell them_ below.
+It used to be the address alone. Acceptance compared the invitation's address
+with the account's confirmed one, and the email deliberately carried no link,
+on the reasoning that a token in a URL would be a second, weaker key to the
+same door. That held only where "confirmed" proves a mailbox — and an install
+that auto-confirms sign-ups, which the compose stack does by default, lets
+anybody sign up as an invitee's address before the invitee does and take the
+invitation, admin role included. Since migration 0090 the token is the key and
+the address is the second check.
+
+The link sits in the fragment, after `#`, which a browser never sends to a
+server — it does not land in an access log or a `Referer` header. `/invite`
+keeps the token in that browser, takes it out of the address bar, and offers
+sign-up or sign-in. It never accepts anything by itself: mail scanners open
+links, and a link that joined workspaces on opening would join whoever's
+session is in the browser that opened it.
 
 If that email fails, or if the deployment has no `RESEND_API_KEY` and
 `RESEND_FROM` — a supported configuration, not a broken one — the invitation
@@ -46,35 +54,25 @@ then say the person is invited and ask you to tell them, rather than claiming a
 message went out. They used to say "Invite sent" unconditionally, in a product
 that had never sent one.
 
-Both, now, because the fix landed in only one of them at first. The dialog on
-this page learned to read `emailed`; the three rows in the first run did not,
-and went on reporting "3 invitations sent" to people running an install with no
-mail at all. The sentence is now decided in one place for both of them.
-
-**"Tell them" comes with the words.** When nothing was emailed, the notice
-carries a _Copy invite text_ action, and every waiting invitation on this page
-has a _Copy invite_ button of its own — the durable version, for whenever the
-notice is long gone. What you get is a short message naming your Covan's address
-and the one address that will work:
+**"Tell them" comes with the words, and the link.** When nothing was emailed,
+the notice carries a _Copy invite text_ action:
 
 > You've been invited to Covan — a shared AI agent our team trains together.
-> Sign up at `https://covan.app/sign-up` with `ali@example.com` and the
-> invitation will be waiting.
+> Open `https://covan.app/invite#id=…&token=…` and sign up (or sign in) with
+> `ali@example.com` to accept.
 
-The URL is the front door, not a key. It carries no token and does not pre-fill
-the address, for the reason above and one more: a link that fills the field in
-gets forwarded in place of the address, and then somebody signs up as themselves
-and cannot see why nothing is waiting. Naming the address in prose keeps it
-visibly the thing that matters. The emailed invitation follows the same rule, so
-the two surfaces cannot drift into disagreeing about what a link is allowed to
-know. Self-hosted installs get their own origin in
-that sentence, so it reads `http://localhost:3000/sign-up` where that is true.
+The link exists only in the response that minted it, because the database
+keeps a hash, so there is nothing stored to copy later. Every waiting
+invitation on this page has a _Resend_ button instead: it mints a new link, the
+old one stops working, the seven days start again, the invitee is emailed if
+this install can send mail, and the notice hands you the new text if it cannot.
+`invitation.resent` goes in the activity log.
 
-The button is offered whether or not the email went out, because this list
-cannot tell: `emailed` is only ever known about the invitation you have just
-created, nothing stores it, and a second nudge is a normal thing to send anyway.
-For the same reason a waiting invitation says when it was sent rather than
-claiming an email reached anyone.
+A workspace can send 50 invitation emails a day, new and resent together,
+counted from the activity log so that revoking an invitation does not give its
+place back. The subject line is fixed — "You're invited to a workspace on
+Covan" — because a workspace name or a person's name is text anybody can choose,
+and a subject is read before anybody decides whether to trust the sender.
 
 ### What the invitee sees
 
@@ -83,6 +81,10 @@ it. A banner sits above the app with the workspace's name and the role, and a
 new account meets the same invitation as a step in the welcome flow instead —
 somebody who was invited already has a workspace waiting, so walking them through
 furnishing another one they are about to abandon would be the wrong order.
+
+Both offer an Accept button only in a browser where the invitation's link was
+opened, because accepting takes the token it carried. Anywhere else the
+invitation is listed with _Open the link in your invitation email to accept_.
 
 **Only the invitee.** `invitations_select_admin_or_invitee` admits a row when the
 caller is an admin of the workspace _or_ the row is addressed to them, which is
@@ -99,16 +101,21 @@ That is the same mistake as the usage figures below, one table over. A policy
 answers "may this person see this row", which stops being the same question as
 "is this row theirs" the moment anybody else is added to the `or`.
 
-Accepting runs `accept_invitation()`, a `SECURITY DEFINER` function, because the
-person accepting is by definition not yet a member and no policy would let them
-insert their own membership row. It compares the invitation's address with the
-one in their token, case-insensitively, and refuses if they differ. That is the
-whole authentication of an invitation: it is bound to an address, not to a link
-or a token, so signing up with a different address — a personal Gmail where the
-invitation went to a work domain — produces an account that cannot see it.
+Accepting runs `accept_invitation(id, token)`, a `SECURITY DEFINER` function,
+because the person accepting is by definition not yet a member and no policy
+would let them insert their own membership row. It asks two things: that the
+token hashes to the one stored, and that the invitation's address is the
+account's own confirmed address, read from the account rather than the session
+token, case-insensitively. Every refusal — wrong token, no token, expired,
+already used, another address — gets the same answer, because telling them
+apart tells a guesser which part was right. So a forwarded email does not seat
+whoever it was forwarded to, and signing up with a different address — a
+personal Gmail where the invitation went to a work domain — produces an account
+that cannot accept it.
 
 On success it inserts the membership with the role the invitation carried,
-stamps the invitation `accepted` with the time and the person, and switches their
+stamps the invitation `accepted` with the time and the person, forgets the
+token's hash so the link is spent, and switches their
 active workspace to the one they just joined. They keep the personal workspace
 their signup created; a person can be in as many workspaces as they are invited
 to, and `profiles.active_workspace_id` records which one they are looking at.
@@ -122,6 +129,12 @@ re-inviting somebody later possible.
 
 Revoking is a hard delete, and only an admin can do it. An accepted invitation is
 not deleted — it stays as the record of who joined, when, and who let them in.
+
+A link lives seven days. An invitation whose link has run out stays on this
+page, marked for a new link, rather than disappearing — it is still somebody you
+meant to invite, and _Resend_ is one press where revoking and inviting again
+would be two. Invitations made before links existed are listed the same way: they
+have no token, so they cannot be accepted until they are resent.
 
 ## What a role actually governs
 

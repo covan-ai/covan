@@ -345,6 +345,29 @@ describe("syncing a connection", () => {
     });
   });
 
+  // `connection_id` is a column on a row, not proof of ownership. Everything
+  // this read returns is rewritten or has its stored object deleted, so a row
+  // in another workspace's bundle naming this connection must never come back.
+  it("reads only the connection's documents in its own workspace", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
+    const fake = db({ documents: [] });
+
+    await runConnection(await connection(), deps(fake));
+
+    const existing = fake
+      .callsTo("documents")
+      .find(
+        (c) =>
+          c.op === "select" &&
+          c.filters.some((f) => f.column === "connection_id" && f.value === "conn-1"),
+      );
+    expect(existing?.filters).toContainEqual({
+      column: "knowledge_bundles.workspace_id",
+      value: "ws-1",
+      kind: "eq",
+    });
+  });
+
   it("stops at the run's ceiling and asks to come straight back", async () => {
     const many = Array.from({ length: MAX_DOCUMENTS_PER_RUN + 3 }, (_, i) => file(`page-${i}`));
     fakeProvider.listFiles.mockResolvedValue(many);

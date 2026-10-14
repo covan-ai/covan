@@ -73,12 +73,15 @@
     "unpdf": "^1.8.1",
     "vite-tsconfig-paths": "^6.1.1"
   },
-  "//overrides": "Every entry is a leaf package with a published fix inside its own major, reached only through somebody else's dependency: the parent already allows the fixed version, the lockfile just pinned an older one and nothing on our side moves it. Raising the floor is therefore not a version bump, and `bun update` does not do it — it walks the ranges we declare, and we declare none of these. Each is a development dependency and none is reachable from anything we ship, so this buys a clean `bun audit` rather than a fix to production. Delete an entry the moment its parent ships a release that resolves past it; an override that is no longer doing anything is one that silently holds a package back later.",
+  "//overrides": "Every entry is a leaf package with a published fix inside its own major, reached only through somebody else's dependency: the parent already allows the fixed version, the lockfile just pinned an older one and nothing on our side moves it. Raising the floor is therefore not a version bump, and `bun update` does not do it — it walks the ranges we declare, and we declare none of these. Most are development dependencies, unreachable from anything we ship, and buy a clean `bun audit` rather than a fix to production. Two are not: `seroval` is in the server render (through @tanstack/router-core, which allows the fixed 1.6.x), and `dompurify` sanitises in the browser for mermaid and posthog-js (both allow the fixed 3.4.x). mermaid's own `katex` is left at the 0.16 line it asks for: the fix is in 0.18, past what mermaid allows, and the advisory needs a prototype-pollution source this app does not have. Delete an entry the moment its parent ships a release that resolves past it; an override that is no longer doing anything is one that silently holds a package back later.",
   "overrides": {
     "@babel/core": "^7.29.6",
-    "brace-expansion": "^5.0.6",
+    "brace-expansion": "^5.0.11",
     "browserslist": "^4.28.7",
-    "js-yaml": "^4.2.0"
+    "dompurify": "^3.4.16",
+    "js-yaml": "^4.2.0",
+    "seroval": "^1.6.9",
+    "source-map-js": "^1.2.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

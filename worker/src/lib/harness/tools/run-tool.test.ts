@@ -74,6 +74,8 @@ function ctxWith(
     approvedSlugs?: string[];
     confirmed?: boolean;
     routineRunId?: string;
+    /** The caller's role in the workspace; a member unless a test says. */
+    role?: "admin" | "member" | "viewer" | null;
     offeredSlugs?: Set<string>;
     offeredOperations?: Map<string, import("../../composio/client").ComposioTool>;
   } = {},
@@ -82,25 +84,40 @@ function ctxWith(
   return {
     db: {
       from: (table: string) =>
-        table === "tool_connection_grants"
+        table === "workspace_members"
           ? {
               select: () => ({
                 eq: () => ({
                   eq: () => ({
-                    eq: () => ({
-                      maybeSingle: async () => ({ data: over.grant ?? null, error: null }),
+                    maybeSingle: async () => ({
+                      data: over.role === null ? null : { role: over.role ?? "member" },
+                      error: null,
                     }),
                   }),
                 }),
               }),
             }
-          : {
-              select: () => ({
-                eq: () => ({
-                  eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }),
+          : table === "tool_connection_grants"
+            ? {
+                select: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      eq: () => ({
+                        maybeSingle: async () => ({ data: over.grant ?? null, error: null }),
+                      }),
+                    }),
+                  }),
                 }),
-              }),
-            },
+              }
+            : {
+                select: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      or: () => ({ maybeSingle: async () => ({ data: row, error: null }) }),
+                    }),
+                  }),
+                }),
+              },
     } as unknown as ToolContext["db"],
     offeredSlugs: over.offeredSlugs,
     offeredOperations: over.offeredOperations,
@@ -305,7 +322,7 @@ describe("run_tool", () => {
               toolkit: "microsoft_teams",
               required: [],
               inputSchema: null,
-              destructive: null,
+              destructive: false,
             },
           ],
         ]),
@@ -565,6 +582,55 @@ describe("run_tool", () => {
  * the type it wanted, and every one was checkable here against the schema
  * `find_tool` had already fetched. #195.
  */
+/**
+ * A viewer reads and changes nothing. They can chat, and an agent's tools ran
+ * for them as for anybody — so a viewer could send mail through a connected
+ * account and approve the card themselves.
+ */
+describe("a viewer", () => {
+  it("cannot run an operation that changes something, even with their own yes", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({
+        role: "viewer",
+        confirmed: true,
+        offeredOperations: describing("GMAIL_SEND_EMAIL", "gmail", null),
+      }),
+    );
+    expect(out).toMatchObject({ kind: "error", message: expect.stringMatching(/viewer/) });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("cannot run one nothing has described, which is not known to be a read", async () => {
+    const out = await runToolTool.run(CALL, ctxWith({ role: "viewer", grant: { mode: "always" } }));
+    expect(out).toMatchObject({ kind: "error", message: expect.stringMatching(/viewer/) });
+  });
+
+  it("can run one the catalogue marks as only reading", async () => {
+    const out = await runToolTool.run(
+      { ...CALL, slug: "GMAIL_FETCH_EMAILS" },
+      ctxWith({
+        role: "viewer",
+        confirmed: true,
+        offeredOperations: describing("GMAIL_FETCH_EMAILS", "gmail", false),
+      }),
+    );
+    expect(out.kind).toBe("ok");
+  });
+
+  it("is refused when their membership cannot be read, rather than let through", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({
+        role: null,
+        confirmed: true,
+        offeredOperations: describing("GMAIL_SEND_EMAIL", "gmail", null),
+      }),
+    );
+    expect(out).toMatchObject({ kind: "error" });
+  });
+});
+
 describe("checking the arguments against the schema", () => {
   const CREATE_EVENT_SCHEMA = {
     type: "object",
@@ -736,7 +802,7 @@ describe("checking the arguments against the schema", () => {
               toolkit: "gmail",
               required: [],
               inputSchema: { type: "object", required: [] },
-              destructive: null,
+              destructive: false,
             },
           ],
         ]) as Map<string, import("../../composio/client").ComposioTool>,
@@ -1071,5 +1137,66 @@ describe("how far one approval reaches", () => {
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("nobody is watching");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Who said yes, and how far that reaches.
+ *
+ * An operation Composio annotates with no hint — `destructive: null`, which is
+ * how it marks `GMAIL_SEND_EMAIL` — used to ride on an earlier approval of the
+ * same connection. So text in an email the agent had been allowed to read
+ * could have it send one. Only an operation the catalogue positively marks
+ * non-destructive does now.
+ */
+describe("how far a connection's approval reaches", () => {
+  const described = (destructive: boolean | null) =>
+    new Map([
+      [
+        "GMAIL_SEND_EMAIL",
+        {
+          slug: "GMAIL_SEND_EMAIL",
+          name: "Send email",
+          description: "Send an email.",
+          toolkit: "gmail",
+          required: [],
+          inputSchema: null,
+          destructive,
+        },
+      ],
+    ]) as Map<string, import("../../composio/client").ComposioTool>;
+  const SEND = { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL", arguments: {} };
+
+  it("does not cover an operation with no hint either way", async () => {
+    const out = await runToolTool.run(
+      SEND,
+      ctxWith({ approved: ["conn-1"], offeredOperations: described(null) }),
+    );
+    expect(out.kind).toBe("needs_confirmation");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("covers one the catalogue marks non-destructive, and says so", async () => {
+    const out = await runToolTool.run(
+      SEND,
+      ctxWith({ approved: ["conn-1"], offeredOperations: described(false) }),
+    );
+    expect(out).toMatchObject({ kind: "ok", approval: "connection" });
+  });
+
+  // The loop counts only a person's yes as approving the connection for the
+  // rest of the turn (`approvedConnectionsFrom`), so the result says whose it is.
+  it("reports a person's yes as the person's", async () => {
+    expect(await runToolTool.run(SEND, ctxWith({ confirmed: true }))).toMatchObject({
+      kind: "ok",
+      approval: "person",
+    });
+  });
+
+  it("reports a standing grant as a grant", async () => {
+    expect(await runToolTool.run(SEND, ctxWith({ grant: { mode: "always" } }))).toMatchObject({
+      kind: "ok",
+      approval: "grant",
+    });
   });
 });

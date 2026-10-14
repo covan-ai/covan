@@ -140,6 +140,26 @@ export interface Entitlements {
 
   /** For display. `metered: false` tells the UI there is nothing to show. */
   snapshot(workspaceId: string): Promise<CreditSnapshot>;
+
+  /**
+   * Mid-flight, for work that spends in steps — an agent turn that may call
+   * the model two dozen times. `spent` is everything the work has consumed so
+   * far and not yet recorded; it is held against the workspace under `holdId`
+   * (replacing what was held before), so that other work starting or
+   * continuing meanwhile sees it, and the answer is whether there is still
+   * credit left to take another step with.
+   *
+   * `check` alone cannot bound a turn: it is asked once, before the first
+   * step, and a turn that began on the last credit could then spend many times
+   * the balance before `record` saw any of it — once per concurrent turn.
+   *
+   * Optional: an implementation with nothing to bound leaves it out, and a
+   * caller treats its absence as "carry on".
+   */
+  hold?(workspaceId: string, holdId: string, spent: Spend[]): Promise<boolean>;
+
+  /** The work under `holdId` has been recorded, or is over: stop holding it. */
+  release?(holdId: string): Promise<void>;
 }
 
 export type EntitlementsFactory = (env: RoutineEnv) => Entitlements;

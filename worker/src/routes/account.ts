@@ -5,9 +5,11 @@ import { getDocStore } from "../lib/docstore";
 import { accountClosedEmail } from "../lib/emails/closed";
 import { notify } from "../lib/emails/send";
 import { connectedAccountsIn, revokeConnectedAccounts } from "../lib/composio/revoke";
+import { releaseHeldConnections } from "../lib/connections/release";
 import { deleteProfile } from "../lib/browser/profiles";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { avatarKeyFromUrl } from "../lib/avatars";
+import { chunked, readAllPages } from "../lib/batch";
 
 /**
  * Closing an account.
@@ -38,8 +40,13 @@ import { avatarKeyFromUrl } from "../lib/avatars";
  */
 const account = new Hono<AppEnv>();
 
-type Membership = { workspace_id: string; role: string };
-type Member = { workspace_id: string; user_id: string; role: string };
+/** One row of `account_closure_plan()` (0091): counted in SQL, not paged. */
+type PlanRow = {
+  workspace_id: string;
+  role: string;
+  other_members: number;
+  other_admins: number;
+};
 
 /**
  * What happens to the rooms somebody was in.
@@ -68,23 +75,20 @@ type Member = { workspace_id: string; user_id: string; role: string };
  * trigger would allow that row to go and leave an empty workspace behind, which
  * is the same unreachable remains by a different route.
  */
-export function planWorkspaces(
-  userId: string,
-  memberships: Membership[],
-  members: Member[],
-): { blocked: string[]; deletable: string[] } {
+export function planWorkspaces(rows: PlanRow[]): { blocked: string[]; deletable: string[] } {
   const blocked: string[] = [];
   const deletable: string[] = [];
 
-  for (const { workspace_id: id } of memberships) {
-    const others = members.filter((m) => m.workspace_id === id && m.user_id !== userId);
-    if (others.length === 0) {
-      deletable.push(id);
+  for (const row of rows) {
+    // PostgREST hands a bigint back as a number or a string depending on its
+    // size; either way it is a count, and only "none" and "some" matter.
+    const others = Number(row.other_members);
+    const otherAdmins = Number(row.other_admins);
+    if (others === 0) {
+      deletable.push(row.workspace_id);
       continue;
     }
-    const mine = members.find((m) => m.workspace_id === id && m.user_id === userId);
-    const otherAdmins = others.filter((m) => m.role === "admin");
-    if (mine?.role === "admin" && otherAdmins.length === 0) blocked.push(id);
+    if (row.role === "admin" && otherAdmins === 0) blocked.push(row.workspace_id);
   }
 
   return { blocked, deletable };
@@ -117,17 +121,22 @@ async function collectDocumentKeys(
   const bundleIds = (bundles ?? []).map((b) => b.id as string);
   if (bundleIds.length === 0) return [];
 
-  const { data: docs, error: docsError } = await admin
-    .from("documents")
-    .select("r2_key")
-    .in("bundle_id", bundleIds);
-
-  if (docsError) {
-    console.error("account deletion: could not list documents to clean up", docsError);
-    return [];
+  // In hundreds and page by page (`lib/batch.ts`): one list of every bundle
+  // was a URL the gateway refused past a couple of hundred, and one read of
+  // every document stopped at a thousand without saying so. Either way the
+  // files of an account with that much in it outlived the account.
+  const keys: string[] = [];
+  for (const ids of chunked(bundleIds)) {
+    const docs = await readAllPages<{ r2_key: string | null }>((from, to) =>
+      admin.from("documents").select("r2_key").in("bundle_id", ids).order("id").range(from, to),
+    );
+    if (docs === null) {
+      console.error("account deletion: could not list documents to clean up");
+      continue;
+    }
+    for (const d of docs) if (d.r2_key) keys.push(d.r2_key);
   }
-
-  return (docs ?? []).map((d) => d.r2_key as string | null).filter((k): k is string => !!k);
+  return keys;
 }
 
 // DELETE /account — close your own account, and nothing else's.
@@ -142,35 +151,17 @@ account.delete("/account", async (c) => {
   const db = c.get("db");
   const user = c.get("user");
 
-  const { data: memberships, error: membershipsError } = await db
-    .from("workspace_members")
-    .select("workspace_id,role")
-    .eq("user_id", user.id);
+  // Counted in the database (0091), not read row by row and counted here.
+  // PostgREST caps a read at a thousand rows without saying so, and a survey
+  // of every member of every workspace somebody is in was cut short exactly
+  // there: a workspace whose members fell off the end looked empty, and was
+  // deleted with them in it. Runs as the caller, so the counts are of the
+  // fellow members their own policies show them — every member of a workspace
+  // they are in.
+  const { data: plan, error: planError } = await db.rpc("account_closure_plan");
+  if (planError) return c.json({ error: "failed to check your workspaces" }, 500);
 
-  if (membershipsError) return c.json({ error: "failed to check your workspaces" }, 500);
-
-  const ids = (memberships ?? []).map((m) => m.workspace_id as string);
-
-  // Read through the caller's own client, not the service one. Being able to
-  // see the other members of these workspaces is exactly what
-  // `workspace_members_select_fellow_members` grants, so the survey is scoped
-  // by the same rule the team screen is — and if the caller is somehow not a
-  // member of one of these, the row it would have relied on is simply absent.
-  let members: Member[] = [];
-  if (ids.length > 0) {
-    const { data, error } = await db
-      .from("workspace_members")
-      .select("workspace_id,user_id,role")
-      .in("workspace_id", ids);
-    if (error) return c.json({ error: "failed to check your workspaces" }, 500);
-    members = (data ?? []) as Member[];
-  }
-
-  const { blocked, deletable } = planWorkspaces(
-    user.id,
-    (memberships ?? []) as Membership[],
-    members,
-  );
+  const { blocked, deletable } = planWorkspaces((plan ?? []) as PlanRow[]);
 
   if (blocked.length > 0) {
     // Named, not counted. "You are the last admin of 2 workspaces" sends a
@@ -258,6 +249,11 @@ account.delete("/account", async (c) => {
   // judgement the document-store delete below already makes.
   await revokeConnectedAccounts(c.env, connectedAccounts);
 
+  // The same for the Drive and Notion sources this person connected: revoked
+  // at the provider, and in the workspaces that stay, the token cleared and
+  // the source paused for somebody to reconnect. See `lib/connections/release.ts`.
+  await releaseHeldConnections(c.env, admin, user.id, deletable);
+
   /**
    * Best-effort, and for the same judgement the line above makes: refusing to
    * close an account over a third party's 500 is the worse outcome. Logged
@@ -289,10 +285,23 @@ account.delete("/account", async (c) => {
     // A failure here still leaves the rest of the account intact rather than
     // half a person in the database, which is why the loop is one workspace at
     // a time rather than one `in (…)` delete.
-    const { error } = await admin.from("workspaces").delete().eq("id", id);
+    //
+    // Conditional, in the same statement (0091): deleted only if nobody but
+    // this person is a member when it runs. The plan above is a moment old,
+    // and a workspace somebody joined since is not this person's to delete.
+    const { data: gone, error } = await admin.rpc("delete_workspace_if_sole_member", {
+      p_workspace_id: id,
+      p_user_id: user.id,
+    });
     if (error) {
       console.error("account deletion: failed to delete empty workspace", id, error);
       return c.json({ error: "failed to close your account" }, 500);
+    }
+    if (gone !== true) {
+      return c.json(
+        { error: "somebody joined one of your workspaces while it was closing — try again" },
+        409,
+      );
     }
   }
 

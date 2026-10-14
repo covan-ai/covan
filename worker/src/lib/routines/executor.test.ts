@@ -957,6 +957,32 @@ describe("runRoutine", () => {
     expect(run.values.error).toMatch(/delivery channel missing/);
   });
 
+  it("refuses to deliver to a channel disabled when the key that made it was revoked", async () => {
+    // Revoking pauses the routine in the same statement (0088); this is the
+    // routine somebody resumed without choosing another channel. The
+    // destination is still one a revoked key picked.
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts } = makeDb({
+      rows: {
+        delivery_channels: {
+          kind: "webhook",
+          secret_ciphertext: "unused",
+          disabled_at: "2026-10-13T00:00:00Z",
+        },
+      },
+    });
+    const r = routine({
+      cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    expect(out.status).toBe("failed");
+    expect(summarise).not.toHaveBeenCalled();
+    const run = inserts.find((i) => i.table === "routine_runs")!;
+    expect(run.values.error).toMatch(/disabled: the API key that set it up was revoked/);
+  });
+
   // ---- first run, web ------------------------------------------------------
 
   it("baselines a web routine's hash on the first run and delivers nothing", async () => {

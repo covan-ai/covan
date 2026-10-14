@@ -1,5 +1,6 @@
 import { send, type BrowserEnv, type BrowserResult } from "./client";
 import { sendV4 } from "./v4";
+import { httpsUrl } from "../https-url";
 
 /**
  * The provider's profiles and standalone browsers.
@@ -88,7 +89,8 @@ function toProviderBrowser(body: unknown): ProviderBrowser {
   return {
     id: String(row.id ?? ""),
     status: statusOf(row.status),
-    liveUrl: typeof row.liveUrl === "string" && row.liveUrl ? row.liveUrl : null,
+    // Into an iframe and a new tab's address bar; an https address or none.
+    liveUrl: httpsUrl(row.liveUrl),
     timeoutAt: typeof row.timeoutAt === "string" && row.timeoutAt ? row.timeoutAt : null,
     // `cdpUrl` is not read. See the file header.
   };

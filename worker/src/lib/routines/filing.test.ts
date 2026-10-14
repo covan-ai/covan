@@ -50,6 +50,7 @@ type Recorded = {
   inserts: Array<{ table: string; values: any }>;
   updates: Array<{ table: string; values: any; ids: string[] }>;
   ranges: Array<{ from: number; to: number }>;
+  eqs: Array<{ table: string; column: string; value: unknown }>;
 };
 
 function makeDb(
@@ -63,14 +64,17 @@ function makeDb(
     pruneError?: { message: string };
   } = {},
 ) {
-  const rec: Recorded = { inserts: [], updates: [], ranges: [] };
+  const rec: Recorded = { inserts: [], updates: [], ranges: [], eqs: [] };
   const bundle = over.bundle === undefined ? { id: "b1" } : over.bundle;
 
   const db: any = {
     from: (table: string) => ({
       select: () => {
         const chain: any = {
-          eq: () => chain,
+          eq: (column: string, value: unknown) => {
+            rec.eqs.push({ table, column, value });
+            return chain;
+          },
           is: () => chain,
           order: () => chain,
           range: async (from: number, to: number) => {
@@ -267,6 +271,22 @@ describe("retention", () => {
     // pretending somebody pressed something.
     expect(prune.values.deleted_via).toBe("r1");
     expect(prune.values.deleted_by).toBeNull();
+  });
+
+  // `routine_id` is a column on a document row. A row in some other workspace
+  // naming this routine must not count towards its retention, or it would push
+  // the routine's real output out of view.
+  it("counts only documents in the routine's own workspace", async () => {
+    const { db, rec } = makeDb({ surplus: [] });
+
+    await fileRoutineOutput(db, {} as any, input({ retention: 4 }));
+
+    expect(rec.eqs).toContainEqual({ table: "documents", column: "routine_id", value: "r1" });
+    expect(rec.eqs).toContainEqual({
+      table: "documents",
+      column: "knowledge_bundles.workspace_id",
+      value: "w1",
+    });
   });
 
   it("still reports the filing when the prune fails", async () => {

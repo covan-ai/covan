@@ -36,6 +36,21 @@ describe("loadEnv", () => {
     );
   });
 
+  // Without it the Node entry built OAuth redirect URIs from the Host header
+  // of whoever asked, and sealed that into the grant.
+  it("refuses to start with an OAuth client and no WORKER_HOST", () => {
+    expect(() => loadEnv(valid({ SLACK_CLIENT_ID: "s", NOTION_CLIENT_ID: "n" }))).toThrow(
+      /WORKER_HOST is required when NOTION_CLIENT_ID, SLACK_CLIENT_ID are set/,
+    );
+    expect(() =>
+      loadEnv(valid({ GOOGLE_CLIENT_ID: "g", WORKER_HOST: "api.example.com" })),
+    ).not.toThrow();
+  });
+
+  it("needs no WORKER_HOST where there is no OAuth client", () => {
+    expect(() => loadEnv(valid())).not.toThrow();
+  });
+
   it("treats an empty string as missing", () => {
     expect(() => loadEnv({ ...complete, OPENAI_API_KEY: "" })).toThrow(/OPENAI_API_KEY/);
   });

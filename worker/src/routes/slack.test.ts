@@ -20,8 +20,15 @@ vi.mock("../lib/slack/api", () => ({
   exchangeSlackCode: (...args: unknown[]) => exchangeSlackCode(...args),
 }));
 
-const { slackPublic } = await import("./slack");
-const { signState } = await import("../lib/connections/oauth-state");
+const { slack, slackPublic } = await import("./slack");
+const { resetRateLimiters } = await import("../lib/ratelimit");
+const { resetMisses } = await import("../middleware/ratelimit");
+const { signState, readState, sealGrant, nonceHashOf } =
+  await import("../lib/connections/oauth-state");
+
+/** What the tab that started the install keeps, and the hash it sent. */
+const NONCE = "nonce-of-the-starting-tab-0123456789";
+const NONCE_HASH = await nonceHashOf(NONCE);
 
 const KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const ENV = {
@@ -50,6 +57,7 @@ function serviceDb(rows: Record<string, unknown> = {}) {
       calls.push({ table, op, values });
       const answer = {
         eq: () => answer,
+        is: () => answer,
         order: () => answer,
         limit: () => answer,
         select: () => answer,
@@ -67,17 +75,58 @@ function serviceDb(rows: Record<string, unknown> = {}) {
   return calls;
 }
 
-function app() {
+/** Both routers, with `caller` signed in for the authenticated one. */
+function app(caller = "user-1") {
   const hono = new Hono<AppEnv>();
+  hono.use("/slack/complete", async (c, next) => {
+    c.set("user", { id: caller, email: `${caller}@example.com` } as never);
+    await next();
+  });
+  hono.route("/", slack);
   hono.route("/", slackPublic);
   return hono;
 }
 
 async function callback(workspaceId = "ws-1", userId = "user-1") {
-  const state = await signState({ provider: "slack", userId, workspaceId }, KEY);
+  const state = await signState(
+    { provider: "slack", userId, workspaceId, nonceHash: NONCE_HASH },
+    KEY,
+  );
   return app().request(
     `/slack/callback?code=abc&state=${state}`,
     { redirect: "manual" },
+    ENV as never,
+  );
+}
+
+/** The grant the callback seals, completed by `caller` with `nonce`. */
+async function complete(
+  opts: { workspaceId?: string; starter?: string; caller?: string; nonce?: string } = {},
+) {
+  const raw = await signState(
+    {
+      provider: "slack",
+      userId: opts.starter ?? "user-1",
+      workspaceId: opts.workspaceId ?? "ws-1",
+      nonceHash: NONCE_HASH,
+    },
+    KEY,
+  );
+  const grant = await sealGrant(
+    {
+      state: (await readState(raw, KEY))!,
+      code: "abc",
+      redirectUri: "https://api.example.com/slack/callback",
+    },
+    KEY,
+  );
+  return app(opts.caller ?? "user-1").request(
+    "/slack/complete",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grant, nonce: opts.nonce ?? NONCE }),
+    },
     ENV as never,
   );
 }
@@ -93,18 +142,51 @@ beforeEach(() => {
 });
 
 describe("GET /slack/callback", () => {
+  it("seals the code for the app and installs nothing", async () => {
+    // Who is at this browser is unknown. Installing here is what let a consent
+    // link sent to another team's admin bind their Slack to the starter.
+    const calls = serviceDb({});
+
+    const res = await callback();
+
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.searchParams.get("for")).toBe("slack");
+    expect(location.searchParams.get("grant")).toBeTruthy();
+    expect(exchangeSlackCode).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("POST /slack/complete", () => {
   const member = { workspace_members: { role: "admin" }, agents: { id: "agent-1" } };
 
   it("installs a Slack team nobody holds yet", async () => {
     const calls = serviceDb({ ...member, slack_installations: null });
 
-    const res = await callback();
+    const res = await complete();
 
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toContain("connected=slack");
+    expect(res.status).toBe(200);
     expect(
       calls.find((c) => c.table === "slack_installations" && c.op === "upsert")?.values,
     ).toMatchObject({ workspace_id: "ws-1", team_id: "T-ACME" });
+  });
+
+  it("refuses an install somebody else started, before exchanging anything", async () => {
+    const calls = serviceDb({ ...member, slack_installations: null });
+
+    const res = await complete({ starter: "user-attacker" });
+
+    expect(res.status).toBe(403);
+    expect(exchangeSlackCode).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.op === "upsert")).toBe(false);
+  });
+
+  it("refuses without the nonce of the tab that started it", async () => {
+    serviceDb(member);
+    const res = await complete({ nonce: "a-different-tab-nonce-0123456789" });
+    expect(res.status).toBe(403);
+    expect(exchangeSlackCode).not.toHaveBeenCalled();
   });
 
   // Re-installing is the ordinary way to fix a revoked token or add a scope,
@@ -112,33 +194,106 @@ describe("GET /slack/callback", () => {
   it("lets the workspace that holds a team re-install it", async () => {
     const calls = serviceDb({ ...member, slack_installations: { workspace_id: "ws-1" } });
 
-    const res = await callback("ws-1");
+    const res = await complete({ workspaceId: "ws-1" });
 
-    expect(res.headers.get("location")).toContain("connected=slack");
+    expect(res.status).toBe(200);
     expect(calls.some((c) => c.table === "slack_installations" && c.op === "upsert")).toBe(true);
   });
 
-  // Finding 4 in the 2026-10-08 audit. The only authorisation this route
-  // performs is that the state's user is an admin of the state's OWN
-  // workspace — so an admin of any workspace could install an app into a Slack
-  // team another tenant already held, and the upsert would re-point that row,
-  // bot token and all, at theirs.
+  // Finding 4 in the 2026-10-08 audit: a team another tenant already holds is
+  // not re-pointed at this one.
   it("refuses a Slack team another workspace already holds", async () => {
     const calls = serviceDb({ ...member, slack_installations: { workspace_id: "ws-other" } });
 
-    const res = await callback("ws-1");
+    const res = await complete({ workspaceId: "ws-1" });
 
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toContain("error=team_taken");
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "team_taken" });
     expect(calls.some((c) => c.op === "upsert")).toBe(false);
   });
 
   it("refuses somebody who is not an admin of the workspace in the state", async () => {
     const calls = serviceDb({ workspace_members: { role: "member" } });
 
-    const res = await callback();
+    const res = await complete();
 
-    expect(res.headers.get("location")).toContain("error=admin_only");
+    expect(await res.json()).toEqual({ error: "admin_only" });
     expect(calls.some((c) => c.op === "upsert")).toBe(false);
+  });
+});
+
+describe("POST /slack/events, in front of the per-address limit", () => {
+  // Slack delivers every customer's events from the same few addresses, so the
+  // route counts by what the signature vouches for — the team — and charges an
+  // address only for signatures that fail.
+  beforeEach(() => {
+    resetRateLimiters();
+    resetMisses();
+    serviceDb();
+  });
+
+  async function event(teamId: string, opts: { sign?: boolean; from?: string } = {}) {
+    const body = JSON.stringify({
+      type: "event_callback",
+      team_id: teamId,
+      event: { type: "app_mention", user: "U1", channel: "C1", text: "hi", ts: "1.0" },
+    });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(ENV.SLACK_SIGNING_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v0:${ts}:${body}`)),
+    );
+    const hex = [...mac].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return app().request(
+      "/slack/events",
+      {
+        method: "POST",
+        body,
+        headers: {
+          "Content-Type": "application/json",
+          "CF-Connecting-IP": opts.from ?? "54.0.0.1",
+          "x-slack-request-timestamp": ts,
+          "x-slack-signature": opts.sign === false ? "v0=00" : `v0=${hex}`,
+        },
+      },
+      { ...ENV, RATE_LIMIT_STANDARD_PER_MINUTE: "2" } as never,
+    );
+  }
+
+  it("counts verified events per team, not per Slack's shared address", async () => {
+    for (const team of ["T1", "T2", "T3", "T4"]) {
+      expect((await event(team)).status).toBe(200);
+    }
+    const lookups = serviceFrom.mock.calls.filter(([t]) => t === "slack_installations").length;
+    expect(lookups).toBe(4);
+  });
+
+  it("acknowledges and drops a team's events past its rate", async () => {
+    await event("T1");
+    await event("T1");
+    serviceFrom.mockClear();
+
+    const over = await event("T1");
+
+    // 200, because Slack switches off an app whose deliveries keep failing.
+    expect(over.status).toBe(200);
+    expect(serviceFrom).not.toHaveBeenCalled();
+  });
+
+  it("refuses an address that keeps failing the signature", async () => {
+    const from = "203.0.113.20";
+    expect((await event("T1", { sign: false, from })).status).toBe(401);
+    expect((await event("T1", { sign: false, from })).status).toBe(401);
+    expect((await event("T1", { sign: false, from })).status).toBe(401);
+    // Spent: refused before the body is read, even with a good signature.
+    expect((await event("T1", { from })).status).toBe(429);
+    // Slack's own address is untouched.
+    expect((await event("T1")).status).toBe(200);
   });
 });

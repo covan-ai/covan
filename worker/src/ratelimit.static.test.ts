@@ -87,25 +87,25 @@ function paidRouteFiles(): string[] {
  * the `createOpenAI` seam above does not see it, which is exactly the kind of
  * thing this file exists to stop being invisible.
  *
- * It is deliberately not on the expensive tier. That tier is keyed by user, and
- * this request has no user: it arrives from Slack's infrastructure, from many
- * addresses, on behalf of whoever happened to type in a channel. A per-minute
- * limit there would either be wide enough to bound nothing or narrow enough to
- * throttle a busy Slack workspace.
- *
- * What bounds it instead is stronger than a minute counter, and both halves
+ * It is not behind the expensive tier's middleware, because that runs before
+ * anything is known about the caller, and this request arrives from Slack's
+ * infrastructure on behalf of whoever happened to type in a channel. The tier
+ * is taken by hand instead, once there is somebody to count, and three bounds
  * have to hold:
  *
  * - **Nothing reaches the work without the signing secret.** The signature is
  *   checked before the body is even parsed, and a failure is a 401 that costs
- *   one HMAC (`lib/slack/verify.ts`).
- * - **The spend is attributed to a person and checked against their
- *   allowance.** `handleSlackEvent` resolves the Slack user to a Covan account
- *   and calls `entitlements.check` before the model, exactly as a chat turn
- *   does. An unrecognised asker is answered with a sentence and no completion.
- *
- * The standard tier still applies — `app.use("/*")` is mounted at the root, in
- * front of this route as much as any other.
+ *   one HMAC (`lib/slack/verify.ts`). An address that keeps failing it is
+ *   refused at the door (`countMiss`).
+ * - **The spend is attributed to a person and checked against their rate and
+ *   their allowance.** `handleSlackEvent` resolves the Slack user to a Covan
+ *   account, takes the expensive tier in that person's own bucket — the one the
+ *   chat screen spends — and calls `entitlements.check` before the model,
+ *   exactly as a chat turn does. An unrecognised asker is answered with a
+ *   sentence and no completion.
+ * - **A team's volume is bounded per team.** The route counts each verified
+ *   event against its Slack team, not against an address Slack shares between
+ *   every customer it has.
  */
 const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   "slack.ts": "handleSlackEvent",
@@ -180,15 +180,22 @@ describe("the expensive rate limit", () => {
     }
     const handle = readFileSync(join(SRC, "lib", "slack", "handle.ts"), "utf8");
     expect(handle).toContain("entitlements.check");
-    expect(readFileSync(join(ROUTES, "slack.ts"), "utf8")).toContain("verifySlackSignature");
+    expect(handle).toContain('getRateLimiter(deps.env, "expensive").check(userRateKey("expensive"');
+    const slackRoute = readFileSync(join(ROUTES, "slack.ts"), "utf8");
+    expect(slackRoute).toContain("verifySlackSignature");
+    expect(slackRoute).toContain("slack-team:${teamId}");
+    expect(slackRoute).toContain("countMiss(c)");
 
-    // The incoming-webhook route's two bounds, in the same spirit. It cannot
-    // reach a routine without resolving a token, and it takes the expensive
-    // tier's limiter by hand — keyed per routine, because the routine is what
-    // spends its owner's allowance.
+    // The incoming-webhook route's bounds, in the same spirit. It cannot
+    // reach a routine without resolving a token, it takes the expensive tier's
+    // limiter by hand — keyed per token, because the trigger's routine is what
+    // spends its owner's allowance — and an address whose tokens keep failing
+    // is refused before the lookup.
     const hooks = readFileSync(join(ROUTES, "routine-hooks.ts"), "utf8");
     expect(hooks).toContain("resolveIngestToken");
     expect(hooks).toContain('getRateLimiter(c.env, "expensive")');
+    expect(hooks).toContain("hasSpentMisses(c)");
+    expect(hooks).toContain("countMiss(c)");
     // And the credits themselves: a poked run is charged to the routine's
     // workspace by the executor, with no new code, because every id comes off
     // the row.

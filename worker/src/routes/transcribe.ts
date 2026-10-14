@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { TRANSCRIPTION_MODEL, transcribeAudio } from "../lib/transcribe";
+import { uploadLimit } from "../lib/body-limit";
 
 const transcribe = new Hono<AppEnv>();
 
@@ -19,8 +20,12 @@ function extOf(name: string): string {
   return m ? m[1] : "";
 }
 
+// Counted as it arrives (`lib/body-limit.ts`): the Content-Length check below is
+// a claim a chunked upload does not make.
+const recordingLimit = uploadLimit(MAX_SIZE, "recording too long (max 2 minutes)");
+
 // POST /transcribe — multipart `file`; returns the text to put in the composer.
-transcribe.post("/transcribe", async (c) => {
+transcribe.post("/transcribe", recordingLimit, async (c) => {
   // Before the audio goes anywhere. The spend happens at OpenAI, and there is
   // no way to un-transcribe a recording once it has been sent.
   const denied = await guardCredits(c);

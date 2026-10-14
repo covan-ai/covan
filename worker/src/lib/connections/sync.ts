@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SyncEnv } from "../../types";
 import { embeddingSpend, spends, type Entitlements } from "../entitlements";
-import { chunkText, embedTexts, embeddingModel } from "../embeddings";
+import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../embeddings";
 import { insertChunkRows } from "../chunk-store";
 import { getDocStore } from "../docstore";
 import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
@@ -14,6 +14,7 @@ import {
   type RemoteFile,
   type TokenEnvelope,
 } from "./types";
+import { holderPresent } from "./holder";
 
 /**
  * One sync: what the source holds now, made true here.
@@ -259,42 +260,18 @@ export async function runConnection(
   //
   // Paused rather than failed. Nothing is broken — the row is waiting for
   // somebody to reconnect it, which since 0057 is any member who can write.
-  if (!connection.user_id) {
-    const reason =
-      "the person whose account this source was connected with has closed their Covan account. " +
-      "Reconnect it to start syncing again; the documents it already imported are untouched.";
+  // `lib/connections/holder.ts`, shared with the routes that reach the grant.
+  const holder = await holderPresent(deps.db, connection);
+  if (!holder.present) {
     return finish(connection, deps, startedAt, {
       status: "skipped",
       added: 0,
       updated: 0,
       removed: 0,
       more: false,
-      error: reason,
-      pause: reason,
-      pauseCode: "owner_gone",
-    });
-  }
-
-  const { data: membership, error: membershipError } = await deps.db
-    .from("workspace_members")
-    .select("user_id")
-    .eq("workspace_id", connection.workspace_id)
-    .eq("user_id", connection.user_id)
-    .maybeSingle();
-  if (membershipError) {
-    throw new Error(`workspace membership lookup failed: ${membershipError.message}`);
-  }
-  if (!membership) {
-    const reason = "the person who connected this source is no longer a member of this workspace";
-    return finish(connection, deps, startedAt, {
-      status: "skipped",
-      added: 0,
-      updated: 0,
-      removed: 0,
-      more: false,
-      error: reason,
-      pause: reason,
-      pauseCode: "owner_left",
+      error: holder.reason,
+      pause: holder.reason,
+      pauseCode: holder.code,
     });
   }
 
@@ -368,10 +345,17 @@ export async function runConnection(
     // unique index on (connection_id, external_id) means importing "again"
     // would be a constraint violation rather than a fresh document, and a file
     // that comes back at the source has to come back here.
+    //
+    // Joined to the connection's own workspace: these rows are rewritten and
+    // their stored objects deleted below, and `connection_id` alone is only a
+    // claim made by whoever wrote the row.
     const { data: existingRows, error: existingError } = await deps.db
       .from("documents")
-      .select("id,external_id,external_version,r2_key,bundle_id,deleted_at")
-      .eq("connection_id", connection.id);
+      .select(
+        "id,external_id,external_version,r2_key,bundle_id,deleted_at,knowledge_bundles!inner(workspace_id)",
+      )
+      .eq("connection_id", connection.id)
+      .eq("knowledge_bundles.workspace_id", connection.workspace_id);
     if (existingError) {
       throw new Error(`could not read this connection's documents: ${existingError.message}`);
     }
@@ -470,8 +454,9 @@ export async function runConnection(
       clearApproval: approved && vanished.length <= MAX_REMOVALS_PER_RUN,
     });
   } catch (err) {
-    // What was embedded before the failure was still bought.
-    await charge(tokens);
+    // What was embedded before the failure was still bought — the files
+    // finished before it, and the batches of the one it failed in.
+    await charge(tokens + tokensSpentBefore(err));
 
     const message = err instanceof Error ? err.message : String(err);
     const retryable = err instanceof ProviderError ? err.retryable : true;

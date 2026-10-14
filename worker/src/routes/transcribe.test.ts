@@ -12,7 +12,7 @@ vi.mock("../lib/transcribe", async (orig) => ({
 }));
 // A transcription has no row of its own, so the caller's active workspace
 // pays. Resolved here rather than against a fake database.
-vi.mock("../lib/workspace", () => ({ getActiveWorkspaceId: async () => "ws-1" }));
+vi.mock("../lib/workspace", () => ({ callerWorkspaceId: async () => "ws-1" }));
 
 const { transcribe } = await import("./transcribe");
 

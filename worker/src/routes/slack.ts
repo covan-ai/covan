@@ -2,14 +2,24 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { AppEnv, Bindings } from "../types";
 import { serviceClient } from "../lib/supabase";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { deferred } from "../lib/defer";
 import { encryptSecret } from "../lib/secret-box";
-import { readState, signState } from "../lib/connections/oauth-state";
+import {
+  nonceHashOf,
+  openGrant,
+  readState,
+  sealGrant,
+  signState,
+} from "../lib/connections/oauth-state";
 import { entitlementsFor } from "../lib/entitlements";
 import { verifySlackSignature } from "../lib/slack/verify";
 import { exchangeSlackCode } from "../lib/slack/api";
 import { handleSlackEvent, type InstallationRow, type SlackEvent } from "../lib/slack/handle";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { readCapped } from "../lib/routines/source";
+import { getRateLimiter } from "../lib/ratelimit";
+import { countMiss, hasSpentMisses, refuseSpent } from "../middleware/ratelimit";
 
 /**
  * Slack: installing the app, and receiving what it hears.
@@ -35,7 +45,16 @@ const slackPublic = new Hono<AppEnv>();
  * why answering as the installer instead is the end of tenancy. The rest is the
  * minimum to hear a mention, hear a DM, and reply.
  */
-const SCOPES = ["app_mentions:read", "chat:write", "im:history", "users:read", "users:read.email"];
+// `channels:read` tells a public channel from a private one, which decides
+// who in Covan can see the conversation a mention starts (`isPublicChannel`).
+const SCOPES = [
+  "app_mentions:read",
+  "channels:read",
+  "chat:write",
+  "im:history",
+  "users:read",
+  "users:read.email",
+];
 
 function slackConfigured(env: Bindings): boolean {
   return Boolean(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET);
@@ -66,7 +85,7 @@ const INSTALLATION_SELECT =
  */
 async function activeInstallationId(c: Context<AppEnv>): Promise<string | null> {
   const db = c.get("db");
-  const workspaceId = await getActiveWorkspaceId(db, c.get("user").id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return null;
 
   const { data } = await db
@@ -80,7 +99,7 @@ async function activeInstallationId(c: Context<AppEnv>): Promise<string | null> 
 // GET /slack — whether Slack is available here, and what is installed.
 slack.get("/slack", async (c) => {
   const db = c.get("db");
-  const workspaceId = await getActiveWorkspaceId(db, c.get("user").id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
   const { data, error } = await db
@@ -106,16 +125,24 @@ slack.get("/slack", async (c) => {
 
 // POST /slack/install/start — begin the install.
 slack.post("/slack/install/start", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "install Slack");
+  if (refusal) return c.json(refusal, 403);
+
   if (!slackConfigured(c.env)) {
     return c.json({ error: "Slack is not configured on this deployment" }, 501);
   }
 
+  // The hash of the nonce this tab keeps for the flow; `/slack/complete` asks
+  // for the nonce itself. See `lib/connections/oauth-state.ts`.
+  const parsed = installSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
   const user = c.get("user");
-  const workspaceId = await getActiveWorkspaceId(c.get("db"), user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
   const state = await signState(
-    { provider: "slack", userId: user.id, workspaceId },
+    { provider: "slack", userId: user.id, workspaceId, nonceHash: parsed.data.nonceHash },
     c.env.ROUTINE_SECRET_KEY,
   );
 
@@ -128,10 +155,17 @@ slack.post("/slack/install/start", async (c) => {
   return c.json({ url: url.toString() });
 });
 
+const installSchema = z.object({
+  nonceHash: z.string().regex(/^[0-9a-f]{64}$/, "a flow nonce's hash is required"),
+});
+
 const patchSchema = z.object({ agentId: z.string().min(1) });
 
 // PATCH /slack/installation — choose which agent answers.
 slack.patch("/slack/installation", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "change the Slack installation");
+  if (refusal) return c.json(refusal, 403);
+
   const parsed = patchSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
@@ -164,6 +198,9 @@ slack.patch("/slack/installation", async (c) => {
 // ordinary sessions, and 0044 lets `slack_threads` cascade rather than taking
 // them with it.
 slack.delete("/slack/installation", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "remove the Slack installation");
+  if (refusal) return c.json(refusal, 403);
+
   const id = await activeInstallationId(c);
   if (!id) return c.json({ error: "not found" }, 404);
 
@@ -180,7 +217,16 @@ slack.delete("/slack/installation", async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /slack/callback — the other end of the install.
+/**
+ * GET /slack/callback — where Slack sends the browser back after an install.
+ *
+ * It decides nothing, for the reason `GET /connections/callback` gives: the
+ * browser carries no Covan session, and trusting the state alone let somebody
+ * start an install and send the consent link to another team's admin, whose
+ * Slack then answered to the starter's workspace (and, being taken, locked the
+ * team's own workspace out). The code is sealed into a grant and the app
+ * completes it with `POST /slack/complete`, as the person who started it.
+ */
 slackPublic.get("/slack/callback", async (c) => {
   const home = `${frontendOrigin(c.env)}/integrations`;
   const fail = (reason: string) => c.redirect(`${home}?error=${encodeURIComponent(reason)}`, 302);
@@ -196,10 +242,44 @@ slackPublic.get("/slack/callback", async (c) => {
   const state = await readState(rawState, c.env.ROUTINE_SECRET_KEY);
   if (!state || state.provider !== "slack") return fail("expired");
 
-  // Service role for the same two reasons as the connections callback: the row
-  // holds a bot token that has to be encrypted before the database sees it, and
-  // there is no caller here for RLS to resolve. Both checks below are what
-  // stands in for it.
+  const grant = await sealGrant(
+    { state, code, redirectUri: `${apiOrigin(c)}/slack/callback` },
+    c.env.ROUTINE_SECRET_KEY,
+  );
+  return c.redirect(`${home}?grant=${grant}&for=slack`, 302);
+});
+
+const completeSchema = z.object({
+  grant: z.string().min(1).max(16_384),
+  nonce: z.string().min(16).max(200),
+});
+
+/**
+ * POST /slack/complete — finish an install, as the admin who started it.
+ *
+ * What the callback used to do, behind the two checks it could not make: the
+ * caller is the state's person and holds the flow's nonce. Then, as before,
+ * they must still be an admin there, and a team already answering another
+ * workspace is not taken over.
+ */
+slack.post("/slack/complete", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "install Slack");
+  if (refusal) return c.json(refusal, 403);
+
+  if (!slackConfigured(c.env)) return c.json({ error: "unavailable" }, 501);
+
+  const parsed = completeSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: "missing_code" }, 400);
+
+  const grant = await openGrant(parsed.data.grant, c.env.ROUTINE_SECRET_KEY);
+  if (!grant || grant.state.provider !== "slack") return c.json({ error: "expired" }, 400);
+  const { state, code } = grant;
+
+  if (state.userId !== c.get("user").id) return c.json({ error: "not_yours" }, 403);
+  if ((await nonceHashOf(parsed.data.nonce)) !== state.nonceHash) {
+    return c.json({ error: "not_yours" }, 403);
+  }
+
   const admin = serviceClient(c.env);
 
   const { data: membership } = await admin
@@ -208,46 +288,27 @@ slackPublic.get("/slack/callback", async (c) => {
     .eq("workspace_id", state.workspaceId)
     .eq("user_id", state.userId)
     .maybeSingle();
-  if (!membership) return fail("not_a_member");
-  // Installing an app that answers on the workspace's behalf is an
-  // administrative act, not an authoring one.
-  if (membership.role !== "admin") return fail("admin_only");
+  if (!membership) return c.json({ error: "not_a_member" }, 403);
+  if (membership.role !== "admin") return c.json({ error: "admin_only" }, 403);
 
   let install;
   try {
-    install = await exchangeSlackCode(
-      fetch.bind(globalThis),
-      c.env,
-      code,
-      `${apiOrigin(c)}/slack/callback`,
-    );
+    install = await exchangeSlackCode(fetch.bind(globalThis), c.env, code, grant.redirectUri);
   } catch (err) {
     console.error("slack install failed", err);
-    return fail("exchange_failed");
+    return c.json({ error: "exchange_failed" }, 502);
   }
 
-  // Whose Slack workspace this is, which is not the same question as who the
-  // installer is. `team_id` is globally unique (0044) and the upsert below
-  // conflicts on it, so without this read an admin of ANY Covan workspace could
-  // run the install against a Slack team another tenant already held and
-  // re-point that row — bot token, agent and all — at their own workspace. The
-  // state names the installer's workspace and that is the only thing the two
-  // checks above compare it against; neither of them can see this.
-  //
-  // Read with the service role on purpose: the holder is usually a workspace
-  // the caller cannot see, and a check that could only see rows the caller is
-  // allowed to read would answer "nobody holds it" for exactly the case this
-  // is about.
+  // One Slack team answers one Covan workspace. Moving it is uninstall and
+  // reinstall from the workspace that holds it, never a second install here.
   const { data: holder } = await admin
     .from("slack_installations")
     .select("workspace_id")
     .eq("team_id", install.teamId)
     .maybeSingle();
-  // Re-installing from the workspace that already holds the team is the
-  // ordinary case and goes on to the upsert. Another workspace is refused, and
-  // refused without naming which one: the holder is a tenant the caller has no
-  // business learning about.
-  if (holder && holder.workspace_id !== state.workspaceId) return fail("team_taken");
+  if (holder && holder.workspace_id !== state.workspaceId) {
+    return c.json({ error: "team_taken" }, 409);
+  }
 
   // Which agent answers, before anybody has been asked. The oldest one is the
   // workspace's first and usually its main; the alternative is an app that is
@@ -257,6 +318,7 @@ slackPublic.get("/slack/callback", async (c) => {
     .from("agents")
     .select("id")
     .eq("workspace_id", state.workspaceId)
+    .is("deleted_at", null)
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -272,21 +334,18 @@ slackPublic.get("/slack/callback", async (c) => {
       installed_by: state.userId,
       updated_at: new Date().toISOString(),
     },
-    // Re-installing is the ordinary way to fix a revoked token or add a scope,
-    // and Slack issues a new bot token each time. Conflicting on the team keeps
-    // one row per Slack workspace and refreshes the credential in place, so the
-    // threads already linked to this installation keep working. What makes that
-    // safe is the holder check above: without it, conflicting on `team_id`
-    // means any caller who reaches here can refresh a row that is not theirs.
     { onConflict: "team_id" },
   );
   if (error) {
     console.error("failed to save the slack installation", error);
-    return fail("save_failed");
+    return c.json({ error: "save_failed" }, 500);
   }
 
-  return c.redirect(`${home}?connected=slack`, 302);
+  return c.json({ provider: "slack" });
 });
+
+/** Slack event payloads are kilobytes. Anything near this is not Slack. */
+const SLACK_EVENT_MAX_BYTES = 1024 * 1024;
 
 /**
  * POST /slack/events — everything the app hears.
@@ -298,9 +357,24 @@ slackPublic.get("/slack/callback", async (c) => {
  * second answer in the thread.
  */
 slackPublic.post("/slack/events", async (c) => {
+  // An address that keeps failing the signature is refused before its next
+  // body is read. Slack's own deliveries always verify and so never count.
+  if (hasSpentMisses(c)) return refuseSpent(c);
+
   // The raw body, byte for byte. Re-serialising the parsed JSON produces a
   // different string and the signature is over what Slack sent.
-  const body = await c.req.text();
+  //
+  // Capped while it streams in, and before the signature is checked, because
+  // the check needs the whole body and the caller is not anybody yet. Read
+  // whole, this was an unauthenticated way to make the Node entry hold
+  // hundreds of megabytes. Slack's events are a few kilobytes; a megabyte is
+  // generous.
+  let body: string;
+  try {
+    body = await readCapped(c.req.raw, SLACK_EVENT_MAX_BYTES);
+  } catch {
+    return c.json({ error: "payload too large" }, 413);
+  }
 
   const verified = await verifySlackSignature(
     c.env.SLACK_SIGNING_SECRET ?? "",
@@ -312,6 +386,7 @@ slackPublic.post("/slack/events", async (c) => {
   );
   if (!verified.ok) {
     console.warn("slack event rejected:", verified.reason);
+    await countMiss(c);
     return c.json({ error: "unauthorized" }, 401);
   }
 
@@ -345,6 +420,18 @@ slackPublic.post("/slack/events", async (c) => {
 
   const event = payload.event;
   const teamId = payload.team_id;
+
+  // Counted per Slack team, which the signature has just vouched for. Slack
+  // delivers every team's events from the same few addresses, so this route
+  // is in front of the per-address limit, and the team is the thing whose
+  // volume is ours to bound. Over it, the event is acknowledged and dropped:
+  // Slack treats a 429 as a failed delivery, retries it (which is dropped
+  // above anyway), and switches off an app whose deliveries keep failing.
+  const teamVerdict = await getRateLimiter(c.env, "standard").check(`slack-team:${teamId}`);
+  if (!teamVerdict.allowed) {
+    console.warn("slack event dropped: team over its rate", teamId);
+    return c.json({ ok: true });
+  }
 
   deferred(
     c,

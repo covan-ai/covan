@@ -62,7 +62,9 @@ import {
   spentTurnUsage,
   spentUsage,
   turnSpend,
+  creditHold,
 } from "./chat-turn";
+import type { RunApproval } from "../lib/harness/registry";
 
 const chat = new Hono<AppEnv>();
 
@@ -397,6 +399,9 @@ chat.post("/chat/stream", async (c) => {
        * `runAgentTurn` returns none of them when it throws. See `TurnSpend`.
        */
       const spend = turnSpend();
+      // What this turn has spent, held against its workspace before each step
+      // so that it, and every other turn there, stops when the credit does.
+      const hold = creditHold(c.get("entitlements"), c.get("workspaceId"), model, spend);
       // Token usage arrives once, after the last delta, whichever provider
       // answered — `lib/completion.ts` normalises the two shapes into one
       // event. Captured for the usage dashboard.
@@ -498,6 +503,8 @@ chat.post("/chat/stream", async (c) => {
           ),
           { sessionId, messageId: assistantMessageId },
         );
+        // Charged now, so no longer held: holding it too would count it twice.
+        await hold.release();
       };
 
       // Assistant rows are server-authoritative — always written with the
@@ -754,6 +761,7 @@ chat.post("/chat/stream", async (c) => {
           signal,
           send,
           spend,
+          mayContinue: hold.mayContinue,
         });
 
         steps = turn.steps;
@@ -1121,6 +1129,13 @@ chat.post("/chat/confirm/:id", async (c) => {
        * request drops what it did, nothing else will ever write it.
        */
       const spend = turnSpend();
+      // As `/chat/stream` holds it: the resumed half can take many more steps.
+      const hold = creditHold(
+        c.get("entitlements"),
+        c.get("workspaceId"),
+        pause.model ?? resolveModel(null, env),
+        spend,
+      );
       let spendRecorded = false;
       let persisted = false;
       /**
@@ -1140,6 +1155,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           sessionId: pause.sessionId,
           messageId: pause.messageId ?? undefined,
         });
+        await hold.release();
       };
 
       /**
@@ -1220,7 +1236,8 @@ chat.post("/chat/confirm/:id", async (c) => {
         const started = Date.now();
         const parsedArgs = parseArguments(pause.toolCall.arguments);
         const result = await (async (): Promise<
-          { kind: "ok"; content: string } | { kind: "error"; message: string }
+          | { kind: "ok"; content: string; approval?: RunApproval }
+          | { kind: "error"; message: string }
         > => {
           if (!approve) return { kind: "error", message: DECLINED_RESULT };
           if (!tool) return { kind: "error", message: `no tool named ${pause.toolCall.name}` };
@@ -1287,6 +1304,9 @@ chat.post("/chat/confirm/:id", async (c) => {
                       ? ("failed" as const)
                       : ("refused" as const),
                 resultExcerpt: resolved,
+                // The person's yes, which is what lets the rest of the turn
+                // treat this connection as approved (`approvedConnectionsFrom`).
+                ...(result.kind === "ok" && result.approval ? { approval: result.approval } : {}),
                 // The pause wrote this row with no `result_chars`, because at
                 // that point nothing had been put in front of the model. Now
                 // something has. Leaving it null made every confirmed call
@@ -1390,7 +1410,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           }
           const run = await runToolCall(call, {
             tools,
-            ctx: { ...ctx, confirmed: covered },
+            ctx: { ...ctx, confirmed: covered, confirmedAsListed: covered },
             steps,
             index: step.index,
             pass: step.pass ?? 0,
@@ -1487,6 +1507,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           signal,
           send,
           spend,
+          mayContinue: hold.mayContinue,
         });
 
         await recordSpend();

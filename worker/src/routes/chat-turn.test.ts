@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildToolContext } from "./chat-turn";
+import { buildToolContext, creditHold, turnSpend } from "./chat-turn";
+import type { Entitlements } from "../lib/entitlements";
 import type { ToolEnv } from "../lib/harness/registry";
 
 /**
@@ -146,5 +147,61 @@ describe("buildToolContext", () => {
 
     // Sequential would finish in the order they were started.
     expect(seen).toEqual(["searches", "offerings"]);
+  });
+});
+
+describe("creditHold", () => {
+  const pass = {
+    index: 0,
+    prompt: 80_000,
+    completion: 900,
+    cached: null,
+    written: null,
+    reasoning: null,
+    searches: null,
+  };
+
+  it("holds the turn's spend so far under one id, and releases that id", async () => {
+    const hold = vi.fn(async () => true);
+    const release = vi.fn(async () => {});
+    const spend = turnSpend();
+    const credit = creditHold(
+      { hold, release } as unknown as Entitlements,
+      "ws-1",
+      "gpt-4.1",
+      spend,
+    );
+
+    spend.passes.push(pass);
+    await expect(credit.mayContinue!()).resolves.toBe(true);
+    spend.passes.push({ ...pass, index: 1 });
+    await credit.mayContinue!();
+    await credit.release();
+
+    const [first, second] = hold.mock.calls as unknown as Array<
+      [string, string, Array<{ promptTokens: number }>]
+    >;
+    expect(first[0]).toBe("ws-1");
+    // The same hold, growing: the second step holds both passes, not one more.
+    expect(second[1]).toBe(first[1]);
+    expect(first[2][0].promptTokens).toBe(80_000);
+    expect(second[2][0].promptTokens).toBe(160_000);
+    expect(release).toHaveBeenCalledWith(first[1]);
+  });
+
+  it("asks nothing where nothing is metered", async () => {
+    const credit = creditHold({} as Entitlements, "ws-1", "gpt-4.1", turnSpend());
+    expect(credit.mayContinue).toBeUndefined();
+    await expect(credit.release()).resolves.toBeUndefined();
+  });
+
+  it("asks nothing when no workspace was resolved to charge", () => {
+    const credit = creditHold(
+      { hold: vi.fn() } as unknown as Entitlements,
+      undefined,
+      "gpt-4.1",
+      turnSpend(),
+    );
+    expect(credit.mayContinue).toBeUndefined();
   });
 });

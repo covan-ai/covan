@@ -1,9 +1,10 @@
 import { meteredFetch } from "../../subrequests";
 import { assertFetchableUrl, ownHostsFrom } from "../../routines/url-guard";
-import { readCapped, resolvesPublicly } from "../../routines/source";
+import { pinnedRequest, readCapped, resolvesPublicly } from "../../routines/source";
 import { loadConnection } from "../connections";
 import { authHeaders } from "../secrets";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
+import { mayChangeThings, VIEWERS_READ_ONLY } from "../role";
 
 /**
  * One implementation of "call an API", for every API.
@@ -179,6 +180,50 @@ export const httpRequestTool: AgentTool = {
       };
     }
 
+    const writes = method !== "GET" && method !== "HEAD";
+    // A viewer reads and changes nothing (`lib/harness/role.ts`).
+    if (writes && !(await mayChangeThings(ctx))) {
+      return { kind: "error", message: VIEWERS_READ_ONLY };
+    }
+
+    /**
+     * A write through a colleague's credential asks first (0098).
+     *
+     * `allowed_methods` is what the connection's creator allowed — for their
+     * own use. On a connection they shared, another person's turn writing
+     * through it is writing as them, and until now it never asked: a POST in
+     * the allowed list just went. So it is a card now, unless this person
+     * already approved a write on this connection in this turn. A person's own
+     * connection keeps its methods as they set them.
+     *
+     * A scheduled run has nobody to ask, so a write through somebody else's
+     * connection there is an honest failure, as `run_tool`'s is.
+     */
+    const theirs = connection.created_by !== ctx.userId;
+    const approved =
+      ctx.confirmed === true || (ctx.approvedConnections ?? []).includes(connection.id);
+    if (writes && theirs && !approved) {
+      if (ctx.routineRunId) {
+        return {
+          kind: "error",
+          message:
+            `${method} on ${connection.label} writes through a connection somebody else shared, ` +
+            "and a scheduled run has nobody to approve that. Report that you could not do it.",
+        };
+      }
+      return {
+        kind: "needs_confirmation",
+        summary: `${method} to ${connection.label}?`,
+        proposal: {
+          kind: "http_request",
+          connection: { id: connection.id, label: connection.label },
+          method,
+          path: input.path,
+          ...(input.body !== undefined ? { body: input.body } : {}),
+        },
+      };
+    }
+
     const resolved = resolveTarget(connection.base_url, input.path);
     if (!resolved.ok) return { kind: "error", message: resolved.message };
     const url = resolved.url;
@@ -195,9 +240,10 @@ export const httpRequestTool: AgentTool = {
     // created; DNS is not a promise, and the check that catches a host that
     // has since become `169.254.169.254` is the one at call time.
     let target: URL;
+    let address: string | null;
     try {
       target = assertFetchableUrl(url.toString(), ownHostsFrom(ctx.env));
-      await resolvesPublicly(target.hostname);
+      address = await resolvesPublicly(target.hostname);
     } catch (err) {
       return { kind: "error", message: err instanceof Error ? err.message : "unsafe url" };
     }
@@ -221,17 +267,19 @@ export const httpRequestTool: AgentTool = {
     // third party the model chose, so it is exactly the kind that runs a turn
     // out of subrequests. See `lib/subrequests.ts`.
     const send = meteredFetch(ctx.env) ?? fetch;
-    const res = await send(target.toString(), {
-      method,
-      headers,
-      ...(body !== null ? { body } : {}),
-      // Every 3xx is an error, for `lib/routines/delivery.ts`'s reason: a
-      // redirect is either a request to repeat a credentialed request at a
-      // host the connection does not name, or a request to drop the body.
-      // Neither is the call that was authorised.
-      redirect: "manual",
-      signal: ctx.signal ?? AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const res = await send(
+      ...pinnedRequest(target, address, {
+        method,
+        headers,
+        ...(body !== null ? { body } : {}),
+        // Every 3xx is an error, for `lib/routines/delivery.ts`'s reason: a
+        // redirect is either a request to repeat a credentialed request at a
+        // host the connection does not name, or a request to drop the body.
+        // Neither is the call that was authorised.
+        redirect: "manual",
+        signal: ctx.signal ?? AbortSignal.timeout(TIMEOUT_MS),
+      }),
+    );
 
     if (res.status >= 300 && res.status < 400) {
       return {

@@ -1,4 +1,4 @@
-import { deliver, deliveryDepsFrom, type DeliveryChannel } from "../../routines/delivery";
+import { deliver, deliveryDepsFrom } from "../../routines/delivery";
 import { deliveryChannelSecret } from "../secrets";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 
@@ -83,7 +83,7 @@ export const sendEmailTool: AgentTool = {
     if (!secret) return { kind: "error", message: "that channel has no stored destination" };
 
     await deliver(
-      secret as unknown as DeliveryChannel,
+      secret,
       { subject: input.subject.trim(), body: input.body },
       deliveryDepsFrom(ctx.env),
       { event: "agent.sent" },

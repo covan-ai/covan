@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, Mail, Plus, RefreshCw, Send, Trash2, Webhook } from "lucide-react";
-import { SectionCard } from "@/components/section-card";
+import { Chip, SectionCard } from "@/components/section-card";
 import { SectionHeading } from "@/components/page-container";
 import { RevealedSecret } from "@/components/revealed-secret";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
-import type { DeliveryChannel, DeliveryChannelKind } from "@/lib/routines-api";
+import type { ConfirmationOutcome, DeliveryChannel, DeliveryChannelKind } from "@/lib/routines-api";
 import {
   useDeliveryChannels,
   useCreateChannel,
@@ -98,6 +98,11 @@ export function DeliveryChannelsCard() {
         setRevealed(created.signingSecret);
         return;
       }
+      if (created.kind === "email" && !created.confirmed) {
+        toast.success(confirmationSentence(created.confirmation));
+        close();
+        return;
+      }
       toast.success("Delivery channel added");
       close();
     } catch (err) {
@@ -113,6 +118,15 @@ export function DeliveryChannelsCard() {
       await testChannel.mutateAsync(channel.id);
       toast.success(`Test sent to ${channel.label}`);
     } catch (err) {
+      // An address that has not confirmed is not sent a test — that is the
+      // mail it has not agreed to — but it is asked again, at most daily.
+      if (err instanceof ApiError && err.status === 409) {
+        toast.message("This address hasn't confirmed yet", {
+          description:
+            "Covan emailed it a link. Nothing is sent there until somebody opens it — we ask again at most once a day.",
+        });
+        return;
+      }
       // 502 carries what the receiver itself said. Replacing that with
       // "delivery failed" would make the button worth less than not having it.
       toast.error(err instanceof ApiError ? err.message : "Could not send a test");
@@ -173,6 +187,7 @@ export function DeliveryChannelsCard() {
               >
                 <ChannelIcon kind={channel.kind} />
                 <span className="min-w-0 flex-1 truncate text-sm">{channel.label}</span>
+                {!channel.confirmed && <Chip>Waiting for confirmation</Chip>}
 
                 <button
                   onClick={() => void sendTest(channel)}
@@ -312,4 +327,15 @@ export function DeliveryChannelsCard() {
       </Dialog>
     </section>
   );
+}
+
+/** What to tell somebody who just added an address that is not their own. */
+function confirmationSentence(outcome: ConfirmationOutcome | undefined): string {
+  if (outcome === "sent") {
+    return "Added. We've emailed that address a link — nothing is sent there until it's confirmed.";
+  }
+  if (outcome === "limit") {
+    return "Added, but you've asked enough addresses today. We'll ask this one tomorrow.";
+  }
+  return "Added. It will need to confirm before anything is sent there.";
 }

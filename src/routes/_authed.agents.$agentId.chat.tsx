@@ -454,7 +454,7 @@ function ChatTab() {
   const [stoppedShort, setStoppedShort] = useState<{
     sessionId: string;
     messageId: string;
-    reason: "budget" | "tokens" | "runtime";
+    reason: "budget" | "tokens" | "runtime" | "credits";
   } | null>(null);
   // The reply a continuation is being written into, so the text arriving can
   // be drawn on the end of it rather than under it as a second answer.
@@ -622,7 +622,7 @@ function ChatTab() {
     let ranLong = false;
     // And which ceiling stopped it, if one did. Same reason it is local: the
     // reply it belongs to does not have an id until `done`.
-    let ranOut: "budget" | "tokens" | "runtime" | null = null;
+    let ranOut: "budget" | "tokens" | "runtime" | "credits" | null = null;
 
     const controller = new AbortController();
     streamAbort.current = controller;
@@ -840,7 +840,8 @@ function ChatTab() {
             if (
               event.reason === "budget" ||
               event.reason === "tokens" ||
-              event.reason === "runtime"
+              event.reason === "runtime" ||
+              event.reason === "credits"
             ) {
               ranOut = event.reason;
             }

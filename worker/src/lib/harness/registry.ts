@@ -99,6 +99,14 @@ export type ToolContext = {
    */
   confirmed?: boolean;
   /**
+   * Set beside `confirmed` when the yes was given on ANOTHER call's card, as a
+   * line in the list it carried (`AgentTool.approvedTogether`), rather than on
+   * a card of this call's own. Such a card showed only the line, so a tool
+   * must not add to this call anything the line did not say — a saved login,
+   * most of all. Set by `routes/chat.ts` only.
+   */
+  confirmedAsListed?: boolean;
+  /**
    * Connections a person has already approved an action on, in this turn.
    *
    * Computed by `lib/harness/loop.ts` from the steps it can already see, not
@@ -259,8 +267,16 @@ export type ToolContext = {
   signal?: AbortSignal;
 };
 
+/**
+ * Who said yes to a call that acts at a connected service: the person, on a
+ * card (`person`); a standing always-allow (`grant`); or an earlier yes on the
+ * same connection that this call rode on (`connection`). Only the first is
+ * somebody looking at what is about to happen — see `approvedConnectionsFrom`.
+ */
+export type RunApproval = "person" | "grant" | "connection";
+
 export type ToolResult =
-  | { kind: "ok"; content: string }
+  | { kind: "ok"; content: string; approval?: RunApproval }
   | { kind: "error"; message: string }
   /**
    * The tool has worked out what it would do and wants a person to say yes

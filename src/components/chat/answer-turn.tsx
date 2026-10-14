@@ -90,7 +90,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   /** The answer stopped at its length cap and can be carried on. */
   truncated: boolean;
   /** The turn stopped at a ceiling, and which one. */
-  stoppedShort: "budget" | "tokens" | "runtime" | null;
+  stoppedShort: "budget" | "tokens" | "runtime" | "credits" | null;
   canSpeak: boolean;
   speaking: boolean;
   onSpeak: (id: string, text: string) => void;
@@ -200,11 +200,18 @@ export const AnswerTurn = memo(function AnswerTurn({
                     // so the sentence points at the one thing that does work:
                     // the count resets per turn.
                     "This turn reached how much this deployment can do in one go."
-                  : "This turn used every tool call it is allowed."}
+                  : stoppedShort === "credits"
+                    ? // The workspace's, checked before every step. Keep going
+                      // would be refused until somebody adds credit, so it is
+                      // not offered.
+                      "This workspace ran out of credits partway through this answer."
+                    : "This turn used every tool call it is allowed."}
             </span>
-            <Button variant="outline" size="sm" onClick={onKeepGoing} disabled={busy}>
-              Keep going
-            </Button>
+            {stoppedShort !== "credits" && (
+              <Button variant="outline" size="sm" onClick={onKeepGoing} disabled={busy}>
+                Keep going
+              </Button>
+            )}
           </div>
         )}
 

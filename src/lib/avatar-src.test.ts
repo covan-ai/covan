@@ -6,17 +6,22 @@ beforeEach(() => {
 });
 
 describe("avatarSrc", () => {
-  it("serves an uploaded photo from the API", () => {
-    expect(avatarSrc("/avatars/u1/abc.webp")).toBe("https://api.covan.test/avatars/u1/abc.webp");
-  });
+  const STORED =
+    "/avatars/0b7e7c1e-6a43-4c38-9a59-3f1b2c4d5e6f/0123456789abcdef0123456789abcdef.webp";
 
-  it("passes an https address through as it is", () => {
-    expect(avatarSrc("https://lh3.example.com/a.png")).toBe("https://lh3.example.com/a.png");
+  it("serves an uploaded photo from the API", () => {
+    expect(avatarSrc(STORED)).toBe(`https://api.covan.test${STORED}`);
   });
 
   // The column is the user's own to write. Anything the app would not have put
   // there renders as a monogram instead of being loaded into every member list.
+  //
+  // An https address included: an image on somebody else's server, loaded by
+  // every co-member's browser, tells that server who looked and when.
   it.each([
+    "https://tracker.example/pixel.png",
+    "/avatars/u1/abc.webp",
+    "/avatars/../documents/1/download",
     "javascript:alert(1)",
     "data:image/svg+xml;base64,PHN2Zz4=",
     "http://example.com/a.png",

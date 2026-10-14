@@ -182,6 +182,16 @@ export const EXPORTED: TableSpec[] = [
     withheld: {
       secret_ciphertext:
         "the webhook URL or address, encrypted with this install's ROUTINE_SECRET_KEY and withheld from authenticated by 0023; see TableSpec.columns.",
+      api_key_id:
+        "the API key that made the channel (0088). Keys are never exported, so it would point outside the archive, as `routines.api_key_id` does.",
+      disabled_at:
+        "when revoking that key stopped the channel (0088). A restored channel has no secret to deliver to and no key to answer for, so there is nothing left for it to stop.",
+      confirmed_at:
+        "when the address said yes (0096). Withheld so a restored email channel asks again: the address is withheld too, and a confirmation is for one address on one install.",
+      confirmation_hash:
+        "the hash of a confirmation link's token (0096), never granted to a client.",
+      confirmation_sent_at:
+        "when the last confirmation link went out (0096): send-rate bookkeeping for a link the restored channel does not have.",
     },
   },
   {

@@ -85,12 +85,11 @@ Every one of them follows one of two shapes:
 In neither case may `anon` — the role behind the public key that ships in the
 browser — execute it. Supabase grants new functions to `anon` by name, so
 `revoke ... from public` is not enough and every definer function is revoked
-from both. The exceptions are the five helpers that row level security
-policies call (`is_workspace_member` and its siblings): a policy is evaluated
-as the caller, so revoking them would turn every anonymous read from "no rows"
-into an error without protecting anything, since each answers false when
-`auth.uid()` is null. A static test and a live database test both fail if a
-sixth appears.
+from both. That includes the five helpers that row level security policies
+call (`is_workspace_member` and its siblings): `anon` holds no table or
+sequence privilege in `public` either, so no policy is ever evaluated for it
+and there is nothing a helper would answer. A static test and a live database
+test both fail if any definer function is executable by `anon`.
 
 ## Who can do what
 
@@ -199,6 +198,19 @@ the boundary between two tenants, and it is withheld exactly as a credential is.
 Composio does not hand either one back. Asked about a connection, it returns the
 key redacted to its first few characters, so not even the deployment's own API
 key can read what a member typed.
+
+**A connection is finished by the person who started it, in the browser that
+started it.** That holds for every kind — Drive, Notion, Slack and a connected
+application. A consent screen sends the browser back to Covan carrying
+something that can finish the flow, and the browser that arrives is not
+necessarily the one that began it: somebody can start a connection and send the
+consent link to somebody else. So nothing is stored when the browser arrives.
+For Drive, Notion and Slack the code is sealed and the app finishes the flow
+with a signed-in request, which has to come from the account that started it
+and carry a secret only the starting tab holds. For a connected application,
+the account is activated only when the browser Composio sends back is the
+starter's own; anybody else's is revoked at Composio instead. A link forwarded
+to you therefore connects nothing of yours to anybody else's workspace.
 
 **Taking one back differs by kind, and the difference matters.** An OAuth grant
 is revoked at the provider — its own connected-applications page — and that

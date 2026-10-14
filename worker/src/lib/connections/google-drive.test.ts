@@ -388,3 +388,29 @@ describe("google drive provider", () => {
     expect(await listFolders(ctx(fetchImpl), "root")).toEqual([{ id: "f1", name: "Handbook" }]);
   });
 });
+
+describe("revoking a Drive grant", () => {
+  it("hands Google the refresh token, which ends the whole grant", async () => {
+    let sent: { url: string; body: string } | undefined;
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      sent = { url, body: String(init?.body) };
+      return new Response("", { status: 200 });
+    });
+
+    await googleDriveProvider.revoke!(
+      {},
+      { accessToken: "a", refreshToken: "r" },
+      fetchImpl as never,
+    );
+
+    expect(sent?.url).toBe("https://oauth2.googleapis.com/revoke");
+    expect(sent?.body).toBe("token=r");
+  });
+
+  it("takes Google's 400 — the token is already invalid — as done", async () => {
+    const fetchImpl = vi.fn(async () => new Response("invalid_token", { status: 400 }));
+    await expect(
+      googleDriveProvider.revoke!({}, { accessToken: "a" }, fetchImpl as never),
+    ).resolves.toBeUndefined();
+  });
+});

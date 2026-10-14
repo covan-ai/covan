@@ -3,12 +3,13 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { toEpochMs } from "../lib/dto";
 import type { PendingInvitationDTO, IncomingInvitationDTO } from "../lib/dto";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { canSendEmail, sendEmail } from "../lib/email";
 import { invitationEmail } from "../lib/emails/invitation";
 import { joinedEmail } from "../lib/emails/joined";
 import { appUrlOf, notify } from "../lib/emails/send";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { generateInviteToken, inviteUrl } from "../lib/invite-token";
 
 const invitations = new Hono<AppEnv>();
 
@@ -22,33 +23,72 @@ const createInviteSchema = z.object({
 });
 
 // GET /invitations — pending invites for the caller's active workspace (admin).
+//
+// Expired ones too, since 0090: an invitation whose link has run out, or that
+// was made before invitations had links at all, is still somebody the admin
+// meant to invite. It is listed with `needsResend` rather than dropped, so the
+// way forward is one button instead of revoking and inviting again.
 invitations.get("/invitations", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   // RLS returns rows only to admins of the workspace (or invitees by email);
   // scoping to workspace + pending keeps this to the admin's pending list.
   const { data, error } = await db
     .from("invitations")
-    .select("id, email, role, created_at")
+    .select("id, email, role, created_at, expires_at, token_issued_at")
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")
-    .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);
 
+  const now = Date.now();
   const result: PendingInvitationDTO[] = (data ?? []).map((r) => ({
     id: r.id as string,
     email: r.email as string,
     role: r.role as string,
     createdAt: toEpochMs(r.created_at as string),
+    needsResend: !r.token_issued_at || Date.parse(r.expires_at as string) <= now,
   }));
   return c.json(result);
 });
+
+/**
+ * How many invitation emails one workspace may send in a day, new and resent
+ * together.
+ *
+ * An invitation is a Covan-branded email to any address, carrying a workspace
+ * name and a person's name somebody chose, and any free account is the admin
+ * of a workspace. Without a ceiling that is a mail relay. Fifty is more than a
+ * team onboarding in a day needs and far less than spam does.
+ *
+ * Counted from `workspace_events` rather than from `invitations`: revoking one
+ * deletes the row, so invite-revoke-invite would never add up, and the event
+ * log keeps both kinds and has no delete for anybody.
+ */
+export const DAILY_INVITATIONS_PER_WORKSPACE = 50;
+
+async function invitationsSentToday(
+  db: Context<AppEnv>["var"]["db"],
+  workspaceId: string,
+): Promise<number | null> {
+  const { count, error } = await db
+    .from("workspace_events")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", workspaceId)
+    .in("action", ["invitation.created", "invitation.resent"])
+    .gt("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  return error ? null : (count ?? 0);
+}
+
+const OVER_THE_DAILY_CAP = {
+  error:
+    `This workspace has sent ${DAILY_INVITATIONS_PER_WORKSPACE} invitations today. ` +
+    "Try again tomorrow.",
+};
 
 // POST /invitations — create an invite (admin only, enforced by RLS insert policy).
 invitations.post("/invitations", async (c) => {
@@ -65,7 +105,7 @@ invitations.post("/invitations", async (c) => {
   const parsed = createInviteSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   const email = parsed.data.email.toLowerCase();
@@ -105,6 +145,14 @@ invitations.post("/invitations", async (c) => {
     }
   }
 
+  const sentToday = await invitationsSentToday(db, workspaceId);
+  if (sentToday === null) return c.json({ error: "could not check today's invitations" }, 500);
+  if (sentToday >= DAILY_INVITATIONS_PER_WORKSPACE) return c.json(OVER_THE_DAILY_CAP, 429);
+
+  // The token is minted here and kept nowhere but the email and this one
+  // response: the database holds its hash (0090), so it cannot be shown again.
+  const { token, tokenHash } = await generateInviteToken();
+
   const { data, error } = await db
     .from("invitations")
     .insert({
@@ -112,6 +160,7 @@ invitations.post("/invitations", async (c) => {
       email,
       role: parsed.data.role,
       invited_by: user.id,
+      token_hash: tokenHash,
     })
     .select("id, email, role, created_at");
 
@@ -128,16 +177,17 @@ invitations.post("/invitations", async (c) => {
   }
 
   const row = data[0];
+  const link = inviteUrl(appUrlOf(c), row.id as string, token);
 
-  // Told, not created. The row above IS the invitation — it is what
-  // /invitations/incoming reads and what accept_invitation consumes — so the
-  // email is a courtesy and its failure must not roll anything back. What the
-  // caller gets is the truth about whether it went, which the dialog then says
-  // instead of the "Invite sent" it used to say unconditionally.
+  // Told, not created. The row above IS the invitation, so a failed email must
+  // not roll anything back. What the caller gets is the truth about whether it
+  // went, and the link either way: on an install with no mail configured the
+  // admin passing it on is the only way the invitee ever receives it.
   const emailed = await notifyInvitee(c, {
     email,
     role: parsed.data.role,
     workspaceId,
+    inviteUrl: link,
   });
 
   const result: PendingInvitationDTO = {
@@ -146,8 +196,78 @@ invitations.post("/invitations", async (c) => {
     role: row.role as string,
     createdAt: toEpochMs(row.created_at as string),
     emailed,
+    inviteUrl: link,
+    needsResend: false,
   };
   return c.json(result, 201);
+});
+
+// POST /invitations/:id/resend — a new link for a pending invitation (admin).
+//
+// For a link that ran out, one made before invitations had links (0090), or
+// one that never arrived. The old link stops working: `reissue_invitation`
+// replaces the stored hash, restarts the seven days and logs it.
+invitations.post("/invitations/:id/resend", async (c) => {
+  // The same reason creating one is refused: the link is a way into the
+  // workspace for whoever holds it, and it outlives the key.
+  const refusal = refuseIfKeyAuthenticated(c, "resend an invitation");
+  if (refusal) return c.json(refusal, 403);
+
+  const db = c.get("db");
+  const id = c.req.param("id");
+
+  // Counted against the invitation's own workspace, which a caller who may
+  // resend it can read. Not found here is the same 404 as below.
+  const { data: target } = await db
+    .from("invitations")
+    .select("workspace_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (target) {
+    const sentToday = await invitationsSentToday(db, target.workspace_id as string);
+    if (sentToday === null) return c.json({ error: "could not check today's invitations" }, 500);
+    if (sentToday >= DAILY_INVITATIONS_PER_WORKSPACE) return c.json(OVER_THE_DAILY_CAP, 429);
+  }
+
+  const { token, tokenHash } = await generateInviteToken();
+  const { error: reissueError } = await db.rpc("reissue_invitation", {
+    p_invite_id: id,
+    p_token_hash: tokenHash,
+  });
+  if (reissueError) {
+    // P0002 is both "no such invitation" and "not an admin of its workspace",
+    // deliberately one answer. 22P02 is an id that is not a uuid.
+    if (reissueError.code === "P0002" || reissueError.code === "22P02") {
+      return c.json({ error: "invitation not found or not permitted" }, 404);
+    }
+    return c.json({ error: "failed to resend the invitation" }, 500);
+  }
+
+  const { data: row, error } = await db
+    .from("invitations")
+    .select("id, email, role, created_at, workspace_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !row) return c.json({ error: "failed to load the invitation" }, 500);
+
+  const link = inviteUrl(appUrlOf(c), id, token);
+  const emailed = await notifyInvitee(c, {
+    email: row.email as string,
+    role: row.role as string,
+    workspaceId: row.workspace_id as string,
+    inviteUrl: link,
+  });
+
+  const result: PendingInvitationDTO = {
+    id,
+    email: row.email as string,
+    role: row.role as string,
+    createdAt: toEpochMs(row.created_at as string),
+    emailed,
+    inviteUrl: link,
+    needsResend: false,
+  };
+  return c.json(result);
 });
 
 /**
@@ -160,7 +280,7 @@ invitations.post("/invitations", async (c) => {
  */
 async function notifyInvitee(
   c: Context<AppEnv>,
-  invite: { email: string; role: string; workspaceId: string },
+  invite: { email: string; role: string; workspaceId: string; inviteUrl: string },
 ): Promise<boolean> {
   if (!canSendEmail(c.env)) return false;
 
@@ -184,11 +304,7 @@ async function notifyInvitee(
         inviterName,
         role: invite.role,
         email: invite.email,
-        // ALLOWED_ORIGIN is a comma-separated list — a deployment reachable at
-        // more than one origin sets several. The first is the canonical one,
-        // and putting the raw variable in the mail would send somebody a URL
-        // with a comma in it.
-        appUrl: (c.env.ALLOWED_ORIGIN ?? "").split(",")[0].trim(),
+        inviteUrl: invite.inviteUrl,
       }),
       { fetchImpl: fetch.bind(globalThis), apiKey: c.env.RESEND_API_KEY, from: c.env.RESEND_FROM },
     );
@@ -200,6 +316,9 @@ async function notifyInvitee(
 
 // DELETE /invitations/:id — revoke a pending invite (admin only).
 invitations.delete("/invitations/:id", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "revoke an invitation");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const id = c.req.param("id");
 
@@ -267,8 +386,23 @@ invitations.get("/invitations/incoming", async (c) => {
   return c.json(result);
 });
 
-// POST /invitations/:id/accept — accept via SECURITY DEFINER RPC.
+const acceptSchema = z.object({
+  // From the invitation email's link, via `src/lib/invite-stash.ts`. Bounded
+  // so a pasted essay is a 400 rather than a hash computed over it.
+  token: z.string().min(1).max(200),
+});
+
+// POST /invitations/:id/accept — accept via SECURITY DEFINER RPC, with the
+// token the invitation email carried (0090).
 invitations.post("/invitations/:id/accept", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "accept an invitation");
+  if (refusal) return c.json(refusal, 403);
+
+  const parsed = acceptSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return c.json({ error: "open the link in your invitation email to accept it" }, 400);
+  }
+
   const db = c.get("db");
   const id = c.req.param("id");
 
@@ -285,7 +419,10 @@ invitations.post("/invitations/:id/accept", async (c) => {
     .then((r) => r.data)
     .catch(() => null);
 
-  const { data, error } = await db.rpc("accept_invitation", { p_invite_id: id });
+  const { data, error } = await db.rpc("accept_invitation", {
+    p_invite_id: id,
+    p_token: parsed.data.token,
+  });
 
   if (error) {
     return c.json({ error: error.message || "failed to accept invitation" }, 400);

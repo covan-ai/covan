@@ -60,6 +60,7 @@ describe("the key itself", () => {
 
 describe("the token minted for a key's owner", () => {
   const user = { id: "user-1", email: "a@example.com" } as never;
+  const KEY = { keyId: "key-1", workspaceId: "ws-1" };
 
   /** Decode without verifying — the claims are what these assertions are about. */
   function claims(jwt: string): Record<string, unknown> {
@@ -68,7 +69,7 @@ describe("the token minted for a key's owner", () => {
   }
 
   it("names the user Postgres will resolve as auth.uid()", async () => {
-    const token = await mintUserToken(SECRET, user);
+    const token = await mintUserToken(SECRET, user, KEY);
 
     expect(claims(token).sub).toBe("user-1");
     // Without this PostgREST stays in the anon role and every policy that
@@ -78,8 +79,19 @@ describe("the token minted for a key's owner", () => {
     expect(claims(token).email).toBe("a@example.com");
   });
 
+  it("names the key and the one workspace it may act in", async () => {
+    // `covan_ws` is what Postgres holds the request to (0087): the membership
+    // helpers and every workspace table answer "no" for any other workspace.
+    // A session token has neither claim, which is how the database tells the
+    // two apart.
+    const token = await mintUserToken(SECRET, user, KEY);
+
+    expect(claims(token).covan_ws).toBe("ws-1");
+    expect(claims(token).covan_key).toBe("key-1");
+  });
+
   it("expires in a minute, so a captured one is worth nothing by the time it is read", async () => {
-    const token = await mintUserToken(SECRET, user);
+    const token = await mintUserToken(SECRET, user, KEY);
     const { iat, exp } = claims(token) as { iat: number; exp: number };
 
     expect(exp - iat).toBe(60);
@@ -87,7 +99,7 @@ describe("the token minted for a key's owner", () => {
   });
 
   it("carries a signature the secret verifies and a different secret does not", async () => {
-    const token = await mintUserToken(SECRET, user);
+    const token = await mintUserToken(SECRET, user, KEY);
     const [header, payload, signature] = token.split(".");
 
     const verify = async (secret: string) => {
@@ -113,7 +125,7 @@ describe("the token minted for a key's owner", () => {
   });
 
   it("says HS256 in the header, which is what the project signs sessions with", async () => {
-    const [header] = (await mintUserToken(SECRET, user)).split(".");
+    const [header] = (await mintUserToken(SECRET, user, KEY)).split(".");
 
     expect(JSON.parse(atob(header))).toEqual({ alg: "HS256", typ: "JWT" });
   });
@@ -148,14 +160,20 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+const KEY_ROW = { id: "key-1", workspace_id: "ws-1", user_id: "user-1", last_used_at: null };
+
+/** The key's row, and a seat for its owner in its workspace unless told otherwise. */
+function tables(
+  seat: { data: unknown; error: unknown } = { data: { user_id: "user-1" }, error: null },
+) {
+  from.mockImplementation((table: string) =>
+    table === "api_keys" ? chain({ data: KEY_ROW, error: null }) : chain(seat),
+  );
+}
+
 describe("resolveApiKey", () => {
   it("answers with the key's owner", async () => {
-    from.mockReturnValue(
-      chain({
-        data: { id: "key-1", workspace_id: "ws-1", user_id: "user-1", last_used_at: null },
-        error: null,
-      }),
-    );
+    tables();
     getUserById.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
 
     const resolved = await resolveApiKey(ENV, `${API_KEY_PREFIX}abc`);
@@ -179,15 +197,43 @@ describe("resolveApiKey", () => {
   it("answers null when the owner's account is gone", async () => {
     // The row outlives the account only until the cascade runs, and a request in
     // that window must not be honoured as a user who no longer exists.
-    from.mockReturnValue(
-      chain({
-        data: { id: "key-1", workspace_id: "ws-1", user_id: "user-1", last_used_at: null },
-        error: null,
-      }),
-    );
+    tables();
     getUserById.mockResolvedValue({ data: { user: null }, error: null });
 
     await expect(resolveApiKey(ENV, `${API_KEY_PREFIX}abc`)).resolves.toBeNull();
+  });
+
+  it.each([
+    ["has left or been removed from it", { data: null, error: null }],
+    ["cannot be looked up", { data: null, error: { message: "boom" } }],
+  ])("answers null when the owner's seat in the key's workspace %s", async (_label, seat) => {
+    // A key acts in the workspace it was made in and nowhere else. With no
+    // seat there, there is nothing it may reach, and the answer is the same
+    // 401 a revoked key gets rather than a run of empty pages.
+    tables(seat);
+    getUserById.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+
+    await expect(resolveApiKey(ENV, `${API_KEY_PREFIX}abc`)).resolves.toBeNull();
+  });
+
+  it("asks for the owner's seat in the key's own workspace", async () => {
+    const filters: unknown[][] = [];
+    from.mockImplementation((table: string) => {
+      if (table === "api_keys") return chain({ data: KEY_ROW, error: null });
+      const link = {
+        select: () => link,
+        eq: (...args: unknown[]) => (filters.push(args), link),
+        maybeSingle: async () => ({ data: { user_id: "user-1" }, error: null }),
+      };
+      return link;
+    });
+    getUserById.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+
+    await resolveApiKey(ENV, `${API_KEY_PREFIX}abc`);
+
+    expect(from).toHaveBeenCalledWith("workspace_members");
+    expect(filters).toContainEqual(["workspace_id", "ws-1"]);
+    expect(filters).toContainEqual(["user_id", "user-1"]);
   });
 
   it("looks the key up by hash and excludes revoked rows", async () => {

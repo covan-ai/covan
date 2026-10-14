@@ -139,6 +139,16 @@ export interface ConnectionProvider {
 
   /** One file, as indexable plain text. */
   readFile(ctx: ProviderContext, file: RemoteFile): Promise<string>;
+
+  /**
+   * Withdraw the grant at the provider, where the provider has a way to.
+   *
+   * For an account being closed: the person asked to be forgotten, and a
+   * refresh token still valid at Google is their Drive still readable by
+   * whoever holds this database. Optional, because not every provider offers
+   * one — Notion's integrations are removed from Notion's own settings.
+   */
+  revoke?(env: ProviderEnv, token: TokenEnvelope, fetchImpl: typeof fetch): Promise<void>;
 }
 
 /**

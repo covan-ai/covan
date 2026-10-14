@@ -69,7 +69,9 @@ async function writeSurface() {
           and privilege_type in ('INSERT', 'UPDATE', 'DELETE'))::int as column_grants,
       (select count(*) from pg_policies
         where schemaname = 'public' and tablename = 'browser_credentials'
-          and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL'))::int as write_policies
+          and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+          -- A restrictive policy grants nothing; 0087's narrows every command.
+          and permissive = 'PERMISSIVE')::int as write_policies
   `) as unknown as { table_grants: number; column_grants: number; write_policies: number }[];
   return row;
 }

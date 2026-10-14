@@ -17,6 +17,7 @@ import { AppCatalogue } from "@/components/integrations/app-catalogue";
 import { AppLogo } from "@/components/integrations/app-logo";
 import { Chip, SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
+import { ConnectionScope } from "./connection-scope";
 
 /**
  * The applications this workspace has connected, and the catalogue it can
@@ -209,6 +210,7 @@ function ConnectedApp({
           ) : null}
         </span>
         <span className="flex shrink-0 items-center gap-2">
+          {connection.status === "active" ? <ConnectionScope connection={connection} /> : null}
           {canWrite ? (
             confirming ? (
               <>

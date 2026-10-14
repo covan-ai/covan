@@ -5,6 +5,8 @@ import { loadConnection, unavailableTools, type ToolConnection } from "../connec
 import { composioAccount, recordUnavailableTool } from "../secrets";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
+import type { RunApproval } from "../registry";
+import { mayChangeThings, VIEWERS_READ_ONLY } from "../role";
 
 /**
  * Run one operation at a connected application.
@@ -485,14 +487,39 @@ export const runToolTool: AgentTool = {
     // #201's other half: repeating the destructive call somebody just approved
     // must stay free, and that has nothing to do with whether this turn also
     // happens to hold its catalogue row.
+    //
+    // And `destructive: null` is no longer "harmless". It is Composio saying it
+    // has no hint either way, and `GMAIL_SEND_EMAIL` is one of the operations
+    // it annotates that way — so text in an email the agent had just been
+    // allowed to read could have it send one, covered by the read's approval.
+    // `docs/integrations.md` promised the opposite. Only an operation the
+    // catalogue positively marks non-destructive rides on the connection.
+    // A viewer reads and changes nothing (`lib/harness/role.ts`). Only an
+    // operation the catalogue positively marks non-destructive counts as a
+    // read, for the reason the paragraph above gives about `null`. Asked
+    // before any approval is weighed, so a viewer's own yes on the card does
+    // not get past it.
+    if (operation?.destructive !== false && !(await mayChangeThings(ctx))) {
+      return { kind: "error", message: VIEWERS_READ_ONLY };
+    }
+
     const described = ctx.offeredOperations?.has(slug) === true;
     const approvedSlug = (ctx.approvedSlugs ?? []).includes(slug);
     const coveredByConnection =
       (ctx.approvedConnections ?? []).includes(connection.id) &&
-      (approvedSlug || (described && operation?.destructive !== true));
+      (approvedSlug || (described && operation?.destructive === false));
 
-    const approved =
-      ctx.confirmed === true || coveredByConnection || (await alwaysAllowed(ctx, connection, slug));
+    // Which of the three said yes, carried on the result so the loop can tell
+    // a person's yes from a standing grant's (see `approvedConnectionsFrom`).
+    const approval: RunApproval | null =
+      ctx.confirmed === true
+        ? "person"
+        : coveredByConnection
+          ? "connection"
+          : (await alwaysAllowed(ctx, connection, slug))
+            ? "grant"
+            : null;
+    const approved = approval !== null;
 
     if (!approved) {
       // Nobody is watching a scheduled run, so an unanswerable question is
@@ -624,6 +651,7 @@ export const runToolTool: AgentTool = {
       kind: "ok",
       content:
         compactForModel(result.body, MAX_TOOL_OUTPUT_CHARS) || "(the operation returned nothing)",
+      approval: approval ?? undefined,
     };
   },
 };

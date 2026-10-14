@@ -5,53 +5,45 @@ import { paragraphs } from "./prose";
 /**
  * The invitation email.
  *
- * Deliberately not a link that accepts anything. Acceptance runs through
- * `accept_invitation`, which matches the invitation's email against the
- * caller's verified JWT email — so the address IS the credential, and a token
- * in a URL would be a second, weaker one guarding the same door. What the
- * recipient needs to know is which address to use; that is what this says.
+ * The button is the invitation. It goes to `/invite#id=…&token=…`, and the
+ * token in it is what `accept_invitation` asks for (0090): holding this email
+ * is what proves the invitee is the invitee. Until 0090 the address was the
+ * whole credential and this email deliberately carried no link that did
+ * anything, because "a token in a URL would be a second, weaker key to the
+ * same door". That held only where a confirmed address proves a mailbox, and
+ * an install that auto-confirms sign-ups — the compose stack, by default —
+ * let anybody sign up as the invitee first and take the invitation. The token
+ * is the key now, and the address is the second check rather than the only
+ * one.
  *
- * Where it did not send them, for a long time, is anywhere useful. The button
- * read "Sign in to accept" and pointed at the bare origin — a marketing page on
- * the hosted build, a redirect to sign-in on the self-hosted one. Somebody
- * invited to a product they have never used therefore landed on a page about it,
- * holding no account and no password, having just been told to sign in. Reported
- * from outside by a person who could not get in at all.
+ * The link works for both kinds of recipient: `/invite` keeps the token in the
+ * browser and offers sign-up or sign-in, then the invitation is waiting with
+ * its Accept button inside. Nothing is accepted by opening it — a mail
+ * scanner that follows links accepts nothing.
  *
- * So the button goes to `/sign-up`, and a second, named link goes to `/sign-in`
- * for the recipient who already has an account. Two links rather than a guess:
- * this route cannot tell which of the two it is writing to, because `profiles`
- * is behind RLS scoped to the caller's own workspaces and an invitee is by
- * definition not in one yet.
+ * The address is still in the body in bold, because it still has to match:
+ * signing up with another one finds an invitation that is not addressed to
+ * that account.
  *
- * Neither URL carries the address, and that is the same rule
- * `src/lib/invite-text.ts` follows for the copy-paste version — a link that
- * fills the field in is a link that gets forwarded in place of the address,
- * after which somebody signs up as themselves and cannot see why nothing is
- * waiting. The address is in the body in bold, where it stays visibly the thing
- * that decides whether the invitation is ever found. docs/team.md argues it at
- * length.
- *
- * Two halves, not two mails. The text below was the whole message for as long as
- * this route existed, on the reasoning that an HTML mail which renders as a
- * blank card in a client that strips styles is worse than no HTML at all. That
- * reasoning still holds and is why `text` is unchanged and still says
- * everything: the HTML is an addition Resend carries in the same request, and a
- * client that drops it falls back to prose that was never a fallback.
+ * Two halves, not two mails. `text` says everything on its own, for a client
+ * that strips HTML; the HTML is an addition Resend carries in the same request.
  */
 export function invitationEmail(args: {
   workspaceName: string;
   inviterName: string;
   role: string;
   email: string;
-  appUrl: string;
+  /** `inviteUrl()` from `lib/invite-token.ts`: the link with the token in it. */
+  inviteUrl: string;
 }) {
   const asRole = args.role === "admin" ? "an admin" : "a member";
-  const signUpUrl = `${args.appUrl}/sign-up`;
-  const signInUrl = `${args.appUrl}/sign-in`;
   return {
     to: args.email,
-    subject: `${args.inviterName} invited you to ${args.workspaceName} on Covan`,
+    // Fixed. The names below are text somebody chose, and a subject line is
+    // read before anybody decides whether to trust the sender — a workspace
+    // named "Your account is locked" was a phishing subject with Covan's name
+    // on it. Inside, beside the address it was sent to, they are context.
+    subject: "You're invited to a workspace on Covan",
     // Hard-wrapped, and every interpolated value sits on a line of its own —
     // an address or a workspace name in the middle of a sentence pushes the
     // wrap around and turns a tidy paragraph into a ragged one for exactly the
@@ -63,34 +55,30 @@ export function invitationEmail(args: {
       "Covan is where a team keeps its AI agents: the agents and the knowledge",
       "they read are shared, and your own conversations stay yours.",
       "",
-      "Create your account here, and the invitation will be waiting inside:",
+      "Open this link to accept. It works whether or not you have an account yet:",
       "",
-      `  ${signUpUrl}`,
+      `  ${args.inviteUrl}`,
       "",
-      "Already have a Covan account? Sign in instead:",
-      "",
-      `  ${signInUrl}`,
-      "",
-      "Either way, use the address this was sent to:",
+      "Sign up or sign in with the address this was sent to:",
       "",
       `  ${args.email}`,
       "",
-      "That address is what the invitation is matched to, so a different one",
-      "will not find it.",
+      "The link is yours alone and works for seven days. If it has run out, ask",
+      "for a new one.",
       "",
       "If you were not expecting this, you can ignore it. Nothing happens until",
       "you accept.",
     ].join("\n"),
     html: emailShell({
-      preheader: `${args.inviterName} invited you to ${args.workspaceName} on Covan.`,
+      // Shown beside the subject in most inboxes, so fixed for the same reason.
+      preheader: "Somebody invited you to join their workspace on Covan.",
       heading: `${args.inviterName} invited you to ${args.workspaceName}`,
       bodyHtml: paragraphs(
         `You have been invited as ${asRole}.`,
         "Covan is where a team keeps its AI agents: the agents and the knowledge they read are shared, and your own conversations stay yours.",
-        `Sign up with <strong>${escapeHtml(args.email)}</strong> — that address is what the invitation is matched to, so a different one will not find it. The invitation is waiting once you are in.`,
-        `Already have a Covan account? <a href="${escapeHtml(signInUrl)}" style="color:#251f19">Sign in instead</a>.`,
+        `Sign up or sign in with <strong>${escapeHtml(args.email)}</strong> — the invitation is addressed to it. The button below is yours alone and works for seven days.`,
       ),
-      action: { label: "Create your account", url: signUpUrl },
+      action: { label: "Accept the invitation", url: args.inviteUrl },
       footnote:
         "If you were not expecting this, you can ignore it. Nothing happens until you accept.",
     }),

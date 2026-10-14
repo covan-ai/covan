@@ -12,6 +12,8 @@ const tool = (over: Partial<ToolConnection> & { id: string }): ToolConnection =>
   toolkitSlug: "gmail",
   status: "active",
   logoPath: "/composio/logo?u=gmail",
+  scope: "owner",
+  mine: true,
   createdAt: 0,
   ...over,
 });

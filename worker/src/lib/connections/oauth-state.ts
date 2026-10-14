@@ -20,37 +20,31 @@ import type { ProviderId } from "./types";
  * What it is deliberately NOT is a bearer token: it names a user and a bundle,
  * and everything it names is re-checked against RLS before a row is written.
  *
- * **On the CSRF this is usually about, and why the usual fix is not here.**
- * The classic OAuth state attack is session fixation: an attacker runs the flow
- * with *their* Notion account, gets a code, and lures a victim into loading the
- * callback, so the attacker's third-party account ends up attached to the
- * victim's app account. The standard defence is to bind the state to the
- * initiating browser with a cookie.
+ * **Who the grant goes to is decided by who finishes it, not by the state.**
+ * The state says who STARTED a flow. The callback used to
+ * trust that alone: it exchanged the code and stored the token as the
+ * state's person, in the state's workspace. So an attacker could start a flow,
+ * send the provider's genuine consent link to somebody else, and have that
+ * person's Drive, Notion pages or Slack team land in the attacker's workspace
+ * — "connection planting". A Drive token planted that way read the victim's
+ * whole Drive.
  *
- * That attack cannot land here, because the callback never reads the visiting
- * browser's identity. Who the grant belongs to comes out of `state` — which was
- * minted for the person who started the flow — so a victim who loads an
- * attacker's callback link completes the *attacker's* connection into the
- * *attacker's* workspace, and nothing is written anywhere near the victim.
- * `routes/connections.ts` then re-checks that named person's membership and
- * write access before inserting, so a state issued to somebody who has since
- * been removed from the workspace fails too.
+ * So the callback no longer exchanges anything. It seals what it was given
+ * (the code, the state, the redirect URI) into a grant — `sealGrant` below,
+ * under its own purpose so a state can never be handed back as one — and sends
+ * the browser to the app with it. The app then completes the flow with an
+ * authenticated request, and completing requires two things the state names:
  *
- * The residual case is the mirror image: an attacker who captures somebody
- * else's state before they finish, and completes it with their own Notion — so
- * the victim's bundle fills with documents the attacker chose. It is bounded
- * (documents in, never out — the token stored is the attacker's, and it grants
- * no read of anything in Covan), the connection is visible to every member of
- * the workspace and deletable by any admin, and capturing the state means
- * reading a URL out of a browser that is also carrying that person's session
- * token. The TTL below is what limits the window.
+ *  - the caller is the person who started it (`userId`), so a grant that
+ *    reaches somebody else's browser completes nothing; and
+ *  - the browser holds the nonce whose hash the flow started with
+ *    (`nonceHash`), kept in that tab's session storage, so the flow is bound
+ *    to the browser that began it as well as to the account.
  *
- * A cookie would not close it in this deployment anyway: the API and the
- * frontend are separate origins (`api.covan.app` and `covan.app`), so a binding
- * cookie would have to be `SameSite=None`, which is exactly the kind Safari and
- * Chrome now block — it would fail closed for a large share of real users while
- * defending against an attacker who already has their session. If the two ever
- * share an origin, bind it.
+ * Neither needs a cookie, which is what the old note here said a binding would
+ * require: the API and the app are separate origins and a cross-site cookie
+ * fails closed for a large share of browsers. The proof travels in an
+ * authenticated request instead.
  */
 
 /**
@@ -95,6 +89,11 @@ export type OAuthState = {
    * which they could already do by deleting it and connecting again.
    */
   connectionId?: string;
+  /**
+   * SHA-256 hex of the nonce the starting browser holds in session storage.
+   * Completing the flow asks for the nonce itself. See the header.
+   */
+  nonceHash: string;
   /** Epoch milliseconds. */
   issuedAt: number;
 };
@@ -107,7 +106,7 @@ export async function signState(
   const payload: OAuthState = { ...state, issuedAt: now };
   // base64url so it survives a query string untouched — Notion and Google both
   // echo `state` back verbatim, and a raw `+` in a URL is a space.
-  return toUrlSafe(await encryptSecret(JSON.stringify(payload), keyB64));
+  return toUrlSafe(await encryptSecret(JSON.stringify(payload), keyB64, "covan/oauth-state/v2"));
 }
 
 export async function readState(
@@ -116,9 +115,12 @@ export async function readState(
   now = Date.now(),
 ): Promise<OAuthState | null> {
   try {
-    const json = await decryptSecret(fromUrlSafe(raw), keyB64);
+    const json = await decryptSecret(fromUrlSafe(raw), keyB64, "covan/oauth-state/v2");
     const parsed = JSON.parse(json) as OAuthState;
     if (!parsed.provider || !parsed.userId || !parsed.workspaceId) return null;
+    if (typeof parsed.nonceHash !== "string" || !/^[0-9a-f]{64}$/.test(parsed.nonceHash)) {
+      return null;
+    }
     // A connection with no bundle would have nowhere to put its documents, and
     // the callback would discover that after spending the code.
     if (parsed.provider !== "slack" && !parsed.bundleId) return null;
@@ -133,6 +135,49 @@ export async function readState(
     // not a state we issued.
     return null;
   }
+}
+
+/**
+ * What a provider handed the callback, sealed for the app to complete with.
+ *
+ * The callback cannot tell who is at the browser, so it decides nothing: it
+ * seals the code with the state it came with and the exact redirect URI the
+ * code was issued against (the exchange must repeat it), and the completing
+ * request — authenticated — decides. Sealed under its own purpose, so neither
+ * a state nor a stored secret opens as a grant.
+ */
+export type OAuthGrant = { state: OAuthState; code: string; redirectUri: string };
+
+export async function sealGrant(grant: OAuthGrant, keyB64: string): Promise<string> {
+  return toUrlSafe(await encryptSecret(JSON.stringify(grant), keyB64, "covan/oauth-grant/v1"));
+}
+
+/** Null for anything that is not a grant we sealed, or whose flow has run out. */
+export async function openGrant(
+  raw: string,
+  keyB64: string,
+  now = Date.now(),
+): Promise<OAuthGrant | null> {
+  try {
+    const parsed = JSON.parse(
+      await decryptSecret(fromUrlSafe(raw), keyB64, "covan/oauth-grant/v1"),
+    ) as OAuthGrant;
+    const state = parsed?.state;
+    if (!state || typeof parsed.code !== "string" || typeof parsed.redirectUri !== "string") {
+      return null;
+    }
+    // The flow's own clock: a grant is as old as the state it carries.
+    if (!Number.isFinite(state.issuedAt) || now - state.issuedAt > STATE_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** SHA-256 hex, to compare a presented nonce with the hash a state carries. */
+export async function nonceHashOf(nonce: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(nonce));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 const toUrlSafe = (s: string): string => s.replace(/\+/g, "-").replace(/\//g, "_");

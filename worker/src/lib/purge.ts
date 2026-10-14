@@ -3,6 +3,7 @@ import type { Bindings } from "../types";
 import { serviceClient } from "./supabase";
 import { getDocStore, type DocStore } from "./docstore";
 import { RETENTION_DAYS } from "./deletion";
+import { chunked, readAllPages } from "./batch";
 
 /**
  * The other half of recoverable deletion: after thirty days, the rows go for
@@ -71,50 +72,64 @@ export async function purgeExpired(deps: PurgeDeps): Promise<PurgeResult> {
 
   const expiredBundleIds = await idsOlderThan(db, "knowledge_bundles", cutoff);
   const expiredAgentIds = await idsOlderThan(db, "agents", cutoff);
+  const expiredDocs = await expiredDocuments(db, cutoff);
 
+  // In hundreds, everywhere an id list goes into a URL (`lib/batch.ts`). One
+  // list of everything was a 414 past a couple of hundred rows, and the whole
+  // sweep stopped for every tenant until somebody noticed.
+  //
+  // A bundle's documents are listed per batch of bundles, before anything is
+  // deleted, and the keys are kept against that batch. A batch whose documents
+  // cannot be listed is not deleted this run: deleting it would cascade the
+  // rows that name its files and leave the files nobody can find. It is tried
+  // again on the next tick.
+  const bundleBatches: { ids: string[]; keys: string[] }[] = [];
+  for (const ids of chunked(expiredBundleIds)) {
+    const inside = await documentsInBundles(db, ids);
+    if (inside === null) continue;
+    bundleBatches.push({ ids, keys: inside.map((d) => d.r2_key).filter((k): k is string => !!k) });
+  }
+
+  // A key is deleted only once the row that named it is gone. A batch that
+  // failed to delete keeps its rows, and its files with them.
   const keys = new Set<string>();
-  const documentIds = new Set<string>();
-
-  for (const row of await expiredDocuments(db, cutoff)) {
-    documentIds.add(row.id);
-    if (row.r2_key) keys.add(row.r2_key);
-  }
-  for (const row of await documentsInBundles(db, expiredBundleIds)) {
-    if (row.r2_key) keys.add(row.r2_key);
-  }
 
   // Agents first: the cascade takes sessions, messages, routines and
   // favourites, none of which own a stored object, so nothing here depends on
   // the key collection above.
-  if (expiredAgentIds.length > 0) {
-    const { error } = await db.from("agents").delete().in("id", expiredAgentIds);
-    if (error) {
-      console.error("purge: failed to delete expired agents", error);
-    } else {
-      result.agents = expiredAgentIds.length;
-    }
+  for (const ids of chunked(expiredAgentIds)) {
+    const { error } = await db.from("agents").delete().in("id", ids);
+    if (error) console.error("purge: failed to delete expired agents", error);
+    else result.agents += ids.length;
   }
 
   // Bundles next, taking their documents and chunks with them.
-  if (expiredBundleIds.length > 0) {
-    const { error } = await db.from("knowledge_bundles").delete().in("id", expiredBundleIds);
+  for (const batch of bundleBatches) {
+    const { error } = await db.from("knowledge_bundles").delete().in("id", batch.ids);
     if (error) {
       console.error("purge: failed to delete expired bundles", error);
-    } else {
-      result.bundles = expiredBundleIds.length;
+      continue;
     }
+    result.bundles += batch.ids.length;
+    for (const key of batch.keys) keys.add(key);
   }
 
   // Then whatever is left: documents deleted on their own, whose bundle is
   // still very much alive.
-  const remaining = [...documentIds];
-  if (remaining.length > 0) {
-    const { error } = await db.from("documents").delete().in("id", remaining);
+  for (const docs of chunked(expiredDocs)) {
+    const { error } = await db
+      .from("documents")
+      .delete()
+      .in(
+        "id",
+        docs.map((d) => d.id),
+      );
     if (error) {
       console.error("purge: failed to delete expired documents", error);
-    } else {
-      result.documents = remaining.length;
+      continue;
     }
+    result.documents += docs.length;
+    for (const d of docs) if (d.r2_key) keys.add(d.r2_key);
   }
 
   // Last, and best-effort. A failure here leaves a file nothing points at,
@@ -158,17 +173,21 @@ async function expiredDocuments(
   return (data ?? []) as { id: string; r2_key: string | null }[];
 }
 
+/**
+ * Every document inside these bundles, paged past PostgREST's thousand-row
+ * cap. Null when they cannot be listed, which the caller answers by keeping
+ * the bundles for another run rather than orphaning their files.
+ */
 async function documentsInBundles(
   db: SupabaseClient,
   bundleIds: string[],
-): Promise<{ r2_key: string | null }[]> {
+): Promise<{ r2_key: string | null }[] | null> {
   if (bundleIds.length === 0) return [];
-  const { data, error } = await db.from("documents").select("r2_key").in("bundle_id", bundleIds);
-  if (error) {
-    console.error("purge: failed to list documents inside expiring bundles", error);
-    return [];
-  }
-  return (data ?? []) as { r2_key: string | null }[];
+  const rows = await readAllPages<{ r2_key: string | null }>((from, to) =>
+    db.from("documents").select("r2_key").in("bundle_id", bundleIds).order("id").range(from, to),
+  );
+  if (rows === null) console.error("purge: failed to list documents inside expiring bundles");
+  return rows;
 }
 
 /** What the scheduled handler calls. Resolves the store, which may not exist. */

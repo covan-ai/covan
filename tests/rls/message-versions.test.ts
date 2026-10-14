@@ -92,29 +92,39 @@ describe("the constraint, which is the security half", () => {
     // The one row a member can write. Without the role half of
     // `messages_version_valid` they could take their own turn out of a
     // transcript a colleague is reading.
-    const { error } = await owner.db.from("messages").insert({
+    const row = {
       session_id: sessionId,
       role: "user",
       content: "How many vacation days?",
       sender_id: owner.id,
       superseded_at: new Date().toISOString(),
-    });
+    };
 
-    expect(error?.message ?? "").toMatch(/messages_version_valid/);
+    // Since 0094 a member cannot name the column at all: versions are
+    // `show_message_version`'s to set. The grant refuses before the
+    // constraint is reached...
+    const { error } = await owner.db.from("messages").insert(row);
+    expect(error?.code).toBe("42501");
+    // ...and the constraint still refuses the row from anybody who can.
+    const { error: constraint } = await serviceClient().from("messages").insert(row);
+    expect(constraint?.message ?? "").toMatch(/messages_version_valid/);
   });
 
   it("refuses a question that claims to be a version of an answer", async () => {
     const reply = await seedReply("Twenty days.");
 
-    const { error } = await owner.db.from("messages").insert({
+    const row = {
       session_id: sessionId,
       role: "user",
       content: "How many vacation days?",
       sender_id: owner.id,
       original_message_id: reply,
-    });
+    };
 
-    expect(error?.message ?? "").toMatch(/messages_version_valid/);
+    const { error } = await owner.db.from("messages").insert(row);
+    expect(error?.code).toBe("42501");
+    const { error: constraint } = await serviceClient().from("messages").insert(row);
+    expect(constraint?.message ?? "").toMatch(/messages_version_valid/);
   });
 
   it("accepts a plain question, which is every question", async () => {

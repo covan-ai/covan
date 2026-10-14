@@ -6,7 +6,7 @@ import { canSendEmail, sendEmail } from "../lib/email";
 import { quotaSupportEmail } from "../lib/emails/support";
 import { appUrlOf } from "../lib/emails/send";
 import { getRateLimiter } from "../lib/ratelimit";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 
 /**
  * Where somebody out of credits asks for more.
@@ -80,7 +80,7 @@ support.post("/support/quota", async (c) => {
   // Everything below is read here rather than taken from the body. Somebody who
   // can type JSON must not be able to tell us they are a hundred-seat account.
   const db = c.get("db");
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
   const [

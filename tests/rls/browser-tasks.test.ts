@@ -169,7 +169,9 @@ describe("browser_tasks", () => {
           where table_name = 'browser_tasks' and grantee = 'authenticated'
             and privilege_type = 'INSERT')::int as insert_columns,
         (select count(*) from pg_policies
-          where tablename = 'browser_tasks' and cmd in ('INSERT', 'ALL'))::int as insert_policies
+          where tablename = 'browser_tasks' and cmd in ('INSERT', 'ALL')
+            -- A restrictive policy grants nothing; 0087's narrows every command.
+            and permissive = 'PERMISSIVE')::int as insert_policies
     `) as unknown as { insert_grant: number; insert_columns: number; insert_policies: number }[];
     expect(insert_grant).toBe(0);
     expect(insert_columns).toBe(0);

@@ -771,7 +771,7 @@ describe("an answer that stopped at a ceiling", () => {
   const partial = { ...answer, content: "I checked three of the repositories." };
 
   /** A turn that answered, but stopped because it ran out of something. */
-  const stoppedBy = (reason: "budget" | "tokens") =>
+  const stoppedBy = (reason: "budget" | "tokens" | "credits") =>
     streamOf([
       { type: "delta", text: partial.content },
       { type: "paused", reason },
@@ -797,6 +797,23 @@ describe("an answer that stopped at a ceiling", () => {
       await screen.findByText("This turn used every tool call it is allowed."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Keep going" })).toBeInTheDocument();
+  });
+
+  it("says the workspace ran out of credit, and offers nothing that would be refused", async () => {
+    // Checked before every step now, not only before the first. Keep going
+    // would meet the same empty balance, so the line says why and stops there.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(stoppedBy("credits"))),
+    );
+    await renderChat();
+    listMessages.mockResolvedValue([question, partial]);
+    await ask();
+
+    expect(
+      await screen.findByText("This workspace ran out of credits partway through this answer."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Keep going" })).not.toBeInTheDocument();
   });
 
   it("names the ceiling it actually hit", async () => {

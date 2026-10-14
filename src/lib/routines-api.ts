@@ -99,7 +99,17 @@ export type DeliveryChannel = {
   kind: DeliveryChannelKind;
   label: string;
   createdAt: number;
+  /**
+   * False only for an email address that has not agreed to these messages.
+   * Nothing is delivered to it until somebody there opens the link Covan
+   * mailed it — unless it is your own sign-in address, which is confirmed as
+   * it is added.
+   */
+  confirmed: boolean;
 };
+
+/** What happened to the question an unconfirmed address is sent. */
+export type ConfirmationOutcome = "sent" | "recently" | "limit" | "unavailable";
 
 /**
  * What creating a channel answers with.
@@ -109,7 +119,10 @@ export type DeliveryChannel = {
  * nothing reads it out to a client a second time. A screen that does not show
  * it here has lost it, and the only way forward is to rotate.
  */
-export type CreatedDeliveryChannel = DeliveryChannel & { signingSecret?: string };
+export type CreatedDeliveryChannel = DeliveryChannel & {
+  signingSecret?: string;
+  confirmation?: ConfirmationOutcome;
+};
 
 /**
  * What POST /routines/draft returns. Note the field names differ from

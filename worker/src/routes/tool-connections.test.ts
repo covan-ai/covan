@@ -263,7 +263,32 @@ describe("POST /tool-connections", () => {
     }));
     const { status, body } = await post(appWith(), VALID);
     expect(status).toBe(400);
-    expect(String(body?.error)).toContain("already exists");
+    // Personal by default (0098), so the name it clashes with is the caller's own.
+    expect(String(body?.error)).toContain("you already have a connection with that name");
+  });
+
+  it("makes a connection personal unless asked to share it", async () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    serviceFrom.mockImplementation(() => ({
+      insert: (row: Record<string, unknown>) => {
+        inserted.push(row);
+        return {
+          select: () => ({
+            single: async () => ({
+              data: { ...row, id: "c1", created_at: "2026-10-13T00:00:00Z" },
+              error: null,
+            }),
+          }),
+        };
+      },
+    }));
+
+    const personal = await post(appWith(), VALID);
+    const shared = await post(appWith(), { ...VALID, label: "Team API", shared: true });
+
+    expect(inserted.map((r) => r.scope)).toEqual(["owner", "workspace"]);
+    expect(personal.body).toMatchObject({ scope: "owner", mine: true });
+    expect(shared.body).toMatchObject({ scope: "workspace", mine: true });
   });
 });
 
@@ -281,6 +306,21 @@ describe("PATCH /tool-connections/:id", () => {
     expect(res.status).toBe(200);
     // Nothing reached the service client, which is the claim: editing is a
     // question RLS already answers.
+    expect(serviceFrom).not.toHaveBeenCalled();
+  });
+
+  it("shares a connection, or takes it back, through the same client", async () => {
+    const res = await appWith({ connection: ROW }).request(
+      "/tool-connections/conn-1",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shared: true }),
+      },
+      ENV as never,
+    );
+    expect(res.status).toBe(200);
+    expect(updated).toMatchObject({ scope: "workspace" });
     expect(serviceFrom).not.toHaveBeenCalled();
   });
 

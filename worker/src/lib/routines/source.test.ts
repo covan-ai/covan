@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fetchSource } from "./source";
+import { fetchSource, pinnedRequest } from "./source";
 import type { Cursor } from "./feed";
 
 // Task 11 wires a real DNS lookup into the Node fetch path so a hostname that
@@ -150,5 +150,51 @@ describe("fetchSource", () => {
         ownHosts: OWN,
       }),
     ).rejects.toThrow(/upstream 500/);
+  });
+});
+
+describe("pinnedRequest", () => {
+  // Checking what a name resolves to is half of it; `fetch` resolves again to
+  // connect, and DNS may answer differently the second time. On Bun the
+  // request goes to the checked address, carrying the real name.
+  it("connects to the checked address and speaks to the chosen host", () => {
+    const [url, init] = pinnedRequest(
+      new URL("https://feeds.example.com:8443/rss?x=1"),
+      "93.184.216.34",
+      {
+        method: "GET",
+        headers: { "User-Agent": "covan-routines/1.0" },
+      },
+    );
+
+    expect(url).toBe("https://93.184.216.34:8443/rss?x=1");
+    const headers = new Headers(init.headers);
+    expect(headers.get("Host")).toBe("feeds.example.com:8443");
+    expect(headers.get("User-Agent")).toBe("covan-routines/1.0");
+    // Bun's fetch takes the TLS server name from here, for SNI and for the
+    // certificate check, so the pin is verified against the chosen name.
+    expect((init as { tls?: { serverName?: string } }).tls?.serverName).toBe("feeds.example.com");
+  });
+
+  it("brackets an IPv6 address", () => {
+    const [url] = pinnedRequest(new URL("http://feeds.example.com/rss"), "2606:4700::1", {});
+    expect(url).toBe("http://[2606:4700::1]/rss");
+  });
+
+  it("names no TLS server for plain http", () => {
+    const [, init] = pinnedRequest(new URL("http://feeds.example.com/"), "93.184.216.34", {});
+    expect((init as { tls?: unknown }).tls).toBeUndefined();
+  });
+
+  it("leaves the request alone with nothing to pin to", () => {
+    const init = { method: "POST" };
+    expect(pinnedRequest(new URL("https://feeds.example.com/"), null, init)).toEqual([
+      "https://feeds.example.com/",
+      init,
+    ]);
+    // An IP literal was checked as written; there is no second lookup to race.
+    expect(pinnedRequest(new URL("https://93.184.216.34/"), "93.184.216.34", init)[0]).toBe(
+      "https://93.184.216.34/",
+    );
   });
 });

@@ -727,6 +727,27 @@ describe("once approved", () => {
         refusedWithNothingSpent();
       });
 
+      // A task approved as a line on another task's card was shown as a
+      // sentence and nothing else, so it must not pick up a saved login from
+      // a host its text names.
+      it("gives a task approved as a listed line no saved login its card never named", async () => {
+        busy();
+        savedLogin.mockResolvedValue({
+          id: "cred-1",
+          label: "Example — shared",
+          scope: "agent",
+          siteHost: "example.com",
+        });
+
+        await browseTool.run({ task: TASK }, { ...ctx(), confirmedAsListed: true });
+
+        expect(queueBrowserTask).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ task: TASK, site: null }),
+        );
+        expect(savedLogin).not.toHaveBeenCalled();
+      });
+
       it("queues behind tasks already waiting even when nothing runs, so the order holds", async () => {
         busy(2);
         ensureBrowserSession.mockResolvedValue({
@@ -1913,6 +1934,53 @@ describe("a saved login (Task 2.3)", () => {
         "signsInAs",
         "task",
       ]);
+    });
+
+    // A colleague's shared login typed into the person's own browser,
+    // where they are already signed in to that site, replaced their session
+    // with the shared account's.
+    it("keeps a shared login out of a jar that already has the site", async () => {
+      profileFor.mockResolvedValue({
+        id: "prof-1",
+        providerProfileId: "prov-1",
+        proxyCountryCode: null,
+      });
+      savedLogin.mockResolvedValue({
+        id: "cred-1",
+        label: LABEL,
+        scope: "agent",
+        siteHost: "linkedin.com",
+      });
+
+      const result = await browseTool.run(
+        { task: TASK, site: "linkedin.com" },
+        ctxWith({ db: refusingDb(["www.linkedin.com", "google.com"]) }),
+      );
+
+      expect((result as { proposal: Record<string, unknown> }).proposal.signsInAs).toBeUndefined();
+    });
+
+    it("still uses the person's own saved login in their own jar", async () => {
+      profileFor.mockResolvedValue({
+        id: "prof-1",
+        providerProfileId: "prov-1",
+        proxyCountryCode: null,
+      });
+      savedLogin.mockResolvedValue({
+        id: "cred-1",
+        label: LABEL,
+        scope: "owner",
+        siteHost: "linkedin.com",
+      });
+
+      const result = await browseTool.run(
+        { task: TASK, site: "linkedin.com" },
+        ctxWith({ db: refusingDb(["linkedin.com"]) }),
+      );
+
+      expect((result as { proposal: Record<string, unknown> }).proposal.signsInAs).toBe(
+        `linkedin.com (saved login: ${LABEL})`,
+      );
     });
 
     it("says nothing about a saved login when there is none for the site", async () => {

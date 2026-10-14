@@ -35,20 +35,51 @@ async function importKey(keyB64: string): Promise<CryptoKey> {
  */
 const VERSION = "v1";
 
+/**
+ * What a sealed value is FOR, bound into it.
+ *
+ * AES-GCM's additional data is authenticated but not encrypted: decrypting
+ * with a different purpose fails exactly as tampering does. One key seals
+ * stored secrets, OAuth states and OAuth grants, and without a purpose any of
+ * them would open as any other — a state could be handed back where a grant
+ * is expected. Stored secrets are written without one, as every existing row
+ * was, so nothing already in the database changes.
+ */
+export type SealPurpose = "covan/oauth-state/v2" | "covan/oauth-grant/v1";
+
+const gcm = (
+  iv: Uint8Array,
+  purpose?: SealPurpose,
+): { name: "AES-GCM"; iv: Uint8Array; additionalData?: Uint8Array } =>
+  purpose
+    ? { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(purpose) }
+    : { name: "AES-GCM", iv };
+
 /** Returns `v1.<iv-base64>.<ciphertext-base64>`. */
-export async function encryptSecret(plaintext: string, keyB64: string): Promise<string> {
+export async function encryptSecret(
+  plaintext: string,
+  keyB64: string,
+  purpose?: SealPurpose,
+): Promise<string> {
   const key = await importKey(keyB64);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    gcm(iv, purpose),
     key,
     new TextEncoder().encode(plaintext),
   );
   return `${VERSION}.${toB64(iv)}.${toB64(new Uint8Array(ct))}`;
 }
 
-/** Throws if the payload was tampered with or the key is wrong — AES-GCM is authenticated. */
-export async function decryptSecret(payload: string, keyB64: string): Promise<string> {
+/**
+ * Throws if the payload was tampered with, the key is wrong, or it was sealed
+ * for another purpose — AES-GCM is authenticated, additional data included.
+ */
+export async function decryptSecret(
+  payload: string,
+  keyB64: string,
+  purpose?: SealPurpose,
+): Promise<string> {
   const [version, ivB64, ctB64] = payload.split(".");
   // Rejected loudly rather than guessed at: an unknown version means a payload
   // this build cannot read, and silently trying v1 rules on it would surface as
@@ -58,10 +89,6 @@ export async function decryptSecret(payload: string, keyB64: string): Promise<st
   }
   if (!ivB64 || !ctB64) throw new Error("malformed secret payload");
   const key = await importKey(keyB64);
-  const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: fromB64(ivB64) },
-    key,
-    fromB64(ctB64),
-  );
+  const plain = await crypto.subtle.decrypt(gcm(fromB64(ivB64), purpose), key, fromB64(ctB64));
   return new TextDecoder().decode(plain);
 }

@@ -33,7 +33,10 @@ const { fakeProvider } = vi.hoisted(() => ({
   },
 }));
 vi.mock("../lib/connections/registry", () => ({
-  providerFor: (id: string) => (id === "unknown" ? null : fakeProvider),
+  // A row whose provider is Notion resolves to a provider whose id says so, so
+  // a grant for one provider cannot land on a row of another.
+  providerFor: (id: string) =>
+    id === "unknown" ? null : id === "notion" ? { ...fakeProvider, id: "notion" } : fakeProvider,
   providerAvailability: () => [],
 }));
 
@@ -42,7 +45,12 @@ const { listFolders } = vi.hoisted(() => ({ listFolders: vi.fn() }));
 vi.mock("../lib/connections/google-drive", () => ({ listFolders }));
 
 const { connections, connectionsPublic } = await import("./connections");
-const { signState } = await import("../lib/connections/oauth-state");
+const { signState, sealGrant, readState, nonceHashOf } =
+  await import("../lib/connections/oauth-state");
+
+/** What the starting tab keeps in session storage, and the hash it sent. */
+const NONCE = "nonce-of-the-starting-tab-0123456789";
+const NONCE_HASH = await nonceHashOf(NONCE);
 
 const USER = { id: "user-2", email: "bob@example.com" };
 const KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
@@ -153,7 +161,7 @@ describe("POST /connections/:id/reconnect", () => {
       },
     });
 
-    const res = await request("POST", "/connections/conn-1/reconnect");
+    const res = await request("POST", "/connections/conn-1/reconnect", { nonceHash: NONCE_HASH });
 
     expect(res.status).toBe(403);
     // And it asked by writing, rather than by re-deriving the rule here.
@@ -163,12 +171,12 @@ describe("POST /connections/:id/reconnect", () => {
   it("carries the connection into the state, so the callback updates it", async () => {
     const { request } = appWith({ tables: callerTables() });
 
-    const res = await request("POST", "/connections/conn-1/reconnect");
+    const res = await request("POST", "/connections/conn-1/reconnect", { nonceHash: NONCE_HASH });
     const { url } = (await res.json()) as { url: string };
 
     const state = new URL(url).searchParams.get("state")!;
     const payload = JSON.parse(
-      await decryptSecret(state.replace(/-/g, "+").replace(/_/g, "/"), KEY),
+      await decryptSecret(state.replace(/-/g, "+").replace(/_/g, "/"), KEY, "covan/oauth-state/v2"),
     );
     expect(payload).toMatchObject({
       provider: "google_drive",
@@ -176,6 +184,8 @@ describe("POST /connections/:id/reconnect", () => {
       userId: "user-2",
       workspaceId: "ws-1",
       connectionId: "conn-1",
+      // And the starting tab's nonce, by hash: completing asks for the nonce.
+      nonceHash: NONCE_HASH,
     });
   });
 
@@ -183,42 +193,160 @@ describe("POST /connections/:id/reconnect", () => {
     fakeProvider.isConfigured.mockReturnValue(false);
     const { request } = appWith({ tables: callerTables() });
 
-    expect((await request("POST", "/connections/conn-1/reconnect")).status).toBe(501);
+    expect(
+      (await request("POST", "/connections/conn-1/reconnect", { nonceHash: NONCE_HASH })).status,
+    ).toBe(501);
   });
 });
 
-describe("the callback, completing a reconnect", () => {
-  const callbackFor = async (connectionId?: string) => {
+describe("the callback", () => {
+  it("seals the code for the app instead of exchanging it", async () => {
+    // The browser coming back from a consent screen carries no Covan session,
+    // so the callback cannot know whose it is. Exchanging here is what let a
+    // consent link sent to somebody else plant their Drive in the starter's
+    // workspace.
+    const calls = serviceDb();
+    const { request } = appWith();
     const state = await signState(
       {
         provider: "google_drive",
         userId: USER.id,
         workspaceId: "ws-1",
         bundleId: "bundle-1",
-        ...(connectionId ? { connectionId } : {}),
+        nonceHash: NONCE_HASH,
       },
       KEY,
     );
-    return `/connections/callback?code=abc&state=${state}`;
+
+    const res = await request("GET", `/connections/callback?code=abc&state=${state}`);
+
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.pathname).toBe("/integrations");
+    expect(location.searchParams.get("for")).toBe("connection");
+    expect(location.searchParams.get("grant")).toBeTruthy();
+    expect(fakeProvider.exchangeCode).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("turns a state it did not issue away on the spot", async () => {
+    const { request } = appWith();
+    const res = await request("GET", "/connections/callback?code=abc&state=forged");
+    expect(res.headers.get("location")).toContain("error=expired");
+  });
+});
+
+describe("POST /connections/complete", () => {
+  /** A grant as the callback seals one, for a flow started by `userId`. */
+  const grantFor = async (over: { connectionId?: string; userId?: string } = {}) => {
+    const raw = await signState(
+      {
+        provider: "google_drive",
+        userId: over.userId ?? USER.id,
+        workspaceId: "ws-1",
+        bundleId: "bundle-1",
+        nonceHash: NONCE_HASH,
+        ...(over.connectionId ? { connectionId: over.connectionId } : {}),
+      },
+      KEY,
+    );
+    const state = (await readState(raw, KEY))!;
+    return sealGrant(
+      { state, code: "abc", redirectUri: "https://api.example.com/connections/callback" },
+      KEY,
+    );
   };
 
-  /** Membership and bundle checks the callback makes before writing anything. */
+  /** Membership and bundle checks made before anything is exchanged. */
   const preflight = {
     workspace_members: { role: "member" },
     knowledge_bundles: { id: "bundle-1" },
   };
 
-  it("replaces the grant on the row instead of adding a second connection", async () => {
-    const calls = serviceDb({ ...preflight, connections: CONNECTION });
+  it("refuses a grant somebody else started, before exchanging anything", async () => {
+    // The planting case: an attacker starts a flow and sends the consent link
+    // to the person reading this. Their browser comes back with the grant;
+    // completing it as themselves must store nothing of theirs anywhere.
+    const calls = serviceDb(preflight);
     const { request } = appWith();
 
-    const res = await request("GET", await callbackFor("conn-1"));
+    const res = await request("POST", "/connections/complete", {
+      grant: await grantFor({ userId: "user-attacker" }),
+      nonce: NONCE,
+    });
 
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toContain("reconnected=google_drive");
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "not_yours" });
+    expect(fakeProvider.exchangeCode).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.op !== "select")).toEqual([]);
+  });
 
-    // The bug this closes: an insert here leaves two rows for one Drive folder,
-    // the old one paused, and nothing saying which matters.
+  it("refuses without the nonce of the tab that started the flow", async () => {
+    const { request } = appWith();
+    const res = await request("POST", "/connections/complete", {
+      grant: await grantFor(),
+      nonce: "a-different-tab-nonce-0123456789",
+    });
+    expect(res.status).toBe(403);
+    expect(fakeProvider.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it("refuses a grant it did not seal", async () => {
+    const { request } = appWith();
+    const state = await signState(
+      {
+        provider: "google_drive",
+        userId: USER.id,
+        workspaceId: "ws-1",
+        bundleId: "bundle-1",
+        nonceHash: NONCE_HASH,
+      },
+      KEY,
+    );
+    // A state is not a grant, though one key seals both.
+    const res = await request("POST", "/connections/complete", { grant: state, nonce: NONCE });
+    expect(res.status).toBe(400);
+  });
+
+  it("exchanges with the redirect the code was issued against", async () => {
+    serviceDb(preflight);
+    const { request } = appWith();
+    await request("POST", "/connections/complete", { grant: await grantFor(), nonce: NONCE });
+    expect(fakeProvider.exchangeCode).toHaveBeenCalledWith(
+      expect.anything(),
+      "abc",
+      "https://api.example.com/connections/callback",
+      expect.anything(),
+    );
+  });
+
+  it("inserts a new connection for a plain connect", async () => {
+    const calls = serviceDb(preflight);
+    const { request } = appWith();
+
+    const res = await request("POST", "/connections/complete", {
+      grant: await grantFor(),
+      nonce: NONCE,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ provider: "google_drive", reconnected: false });
+    const insert = calls.find((c) => c.table === "connections" && c.op === "insert")!;
+    // A Drive connection has no folder yet and must not sync until it has one.
+    expect(insert.values).toMatchObject({ status: "paused", paused_code: "needs_folder" });
+  });
+
+  it("replaces the grant on the row instead of adding a second connection", async () => {
+    const calls = serviceDb(preflight);
+    const { request } = appWith({ tables: callerTables() });
+
+    const res = await request("POST", "/connections/complete", {
+      grant: await grantFor({ connectionId: "conn-1" }),
+      nonce: NONCE,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ reconnected: true, connectionId: "conn-1" });
     expect(calls.filter((c) => c.table === "connections" && c.op === "insert")).toEqual([]);
 
     const update = calls.find((c) => c.table === "connections" && c.op === "update")!;
@@ -231,70 +359,65 @@ describe("the callback, completing a reconnect", () => {
       paused_reason: null,
       paused_code: null,
       consecutive_failures: 0,
+      // A reconnect is the single most likely cause of a narrowing, so an old
+      // approval must not carry across it.
+      removals_approved_at: null,
     });
+    // Replacing a credential is not setting the connection up again.
+    expect(update.values?.config).toMatchObject({ folderId: "folder-1" });
     expect(
       JSON.parse(await decryptSecret(update.values!.secret_ciphertext as string, KEY)),
     ).toEqual({ accessToken: "new-token" });
   });
 
-  it("keeps the folder that was already chosen", async () => {
-    const calls = serviceDb({ ...preflight, connections: CONNECTION });
-    const { request } = appWith();
+  it("asks again whether the caller may still change the connection", async () => {
+    const calls = serviceDb(preflight);
+    const { request } = appWith({
+      tables: {
+        connections: {
+          select: () => ({ data: CONNECTION, error: null }),
+          // The policy no longer lets this caller change the row.
+          update: () => ({ data: null, error: null }),
+        },
+      },
+    });
 
-    await request("GET", await callbackFor("conn-1"));
+    const res = await request("POST", "/connections/complete", {
+      grant: await grantFor({ connectionId: "conn-1" }),
+      nonce: NONCE,
+    });
 
-    // Replacing a credential is not setting the connection up again, and asking
-    // somebody to find the same folder twice is asking for the same intention
-    // twice. A folder the new grant cannot see shows up as a narrowing instead.
-    const update = calls.find((c) => c.table === "connections" && c.op === "update")!;
-    expect(update.values?.config).toMatchObject({ folderId: "folder-1" });
-    expect(update.values?.status).toBe("active");
+    expect(res.status).toBe(403);
+    expect(fakeProvider.exchangeCode).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.table === "connections" && c.op === "update")).toEqual([]);
   });
 
-  it("does not carry an old removal approval across a new grant", async () => {
-    const calls = serviceDb({ ...preflight, connections: CONNECTION });
-    const { request } = appWith();
+  it("writes nothing when the connection has gone", async () => {
+    const calls = serviceDb(preflight);
+    const { request } = appWith({
+      tables: { connections: { select: () => ({ data: null, error: null }) } },
+    });
 
-    await request("GET", await callbackFor("conn-1"));
+    const res = await request("POST", "/connections/complete", {
+      grant: await grantFor({ connectionId: "conn-1" }),
+      nonce: NONCE,
+    });
 
-    // A reconnect is the single most likely cause of a narrowing, so the next
-    // run has to be free to notice one.
-    const update = calls.find((c) => c.table === "connections" && c.op === "update")!;
-    expect(update.values?.removals_approved_at).toBeNull();
-  });
-
-  it("writes nothing when the connection has gone, or moved workspace", async () => {
-    const calls = serviceDb({ ...preflight, connections: null });
-    const { request } = appWith();
-
-    const res = await request("GET", await callbackFor("conn-1"));
-
-    expect(res.headers.get("location")).toContain("connection_gone");
+    expect(await res.json()).toEqual({ error: "connection_gone" });
     expect(calls.filter((c) => c.table === "connections" && c.op !== "select")).toEqual([]);
   });
 
   it("refuses a grant for a different provider than the row's", async () => {
-    const calls = serviceDb({ ...preflight, connections: { ...CONNECTION, provider: "notion" } });
-    const { request } = appWith();
-
-    const res = await request("GET", await callbackFor("conn-1"));
-
-    // Should be impossible: the provider is fixed at creation and the state
-    // named this row. The safe answer to something impossible is to refuse.
-    expect(res.headers.get("location")).toContain("wrong_provider");
-    expect(calls.filter((c) => c.table === "connections" && c.op === "update")).toEqual([]);
-  });
-
-  it("still inserts when the flow was a plain connect", async () => {
     const calls = serviceDb(preflight);
-    const { request } = appWith();
+    const { request } = appWith({ tables: callerTables({ provider: "notion" }) });
 
-    const res = await request("GET", await callbackFor());
+    const res = await request("POST", "/connections/complete", {
+      grant: await grantFor({ connectionId: "conn-1" }),
+      nonce: NONCE,
+    });
 
-    expect(res.headers.get("location")).toContain("connected=google_drive");
-    const insert = calls.find((c) => c.table === "connections" && c.op === "insert")!;
-    // A Drive connection has no folder yet and must not sync until it has one.
-    expect(insert.values).toMatchObject({ status: "paused", paused_code: "needs_folder" });
+    expect(await res.json()).toEqual({ error: "wrong_provider" });
+    expect(calls.filter((c) => c.table === "connections" && c.op === "update")).toEqual([]);
   });
 });
 
@@ -370,14 +493,70 @@ describe("GET /connections/:id/folders", () => {
     expect(listFolders).not.toHaveBeenCalled();
   });
 
-  it("lists folders for a caller the policy admits, and asks the database first", async () => {
-    serviceDb(await storedGrant());
-    const { request, fake } = appWith({ tables: callerTables() });
+  it("lists folders for the grant holder, and asks the database first", async () => {
+    serviceDb({ ...(await storedGrant()), workspace_members: { user_id: USER.id } });
+    const { request, fake } = appWith({ tables: callerTables({ user_id: USER.id }) });
 
     const res = await request("GET", "/connections/conn-1/folders");
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{ id: "folder-2", name: "Policies" }]);
     expect(fake.callsTo("connections").some((c) => c.op === "update")).toBe(true);
+  });
+
+  // The probe writes `status` back to itself. Unconditional, it wrote the value
+  // read a moment before, so a sync that paused the connection in between was
+  // un-paused by somebody opening its folder list.
+  it("probes only where the status is still what it read, so it undoes nothing", async () => {
+    serviceDb({ ...(await storedGrant()), workspace_members: { user_id: USER.id } });
+    const { request, fake } = appWith({ tables: callerTables({ user_id: USER.id }) });
+
+    await request("GET", "/connections/conn-1/folders");
+
+    const probe = fake.callsTo("connections").find((c) => c.op === "update");
+    expect(probe?.values).toEqual({ status: "paused" });
+    expect(probe?.filters).toContainEqual({ column: "status", value: "paused", kind: "eq" });
+  });
+
+  // The policy lets an admin change a member's connection, and used to let
+  // anybody who could write change one whose holder had closed their account.
+  // Neither is a reason to read the holder's Drive with their token.
+  it.each([
+    ["an admin who is not the holder", "user-1"],
+    ["a writer, once the holder has closed their account", null],
+  ])("refuses %s, before any token is used", async (_label, holder) => {
+    serviceDb(await storedGrant());
+    const { request } = appWith({ tables: callerTables({ user_id: holder as never }) });
+
+    const res = await request("GET", "/connections/conn-1/folders");
+
+    expect(res.status).toBe(403);
+    expect(listFolders).not.toHaveBeenCalled();
+  });
+
+  it("refuses the holder's own token once they have left the workspace", async () => {
+    // The caller is the holder by id, but has no seat here any more: the
+    // check `tokenFor` shares with the sync engine stops the token being used.
+    serviceDb({ ...(await storedGrant()), workspace_members: null });
+    const { request } = appWith({ tables: callerTables({ user_id: USER.id }) });
+
+    const res = await request("GET", "/connections/conn-1/folders");
+
+    expect(res.status).toBe(502);
+    expect(listFolders).not.toHaveBeenCalled();
+  });
+});
+
+describe("choosing a Drive folder", () => {
+  it("is the grant holder's alone", async () => {
+    // An admin may pause a member's connection. Pointing it at the member's
+    // private folder is reading their Drive with their token.
+    const calls = serviceDb();
+    const { request } = appWith({ tables: callerTables({ user_id: "user-1" }) });
+
+    const res = await request("PATCH", "/connections/conn-1", { folderId: "private" });
+
+    expect(res.status).toBe(403);
+    expect(calls.some((c) => c.table === "connections" && c.op === "update")).toBe(false);
   });
 });

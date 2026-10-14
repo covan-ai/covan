@@ -8,11 +8,10 @@ beforeEach(() => {
 
 describe("UserAvatar", () => {
   it("loads an uploaded photo from the API", () => {
-    render(<UserAvatar name="Ada Lovelace" url="/avatars/u1/abc.webp" />);
-    expect(screen.getByRole("img")).toHaveAttribute(
-      "src",
-      "https://api.covan.test/avatars/u1/abc.webp",
-    );
+    const url =
+      "/avatars/0b7e7c1e-6a43-4c38-9a59-3f1b2c4d5e6f/0123456789abcdef0123456789abcdef.webp";
+    render(<UserAvatar name="Ada Lovelace" url={url} />);
+    expect(screen.getByRole("img")).toHaveAttribute("src", `https://api.covan.test${url}`);
   });
 
   it("draws a monogram instead of loading an address the app would not have stored", () => {

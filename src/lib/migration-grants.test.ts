@@ -43,10 +43,13 @@ const CLOUD = join(process.cwd(), "supabase", "cloud");
  * `routine_deliveries` is written and read only by the scheduled Worker through
  * the service-role client — 0023 revokes it from `anon` and `authenticated` on
  * purpose, and `tests/rls/structure.test.ts` carries the same name in its own
- * service-role-only list. An entry here is a decision, not an exemption from
- * thinking.
+ * service-role-only list. `credit_holds` (hosted only, cloud/0004) is the same
+ * shape: the running spend of turns, read and written by the credit check
+ * before each step. So is `signup_grant_addresses` (cloud/0005), which only the
+ * new-workspace trigger reads. An entry here is a decision, not an exemption
+ * from thinking.
  */
-const NO_CLIENT_GRANT = new Set(["routine_deliveries"]);
+const NO_CLIENT_GRANT = new Set(["routine_deliveries", "credit_holds", "signup_grant_addresses"]);
 
 /**
  * The one migration that creates a table and grants in a later file.

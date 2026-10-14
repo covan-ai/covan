@@ -19,6 +19,11 @@ import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResul
 import type { CoverageRunInput, CoverageRunResult } from "./coverage-source";
 import { embeddingSpend, spends, type Entitlements, type Spend } from "../entitlements";
 import { embeddingModel } from "../embeddings";
+import {
+  CONFIRMABLE_COLUMNS,
+  readyForDelivery,
+  type ConfirmableChannel,
+} from "./address-confirmation";
 
 export const MAX_FAILURES = 5;
 
@@ -1059,13 +1064,23 @@ async function loadDeliveryChannel(
 ): Promise<DeliveryChannel> {
   const { data: channel, error } = await deps.db
     .from("delivery_channels")
-    .select("kind, secret_ciphertext")
+    .select(`${CONFIRMABLE_COLUMNS}, disabled_at`)
     .eq("id", routine.delivery_channel_id)
     .eq("user_id", routine.user_id)
     .maybeSingle();
   if (error) throw new Error(`delivery channel lookup failed: ${error.message}`);
   if (!channel) throw new Error("delivery channel missing");
-  return channel;
+  // Revoking the key that made it disabled it (0088), and the routine was
+  // paused in the same statement. Reaching here means somebody resumed the
+  // routine without choosing another channel; the destination is still one a
+  // revoked key picked.
+  if (channel.disabled_at) {
+    throw new Error("delivery channel disabled: the API key that set it up was revoked");
+  }
+  // An email address that has not agreed to these messages is asked here, or
+  // confirmed on the spot if it is the owner's own; `deliver` refuses it
+  // otherwise, and that refusal is the run's failure, in words.
+  return readyForDelivery(deps.env, channel as ConfirmableChannel);
 }
 
 /**
@@ -1434,13 +1449,15 @@ async function notifyOwner(
   try {
     if (!(await wantsNotice(deps.db, routine.user_id, kind))) return;
 
-    const { data: channel } = await deps.db
+    const { data: row } = await deps.db
       .from("delivery_channels")
-      .select("kind, secret_ciphertext")
+      .select(CONFIRMABLE_COLUMNS)
       .eq("id", routine.delivery_channel_id)
       .eq("user_id", routine.user_id)
+      .is("disabled_at", null)
       .maybeSingle();
-    if (!channel) return;
+    if (!row) return;
+    const channel = await readyForDelivery(deps.env, row as ConfirmableChannel);
 
     await deliver(channel, message, deps.deliveryDeps, {
       // Named so a webhook receiver can file a notice apart from a result. No

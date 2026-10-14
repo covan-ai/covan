@@ -56,10 +56,14 @@ export async function capabilitiesFor(input: {
 
   // Best-effort. A tool the agent cannot see is a worse turn; a turn that
   // fails because a lookup failed is no turn at all.
-  const connections = await listConnections(input.db, input.workspaceId).catch((err: unknown) => {
-    console.error("could not list tool connections", err);
-    return [];
-  });
+  // The caller's own connections and the shared ones (0098): on a scheduled
+  // run `input.db` is the service role, and the routine's owner is the caller.
+  const connections = await listConnections(input.db, input.workspaceId, input.userId).catch(
+    (err: unknown) => {
+      console.error("could not list tool connections", err);
+      return [];
+    },
+  );
   const channels = scheduled ? [] : await ownChannels(input.db, input.userId);
 
   const tools = configuredTools(input.env).filter((tool) => {

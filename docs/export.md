@@ -127,6 +127,12 @@ depends on how the target install stores them:
   ```sh
   jq -r '.[] | select(.r2_key) | "\(.id)\t\(.r2_key)"' data/documents.json |
   while IFS=$'\t' read -r id key; do
+    # An archive is a file somebody handed you. A key that is not
+    # <bundle id>/<name> — one with "..", a leading "/" or more than one
+    # directory — would write outside DOCS_DIR, so it is skipped and named.
+    case "$key" in
+      /*|*..*|*/*/*|*[!A-Za-z0-9._/-]*) echo "skipped unsafe key: $key" >&2; continue ;;
+    esac
     dest="$DOCS_DIR/$key"
     mkdir -p "$(dirname "$dest")"
     cp documents/$id-* "$dest"
@@ -138,6 +144,10 @@ depends on how the target install stores them:
   ```sh
   jq -r '.[] | select(.r2_key) | "\(.id)\t\(.r2_key)"' data/documents.json |
   while IFS=$'\t' read -r id key; do
+    # The same check as above: a key is <bundle id>/<name> and nothing else.
+    case "$key" in
+      /*|*..*|*/*/*|*[!A-Za-z0-9._/-]*) echo "skipped unsafe key: $key" >&2; continue ;;
+    esac
     npx wrangler r2 object put "covan-docs/$key" --file documents/$id-*
   done
   ```

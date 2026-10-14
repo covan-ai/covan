@@ -52,32 +52,58 @@ asked. See
 [a question row level security cannot be asked](security.md#a-question-row-level-security-cannot-be-asked).
 A scope fails that test; a capability passes it.
 
-Three things a key cannot do, each by explicit refusal:
+What a key cannot do is one rule: **a key may not create access that outlives
+its own revocation.** Revoking a leaked key has to end the incident. Every
+endpoint is sorted against that rule, and these are refused to a key with a
+`403`:
 
-- **Create another key.** Otherwise a leaked key writes itself permanent
-  successors and revoking the original achieves nothing.
-- **Revoke a key.** Otherwise a leaked key takes down the keys you are relying
-  on.
-- **Close the account.** Otherwise a leaked key ends the account it came from in
-  one call, destroying the evidence and the account together, and no revocation
-  afterwards can undo it.
+- **Keys and the account.** Creating or revoking a key, and closing the
+  account. A leaked key that could mint successors could never be revoked; one
+  that could revoke keys could take down the ones you rely on; one that could
+  close the account would destroy it and the evidence together.
+- **Membership.** Inviting, revoking or accepting an invitation, changing a
+  role, removing somebody, leaving, creating a workspace and switching to
+  another one. An invited admin has a session of their own that no revocation
+  reaches.
+- **Third-party connections.** Starting or reconnecting a Drive or Notion
+  source, browsing its folders, choosing what it imports, removing it;
+  connecting a Composio application and changing what an agent may do in it;
+  installing, changing or removing Slack; adding, changing or removing a tool
+  connection; and rotating a webhook's signing secret. Each ends in a token or
+  a secret held by somebody else.
+- **The browser.** Anything that hands out a live view of your signed-in
+  browser, or saves a login an agent signs in with.
 
-All three need a signed-in session. Everything else is open to a key —
+All of these need a signed-in session. Everything else is open to a key —
 including `GET /workspaces/:id/export`, which is not refused because it is a
 read: a key that can reach `/agents` and `/messages` can already assemble the
 same archive with a loop, so a refusal would be a gate with a door beside it.
 
-### A key belongs to a person
+### A key belongs to a person, in one workspace
 
-Not to the workspace. When you leave a workspace — or an admin removes you —
-your keys stop working at the same moment your own access does, because they
-_are_ your access. A script running on a departed colleague's key goes quiet.
+A key acts as the person who made it, and only in the workspace it was made in.
+Requests made with it are scoped to that workspace whatever the person has
+switched to since, and the database refuses the key everything in any other
+workspace the person belongs to — a key made for one team's nightly script
+cannot read another team's documents by id.
+
+When you leave that workspace, or an admin removes you, the key stops working
+at the same moment your own access does: it answers `401` from then on. A
+script running on a departed colleague's key goes quiet.
 
 That is the correct behaviour and it is also the one that surprises people, so
 the removal dialog on the Team page says how many live keys somebody has before
 you remove them.
 
 Revoking is one-way. A revoked key cannot be restored, only replaced.
+
+Revoking also stops what the key set up. A routine, delivery channel or webhook
+trigger made with a key remembers which key made it, and when that key is
+revoked its routines pause — with the reason on the routine's page — its
+delivery channels are disabled, and its webhook trigger URLs stop working. A
+routine you made yourself that delivers to one of those channels pauses too,
+because the destination is one the key chose. Resume it after picking another
+channel.
 
 ## Making a request
 
@@ -126,14 +152,18 @@ stands in front of the six endpoints that buy a completion or a transcription:
 `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`,
 `/routines/draft` and `/routines/:id/run`.
 
-`POST /routine-hooks/:token` is the one endpoint in this API that takes no
-bearer token at all. It is reached by third-party systems with no Covan
-session, so an ingest token stands in for a caller — see
-[Routines](routines.md#being-poked-instead). It takes the expensive tier's
-limiter keyed by routine rather than by caller, because the routine is what
-spends, and it is the second endpoint that buys a completion without importing
-the completion seam: `ratelimit.static.test.ts` names both by hand and says why
-that list is a review item rather than a guarantee.
+`POST /routine-hooks/:token` is one of two endpoints that take no bearer token
+(the other is Slack's `POST /slack/events`). It is reached by third-party
+systems with no Covan session, so an ingest token stands in for a caller —
+preferably in the `X-Covan-Ingest-Token` header, with `-` in the path, since a
+path is logged wherever requests are; see
+[Routines](routines.md#being-poked-instead). Both stand in front of the
+per-address limit, because the senders deliver for all their customers from
+shared addresses: a hook is counted per token on the expensive tier, Slack per
+team, and an address is charged only for tokens and signatures that fail. It is
+the second endpoint that buys a completion without importing the completion
+seam: `ratelimit.static.test.ts` names both by hand and says why that list is a
+review item rather than a guarantee.
 
 `POST /delivery-channels/:id/test` takes the expensive tier's limiter without
 being mounted behind that middleware. It buys no completion, and the list of
@@ -150,7 +180,8 @@ keys and decides what to spend on them.
 
 ## The endpoints
 
-Everything below is scoped to your active workspace unless it says otherwise.
+Everything below is scoped to your active workspace — for a key, the workspace
+it was made in — unless it says otherwise.
 This is a map rather than a full reference — the request and response shapes are
 the ones `worker/src/routes/` accepts, and `src/lib/api-client.ts` is a typed
 client for all of it.
@@ -272,7 +303,7 @@ it is already gone or was never visible. Same for `DELETE /agents/:id`.
 | `POST /routines/draft`                         | Turn a sentence into a routine   |
 | `GET`/`POST`/`DELETE /delivery-channels`       | Where output goes                |
 | `POST /delivery-channels/:id/test`             | One message through it, now      |
-| `POST /delivery-channels/:id/rotate`           | A new webhook signing secret     |
+| `POST /delivery-channels/:id/rotate`           | New signing secret. Session only |
 | `GET`/`POST`/`DELETE /routines/:id/trigger`    | The URL that can start it        |
 
 `POST /routines` and `PATCH /routines/:id` also carry `outputBundleId` and
@@ -289,13 +320,13 @@ and could not.
 |                                                              |                                                                                                                |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
 | `GET /me` · `PATCH /me`                                      | You, and your display name                                                                                     |
-| `GET /workspaces` · `POST /workspaces`                       | Every workspace you are in                                                                                     |
-| `POST /workspace/active`                                     | Switch which one requests are scoped to                                                                        |
+| `GET /workspaces` · `POST /workspaces`                       | Every workspace you are in. Creating one is session only.                                                      |
+| `POST /workspace/active`                                     | Switch which one a session is scoped to. Session only.                                                         |
 | `PATCH /workspace`                                           | Name, slug, default model. Admin.                                                                              |
-| `PATCH`/`DELETE /workspace/members/:userId`                  | Change a role, remove somebody. Admin.                                                                         |
-| `DELETE /workspace/members/me`                               | Leave                                                                                                          |
-| `GET`/`POST`/`DELETE /invitations`                           | Invite and revoke. Admin.                                                                                      |
-| `GET /invitations/incoming` · `POST /invitations/:id/accept` | Yours to accept                                                                                                |
+| `PATCH`/`DELETE /workspace/members/:userId`                  | Change a role, remove somebody. Admin. Session only.                                                           |
+| `DELETE /workspace/members/me`                               | Leave. Session only.                                                                                           |
+| `GET`/`POST`/`DELETE /invitations`                           | Invite and revoke. Admin. Inviting and revoking are session only.                                              |
+| `GET /invitations/incoming` · `POST /invitations/:id/accept` | Yours to accept. Accepting is session only.                                                                    |
 | `GET /workspaces/:id/export`                                 | The whole workspace as one zip — [Taking it with you](export.md)                                               |
 | `GET /trash`                                                 | Agents, bundles and documents deleted in the last 30 days. Refused to a viewer, rather than answered empty.    |
 | `POST /trash/:kind/:id/restore`                              | `kind` is the word `/trash` gave back. 400 means restore the parent first, and says which.                     |
@@ -315,11 +346,11 @@ and could not.
 
 ### Services an agent can call
 
-|                                                                |                                               |
-| -------------------------------------------------------------- | --------------------------------------------- |
-| `GET /tool-connections`                                        | The services, and this build's tools          |
-| `POST /tool-connections`                                       | Connect one. Not available to a viewer        |
-| `PATCH /tool-connections/:id` · `DELETE /tool-connections/:id` | Rename, re-scope, remove                      |
+|                                                                |                                            |
+| -------------------------------------------------------------- | ------------------------------------------ |
+| `GET /tool-connections`                                        | The services, and this build's tools       |
+| `POST /tool-connections`                                       | Connect one. Not to a viewer. Session only |
+| `PATCH /tool-connections/:id` · `DELETE /tool-connections/:id` | Rename, re-scope, remove. Session only     |
 
 `POST` takes `{ "label", "transport": "http" | "sql", "baseUrl", "headers" }`
 plus `allowedMethods` (HTTP only, defaults to `["GET"]`), `rpc` (SQL only,

@@ -2,6 +2,12 @@ import { serviceClient } from "../supabase";
 import { decryptSecret } from "../secret-box";
 import type { ToolConnection } from "./connections";
 import type { ToolEnv } from "./registry";
+import {
+  CONFIRMABLE_COLUMNS,
+  readyForDelivery,
+  type ConfirmableChannel,
+} from "../routines/address-confirmation";
+import type { DeliveryChannel } from "../routines/delivery";
 
 /**
  * The one place in the harness that reaches past Row Level Security, and the
@@ -265,12 +271,15 @@ const MAX_UNAVAILABLE_TOOLS = 200;
 export async function deliveryChannelSecret(
   env: ToolEnv,
   owned: { id: string },
-): Promise<{ kind: string; secret_ciphertext: string } | null> {
+): Promise<DeliveryChannel | null> {
   const { data, error } = await serviceClient(env)
     .from("delivery_channels")
-    .select("kind, secret_ciphertext")
+    .select(CONFIRMABLE_COLUMNS)
     .eq("id", owned.id)
+    .is("disabled_at", null)
     .maybeSingle();
   if (error || !data) return null;
-  return { kind: String(data.kind), secret_ciphertext: String(data.secret_ciphertext) };
+  // An email address that has not agreed to these messages is asked rather
+  // than mailed; `deliver` refuses it until it says yes.
+  return readyForDelivery(env, data as ConfirmableChannel);
 }

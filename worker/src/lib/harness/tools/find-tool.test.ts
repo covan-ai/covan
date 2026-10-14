@@ -52,7 +52,7 @@ function ctxWith(
       from: () => ({
         select: () => ({
           eq: () => ({
-            eq: () => ({ order: async () => ({ data: connections, error: null }) }),
+            or: () => ({ eq: () => ({ order: async () => ({ data: connections, error: null }) }) }),
           }),
         }),
       }),

@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AppEnv } from "../types";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { MODEL_IDS, availableModels } from "../lib/models";
 import { canSendEmail } from "../lib/email";
 import { removedFromWorkspaceEmail, roleChangedEmail } from "../lib/emails/membership";
@@ -36,14 +36,13 @@ const createWorkspaceSchema = z.object({
 // PATCH /workspace
 workspace.patch("/workspace", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
   const parsed = updateWorkspaceSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ error: "no workspace found for user" }, 404);
   }
@@ -123,6 +122,9 @@ workspace.get("/workspaces", async (c) => {
 // active. Membership creation requires the create_workspace SECURITY DEFINER RPC
 // (workspace_members has no general insert policy).
 workspace.post("/workspaces", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "create a workspace");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
 
   const parsed = createWorkspaceSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -142,6 +144,9 @@ const setActiveSchema = z.object({ workspaceId: z.string().min(1) });
 
 // POST /workspace/active — switch the caller's active workspace.
 workspace.post("/workspace/active", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "switch workspaces");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const user = c.get("user");
 
@@ -178,13 +183,12 @@ workspace.patch("/workspace/members/:userId", async (c) => {
   if (refusal) return c.json(refusal, 403);
 
   const db = c.get("db");
-  const user = c.get("user");
   const targetUserId = c.req.param("userId");
 
   const parsed = updateMemberSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   // RLS (workspace_members_update_admin) permits only admins; a non-admin
@@ -270,10 +274,13 @@ async function affectedMember(
 // surviving workspace without an admin. This handler's job is to name both
 // outcomes in a way the screen can repeat to the person.
 workspace.delete("/workspace/members/me", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "leave a workspace");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   // Refused here rather than in the database, because it is not a rule about
@@ -330,11 +337,13 @@ workspace.delete("/workspace/members/me", async (c) => {
 
 // DELETE /workspace/members/:userId — remove a member (admin only).
 workspace.delete("/workspace/members/:userId", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "remove somebody from a workspace");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
-  const user = c.get("user");
   const targetUserId = c.req.param("userId");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   // Read before the delete. Afterwards they are not a fellow member any more,
@@ -388,9 +397,8 @@ workspace.delete("/workspace/members/:userId", async (c) => {
 // credentials on another person's screen for a question that only needs a count.
 workspace.get("/workspace/members/:userId/key-count", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   const { data, error } = await db.rpc("workspace_api_key_count", {

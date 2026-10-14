@@ -111,6 +111,21 @@ describe("fetchConnectionItems", () => {
     ).rejects.toThrow(/connection/i);
   });
 
+  // `connection_id` sits on a document row, and a row in another workspace's
+  // bundle can name this connection. Its text must not reach this routine's
+  // summary, so the documents read is held to the workspace as well.
+  it("reads only documents filed in the routine's own workspace", async () => {
+    const { db, filters } = makeDb({ documents: [] });
+
+    await fetchConnectionItems(db, { workspaceId: "w1", connectionId: "cn1" });
+
+    expect(filters).toContainEqual({
+      table: "documents",
+      column: "knowledge_bundles.workspace_id",
+      value: "w1",
+    });
+  });
+
   it("refuses a routine whose source_config names no connection", async () => {
     const { db } = makeDb();
 

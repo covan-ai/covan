@@ -47,7 +47,9 @@ function ctxWith(row: Record<string, unknown> | null): ToolContext {
     db: {
       from: () => ({
         select: () => ({
-          eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
+          eq: () => ({
+            eq: () => ({ or: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
+          }),
         }),
       }),
     } as unknown as ToolContext["db"],

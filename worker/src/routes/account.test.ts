@@ -11,9 +11,11 @@ const deleteUser = vi.fn();
 
 const MAIL_ENV = { RESEND_API_KEY: "re_test", RESEND_FROM: "Covan <hello@covan.test>" };
 const serviceFrom = vi.fn();
+/** `delete_workspace_if_sole_member` (0091), the one rpc the service client makes. */
+const serviceRpc = vi.fn();
 const storeDelete = vi.fn();
 vi.mock("../lib/supabase", () => ({
-  serviceClient: () => ({ from: serviceFrom, auth: { admin: { deleteUser } } }),
+  serviceClient: () => ({ from: serviceFrom, rpc: serviceRpc, auth: { admin: { deleteUser } } }),
 }));
 vi.mock("../lib/docstore", () => ({ getDocStore: () => ({ delete: storeDelete }) }));
 
@@ -32,22 +34,14 @@ vi.mock("../lib/browser/profiles", () => ({
 }));
 
 /**
- * The service-role client, which this route uses for four different shapes:
- * three `select().in()` reads — two for the storage keys, one for the Composio
- * accounts to revoke — and one `delete().eq()` per workspace. One builder
- * answers all four, and records which ids were deleted.
- *
- * `onDelete` fires only on a chain that actually called `delete()`. It used to
- * fire on any `eq()`, which was indistinguishable until a read grew a filter of
- * its own — and then reported a read as a deletion, in the one test whose whole
- * subject is the order things are deleted in.
+ * The service-role client's reads: two `select().in()` for the storage keys,
+ * one for the Composio accounts to revoke, and the browser profile. Workspace
+ * deletes go through `serviceRpc` (0091) instead.
  */
 function serviceTables(spec: {
   bundles?: { id: string }[];
   documents?: { r2_key: string | null }[];
   connections?: { connected_account_id: string | null }[];
-  deleteError?: { message: string };
-  onDelete?: (table: string, id: string) => void;
   readError?: boolean;
   /** The row `browser_profiles` answers with, or null for somebody who never took over a browser. */
   browserProfile?: { provider_profile_id: string } | null;
@@ -65,20 +59,15 @@ function serviceTables(spec: {
                   data: spec.browserProfile === undefined ? null : spec.browserProfile,
                   error: null,
                 }
-              : { data: null, error: spec.deleteError ?? null };
+              : { data: null, error: null };
 
-    let deleting = false;
     const link = {
       select: () => link,
       in: () => link,
-      delete: () => {
-        deleting = true;
-        return link;
-      },
-      eq: (_column: string, value: string) => {
-        if (deleting) spec.onDelete?.(table, value);
-        return link;
-      },
+      eq: () => link,
+      // The documents read is paged (`lib/batch.ts`); one short page ends it.
+      order: () => link,
+      range: () => Promise.resolve(result),
       // The browser-profile read is the one `maybeSingle` call the erasure
       // path makes — it wants one row or none, not a list.
       maybeSingle: () => Promise.resolve(result),
@@ -106,6 +95,29 @@ function appWith(spec: {
   avatarUrl?: string | null;
 }) {
   const dbSpec: FakeDbSpec = {
+    rpc: {
+      // What `account_closure_plan()` (0091) answers: counted per workspace
+      // the caller is in, the way the SQL aggregate does it.
+      account_closure_plan: () => {
+        if (spec.membershipsError) return { data: null, error: { message: "boom" } };
+        return {
+          data: spec.members
+            .filter((m) => m.user_id === USER.id)
+            .map((mine) => {
+              const others = spec.members.filter(
+                (m) => m.workspace_id === mine.workspace_id && m.user_id !== USER.id,
+              );
+              return {
+                workspace_id: mine.workspace_id,
+                role: mine.role,
+                other_members: others.length,
+                other_admins: others.filter((m) => m.role === "admin").length,
+              };
+            }),
+          error: null,
+        };
+      },
+    },
     tables: {
       workspace_members: {
         select: (ctx: QueryContext) => {
@@ -165,84 +177,62 @@ beforeEach(() => {
   deleteUser.mockResolvedValue({ data: null, error: null });
   storeDelete.mockResolvedValue(undefined);
   serviceFrom.mockImplementation(serviceTables({}));
+  serviceRpc.mockResolvedValue({ data: true, error: null });
 });
 
 describe("planWorkspaces", () => {
+  const row = (workspace_id: string, role: string, other_members: number, other_admins = 0) => ({
+    workspace_id,
+    role,
+    other_members,
+    other_admins,
+  });
+
   it("deletes a workspace nobody else is in", () => {
-    const plan = planWorkspaces(
-      "user-1",
-      [{ workspace_id: "ws-1", role: "admin" }],
-      [{ workspace_id: "ws-1", user_id: "user-1", role: "admin" }],
-    );
-    expect(plan).toEqual({ blocked: [], deletable: ["ws-1"] });
+    expect(planWorkspaces([row("ws-1", "admin", 0)])).toEqual({ blocked: [], deletable: ["ws-1"] });
   });
 
   it("blocks a workspace where the caller is the only admin and others remain", () => {
-    const plan = planWorkspaces(
-      "user-1",
-      [{ workspace_id: "ws-1", role: "admin" }],
-      [
-        { workspace_id: "ws-1", user_id: "user-1", role: "admin" },
-        { workspace_id: "ws-1", user_id: "user-2", role: "member" },
-      ],
-    );
-    expect(plan).toEqual({ blocked: ["ws-1"], deletable: [] });
+    expect(planWorkspaces([row("ws-1", "admin", 1, 0)])).toEqual({
+      blocked: ["ws-1"],
+      deletable: [],
+    });
   });
 
   it("lets the account go when another admin is left to hold it", () => {
-    const plan = planWorkspaces(
-      "user-1",
-      [{ workspace_id: "ws-1", role: "admin" }],
-      [
-        { workspace_id: "ws-1", user_id: "user-1", role: "admin" },
-        { workspace_id: "ws-1", user_id: "user-2", role: "admin" },
-      ],
-    );
     // Neither blocked nor deleted: the workspace keeps running without them,
     // which is what `0016`'s "attribution survives its author" means in practice.
-    expect(plan).toEqual({ blocked: [], deletable: [] });
+    expect(planWorkspaces([row("ws-1", "admin", 1, 1)])).toEqual({ blocked: [], deletable: [] });
   });
 
   it("does not block a member who was never an admin", () => {
-    const plan = planWorkspaces(
-      "user-1",
-      [{ workspace_id: "ws-1", role: "member" }],
-      [
-        { workspace_id: "ws-1", user_id: "user-1", role: "member" },
-        { workspace_id: "ws-1", user_id: "user-2", role: "member" },
-      ],
-    );
     // A workspace with no admin at all is somebody else's problem and not a
     // reason to refuse this person their erasure.
-    expect(plan).toEqual({ blocked: [], deletable: [] });
+    expect(planWorkspaces([row("ws-1", "member", 1, 0)])).toEqual({ blocked: [], deletable: [] });
   });
 
   it("deletes a sole membership even when the role is not admin", () => {
-    const plan = planWorkspaces(
-      "user-1",
-      [{ workspace_id: "ws-1", role: "member" }],
-      [{ workspace_id: "ws-1", user_id: "user-1", role: "member" }],
-    );
     // The trigger would allow this row to go and leave an empty room behind.
-    expect(plan).toEqual({ blocked: [], deletable: ["ws-1"] });
+    expect(planWorkspaces([row("ws-1", "member", 0)])).toEqual({
+      blocked: [],
+      deletable: ["ws-1"],
+    });
+  });
+
+  it("reads a count PostgREST sent as a string", () => {
+    // `count()` is a bigint, and a bigint can arrive as a string.
+    const plan = planWorkspaces([
+      { workspace_id: "big", role: "member", other_members: "1000" as never, other_admins: 0 },
+    ]);
+    expect(plan).toEqual({ blocked: [], deletable: [] });
   });
 
   it("sorts a mixed set into both piles at once", () => {
-    const plan = planWorkspaces(
-      "user-1",
-      [
-        { workspace_id: "solo", role: "admin" },
-        { workspace_id: "team", role: "admin" },
-        { workspace_id: "guest", role: "member" },
-      ],
-      [
-        { workspace_id: "solo", user_id: "user-1", role: "admin" },
-        { workspace_id: "team", user_id: "user-1", role: "admin" },
-        { workspace_id: "team", user_id: "user-2", role: "member" },
-        { workspace_id: "guest", user_id: "user-1", role: "member" },
-        { workspace_id: "guest", user_id: "user-3", role: "admin" },
-      ],
-    );
+    const plan = planWorkspaces([
+      row("solo", "admin", 0),
+      row("team", "admin", 1, 0),
+      row("guest", "member", 1, 1),
+    ]);
     expect(plan).toEqual({ blocked: ["team"], deletable: ["solo"] });
   });
 });
@@ -280,9 +270,10 @@ describe("DELETE /account", () => {
 
   it("deletes the workspace before the user", async () => {
     const order: string[] = [];
-    serviceFrom.mockImplementation(
-      serviceTables({ onDelete: (table, id) => order.push(`${table}:${id}`) }),
-    );
+    serviceRpc.mockImplementation(async (_name: string, args: { p_workspace_id: string }) => {
+      order.push(`workspaces:${args.p_workspace_id}`);
+      return { data: true, error: null };
+    });
     deleteUser.mockImplementation(async () => {
       order.push("user");
       return { data: null, error: null };
@@ -309,8 +300,35 @@ describe("DELETE /account", () => {
     expect(order).toEqual(["workspaces:solo", "user"]);
   });
 
+  it("asks for the delete only on condition nobody else is in the workspace", async () => {
+    const app = appWith({
+      members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],
+    });
+    await close(app);
+
+    // The plan is a moment old by the time the delete runs. The function
+    // re-checks membership in the same statement (0091), so a workspace
+    // somebody joined in between is not taken with this account.
+    expect(serviceRpc).toHaveBeenCalledWith("delete_workspace_if_sole_member", {
+      p_workspace_id: "solo",
+      p_user_id: USER.id,
+    });
+    expect(serviceFrom).not.toHaveBeenCalledWith("workspaces");
+  });
+
+  it("stops when somebody joined a workspace between the plan and the delete", async () => {
+    serviceRpc.mockResolvedValue({ data: false, error: null });
+    const app = appWith({
+      members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],
+    });
+    const { status } = await close(app);
+
+    expect(status).toBe(409);
+    expect(deleteUser).not.toHaveBeenCalled();
+  });
+
   it("leaves the account alone when a workspace cannot be deleted", async () => {
-    serviceFrom.mockImplementation(serviceTables({ deleteError: { message: "nope" } }));
+    serviceRpc.mockResolvedValue({ data: null, error: { message: "nope" } });
     const app = appWith({
       members: [{ workspace_id: "solo", user_id: USER.id, role: "admin" }],
     });
@@ -377,10 +395,15 @@ describe("DELETE /account", () => {
     const { status } = await close(app);
 
     expect(status).toBe(200);
-    // One service-role read even with nothing to delete, and it is the right
-    // one: a person can have taken over a browser without owning a workspace,
-    // and that cookie jar still has to be handed back.
-    expect(serviceFrom.mock.calls.map((c) => c[0])).toEqual(["browser_profiles"]);
+    // Two service-role reads even with nothing to delete, and they are the
+    // right two: a person can have taken over a browser without owning a
+    // workspace, and that cookie jar still has to be handed back; and a source
+    // they connected stays theirs in a workspace they have since left, and its
+    // grant still has to be let go.
+    expect(serviceFrom.mock.calls.map((c) => c[0]).sort()).toEqual([
+      "browser_profiles",
+      "connections",
+    ]);
     expect(deleteUser).toHaveBeenCalledWith(USER.id);
   });
 

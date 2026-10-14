@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readState, signState } from "./oauth-state";
+import { nonceHashOf, openGrant, readState, sealGrant, signState } from "./oauth-state";
 
 const KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -8,6 +8,7 @@ const state = {
   userId: "user-1",
   workspaceId: "ws-1",
   bundleId: "bundle-1",
+  nonceHash: "a".repeat(64),
 };
 
 describe("oauth state", () => {
@@ -62,7 +63,66 @@ describe("oauth state", () => {
   it("refuses a state that decrypts but names nothing", async () => {
     // Encrypted with our key, so it decrypts — and still is not a state.
     const { encryptSecret } = await import("../secret-box");
-    const raw = await encryptSecret(JSON.stringify({ issuedAt: Date.now() }), KEY);
+    const raw = await encryptSecret(
+      JSON.stringify({ issuedAt: Date.now() }),
+      KEY,
+      "covan/oauth-state/v2",
+    );
     expect(await readState(raw, KEY)).toBeNull();
+  });
+
+  it("refuses a state with no nonce hash to bind the browser", async () => {
+    const { nonceHash: _none, ...withoutIt } = state;
+    const { encryptSecret } = await import("../secret-box");
+    const raw = await encryptSecret(
+      JSON.stringify({ ...withoutIt, issuedAt: Date.now() }),
+      KEY,
+      "covan/oauth-state/v2",
+    );
+    expect(await readState(raw, KEY)).toBeNull();
+  });
+});
+
+/**
+ * What the callback hands the app instead of exchanging the code itself.
+ * Sealed under its own purpose, so a state is never accepted as a grant and a
+ * grant never as a state — one key seals both, and stored secrets besides.
+ */
+describe("an oauth grant", () => {
+  const sealed = async (issuedAt = Date.now()) => {
+    const raw = await signState(state, KEY, issuedAt);
+    const opened = (await readState(raw, KEY, issuedAt))!;
+    return sealGrant({ state: opened, code: "code-1", redirectUri: "https://api/cb" }, KEY);
+  };
+
+  it("carries the state, the code and the redirect it was issued against", async () => {
+    const grant = await openGrant(await sealed(), KEY);
+    expect(grant).toMatchObject({ code: "code-1", redirectUri: "https://api/cb", state });
+  });
+
+  it("is not a state, and a state is not a grant", async () => {
+    const raw = await signState(state, KEY);
+    expect(await openGrant(raw, KEY)).toBeNull();
+    expect(await readState(await sealed(), KEY)).toBeNull();
+  });
+
+  it("is not a stored secret either", async () => {
+    const { encryptSecret } = await import("../secret-box");
+    const plain = await encryptSecret(JSON.stringify({ state, code: "x", redirectUri: "y" }), KEY);
+    expect(await openGrant(plain, KEY)).toBeNull();
+  });
+
+  it("runs out with the flow it belongs to", async () => {
+    const issued = Date.parse("2026-09-02T10:00:00Z");
+    const grant = await sealed(issued);
+    expect(await openGrant(grant, KEY, issued + 9 * 60_000)).not.toBeNull();
+    expect(await openGrant(grant, KEY, issued + 11 * 60_000)).toBeNull();
+  });
+
+  it("hashes a nonce the way the starting browser does", async () => {
+    // SHA-256 hex of the string, which is what `src/lib/flow-nonce.ts` sends.
+    expect(await nonceHashOf("abc")).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
   });
 });

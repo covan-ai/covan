@@ -340,13 +340,52 @@ function relevance(tool: ComposioTool, words: Set<string>): number {
 }
 
 /**
+ * How much of the question a connected application, as a whole, looks like it
+ * answers — so the four targeted searches below go to the right four.
+ *
+ * WHY THIS EXISTS. Those searches used to go to the first four connections in
+ * the order `listConnections` returns them, which is `.order("label")`: with
+ * five or more connected, which applications were asked was decided by whatever
+ * somebody typed as a name. "Create a Zendesk ticket" in a workspace whose
+ * Zendesk sorted sixth never asked Zendesk at all. #257.
+ *
+ * One point per query word the connection visibly names: contained in its
+ * toolkit slug (a containment test for `relevance`'s reason — `googlecalendar`
+ * is how `calendar` is spelled there — and only for words of three letters or
+ * more, so `go` does not match half the catalogue), or a whole word of its label
+ * or of the opening of the schema summary `describe_connection` caches. Nothing
+ * cleverer: this only has to put an application the person named ahead of one
+ * they did not, and it never removes one — a query that names none of them
+ * scores every connection zero, and the stable sort leaves label order intact.
+ */
+function connectionRelevance(c: ToolConnection, words: Set<string>): number {
+  if (words.size === 0) return 0;
+  const slug = (c.toolkit_slug ?? "").toLowerCase();
+  const summary = typeof c.config.summary === "string" ? c.config.summary.slice(0, 280) : "";
+  const named = meaningfulWords(`${c.label} ${summary}`);
+  let score = 0;
+  for (const word of words) {
+    if ((word.length >= 3 && slug.includes(word)) || named.has(word)) score += 1;
+  }
+  return score;
+}
+
+/**
  * How many connected applications get asked the question in their own right.
  *
  * A ceiling on requests per search, not a judgement about how many connections a
- * workspace should have. Four covers every workspace on the install today with
- * room over; past that the catalogue-wide search is still doing its job and the
- * `toolkit` argument is the honest answer for a model that knows which
- * application it wants.
+ * workspace should have. Past it the catalogue-wide search is still doing its
+ * job and the `toolkit` argument is the honest answer for a model that knows
+ * which application it wants.
+ *
+ * WHY IT IS NOT RAISED now that a workspace can connect 1,437 applications
+ * (#257). Every one of these is a Composio request inside a single tool call, and
+ * a Worker invocation has a subrequest budget that the rest of the turn —
+ * model passes, database reads, the other tools — is already drawing on (#177).
+ * Raising it would buy recall with headroom that is not ours to spend. What
+ * changed instead is WHICH four: `connectionRelevance` ranks the connections
+ * before this slice, so the application the query names is among them whatever
+ * it is called.
  */
 const MAX_CONNECTED_SEARCHES = 4;
 
@@ -779,7 +818,14 @@ export const findToolTool: AgentTool = {
     const answeredFromConnected = bestConnected > 0 && bestConnected >= bestOf(broadTools);
     const connectedSearches: ComposioTool[] = [];
     if (!toolkit && byToolkit.size > 0 && !answeredFromConnected) {
-      const slugs = [...byToolkit.keys()].slice(0, MAX_CONNECTED_SEARCHES);
+      // Ranked before the cut, so the four asked are the four the question
+      // names rather than the first four alphabetically. A stable sort, so a
+      // query naming none of them keeps label order. `connectionRelevance`.
+      const slugs = [...byToolkit]
+        .map(([slug, c]) => [slug, connectionRelevance(c, queryWords)] as const)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MAX_CONNECTED_SEARCHES)
+        .map(([slug]) => slug);
       const answers = await Promise.all(
         slugs.map((slug) =>
           searchTools(

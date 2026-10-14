@@ -853,15 +853,29 @@ describe("searching with a connected app in the workspace", () => {
     toolkit_slug: "googlecalendar",
   };
 
-  /** The catalogue as it actually behaves: alphabetical, and the g's never fit. */
+  /**
+   * The catalogue as it actually behaves: alphabetical, and the g's never fit.
+   * Returns the toolkits the targeted searches asked, in the order they asked.
+   */
   function alphabeticalCatalogue() {
+    const asked: string[] = [];
     fetchMock.mockImplementation((url: unknown) => {
       const toolkit = new URL(String(url)).searchParams.get("toolkit_slug");
+      if (toolkit) asked.push(toolkit);
       return Promise.resolve(
         catalogue(toolkit === "GOOGLECALENDAR" ? [CALENDAR_CREATE] : [TWO_CHAT]),
       );
     });
+    return asked;
   }
+
+  /** Six connected apps, labelled so Zendesk sorts last. */
+  const SIX = ["Airtable", "Asana", "Discord", "Github", "Notion", "Zendesk"].map((label) => ({
+    ...GMAIL_CONNECTION,
+    id: `conn-${label.toLowerCase()}`,
+    label,
+    toolkit_slug: label.toLowerCase(),
+  }));
 
   it("finds a connected app's operation that the catalogue-wide search missed", async () => {
     alphabeticalCatalogue();
@@ -872,6 +886,23 @@ describe("searching with a connected app in the workspace", () => {
     // With the id beside it, which is the whole difference between "you could
     // connect a calendar" and an operation the agent can actually run.
     expect(content).toContain("connectionId: conn-cal");
+  });
+
+  it("searches a connected app the query names, even when it is sixth alphabetically", async () => {
+    // Before #257 the four searches went to the first four labels, and Zendesk
+    // was never asked about a Zendesk ticket.
+    const asked = alphabeticalCatalogue();
+    await findToolTool.run({ query: "create zendesk ticket" }, ctxWith(SIX));
+
+    expect(asked).toHaveLength(4);
+    expect(asked).toContain("ZENDESK");
+  });
+
+  it("keeps label order when the query names none of them", async () => {
+    const asked = alphabeticalCatalogue();
+    await findToolTool.run({ query: "create event" }, ctxWith(SIX));
+
+    expect(asked).toEqual(["AIRTABLE", "ASANA", "DISCORD", "GITHUB"]);
   });
 });
 

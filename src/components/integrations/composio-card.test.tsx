@@ -91,6 +91,7 @@ function app(over: Partial<ToolConnection> = {}): ToolConnection {
     logoPath: "/composio/logo?u=https%3A%2F%2Flogos.composio.dev%2Fapi%2Fgmail",
     scope: "owner",
     mine: true,
+    unavailable: null,
     createdAt: 1,
     ...over,
   };
@@ -136,6 +137,35 @@ describe("ComposioCard", () => {
   it("says a half-finished connection is not finished", async () => {
     render(<ComposioCard connections={[app({ status: "pending" })]} agents={AGENTS} />);
     expect(screen.getByText("Finishing…")).toBeInTheDocument();
+  });
+
+  /**
+   * covan#276. An app whose only useful operation the service refused is
+   * hidden from agents for thirty days, and the card used to say "connected"
+   * and nothing else for all of them.
+   */
+  it("says how many operations are hidden, why, and when they are tried again", async () => {
+    const until = Date.parse("2026-11-07T22:51:56Z");
+    render(
+      <ComposioCard
+        connections={[app({ unavailable: { count: 1, hiddenUntil: until } })]}
+        agents={AGENTS}
+      />,
+    );
+    expect(screen.getByText("1 operation hidden")).toBeInTheDocument();
+    expect(screen.getByText(/refused an operation when an agent tried it/)).toHaveTextContent(
+      `Tried again from ${new Date(until).toLocaleDateString("en", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      })}.`,
+    );
+  });
+
+  it("says nothing about hidden operations when there are none", async () => {
+    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
+    expect(screen.queryByText(/hidden/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/refused/)).not.toBeInTheDocument();
   });
 
   it("shows a viewer what is connected without offering a control that would 403", async () => {

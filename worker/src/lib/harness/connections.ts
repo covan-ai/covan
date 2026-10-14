@@ -291,6 +291,53 @@ export function connectionsManifest(connections: ToolConnection[]): string {
  * failed call per operation to rediscover it, once a month at worst.
  */
 const UNAVAILABLE_TRUSTED_DAYS = 30;
+const UNAVAILABLE_TRUSTED_MS = UNAVAILABLE_TRUSTED_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * The entries of a connection's `unavailable_tools` bag that are still
+ * trusted, with when each was recorded (NaN for a date nobody can read).
+ *
+ * An unparseable date is trusted rather than discarded. It means an older or
+ * hand-edited bag, and the slug was still put there by a real 404.
+ */
+function trustedUnavailable(config: Record<string, unknown>, now: number): Array<[string, number]> {
+  const raw = config.unavailable_tools;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const cutoff = now - UNAVAILABLE_TRUSTED_MS;
+  const live: Array<[string, number]> = [];
+  for (const [slug, at] of Object.entries(raw as Record<string, unknown>)) {
+    const seen = typeof at === "string" ? Date.parse(at) : NaN;
+    if (Number.isNaN(seen) || seen >= cutoff) live.push([slug, seen]);
+  }
+  return live;
+}
+
+/**
+ * How many operations this connection is hiding, and until when — what the
+ * Integrations card says so a person is not shown "connected" and nothing
+ * else for a month (covan#276).
+ *
+ * `hiddenUntil` is when the OLDEST trusted entry expires, in epoch ms: the
+ * first moment anything comes back. Null when every entry's date is
+ * unreadable, which is trusted indefinitely. The whole answer is null when
+ * nothing is hidden, so the card has one thing to check.
+ *
+ * Here rather than in the DTO because the thirty days are this file's, and a
+ * second copy of the arithmetic would be free to drift from the one that
+ * actually decides what `find_tool` hides.
+ */
+export function hiddenOperations(
+  config: Record<string, unknown>,
+  now: number = Date.now(),
+): { count: number; hiddenUntil: number | null } | null {
+  const live = trustedUnavailable(config, now);
+  if (live.length === 0) return null;
+  const dated = live.map(([, seen]) => seen).filter((seen) => !Number.isNaN(seen));
+  return {
+    count: live.length,
+    hiddenUntil: dated.length > 0 ? Math.min(...dated) + UNAVAILABLE_TRUSTED_MS : null,
+  };
+}
 
 /**
  * The operations this connection has already proven it cannot run.
@@ -318,15 +365,5 @@ const UNAVAILABLE_TRUSTED_DAYS = 30;
  * know nothing", which is where this started.
  */
 export function unavailableTools(connection: ToolConnection): Set<string> {
-  const raw = connection.config.unavailable_tools;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return new Set();
-  const cutoff = Date.now() - UNAVAILABLE_TRUSTED_DAYS * 24 * 60 * 60 * 1000;
-  const live = new Set<string>();
-  for (const [slug, at] of Object.entries(raw as Record<string, unknown>)) {
-    const seen = typeof at === "string" ? Date.parse(at) : NaN;
-    // An unparseable date is trusted rather than discarded. It means an older
-    // or hand-edited bag, and the slug was still put there by a real 404.
-    if (Number.isNaN(seen) || seen >= cutoff) live.add(slug);
-  }
-  return live;
+  return new Set(trustedUnavailable(connection.config, Date.now()).map(([slug]) => slug));
 }

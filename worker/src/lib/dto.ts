@@ -5,6 +5,7 @@
 import { NOTHING_RELEVANT_REASON } from "./routines/executor";
 import { allowedLogoUrl } from "./composio/client";
 import { REASONING_EFFORTS, type ReasoningEffort } from "./models";
+import { hiddenOperations } from "./harness/connections";
 
 export type DocumentDTO = {
   id: string;
@@ -159,6 +160,19 @@ export type ToolConnectionDTO = {
   scope: "owner" | "workspace";
   /** Whether the caller connected it — the one person who may share it or take it back. */
   mine: boolean;
+  /**
+   * Operations this connection has already been refused and that the agent is
+   * therefore not shown, and when the oldest of them is tried again (epoch
+   * ms). Null when nothing is hidden.
+   *
+   * The card's rule is "say connected, never working" (0072), and this is the
+   * case where the database already knows better: an app whose one useful
+   * operation answered 404 stays hidden for thirty days, and until covan#276
+   * no screen said so. A count rather than a verdict, because seven dead slugs
+   * on GitHub is a usable connection and one on `browser_tool` is not, and
+   * telling those apart needs the catalogue.
+   */
+  unavailable: { count: number; hiddenUntil: number | null } | null;
   createdAt: number;
 };
 
@@ -214,6 +228,7 @@ export function mapToolConnection(
     status: row.status === "pending" || row.status === "failed" ? row.status : "active",
     scope: row.scope === "workspace" ? "workspace" : "owner",
     mine: typeof row.created_by === "string" && row.created_by === callerId,
+    unavailable: hiddenOperations(config),
     createdAt: toEpochMs(row.created_at),
   };
 }

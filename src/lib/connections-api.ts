@@ -66,6 +66,16 @@ export type ToolConnection = {
   scope: "owner" | "workspace";
   /** Whether you connected it — the one person who can share it or take it back. */
   mine: boolean;
+  /**
+   * Operations this connection was already refused by the service, which the
+   * agent is not shown, and when the oldest of them is tried again (epoch
+   * ms; null when that date could not be read). Null when nothing is hidden.
+   *
+   * A count, not a verdict: seven hidden on GitHub is a usable connection and
+   * one on a browser app may be all it had. The card says how many and until
+   * when, and leaves "broken" to the person reading it.
+   */
+  unavailable: { count: number; hiddenUntil: number | null } | null;
   createdAt: number;
 };
 

@@ -13,6 +13,7 @@ import {
   MAX_STEP_EXCERPT_CHARS,
   MAX_TOOL_OUTPUT_CHARS,
   TOKEN_WARNING_SHARE,
+  TOOL_OUTPUT_CHARS_PER_TOKEN,
   TOOL_TIMEOUT_MS,
   TRIM_ABOVE_PROMPT_TOKENS,
   cap,
@@ -334,7 +335,9 @@ const BUDGET_INSTRUCTION =
   "what you would need to do next — do not pretend the work is complete.";
 
 /**
- * What the model is told when the turn has spent its token allowance.
+ * What the model is told when the turn has spent its token allowance — or has
+ * spent so much of it that the next pass would cross, which is how it is
+ * usually met now that the ceiling is forecast (#248).
  *
  * Beside `BUDGET_INSTRUCTION` rather than folded into it, because they are
  * different facts and lead to different advice. "You ran out of tool calls"
@@ -353,10 +356,10 @@ const CREDITS_INSTRUCTION =
   "pretend the work is complete.";
 
 const TOKEN_INSTRUCTION =
-  "This turn has used the whole token allowance one turn is given. Answer now with what " +
-  "you already have. Say plainly, in one sentence, what you were not able to finish — and " +
-  "if the material you were working through was large, say so, because that is the thing " +
-  "to narrow next time.";
+  "This turn has used so much of the token allowance one turn is given that not enough is " +
+  "left for another tool call. Answer now with what you already have. Say plainly, in one " +
+  "sentence, what you were not able to finish — and if the material you were working " +
+  "through was large, say so, because that is the thing to narrow next time.";
 
 /**
  * What the model is told, once, when the turn has spent `TOKEN_WARNING_SHARE`
@@ -904,6 +907,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * where `tokensSpent` is summed. Null until the first pass answers.
    */
   let lastPromptTokens: number | null = null;
+  /**
+   * What the last pass reported writing — its words and its tool calls.
+   *
+   * Beside `lastPromptTokens` because the next pass re-sends both: the
+   * assistant turn that asked for the tools is part of the transcript it reads.
+   * Zero until the first pass answers, which is when the forecast first runs.
+   */
+  let lastCompletionTokens = 0;
   const toolTimeoutMs = opts.budget?.toolTimeoutMs ?? TOOL_TIMEOUT_MS;
   const maxOutputChars = opts.budget?.maxOutputChars ?? MAX_TOOL_OUTPUT_CHARS;
 
@@ -1102,10 +1113,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // `onPass` gives: what the caller cannot reach is what a throw takes
         // with it, and everything after this line can throw.
         opts.onPass?.(spent);
-        // And the running total the cost ceiling is measured against. Checked here rather than before the
-        // next request because this is where it changes — a pass that has
+        // And the running total the cost ceiling is measured against. Checked
+        // here as well as forecast at the foot of the loop: the forecast is
+        // what stops a turn before it buys a pass that would cross, and this
+        // is the backstop for a pass that crossed anyway — a pass that has
         // already been paid for is not un-spent by noticing late.
         lastPromptTokens = event.usage.promptTokens ?? lastPromptTokens;
+        lastCompletionTokens = event.usage.completionTokens ?? lastCompletionTokens;
         tokensSpent += (event.usage.promptTokens ?? 0) + (event.usage.completionTokens ?? 0);
         if (maxTurnTokens && tokensSpent >= maxTurnTokens && !stopped) stopped = "tokens";
         // The platform's ceiling, checked in the same place and for the same
@@ -1155,6 +1169,8 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     // the provider needs it in front of every result, and a tool that throws
     // must not leave the transcript with results answering nothing.
     messages.push({ role: "assistant", content: passText, toolCalls: calls });
+    /** Where this pass's results start, for the token forecast at the foot. */
+    const resultsFrom = messages.length;
 
     for (const call of calls) {
       // Any ceiling, met mid-batch. `stopped` is already set when the token or
@@ -1277,6 +1293,22 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     }
 
     if (spentSteps() >= hardSteps && !stopped) stopped = "budget";
+    // The token ceiling, forecast rather than noticed. The check after each
+    // pass only fires once a pass has crossed, and a pass of a 200k-token
+    // transcript crosses by as much as it costs: on 2026-10-05 the turns it
+    // stopped had landed 22% to 105% past it (#248). So ask before buying the
+    // next one instead — it re-sends everything the last one read, what the
+    // last one wrote, and the results it was just handed — and stop if that
+    // would reach the line. A turn that would have finished on that pass is
+    // stopped one pass early; for a ceiling, short is the right way to miss.
+    if (!stopped && maxTurnTokens && lastPromptTokens !== null) {
+      const handedChars = messages.slice(resultsFrom).reduce((sum, m) => sum + m.content.length, 0);
+      const nextPass =
+        lastPromptTokens +
+        lastCompletionTokens +
+        Math.ceil(handedChars / TOOL_OUTPUT_CHARS_PER_TOKEN);
+      if (tokensSpent + nextPass >= maxTurnTokens) stopped = "tokens";
+    }
     // And again after the tools have run, because they are what actually
     // spends the count: eight connected-app calls is eight subrequests that
     // were not there when this pass began.

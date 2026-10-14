@@ -331,13 +331,22 @@ and log every question as theirs.
 which Slack does not read — its `text` is _mrkdwn_, a different language — so
 replies are translated on the way out: bold, italic, strikethrough, links,
 headings and lists all arrive formatted rather than as visible asterisks and
-brackets. Code blocks are passed through untouched, since both languages spell
-them the same way.
+brackets. Code blocks are passed through unconverted, since both languages
+spell them the same way. Only `http`, `https` and `mailto` links become links;
+anything else in a link's place — `!channel`, a user id — is shown as text, so
+a document cannot make the app ping a channel.
 
-**Each thread becomes a conversation in Covan.** A question asked in a channel
-creates a shared conversation; a direct message creates a private one. Either
-way it is an ordinary conversation afterwards — searchable, exportable, and
-visible on the Chats screen.
+**Each thread becomes a conversation in Covan.** A question asked in a public
+channel creates a shared conversation. A direct message, a private channel or
+a group DM creates a private one, visible to the person who asked: the room it
+was asked in is not one the whole workspace is in. Either way it is an ordinary
+conversation afterwards — searchable, exportable, and visible on the Chats
+screen.
+
+Telling a public channel from a private one takes the `channels:read` scope.
+An install made before that scope was requested cannot ask, so every channel
+question it hears becomes a private conversation until the app is reinstalled
+from the Integrations page.
 
 Which agent answers is chosen on the Integrations page. It starts as the
 workspace's oldest agent so the app works before anybody configures anything.
@@ -346,8 +355,8 @@ workspace's oldest agent so the app works before anybody configures anything.
 
 1. Create an app at <https://api.slack.com/apps>.
 2. **OAuth & Permissions** → redirect URL `<your API URL>/slack/callback`.
-3. **Bot token scopes**: `app_mentions:read`, `chat:write`, `im:history`,
-   `users:read`, `users:read.email`.
+3. **Bot token scopes**: `app_mentions:read`, `channels:read`, `chat:write`,
+   `im:history`, `users:read`, `users:read.email`.
 4. **Event Subscriptions** → request URL `<your API URL>/slack/events`, and
    subscribe to the bot events `app_mention` and `message.im`.
 5. Set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and `SLACK_SIGNING_SECRET` — all
@@ -410,6 +419,29 @@ a service is a row telling one of them where to go.
 | HubSpot, Stripe, Linear, any REST API with a token                  | One row                                                         |
 | Gmail, Slack, Notion, HubSpot and the other common apps             | A search, a read, and a consent screen. See **Connected apps**   |
 | A service that speaks MCP and has no HTTP API                       | A one-off addition to the code — not built, and deliberately so |
+
+### Whose a service is
+
+A service is **personal** when it is made: only the person who connected it
+sees it, and only their own conversations and routines can use it. Your Gmail
+is your agents' tool, not every member's. **Share** on its row makes it the
+workspace's — every member's turns can use it — and **Stop sharing** takes it
+back. Only the person who connected it can do either; an admin can remove a
+shared service, and cannot see a personal one at all (migration `0098`).
+
+Two rules hold whoever is asking:
+
+- **A viewer changes nothing through a service.** Reads work; an operation that
+  is not known to be a read, or an HTTP method other than `GET` and `HEAD`, is
+  refused — even if the viewer approves its card.
+- **Writing through somebody else's shared service asks first.** An HTTP
+  `POST`, `PUT`, `PATCH` or `DELETE` through a service a colleague shared shows
+  a card before it is sent, and a scheduled run, which has nobody to ask, does
+  not send it. Through your own service the methods you allowed apply as they
+  are.
+
+Services made before `0098`: connected apps became personal to whoever
+connected them; HTTP APIs and databases stayed shared.
 
 ### What the form asks for
 
@@ -614,6 +646,13 @@ data at the service is never covered by an earlier yes — it asks for itself,
 every time, however many approvals the conversation has already collected.
 Reading three threads and replying still costs one click; emptying a calendar
 does not become free because somebody approved a calendar read a minute ago.
+An operation the service does not describe either way counts as one that
+changes data: only an operation marked as read-only rides on an earlier yes.
+
+Only **your** yes carries over. A call let through by an always-allow is
+consent to that one operation, not somebody watching the conversation, so it
+does not approve the app for the calls after it — in a scheduled run least of
+all.
 
 **Always-allow** is per agent, per app, per operation, and an admin sets it.
 That is the one thing that removes the asking, and it is deliberately narrow:

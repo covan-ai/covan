@@ -5,16 +5,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { IncomingInvitesBanner } from "./incoming-invites-banner";
 import { InviteAcceptStep } from "./welcome/invite-accept-step";
 import { WORKSPACE_SCOPED_QUERY_KEYS } from "@/lib/workspace-queries";
+import { stashInvite } from "@/lib/invite-stash";
 
 const incoming = vi.fn(async () => [
   { id: "inv-1", workspaceName: "Efe's Workspace", role: "member" },
 ]);
-const accept = vi.fn(async (_id: string) => ({ workspaceId: "ws-1" }));
+const accept = vi.fn(async (_id: string, _token: string) => ({ workspaceId: "ws-1" }));
 
 // Mocked wholesale rather than through importActual: the real module builds a
 // Supabase client at import time, which needs env this process does not have.
 vi.mock("@/lib/api-client", () => ({
-  api: { invitations: { incoming: () => incoming(), accept: (id: string) => accept(id) } },
+  api: {
+    invitations: {
+      incoming: () => incoming(),
+      accept: (id: string, token: string) => accept(id, token),
+    },
+  },
   ApiError: class ApiError extends Error {},
 }));
 
@@ -44,6 +50,7 @@ function invalidatedKeys(queryClient: QueryClient): string[] {
 beforeEach(() => {
   incoming.mockClear();
   accept.mockClear();
+  localStorage.clear();
 });
 
 // Accepting an invitation swaps the workspace the whole app is looking at, and
@@ -61,13 +68,26 @@ describe.each([
     const queryClient = seededClient();
     const user = userEvent.setup();
 
+    // What `/invite` leaves behind when the email's link was opened here.
+    stashInvite("inv-1", "tok-1");
     render(<QueryClientProvider client={queryClient}>{renderComponent()}</QueryClientProvider>);
 
     await user.click(await screen.findByRole("button", { name: buttonName }));
 
-    await waitFor(() => expect(accept).toHaveBeenCalledWith("inv-1"));
+    await waitFor(() => expect(accept).toHaveBeenCalledWith("inv-1", "tok-1"));
     await waitFor(() =>
       expect(invalidatedKeys(queryClient)).toEqual([...WORKSPACE_SCOPED_QUERY_KEYS]),
     );
+  });
+
+  // Accepting takes the token from the invitation's email (migration 0090). A
+  // button without one could only ever be refused, so there is none, and the
+  // invitation says where the way in is.
+  it("offers no button without the token from the email, and says why", async () => {
+    render(<QueryClientProvider client={seededClient()}>{renderComponent()}</QueryClientProvider>);
+
+    expect(await screen.findByText(/open the link in your invitation email/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: buttonName })).toBeNull();
+    expect(accept).not.toHaveBeenCalled();
   });
 });

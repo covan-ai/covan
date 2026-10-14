@@ -672,9 +672,15 @@ export const findToolTool: AgentTool = {
     //
     // Read before the search rather than after it, because on a catalogue-wide
     // query it decides what gets searched. See `connectedSearches` below.
-    const connections = await listConnections(ctx.db, ctx.workspaceId).catch(() => []);
+    const connections = await listConnections(ctx.db, ctx.workspaceId, ctx.userId).catch(() => []);
+    // One connection per application, and the caller's own first: since 0098
+    // a person's own Gmail and a Gmail a colleague shared can both be in reach,
+    // and "my email" means the one they connected.
     const byToolkit = new Map<string, ToolConnection>();
-    for (const c of connections) {
+    const ordered = [...connections].sort(
+      (a, b) => Number(b.created_by === ctx.userId) - Number(a.created_by === ctx.userId),
+    );
+    for (const c of ordered) {
       if (c.transport === "composio" && c.toolkit_slug && !byToolkit.has(c.toolkit_slug)) {
         byToolkit.set(c.toolkit_slug, c);
       }

@@ -35,10 +35,11 @@ import { join } from "node:path";
  *
  * And PUBLIC is only half of it. Supabase also grants EXECUTE on every new
  * function to `anon` BY NAME, which `revoke ... from public` does not reach —
- * 0076 found that by reading a gap list with nothing but the anon key, and 0084
- * swept the rest of the tree. So the second rule below is stricter than the
- * first: triggers are not exempt from it, and of `CALLABLE` only the policy
- * helpers in `ANON_CALLABLE` are.
+ * 0076 found that by reading a gap list with nothing but the anon key, and
+ * 0084_the_deleted_and_the_anonymous swept the rest of the tree. So the second rule below is stricter than the
+ * first: nothing is exempt from it. Not triggers, and not `CALLABLE` either —
+ * 0089 took the policy helpers from `anon` too, once it had taken every table
+ * grant a policy could have been evaluated for.
  */
 const MIGRATIONS = join(process.cwd(), "..", "supabase", "migrations");
 
@@ -83,6 +84,8 @@ const CALLABLE: Record<string, string> = {
     "creating the workspace you are about to be the first member of. There is no membership to check against yet, which is exactly why it cannot be an ordinary insert.",
   accept_invitation:
     "accepting an invitation addressed to your email. It checks the token and the address itself; a policy could not, because you are not a member until it succeeds.",
+  reissue_invitation:
+    "a new link for a pending invitation (0090). Checks the caller is an admin of the invitation's workspace first, and answers the same for a stranger as for a missing row.",
   soft_delete_agent:
     "cascading a soft delete to the rows that hang off an agent, which policies would otherwise consider one at a time. Checks the caller may write in the workspace first.",
   soft_delete_bundle: "the same, for a bundle.",
@@ -98,28 +101,6 @@ const CALLABLE: Record<string, string> = {
   show_message_version:
     "promoting one edit of a message to the visible one. Touches sibling rows as a set, so it is one statement rather than a client-driven sequence.",
 };
-
-/**
- * The functions `anon` may still execute, which is a much shorter list.
- *
- * Only the policy helpers, and for a reason the database forces rather than one
- * anybody chose: every policy that names a helper is `to public`, and `anon`
- * holds table privileges through Supabase's auto-expose, so an anonymous read of
- * any table evaluates these. Revoking one would turn "no rows" into "permission
- * denied for function" across the whole schema without protecting anything —
- * each answers a question about `auth.uid()`, which for `anon` is null, so each
- * answers false.
- *
- * The client RPCs in `CALLABLE` are NOT here: they are for a signed-in caller,
- * and `docs/security.md` ("Functions that run as their owner") is the rule.
- */
-const ANON_CALLABLE = new Set([
-  "is_workspace_member",
-  "is_workspace_admin",
-  "can_write_in_workspace",
-  "session_is_visible",
-  "shares_workspace",
-]);
 
 type Fn = { name: string; file: string; returnsTrigger: boolean };
 
@@ -231,13 +212,12 @@ describe("security definer functions", () => {
     ).toEqual([]);
   });
 
-  it("are revoked from anon by name unless a policy evaluates them", () => {
+  it("are revoked from anon by name, every one of them", () => {
     const fromPublic = revokedFromPublic();
     const fromAnon = revokedFrom("anon");
     const exposed: string[] = [];
 
     for (const fn of definerFunctions().values()) {
-      if (ANON_CALLABLE.has(fn.name)) continue;
       // Both, because each alone leaves the other door open: `anon` inherits
       // PUBLIC, and it also holds the grant by name.
       if (fromPublic.has(fn.name) && fromAnon.has(fn.name)) continue;
@@ -251,14 +231,6 @@ describe("security definer functions", () => {
         "... from public, anon` (and `authenticated` too if no client calls it); " +
         "docs/security.md says which of the two grant shapes it needs.",
     ).toEqual([]);
-  });
-
-  it("lets anon reach only policy helpers that exist and a client may call", () => {
-    const defined = definerFunctions();
-    for (const name of ANON_CALLABLE) {
-      expect(defined.has(name), `${name} is not a definer function any more`).toBe(true);
-      expect(name in CALLABLE, `${name} must also be in CALLABLE`).toBe(true);
-    }
   });
 
   // The two the plan singles out, asserted by name rather than by rule. A

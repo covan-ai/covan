@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 
 /**
  * A ratchet on the two ways a request can step outside Row Level Security.
@@ -97,6 +97,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   [
     "routes/account.ts",
     "erasure is the one thing a caller cannot do as themselves: auth.users is outside RLS entirely, so deleting your own account needs auth.admin.deleteUser, and the workspaces left with nobody in them have no DELETE policy for the same reason nobody has ever needed one. Both writes are keyed to the caller's own id, and the survey that decides which workspaces those are is done through the user client on purpose",
+  ],
+  [
+    "lib/routines/address-confirmation.ts",
+    "the person confirming an address may have no Covan account, so the link's token is the only credential, and delivery_channels.confirmation_hash is granted to no client role (0096). Every write is keyed to one channel id or one token hash; the owner's own address is read from auth.users through the admin API, which no client can reach, and the daily cap counts one owner's rows",
   ],
   [
     "lib/routines/ingest.ts",
@@ -208,4 +212,165 @@ describe("the RLS bypass", () => {
       ).toBe(true);
     },
   );
+});
+
+/**
+ * Files that never call `serviceClient()` but are handed the client it returns.
+ *
+ * The allowlist above sees the identifier and nothing else, so it was blind to
+ * the far end of every exemption: a dispatcher builds the service client and
+ * passes it on, and the function that receives it runs queries no policy
+ * filters, from a file this test had never heard of. The ones known are
+ * listed below. Each is listed with what bounds its queries in place
+ * of the policies it does not get.
+ *
+ * The scan below finds a direct hand-over — `f(admin)`, `f({ db: admin })`,
+ * `f(serviceClient(env))` — from a file that builds the client, and fails on a
+ * receiver that is not here. It does not follow the client through a local
+ * factory, so some of these are listed from reading rather than found by it.
+ */
+const RECEIVES_THE_SERVICE_CLIENT = new Map([
+  [
+    "lib/routines/address-confirmation.ts",
+    "the channel routes hand it a service client for the 0096 bookkeeping on a channel the route has already scoped to the caller by user_id: the daily count is of that owner's rows, and the link update is keyed to that channel's id",
+  ],
+  [
+    "lib/slack/handle.ts",
+    "a Slack event has no Covan caller. Every query is scoped to the installation's workspace, and the asker is resolved to a member by email before anything is read on their behalf",
+  ],
+  [
+    "lib/routines/executor.ts",
+    "a scheduled run has no caller. Every read is keyed to the routine row the claim returned and its own workspace_id, and the owner's membership is checked before a run",
+  ],
+  [
+    "lib/routines/agent-run.ts",
+    "the agent half of a scheduled run, with the executor's bounds: the routine's own workspace and agent",
+  ],
+  [
+    "lib/routines/filing.ts",
+    "files a summary into the routine's output bundle, verified against the routine's workspace before the insert; retention is held to that workspace too",
+  ],
+  [
+    "lib/routines/connection-source.ts",
+    "reads one connection's documents for a routine, the connection and every document held to the routine's own workspace",
+  ],
+  [
+    "lib/retrieval.ts",
+    "retrieval for Slack and scheduled runs: scoped to the bundles attached to an agent the caller already resolved, and to documents not in the bin",
+  ],
+  [
+    "lib/connections/sync.ts",
+    "a sync has no caller: bounded to the connection claim_due_connections returned, its bundle, its workspace, and a holder who is still a member",
+  ],
+  [
+    "lib/connections/holder.ts",
+    "one read of workspace_members, keyed to the connection's own workspace and holder",
+  ],
+  [
+    "lib/connections/release.ts",
+    "account closure: reads and clears only connections whose user_id is the person closing their own account",
+  ],
+  [
+    "lib/composio/revoke.ts",
+    "account closure and connection removal: reads connected_account_id, which no client role may, for rows the caller was already shown to be allowed to remove",
+  ],
+  [
+    "lib/harness/turn.ts",
+    "parks and resumes a turn: paused_turns has no client write grant, and every row is keyed to a message and session the route resolved through the caller's own client",
+  ],
+  [
+    "routes/chat-turn.ts",
+    "salvages a reply after a failure: writes the assistant message 0009 forbids the caller to write, into the session the route already resolved",
+  ],
+]);
+
+function codeOnly(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+/** Top-level arguments of a call, given the text between its parentheses. */
+function splitArgs(args: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of args) {
+    if ("([{".includes(ch)) depth++;
+    if (")]}".includes(ch)) depth--;
+    if (ch === "," && depth === 0) {
+      out.push(current.trim());
+      current = "";
+    } else current += ch;
+  }
+  out.push(current.trim());
+  return out;
+}
+
+/** The source files a file hands the service client to, directly. */
+function handsTheClientTo(file: string): string[] {
+  const code = codeOnly(readFileSync(join(SRC, file), "utf8"));
+  const imports = new Map<string, string>();
+  for (const m of code.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+"([^"]+)"/g)) {
+    for (const raw of m[1].split(",")) {
+      const name = raw.trim().split(" as ").pop()!.trim();
+      if (name) imports.set(name, m[2]);
+    }
+  }
+  const found = new Set<string>();
+  // One top-level unit at a time — a handler, a function — so a name used for
+  // the service client in one does not taint the same name in another.
+  for (const unit of code.split(/\n(?=[A-Za-z])/)) {
+    if (!unit.includes("serviceClient(")) continue;
+    const held = new Set(
+      [...unit.matchAll(/(?:const|let)\s+(\w+)\s*=\s*[^;\n]*serviceClient\(/g)].map((m) => m[1]),
+    );
+    const holds = (arg: string) =>
+      arg.startsWith("serviceClient(") ||
+      held.has(arg) ||
+      (arg.startsWith("{") &&
+        ([...held].some((v) => new RegExp(`(?:\\w+\\s*:\\s*|[{,]\\s*)${v}\\s*[,}]`).test(arg)) ||
+          /:\s*serviceClient\(/.test(arg)));
+    for (const m of unit.matchAll(/\b(\w+)\(/g)) {
+      const from = imports.get(m[1]);
+      if (!from || !from.startsWith(".")) continue;
+      let depth = 1;
+      let j = (m.index ?? 0) + m[0].length;
+      const start = j;
+      while (j < unit.length && depth > 0) {
+        if (unit[j] === "(") depth++;
+        else if (unit[j] === ")") depth--;
+        j++;
+      }
+      if (!splitArgs(unit.slice(start, j - 1)).some(holds)) continue;
+      const target = normalize(join(dirname(file), from));
+      found.add(files.includes(`${target}.ts`) ? `${target}.ts` : `${target}/index.ts`);
+    }
+  }
+  return [...found];
+}
+
+describe("the RLS bypass, one call further", () => {
+  it("is handed only to files that say what bounds them instead", () => {
+    const builders = files.filter((f) => mentions(f, "serviceClient("));
+    const unlisted = builders
+      .flatMap((f) => handsTheClientTo(f).map((to) => [f, to] as const))
+      .filter(([, to]) => !SERVICE_CLIENT_ALLOWLIST.has(to) && !RECEIVES_THE_SERVICE_CLIENT.has(to))
+      .map(([from, to]) => `${from} -> ${to}`);
+
+    expect(
+      unlisted,
+      "these receive the service client, which no policy filters, from a file that " +
+        "builds it. Add the receiver to RECEIVES_THE_SERVICE_CLIENT with what bounds its " +
+        "queries, or hand it the caller's own client instead.",
+    ).toEqual([]);
+  });
+
+  it("finds the hand-overs it is meant to find", () => {
+    // Without this, a scan that matched nothing would pass on nothing.
+    expect(handsTheClientTo("routes/slack.ts")).toContain("lib/slack/handle.ts");
+    expect(handsTheClientTo("routes/account.ts")).toContain("lib/connections/release.ts");
+  });
+
+  it.each([...RECEIVES_THE_SERVICE_CLIENT.keys()])("still exists: %s", (file) => {
+    expect(files).toContain(file);
+  });
 });

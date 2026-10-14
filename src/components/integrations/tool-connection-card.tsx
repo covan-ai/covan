@@ -5,6 +5,7 @@ import type { ToolAvailability, ToolConnection } from "@/lib/connections-api";
 import { Button } from "@/components/ui/button";
 import { Chip, Disclosure, SectionCard } from "@/components/section-card";
 import { useRemoveToolConnection } from "@/hooks/use-connections";
+import { ConnectionScope } from "./connection-scope";
 
 /**
  * A service an agent can call: one row, and the way back out of it.
@@ -73,6 +74,7 @@ export function ToolConnectionCard({ connection }: { connection: ToolConnection 
                 : "Database"}
           </Chip>
           {writes ? <Chip tone="neutral">Can write</Chip> : <Chip tone="neutral">Read only</Chip>}
+          <ConnectionScope connection={connection} />
           {confirming ? (
             <>
               <Button

@@ -150,6 +150,33 @@ function TeamPage() {
     }
   };
 
+  // A new link: the old one stops working, the seven days start again, and the
+  // invitee is emailed if this install can send mail. If it cannot, the link
+  // exists only in this response (the database keeps a hash), so the toast is
+  // where it is handed over.
+  const resendInvite = async (id: string) => {
+    try {
+      const invite = await api.invitations.resend(id);
+      await queryClient.invalidateQueries({ queryKey: ["invitations"] });
+      const url = invite.inviteUrl;
+      if (invite.emailed) {
+        toast.success(`Sent a new link to ${invite.email}`);
+      } else {
+        toast.warning(`New link ready for ${invite.email} — no email went out, so pass it on`, {
+          duration: 12000,
+          action: url
+            ? {
+                label: "Copy invite text",
+                onClick: () => copyInviteText([{ email: invite.email, url }]),
+              }
+            : undefined,
+        });
+      }
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't resend the invitation");
+    }
+  };
+
   const revokeInvite = async (id: string) => {
     try {
       await api.invitations.revoke(id);
@@ -360,20 +387,29 @@ function TeamPage() {
                       // stores it, so this list cannot answer whether mail
                       // went anywhere, and with no RESEND_API_KEY the answer
                       // is no. What the row does know is that it is waiting.
-                      meta={`Invited ${formatRelative(inv.createdAt)}`}
+                      // An invitation needs its emailed link to be accepted,
+                      // and one whose link ran out (or that predates links)
+                      // cannot be until it is resent. Said on the row, since
+                      // nothing else would tell the admin why nobody arrives.
+                      meta={
+                        inv.needsResend
+                          ? `Invited ${formatRelative(inv.createdAt)} · link expired, resend it`
+                          : `Invited ${formatRelative(inv.createdAt)}`
+                      }
                       trailing={
                         <span className="flex shrink-0 items-center gap-2">
                           <RoleChip role={inv.role} />
-                          {/* The durable half of "let them know" — unconditional,
-                              because a nudge is a normal thing to send even when
-                              the email did go out, and this list could not tell
-                              the difference anyway. */}
+                          {/* The durable half of "let them know". The link
+                              lives only in the response that mints it, so
+                              there is nothing stored to copy: Resend mints a
+                              new one, emails it if it can, and hands it over
+                              if it cannot. */}
                           <Button
-                            variant="ghost"
+                            variant={inv.needsResend ? "secondary" : "ghost"}
                             size="sm"
-                            onClick={() => copyInviteText([inv.email])}
+                            onClick={() => void resendInvite(inv.id)}
                           >
-                            Copy invite
+                            Resend
                           </Button>
                           <Button variant="ghost" size="sm" onClick={() => revokeInvite(inv.id)}>
                             Revoke

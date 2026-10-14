@@ -1,8 +1,8 @@
 /**
- * The four Slack calls this integration makes, and no client library.
+ * The five Slack calls this integration makes, and no client library.
  *
  * Slack's own SDK is a large dependency that assumes Node, and what we need
- * from it is four `fetch` calls with a bearer token. The one thing worth
+ * from it is five `fetch` calls with a bearer token. The one thing worth
  * knowing about the Web API is below: it answers **200 with `ok: false`** for
  * application errors, so a caller that checks `res.ok` and stops has just
  * silently ignored `invalid_auth`.
@@ -128,6 +128,32 @@ export async function lookupEmail(
     ) {
       return null;
     }
+    throw err;
+  }
+}
+
+/**
+ * Whether a channel is one the whole Slack workspace can read.
+ *
+ * `false` for a private channel, a group DM or a DM, and for any channel Slack
+ * will not describe — `missing_scope` from an install made before
+ * `channels:read` was requested, `channel_not_found` for a private channel this
+ * app has no `groups:read` for. The caller decides who in Covan sees the
+ * conversation by this answer, and "not known to be public" is private.
+ */
+export async function isPublicChannel(
+  fetchImpl: typeof fetch,
+  token: string,
+  channel: string,
+): Promise<boolean> {
+  try {
+    const data = await call(fetchImpl, "conversations.info", token, { channel });
+    const info = data.channel as
+      | { is_channel?: boolean; is_private?: boolean; is_im?: boolean; is_mpim?: boolean }
+      | undefined;
+    return Boolean(info?.is_channel && !info.is_private && !info.is_im && !info.is_mpim);
+  } catch (err) {
+    if (err instanceof SlackError) return false;
     throw err;
   }
 }

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { resolveModel, type ModelEnv } from "../lib/models";
 import { estimateCostUsd } from "../lib/pricing";
 import type { CreditSnapshot } from "../lib/entitlements";
@@ -178,9 +178,8 @@ function sumTotals(agents: ReturnType<typeof mapAgent>[]) {
 // reflect the caller's own conversations.
 usage.get("/usage", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ agents: [], totals: emptyTotals, credits: { metered: false } });
   }
@@ -240,9 +239,8 @@ type LedgerRow = {
 // person (see 0032).
 usage.get("/usage/credits/ledger", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ entries: [] });
 
   const credits = await creditsOf(c.get("entitlements"), workspaceId);
@@ -307,9 +305,8 @@ function isNotAdmin(error: { code?: string }): boolean {
 // There is nothing per-person in the response, by construction — see 0032.
 usage.get("/usage/workspace", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ available: true, agents: [], totals: emptyTotals, months: [] });
 
   const [wide, monthly] = await Promise.all([

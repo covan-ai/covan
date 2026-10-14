@@ -24,6 +24,8 @@
 export type QueryResult = {
   data: unknown;
   error: { message: string; code?: string } | null;
+  /** What a `{ count: "exact" }` read answers with. */
+  count?: number | null;
 };
 
 export type Filter = {

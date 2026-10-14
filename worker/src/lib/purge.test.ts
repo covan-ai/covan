@@ -13,7 +13,10 @@ import type { DocStore } from "./docstore";
  * is correct or incorrect entirely by the sequence it performs, because after
  * the rows are gone nothing can enumerate the keys they named.
  */
-function stubDb(rows: Record<string, Record<string, unknown>[]>) {
+function stubDb(
+  rows: Record<string, Record<string, unknown>[]>,
+  fail: { listInside?: boolean; deleteFrom?: string } = {},
+) {
   const log: string[] = [];
 
   const db = {
@@ -25,9 +28,22 @@ function stubDb(rows: Record<string, Record<string, unknown>[]>) {
               log.push(`select ${table}.${columns} where ${column} < cutoff`);
               return Promise.resolve({ data: rows[table] ?? [], error: null });
             },
+            // The documents inside expiring bundles are read a page at a time:
+            // `.in().order().range()`.
             in(column: string, values: string[]) {
-              log.push(`select ${table}.${columns} where ${column} in (${values.length})`);
-              return Promise.resolve({ data: rows[`${table}:in`] ?? [], error: null });
+              const query = {
+                order: () => query,
+                range(from: number, to: number) {
+                  log.push(
+                    `select ${table}.${columns} where ${column} in (${values.length}) range ${from}-${to}`,
+                  );
+                  if (fail.listInside)
+                    return Promise.resolve({ data: null, error: { message: "x" } });
+                  const all = rows[`${table}:in`] ?? [];
+                  return Promise.resolve({ data: all.slice(from, to + 1), error: null });
+                },
+              };
+              return query;
             },
           };
         },
@@ -35,7 +51,8 @@ function stubDb(rows: Record<string, Record<string, unknown>[]>) {
           return {
             in(column: string, values: string[]) {
               log.push(`delete ${table} where ${column} in (${values.length})`);
-              return Promise.resolve({ data: null, error: null });
+              const error = fail.deleteFrom === table ? { message: "refused" } : null;
+              return Promise.resolve({ data: null, error });
             },
           };
         },
@@ -95,7 +112,7 @@ describe("the thirty-day sweeper", () => {
     const firstObjectDelete = log.findIndex((l) => l.startsWith("store delete "));
 
     expect(firstObjectDelete).toBeGreaterThan(lastRowDelete);
-    expect(log.filter((l) => l.startsWith("store delete "))).toEqual([
+    expect(log.filter((l) => l.startsWith("store delete ")).sort()).toEqual([
       "store delete keys/one.pdf",
       "store delete keys/two.pdf",
     ]);
@@ -177,5 +194,60 @@ describe("the horizon", () => {
   it("is thirty days behind, so today's deletion survives today", () => {
     const now = new Date("2026-09-02T12:00:00.000Z");
     expect(defaultHorizon(now).toISOString()).toBe("2026-08-03T12:00:00.000Z");
+  });
+
+  // A list of ids goes into the URL, and a few hundred uuids is a 414 at the
+  // gateway: past about 220 expired rows the whole sweep used to stop, for
+  // every tenant, until somebody noticed.
+  it("deletes in hundreds, so no request carries an id list a URL cannot", async () => {
+    const docs = Array.from({ length: 250 }, (_, i) => ({ id: `doc-${i}`, r2_key: `keys/${i}` }));
+    const { db, log } = stubDb({ documents: docs });
+
+    const result = await purgeExpired({ db, store: stubStore(log), horizon: HORIZON });
+
+    expect(log.filter((l) => l.startsWith("delete documents"))).toEqual([
+      "delete documents where id in (100)",
+      "delete documents where id in (100)",
+      "delete documents where id in (50)",
+    ]);
+    expect(result.documents).toBe(250);
+    expect(result.objects).toBe(250);
+  });
+
+  it("reads a bundle's documents past the thousand a single read returns", async () => {
+    const inside = Array.from({ length: 1500 }, (_, i) => ({ r2_key: `inside/${i}` }));
+    const { db, log } = stubDb({ knowledge_bundles: [{ id: "bundle-1" }], "documents:in": inside });
+
+    const result = await purgeExpired({ db, store: stubStore(log), horizon: HORIZON });
+
+    expect(log.filter((l) => l.includes("range"))).toHaveLength(2);
+    expect(result.objects).toBe(1500);
+  });
+
+  it("keeps a bundle whose documents cannot be listed, rather than orphan its files", async () => {
+    const { db, log } = stubDb(
+      { knowledge_bundles: [{ id: "bundle-1" }], "documents:in": [{ r2_key: "inside/1" }] },
+      { listInside: true },
+    );
+
+    const result = await purgeExpired({ db, store: stubStore(log), horizon: HORIZON });
+
+    expect(log.some((l) => l.startsWith("delete knowledge_bundles"))).toBe(false);
+    expect(result.bundles).toBe(0);
+    expect(log.some((l) => l.startsWith("store delete"))).toBe(false);
+  });
+
+  it("leaves the files of rows it failed to delete", async () => {
+    // The row still names the key. Deleting the object would leave a document
+    // that opens to nothing.
+    const { db, log } = stubDb(
+      { knowledge_bundles: [{ id: "bundle-1" }], "documents:in": [{ r2_key: "inside/1" }] },
+      { deleteFrom: "knowledge_bundles" },
+    );
+
+    const result = await purgeExpired({ db, store: stubStore(log), horizon: HORIZON });
+
+    expect(result.bundles).toBe(0);
+    expect(log).not.toContain("store delete inside/1");
   });
 });

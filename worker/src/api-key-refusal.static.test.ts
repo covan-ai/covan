@@ -23,10 +23,11 @@ import { join } from "node:path";
  * files away. Two routes asked, two routes that did the same thing did not, and
  * the difference was invisible.
  *
- * So the files are pinned, and the rule is pinned to one place. The real fix is
- * to invert it — a key's powers as an allowlist, so forgetting is impossible —
- * and until that is done this is what notices. The list only ever grows: every
- * new route that hands out access or destroys an account belongs on it.
+ * The same gap turned up again, wider: OAuth, Slack, Composio
+ * and tool connections, membership changes, and switching workspaces, none of
+ * them refused. So the rule is now inverted where it can be seen whole — every
+ * handler behind `authMiddleware` has to appear in one of two lists below, and
+ * a route nobody has sorted fails this file. Forgetting is no longer quiet.
  *
  * What it looks for is a *call*, and comments are stripped before it looks. The
  * first draft of this file asked only whether the name appeared in the file,
@@ -43,37 +44,104 @@ const RULE = "lib/api-key-rule.ts";
 const ASKS = ["refuseIfKeyAuthenticated(", 'c.get("apiKeyId")'];
 
 /**
- * Routes that create access an API key must not create, and what they create.
+ * Every authenticated handler, sorted into the two answers it can give a key.
  *
- * Each line is a claim that a leaked key reaching this route would outlive its
- * own revocation. The reasons are kept short here because the argument for each
- * is written once, in the helper's docblock.
- */
-const ACTS_BEYOND_THE_KEY: Record<string, string> = {
-  "routes/browser.ts":
-    "mints a live browser URL carrying the owner's own signed-in cookies, and browser-use documents that URL as full control of that browser — so it is access that outlives the key by the whole session, and revoking the key does not touch it; and it saves a site's password for an agent, which signs in as that person on every later run long after the key is revoked",
-  "routes/api-keys.ts":
-    "mints and revokes keys: a key that writes successors cannot be revoked, and a leaked one can take down the keys somebody still relies on",
-  "routes/account.ts":
-    "closes the account, which destroys the evidence and the account in one call and cannot be undone by revoking anything",
-  "routes/invitations.ts":
-    "invites people, and what comes back is a second person with their own session — access in a third party's hands that revoking the key does not touch",
-  "routes/workspace.ts":
-    "changes what a member may do, so a viewer promoted to admin by a key stays an admin after the key is gone",
-};
-
-/**
- * Single handlers that create access a key must not create, checked one by one.
+ * This used to be a list of FILES that had to refuse a key
+ * somewhere, and it was blind twice over. Inside a file: `routes/browser.ts`'s
+ * `GET .../current` handed back a live URL with no refusal of its own while
+ * `POST`'s answered for it. And across files: nothing listed
+ * `routes/connections.ts`, `composio.ts`, `slack.ts` or `tool-connections.ts`,
+ * so a key could start an OAuth flow, plant a Composio grant, or repoint a
+ * Drive folder -- third-party access that keeps working after the key is
+ * revoked -- and every test stayed green.
  *
- * `ACTS_BEYOND_THE_KEY` asks whether a FILE refuses a key somewhere, and that
- * is blind inside a file: `routes/browser.ts`'s `GET .../current` handed back
- * a live URL with no refusal of its own while `POST`'s answered for it. So the
- * routes that hand somebody a browser are pinned by handler — the text from
- * `.<method>("<path>"` to the next registration must itself make the call.
+ * So the question is now asked of every handler, and a handler that is in
+ * neither list fails this file. A new route cannot be added without somebody
+ * deciding, in writing, whether a key may reach it. That is the allowlist the
+ * rule's docblock asked for, held at the one place that can see every route.
  *
  * Keyed `"<file> <METHOD> <path>"`.
  */
 const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
+  // -- keys and the account
+  "routes/api-keys.ts POST /api-keys":
+    "mints a key, and a key that writes successors cannot be revoked: the moment one leaks it makes more",
+  "routes/api-keys.ts DELETE /api-keys/:id":
+    "revokes a key, so a leaked key could take down the keys somebody is still relying on",
+  "routes/account.ts DELETE /account":
+    "closes the account, which destroys the evidence and the account in one call and cannot be undone by revoking anything",
+
+  // -- people
+  "routes/invitations.ts POST /invitations":
+    "invites people, and what comes back is a second person with their own session — access in a third party's hands that revoking the key does not touch",
+  "routes/invitations.ts POST /invitations/:id/resend":
+    "mints a new invitation link, a way into the workspace for whoever holds it that revoking the key does not reach",
+  "routes/invitations.ts DELETE /invitations/:id":
+    "revokes somebody's invitation, deciding who may join the workspace on the owner's behalf",
+  "routes/invitations.ts POST /invitations/:id/accept":
+    "joins the owner to another workspace, a membership that outlives the key and that the key's own workspace lock cannot see",
+  "routes/workspace.ts PATCH /workspace/members/:userId":
+    "changes what a member may do, so a viewer promoted to admin by a key stays an admin after the key is gone",
+  "routes/workspace.ts DELETE /workspace/members/:userId":
+    "removes somebody from the workspace, taking their access, their keys and their seat with it — not undone by revoking anything",
+  "routes/workspace.ts DELETE /workspace/members/me":
+    "takes the owner out of the workspace, which a revoked key cannot give back",
+  "routes/workspace.ts POST /workspaces":
+    "creates a workspace, somewhere new for the owner's data to go that the key's own workspace lock does not reach",
+  "routes/workspace.ts POST /workspace/active":
+    "moves the owner's own sessions into another workspace, reaching past the one the key belongs to",
+
+  // -- third parties: set up, changed and removed with a session only
+  "routes/connections.ts POST /connections/:provider/start":
+    "starts an OAuth flow, and the grant it ends in reads a Drive or a Notion into the workspace long after the key is revoked",
+  "routes/connections.ts POST /connections/complete":
+    "exchanges an OAuth code and stores the token it buys, the second half of starting a connection",
+  "routes/slack.ts POST /slack/complete":
+    "exchanges Slack's code and stores the bot token it buys, the second half of installing Slack",
+  "routes/composio.ts POST /composio/complete":
+    "activates a connected application, the second half of connecting one",
+  "routes/connections.ts POST /connections/:id/reconnect":
+    "re-grants a source with fresh OAuth tokens, access that outlives the key exactly as starting one does",
+  "routes/connections.ts GET /connections/:id/folders":
+    "browses the grant holder's Drive with their own token — reconnaissance of a third party's files that no key-driven caller needs",
+  "routes/connections.ts PATCH /connections/:id":
+    "choosing a folder decides what the owner's grant imports from now on, which outlives the key; pausing and the cadence stay open",
+  "routes/connections.ts DELETE /connections/:id":
+    "tears down a source the whole workspace syncs from — integrations are set up and removed with a session, never by a script",
+  "routes/composio.ts POST /composio/connect":
+    "connects an application to the owner's account at a third party, a grant that keeps working after the key is revoked",
+  "routes/composio.ts GET /composio/connections/:id/status":
+    "finishes a connection the poll finds active, which is the second half of connecting an application",
+  "routes/composio.ts PUT /composio/grants":
+    "lets an agent act in a connected application — an always-allow planted by a key keeps firing after it is revoked",
+  "routes/composio.ts DELETE /composio/grants":
+    "changes what an agent may do in a connected application, the same decision as granting it",
+  "routes/slack.ts POST /slack/install/start":
+    "installs Covan into a Slack workspace, a bot token that keeps answering long after the key is revoked",
+  "routes/slack.ts PATCH /slack/installation":
+    "changes which agent answers in Slack, deciding who a third party's workspace talks to",
+  "routes/slack.ts DELETE /slack/installation":
+    "removes the Slack installation a whole team may be relying on",
+  "routes/tool-connections.ts POST /tool-connections":
+    "stores a credential for a service the agent can then call on every later run, after the key is revoked",
+  "routes/tool-connections.ts PATCH /tool-connections/:id":
+    "re-scopes a stored service credential, changing what agents may do with it from now on",
+  "routes/tool-connections.ts DELETE /tool-connections/:id":
+    "removes a service credential somebody's agents depend on",
+  "routes/routines.ts POST /delivery-channels/:id/rotate":
+    "hands back a fresh webhook signing secret, so whoever holds it can sign payloads to the owner's endpoint after the key is revoked",
+
+  // -- the owner's browser
+  "routes/browser.ts POST /browser/takeovers":
+    "opens a browser carrying the owner's own signed-in cookies, a live session that outlives the key",
+  "routes/browser.ts GET /browser/takeovers/current":
+    "hands back the live URL of a browser carrying the owner's signed-in cookies",
+  "routes/browser.ts POST /browser/takeovers/:id/close":
+    "ends a sign-in the owner may be in the middle of and decides what their cookie jar keeps",
+  "routes/browser.ts GET /browser/profile":
+    "reads which sites the owner is signed in to — reconnaissance no key-driven caller needs",
+  "routes/browser.ts DELETE /browser/profile":
+    "throws away every site the owner is signed in to, which revoking the key does not undo",
   "routes/browser.ts GET /browser/sessions/:id/live":
     "hands back the live view URL of a browser carrying the owner's signed-in cookies — a credential the provider says gives full control of that browser, and revoking the key does not end it",
   "routes/browser.ts POST /browser/sessions/:id/take-over":
@@ -93,6 +161,146 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
   "routes/browser.ts DELETE /browser/credentials/:id":
     "forgets a saved login, possibly a shared one the whole team's agent signs in with — a destructive act on their behalf that revoking the key does not undo",
 };
+
+/**
+ * Handlers a key may reach, because everything they do is undone or stopped by
+ * revoking it, or is a read the owner's own policies already answer.
+ *
+ * Routines, delivery channels and ingest triggers are here on purpose, and it
+ * is the one place that is not obvious: they run on their own long after the
+ * request that made them, which is what the rule forbids. They are allowed
+ * because a key that makes one is written onto it (`api_key_id`, 0088) and
+ * revoking the key pauses the routine, disables the channel and deletes the
+ * trigger. A scheduled job driven by a key is the API's main use; the tag is
+ * what lets it survive the rule.
+ */
+const OPEN_TO_A_KEY = new Set([
+  "routes/agents.ts GET /agents",
+  "routes/agents.ts POST /agents",
+  "routes/agents.ts PATCH /agents/:id",
+  "routes/agents.ts DELETE /agents/:id",
+  "routes/api-keys.ts GET /api-keys",
+  "routes/avatars.ts PUT /me/avatar",
+  "routes/avatars.ts DELETE /me/avatar",
+  "routes/brainstorm.ts POST /brainstorm/ideas/suggest",
+  "routes/bundles.ts GET /bundles",
+  "routes/bundles.ts GET /bundles/citations",
+  "routes/bundles.ts GET /bundles/:id/documents",
+  "routes/bundles.ts POST /bundles",
+  "routes/bundles.ts PATCH /bundles/:id",
+  "routes/bundles.ts DELETE /bundles/:id",
+  "routes/bundles.ts POST /agents/:id/bundles/:bundleId",
+  "routes/bundles.ts DELETE /agents/:id/bundles/:bundleId",
+  "routes/bundles.ts POST /bundles/:id/documents/upload",
+  "routes/bundles.ts POST /admin/backfill-embeddings",
+  "routes/chat.ts POST /chat/stream",
+  "routes/chat.ts POST /chat/confirm/:id",
+  "routes/composio.ts GET /composio/toolkits",
+  "routes/composio.ts GET /composio/toolkits/:slug",
+  "routes/composio.ts GET /composio/categories",
+  "routes/composio.ts GET /composio/grants",
+  "routes/connections.ts GET /connections",
+  "routes/connections.ts GET /connections/:id/runs",
+  "routes/connections.ts POST /connections/:id/sync",
+  "routes/coverage.ts GET /coverage/workspace",
+  "routes/coverage.ts PATCH /coverage/settings",
+  "routes/coverage.ts PUT /coverage/preference",
+  "routes/coverage.ts GET /coverage/preference",
+  "routes/documents.ts DELETE /documents/:id",
+  "routes/documents.ts PATCH /documents/:id",
+  "routes/documents.ts GET /documents/:id/preview",
+  "routes/documents.ts GET /documents/:id/download",
+  "routes/documents.ts POST /documents/:id/reindex",
+  "routes/events.ts GET /events",
+  "routes/export.ts GET /workspaces/:id/export",
+  "routes/favorites.ts POST /agents/:id/favorite",
+  "routes/favorites.ts GET /favorites",
+  "routes/feedback.ts POST /feedback",
+  "routes/ideas.ts GET /sessions/:id/ideas",
+  "routes/ideas.ts POST /sessions/:id/ideas",
+  "routes/ideas.ts PATCH /ideas/:id",
+  "routes/ideas.ts DELETE /ideas/:id",
+  "routes/invitations.ts GET /invitations",
+  "routes/invitations.ts GET /invitations/incoming",
+  "routes/me.ts GET /me",
+  "routes/me.ts PATCH /me",
+  "routes/messages.ts POST /messages",
+  "routes/messages.ts PATCH /messages/:id",
+  "routes/messages.ts DELETE /messages/after/:id",
+  "routes/messages.ts POST /messages/:id/show",
+  "routes/notifications.ts GET /notification-preferences",
+  "routes/notifications.ts PATCH /notification-preferences",
+  "routes/onboarding.ts PATCH /onboarding",
+  "routes/onboarding.ts POST /onboarding/complete",
+  "routes/persona.ts POST /persona/suggest",
+  "routes/reports.ts POST /sessions/:id/report",
+  "routes/routines.ts POST /routines/draft",
+  "routes/routines.ts GET /delivery-channels",
+  "routes/routines.ts POST /delivery-channels",
+  "routes/routines.ts POST /delivery-channels/:id/test",
+  "routes/routines.ts DELETE /delivery-channels/:id",
+  "routes/routines.ts GET /routines",
+  "routes/routines.ts POST /routines",
+  "routes/routines.ts PATCH /routines/:id",
+  "routes/routines.ts POST /routines/:id/run",
+  "routes/routines.ts DELETE /routines/:id",
+  "routes/routines.ts GET /routines/:id/runs",
+  "routes/routines.ts GET /routines/:id/trigger",
+  "routes/routines.ts POST /routines/:id/trigger",
+  "routes/routines.ts DELETE /routines/:id/trigger",
+  "routes/search.ts GET /search/messages",
+  "routes/sessions.ts GET /sessions",
+  "routes/sessions.ts POST /sessions",
+  "routes/sessions.ts PATCH /sessions/:id",
+  "routes/sessions.ts DELETE /sessions/:id",
+  "routes/sessions.ts GET /sessions/:id/messages",
+  "routes/sessions.ts GET /sessions/:id/browser-tasks",
+  "routes/slack.ts GET /slack",
+  "routes/support.ts POST /support/quota",
+  "routes/tool-connections.ts GET /tool-connections",
+  "routes/transcribe.ts POST /transcribe",
+  "routes/trash.ts GET /trash",
+  "routes/trash.ts POST /trash/:kind/:id/restore",
+  "routes/usage.ts GET /usage",
+  "routes/usage.ts GET /usage/credits/ledger",
+  "routes/usage.ts GET /usage/workspace",
+  "routes/workspace.ts PATCH /workspace",
+  "routes/workspace.ts GET /workspaces",
+  "routes/workspace.ts GET /workspace/members/:userId/key-count",
+]);
+
+/**
+ * Routers mounted outside `authMiddleware`, where there is no key to refuse:
+ * the caller is a provider's redirect, Slack, an `<img>` or a webhook sender.
+ */
+const OUTSIDE_THE_SESSION: Record<string, string> = {
+  connectionsPublic: "the OAuth provider's redirect back, which carries no bearer token",
+  slackPublic: "Slack's own redirect and event deliveries, verified by signature",
+  avatarsPublic: "an <img> fetching a profile photo, whose unguessable URL is the capability",
+  composioPublic: "a logo proxy for <img> tags, serving nothing about anybody",
+  routineHooks: "a third-party sender holding an ingest token, which is the credential",
+  addressConfirmationsPublic:
+    "somebody at an email address confirming it, holding the token mailed to it",
+};
+
+/** Every `<router>.<method>("<path>"` registration in a route file. */
+function handlersIn(file: string): Array<{ router: string; key: string; body: string }> {
+  const code = codeOnly(readFileSync(join(SRC, file), "utf8"));
+  const out: Array<{ router: string; key: string; body: string }> = [];
+  const pattern = /\n(\w+)\.(get|post|put|patch|delete)\("([^"]+)"/g;
+  for (const match of code.matchAll(pattern)) {
+    const start = (match.index ?? 0) + 1;
+    // To the next handler registered on any router, or the end of the file.
+    const rest = code.slice(start + 1);
+    const next = rest.search(/\n\w+\.(get|post|put|patch|delete)\(/);
+    out.push({
+      router: match[1],
+      key: `${file} ${match[2].toUpperCase()} ${match[3]}`,
+      body: next === -1 ? rest : rest.slice(0, next),
+    });
+  }
+  return out;
+}
 
 /**
  * Files permitted to read `apiKeyId` off the context directly.
@@ -151,18 +359,56 @@ describe("the one thing an API key may not do", () => {
     expect(ASKS.every((needle) => needle.includes("("))).toBe(true);
   });
 
-  it("is refused by every route that could create access outliving a key", () => {
-    const silent = Object.keys(ACTS_BEYOND_THE_KEY).filter(
-      (file) => !ASKS.some((name) => mentions(file, name)),
-    );
+  const routeFiles = files.filter((f) => f.startsWith("routes/"));
+  const handlers = routeFiles.flatMap(handlersIn);
+  const authenticated = handlers.filter((h) => !(h.router in OUTSIDE_THE_SESSION));
+
+  it("finds the routes it is meant to be sorting", () => {
+    expect(authenticated.length).toBeGreaterThan(100);
+  });
+
+  it("has an answer for every handler a key can reach", () => {
+    const unsorted = authenticated
+      .map((h) => h.key)
+      .filter((key) => !(key in HANDLERS_BEYOND_THE_KEY) && !OPEN_TO_A_KEY.has(key));
 
     expect(
-      silent,
-      "these create access a revoked key would leave behind, and no longer refuse a " +
-        "key-authenticated caller. A key authenticates as its owner, so nothing else " +
-        `in this repo can notice. Call ${ASKS[0]}c, …) from ${RULE}, or — if the route ` +
-        "genuinely stopped creating access — remove it from ACTS_BEYOND_THE_KEY.",
+      unsorted,
+      "these handlers are behind authMiddleware, so an API key reaches them, and nobody " +
+        "has decided whether it should. Add each to HANDLERS_BEYOND_THE_KEY (and refuse " +
+        `the key with ${ASKS[0]}c, …) inside the handler) if what it does would outlive ` +
+        "a revoked key, or to OPEN_TO_A_KEY if revoking the key stops it.",
     ).toEqual([]);
+  });
+
+  it("gives every handler one answer, and only handlers that exist", () => {
+    const registered = new Set(authenticated.map((h) => h.key));
+    const both = [...OPEN_TO_A_KEY].filter((key) => key in HANDLERS_BEYOND_THE_KEY);
+    const stale = [...OPEN_TO_A_KEY, ...Object.keys(HANDLERS_BEYOND_THE_KEY)].filter(
+      (key) => !registered.has(key),
+    );
+    expect(both, "listed as both open and refused").toEqual([]);
+    expect(stale, "listed, but no longer registered — remove the line").toEqual([]);
+  });
+
+  it("does not refuse a key in a handler that says it is open to one", () => {
+    // Otherwise OPEN_TO_A_KEY stops being a description of the API and the
+    // documentation built from it says something untrue.
+    const refusing = authenticated
+      .filter((h) => OPEN_TO_A_KEY.has(h.key))
+      .filter((h) => ASKS.some((name) => h.body.includes(name)))
+      .map((h) => h.key);
+    expect(refusing).toEqual([]);
+  });
+
+  it("mounts the routers it treats as public outside the authenticated one", () => {
+    const index = codeOnly(readFileSync(join(SRC, "index.ts"), "utf8"));
+    for (const router of Object.keys(OUTSIDE_THE_SESSION)) {
+      expect(index, `${router} is not mounted on app`).toContain(`app.route("/", ${router})`);
+      expect(index, `${router} is mounted behind authMiddleware`).not.toContain(
+        `api.route("/", ${router})`,
+      );
+    }
   });
 
   it("states the rule in one place", () => {
@@ -176,34 +422,11 @@ describe("the one thing an API key may not do", () => {
     ).toEqual([]);
   });
 
-  it.each(Object.keys(ACTS_BEYOND_THE_KEY))("is still a route that creates access: %s", (file) => {
-    // An entry outliving its reason is how a list like this rots.
-    expect(files, `${file} is in ACTS_BEYOND_THE_KEY but no longer exists`).toContain(file);
-    expect(
-      ASKS.some((name) => mentions(file, name)),
-      `${file} no longer refuses a key — either the refusal was lost, or the route ` +
-        "stopped creating access and the entry should go",
-    ).toBe(true);
-    expect(
-      ACTS_BEYOND_THE_KEY[file].length,
-      `${file}'s reason is too short to be one`,
-    ).toBeGreaterThan(30);
-  });
-
   it.each(Object.keys(HANDLERS_BEYOND_THE_KEY))("is refused by the handler itself: %s", (key) => {
-    const [file, method, path] = key.split(" ");
-    expect(files, `${file} is in HANDLERS_BEYOND_THE_KEY but no longer exists`).toContain(file);
-
-    const code = codeOnly(readFileSync(join(SRC, file), "utf8"));
-    const start = code.indexOf(`.${method.toLowerCase()}("${path}"`);
-    expect(start, `${key} is no longer registered in ${file}`).toBeGreaterThanOrEqual(0);
-    // To the next handler registered on any router, or the end of the file.
-    const rest = code.slice(start + 1);
-    const next = rest.search(/\n\w+\.(get|post|put|patch|delete)\(/);
-    const handler = next === -1 ? rest : rest.slice(0, next);
-
+    const handler = handlers.find((h) => h.key === key);
+    expect(handler, `${key} is no longer registered`).toBeDefined();
     expect(
-      ASKS.some((name) => handler.includes(name)),
+      ASKS.some((name) => handler!.body.includes(name)),
       `${key} creates access a revoked key would leave behind and does not refuse a key itself`,
     ).toBe(true);
     expect(

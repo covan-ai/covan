@@ -22,6 +22,22 @@ vi.mock("node:dns/promises", () => ({
 const serviceFrom = vi.fn();
 vi.mock("../lib/supabase", () => ({ serviceClient: () => ({ from: serviceFrom }) }));
 
+/**
+ * The 0096 bookkeeping, which reads `auth.users` through the admin API and
+ * mails a link. Stubbed at the module's edges; what these tests hold is what
+ * the routes decide with the answers. `address-confirmation.test.ts` holds the
+ * module itself.
+ */
+const confirmation = vi.hoisted(() => ({
+  ownConfirmedAddress: vi.fn(async (_env: unknown, _userId: string) => null as string | null),
+  linksSentToday: vi.fn(async (_db: unknown, _userId: string) => 0),
+  askToConfirm: vi.fn(async (..._args: unknown[]) => "sent" as const),
+}));
+vi.mock("../lib/routines/address-confirmation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/routines/address-confirmation")>()),
+  ...confirmation,
+}));
+
 const { routines } = await import("./routines");
 
 const USER = { id: "user-1", email: "a@example.com" };
@@ -39,11 +55,18 @@ const ENV = {
 
 beforeEach(() => {
   serviceFrom.mockReset();
+  confirmation.ownConfirmedAddress.mockReset().mockResolvedValue(null);
+  confirmation.linksSentToday.mockReset().mockResolvedValue(0);
+  confirmation.askToConfirm.mockReset().mockResolvedValue("sent");
   resetRateLimiters();
   vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
 });
 
-function appWith(spec: FakeDbSpec = {}, env: Partial<typeof ENV> = {}) {
+function appWith(
+  spec: FakeDbSpec = {},
+  env: Partial<typeof ENV> = {},
+  key?: { id: string; workspaceId: string },
+) {
   const { db } = fakeDb({
     ...spec,
     tables: { ...activeWorkspaceTables(USER.id, WORKSPACE_ID), ...(spec.tables ?? {}) },
@@ -53,6 +76,10 @@ function appWith(spec: FakeDbSpec = {}, env: Partial<typeof ENV> = {}) {
   app.use("/*", async (c, next) => {
     c.set("user", USER as never);
     c.set("db", db as never);
+    if (key) {
+      c.set("apiKeyId", key.id);
+      c.set("apiKeyWorkspaceId", key.workspaceId);
+    }
     await next();
   });
   app.route("/", routines);
@@ -89,9 +116,11 @@ function insertReturning(row: Record<string, unknown>) {
 
 /** The service-role chain rotate and test use: select → eq → eq → maybeSingle. */
 function channelRow(row: Record<string, unknown> | null, onUpdate?: (v: unknown) => void) {
+  const found = { maybeSingle: async () => ({ data: row, error: null }) };
   serviceFrom.mockReturnValue({
     select: () => ({
-      eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
+      // The test route also asks `.is("disabled_at", null)`; rotate does not.
+      eq: () => ({ eq: () => ({ ...found, is: () => found }) }),
     }),
     update: (values: unknown) => {
       onUpdate?.(values);
@@ -142,6 +171,30 @@ describe("POST /delivery-channels, kind webhook", () => {
     });
 
     expect(captured.values).toMatchObject({ user_id: USER.id, workspace_id: WORKSPACE_ID });
+  });
+
+  it("writes the key onto a channel made with one, so revoking the key disables it", async () => {
+    const captured = insertReturning(CREATED);
+    const request = appWith({}, {}, { id: "key-1", workspaceId: WORKSPACE_ID });
+
+    await request("POST", "/delivery-channels", {
+      kind: "webhook",
+      secret: "https://receiver.example.com/covan",
+    });
+
+    expect(captured.values).toMatchObject({ api_key_id: "key-1" });
+  });
+
+  it("writes no key onto a channel a person made in the browser", async () => {
+    const captured = insertReturning(CREATED);
+    const request = appWith();
+
+    await request("POST", "/delivery-channels", {
+      kind: "webhook",
+      secret: "https://receiver.example.com/covan",
+    });
+
+    expect(captured.values).toMatchObject({ api_key_id: null });
   });
 
   it("labels the row with a mask rather than the URL", async () => {
@@ -204,6 +257,84 @@ describe("POST /delivery-channels, kind webhook", () => {
 
     expect(status).toBe(201);
     expect(body).not.toHaveProperty("signingSecret");
+  });
+});
+
+describe("POST /delivery-channels, kind email: an address that has to say yes", () => {
+  const EMAIL = { ...CREATED, kind: "email", label: "d…z@example.com", user_id: USER.id };
+
+  it("confirms the caller's own confirmed sign-in address as it is created", async () => {
+    confirmation.ownConfirmedAddress.mockResolvedValue("deniz@example.com");
+    const captured = insertReturning({ ...EMAIL, confirmed_at: "2026-10-13T00:00:00Z" });
+    const request = appWith();
+
+    const { status, body } = await request("POST", "/delivery-channels", {
+      kind: "email",
+      secret: "Deniz@Example.com",
+    });
+
+    expect(status).toBe(201);
+    expect(captured.values?.confirmed_at).toEqual(expect.any(String));
+    expect(confirmation.askToConfirm).not.toHaveBeenCalled();
+    expect(body.confirmed).toBe(true);
+  });
+
+  it("creates any other address unconfirmed and mails it the question", async () => {
+    const captured = insertReturning({ ...EMAIL, confirmed_at: null });
+    const request = appWith();
+
+    const { status, body } = await request("POST", "/delivery-channels", {
+      kind: "email",
+      secret: "stranger@example.org",
+    });
+
+    expect(status).toBe(201);
+    expect(captured.values?.confirmed_at).toBeNull();
+    expect(confirmation.askToConfirm).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ id: "channel-1", user_id: USER.id }),
+      "stranger@example.org",
+    );
+    expect(body).toMatchObject({ confirmed: false, confirmation: "sent" });
+  });
+
+  it("refuses a sixth stranger in a day before the row exists", async () => {
+    confirmation.linksSentToday.mockResolvedValue(5);
+    const captured = insertReturning(EMAIL);
+    const request = appWith();
+
+    const { status } = await request("POST", "/delivery-channels", {
+      kind: "email",
+      secret: "stranger@example.org",
+    });
+
+    expect(status).toBe(429);
+    expect(captured.values).toBeUndefined();
+  });
+
+  it("sends no test message to an address that has not confirmed", async () => {
+    const { encryptSecret } = await import("../lib/secret-box");
+    channelRow({
+      id: "channel-1",
+      user_id: USER.id,
+      kind: "email",
+      secret_ciphertext: await encryptSecret("stranger@example.org", KEY),
+      confirmed_at: null,
+      // Asked an hour ago: not asked again yet.
+      confirmation_sent_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchImpl);
+    confirmation.ownConfirmedAddress.mockResolvedValue("a@example.com");
+    const request = appWith();
+
+    const { status, body } = await request("POST", "/delivery-channels/channel-1/test");
+
+    expect(status).toBe(409);
+    expect(body.error).toBe("unconfirmed");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
 
@@ -331,23 +462,50 @@ describe("POST /delivery-channels/:id/test", () => {
 
 describe("the ingest trigger endpoints", () => {
   /** The caller's own client sees the routine; the service client writes the hash. */
-  function withRoutine(routine: Record<string, unknown> | null, onWrite?: (v: unknown) => void) {
+  function withRoutine(
+    routine: Record<string, unknown> | null,
+    onWrite?: (v: unknown) => void,
+    key?: { id: string; workspaceId: string },
+  ) {
     serviceFrom.mockReturnValue({
       upsert: (values: unknown) => {
         onWrite?.(values);
         return Promise.resolve({ error: null });
       },
     });
-    return appWith({
-      tables: {
-        routines: { select: async () => ({ data: routine, error: null }) },
-        routine_triggers: {
-          select: async () => ({ data: null, error: null }),
-          delete: async () => ({ data: null, error: null }),
+    return appWith(
+      {
+        tables: {
+          routines: { select: async () => ({ data: routine, error: null }) },
+          routine_triggers: {
+            select: async () => ({ data: null, error: null }),
+            delete: async () => ({ data: null, error: null }),
+          },
         },
       },
-    });
+      {},
+      key,
+    );
   }
+
+  it("writes the key onto a token minted with one, and none onto a session's", async () => {
+    // Revoking the key deletes the trigger (0088). A session minting over a
+    // key's token clears the mark, so the new token does not die with a key
+    // that had nothing to do with it.
+    let fromKey: unknown;
+    await withRoutine({ id: "r1", trigger_kind: "webhook" }, (v) => (fromKey = v), {
+      id: "key-1",
+      workspaceId: WORKSPACE_ID,
+    })("POST", "/routines/r1/trigger");
+    expect(fromKey).toMatchObject({ routine_id: "r1", api_key_id: "key-1" });
+
+    let fromSession: unknown;
+    await withRoutine({ id: "r1", trigger_kind: "webhook" }, (v) => (fromSession = v))(
+      "POST",
+      "/routines/r1/trigger",
+    );
+    expect(fromSession).toMatchObject({ routine_id: "r1", api_key_id: null });
+  });
 
   it("mints a token and returns it exactly once, with the path to use it", async () => {
     let written: unknown;

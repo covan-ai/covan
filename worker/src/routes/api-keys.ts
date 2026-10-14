@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { toEpochMs } from "../lib/dto";
 import type { ApiKeyDTO } from "../lib/dto";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { generateApiKey } from "../lib/api-keys";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
@@ -77,7 +77,7 @@ apiKeys.post("/api-keys", async (c) => {
   const db = c.get("db");
   const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   const { token, tokenHash, prefix } = await generateApiKey();

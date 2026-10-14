@@ -53,6 +53,13 @@ export type ToolConnection = {
    * ever anything but `active` — every other transport is born finished (0063).
    */
   status: "pending" | "active" | "failed";
+  /**
+   * Who may reach it (0098): `owner` is its creator alone, `workspace` is every
+   * member. Read here so a tool can tell a person's own connection from one a
+   * colleague shared — a write through somebody else's account asks first.
+   */
+  scope: "owner" | "workspace";
+  created_by: string | null;
 };
 
 /**
@@ -66,7 +73,23 @@ export type ToolConnection = {
  * row.
  */
 const SELECT =
-  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status";
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, scope, created_by";
+
+/**
+ * Own or shared, said in the query as well as by the policy (0098).
+ *
+ * On a chat turn `db` is the caller's client and the read policy already says
+ * this. On a scheduled run it is the service role, which no policy filters, so
+ * without this a routine would reach every member's personal account in its
+ * workspace. `userId` is the person the turn runs for — never anything the
+ * model wrote — and is checked to be a bare id before it goes into the filter.
+ */
+function reachableBy(userId: string): string {
+  // A uuid in practice; refused if it holds anything PostgREST's filter
+  // grammar would read as structure.
+  if (!/^[A-Za-z0-9_-]+$/.test(userId)) throw new Error("not a user id");
+  return `scope.eq.workspace,created_by.eq.${userId}`;
+}
 
 const TRANSPORTS = new Set(["http", "sql", "composio"]);
 
@@ -100,6 +123,9 @@ function normalise(row: Record<string, unknown>): ToolConnection {
       row.config && typeof row.config === "object" ? (row.config as Record<string, unknown>) : {},
     toolkit_slug: typeof row.toolkit_slug === "string" ? row.toolkit_slug.toLowerCase() : null,
     status,
+    // Anything but `workspace` is read as personal: the narrower reading.
+    scope: row.scope === "workspace" ? "workspace" : "owner",
+    created_by: typeof row.created_by === "string" ? row.created_by : null,
   };
 }
 
@@ -117,11 +143,13 @@ function normalise(row: Record<string, unknown>): ToolConnection {
 export async function listConnections(
   db: ToolContext["db"],
   workspaceId: string,
+  userId: string,
 ): Promise<ToolConnection[]> {
   const { data, error } = await db
     .from("tool_connections")
     .select(SELECT)
     .eq("workspace_id", workspaceId)
+    .or(reachableBy(userId))
     .eq("status", "active")
     .order("label", { ascending: true });
   if (error) throw new Error(`could not list connections: ${error.message}`);
@@ -148,6 +176,7 @@ export async function loadConnection(ctx: ToolContext, id: string): Promise<Tool
     .select(SELECT)
     .eq("id", id)
     .eq("workspace_id", ctx.workspaceId)
+    .or(reachableBy(ctx.userId))
     .maybeSingle();
   if (error) throw new Error(`could not load connection: ${error.message}`);
   return data ? normalise(data as Record<string, unknown>) : null;

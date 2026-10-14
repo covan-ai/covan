@@ -29,6 +29,7 @@ import {
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 
 /**
@@ -414,6 +415,20 @@ export const googleDriveProvider: ConnectionProvider = {
     // No folder yet. The connection is created paused for exactly this reason,
     // and the interface's next screen is the folder picker.
     return { token, accountLabel, config: {} };
+  },
+
+  // Revoking the refresh token ends the whole grant, access tokens included.
+  async revoke(_env, token, fetchImpl) {
+    const res = await fetchImpl(REVOKE_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: token.refreshToken ?? token.accessToken }),
+    });
+    // 400 is Google saying the token is already invalid, which is the outcome
+    // wanted anyway.
+    if (!res.ok && res.status !== 400) {
+      throw errorForStatus("Google", res.status, await res.text().catch(() => ""));
+    }
   },
 
   async refresh(env, token, fetchImpl) {

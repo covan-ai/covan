@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { readSession } from "@/lib/supabase/session";
 import { api } from "@/lib/api-client";
 import { onboardingRedirect } from "@/lib/onboarding-gate";
+import { hasPendingGrant } from "@/lib/sensitive-url";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -104,6 +105,15 @@ function AuthedLayout() {
       void navigate({ to: redirect, replace: true });
     }
   }, [redirect, navigate]);
+
+  // A connect flow that came back before its starter was signed in left its
+  // grant in this tab (`lib/sensitive-url.ts`). Signed in now, they are taken
+  // to the one page that finishes it, rather than to wherever sign-in lands.
+  useEffect(() => {
+    if (session && !redirect && pathname !== "/integrations" && hasPendingGrant()) {
+      void navigate({ to: "/integrations", replace: true });
+    }
+  }, [session, redirect, pathname, navigate]);
 
   if (!session && unreachable) {
     return (

@@ -2,15 +2,23 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { AppEnv, Bindings } from "../types";
 import { serviceClient } from "../lib/supabase";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { mapConnection, mapConnectionRun } from "../lib/dto";
 import { encryptSecret, decryptSecret } from "../lib/secret-box";
 import { providerFor, providerAvailability } from "../lib/connections/registry";
-import { readState, signState } from "../lib/connections/oauth-state";
+import {
+  nonceHashOf,
+  openGrant,
+  readState,
+  sealGrant,
+  signState,
+} from "../lib/connections/oauth-state";
 import { runOneConnection } from "../lib/connections/dispatcher";
 import { listFolders } from "../lib/connections/google-drive";
 import { ProviderError, type TokenEnvelope } from "../lib/connections/types";
 import type { ConnectionRow } from "../lib/connections/sync";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { holderPresent } from "../lib/connections/holder";
 
 /**
  * Connections: the two halves of a connector that a person actually touches.
@@ -76,7 +84,7 @@ connections.get("/connections", async (c) => {
   // member of two workspaces, and the policy is written from the workspace's
   // point of view — so an unscoped read would put another team's connections on
   // this team's page, all of them legitimately visible and none of them theirs.
-  const workspaceId = await getActiveWorkspaceId(db, c.get("user").id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
   const { data, error } = await db
@@ -109,7 +117,13 @@ connections.get("/connections/:id/runs", async (c) => {
   return c.json((data ?? []).map(mapConnectionRun));
 });
 
-const startSchema = z.object({ bundleId: z.string().min(1) });
+/**
+ * SHA-256 hex of a nonce the starting tab keeps in session storage. Completing
+ * the flow asks for the nonce itself (`lib/connections/oauth-state.ts`).
+ */
+const nonceHash = z.string().regex(/^[0-9a-f]{64}$/, "a flow nonce's hash is required");
+const startSchema = z.object({ bundleId: z.string().min(1), nonceHash });
+const reconnectSchema = z.object({ nonceHash });
 
 // POST /connections/:provider/start — begin a grant.
 //
@@ -118,6 +132,9 @@ const startSchema = z.object({ bundleId: z.string().min(1) });
 // and turning that into a 302 here would produce a CORS error instead of a
 // login page.
 connections.post("/connections/:provider/start", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "connect a source");
+  if (refusal) return c.json(refusal, 403);
+
   const provider = providerFor(c.req.param("provider"));
   if (!provider) return c.json({ error: "unknown provider" }, 404);
   if (!provider.isConfigured(c.env)) {
@@ -130,7 +147,7 @@ connections.post("/connections/:provider/start", async (c) => {
   const db = c.get("db");
   const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
   // Read through the caller's own client, so a bundle in another workspace —
@@ -150,6 +167,7 @@ connections.post("/connections/:provider/start", async (c) => {
       userId: user.id,
       workspaceId,
       bundleId: bundle.id,
+      nonceHash: parsed.data.nonceHash,
     },
     c.env.ROUTINE_SECRET_KEY,
   );
@@ -180,6 +198,9 @@ connections.post("/connections/:provider/start", async (c) => {
  * nothing back and a 403.
  */
 connections.post("/connections/:id/reconnect", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "reconnect a source");
+  if (refusal) return c.json(refusal, 403);
+
   const loaded = await loadForCaller(c, c.req.param("id"));
   if ("response" in loaded) return loaded.response;
   const { connection, provider } = loaded;
@@ -189,6 +210,9 @@ connections.post("/connections/:id/reconnect", async (c) => {
   }
 
   // Seeing a connection is membership; replacing its credential is writing.
+  const parsed = reconnectSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
   const refused = await mayChangeConnection(c, connection, "reconnect");
   if (refused) return refused;
 
@@ -199,6 +223,7 @@ connections.post("/connections/:id/reconnect", async (c) => {
       workspaceId: connection.workspace_id,
       bundleId: connection.bundle_id,
       connectionId: connection.id,
+      nonceHash: parsed.data.nonceHash,
     },
     c.env.ROUTINE_SECRET_KEY,
   );
@@ -207,17 +232,21 @@ connections.post("/connections/:id/reconnect", async (c) => {
 });
 
 /**
- * GET /connections/callback — the other end of the grant.
+ * GET /connections/callback — where the provider sends the browser back.
  *
- * Unauthenticated, and everything it trusts comes out of `state`, which only
- * decrypts if we issued it. Every claim inside is then re-checked against the
- * database before a row is written: that the person is still a member of that
- * workspace, that they are allowed to write in it, and that the bundle is still
- * in it. A state is ten minutes long, and all three can change inside it.
+ * It decides nothing. A browser arriving from a consent screen carries no
+ * Covan session, so this route cannot know who is at it — and it used to
+ * not need to, because it trusted `state` to say who
+ * the grant was for. That let somebody start a flow and send the consent link
+ * to somebody else, whose Drive then landed in the starter's workspace. So the
+ * code is not exchanged here: it is sealed with its state into a grant
+ * (`sealGrant`) and the browser goes to the app, which completes the flow with
+ * an authenticated request to `POST /connections/complete` — where the caller
+ * has to be the person who started it, in the browser that started it.
  *
- * The response is always a redirect back to the application, never JSON. The
- * audience is a browser that has just come from a consent screen, and the
- * failure it must not be shown is a bare 400.
+ * The state is still read here, so an expired or forged one fails on the spot
+ * rather than after a round trip through the app. The response is always a
+ * redirect: the audience is a browser that has just left a consent screen.
  */
 connectionsPublic.get("/connections/callback", async (c) => {
   const home = `${frontendOrigin(c.env)}/integrations`;
@@ -226,7 +255,6 @@ connectionsPublic.get("/connections/callback", async (c) => {
   const url = new URL(c.req.url);
   const error = url.searchParams.get("error");
   if (error) {
-    // The person pressed Cancel on the consent screen, most of the time.
     return fail(error === "access_denied" ? "cancelled" : error);
   }
 
@@ -235,26 +263,68 @@ connectionsPublic.get("/connections/callback", async (c) => {
   if (!code || !rawState) return fail("missing_code");
 
   const state = await readState(rawState, c.env.ROUTINE_SECRET_KEY);
-  if (!state) return fail("expired");
+  if (!state || state.provider === "slack") return fail("expired");
+
+  const grant = await sealGrant(
+    { state, code, redirectUri: redirectUri(c) },
+    c.env.ROUTINE_SECRET_KEY,
+  );
+  return c.redirect(`${home}?grant=${grant}&for=connection`, 302);
+});
+
+const completeSchema = z.object({
+  grant: z.string().min(1).max(16_384),
+  nonce: z.string().min(16).max(200),
+});
+
+/**
+ * POST /connections/complete — finish a grant, as the person who started it.
+ *
+ * Everything the callback used to do, behind two checks the callback could
+ * not make: the caller is the state's person, and the caller's browser holds
+ * the nonce the flow started with. A grant that reaches anybody else — the
+ * person an attacker sent the consent link to — completes nothing; their
+ * token is never exchanged, let alone stored.
+ *
+ * Then every claim in the state is re-checked against the database, as
+ * before: membership, write access, the bundle, and for a reconnect, that the
+ * caller may still change that connection. A state is ten minutes long, and
+ * all of that can change inside it. The exchange repeats the redirect URI the
+ * code was issued against, which the grant carries.
+ */
+connections.post("/connections/complete", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "connect a source");
+  if (refusal) return c.json(refusal, 403);
+
+  const parsed = completeSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: "missing_code" }, 400);
+
+  const grant = await openGrant(parsed.data.grant, c.env.ROUTINE_SECRET_KEY);
+  if (!grant || grant.state.provider === "slack") return c.json({ error: "expired" }, 400);
+  const { state, code } = grant;
+
+  // The two checks the callback could not make. Same answer whether the grant
+  // was minted for somebody else or this browser did not start it.
+  if (state.userId !== c.get("user").id) return c.json({ error: "not_yours" }, 403);
+  if ((await nonceHashOf(parsed.data.nonce)) !== state.nonceHash) {
+    return c.json({ error: "not_yours" }, 403);
+  }
 
   const provider = providerFor(state.provider);
-  if (!provider || !provider.isConfigured(c.env)) return fail("unavailable");
+  if (!provider || !provider.isConfigured(c.env)) return c.json({ error: "unavailable" }, 501);
 
-  // Service role from here on, for the reason `POST /delivery-channels` uses
-  // it: `connections` has no INSERT grant, because the row holds a secret this
-  // route has to encrypt before the database ever sees it. There is also no
-  // caller for RLS to resolve — that is what the three checks below stand in
-  // for, and none of them is skippable.
   const admin = serviceClient(c.env);
 
+  // Re-checked rather than trusted: the state says who started this and where,
+  // and ten minutes is long enough to have been removed from that workspace.
   const { data: membership } = await admin
     .from("workspace_members")
     .select("role")
     .eq("workspace_id", state.workspaceId)
     .eq("user_id", state.userId)
     .maybeSingle();
-  if (!membership) return fail("not_a_member");
-  if (membership.role === "viewer") return fail("read_only");
+  if (!membership) return c.json({ error: "not_a_member" }, 403);
+  if (membership.role === "viewer") return c.json({ error: "read_only" }, 403);
 
   const { data: bundle } = await admin
     .from("knowledge_bundles")
@@ -262,45 +332,40 @@ connectionsPublic.get("/connections/callback", async (c) => {
     .eq("id", state.bundleId)
     .eq("workspace_id", state.workspaceId)
     .maybeSingle();
-  if (!bundle) return fail("bundle_gone");
+  if (!bundle) return c.json({ error: "bundle_gone" }, 409);
+
+  // A reconnect replaces somebody's grant on an existing row, so the caller
+  // has to still be allowed to change that row — the question the reconnect
+  // route asked when the flow began, asked again now that it is about to land.
+  let existing: ConnectionRow | null = null;
+  if (state.connectionId) {
+    const loaded = await loadForCaller(c, state.connectionId);
+    if ("response" in loaded) return c.json({ error: "connection_gone" }, 409);
+    if (loaded.connection.workspace_id !== state.workspaceId) {
+      return c.json({ error: "connection_gone" }, 409);
+    }
+    if (loaded.provider.id !== provider.id) return c.json({ error: "wrong_provider" }, 409);
+    const refused = await mayChangeConnection(c, loaded.connection, "reconnect");
+    if (refused) return refused;
+    existing = loaded.connection;
+  }
 
   let exchanged;
   try {
-    exchanged = await provider.exchangeCode(c.env, code, redirectUri(c), fetch.bind(globalThis));
+    exchanged = await provider.exchangeCode(c.env, code, grant.redirectUri, fetch.bind(globalThis));
   } catch (err) {
     console.error("oauth exchange failed", state.provider, err);
-    return fail(err instanceof ProviderError ? "grant_failed" : "exchange_failed");
+    return c.json(
+      { error: err instanceof ProviderError ? "grant_failed" : "exchange_failed" },
+      502,
+    );
   }
 
   const secret = await encryptSecret(JSON.stringify(exchanged.token), c.env.ROUTINE_SECRET_KEY);
 
-  // Replacing a grant, not making one. The id came out of the state this
-  // deployment issued to this person for this workspace, and it is matched
-  // against that workspace again here — so a state whose connection has since
-  // been deleted, or moved, writes nothing rather than writing somewhere else.
-  if (state.connectionId) {
-    const { data } = await admin
-      .from("connections")
-      .select("id,provider,config")
-      .eq("id", state.connectionId)
-      .eq("workspace_id", state.workspaceId)
-      .maybeSingle();
-    // Named rather than inferred: this client carries no generated schema, so
-    // postgrest-js widens a multi-column select to a union it cannot narrow.
-    const existing = data as { id: string; provider: string; config: unknown } | null;
-    if (!existing) return fail("connection_gone");
-    // The provider is fixed at creation. A Notion grant arriving for a Drive
-    // connection would mean a state issued for one row was completed against
-    // another, and the safe answer to something that should be impossible is
-    // to refuse it rather than to write it.
-    if (existing.provider !== provider.id) return fail("wrong_provider");
-
-    // A Drive reconnect keeps the folder that was already chosen. It is the
-    // whole reason this is an update: the person is replacing a credential,
-    // not setting the connection up again, and asking them to find the folder
-    // a second time would be asking them to state the same intention twice.
-    // A folder the new grant cannot see surfaces as a listing that has lost
-    // documents, which is exactly what `access_narrowed` is for.
+  if (existing) {
+    // The folder this connection already syncs is kept: a reconnect replaces
+    // the grant, not the choice of what to read with it.
     const keptConfig = {
       ...(exchanged.config ?? {}),
       ...((existing.config as Record<string, unknown> | null) ?? {}),
@@ -312,9 +377,6 @@ connectionsPublic.get("/connections/callback", async (c) => {
     const { error: updateError } = await admin
       .from("connections")
       .update({
-        // The new grant holder, which is the point of the whole route: whoever
-        // just granted access is whose view the sync now has and who its
-        // spending is attributed to.
         user_id: state.userId,
         account_label: exchanged.accountLabel,
         config: keptConfig,
@@ -324,25 +386,19 @@ connectionsPublic.get("/connections/callback", async (c) => {
         paused_code: stillNeedsFolder ? "needs_folder" : null,
         consecutive_failures: 0,
         next_sync_at: new Date().toISOString(),
-        // Deliberately NOT cleared, and deliberately not set. A reconnect is
-        // the single most likely cause of a narrowing, so the next run has to
-        // be free to notice one — an approval carried over from a previous
-        // pause would let the new grant's smaller view delete the difference
-        // without asking.
         removals_approved_at: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", existing.id);
     if (updateError) {
       console.error("failed to reconnect connection", updateError);
-      return fail("save_failed");
+      return c.json({ error: "save_failed" }, 500);
     }
-
-    return c.redirect(`${home}?reconnected=${provider.id}&connection=${existing.id}`, 302);
+    return c.json({ provider: provider.id, connectionId: existing.id, reconnected: true });
   }
 
-  // A Drive connection has no folder yet and must not sync until it has one.
-  // Notion's scope came from Notion's own picker, so it is ready immediately.
+  // Drive is not ready until somebody chooses a folder, and saying "active"
+  // over a connection that will fail on its first run would be the lie.
   const needsFolder = provider.id === "google_drive";
 
   const { data: row, error: insertError } = await admin
@@ -363,18 +419,16 @@ connectionsPublic.get("/connections/callback", async (c) => {
     .single();
   if (insertError || !row) {
     console.error("failed to save connection", insertError);
-    return fail("save_failed");
+    return c.json({ error: "save_failed" }, 500);
   }
 
-  return c.redirect(`${home}?connected=${provider.id}&connection=${row.id}`, 302);
+  return c.json({ provider: provider.id, connectionId: row.id, reconnected: false });
 });
 
-// GET /connections/:id/folders — browse Drive, one level at a time.
-//
-// The browser cannot ask Drive itself: it does not have the token, and giving
-// it one so it could would undo the entire reason the token is encrypted in a
-// column no client can select.
 connections.get("/connections/:id/folders", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "browse a connected source");
+  if (refusal) return c.json(refusal, 403);
+
   const loaded = await loadForCaller(c, c.req.param("id"));
   if ("response" in loaded) return loaded.response;
   const { connection, provider } = loaded;
@@ -386,6 +440,18 @@ connections.get("/connections/:id/folders", async (c) => {
   // Before the token, not after: browsing is reading somebody else's grant.
   const refused = await mayChangeConnection(c, connection, "browse");
   if (refused) return refused;
+
+  // And only by the person whose Drive it is. The policy above lets an admin
+  // change a member's connection, which is right for pausing it and wrong for
+  // reading their folder tree with their token — and it let anybody who could
+  // write browse a Drive whose owner had left the workspace or closed their
+  // account, with the token they left behind.
+  if (connection.user_id !== c.get("user").id) {
+    return c.json(
+      { error: "only the person who connected this Drive can browse its folders" },
+      403,
+    );
+  }
 
   const parent = c.req.query("parent") || "root";
   try {
@@ -419,9 +485,25 @@ connections.patch("/connections/:id", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const body = parsed.data;
 
+  // Pausing, resuming and the cadence stay open to a key. Choosing the folder
+  // decides what the owner's grant reads into the workspace from now on, which
+  // outlives the key the same way starting the connection would.
+  if (body.folderId) {
+    const refusal = refuseIfKeyAuthenticated(c, "choose what a source imports");
+    if (refusal) return c.json(refusal, 403);
+  }
+
   const loaded = await loadForCaller(c, c.req.param("id"));
   if ("response" in loaded) return loaded.response;
   const { connection } = loaded;
+
+  // The folder decides which of the grant holder's files the workspace syncs,
+  // so it is theirs to choose. An admin may pause a member's connection; an
+  // admin pointing it at the member's private folder is reading their Drive
+  // with their token.
+  if (body.folderId && connection.user_id !== c.get("user").id) {
+    return c.json({ error: "only the person who connected this Drive can choose its folder" }, 403);
+  }
 
   // Choosing a folder is what finishes setting up a Drive connection, so it also
   // starts it — asking somebody to pick a folder and then press Resume would be
@@ -532,6 +614,9 @@ const DELETE_MODES = new Set(["keep", "delete"]);
 // and the team that connected Drive in March should not lose its handbook
 // because somebody tidied up in September.
 connections.delete("/connections/:id", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "remove a connected source");
+  if (refusal) return c.json(refusal, 403);
+
   const mode = c.req.query("documents") ?? "keep";
   if (!DELETE_MODES.has(mode)) return c.json({ error: "documents must be keep or delete" }, 400);
 
@@ -679,13 +764,37 @@ async function mayChangeConnection(
   verb: string,
   writes?: Record<string, unknown>,
 ): Promise<Response | undefined> {
-  const { data: allowed, error } = await c
-    .get("db")
-    .from("connections")
-    .update(writes ?? { status: connection.status })
-    .eq("id", connection.id)
-    .select("id")
-    .maybeSingle();
+  const db = c.get("db");
+  /**
+   * The probe writes `status` back to the value it holds — and only where it
+   * still holds it. Unconditional, it wrote the value read a moment earlier,
+   * so a sync that paused the connection in between was quietly un-paused by
+   * somebody merely opening its folder list. With the condition the write
+   * changes nothing it did not read; if the status moved, it is read again
+   * and asked once more, so a concurrent change is neither undone nor
+   * mistaken for a "no".
+   */
+  const probe = (status: string) =>
+    writes
+      ? db.from("connections").update(writes).eq("id", connection.id).select("id").maybeSingle()
+      : db
+          .from("connections")
+          .update({ status })
+          .eq("id", connection.id)
+          .eq("status", status)
+          .select("id")
+          .maybeSingle();
+  let { data: allowed, error } = await probe(connection.status);
+  if (!error && !allowed && !writes) {
+    const { data: now } = await db
+      .from("connections")
+      .select("status")
+      .eq("id", connection.id)
+      .maybeSingle();
+    if (now && now.status !== connection.status) {
+      ({ data: allowed, error } = await probe(now.status as string));
+    }
+  }
   // A failed probe is not a yes. `POST /connections/:id/sync` used to read only
   // `data` here and answer 403 on a database error; 500 says the same no and
   // says why.
@@ -723,6 +832,12 @@ async function tokenFor(
   provider: NonNullable<ReturnType<typeof providerFor>>,
 ): Promise<TokenEnvelope> {
   const admin = serviceClient(env);
+
+  // The token is somebody's, and they have to still be here for it to be
+  // used — the check the sync engine makes before every run.
+  const holder = await holderPresent(admin, connection);
+  if (!holder.present) throw new ProviderError(holder.reason, false);
+
   const full = await withSecret(env, connection);
 
   const stored = JSON.parse(

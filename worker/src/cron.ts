@@ -1,6 +1,7 @@
 // worker/src/cron.ts
 import type { RoutineEnv } from "./types";
 import { runScheduledWork } from "./lib/background";
+import { unfitToServe } from "./lib/env";
 
 /**
  * The routine engine as a Worker of its own — no API, no HTTP handler at all.
@@ -23,6 +24,11 @@ import { runScheduledWork } from "./lib/background";
  */
 export default {
   scheduled(_event: ScheduledEvent, env: RoutineEnv, ctx: ExecutionContext) {
+    // The API Worker's check (`index.ts`), for the engine: a deploy configured
+    // from `.env.docker.example` runs nothing. Thrown, so the tick is recorded
+    // as failed rather than as a quiet success.
+    const problem = unfitToServe(env as unknown as Record<string, unknown>);
+    if (problem) throw new Error(`Refusing to run: ${problem}`);
     ctx.waitUntil(
       // Log and re-throw. Swallowing the error would have Cloudflare record a
       // broken tick as a successful invocation, so the engine could be dead for

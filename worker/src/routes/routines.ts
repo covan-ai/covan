@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { mapRoutine, mapRoutineRun, mapDeliveryChannel } from "../lib/dto";
 import { parseDraft } from "../lib/routines/draft";
 import { runOneRoutine } from "../lib/routines/dispatcher";
@@ -11,6 +11,17 @@ import { isValidCron, nextRunAt } from "../lib/routines/schedule";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
 import { encryptSecret, decryptSecret } from "../lib/secret-box";
 import { deliver, deliveryDepsFrom } from "../lib/routines/delivery";
+import {
+  CONFIRMABLE_COLUMNS,
+  DAILY_LINKS_PER_OWNER,
+  askToConfirm,
+  linksSentToday,
+  ownConfirmedAddress,
+  readyForDelivery,
+  sameAddress,
+  type ConfirmableChannel,
+  type ConfirmationOutcome,
+} from "../lib/routines/address-confirmation";
 import {
   generateSigningSecret,
   parseWebhookSecret,
@@ -27,6 +38,7 @@ import { resolveModel } from "../lib/models";
 import { complete } from "../lib/completion";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { completionSpend, spends, type Spend } from "../lib/entitlements";
+import { apiKeyIdOf, refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 const routines = new Hono<AppEnv>();
 
@@ -120,15 +132,54 @@ function channelSecretProblem(
 // GET /delivery-channels — masked labels only; RLS scopes to the caller and the
 // column grant means the secret is not selectable even by mistake.
 routines.get("/delivery-channels", async (c) => {
+  // Without the ones a revoked key made: nothing can deliver to them or choose
+  // them again, so offering one in a picker is offering a refusal.
   const { data, error } = await c
     .get("db")
     .from("delivery_channels")
-    .select("id, kind, label, created_at")
+    .select("id, kind, label, created_at, confirmed_at")
+    .is("disabled_at", null)
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load channels" }, 500);
   return c.json((data ?? []).map(mapDeliveryChannel));
 });
+
+/**
+ * The create-time half of 0096 for an email address.
+ *
+ * The caller's own confirmed sign-in address is confirmed as it is created:
+ * they have already proved that mailbox, and asking again is friction for
+ * nothing. Any other address is created unconfirmed and mailed a link — but
+ * only `DAILY_LINKS_PER_OWNER` of those a day, refused here before the row
+ * exists, so the question cannot itself be a way to mail strangers.
+ */
+async function emailAddressStart(
+  env: Parameters<typeof ownConfirmedAddress>[0],
+  userId: string,
+  address: string,
+): Promise<{ confirmedAt: string | null } | { refused: string }> {
+  if (sameAddress(address, await ownConfirmedAddress(env, userId))) {
+    return { confirmedAt: new Date().toISOString() };
+  }
+  if ((await linksSentToday(serviceClient(env), userId)) >= DAILY_LINKS_PER_OWNER) {
+    return {
+      refused:
+        `You have asked ${DAILY_LINKS_PER_OWNER} addresses to confirm today. ` +
+        "Try again tomorrow, or use your own address.",
+    };
+  }
+  return { confirmedAt: null };
+}
+
+/** Mail the link for a channel just created unconfirmed. */
+async function askNewAddress(
+  env: Parameters<typeof askToConfirm>[0],
+  channel: { id: string; user_id: string },
+  address: string,
+): Promise<ConfirmationOutcome> {
+  return askToConfirm(env, serviceClient(env), { ...channel, confirmation_sent_at: null }, address);
+}
 
 // POST /delivery-channels — the one write that needs the service role, because
 // the secret must be encrypted before it is stored. The owner comes from the
@@ -145,8 +196,15 @@ routines.post("/delivery-channels", async (c) => {
   if (problem) return c.json({ error: problem }, 400);
 
   const user = c.get("user");
-  const workspaceId = await getActiveWorkspaceId(c.get("db"), user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
+
+  let confirmedAt: string | null = null;
+  if (kind === "email") {
+    const start = await emailAddressStart(c.env, user.id, secret);
+    if ("refused" in start) return c.json({ error: start.refused }, 429);
+    confirmedAt = start.confirmedAt;
+  }
 
   // A webhook channel's secret is the URL *and* a signing secret, as one JSON
   // object under the same envelope — see 0054 for why they share the column and
@@ -163,11 +221,18 @@ routines.post("/delivery-channels", async (c) => {
       kind,
       label: maskSecret(kind, secret),
       secret_ciphertext: await encryptSecret(plaintext, c.env.ROUTINE_SECRET_KEY),
+      api_key_id: apiKeyIdOf(c),
+      confirmed_at: confirmedAt,
     })
-    .select("id, kind, label, created_at")
+    .select("id, user_id, kind, label, created_at, confirmed_at")
     .single();
 
   if (error) return c.json({ error: "failed to create channel" }, 500);
+
+  // What happened to the question, so the form can say "check that inbox" or
+  // why it could not be asked.
+  const confirmation =
+    kind === "email" && !confirmedAt ? await askNewAddress(c.env, data, secret) : undefined;
 
   // The only response that ever carries it. It is stored encrypted rather than
   // hashed because signing needs the secret back, but that is not a reason to
@@ -175,7 +240,11 @@ routines.post("/delivery-channels", async (c) => {
   // secret that can be re-read is a secret that leaks through a screenshot of
   // the settings page. Lost it? Rotate.
   return c.json(
-    signingSecret ? { ...mapDeliveryChannel(data), signingSecret } : mapDeliveryChannel(data),
+    {
+      ...mapDeliveryChannel(data),
+      ...(signingSecret ? { signingSecret } : {}),
+      ...(confirmation ? { confirmation } : {}),
+    },
     201,
   );
 });
@@ -195,6 +264,9 @@ routines.post("/delivery-channels", async (c) => {
  * rotation is.
  */
 routines.post("/delivery-channels/:id/rotate", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "rotate a webhook signing secret");
+  if (refusal) return c.json(refusal, 403);
+
   const user = c.get("user");
   const id = c.req.param("id");
 
@@ -266,18 +338,27 @@ routines.post("/delivery-channels/:id/test", async (c) => {
   }
 
   const user = c.get("user");
-  const { data: channel, error } = await serviceClient(c.env)
+  const { data: row, error } = await serviceClient(c.env)
     .from("delivery_channels")
-    .select("kind, secret_ciphertext")
+    .select(CONFIRMABLE_COLUMNS)
     .eq("id", c.req.param("id"))
     .eq("user_id", user.id)
+    .is("disabled_at", null)
     .maybeSingle();
 
   if (error) {
     if (error.code === "22P02") return c.json({ error: "invalid channel id" }, 400);
     return c.json({ error: "failed to load channel" }, 500);
   }
-  if (!channel) return c.json({ error: "no such channel" }, 404);
+  if (!row) return c.json({ error: "no such channel" }, 404);
+
+  // An address that has not confirmed gets the question again (within its
+  // limits), not a test message: the test is exactly the mail it has not
+  // agreed to. The answer says which happened.
+  const channel = await readyForDelivery(c.env, row as ConfirmableChannel);
+  if (channel.kind === "email" && !channel.confirmed_at) {
+    return c.json({ error: "unconfirmed", confirmation: channel.asked ?? "unavailable" }, 409);
+  }
 
   try {
     await deliver(
@@ -462,9 +543,15 @@ routines.post("/routines", async (c) => {
   // reach, and correcting the field and resubmitting doesn't mint a second one
   // on top of it.
   let createdChannelId: string | undefined;
+  let unconfirmedAddress: string | undefined;
   if (body.deliveryEmail !== undefined) {
     const problem = channelSecretProblem("email", body.deliveryEmail, ownHostsFrom(c.env));
     if (problem) return c.json({ error: problem }, 400);
+    // The same rule as the standalone route: the caller's own address is
+    // confirmed now, any other waits for the link mailed below.
+    const start = await emailAddressStart(c.env, user.id, body.deliveryEmail);
+    if ("refused" in start) return c.json({ error: start.refused }, 429);
+    if (!start.confirmedAt) unconfirmedAddress = body.deliveryEmail;
     const { data, error } = await serviceClient(c.env)
       .from("delivery_channels")
       .insert({
@@ -473,6 +560,8 @@ routines.post("/routines", async (c) => {
         kind: "email",
         label: maskSecret("email", body.deliveryEmail),
         secret_ciphertext: await encryptSecret(body.deliveryEmail, c.env.ROUTINE_SECRET_KEY),
+        api_key_id: apiKeyIdOf(c),
+        confirmed_at: start.confirmedAt,
       })
       .select("id")
       .single();
@@ -526,7 +615,13 @@ routines.post("/routines", async (c) => {
     }
     return c.json({ error: created.message }, created.status);
   }
-  return c.json(mapRoutine(created.row), 201);
+  // Asked only once the routine exists, so a request that failed above has
+  // mailed nobody.
+  const confirmation =
+    createdChannelId && unconfirmedAddress
+      ? await askNewAddress(c.env, { id: createdChannelId, user_id: user.id }, unconfirmedAddress)
+      : undefined;
+  return c.json({ ...mapRoutine(created.row), ...(confirmation ? { confirmation } : {}) }, 201);
 });
 
 routines.patch("/routines/:id", async (c) => {
@@ -780,7 +875,14 @@ routines.post("/routines/:id/trigger", async (c) => {
   const { error: writeError } = await serviceClient(c.env)
     .from("routine_triggers")
     .upsert(
-      { routine_id: id, token_hash: await tokenHash, last_used_at: null },
+      // The key, or null: a token minted by a session replaces one a key made,
+      // and stops dying with that key.
+      {
+        routine_id: id,
+        token_hash: await tokenHash,
+        last_used_at: null,
+        api_key_id: apiKeyIdOf(c),
+      },
       { onConflict: "routine_id" },
     );
 

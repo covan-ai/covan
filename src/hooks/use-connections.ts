@@ -1,6 +1,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { ProviderId } from "@/lib/connections-api";
+import { beginFlow } from "@/lib/flow-nonce";
+import { navigateAway } from "@/lib/safe-url";
 
 // The Integrations page is the only screen that reads any of this, so it lives
 // here rather than in agents-store.tsx, which every authed page pays to load —
@@ -186,7 +188,7 @@ export function useConnectComposio() {
       // sign-in flow with no address is a bug upstream, and this line is where
       // it would become invisible: the button would un-disable, nothing would
       // happen, and no error would fire so there would be no toast.
-      if (url) window.location.assign(url);
+      if (url) navigateAway(url);
       else if (expectRedirect) {
         throw new Error("That connection started but there is nowhere to finish it.");
       }
@@ -281,8 +283,10 @@ export function useRemoveComposioGrant() {
 export function useStartConnection() {
   return useMutation({
     mutationFn: async ({ provider, bundleId }: { provider: ProviderId; bundleId: string }) => {
-      const { url } = await api.connections.start(provider, bundleId);
-      window.location.assign(url);
+      // The hash of a nonce this tab keeps: completing the flow asks for it, so
+      // a consent link that reaches anybody else's browser finishes nothing.
+      const { url } = await api.connections.start(provider, bundleId, await beginFlow());
+      navigateAway(url);
     },
   });
 }
@@ -298,8 +302,8 @@ export function useStartConnection() {
 export function useReconnectConnection() {
   return useMutation({
     mutationFn: async (id: string) => {
-      const { url } = await api.connections.reconnect(id);
-      window.location.assign(url);
+      const { url } = await api.connections.reconnect(id, await beginFlow());
+      navigateAway(url);
     },
   });
 }
@@ -307,8 +311,8 @@ export function useReconnectConnection() {
 export function useStartSlackInstall() {
   return useMutation({
     mutationFn: async () => {
-      const { url } = await api.slack.start();
-      window.location.assign(url);
+      const { url } = await api.slack.start(await beginFlow());
+      navigateAway(url);
     },
   });
 }

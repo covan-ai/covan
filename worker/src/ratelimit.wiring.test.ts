@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Hono } from "hono";
 import { app } from "./index";
 import type { AppEnv, Bindings } from "./types";
-import { rateLimit } from "./middleware/ratelimit";
+import { rateLimit, resetMisses } from "./middleware/ratelimit";
 import { resetRateLimiters } from "./lib/ratelimit";
 
 /**
@@ -17,7 +17,10 @@ const env = {
   RATE_LIMIT_STANDARD_PER_MINUTE: "2",
 } as Bindings;
 
-beforeEach(() => resetRateLimiters());
+beforeEach(() => {
+  resetRateLimiters();
+  resetMisses();
+});
 
 describe("the limiter as the app actually mounts it", () => {
   it("stands in front of an unauthenticated route", async () => {
@@ -72,6 +75,26 @@ describe("the limiter as the app actually mounts it", () => {
     for (let i = 0; i < 5; i++) {
       expect((await preflight()).status).not.toBe(429);
     }
+  });
+
+  // Slack and GitHub deliver for every customer from a few shared addresses.
+  // Behind the per-address count, one tenant's flood refused everybody's
+  // deliveries. Each door counts by what its proof names instead; an address
+  // that has spent its allowance elsewhere is still heard here.
+  it("leaves the two webhook doors out of the per-address count", async () => {
+    const headers = { "CF-Connecting-IP": "9.9.9.9" };
+    await app.request("/health", { headers }, env);
+    await app.request("/health", { headers }, env);
+    expect((await app.request("/health", { headers }, env)).status).toBe(429);
+
+    const slack = await app.request("/slack/events", { method: "POST", headers, body: "{}" }, env);
+    expect(slack.status).toBe(401);
+    const hook = await app.request(
+      "/routine-hooks/not-a-token",
+      { method: "POST", headers, body: "{}" },
+      env,
+    );
+    expect(hook.status).toBe(401);
   });
 
   it("matches a path with a parameter in it, which is how /routines/:id/run is mounted", async () => {

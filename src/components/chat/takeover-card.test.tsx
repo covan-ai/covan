@@ -156,6 +156,18 @@ describe("the new-window fallback", () => {
   });
 });
 
+describe("an address that is not an https one", () => {
+  // Nothing on the way to `location.replace` checks a scheme, so a
+  // `javascript:` live URL would have run in a tab that shares this origin.
+  it("is never followed by the new-window fallback", async () => {
+    await expect(openInNewWindow(() => Promise.resolve("javascript:alert(1)"))).rejects.toThrow(
+      /won't open/,
+    );
+    expect(opened.location.replace).not.toHaveBeenCalled();
+    expect(opened.close).toHaveBeenCalled();
+  });
+});
+
 describe("the legacy card: which tasks are offered", () => {
   /**
    * A v4 task belongs to the browser panel, whose own prompt continues it in

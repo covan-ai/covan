@@ -35,6 +35,11 @@ services:
       ANON_KEY: ${ANON_KEY}
       SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
       ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY}
+      # The same defaults the services below apply, so the check sees what
+      # they will actually run with.
+      BIND_ADDR: ${BIND_ADDR:-127.0.0.1}
+      MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
+      REALTIME_DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:-supabaserealtime}
     entrypoint: ["/bin/sh", "/check-secrets.sh"]
     restart: "no"
 
@@ -345,6 +350,10 @@ services:
       # a tier off for an operator who limits at their own proxy instead.
       RATE_LIMIT_STANDARD_PER_MINUTE: ${RATE_LIMIT_STANDARD_PER_MINUTE:-}
       RATE_LIMIT_EXPENSIVE_PER_MINUTE: ${RATE_LIMIT_EXPENSIVE_PER_MINUTE:-}
+      # How many reverse proxies in front of the API append to X-Forwarded-For.
+      # Empty means none: the socket address is the caller and forwarded
+      # headers are ignored. Set 1 behind one nginx / Caddy / Traefik.
+      TRUST_PROXY: ${TRUST_PROXY:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-}
       # Where the "ask for more credits" form delivers. Inert here — this
@@ -361,6 +370,9 @@ services:
       SUPABASE_JWT_SECRET: ${JWT_SECRET}
       # Connected sources. Empty means that source is not offered — the
       # Integrations page names the variables rather than hiding the row.
+      # The API's public host. Required once any OAuth client below is set:
+      # every redirect URI is built from it rather than from a request's Host.
+      WORKER_HOST: ${WORKER_HOST:-}
       NOTION_CLIENT_ID: ${NOTION_CLIENT_ID:-}
       NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}

@@ -49,11 +49,63 @@ describe("deliver", () => {
     expect(JSON.parse(init.body as string).text).toContain("3 new posts");
   });
 
+  it("does not let a summarised post ping the channel it is delivered to", async () => {
+    const fetchImpl = vi.fn(ok);
+    const channel = {
+      kind: "slack_webhook" as const,
+      secret_ciphertext: await encryptSecret("https://hooks.slack.com/services/E/E/E", KEY),
+    };
+    await deliver(
+      channel,
+      { subject: "<!here> digest", body: "A post said <!channel> and <@U012AB3CD>." },
+      deps(fetchImpl),
+    );
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const text = JSON.parse(init.body as string).text as string;
+    expect(text).not.toMatch(/<[!@#]/);
+    expect(text).toContain("&lt;!here> digest");
+  });
+
+  it("refuses a redirect from the Slack webhook rather than following it", async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response(null, { status: 302, headers: { Location: "https://evil.test/" } }),
+    );
+    const channel = {
+      kind: "slack_webhook" as const,
+      secret_ciphertext: await encryptSecret("https://hooks.slack.com/services/E/E/E", KEY),
+    };
+    await expect(deliver(channel, { subject: "s", body: "b" }, deps(fetchImpl))).rejects.toThrow(
+      /302/,
+    );
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.redirect).toBe("manual");
+  });
+
+  // 0096. Every caller funnels through `deliver`, so this is the one check
+  // that keeps an address that never agreed from being mailed at all.
+  it.each([undefined, null])(
+    "mails nothing to an address whose confirmation is %s",
+    async (confirmed_at) => {
+      const fetchImpl = vi.fn(ok);
+      const channel = {
+        kind: "email" as const,
+        secret_ciphertext: await encryptSecret("stranger@example.org", KEY),
+        confirmed_at,
+      };
+      await expect(deliver(channel, { subject: "s", body: "b" }, deps(fetchImpl))).rejects.toThrow(
+        /not confirmed/,
+      );
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
   it("sends email through resend with the configured sender", async () => {
     const fetchImpl = vi.fn(ok);
     const channel = {
       kind: "email" as const,
       secret_ciphertext: await encryptSecret("deniz@example.com", KEY),
+      confirmed_at: "2026-10-01T00:00:00Z",
     };
     await deliver(channel, { subject: "r/saas", body: "3 new posts" }, deps(fetchImpl));
 
@@ -75,6 +127,7 @@ describe("deliver", () => {
     const channel = {
       kind: "email" as const,
       secret_ciphertext: await encryptSecret("deniz@example.com", KEY),
+      confirmed_at: "2026-10-01T00:00:00Z",
     };
     await deliver(
       channel,

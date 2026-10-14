@@ -3,8 +3,8 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapBundle, mapDocument } from "../lib/dto";
-import { getActiveWorkspaceId } from "../lib/workspace";
-import { chunkText, embedTexts, embeddingModel } from "../lib/embeddings";
+import { callerWorkspaceId } from "../lib/workspace";
+import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../lib/embeddings";
 import {
   ALLOWED_EXT,
   contentTypeFor,
@@ -65,9 +65,8 @@ function timingSafeEqualStr(a: string, b: string): boolean {
 // GET /bundles
 bundles.get("/bundles", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json([]);
 
   const { data, error } = await db
@@ -93,9 +92,8 @@ bundles.get("/bundles", async (c) => {
 // and a timestamp; who asked and what they asked stay where they are.
 bundles.get("/bundles/citations", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ since: null, counts: {} });
 
   const { data: bundleRows, error: bundleError } = await db
@@ -169,7 +167,7 @@ bundles.post("/bundles", async (c) => {
   const parsed = createSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 400);
 
   const { data, error } = await db
@@ -379,6 +377,8 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
     }
   } catch (e) {
     console.error("embedding failed (document saved without chunks)", e);
+    // The batches that went through before the failure were paid for.
+    await recordCredits(c, embeddingSpend(embeddingModel(env), tokensSpentBefore(e), "index"));
   }
 
   return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunkCount }] }), 201);

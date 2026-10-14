@@ -6,7 +6,7 @@ import { pollConversationBrowser } from "../lib/browser/live";
 import { NOT_STARTED } from "../lib/browser/queue";
 import { deferred } from "../lib/defer";
 import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 
 const sessions = new Hono<AppEnv>();
 
@@ -37,9 +37,8 @@ const updateSessionSchema = z
 // GET /sessions
 sessions.get("/sessions", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json([]);
   }

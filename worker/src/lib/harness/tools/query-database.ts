@@ -1,5 +1,5 @@
 import { assertFetchableUrl, ownHostsFrom } from "../../routines/url-guard";
-import { readCapped, resolvesPublicly } from "../../routines/source";
+import { pinnedRequest, readCapped, resolvesPublicly } from "../../routines/source";
 import { loadConnection, type ToolConnection } from "../connections";
 import { authHeaders } from "../secrets";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
@@ -187,25 +187,28 @@ export const queryDatabaseTool: AgentTool = {
     }
 
     let target: URL;
+    let address: string | null;
     try {
       target = assertFetchableUrl(rpcUrl(connection), ownHostsFrom(ctx.env));
-      await resolvesPublicly(target.hostname);
+      address = await resolvesPublicly(target.hostname);
     } catch (err) {
       return { kind: "error", message: err instanceof Error ? err.message : "unsafe url" };
     }
 
-    const res = await fetch(target.toString(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "User-Agent": "covan-agent/1.0",
-        ...(await authHeaders(ctx.env, connection)),
-      },
-      body: JSON.stringify({ p_sql: sql, p_limit: limit }),
-      redirect: "manual",
-      signal: ctx.signal ?? AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const res = await fetch(
+      ...pinnedRequest(target, address, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": "covan-agent/1.0",
+          ...(await authHeaders(ctx.env, connection)),
+        },
+        body: JSON.stringify({ p_sql: sql, p_limit: limit }),
+        redirect: "manual",
+        signal: ctx.signal ?? AbortSignal.timeout(TIMEOUT_MS),
+      }),
+    );
 
     if (res.status >= 300 && res.status < 400) {
       return { kind: "error", message: `${res.status} redirect — not followed` };

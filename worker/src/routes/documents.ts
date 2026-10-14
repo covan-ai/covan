@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { chunkText, embedTexts, embeddingModel } from "../lib/embeddings";
+import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../lib/embeddings";
 import { contentTypeFor, EXCERPT_LIMIT, extractDocumentText } from "../lib/extract";
 import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
@@ -281,6 +281,8 @@ documents.post("/documents/:id/reindex", async (c) => {
     await recordCredits(c, embeddingSpend(embeddingModel(env), embedded.tokens, "reindex"));
   } catch (e) {
     console.error("reindex embed failed", id, e);
+    // What the batches before the failure cost was spent all the same.
+    await recordCredits(c, embeddingSpend(embeddingModel(env), tokensSpentBefore(e), "reindex"));
     return c.json({ error: "failed to embed document" }, 502);
   }
 

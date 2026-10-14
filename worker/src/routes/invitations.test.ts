@@ -33,7 +33,12 @@ function appWith(spec: FakeDbSpec & { user?: { id: string; email: string }; apiK
   const { user = USER, apiKeyId, ...dbSpec } = spec;
   const fake = fakeDb({
     ...dbSpec,
-    tables: { ...activeWorkspaceTables(user.id, WORKSPACE), ...dbSpec.tables },
+    tables: {
+      ...activeWorkspaceTables(user.id, WORKSPACE),
+      // Today's invitations so far, for the daily cap. None, unless a test says.
+      workspace_events: { select: () => ({ data: null, error: null, count: 0 }) },
+      ...dbSpec.tables,
+    },
   });
 
   const app = new Hono<AppEnv>();
@@ -76,12 +81,20 @@ const MAIL_ENV = {
 
 describe("GET /invitations", () => {
   it("lists the pending invitations of the caller's own workspace", async () => {
+    const future = new Date(Date.now() + 86_400_000).toISOString();
     const { app, callsTo } = appWith({
       tables: {
         invitations: {
           select: () => ({
             data: [
-              { id: "inv-1", email: "new@example.com", role: "member", created_at: CREATED_AT },
+              {
+                id: "inv-1",
+                email: "new@example.com",
+                role: "member",
+                created_at: CREATED_AT,
+                expires_at: future,
+                token_issued_at: CREATED_AT,
+              },
             ],
             error: null,
           }),
@@ -98,6 +111,7 @@ describe("GET /invitations", () => {
         email: "new@example.com",
         role: "member",
         createdAt: Date.parse(CREATED_AT),
+        needsResend: false,
       },
     ]);
 
@@ -106,28 +120,51 @@ describe("GET /invitations", () => {
     expect(callsTo("invitations")[0].filters).toEqual([
       { column: "workspace_id", value: WORKSPACE, kind: "eq" },
       { column: "status", value: "pending", kind: "eq" },
-      { column: "expires_at", value: expect.any(String), kind: "gt" },
     ]);
   });
 
-  it("excludes invitations past their expiry from the pending list", async () => {
-    // status = 'pending' alone is not enough once invitations expire: 0029
-    // backfilled expires_at onto every pre-existing pending row rather than
-    // voiding it, so an old, unexpired-looking row is exactly the case this
-    // filter has to catch going forward.
-    const { app, callsTo } = appWith({
+  it("keeps an expired or link-less invitation, marked for a new link", async () => {
+    // Since 0090 an invitation needs its emailed token to be accepted. One whose
+    // seven days ran out, or one made before tokens existed, is still somebody
+    // the admin meant to invite: listed with a Resend rather than dropped.
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    const { app } = appWith({
       tables: {
-        invitations: { select: () => ({ data: [], error: null }) },
+        invitations: {
+          select: () => ({
+            data: [
+              {
+                id: "expired",
+                email: "a@example.com",
+                role: "member",
+                created_at: CREATED_AT,
+                expires_at: past,
+                token_issued_at: CREATED_AT,
+              },
+              {
+                id: "no-link",
+                email: "b@example.com",
+                role: "member",
+                created_at: CREATED_AT,
+                expires_at: future,
+                token_issued_at: null,
+              },
+            ],
+            error: null,
+          }),
+        },
       },
     });
 
-    await json(app, "GET", "/invitations");
-
-    expect(callsTo("invitations")[0].filters).toContainEqual({
-      column: "expires_at",
-      value: expect.any(String),
-      kind: "gt",
-    });
+    const body = (await (await json(app, "GET", "/invitations")).json()) as Array<{
+      id: string;
+      needsResend: boolean;
+    }>;
+    expect(body.map((i) => [i.id, i.needsResend])).toEqual([
+      ["expired", true],
+      ["no-link", true],
+    ]);
   });
 
   it("answers 404 when the caller has no workspace at all", async () => {
@@ -181,7 +218,8 @@ describe("POST /invitations", () => {
     });
 
     expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toEqual({
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({
       id: "inv-1",
       email: "new@example.com",
       role: "member",
@@ -190,16 +228,26 @@ describe("POST /invitations", () => {
       // is optional and the invitation stands without it. The dialog reads this
       // to say what happened rather than claiming an email went out.
       emailed: false,
+      // The only time the link exists outside the email. With no mail, it is
+      // how the admin gets it to the invitee.
+      inviteUrl: expect.stringMatching(/\/invite#id=inv-1&token=[A-Za-z0-9_-]{43}$/),
+      needsResend: false,
     });
 
     // workspace_id comes from the caller's session, never from the request
-    // body, and invited_by is stamped server-side.
+    // body, and invited_by is stamped server-side. What is stored is the hash
+    // of the token in the link, never the token.
+    const token = /token=([^&]+)$/.exec(String(body.inviteUrl))![1];
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+    const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
     expect(inserted).toEqual({
       workspace_id: WORKSPACE,
       email: "new@example.com",
       role: "member",
       invited_by: USER.id,
+      token_hash: hash,
     });
+    expect(JSON.stringify(inserted)).not.toContain(token);
   });
 
   it("refuses an API key, which may not put a new person in the workspace", async () => {
@@ -573,13 +621,36 @@ describe("POST /invitations/:id/accept", () => {
       },
     });
 
-    const res = await json(app, "POST", "/invitations/inv-1/accept");
+    const res = await json(app, "POST", "/invitations/inv-1/accept", { token: "tok-1" });
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ workspaceId: "ws-2" });
     // The caller is never named here: `accept_invitation` reads auth.uid()
-    // itself, so there is no id for a caller to substitute.
-    expect(args).toEqual({ p_invite_id: "inv-1" });
+    // itself, so there is no id for a caller to substitute. The token from the
+    // email is passed through untouched; the function hashes and compares it.
+    expect(args).toEqual({ p_invite_id: "inv-1", p_token: "tok-1" });
+  });
+
+  it("refuses without the token from the invitation email, before asking anything", async () => {
+    // Since 0090 the token is the credential: an account that merely has the
+    // invited address -- which an install that auto-confirms sign-ups hands to
+    // anybody -- is not enough.
+    let asked = false;
+    const { app, calls } = appWith({
+      rpc: {
+        accept_invitation: () => {
+          asked = true;
+          return { data: "ws-2", error: null };
+        },
+      },
+    });
+
+    for (const body of [undefined, {}, { token: "" }, { token: "x".repeat(201) }]) {
+      const res = await json(app, "POST", "/invitations/inv-1/accept", body);
+      expect(res.status).toBe(400);
+    }
+    expect(asked).toBe(false);
+    expect(calls.some((c) => c.table === "invitations")).toBe(false);
   });
 
   it("refuses when the database function refuses", async () => {
@@ -594,7 +665,7 @@ describe("POST /invitations/:id/accept", () => {
       },
     });
 
-    const res = await json(app, "POST", "/invitations/someone-elses/accept");
+    const res = await json(app, "POST", "/invitations/someone-elses/accept", { token: "tok-1" });
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({
@@ -642,7 +713,7 @@ describe("POST /invitations/:id/accept", () => {
       return new Response("{}", { status: 200 });
     });
 
-    const res = await json(app, "POST", "/invitations/inv-1/accept", undefined, MAIL_ENV);
+    const res = await json(app, "POST", "/invitations/inv-1/accept", { token: "tok-1" }, MAIL_ENV);
 
     expect(res.status).toBe(200);
     expect(sent?.to).toEqual(["ada@example.com"]);
@@ -658,10 +729,126 @@ describe("POST /invitations/:id/accept", () => {
   it("still reports the join when the notice cannot be sent", async () => {
     const { app } = acceptingApp(async () => new Response("nope", { status: 500 }));
 
-    const res = await json(app, "POST", "/invitations/inv-1/accept", undefined, MAIL_ENV);
+    const res = await json(app, "POST", "/invitations/inv-1/accept", { token: "tok-1" }, MAIL_ENV);
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ workspaceId: "ws-2" });
+  });
+});
+
+describe("POST /invitations/:id/resend", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("mints a new link, hands only its hash to the database, and mails the link", async () => {
+    let reissued: Record<string, unknown> | undefined;
+    let sent: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      sent = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    });
+    const { app } = appWith({
+      rpc: {
+        reissue_invitation: (args) => {
+          reissued = args;
+          return { data: null, error: null };
+        },
+      },
+      tables: {
+        invitations: {
+          select: () => ({
+            data: {
+              id: "inv-1",
+              email: "late@example.com",
+              role: "member",
+              created_at: CREATED_AT,
+              workspace_id: WORKSPACE,
+            },
+            error: null,
+          }),
+        },
+        workspaces: { select: () => ({ data: { name: "Acme" }, error: null }) },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.columns === "name"
+              ? { data: { name: "Ada Lovelace" }, error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+    });
+
+    const res = await json(app, "POST", "/invitations/inv-1/resend", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      inviteUrl: string;
+      emailed: boolean;
+      needsResend: boolean;
+    };
+    expect(body).toMatchObject({ emailed: true, needsResend: false });
+    const token = /token=([^&]+)$/.exec(body.inviteUrl)![1];
+    expect(reissued?.p_invite_id).toBe("inv-1");
+    expect(reissued?.p_token_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(reissued)).not.toContain(token);
+    expect(String(sent?.text)).toContain(body.inviteUrl);
+  });
+
+  it("answers 404 for an invitation that is not there or not the caller's to resend", async () => {
+    // One code from the function for both, on purpose: an admin of one
+    // workspace learns nothing about another's invitations.
+    const { app } = appWith({
+      tables: { invitations: { select: () => ({ data: null, error: null }) } },
+      rpc: {
+        reissue_invitation: () => ({
+          data: null,
+          error: { code: "P0002", message: "invitation not found" },
+        }),
+      },
+    });
+
+    const res = await json(app, "POST", "/invitations/inv-x/resend");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("the daily ceiling on invitation emails", () => {
+  // Any free account is the admin of a workspace, and an invitation is a
+  // Covan-branded email to any address. Counted from the event log, which a
+  // revoke does not delete from.
+  const spent = {
+    workspace_events: { select: () => ({ data: null, error: null, count: 50 }) },
+  };
+
+  it("refuses a new invitation once the workspace has sent its fifty today", async () => {
+    const { app, callsTo } = appWith({ tables: spent });
+
+    const res = await json(app, "POST", "/invitations", { email: "x@example.com", role: "member" });
+
+    expect(res.status).toBe(429);
+    expect(callsTo("invitations").some((c) => c.op === "insert")).toBe(false);
+  });
+
+  it("refuses a resend too, counted against the invitation's own workspace", async () => {
+    const rpc = vi.fn(() => ({ data: null, error: null }));
+    const { app, callsTo } = appWith({
+      tables: {
+        ...spent,
+        invitations: { select: () => ({ data: { workspace_id: "ws-other" }, error: null }) },
+      },
+      rpc: { reissue_invitation: rpc },
+    });
+
+    const res = await json(app, "POST", "/invitations/inv-1/resend");
+
+    expect(res.status).toBe(429);
+    expect(rpc).not.toHaveBeenCalled();
+    const counted = callsTo("workspace_events")[0];
+    expect(counted?.filters).toContainEqual({
+      column: "workspace_id",
+      value: "ws-other",
+      kind: "eq",
+    });
   });
 });
 
@@ -716,21 +903,27 @@ describe("POST /invitations — telling the invitee", () => {
     );
 
     expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toMatchObject({ emailed: true });
+    const body = (await res.json()) as { emailed: boolean; inviteUrl: string };
+    expect(body.emailed).toBe(true);
 
     expect(sent?.url).toBe("https://api.resend.com/emails");
     expect(sent?.body.from).toBe(MAIL_ENV.RESEND_FROM);
     expect(sent?.body.to).toEqual(["new@example.com"]);
-    expect(sent?.body.subject).toBe("Ada Lovelace invited you to Acme on Covan");
+    // Fixed: the names are text somebody chose, and the subject is read
+    // before anybody decides whether to trust the sender.
+    expect(sent?.body.subject).toBe("You're invited to a workspace on Covan");
 
     const text = String(sent?.body.text);
-    // The address is the credential — accept_invitation matches it against the
-    // caller's verified JWT email — so the mail has to name which address to
-    // sign in with, and must not offer a link that accepts on its own.
+    // The mail carries the link with the token (0090) — the same one the
+    // response hands the admin — on this deployment's own origin, and names
+    // the address the account has to have as well.
+    expect(body.inviteUrl.startsWith(`${MAIL_ENV.ALLOWED_ORIGIN}/invite#`)).toBe(true);
+    expect(text).toContain(body.inviteUrl);
     expect(text).toContain("new@example.com");
-    expect(text).toContain(MAIL_ENV.ALLOWED_ORIGIN);
-    expect(text, "the mail offered a link that accepts the invitation").not.toMatch(
-      /\/invitations?\/[\w-]+\/accept|token=/,
+    // The link opens a page, never the API: opening it accepts nothing, so a
+    // mail scanner following links joins nobody to anything.
+    expect(text, "the mail linked straight to the accept endpoint").not.toMatch(
+      /\/invitations?\/[\w-]+\/accept/,
     );
   });
 
@@ -748,9 +941,9 @@ describe("POST /invitations — telling the invitee", () => {
     // message and a reader sees only one of them.
     expect(html).toContain("Acme");
     expect(html).toContain("new@example.com");
-    expect(html).toContain(MAIL_ENV.ALLOWED_ORIGIN);
-    expect(html, "the HTML mail offered a link that accepts the invitation").not.toMatch(
-      /\/invitations?\/[\w-]+\/accept|token=/,
+    expect(html).toContain(`${MAIL_ENV.ALLOWED_ORIGIN}/invite#id=inv-1&amp;token=`);
+    expect(html, "the HTML mail linked straight to the accept endpoint").not.toMatch(
+      /\/invitations?\/[\w-]+\/accept/,
     );
     // The text half is not replaced by the HTML one; a client that strips
     // styles still has the whole message.

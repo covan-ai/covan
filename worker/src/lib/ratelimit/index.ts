@@ -7,6 +7,16 @@ import { memoryRateLimiter } from "./memory";
 export type { RateLimiter, RateTier, RateVerdict } from "./types";
 export { RATE_PERIOD_SECONDS, DEFAULT_LIMITS } from "./types";
 
+/**
+ * The bucket a person's requests are counted in, whichever door they came
+ * through. The Slack app and the chat screen spend the same allowance, so they
+ * share a key — and `middleware/ratelimit.ts` builds the same string from
+ * `rateLimitKey`, which `ratelimit.test.ts` holds it to.
+ */
+export function userRateKey(tier: RateTier, userId: string): string {
+  return `${tier}:user:${userId}`;
+}
+
 /** Allows everything. What an operator gets when they set a limit of 0. */
 export const unlimitedRateLimiter: RateLimiter = {
   async check() {

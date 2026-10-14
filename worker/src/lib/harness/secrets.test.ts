@@ -53,6 +53,8 @@ function connection(over: Partial<ToolConnection> = {}): ToolConnection {
     config: {},
     toolkit_slug: null,
     status: "active",
+    scope: "workspace",
+    created_by: "user-1",
     ...over,
   };
 }

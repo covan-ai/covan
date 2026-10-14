@@ -179,6 +179,53 @@ describe("address ranges that were reachable", () => {
   });
 });
 
+describe("IPv6, by what the address is rather than how it is spelled", () => {
+  // A resolver hands back whatever spelling its AAAA record had, and a list of
+  // patterns only knows the spellings somebody thought of. Each of these was a
+  // way past the old patterns.
+  it.each([
+    "fe90::1", // link-local is fe80::/10, not only fe80:
+    "febf:ffff::1",
+    "fec0::1", // site-local
+    "64:ff9b:1::a00:1", // local-use NAT64, RFC 8215
+    "::ffff:0:7f00:1", // IPv4-translated -> loopback
+    "0:0:0:0:0:ffff:7f00:1", // mapped, uncompressed
+    "::FFFF:A9FE:A9FE", // mapped, upper case -> 169.254.169.254
+    "::ffff:169.254.169.254",
+    "0000:0000:0000:0000:0000:0000:0000:0001",
+    "2002:7f00:1::", // 6to4 around loopback
+    "2002:a9fe:a9fe::1", // 6to4 around the metadata address
+    "2001:db8::1", // documentation
+    "2001:0:4136:e378::1", // Teredo
+    "ff02::1", // multicast
+    "100::1", // discard-only
+    "fd12:3456::1",
+    "fe80::1%eth0",
+  ])("refuses %s", (address) => {
+    expect(isPrivateAddress(address)).toBe(true);
+  });
+
+  it.each([
+    "2606:4700:4700::1111",
+    "2a00:1450:4001:80b::200e",
+    "::ffff:93.184.216.34",
+    "64:ff9b::5db8:d822",
+    "2002:5db8:d822::1",
+  ])("allows the public address %s", (address) => {
+    expect(isPrivateAddress(address)).toBe(false);
+  });
+
+  it("refuses something shaped like IPv6 that does not parse, rather than guessing", () => {
+    expect(isPrivateAddress("1:2:3:4:5:6:7:8:9")).toBe(true);
+    expect(isPrivateAddress("::g")).toBe(true);
+  });
+
+  it("refuses the same addresses inside a URL", () => {
+    expect(() => assertFetchableUrl("http://[fe90::1]/", [])).toThrow(/private address/);
+    expect(() => assertFetchableUrl("http://[::ffff:0:7f00:1]/", [])).toThrow(/private address/);
+  });
+});
+
 describe("assertResolvedHostIsPublic", () => {
   it("rejects a public-looking name that resolves to link-local", async () => {
     const resolve = async () => ["169.254.169.254"];

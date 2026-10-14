@@ -1,4 +1,6 @@
 import { meteredFetch, type SubrequestMeter } from "../subrequests";
+import { httpsUrl } from "../https-url";
+
 /**
  * Composio's API, as much of it as Covan needs and no more.
  *
@@ -1452,7 +1454,10 @@ export async function createLink(
 
   const body = parsed(res.body);
   const row = isRecord(body) ? (isRecord(body.data) ? body.data : body) : null;
-  const redirectUrl = row ? text(row.redirect_url) || text(row.redirectUrl) || text(row.url) : "";
+  // Into `location.assign` in the app; an https address or, as far as the
+  // check below is concerned, no address at all.
+  const redirectUrl =
+    httpsUrl(row ? text(row.redirect_url) || text(row.redirectUrl) || text(row.url) : "") ?? "";
   const connectedAccountId = row ? text(row.id) || text(row.connected_account_id) : "";
 
   /**

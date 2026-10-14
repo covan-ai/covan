@@ -68,7 +68,13 @@ async function session(over: Record<string, unknown> = {}): Promise<string> {
 
 /** Records what the middleware put on the context, if it let the request past. */
 function app() {
-  const seen: { user?: unknown; db?: unknown; apiKeyId?: unknown; reached: boolean } = {
+  const seen: {
+    user?: unknown;
+    db?: unknown;
+    apiKeyId?: unknown;
+    apiKeyWorkspaceId?: unknown;
+    reached: boolean;
+  } = {
     reached: false,
   };
 
@@ -79,6 +85,7 @@ function app() {
     seen.user = c.get("user");
     seen.db = c.get("db");
     seen.apiKeyId = c.get("apiKeyId");
+    seen.apiKeyWorkspaceId = c.get("apiKeyWorkspaceId");
     return c.json({ ok: true });
   });
 
@@ -337,7 +344,13 @@ describe("authMiddleware, with an API key", () => {
 
     await withKey(server);
 
-    expect(mintUserToken).toHaveBeenCalledWith("a-signing-secret", USER);
+    // With the key and its workspace, which the token carries as claims so
+    // Postgres can hold the request to that workspace.
+    expect(mintUserToken).toHaveBeenCalledWith(
+      "a-signing-secret",
+      USER,
+      expect.objectContaining({ keyId: "key-1", workspaceId: "ws-1" }),
+    );
     expect(userClient).toHaveBeenCalledWith(metered(KEYED_ENV), "minted-jwt");
     expect(seen.db).toEqual({ marker: "user-client", token: "minted-jwt" });
     // The key is a credential, not a token any database would accept.
@@ -365,9 +378,21 @@ describe("authMiddleware, with an API key", () => {
     expect(seen.apiKeyId).toBe("key-1");
   });
 
+  it("pins the request to the workspace the key was made in", async () => {
+    // `callerWorkspaceId` answers with this for a key, whatever the owner's
+    // active workspace is, and never writes their profile.
+    resolveApiKey.mockResolvedValue(RESOLVED);
+    const { server, seen } = app();
+
+    await withKey(server);
+
+    expect(seen.apiKeyWorkspaceId).toBe("ws-1");
+  });
+
   it.each([
     ["an unknown or revoked key", null],
     ["a key whose owner is gone", null],
+    ["a key whose owner has left its workspace", null],
   ])("refuses %s", async (_label, resolved) => {
     resolveApiKey.mockResolvedValue(resolved);
     const { server, seen } = app();

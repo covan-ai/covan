@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapProfile, PROFILE_COLUMNS, type MeDTO, type ProfileRow } from "../lib/dto";
 import { BCP47_RE, canonicalTimeZone } from "../lib/profile-fields";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { availableModels, modelSpecsFor } from "../lib/models";
 import { modelCostsFor } from "../lib/pricing";
 
@@ -57,7 +57,7 @@ me.get("/me", async (c) => {
     return c.json({ error: "failed to load profile" }, 500);
   }
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ error: "no workspace found for user" }, 404);
   }

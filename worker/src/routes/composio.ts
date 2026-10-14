@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv, Bindings } from "../types";
 import { serviceClient } from "../lib/supabase";
-import { getActiveWorkspaceId, memberRole } from "../lib/workspace";
+import { callerWorkspaceId, memberRole } from "../lib/workspace";
 import { mapToolConnection, mapToolConnectionGrant } from "../lib/dto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { revokeConnectedAccounts } from "../lib/composio/revoke";
@@ -21,6 +21,8 @@ import {
   MAX_TOOLS_PAGE,
   type ComposioToolkit,
 } from "../lib/composio/client";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { nonceHashOf } from "../lib/connections/oauth-state";
 
 /**
  * Connecting one of about fifteen hundred applications, and saying what an
@@ -106,7 +108,7 @@ const grantSchema = z.object({
 
 /** The columns a client may select. `connected_account_id` is not among them. */
 const CONNECTION_COLUMNS =
-  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, created_by, created_at, updated_at";
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, scope, created_by, created_at, updated_at";
 
 function frontendOrigin(env: Bindings): string {
   return env.ALLOWED_ORIGIN.split(",")[0].trim().replace(/\/+$/, "");
@@ -251,6 +253,9 @@ composio.get("/composio/categories", async (c) => {
 });
 
 composio.post("/composio/connect", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "connect an application");
+  if (refusal) return c.json(refusal, 403);
+
   const parsed = connectSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const { toolkit } = parsed.data;
@@ -261,7 +266,7 @@ composio.post("/composio/connect", async (c) => {
 
   const db = c.get("db");
   const userId = c.get("user").id;
-  const workspaceId = await getActiveWorkspaceId(db, userId);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
   // Before the network, deliberately. A refused caller must not leave a
   // half-made consent flow behind them at a third party.
@@ -336,6 +341,13 @@ composio.post("/composio/connect", async (c) => {
   // turn and by a 3am routine, which resolve to different people.
   const composioUserId = crypto.randomUUID();
 
+  // What the consenting browser brings back (0093). Only its hash is stored,
+  // and it is never in this route's response: the one way to learn it is to
+  // be the browser Composio sends back. `POST /composio/complete` takes it, and
+  // only from the person who created the row — a link forwarded to somebody
+  // else ends with their account revoked rather than in this workspace.
+  const completionNonce = plan ? newCompletionNonce() : null;
+
   // Nothing is created at Composio for an application that needs no
   // credential — there is no auth config to make, no account to create and no
   // page to send anybody to. `link` stands in for all three so the insert
@@ -349,7 +361,9 @@ composio.post("/composio/connect", async (c) => {
         // query parameter, says one sentence and takes it out of the address
         // bar — `useGrantOutcome` in `_authed.integrations.tsx` already does
         // exactly this for Notion and Drive.
-        callbackUrl: `${frontendOrigin(c.env)}/integrations?connected=${encodeURIComponent(toolkit)}`,
+        callbackUrl:
+          `${frontendOrigin(c.env)}/integrations` +
+          `?composio=${encodeURIComponent(toolkit)}&nonce=${completionNonce}`,
       })
     : ({ kind: "ok", redirectUrl: "", connectedAccountId: "" } as const);
   if (link.kind === "error") return c.json({ error: link.message }, 502);
@@ -376,6 +390,10 @@ composio.post("/composio/connect", async (c) => {
     .eq("transport", "composio")
     .eq("toolkit_slug", toolkit)
     .neq("status", "active")
+    // Only the caller's own: a colleague's half-finished connection to the
+    // same application is theirs to finish or remove, and replacing it here
+    // revoked their grant at Composio mid-consent.
+    .eq("created_by", userId)
     .limit(1)
     .maybeSingle();
   if (abandoned?.id) {
@@ -434,13 +452,14 @@ composio.post("/composio/connect", async (c) => {
       // arrive, show "Finishing…" for two minutes, and then be failed as stale.
       status: noAccountNeeded ? "active" : "pending",
       created_by: userId,
+      completion_nonce_hash: completionNonce ? await nonceHashOf(completionNonce) : null,
     })
     .select(CONNECTION_COLUMNS)
     .single();
 
   if (error || !data) {
     if (error?.code === "23505") {
-      return c.json({ error: "a connection with that name already exists here" }, 400);
+      return c.json({ error: "you already have a connection with that name" }, 400);
     }
     return c.json({ error: "failed to start that connection" }, insertErrorStatus(error));
   }
@@ -448,7 +467,10 @@ composio.post("/composio/connect", async (c) => {
   // A URL rather than a 302, for the reason `connections.ts` gives: the caller
   // is a `fetch` from the application, which cannot follow a cross-origin
   // redirect to a consent screen — a 302 here is a CORS error, not a login page.
-  return c.json({ url: link.redirectUrl, connection: mapToolConnection(data as never) }, 201);
+  return c.json(
+    { url: link.redirectUrl, connection: mapToolConnection(data as never, userId) },
+    201,
+  );
 });
 
 /**
@@ -474,6 +496,9 @@ function staleSince(createdAt: unknown): boolean {
  * then a question to Composio about the account that row names.
  */
 composio.get("/composio/connections/:id/status", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "finish connecting an application");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const { data: row, error } = await db
     .from("tool_connections")
@@ -506,41 +531,113 @@ composio.get("/composio/connections/:id/status", async (c) => {
   if (!accountId) return c.json({ status: "failed" });
 
   const asked = await getConnectedAccount(c.env, accountId);
-  // A read that failed says nothing about the connection. Settling on it would
-  // mean an upstream wobble failing rows that are halfway through a consent
-  // screen.
   if (asked.kind === "error") return c.json({ status: "pending" });
-  if (asked.status === "pending") {
-    // Somebody who walked away. The page gives up polling after two minutes,
-    // so without this the row stays `pending` until the next time anybody
-    // happens to open Integrations — and a pending row is one the card calls
-    // "Finishing…" and the catalogue counts as connected.
-    //
-    // Fifteen minutes because Composio's own link dies after ten, so by then
-    // the page they were sent to has expired and no outcome is coming. Written
-    // here rather than in a cron for the reason the banner at the top of this
-    // file gives: the poll is the only thing that needs to know.
-    if (staleSince(row.created_at)) {
-      const { error: failError } = await admin
-        .from("tool_connections")
-        .update({ status: "failed" })
-        .eq("id", row.id);
-      if (failError) console.error("could not fail a stale connection", failError);
-      return c.json({ status: "failed" });
-    }
-    return c.json({ status: "pending" });
+
+  // A consent that failed at Composio settles here. One that succeeded does
+  // not (0093): becoming active takes the browser Composio sends back, through
+  // `POST /composio/complete`. Until then the row says pending — and a row
+  // nobody completes is failed once it is stale, like any other.
+  if (asked.status === "failed" || staleSince(row.created_at)) {
+    const { error: failError } = await admin
+      .from("tool_connections")
+      .update({ status: "failed", completion_nonce_hash: null })
+      .eq("id", row.id);
+    if (failError) console.error("could not fail a connection", failError);
+    return c.json({ status: "failed" });
+  }
+  return c.json({ status: "pending" });
+});
+
+const completeSchema = z.object({ nonce: z.string().min(16).max(200) });
+
+/**
+ * POST /composio/complete — the browser Composio sent back, finishing a
+ * connection it consented to.
+ *
+ * The nonce came in the callback URL and nowhere else (0093). Holding it
+ * proves this is the browser that consented; being the row's creator proves
+ * the consent was for this workspace. Both, or the account is revoked at
+ * Composio and the row failed: a nonce in anybody else's hands means the link
+ * was forwarded, and the person who authorised it never meant their account to
+ * land here.
+ */
+composio.post("/composio/complete", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "finish connecting an application");
+  if (refusal) return c.json(refusal, 403);
+
+  const parsed = completeSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: "expired" }, 400);
+
+  if (!composioConfigured(c.env)) {
+    return c.json({ error: "this deployment has no COMPOSIO_API_KEY set" }, 501);
   }
 
-  // Through the service role because `status` is granted to `authenticated` for
-  // reading only — the settings screen edits a label, not the state of somebody
-  // else's consent flow.
-  const { error: updateError } = await admin
+  // By hash, with the service role: the column is granted to no client role.
+  const admin = serviceClient(c.env);
+  const { data: row, error } = await admin
     .from("tool_connections")
-    .update({ status: asked.status })
-    .eq("id", row.id);
-  if (updateError) console.error("could not settle a connection's status", updateError);
-  return c.json({ status: asked.status });
+    .select("id, created_by, connected_account_id, status")
+    .eq("completion_nonce_hash", await nonceHashOf(parsed.data.nonce))
+    .eq("transport", "composio")
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to load that connection" }, 500);
+  if (!row || row.status !== "pending") return c.json({ error: "expired" }, 404);
+
+  const accountId = typeof row.connected_account_id === "string" ? row.connected_account_id : "";
+
+  if (row.created_by !== c.get("user").id) {
+    if (accountId) await revokeConnectedAccounts(c.env, [accountId]);
+    const { error: failError } = await admin
+      .from("tool_connections")
+      .update({ status: "failed", completion_nonce_hash: null })
+      .eq("id", row.id);
+    if (failError) console.error("could not fail a forwarded connection", failError);
+    return c.json({ error: "not_yours" }, 403);
+  }
+
+  // And visible to the caller through their own policies — the creator may
+  // have left the workspace since.
+  const { data: own } = await c
+    .get("db")
+    .from("tool_connections")
+    .select("id")
+    .eq("id", row.id)
+    .maybeSingle();
+  if (!own || !accountId) return c.json({ error: "expired" }, 404);
+
+  const asked = await getConnectedAccount(c.env, accountId);
+  if (asked.kind === "error") return c.json({ error: "try_again" }, 502);
+  if (asked.status === "failed") {
+    await admin
+      .from("tool_connections")
+      .update({ status: "failed", completion_nonce_hash: null })
+      .eq("id", row.id);
+    return c.json({ status: "failed" }, 409);
+  }
+  if (asked.status !== "active") return c.json({ status: "pending" }, 202);
+
+  const { data: settled, error: settleError } = await admin
+    .from("tool_connections")
+    .update({ status: "active", completion_nonce_hash: null })
+    .eq("id", row.id)
+    .eq("status", "pending")
+    .select(CONNECTION_COLUMNS)
+    .maybeSingle();
+  if (settleError || !settled) return c.json({ error: "failed to finish that connection" }, 500);
+  return c.json({
+    status: "active",
+    connection: mapToolConnection(settled as never, c.get("user").id),
+  });
 });
+
+/** 32 random bytes, base64url: what a consenting browser brings back. */
+function newCompletionNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
 
 /**
  * What one agent may do at one connected service.
@@ -564,12 +661,18 @@ composio.get("/composio/grants", async (c) => {
 });
 
 composio.put("/composio/grants", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(
+    c,
+    "change what an agent may do in a connected application",
+  );
+  if (refusal) return c.json(refusal, 403);
+
   const parsed = grantSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const body = parsed.data;
 
   const db = c.get("db");
-  const workspaceId = await getActiveWorkspaceId(db, c.get("user").id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
   // `workspace_id` is denormalised and constrained to agree with both parents
@@ -610,6 +713,12 @@ composio.put("/composio/grants", async (c) => {
 });
 
 composio.delete("/composio/grants", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(
+    c,
+    "change what an agent may do in a connected application",
+  );
+  if (refusal) return c.json(refusal, 403);
+
   const agentId = c.req.query("agentId");
   const connectionId = c.req.query("connectionId");
   const slug = c.req.query("slug");

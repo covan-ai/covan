@@ -76,6 +76,36 @@ function servesLocalhostOnly(allowedOrigin: string): boolean {
     .every((o) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(o));
 }
 
+/**
+ * What makes this environment unfit to serve anybody, or null.
+ *
+ * The part of `loadEnv`'s checks that holds on any runtime: a value published
+ * in `.env.docker.example` on anything but a localhost stack, and a signing key
+ * too short to be one. `loadEnv` runs only on Node; the Worker asks this on its
+ * first request (`index.ts`), because a Cloudflare deploy configured from that
+ * file would otherwise serve with keys anybody can read on GitHub.
+ */
+export function unfitToServe(source: Record<string, unknown>): string | null {
+  const text = (k: string) => (typeof source[k] === "string" ? (source[k] as string) : undefined);
+  const origin = text("ALLOWED_ORIGIN") ?? "";
+  if (origin && !servesLocalhostOnly(origin)) {
+    const published = Object.entries(PUBLISHED_DEFAULTS)
+      .filter(([k, v]) => text(k) === v)
+      .map(([k]) => k);
+    if (published.length > 0) {
+      return (
+        `${published.join(", ")} still ${published.length > 1 ? "hold the values" : "holds the value"} ` +
+        `from .env.docker.example, which is public. Regenerate before serving.`
+      );
+    }
+  }
+  const jwt = text("SUPABASE_JWT_SECRET") || text("JWT_SECRET");
+  if (jwt && jwt.length < JWT_SECRET_MIN_CHARS) {
+    return `SUPABASE_JWT_SECRET is ${jwt.length} characters; it must be at least ${JWT_SECRET_MIN_CHARS}.`;
+  }
+  return null;
+}
+
 /** Byte length of a base64 string, or -1 if it is not base64 at all. */
 function base64Bytes(value: string): number {
   try {
@@ -119,6 +149,23 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
           `ALLOWED_ORIGIN to a localhost URL if this really is a local stack.`,
       );
     }
+  }
+
+  // The API's public host, which every OAuth redirect is built from. Without
+  // it the Node entry built `redirect_uri` from the Host header of whoever
+  // asked — a value the caller chooses — and sealed it into the grant the
+  // callback is completed with. Cloudflare routes only the hosts it is
+  // configured for, so this is Node's alone. Required only where there is an
+  // OAuth client to send anybody to.
+  const oauth = ["NOTION_CLIENT_ID", "GOOGLE_CLIENT_ID", "SLACK_CLIENT_ID"].filter(
+    (k) => source[k],
+  );
+  if (oauth.length > 0 && !source.WORKER_HOST) {
+    throw new Error(
+      `WORKER_HOST is required when ${oauth.join(", ")} ${oauth.length > 1 ? "are" : "is"} set. ` +
+        `It is the API's public host (for example api.example.com), the one the OAuth ` +
+        `redirect URIs are registered under. See docs/self-hosting.md.`,
+    );
   }
 
   // Checked here rather than at first use: encryptSecret is called the first
@@ -227,6 +274,9 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // stack that was never configured is still bounded. `0` turns a tier off.
     RATE_LIMIT_STANDARD_PER_MINUTE: source.RATE_LIMIT_STANDARD_PER_MINUTE,
     RATE_LIMIT_EXPENSIVE_PER_MINUTE: source.RATE_LIMIT_EXPENSIVE_PER_MINUTE,
+    // How many proxies to believe about the caller's address. Unset is none:
+    // the socket is the caller, and a forwarded header is somebody's claim.
+    TRUST_PROXY: source.TRUST_PROXY,
     DOCS_DIR: source.DOCS_DIR!,
     // DOCS stays undefined: there is no R2 binding off Cloudflare, and its
     // absence is what makes getDocStore choose the filesystem.

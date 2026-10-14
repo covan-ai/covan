@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -165,5 +165,34 @@ describe("a handler that reaches a connection's grant", () => {
       READ_ONLY_BY_DESIGN[label].length,
       `${label}'s reason is too short to be one`,
     ).toBeGreaterThan(30);
+  });
+});
+
+/**
+ * The pairing above is pinned in one file, so the grant has to stay in that
+ * file. A second route reading `connections` would bring its own way to the
+ * token and none of the checks this file holds `connections.ts` to — the gap
+ * this test used to have: it scanned one file.
+ */
+describe("the grant's one door", () => {
+  it("is routes/connections.ts: no other route reads the connections table", () => {
+    const dir = join(process.cwd(), "src", "routes");
+    const others = readdirSync(dir)
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "connections.ts")
+      .filter((f) => codeOnly(readFileSync(join(dir, f), "utf8")).includes('from("connections")'));
+    expect(
+      others,
+      "these read connections themselves. Reach a connection through routes/connections.ts, " +
+        "where every path to the grant asks mayChangeConnection first.",
+    ).toEqual([]);
+  });
+
+  it("checks for a holder before the token is used", () => {
+    // `tokenFor` asks `holderPresent` before decrypting anything: a token whose
+    // owner has left the workspace or closed their account is not used.
+    const route = codeOnly(readFileSync(ROUTE, "utf8"));
+    const tokenFor = route.slice(route.indexOf("async function tokenFor("));
+    expect(tokenFor.indexOf("holderPresent(")).toBeGreaterThan(-1);
+    expect(tokenFor.indexOf("holderPresent(")).toBeLessThan(tokenFor.indexOf("withSecret("));
   });
 });

@@ -326,6 +326,19 @@ export type Bindings = SyncEnv & {
   RATE_LIMIT_STANDARD_PER_MINUTE?: string;
   RATE_LIMIT_EXPENSIVE_PER_MINUTE?: string;
   /**
+   * The address of the socket this request arrived on. Node only: `node.ts`
+   * sets it on every request, and its presence is how `clientAddress` knows it
+   * is not on Cloudflare — where `CF-Connecting-IP` is the address and this is
+   * never set.
+   */
+  PEER_ADDR?: string;
+  /**
+   * How many proxies in front of the Node API append to `X-Forwarded-For`.
+   * Unset or `0`: none, and the socket address is the caller. See
+   * `clientAddress` in `middleware/ratelimit.ts`.
+   */
+  TRUST_PROXY?: string;
+  /**
    * Where a message from the quota wall goes. Defaults to `efe@covan.app`.
    *
    * A default rather than a required secret, so there is nothing to forget on
@@ -363,6 +376,13 @@ export type Variables = {
    * chiefly creating another key, which would make revocation meaningless.
    */
   apiKeyId?: string;
+  /**
+   * The workspace the key was made in, set beside `apiKeyId`. A key acts there
+   * and nowhere else: `callerWorkspaceId` answers with it instead of the
+   * owner's active workspace, and the token minted for the request carries it
+   * as `covan_ws`, which the workspace helpers in Postgres check (0087).
+   */
+  apiKeyWorkspaceId?: string;
   /**
    * Raised when anything in this request discovers the invocation is out of
    * platform budget, so a route can say so instead of "an error".

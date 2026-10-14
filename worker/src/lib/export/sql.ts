@@ -59,6 +59,10 @@ const SKIP = new Set(["profiles"]);
  */
 const OPTIONAL_REFS: Record<string, string> = {
   "ideas.source_message_id": "messages",
+  // The key a routine was made with (0088). Keys are never exported -- a hash
+  // of a token somebody else holds -- so this is always unreachable, and the
+  // restored routine is simply one nobody's key made.
+  "routines.api_key_id": "api_keys",
   // `routines.delivery_channel_id` was here and should never have been: the
   // column is `not null`, so nulling an unreachable reference does not rescue
   // the restore, it fails it in a less obvious place. That case is handled

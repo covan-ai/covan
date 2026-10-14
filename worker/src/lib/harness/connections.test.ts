@@ -154,7 +154,9 @@ describe("loadConnection", () => {
       db: {
         from: () => ({
           select: () => ({
-            eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
+            eq: () => ({
+              eq: () => ({ or: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }),
+            }),
           }),
         }),
       },

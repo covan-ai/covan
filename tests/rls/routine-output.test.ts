@@ -177,7 +177,14 @@ describe("what a filed document survives", () => {
   async function fileOne(routineId: string, bundleId: string, name: string): Promise<string> {
     const { data, error } = await serviceClient()
       .from("documents")
-      .insert({ bundle_id: bundleId, routine_id: routineId, name, size: 10, r2_key: `k/${name}` })
+      .insert({
+        bundle_id: bundleId,
+        routine_id: routineId,
+        name,
+        size: 10,
+        // Unique since 0085: one stored object belongs to one row.
+        r2_key: `${bundleId}/${crypto.randomUUID()}-${name}`,
+      })
       .select("id")
       .single();
     if (error) throw new Error(`filing failed: ${error.message}`);
@@ -237,13 +244,15 @@ describe("what a colleague can see about a filed document", () => {
       .update({ visibility: "private" })
       .eq("id", shared.routineId);
 
-    const { error: fileError } = await serviceClient().from("documents").insert({
-      bundle_id: shared.bundleId,
-      routine_id: shared.routineId,
-      name: "Weekly digest.md",
-      size: 10,
-      r2_key: "k/weekly",
-    });
+    const { error: fileError } = await serviceClient()
+      .from("documents")
+      .insert({
+        bundle_id: shared.bundleId,
+        routine_id: shared.routineId,
+        name: "Weekly digest.md",
+        size: 10,
+        r2_key: `${shared.bundleId}/${crypto.randomUUID()}-weekly.md`,
+      });
     expect(fileError).toBeNull();
 
     const { data, error } = await colleague.db

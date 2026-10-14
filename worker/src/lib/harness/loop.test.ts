@@ -365,6 +365,59 @@ describe("the budget", () => {
     ).toContain("used every tool call");
   });
 
+  // Credit used to be checked once, before the first pass, and a turn could
+  // then spend two dozen passes' worth past the balance — once per running
+  // turn. `mayContinue` is asked before every pass after the first.
+  it("stops when the workspace has no credit left for another step", async () => {
+    const asks = pass("", [{ id: "c", name: "search", arguments: "{}" }]);
+    scripted([asks, asks, pass("all I have")]);
+    const mayContinue = vi.fn(async () => mayContinue.mock.calls.length < 2);
+
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+      budget: { maxSteps: 20 },
+      mayContinue,
+    });
+
+    expect(mayContinue).toHaveBeenCalledTimes(2);
+    expect(turn.paused?.reason).toBe("credits");
+    // Two working passes, then the answer pass the "no" asked for.
+    expect(streamCompletion.mock.calls).toHaveLength(3);
+    expect(turn.text).toContain("all I have");
+    expect(
+      (streamCompletion.mock.calls.at(-1)?.[1].messages as CompletionMessage[]).at(-1)?.content,
+    ).toContain("run out of credits");
+  });
+
+  it("carries on when the credit question cannot be answered", async () => {
+    scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }])]);
+    const mayContinue = vi.fn(async () => {
+      throw new Error("ledger unreachable");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const turn = await runAgentTurn({
+      ...base,
+      tools: [tool("search", async () => ({ kind: "ok", content: "x" }))],
+      budget: { maxSteps: 3 },
+      mayContinue,
+    });
+
+    // The step budget ended it, not the unanswerable question.
+    expect(turn.paused?.reason).toBe("budget");
+  });
+
+  it("does not ask before the first pass, which the route's own check covered", async () => {
+    scripted([pass("the answer")]);
+    const mayContinue = vi.fn(async () => false);
+
+    const turn = await runAgentTurn({ ...base, tools: [], mayContinue });
+
+    expect(mayContinue).not.toHaveBeenCalled();
+    expect(turn.text).toBe("the answer");
+  });
+
   it("keeps the tool list on the budgeted pass, which is the dearest one to uncache", async () => {
     // Withholding the definitions is the one change that invalidates a prompt
     // cache from its first block — the provider renders tools before system
@@ -1540,12 +1593,16 @@ describe("a model that cannot be given tools", () => {
 
 describe("an approval scoped to a connection for the rest of the turn", () => {
   /** What the loop handed the tool, call by call. */
-  function recordingRunTool(seen: Array<string[] | undefined>): AgentTool {
+  /** `approval` is who the stub says let each call through. */
+  function recordingRunTool(
+    seen: Array<string[] | undefined>,
+    approval: "person" | "grant" | "connection" = "person",
+  ): AgentTool {
     return tool(
       "run_tool",
       async (_args, toolCtx) => {
         seen.push(toolCtx.approvedConnections);
-        return { kind: "ok", content: "done" };
+        return { kind: "ok", content: "done", approval };
       },
       { destructive: true },
     );
@@ -1561,11 +1618,28 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
     await runAgentTurn({ ...base, tools: [recordingRunTool(seen)] });
 
     // Nothing to go on for the first call — the tool is what asks. By the
-    // second, the first has landed as `ok`, which is the only status a
-    // `run_tool` step can reach without an approval behind it.
+    // second, the first has landed with a person's yes behind it.
     expect(seen[0]).toEqual([]);
     expect(seen[1]).toEqual(["conn-1"]);
   });
+
+  it.each(["grant", "connection"] as const)(
+    "does not unlock a connection for a call that landed on a %s",
+    async (approval) => {
+      // An always-allow is consent to one operation, not somebody watching
+      // this turn. Counted as a yes, one allowed read used to unlock the whole
+      // connection — in a scheduled run nobody was watching, too.
+      const seen: Array<string[] | undefined> = [];
+      scripted([
+        pass("", [{ id: "c1", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+        pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+        pass("done"),
+      ]);
+      await runAgentTurn({ ...base, tools: [recordingRunTool(seen, approval)] });
+
+      expect(seen[1]).toEqual([]);
+    },
+  );
 
   it("carries an approval across a resume, without a schema or a chat.ts change", async () => {
     // What `routes/chat.ts` hands back after somebody approves: the resolved
@@ -1585,11 +1659,38 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
           request: { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL" },
           resultExcerpt: "done",
           status: "ok",
+          approval: "person",
           durationMs: 5,
         },
       ],
     });
     expect(seen[0]).toEqual(["conn-1"]);
+  });
+
+  it("does not carry a step across a resume that says nothing of who approved it", async () => {
+    // A step parked before `approval` existed, or read back from
+    // `message_steps`, which does not store it. Read as nobody's yes: the cost
+    // is a card asked again, never a call let through.
+    const seen: Array<string[] | undefined> = [];
+    scripted([
+      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("done"),
+    ]);
+    await runAgentTurn({
+      ...base,
+      tools: [recordingRunTool(seen)],
+      stepsSoFar: [
+        {
+          index: 0,
+          tool: "run_tool",
+          request: { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL" },
+          resultExcerpt: "done",
+          status: "ok",
+          durationMs: 5,
+        },
+      ],
+    });
+    expect(seen[0]).toEqual([]);
   });
 
   it("does not read a refused or failed call as an approval", async () => {

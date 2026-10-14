@@ -110,10 +110,23 @@ export async function resolveApiKey(env: Bindings, token: string): Promise<Resol
   // The authoritative source for the email the minted token has to carry, and
   // the check that the account still exists at all — a deleted user leaves the
   // row behind only until the cascade runs.
-  const { data: found, error: userError } = await admin.auth.admin.getUserById(
-    row.user_id as string,
-  );
+  //
+  // Beside it, and in parallel: is the owner still in the workspace the key was
+  // made in? A key acts in that workspace only (`callerWorkspaceId`), so one
+  // whose owner has left or been removed has nothing it may reach. Refusing it
+  // here says so with a 401, rather than letting every route answer as if the
+  // workspace were empty.
+  const [{ data: found, error: userError }, { data: seat, error: seatError }] = await Promise.all([
+    admin.auth.admin.getUserById(row.user_id as string),
+    admin
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", row.workspace_id as string)
+      .eq("user_id", row.user_id as string)
+      .maybeSingle(),
+  ]);
   if (userError || !found?.user) return null;
+  if (seatError || !seat) return null;
 
   return {
     keyId: row.id as string,
@@ -131,8 +144,20 @@ export async function resolveApiKey(env: Bindings, token: string): Promise<Resol
  * except that it expires in a minute and names no session. `role` is what
  * PostgREST switches into, and `sub` is what `auth.uid()` reads; the rest is
  * what the client libraries expect to find.
+ *
+ * And two claims a session never carries, naming the key and the workspace it
+ * was made in. `covan_ws` is the one that does work: `public.request_workspace()`
+ * reads it, and the membership helpers and every workspace table's policies
+ * answer "no" to any other workspace (0087). That is what holds a key to its
+ * workspace on the routes that take an id rather than asking
+ * `callerWorkspaceId` — a document, a session, an export. `covan_key` is for
+ * the rows a key starts, which carry it (0088).
  */
-export async function mintUserToken(secret: string, user: User): Promise<string> {
+export async function mintUserToken(
+  secret: string,
+  user: User,
+  key: { keyId: string; workspaceId: string },
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   return signHs256(secret, {
     sub: user.id,
@@ -141,6 +166,8 @@ export async function mintUserToken(secret: string, user: User): Promise<string>
     aud: "authenticated",
     iat: now,
     exp: now + MINTED_TOKEN_TTL_SECONDS,
+    covan_key: key.keyId,
+    covan_ws: key.workspaceId,
   });
 }
 

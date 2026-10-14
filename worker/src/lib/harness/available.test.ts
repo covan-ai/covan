@@ -32,7 +32,9 @@ function dbWith(connections: unknown[], channels: unknown[]): SupabaseClient {
             // of the budget being told it is not finished.
             select: () => ({
               eq: () => ({
-                eq: () => ({ order: async () => ({ data: connections, error: null }) }),
+                or: () => ({
+                  eq: () => ({ order: async () => ({ data: connections, error: null }) }),
+                }),
               }),
             }),
           }
@@ -120,7 +122,9 @@ describe("capabilitiesFor", () => {
         return {
           select: () => ({
             eq: () => ({
-              eq: () => ({ order: async () => ({ data: [CONNECTION], error: null }) }),
+              or: () => ({
+                eq: () => ({ order: async () => ({ data: [CONNECTION], error: null }) }),
+              }),
             }),
           }),
         };

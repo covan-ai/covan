@@ -175,7 +175,15 @@ export async function embedTexts(env: EmbeddingConfig, texts: string[]): Promise
 
   for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {
     const batch = texts.slice(i, i + EMBED_BATCH_SIZE);
-    const res = await openai.embeddings.create({ model, input: batch });
+    let res;
+    try {
+      res = await openai.embeddings.create({ model, input: batch });
+    } catch (err) {
+      // The batches before this one were embedded and billed by the provider.
+      // The error carries their tokens so a caller that catches it can still
+      // charge for them — see `tokensSpentBefore`.
+      throw withSpentTokens(err, tokens);
+    }
     for (const d of res.data.slice().sort((a, b) => a.index - b.index)) {
       const vector = d.embedding as number[];
       // Checked here, where the endpoint is still nameable, rather than left to
@@ -185,12 +193,15 @@ export async function embedTexts(env: EmbeddingConfig, texts: string[]): Promise
       // symptom would be documents that upload fine and answer nothing, with a
       // constraint error in a log they have no reason to be reading.
       if (vector.length !== dimensions) {
-        throw new Error(
-          `Embedding model ${model} at ${env.EMBEDDING_BASE_URL || "api.openai.com"} returned ` +
-            `${vector.length} dimensions, but this database stores ${dimensions}. ` +
-            `Either point EMBEDDING_MODEL at a model of that width, or change the width — ` +
-            `supabase/optional/embedding_width.sql, then set EMBEDDING_DIMENSIONS to match ` +
-            `and re-embed via POST /admin/backfill-embeddings.`,
+        throw withSpentTokens(
+          new Error(
+            `Embedding model ${model} at ${env.EMBEDDING_BASE_URL || "api.openai.com"} returned ` +
+              `${vector.length} dimensions, but this database stores ${dimensions}. ` +
+              `Either point EMBEDDING_MODEL at a model of that width, or change the width — ` +
+              `supabase/optional/embedding_width.sql, then set EMBEDDING_DIMENSIONS to match ` +
+              `and re-embed via POST /admin/backfill-embeddings.`,
+          ),
+          tokens + (res.usage?.total_tokens ?? 0),
         );
       }
       vectors.push(vector);
@@ -199,4 +210,28 @@ export async function embedTexts(env: EmbeddingConfig, texts: string[]): Promise
   }
 
   return { vectors, tokens };
+}
+
+const SPENT = Symbol.for("covan.embeddedTokens");
+
+function withSpentTokens(err: unknown, tokens: number): unknown {
+  if (tokens > 0 && err !== null && typeof err === "object") {
+    (err as Record<symbol, number>)[SPENT] = tokens;
+  }
+  return err;
+}
+
+/**
+ * The tokens an `embedTexts` call had already spent when it threw.
+ *
+ * A document is embedded in batches, each billed by the provider as it
+ * returns, and a failure on the third leaves the first two paid for. Every
+ * caller catches that failure — a document is kept unindexed rather than lost
+ * — and used to record nothing at all, so the batches that did go through
+ * were free. Zero for anything that is not such an error.
+ */
+export function tokensSpentBefore(err: unknown): number {
+  if (err === null || typeof err !== "object") return 0;
+  const n = (err as Record<symbol, unknown>)[SPENT];
+  return typeof n === "number" && n > 0 ? n : 0;
 }

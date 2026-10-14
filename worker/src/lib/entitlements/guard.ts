@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import type { AppEnv } from "../../types";
-import { getActiveWorkspaceId } from "../workspace";
+import { callerWorkspaceId } from "../workspace";
 import type { Spend, SpendRef } from "./index";
 
 /**
@@ -31,7 +31,7 @@ export async function guardCredits(
   let id = workspaceId ?? null;
   if (!id) {
     try {
-      id = await getActiveWorkspaceId(c.get("db"), c.get("user").id);
+      id = await callerWorkspaceId(c);
     } catch (err) {
       console.error("could not resolve the workspace to charge (allowing the request)", err);
       return null;

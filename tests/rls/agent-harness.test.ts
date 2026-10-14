@@ -84,6 +84,9 @@ beforeAll(async () => {
       config: { rpc: "covan_query" },
       secret_ciphertext: CIPHERTEXT,
       created_by: owner.id,
+      // A team database, shared with the workspace (0098). The personal case
+      // has its own describe below.
+      scope: "workspace",
     })
     .select("id")
     .single();
@@ -248,7 +251,7 @@ describe("paused_turns", () => {
 });
 
 describe("tool_connections", () => {
-  it("is readable by every member, so an agent's reach is not a secret from the team", async () => {
+  it("is readable by every member once shared, so an agent's reach is not a secret from the team", async () => {
     for (const reader of [owner, colleague]) {
       const { data, error } = await reader.db.from("tool_connections").select("label, base_url");
       expect(error, `${reader.email}`).toBeNull();
@@ -328,6 +331,7 @@ describe("tool_connections", () => {
       auth_kind: "static_header",
       secret_ciphertext: CIPHERTEXT,
       created_by: owner.id,
+      scope: "workspace",
     });
     expect(error?.code).toBe("23505");
   });
@@ -397,8 +401,8 @@ describe("a composio connection", () => {
     appId = data.id as string;
   });
 
-  it("shows a member which application it is, and not which account", async () => {
-    const { data, error } = await colleague.db
+  it("shows its owner which application it is, and not which account", async () => {
+    const { data, error } = await owner.db
       .from("tool_connections")
       .select("label, toolkit_slug, status")
       .eq("id", appId)
@@ -431,8 +435,8 @@ describe("a composio connection", () => {
    * to want a field on this row will reach for `config` first. If this test
    * ever has to be changed to make room for an id, the change is wrong.
    */
-  it("lets a member edit config, which is why no account reference may live in it", async () => {
-    const { error } = await colleague.db
+  it("lets its owner edit config, which is why no account reference may live in it", async () => {
+    const { error } = await owner.db
       .from("tool_connections")
       .update({ config: { logo: "https://logos.composio.dev/api/gmail" } })
       .eq("id", appId);

@@ -539,6 +539,20 @@ the summary. Email goes through [Resend](https://resend.com), with the routine's
 name as the subject and the summary as plain text. The webhook kind is
 documented in full below — it is the one a program rather than a person reads.
 
+**An email address has to say yes.** Your own sign-in address is confirmed as
+it is added. Any other address is sent one fixed email — "somebody using Covan
+asked to send routine results here" — with a link to `/confirm-address`, and
+nothing is delivered to it until somebody there opens the link and presses
+**Confirm**. Until then the channel shows _Waiting for confirmation_, a run that
+would deliver to it fails with a sentence saying so, and **Send test** asks the
+address again instead of sending a test. A link works for seven days. An
+address is asked at most once a day, and one person can ask five new addresses
+a day. The confirmation email carries no routine name, person's name or
+workspace: it goes to an address that has not agreed to hear from anybody yet.
+Channels that existed before this (migration `0096`) are treated the same way
+on their next delivery: a person's own address is confirmed on the spot, and
+any other is asked.
+
 Every kind has a **Send test** button on its row in Settings. It sends one
 message through the channel immediately and reports what the receiver said,
 including the receiver's own error text when it refuses. "Did I paste that URL
@@ -693,17 +707,28 @@ force all of them to be rotated at once. One channel's secret rotates alone.
 A routine normally runs on its cron. One with **no source of its own** can also
 be given a URL that starts it:
 
+Send the token in a header when the sender can set one:
+
+```
+POST https://api.example.com/routine-hooks/-
+X-Covan-Ingest-Token: covan_whk_<token>
+```
+
+The header wins over the path, and a token in a header stays out of access
+logs, proxy logs and the platform's request logs, which keep the path. A CI
+job's `curl`, a Zapier step and most scripts can do this.
+
+When the sender cannot — GitHub's webhook box and Stripe's endpoint take one
+URL and nothing else — the token goes in the path:
+
 ```
 POST https://api.example.com/routine-hooks/covan_whk_<token>
 ```
 
-Paste it into GitHub's webhook box, a Stripe endpoint, a Zapier step, a CI job,
-or a `curl` in somebody's deploy script. Whatever is POSTed becomes the material
-the agent reads, in place of a feed or a page. The URL shape is the feature —
-it has to be one string, because most of the things that will be calling it
-cannot be taught to set a header. For the ones that can,
-`X-Covan-Ingest-Token` is accepted and wins over the path, so the credential
-need not end up in an access log.
+Treat that URL as the secret it contains: anybody who sees it can start the
+routine, and it is recorded wherever the request path is. Rotate the token if
+the URL lands somewhere it should not. Whatever is POSTed becomes the material
+the agent reads, in place of a feed or a page.
 
 **Only a routine with no source.** "The routine watches an RSS feed and
 somebody poked it — does it re-fetch?" has no good answer: if it does, a busy

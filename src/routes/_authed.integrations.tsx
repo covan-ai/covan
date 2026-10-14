@@ -21,6 +21,10 @@ import { SlackMark } from "@/components/integrations/brand-marks";
 import { useConnections, useSlack, useToolConnections } from "@/hooks/use-connections";
 import { useAgentsStore } from "@/lib/agents-store";
 import { connectErrorMessage } from "@/lib/connections-api";
+import { api, ApiError } from "@/lib/api-client";
+import { endFlow, flowNonce } from "@/lib/flow-nonce";
+import { takePendingGrant } from "@/lib/sensitive-url";
+import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_authed/integrations")({
   component: IntegrationsPage,
@@ -44,46 +48,72 @@ const CONNECTED_LABEL: Record<string, string> = {
 };
 
 /**
- * Read the outcome of a grant out of the URL, say it once, and take it out of
- * the address bar.
+ * Finish a flow the provider sent this tab back from, and say how it went.
  *
- * `replaceState` rather than a router navigation: this is not a place in the
- * application, it is a message that has been delivered. Left in place it would
- * re-announce itself on every reload and, worse, would still be there when
- * somebody copied the link.
+ * The provider's redirect carries a grant rather
+ * than a finished connection: the callback cannot tell who is at the browser,
+ * so it decides nothing, and this page completes the flow with an
+ * authenticated request — as the person who started it, holding the nonce this
+ * tab started it with. `lib/sensitive-url.ts` has already taken the grant out
+ * of the address bar into session storage; reading it here removes it, so it
+ * is finished at most once, StrictMode's double effect included.
+ *
+ * Errors still arrive as `?error=` from the callback itself (cancelled,
+ * expired) and are read the way they always were.
  */
 function useGrantOutcome() {
+  const queryClient = useQueryClient();
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const connected = params.get("connected");
-    // A reconnect comes back under its own name, because "Notion connected"
-    // after replacing a grant reads as a second connection having appeared —
-    // which is exactly what used to happen, and exactly what this stopped.
-    const reconnected = params.get("reconnected");
     const error = params.get("error");
-    if (!connected && !reconnected && !error) return;
-
-    if (reconnected) {
-      toast.success(`${CONNECTED_LABEL[reconnected] ?? reconnected} reconnected.`);
-    }
-
-    if (connected) {
-      // Named providers are done by the time they land back here — the grant
-      // was exchanged before the redirect. A connected application is not: the
-      // row is still `pending` and only the card's own poll can settle it, so
-      // saying "connected" here asserts something this code cannot back, and
-      // would say it over a connection that turns out to have failed.
-      if (CONNECTED_LABEL[connected]) {
-        toast.success(`${CONNECTED_LABEL[connected]} connected.`);
-      } else {
-        toast.success(`Finishing ${connected}…`);
-      }
-    } else if (error) {
+    if (error) {
       toast.error(connectErrorMessage(error));
+      window.history.replaceState({}, "", window.location.pathname);
     }
 
-    window.history.replaceState({}, "", window.location.pathname);
-  }, []);
+    const pending = takePendingGrant();
+    if (!pending) return;
+    const nonce = flowNonce();
+    endFlow();
+
+    const settle = async () => {
+      try {
+        if (pending.kind === "composio") {
+          const done = await api.composio.complete(pending.nonce);
+          toast.success(
+            done.status === "active"
+              ? `${pending.toolkit} connected.`
+              : `Finishing ${pending.toolkit}…`,
+          );
+        } else if (!nonce) {
+          toast.error(connectErrorMessage("not_yours"));
+          return;
+        } else if (pending.for === "slack") {
+          await api.slack.complete({ grant: pending.grant, nonce });
+          toast.success("Slack connected.");
+        } else {
+          const done = await api.connections.complete({ grant: pending.grant, nonce });
+          const label = CONNECTED_LABEL[done.provider] ?? done.provider;
+          // A reconnect comes back under its own name, because "Notion
+          // connected" after replacing a grant reads as a second connection
+          // having appeared — which is exactly what used to happen.
+          toast.success(done.reconnected ? `${label} reconnected.` : `${label} connected.`);
+        }
+      } catch (e) {
+        toast.error(
+          connectErrorMessage(e instanceof ApiError ? apiErrorCode(e.message) : "save_failed"),
+        );
+      } finally {
+        await queryClient.invalidateQueries();
+      }
+    };
+    void settle();
+  }, [queryClient]);
+}
+
+/** The API answers `{ error: "<code>" }`; `ApiError` carries the code as its message. */
+function apiErrorCode(message: string): string {
+  return /^[a-z_]+$/.test(message) ? message : "save_failed";
 }
 
 /**

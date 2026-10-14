@@ -54,3 +54,23 @@ describe("encryptSecret / decryptSecret", () => {
     await expect(decryptSecret(await encryptSecret("secret", KEY), other)).rejects.toThrow();
   });
 });
+
+describe("a sealed value's purpose", () => {
+  const KEY_B64 = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+
+  it("opens only for the purpose it was sealed for", async () => {
+    const { encryptSecret, decryptSecret } = await import("./secret-box");
+    const state = await encryptSecret("x", KEY_B64, "covan/oauth-state/v2");
+
+    expect(await decryptSecret(state, KEY_B64, "covan/oauth-state/v2")).toBe("x");
+    // One key seals stored secrets, states and grants. Without a purpose any
+    // of them would open as any other.
+    await expect(decryptSecret(state, KEY_B64, "covan/oauth-grant/v1")).rejects.toThrow();
+    await expect(decryptSecret(state, KEY_B64)).rejects.toThrow();
+  });
+
+  it("leaves a stored secret, sealed with no purpose, readable as before", async () => {
+    const { encryptSecret, decryptSecret } = await import("./secret-box");
+    expect(await decryptSecret(await encryptSecret("y", KEY_B64), KEY_B64)).toBe("y");
+  });
+});

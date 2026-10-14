@@ -33,10 +33,13 @@ vi.mock("../routines/delivery", async (importOriginal) => {
   };
 });
 
-const record = vi.fn(async (): Promise<void> => {});
+const record = vi.fn(async (..._args: unknown[]): Promise<void> => {});
 vi.mock("../entitlements", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../entitlements")>();
-  return { ...actual, entitlementsFor: () => ({ record: () => record() }) };
+  return {
+    ...actual,
+    entitlementsFor: () => ({ record: (...args: unknown[]) => record(...args) }),
+  };
 });
 
 /**
@@ -147,8 +150,10 @@ function fakeDb(): SupabaseClient {
         return {
           select: () => ({
             eq: () => ({
-              order: () => ({
-                limit: () => ({ maybeSingle: async () => ({ data: channelRow, error: null }) }),
+              is: () => ({
+                order: () => ({
+                  limit: () => ({ maybeSingle: async () => ({ data: channelRow, error: null }) }),
+                }),
               }),
             }),
           }),
@@ -211,7 +216,16 @@ function fakeDb(): SupabaseClient {
 
 beforeEach(() => {
   agentRow = { model: "gpt-4.1", temperature: 0.4, reasoning_effort: null };
-  channelRow = { id: "ch-1", kind: "email", secret_ciphertext: "v1.x" };
+  // Confirmed (0096): an address that has not said yes is not mailed, and
+  // that is `address-confirmation.test.ts`'s to hold.
+  channelRow = {
+    id: "ch-1",
+    user_id: "user-1",
+    kind: "email",
+    secret_ciphertext: "v1.x",
+    confirmed_at: "2026-10-01T00:00:00Z",
+    confirmation_sent_at: null,
+  };
   sessionExists = true;
   inserted = [];
   messageInsertFails = false;
@@ -268,15 +282,31 @@ describe("a finished task", () => {
   });
 
   /**
-   * Bookkeeping on the row, not a second charge. The 137,000 tokens taken
-   * when the task was created already stand for $0.17, which dwarfs one small
-   * completion — charging the allowance again here would bill twice for one
-   * piece of work.
+   * Charged, against the message rather than the task. It used to be left
+   * off because the task's provisional hold stood for far more — but the hold
+   * is settled to the provider's own figure, which knows nothing of this
+   * completion, so after settling nobody had paid for it. Filed without the
+   * task's id: a ledger row carrying it would be folded into what the settle
+   * makes equal the provider's bill, and refunded.
    */
-  it("records what the phrasing call cost without charging the allowance again", async () => {
+  it("charges the workspace for the phrasing call, filed against the message", async () => {
     await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
     expect(inserted[0]).toMatchObject({ prompt_tokens: 300, completion_tokens: 40 });
-    expect(record).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledTimes(1);
+    const [workspaceId, spent, ref] = record.mock.calls[0] as [
+      string,
+      Array<Record<string, unknown>>,
+      Record<string, unknown>,
+    ];
+    expect(workspaceId).toBe(ROW.workspace_id);
+    expect(spent[0]).toMatchObject({
+      kind: "completion",
+      promptTokens: 300,
+      completionTokens: 40,
+      purpose: "summary",
+    });
+    expect(ref).not.toHaveProperty("browserTaskId");
+    expect(ref).toMatchObject({ userId: ROW.user_id, sessionId: ROW.session_id });
   });
 
   it("notifies the person through their delivery channel", async () => {

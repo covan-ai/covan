@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { toEpochMs } from "../lib/dto";
 import { callDeletionFn, isRestorable, RESTORABLE, RETENTION_DAYS } from "../lib/deletion";
 
@@ -30,9 +30,8 @@ type TrashRow = {
  */
 trash.get("/trash", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ items: [], retentionDays: RETENTION_DAYS });
 
   const { data, error } = await db.rpc("workspace_trash", { p_workspace_id: workspaceId });

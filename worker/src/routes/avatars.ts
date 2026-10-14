@@ -12,6 +12,7 @@ import {
   contentTypeForAvatarFile,
   sniffImage,
 } from "../lib/avatars";
+import { uploadLimit } from "../lib/body-limit";
 
 /**
  * A profile photo somebody uploads, and the route that shows it to everybody
@@ -60,7 +61,7 @@ async function currentAvatarKey(db: AppEnv["Variables"]["db"], userId: string) {
 }
 
 // PUT /me/avatar — multipart `file`; PNG, JPEG or WebP, at most 2 MB.
-avatars.put("/me/avatar", async (c) => {
+avatars.put("/me/avatar", uploadLimit(AVATAR_MAX_BYTES, TOO_LARGE.error), async (c) => {
   const db = c.get("db");
   const user = c.get("user");
 

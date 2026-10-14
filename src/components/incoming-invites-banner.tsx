@@ -1,31 +1,15 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
-import { api, ApiError } from "@/lib/api-client";
+import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
-import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
-import { toast } from "sonner";
+import { OPEN_THE_EMAIL, useAcceptInvitation } from "@/lib/accept-invitation";
 
 export function IncomingInvitesBanner() {
-  const queryClient = useQueryClient();
   const { data: incoming = [] } = useQuery({
     queryKey: ["invitations", "incoming"],
     queryFn: () => api.invitations.incoming(),
   });
-
-  const accept = async (id: string) => {
-    try {
-      await api.invitations.accept(id);
-      // Accepting changes which workspace the whole app is looking at, so it
-      // invalidates exactly what switching workspaces does — including the
-      // incoming invitations themselves, which `invitations` prefix-matches.
-      // This was a hand-written list until it had silently drifted four keys
-      // from the real one.
-      await invalidateWorkspaceScoped(queryClient);
-      toast.success("You've joined the workspace");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't accept invite");
-    }
-  };
+  const { accept, canAccept, busy } = useAcceptInvitation();
 
   if (incoming.length === 0) return null;
 
@@ -37,9 +21,21 @@ export function IncomingInvitesBanner() {
           <span className="text-sm">
             You've been invited to <strong>{inv.workspaceName}</strong> as {inv.role}.
           </span>
-          <Button size="sm" className="ml-auto" onClick={() => accept(inv.id)}>
-            Accept
-          </Button>
+          {/* Accepting takes the token from the invitation's email. Without it
+              in this browser a button would only ever be refused, so the
+              banner says where the way in is instead. */}
+          {canAccept(inv.id) ? (
+            <Button
+              size="sm"
+              className="ml-auto"
+              disabled={busy}
+              onClick={() => void accept(inv.id)}
+            >
+              Accept
+            </Button>
+          ) : (
+            <span className="ml-auto text-meta text-muted-foreground">{OPEN_THE_EMAIL}</span>
+          )}
         </div>
       ))}
     </div>

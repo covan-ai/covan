@@ -35,6 +35,9 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
     // Which ones, not just how many: these are the addresses the copy action
     // below has to name, and each person needs their own.
     const unmailed: string[] = [];
+    // And the links for them, which exist only in these responses (migration
+    // 0090): the copy action below is the only way they leave this page.
+    const copyable: { email: string; url: string }[] = [];
     for (const email of wanted) {
       try {
         const invite = await api.invitations.create({ email, role: "member" });
@@ -42,7 +45,10 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
         // Undefined means "this response does not know", which is not the same
         // as false — but no create response omits it, and counting an unknown
         // as unsent is the error that costs nothing.
-        if (!invite.emailed) unmailed.push(invite.email);
+        if (!invite.emailed) {
+          unmailed.push(invite.email);
+          if (invite.inviteUrl) copyable.push({ email: invite.email, url: invite.inviteUrl });
+        }
       } catch (err) {
         failed.push(err instanceof ApiError ? `${email} (${err.message})` : email);
       }
@@ -59,13 +65,13 @@ export function InviteStep({ onDone }: { onDone: () => void }) {
     // invitation, but nobody has seen the Team page yet.
     toast[notice.tone](
       notice.message,
-      unmailed.length === 0
+      copyable.length === 0
         ? undefined
         : {
             duration: 12000,
             action: {
-              label: unmailed.length === 1 ? "Copy invite text" : "Copy invite texts",
-              onClick: () => copyInviteText(unmailed),
+              label: copyable.length === 1 ? "Copy invite text" : "Copy invite texts",
+              onClick: () => copyInviteText(copyable),
             },
           },
     );

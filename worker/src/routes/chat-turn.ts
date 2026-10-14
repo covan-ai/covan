@@ -14,6 +14,7 @@ import type { MessageOutcome, TurnUsage } from "../lib/harness/usage";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
 import type { ComposioTool } from "../lib/composio/client";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
+import { completionSpend, spends, type Entitlements } from "../lib/entitlements";
 
 /**
  * The half of a chat turn that both chat routes do the same way.
@@ -268,6 +269,8 @@ export async function runChatTurn(opts: {
   send: (event: Record<string, unknown>) => void;
   /** Filled as the turn runs. The caller's `catch` reads it. */
   spend: TurnSpend;
+  /** Asked before each pass after the first; see `creditHold`. */
+  mayContinue?: () => Promise<boolean>;
 }): Promise<AgentTurn> {
   const { send, spend } = opts;
   return runAgentTurn({
@@ -306,7 +309,47 @@ export async function runChatTurn(opts: {
     // Kept as well as shown: the only copies that survive this throwing.
     onStep: (step) => spend.steps.push(step),
     onPass: (usage) => spend.passes.push(usage),
+    ...(opts.mayContinue ? { mayContinue: opts.mayContinue } : {}),
   });
+}
+
+/**
+ * A turn's running spend, held against its workspace step by step.
+ *
+ * Before every pass after the first the turn's spend so far is held under one
+ * id (`Entitlements.hold`), which other turns starting or continuing in the
+ * same workspace see, and the answer is whether credit is left for another
+ * step. Released once the turn's charge is recorded. A deployment whose
+ * entitlements hold nothing — the open build — gets no `mayContinue` and a
+ * release that does nothing.
+ *
+ * Pass the workspace `guardCredits` resolved, because that is the one the
+ * turn will be charged to.
+ */
+export function creditHold(
+  entitlements: Entitlements | undefined,
+  workspaceId: string | undefined,
+  model: string,
+  spend: TurnSpend,
+): { mayContinue?: () => Promise<boolean>; release: () => Promise<void> } {
+  if (!entitlements?.hold || !workspaceId) return { release: async () => {} };
+  const holdId = crypto.randomUUID();
+  return {
+    mayContinue: () =>
+      entitlements.hold!(
+        workspaceId,
+        holdId,
+        spends(completionSpend(model, spentUsage(spend), "reply")),
+      ),
+    release: async () => {
+      try {
+        await entitlements.release?.(holdId);
+      } catch (err) {
+        // It lapses on its own; see `credit_holds` in supabase/cloud/0004.
+        console.error("could not release a turn's credit hold", err);
+      }
+    },
+  };
 }
 
 /** Whether this is the person closing the tab rather than the turn failing. */

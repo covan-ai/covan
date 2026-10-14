@@ -1,4 +1,4 @@
-import { serve } from "@hono/node-server";
+import { serve, type Http2Bindings, type HttpBindings } from "@hono/node-server";
 import { app } from "./index";
 import { loadEnv } from "./lib/env";
 import { runScheduledWork } from "./lib/background";
@@ -38,9 +38,23 @@ const tickMs = Number(process.env.ROUTINE_TICK_MS ?? 60_000);
  */
 const purgeMs = Number(process.env.PURGE_TICK_MS ?? 3_600_000);
 
-const server = serve({ fetch: (request: Request) => app.fetch(request, env), port }, (info) => {
-  console.log(`covan-api listening on http://localhost:${info.port}`);
-});
+/**
+ * The socket's address rides along with the bindings, because nothing else on
+ * this side says who is calling. Cloudflare puts that in `CF-Connecting-IP`;
+ * here any client can send that header, so `clientAddress` ignores it whenever
+ * `PEER_ADDR` is present and believes forwarded headers only as far as
+ * `TRUST_PROXY` says.
+ */
+const server = serve(
+  {
+    fetch: (request: Request, node: HttpBindings | Http2Bindings) =>
+      app.fetch(request, { ...env, PEER_ADDR: node.incoming.socket.remoteAddress ?? "" }),
+    port,
+  },
+  (info) => {
+    console.log(`covan-api listening on http://localhost:${info.port}`);
+  },
+);
 
 const tick = setInterval(() => {
   runScheduledWork(env).catch((err) => console.error("scheduled tick failed", err));

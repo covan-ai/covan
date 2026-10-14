@@ -15,10 +15,11 @@ import { ComposioCard } from "./composio-card";
  * what exists without being offered a control that would answer 403, and a
  * standing permission is listed with a way to take it back.
  */
-const { connect, removeConnection, revokeGrant } = vi.hoisted(() => ({
+const { connect, removeConnection, revokeGrant, updateConnection } = vi.hoisted(() => ({
   connect: { mutate: vi.fn(), isPending: false },
   removeConnection: { mutate: vi.fn(), isPending: false },
   revokeGrant: { mutate: vi.fn(), isPending: false },
+  updateConnection: { mutate: vi.fn(), isPending: false },
 }));
 
 const AGENTS = [{ id: "agent-1", name: "Sales" }];
@@ -73,6 +74,7 @@ vi.mock("@/hooks/use-connections", () => ({
   useConnectComposio: () => connect,
   useComposioStatus: () => ({ data: undefined }),
   useRemoveToolConnection: () => removeConnection,
+  useUpdateToolConnection: () => updateConnection,
 }));
 
 function app(over: Partial<ToolConnection> = {}): ToolConnection {
@@ -87,6 +89,8 @@ function app(over: Partial<ToolConnection> = {}): ToolConnection {
     toolkitSlug: "gmail",
     status: "active",
     logoPath: "/composio/logo?u=https%3A%2F%2Flogos.composio.dev%2Fapi%2Fgmail",
+    scope: "owner",
+    mine: true,
     createdAt: 1,
     ...over,
   };
@@ -212,5 +216,25 @@ describe("ComposioCard", () => {
       { agentId: "agent-1", connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL" },
       expect.anything(),
     );
+  });
+
+  // 0098: personal unless shared, and only the person who connected it can
+  // share it or take it back.
+  it("says whose a connected app is, and offers sharing only to whoever connected it", async () => {
+    render(<ComposioCard connections={[app({ scope: "owner", mine: true })]} agents={AGENTS} />);
+    expect(screen.getByText("Only you")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect(updateConnection.mutate).toHaveBeenCalledWith(
+      { id: expect.any(String), patch: { shared: true } },
+      expect.anything(),
+    );
+  });
+
+  it("shows a colleague's shared app as shared, with no switch", () => {
+    render(
+      <ComposioCard connections={[app({ scope: "workspace", mine: false })]} agents={AGENTS} />,
+    );
+    expect(screen.getByText("Shared")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /share/i })).toBeNull();
   });
 });

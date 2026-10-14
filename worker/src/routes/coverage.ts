@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 
 const coverage = new Hono<AppEnv>();
 
@@ -93,10 +93,9 @@ function isNotAdmin(error: { code?: string }): boolean {
 // caller to have checked is one refactor away from being wrong.
 coverage.get("/coverage/workspace", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
   const days = windowDays(c.req.query("days"));
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ available: true, days, totals: emptyTotals, agents: [] });
   }
@@ -173,14 +172,13 @@ const updateSettingsSchema = z.object({ enabled: z.boolean() });
  */
 coverage.patch("/coverage/settings", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
   const parsed = updateSettingsSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ error: "no workspace found for user" }, 404);
   }
@@ -222,7 +220,7 @@ coverage.put("/coverage/preference", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ error: "no workspace found for user" }, 404);
   }
@@ -273,7 +271,7 @@ coverage.get("/coverage/preference", async (c) => {
   const db = c.get("db");
   const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ error: "no workspace found for user" }, 404);
   }

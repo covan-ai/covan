@@ -30,7 +30,7 @@ const routine: Routine = {
 };
 
 const channels: DeliveryChannel[] = [
-  { id: "c1", kind: "email", label: "e••@example.com", createdAt: Date.now() },
+  { id: "c1", kind: "email", label: "e••@example.com", createdAt: Date.now(), confirmed: true },
 ];
 
 async function open(onSave = vi.fn()) {

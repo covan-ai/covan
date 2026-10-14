@@ -17,9 +17,15 @@ import { anonClient, closeSql, sql } from "./harness";
  * dangerous one — but it must be a decision rather than an oversight, which is
  * what this list records. These rows are written and read only by the Worker
  * through the service-role client, which bypasses RLS: `routine_deliveries` by
- * the scheduled sync.
+ * the scheduled sync, and — on the hosted service only — `credit_holds` by the
+ * credit check before every step of a turn (supabase/cloud/0004), and
+ * `signup_grant_addresses` by the new-workspace trigger (cloud/0005).
  */
-const SERVICE_ROLE_ONLY = new Set(["routine_deliveries"]);
+const SERVICE_ROLE_ONLY = new Set(["routine_deliveries", "credit_holds", "signup_grant_addresses"]);
+
+// The two that exist only where supabase/cloud/ is applied. A database without
+// them is the open-source one, not a stale list.
+const HOSTED_ONLY = new Set(["credit_holds", "signup_grant_addresses"]);
 
 let tables: string[] = [];
 
@@ -86,6 +92,7 @@ describe("row level security", () => {
     const byName = new Map(rows.map((r) => [r.name, r.policies]));
 
     for (const name of SERVICE_ROLE_ONLY) {
+      if (HOSTED_ONLY.has(name) && !byName.has(name)) continue;
       expect(byName.has(name), `${name} is listed as service-role-only but no longer exists`).toBe(
         true,
       );
@@ -114,6 +121,48 @@ describe("an anonymous caller", () => {
     }
 
     expect(readable).toEqual([]);
+  });
+
+  // Reading was the only thing this suite asked of `anon`, and the only thing
+  // that kept writes out was the policies — until 0089 took every grant away.
+  // So the refusal asked for here is the grant's (42501), not a policy's empty
+  // answer: a table `anon` could write to the moment somebody added a careless
+  // policy is the failure.
+  it("can write nothing, to any table, by grant", async () => {
+    const anon = anonClient();
+
+    const writable: string[] = [];
+    for (const table of tables) {
+      const insert = await anon.from(table).insert({});
+      const [first] = await sql()<{ column_name: string }[]>`
+        select column_name from information_schema.columns
+         where table_schema = 'public' and table_name = ${table}
+         order by ordinal_position limit 1`;
+      const remove = await anon.from(table).delete().is(first.column_name, null);
+      if (insert.error?.code !== "42501" || remove.error?.code !== "42501") writable.push(table);
+    }
+
+    expect(writable).toEqual([]);
+  });
+
+  it("can call none of the functions a signed-in client calls", async () => {
+    const anon = anonClient();
+    const id = "00000000-0000-4000-8000-000000000000";
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["create_workspace", { p_name: "anon" }],
+      ["is_workspace_member", { p_workspace_id: id }],
+      ["soft_delete_document", { p_document_id: id }],
+      ["restore_agent", { p_agent_id: id }],
+      ["workspace_usage_all", { p_workspace_id: id }],
+    ];
+
+    const callable: string[] = [];
+    for (const [fn, args] of calls) {
+      const { error } = await anon.rpc(fn, args);
+      if (error?.code !== "42501") callable.push(`${fn}: ${error?.code ?? "ok"}`);
+    }
+
+    expect(callable).toEqual([]);
   });
 });
 
@@ -149,12 +198,13 @@ describe("security definer functions", () => {
    * later `drop function` undid.
    *
    * Supabase grants EXECUTE on new functions to `anon` by name, so this asks
-   * the database rather than the migrations. The five that remain are the
-   * policy helpers: policies are evaluated as the caller, every policy naming
-   * one is `to public`, and each answers false for a null `auth.uid()`. 0084
-   * has the argument; docs/security.md has the rule.
+   * the database rather than the migrations. 0084_the_deleted_and_the_anonymous
+   * left the five policy helpers, because `anon` still held table privileges
+   * and every policy naming one is `to public`. 0089 took those table
+   * privileges, and the helpers with them, so nothing remains.
+   * docs/security.md has the rule.
    */
-  it("are not executable by anon, apart from the policy helpers", async () => {
+  it("are not executable by anon", async () => {
     const rows = await sql()<{ name: string }[]>`
       select p.proname as name
       from pg_proc p
@@ -165,12 +215,6 @@ describe("security definer functions", () => {
       order by p.proname
     `;
 
-    expect(rows.map((r) => r.name)).toEqual([
-      "can_write_in_workspace",
-      "is_workspace_admin",
-      "is_workspace_member",
-      "session_is_visible",
-      "shares_workspace",
-    ]);
+    expect(rows.map((r) => r.name)).toEqual([]);
   });
 });

@@ -49,6 +49,17 @@ updates:
     labels:
       - "dependencies"
 
+  # The two images the self-host stack builds from. Their base images are
+  # pinned by tag (oven/bun, node), and a tag that is never moved is a base
+  # that never gets its security fixes.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

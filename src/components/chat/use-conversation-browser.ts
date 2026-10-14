@@ -6,6 +6,7 @@ import {
   type BrowserTask,
   type ConversationBrowser,
 } from "@/lib/api-client";
+import { safeNavigationUrl } from "@/lib/safe-url";
 
 /**
  * What the chat screen and the browser panel both read about the browser
@@ -268,8 +269,10 @@ export async function openInNewWindow(mint: () => Promise<string>): Promise<void
         "Your browser blocked the new window. Allow pop-ups for Covan and try again.",
       );
     }
+    const safe = safeNavigationUrl(url);
+    if (!safe) throw new Error("That browser sent back an address Covan won't open.");
     tab.opener = null;
-    tab.location.replace(url);
+    tab.location.replace(safe);
   } catch (err) {
     tab?.close();
     throw err;

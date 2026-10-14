@@ -1,5 +1,8 @@
 import { retrieveForAgent } from "../../retrieval";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
+import { spend } from "../spend";
+import { embeddingSpend, spends } from "../../entitlements";
+import { embeddingModel } from "../../embeddings";
 
 /**
  * The first tool, and the one that proves the loop without taking any risk.
@@ -72,7 +75,7 @@ export const searchDocumentsTool: AgentTool = {
       return { kind: "error", message: "query is required and must be a non-empty string" };
     }
 
-    const { ragBlock, sources } = await retrieveForAgent(
+    const { ragBlock, sources, embeddingTokens } = await retrieveForAgent(
       ctx.db,
       ctx.env,
       ctx.agentId,
@@ -82,6 +85,11 @@ export const searchDocumentsTool: AgentTool = {
       // the only thing `retrieveForAgent` reads history for.
       [],
     );
+
+    // The query was embedded to search with, and the route that charged for
+    // the turn never saw it — the model chose to search, as many times as it
+    // liked. Charged here, the way a connected-service call is.
+    await spend(ctx, spends(embeddingSpend(embeddingModel(ctx.env), embeddingTokens, "retrieval")));
 
     if (!ragBlock.trim()) {
       return { kind: "ok", content: NO_PASSAGE_MATCHED };

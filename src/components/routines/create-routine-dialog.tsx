@@ -288,7 +288,7 @@ export function CreateRoutineDialog({
   const save = async () => {
     setFieldError(null);
     try {
-      await createRoutine.mutateAsync({
+      const created = await createRoutine.mutateAsync({
         agentId,
         name: name.trim(),
         sourceKind,
@@ -306,7 +306,11 @@ export function CreateRoutineDialog({
         timezone,
         endsAfterRuns,
       });
-      toast.success("Routine created");
+      toast.success(
+        created.confirmation
+          ? "Routine created. We've emailed that address a link — nothing is sent there until it's confirmed."
+          : "Routine created",
+      );
       close();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Could not create that routine";

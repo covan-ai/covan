@@ -3,7 +3,8 @@ import type { AppEnv } from "../types";
 import { deferred } from "../lib/defer";
 import { getRateLimiter } from "../lib/ratelimit";
 import { readCapped } from "../lib/routines/source";
-import { resolveIngestToken, touchTrigger } from "../lib/routines/ingest";
+import { hashIngestToken, resolveIngestToken, touchTrigger } from "../lib/routines/ingest";
+import { countMiss, hasSpentMisses, refuseSpent } from "../middleware/ratelimit";
 import { runPokedRoutine } from "../lib/routines/dispatcher";
 
 /**
@@ -47,6 +48,11 @@ const MAX_BODY_BYTES = 64 * 1024;
 const EVENT_ID_HEADERS = ["X-Covan-Event-Id", "Idempotency-Key", "X-GitHub-Delivery"];
 
 routineHooks.post("/routine-hooks/:token", async (c) => {
+  // An address that keeps sending tokens that resolve to nothing is refused
+  // before it costs another lookup. See `countMiss` for why this door is not
+  // behind the per-address limit everything else is.
+  if (hasSpentMisses(c)) return refuseSpent(c);
+
   // Cheap refusal first, for a sender that announced the size. The streaming
   // cap below is the real guard — `Content-Length` is a claim, not a fact.
   const announced = Number(c.req.header("Content-Length") ?? "");
@@ -64,23 +70,31 @@ routineHooks.post("/routine-hooks/:token", async (c) => {
   // The header wins over the path so a sender that can set one is not forced
   // to put its credential in a URL that ends up in somebody's access log.
   const token = c.req.header("X-Covan-Ingest-Token") ?? c.req.param("token");
-  const resolved = await resolveIngestToken(c.env, token);
-  if (!resolved.ok) return c.json({ error: resolved.error }, resolved.status);
 
-  const routine = resolved.routine;
-
-  // Counted per routine, not per address.
+  // Counted per token, not per address, and before the lookup.
   //
-  // An address is the wrong key in both directions here. One sender behind one
-  // address — which is what a webhook is — would be counted as many if several
-  // routines shared it, and many senders behind one NAT would be counted as
-  // one. The routine is the thing being protected: it is the row that spends
-  // its workspace's credits every time this fires.
-  const verdict = await getRateLimiter(c.env, "expensive").check(`routine-hook:${routine.id}`);
+  // An address is the wrong key in both directions here. GitHub and Stripe
+  // deliver for every one of their customers from a few shared addresses, so
+  // counting by address let one routine's flood refuse everybody else's
+  // deliveries — and many senders behind one NAT would be counted as one. The
+  // token names one trigger, which fires one routine: the row that spends its
+  // workspace's credits every time this fires. Counting it before the lookup
+  // means a flood of one token stops before the database rather than after.
+  const verdict = await getRateLimiter(c.env, "expensive").check(
+    `routine-hook:${await hashIngestToken(token)}`,
+  );
   if (!verdict.allowed) {
     c.header("Retry-After", String(verdict.retryAfterSeconds));
     return c.json({ error: "rate_limited" }, 429);
   }
+
+  const resolved = await resolveIngestToken(c.env, token);
+  if (!resolved.ok) {
+    if (resolved.status === 401) await countMiss(c);
+    return c.json({ error: resolved.error }, resolved.status);
+  }
+
+  const routine = resolved.routine;
 
   // No id from the sender means no way to deduplicate, so nothing pretends
   // otherwise: a fresh id makes this run, which is what somebody who poked an

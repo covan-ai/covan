@@ -41,6 +41,10 @@ export const MESSAGE_OUTCOMES = [
   // visible, which is the same argument that split `tokens` off in the first
   // place.
   "runtime",
+  // The workspace's credit, checked before every step since 0097 rather than
+  // once before the first. Its own word for `runtime`'s reason: the thing to do
+  // about it is add credit, not ask for less.
+  "credits",
   "cut_short",
   "empty",
   "truncated",
@@ -185,7 +189,7 @@ export function usageColumns(usage: TurnUsage): {
  * answer.
  */
 export function replyOutcome(input: {
-  paused: { reason: "confirmation" | "budget" | "tokens" | "runtime" } | null;
+  paused: { reason: "confirmation" | "budget" | "tokens" | "runtime" | "credits" } | null;
   finishReason: string | null;
   /** Whether this turn will actually be parked for somebody to answer. */
   parked: boolean;

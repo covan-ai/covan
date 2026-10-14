@@ -2,15 +2,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { routineMaterial } from "./material";
 import type { RoutineEnv } from "../../types";
 import { complete, totalTokens, type CompletionMessage } from "../completion";
-import { completionSpend, spends } from "../entitlements";
+import { completionSpend, entitlementsFor, spends } from "../entitlements";
 import { resolveModel } from "../models";
 import { temperatureFor, reasoningEffortFor, maxTokensFor, whenAndWhere } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
-import { runAgentTurn } from "../harness/loop";
+import { runAgentTurn, type PassUsage } from "../harness/loop";
 import { SCHEDULED_MAX_STEPS } from "../harness/budget";
 import type { ToolEnv } from "../harness/registry";
 import { DECISION_INSTRUCTION, readDecision } from "./summarise";
-import { replyOutcome } from "../harness/usage";
+import { replyOutcome, sumOverPasses } from "../harness/usage";
 import type { AgentRunInput, AgentRunResult } from "./executor";
 
 /**
@@ -115,8 +115,37 @@ export function runRoutineWithTools(
       },
     ];
 
+    // The run's spend so far, held against its workspace before each step
+    // (`Entitlements.hold`), so a run that began on the last credit stops when
+    // the credit does rather than eight passes later. The executor checked once
+    // before it started; this is every check after that.
+    const entitlements = entitlementsFor(runEnv);
+    const holdId = crypto.randomUUID();
+    const passesSoFar: PassUsage[] = [];
+    const spentSoFar = () =>
+      spends(
+        completionSpend(
+          model,
+          {
+            promptTokens: sumOverPasses(passesSoFar, (p) => p.prompt),
+            completionTokens: sumOverPasses(passesSoFar, (p) => p.completion),
+            cachedTokens: sumOverPasses(passesSoFar, (p) => p.cached),
+            cacheWriteTokens: sumOverPasses(passesSoFar, (p) => p.written),
+            reasoningTokens: sumOverPasses(passesSoFar, (p) => p.reasoning),
+            webSearches: sumOverPasses(passesSoFar, (p) => p.searches),
+          },
+          "routine",
+        ),
+      );
+
     const turn = await runAgentTurn({
       env: runEnv,
+      onPass: (usage) => passesSoFar.push(usage),
+      ...(entitlements.hold
+        ? {
+            mayContinue: () => entitlements.hold!(input.workspaceId, holdId, spentSoFar()),
+          }
+        : {}),
       request: {
         model,
         messages,
@@ -166,6 +195,12 @@ export function runRoutineWithTools(
         // should be allowed to remember of the last one — a product question,
         // not a missing read.
       },
+    });
+
+    // The executor records this run's charge as soon as it returns; until then
+    // the hold lapses on its own if this is never reached.
+    await entitlements.release?.(holdId).catch((err: unknown) => {
+      console.error("could not release a routine run's credit hold", err);
     });
 
     let tokens = totalTokens(turn.usage);

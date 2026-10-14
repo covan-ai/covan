@@ -1,4 +1,27 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Context } from "hono";
+import type { AppEnv } from "../types";
+
+/**
+ * The workspace a request acts in. Every route asks this, not
+ * `getActiveWorkspaceId`.
+ *
+ * A browser session acts in whichever workspace its person last chose. An API
+ * key acts in the workspace it was made in, whatever the owner has chosen
+ * since -- and never runs the fallback below, which would write the owner's
+ * profile on a script's behalf. Without this a key reached every workspace its
+ * owner belongs to, and `POST /workspace/active` (refused to keys now) moved
+ * it between them.
+ *
+ * The middleware has already refused a key whose owner is no longer a member
+ * of that workspace, and Postgres refuses the rest: the token minted for a key
+ * names the workspace, and the membership helpers answer "no" to any other.
+ */
+export async function callerWorkspaceId(c: Context<AppEnv>): Promise<string | null> {
+  const keyWorkspace = c.get("apiKeyWorkspaceId");
+  if (keyWorkspace) return keyWorkspace;
+  return getActiveWorkspaceId(c.get("db"), c.get("user").id);
+}
 
 /**
  * Resolves the caller's *active* workspace id.
@@ -9,6 +32,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * workspace, and returns it. Returns null only if the caller has no memberships.
  *
  * RLS scopes both reads to the caller's own rows.
+ *
+ * A session's answer only. Routes ask `callerWorkspaceId`, which knows that a
+ * key's answer is fixed; `workspace-lock.static.test.ts` keeps it that way.
  */
 export async function getActiveWorkspaceId(
   db: SupabaseClient,

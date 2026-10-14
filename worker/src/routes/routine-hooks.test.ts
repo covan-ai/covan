@@ -2,12 +2,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { resetRateLimiters } from "../lib/ratelimit";
+import { resetMisses } from "../middleware/ratelimit";
 
 const resolveIngestToken = vi.fn();
 const touchTrigger = vi.fn(async () => {});
 const runPokedRoutine = vi.fn(async () => ({ status: "ok" as const, itemsNew: 1 }));
 
-vi.mock("../lib/routines/ingest", () => ({ resolveIngestToken, touchTrigger }));
+vi.mock("../lib/routines/ingest", () => ({
+  resolveIngestToken,
+  touchTrigger,
+  hashIngestToken: async (token: string) => `hash:${token}`,
+}));
 vi.mock("../lib/routines/dispatcher", () => ({ runPokedRoutine }));
 
 const { routineHooks } = await import("./routine-hooks");
@@ -47,6 +52,7 @@ beforeEach(() => {
   runPokedRoutine.mockReset().mockResolvedValue({ status: "ok", itemsNew: 1 });
   touchTrigger.mockReset().mockResolvedValue(undefined);
   resetRateLimiters();
+  resetMisses();
 });
 
 describe("POST /routine-hooks/:token", () => {
@@ -197,6 +203,57 @@ describe("POST /routine-hooks/:token", () => {
 
     expect(refused.status).toBe(429);
     expect(refused.headers.get("Retry-After")).toBe("60");
+  });
+
+  it("never counts a busy sender's verified deliveries against its address", async () => {
+    // GitHub delivers every customer's hooks from the same few addresses. A
+    // per-address limit counted them together, so one tenant's flood refused
+    // everybody else's deliveries.
+    const shared = { "CF-Connecting-IP": "140.82.115.1" };
+    const tight = { RATE_LIMIT_STANDARD_PER_MINUTE: "1" };
+    for (const token of ["a", "b", "c", "d"]) {
+      const res = await post(`/routine-hooks/covan_whk_${token}`, { headers: shared }, tight);
+      expect(res.status).toBe(202);
+    }
+  });
+
+  it("stops looking tokens up for an address that keeps sending unknown ones", async () => {
+    resolveIngestToken.mockResolvedValue({ ok: false, status: 401, error: "unknown ingest token" });
+    const from = { "CF-Connecting-IP": "203.0.113.9" };
+    const tight = { RATE_LIMIT_STANDARD_PER_MINUTE: "2" };
+
+    for (const token of ["x1", "x2", "x3"]) {
+      expect(
+        (await post(`/routine-hooks/covan_whk_${token}`, { headers: from }, tight)).status,
+      ).toBe(401);
+    }
+    const refused = await post("/routine-hooks/covan_whk_x4", { headers: from }, tight);
+
+    expect(refused.status).toBe(429);
+    expect(resolveIngestToken).toHaveBeenCalledTimes(3);
+    // Another address is not affected.
+    const other = await post(
+      "/routine-hooks/covan_whk_x5",
+      { headers: { "CF-Connecting-IP": "198.51.100.7" } },
+      tight,
+    );
+    expect(other.status).toBe(401);
+  });
+
+  it("does not count a paused routine as a failed proof", async () => {
+    resolveIngestToken.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "this routine is paused",
+    });
+    const from = { "CF-Connecting-IP": "203.0.113.10" };
+    const tight = { RATE_LIMIT_STANDARD_PER_MINUTE: "1" };
+
+    for (const token of ["p1", "p2", "p3"]) {
+      expect(
+        (await post(`/routine-hooks/covan_whk_${token}`, { headers: from }, tight)).status,
+      ).toBe(409);
+    }
   });
 
   it("notes that the trigger fired", async () => {

@@ -17,18 +17,29 @@
  *   way — a leaked key taking down the keys somebody was still relying on.
  * - **Closing the account** (`routes/account.ts`). Destroys the evidence and
  *   the account in one call, and no revocation afterwards undoes it.
- * - **Inviting somebody** (`routes/invitations.ts`). An admin's key may invite
- *   an admin, and what comes back is a second person with their own session —
- *   access in a third party's hands that revoking the key does not touch.
- * - **Changing a member's role** (`routes/workspace.ts`). The same thing done
- *   to somebody who is already here: a viewer promoted to admin by a key stays
- *   an admin afterwards.
+ * - **Membership.** Inviting, revoking an invitation, accepting one, changing
+ *   a role, removing somebody, leaving, creating a workspace and switching
+ *   into another. An admin's key inviting an admin produces a second person
+ *   with their own session; a key that joins or creates a workspace reaches
+ *   past the one it belongs to. None of it is undone by revoking the key.
+ * - **Third parties.** Starting or re-granting an OAuth connection, choosing
+ *   what a Drive connection imports, connecting a Composio application or
+ *   letting an agent act in one, installing Slack, storing a service
+ *   credential, rotating a webhook's signing secret. Each ends in a token or a
+ *   secret held somewhere a revocation here cannot reach.
+ * - **The owner's browser.** A live view of it carries their signed-in
+ *   cookies, and a saved login signs an agent in as them on every later run.
  *
- * The last two were missing until finding 7 of the 2026-10-08 audit — the
- * second time a route that creates access forgot to ask. The real fix is to
- * invert the rule, so a key's powers are an allowlist and forgetting is
- * impossible; that is recorded as deferred work. Until then
- * `worker/src/api-key-refusal.static.test.ts` is what notices.
+ * Membership and role changes were missing until finding 7 of the 2026-10-08
+ * audit, and the third parties until later. Both times the route
+ * that forgot behaved identically for a key and a session, so nothing noticed.
+ * `worker/src/api-key-refusal.static.test.ts` now sorts EVERY authenticated
+ * handler into "refused" or "open to a key", so a new route cannot be added
+ * without that decision being written down.
+ *
+ * What a key may still start that runs on after the request -- a routine, a
+ * delivery channel, an ingest trigger -- is written onto by the key's id and
+ * stopped when the key is revoked. See `apiKeyIdOf` below.
  *
  * `what` completes "api keys cannot ___ — sign in to do this", so it reads as
  * the verb phrase the caller just attempted.
@@ -40,4 +51,18 @@ export function refuseIfKeyAuthenticated(
   return c.get("apiKeyId")
     ? ({ error: `api keys cannot ${what} — sign in to do this` } as const)
     : null;
+}
+
+/**
+ * The key this request was made with, to write onto what it starts, or null
+ * for a browser session.
+ *
+ * For the rows the API creates with the service role on a caller's behalf --
+ * a delivery channel, a webhook trigger -- which therefore cannot pick the key
+ * up from the token the way a routine does (0088). Revoking the key disables
+ * the channel and deletes the trigger, so a key that sets up a webhook leaves
+ * nothing behind that still delivers once it is gone.
+ */
+export function apiKeyIdOf(c: { get: (k: "apiKeyId") => string | undefined }): string | null {
+  return c.get("apiKeyId") ?? null;
 }

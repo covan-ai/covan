@@ -3,7 +3,7 @@ import { sendEmail } from "../email";
 import { emailShell } from "../email-layout";
 import { renderMarkdown } from "../email-markdown";
 import { decryptSecret } from "../secret-box";
-import { readCapped, resolvesPublicly } from "./source";
+import { pinnedRequest, readCapped, resolvesPublicly } from "./source";
 import { assertFetchableUrl, ownHostsFrom } from "./url-guard";
 import { UpstreamError } from "./upstream-error";
 import {
@@ -13,13 +13,26 @@ import {
   webhookHeaders,
   EVENT_DELIVERED,
 } from "./webhook";
+import { escapeMrkdwn } from "../slack/mrkdwn";
 
 export type DeliveryKind = "slack_webhook" | "email" | "webhook";
 
 export type DeliveryChannel = {
   kind: DeliveryKind;
   secret_ciphertext: string;
+  /**
+   * When an email channel's address agreed to these messages (0096). Read by
+   * `deliver` for email only, and absent counts as never: a caller that forgot
+   * to select it sends nothing rather than mailing an address that never said
+   * yes. `readyForDelivery` in `address-confirmation.ts` is how to get it.
+   */
+  confirmed_at?: string | null;
 };
+
+/** What `deliver` throws for an email address that has not confirmed. */
+export const UNCONFIRMED_ADDRESS =
+  "delivery failed: this address has not confirmed it wants these messages yet. " +
+  "Covan has emailed it a link; once somebody there opens it, delivery starts.";
 
 export type DeliveryDeps = {
   fetchImpl: typeof fetch;
@@ -181,7 +194,7 @@ async function postWebhook(
 ): Promise<Response> {
   const config = parseWebhookSecret(secret);
   const url = assertFetchableUrl(config.url, deps.ownHosts);
-  await resolvesPublicly(url.hostname);
+  const address = await resolvesPublicly(url.hostname);
 
   const sentAt = (deps.now ?? (() => new Date()))();
   const deliveryId = crypto.randomUUID();
@@ -203,18 +216,20 @@ async function postWebhook(
   const rawBody = JSON.stringify(payload);
   const signature = await signWebhookBody(config.signingSecret, timestampSeconds, rawBody);
 
-  const res = await deps.fetchImpl(url.toString(), {
-    method: "POST",
-    redirect: "manual",
-    headers: webhookHeaders({
-      event: context.event,
-      deliveryId,
-      timestampSeconds,
-      signature,
+  const res = await deps.fetchImpl(
+    ...pinnedRequest(url, address, {
+      method: "POST",
+      redirect: "manual",
+      headers: webhookHeaders({
+        event: context.event,
+        deliveryId,
+        timestampSeconds,
+        signature,
+      }),
+      body: rawBody,
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
     }),
-    body: rawBody,
-    signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
-  });
+  );
 
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get("Location") ?? "(no Location)";
@@ -232,6 +247,11 @@ export async function deliver(
   deps: DeliveryDeps,
   context: DeliveryContext = { event: EVENT_DELIVERED },
 ): Promise<void> {
+  // Before anything is decrypted or sent. Every caller funnels through here,
+  // so this one check is what keeps an address that never agreed off the
+  // receiving end of digests, tests and notices alike.
+  if (channel.kind === "email" && !channel.confirmed_at) throw new Error(UNCONFIRMED_ADDRESS);
+
   const secret = await decryptSecret(channel.secret_ciphertext, deps.secretKey);
 
   const res =
@@ -241,7 +261,18 @@ export async function deliver(
         ? await deps.fetchImpl(secret, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: `*${message.subject}*\n${message.body}` }),
+            // Escaped, not converted: the summary stays the Markdown it was
+            // written as. But it is a model's summary of feed items somebody
+            // else wrote, and unescaped, a `<!channel>` in a post was a ping
+            // to the whole channel.
+            body: JSON.stringify({
+              text: `*${escapeMrkdwn(message.subject)}*\n${escapeMrkdwn(message.body)}`,
+            }),
+            // Not followed, for `postWebhook`'s reason. The address was checked
+            // to be Slack's when the channel was made; a redirect is Slack
+            // asking the body to go somewhere that check never saw. A 3xx is
+            // not `ok`, so `assertDelivered` fails it.
+            redirect: "manual",
             // Slack answers in milliseconds. This bounds the case where it does
             // not, which before this change could hold a whole tick open.
             signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),

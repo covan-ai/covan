@@ -16,6 +16,12 @@ import { AgentsProvider } from "../lib/agents-store";
 import { THEME_INIT_SCRIPT } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { CommandPalette } from "@/components/command-palette";
+import { takeSensitiveParams } from "../lib/sensitive-url";
+
+// Before the router renders and before the first page view is sent: a connect
+// flow's grant comes back in the address bar, and it is taken out of it here.
+// See `lib/sensitive-url.ts`.
+takeSensitiveParams();
 
 function NotFoundComponent() {
   return (

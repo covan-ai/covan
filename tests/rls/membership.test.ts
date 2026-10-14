@@ -211,6 +211,112 @@ describe("leaving a workspace", () => {
   });
 });
 
+describe("what an admin may change about a membership", () => {
+  /**
+   * Fresh users, for the same reason as above. Every account is the admin of
+   * the workspace its signup made, so "an admin" here is anybody at all.
+   */
+  async function rowsFor(workspaceId: string, userId: string) {
+    const { data } = await serviceClient()
+      .from("workspace_members")
+      .select("user_id, role, created_at")
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId);
+    return data ?? [];
+  }
+
+  it("changes a role", async () => {
+    const host = await createTestUser("seat-role-host");
+    const guest = await createTestUser("seat-role-guest");
+    await serviceClient()
+      .from("workspace_members")
+      .insert({ workspace_id: host.workspaceId, user_id: guest.id, role: "member" });
+
+    const { error } = await host.db
+      .from("workspace_members")
+      .update({ role: "viewer" })
+      .eq("workspace_id", host.workspaceId)
+      .eq("user_id", guest.id);
+
+    expect(error).toBeNull();
+    expect((await rowsFor(host.workspaceId, guest.id))[0]?.role).toBe("viewer");
+  });
+
+  it("does not hand a seat to somebody who never accepted one", async () => {
+    // A throwaway member's row, repointed at a person who has never heard of
+    // this workspace. Before 0086 this added them silently -- no invitation,
+    // no log entry -- and put their profile in front of the room.
+    const host = await createTestUser("seat-repoint-host");
+    const throwaway = await createTestUser("seat-repoint-throwaway");
+    const stranger = await createTestUser("seat-repoint-stranger");
+    await serviceClient()
+      .from("workspace_members")
+      .insert({ workspace_id: host.workspaceId, user_id: throwaway.id, role: "member" });
+
+    const { error } = await host.db
+      .from("workspace_members")
+      .update({ user_id: stranger.id, role: "admin" })
+      .eq("workspace_id", host.workspaceId)
+      .eq("user_id", throwaway.id);
+
+    expect(error?.code).toBe("42501");
+    expect(await rowsFor(host.workspaceId, stranger.id)).toEqual([]);
+    expect(await rowsFor(host.workspaceId, throwaway.id)).toHaveLength(1);
+  });
+
+  it("does not backdate when somebody joined", async () => {
+    // The oldest membership is where a person with no active workspace lands.
+    const host = await createTestUser("seat-backdate-host");
+    const guest = await createTestUser("seat-backdate-guest");
+    await serviceClient()
+      .from("workspace_members")
+      .insert({ workspace_id: host.workspaceId, user_id: guest.id, role: "member" });
+    const [before] = await rowsFor(host.workspaceId, guest.id);
+
+    const { error } = await host.db
+      .from("workspace_members")
+      .update({ created_at: "2000-01-01T00:00:00Z" })
+      .eq("workspace_id", host.workspaceId)
+      .eq("user_id", guest.id);
+
+    expect(error?.code).toBe("42501");
+    expect((await rowsFor(host.workspaceId, guest.id))[0]?.created_at).toBe(before.created_at);
+  });
+
+  it("does not move a membership even for the service role", async () => {
+    // The pin is a trigger, not just a grant, so it holds for every caller: a
+    // membership that should be somebody else's is a removal and an
+    // invitation, and both of those are logged.
+    const host = await createTestUser("seat-service-host");
+    const guest = await createTestUser("seat-service-guest");
+    const other = await createTestUser("seat-service-other");
+    await serviceClient()
+      .from("workspace_members")
+      .insert({ workspace_id: host.workspaceId, user_id: guest.id, role: "member" });
+
+    const { error } = await serviceClient()
+      .from("workspace_members")
+      .update({ user_id: other.id })
+      .eq("workspace_id", host.workspaceId)
+      .eq("user_id", guest.id);
+
+    expect(error?.message ?? "").toMatch(/only change its role/);
+  });
+
+  it("is not a way in through the front door either", async () => {
+    // No INSERT policy has ever existed; since 0086 there is no grant either.
+    const host = await createTestUser("seat-insert-host");
+    const stranger = await createTestUser("seat-insert-stranger");
+
+    const { error } = await host.db
+      .from("workspace_members")
+      .insert({ workspace_id: host.workspaceId, user_id: stranger.id, role: "member" });
+
+    expect(error?.code).toBe("42501");
+    expect(await rowsFor(host.workspaceId, stranger.id)).toEqual([]);
+  });
+});
+
 describe("a removed member's own conversation", () => {
   /**
    * The half `after being removed` below never built. It removes Carol, who

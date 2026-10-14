@@ -25,6 +25,7 @@ import type {
   DeliveryChannel,
   DeliveryChannelKind,
   CreatedDeliveryChannel,
+  ConfirmationOutcome,
   RoutineDraft,
   RoutineTrigger,
   CreateRoutineInput,
@@ -128,6 +129,14 @@ export type PendingInvitation = {
    * means "not something this response knows", never "no".
    */
   emailed?: boolean;
+  /**
+   * The link with the token in it. Only on the response that minted it —
+   * creating or resending an invitation — because nothing can show it again.
+   * With no mail configured, passing it on is how the invitee receives it.
+   */
+  inviteUrl?: string;
+  /** Its link ran out, or it predates links: it needs Resend to be accepted. */
+  needsResend: boolean;
 };
 
 export type IncomingInvitation = {
@@ -676,9 +685,13 @@ export const api = {
     create: (input: { email: string; role: WorkspaceRole }): Promise<PendingInvitation> =>
       request("POST", "/invitations", input),
     revoke: (id: string): Promise<{ ok: true }> => request("DELETE", `/invitations/${id}`),
+    /** A new link: the old one stops working and the seven days start again. */
+    resend: (id: string): Promise<PendingInvitation> =>
+      request("POST", `/invitations/${id}/resend`),
     incoming: (): Promise<IncomingInvitation[]> => request("GET", "/invitations/incoming"),
-    accept: (id: string): Promise<{ workspaceId: string }> =>
-      request("POST", `/invitations/${id}/accept`),
+    /** `token` is the one the invitation email's link carried. See `invite-stash.ts`. */
+    accept: (id: string, token: string): Promise<{ workspaceId: string }> =>
+      request("POST", `/invitations/${id}/accept`, { token }),
   },
   connections: {
     list: (): Promise<ConnectionsResponse> => request("GET", "/connections"),
@@ -688,8 +701,8 @@ export const api = {
      * redirect: a cross-origin 302 from `fetch` lands as a CORS error, not a
      * login page, so the navigation has to happen in the page.
      */
-    start: (provider: ProviderId, bundleId: string): Promise<{ url: string }> =>
-      request("POST", `/connections/${provider}/start`, { bundleId }),
+    start: (provider: ProviderId, bundleId: string, nonceHash: string): Promise<{ url: string }> =>
+      request("POST", `/connections/${provider}/start`, { bundleId, nonceHash }),
     /**
      * A new grant for a connection that already exists.
      *
@@ -697,8 +710,17 @@ export const api = {
      * The alternative — delete and connect again — left a second connection
      * pointed at the same bundle and the old one sitting there paused.
      */
-    reconnect: (id: string): Promise<{ url: string }> =>
-      request("POST", `/connections/${id}/reconnect`),
+    reconnect: (id: string, nonceHash: string): Promise<{ url: string }> =>
+      request("POST", `/connections/${id}/reconnect`, { nonceHash }),
+    /**
+     * Finish a grant the provider sent this tab back with. `nonce` is the one
+     * this tab started the flow with (`lib/flow-nonce.ts`).
+     */
+    complete: (input: {
+      grant: string;
+      nonce: string;
+    }): Promise<{ provider: ProviderId; connectionId: string; reconnected: boolean }> =>
+      request("POST", "/connections/complete", input),
     /** One level of a Drive tree. The browser holds no Google token of its own. */
     folders: (id: string, parent?: string): Promise<DriveFolder[]> =>
       request("GET", `/connections/${id}/folders${parent ? `?parent=${parent}` : ""}`),
@@ -738,10 +760,18 @@ export const api = {
       allowedMethods?: string[];
       rpc?: string;
       summary?: string;
+      /** Share it with the workspace. Personal when absent. */
+      shared?: boolean;
     }): Promise<ToolConnection> => request("POST", "/tool-connections", input),
     update: (
       id: string,
-      patch: { label?: string; allowedMethods?: string[]; rpc?: string; summary?: string },
+      patch: {
+        label?: string;
+        allowedMethods?: string[];
+        rpc?: string;
+        summary?: string;
+        shared?: boolean;
+      },
     ): Promise<ToolConnection> => request("PATCH", `/tool-connections/${id}`, patch),
     remove: (id: string): Promise<void> => request("DELETE", `/tool-connections/${id}`),
   },
@@ -778,6 +808,12 @@ export const api = {
       request("POST", "/composio/connect", input),
     status: (id: string): Promise<{ status: "pending" | "active" | "failed" }> =>
       request("GET", `/composio/connections/${id}/status`),
+    /**
+     * Finish a connection with the nonce Composio sent this browser back with.
+     * Only the person who started it can; anybody else's account is revoked.
+     */
+    complete: (nonce: string): Promise<{ status: string }> =>
+      request("POST", "/composio/complete", { nonce }),
     grants: (agentId?: string): Promise<{ grants: ToolConnectionGrant[] }> =>
       request("GET", `/composio/grants${agentId ? `?agentId=${agentId}` : ""}`),
     setGrant: (input: {
@@ -804,14 +840,26 @@ export const api = {
    */
   slack: {
     get: (): Promise<SlackState> => request("GET", "/slack"),
-    start: (): Promise<{ url: string }> => request("POST", "/slack/install/start"),
+    start: (nonceHash: string): Promise<{ url: string }> =>
+      request("POST", "/slack/install/start", { nonceHash }),
+    /** Finish an install Slack sent this tab back from. */
+    complete: (input: { grant: string; nonce: string }): Promise<{ provider: "slack" }> =>
+      request("POST", "/slack/complete", input),
     setAgent: (agentId: string): Promise<{ id: string; agentId: string }> =>
       request("PATCH", "/slack/installation", { agentId }),
     remove: (): Promise<void> => request("DELETE", "/slack/installation"),
   },
   routines: {
     list: (): Promise<Routine[]> => request("GET", "/routines"),
-    create: (input: CreateRoutineInput): Promise<Routine> => request("POST", "/routines", input),
+    /**
+     * `confirmation` is there when the routine brought a new address with it
+     * that is not the caller's own: it has been mailed a link, and nothing is
+     * delivered to it until it is opened.
+     */
+    create: (
+      input: CreateRoutineInput,
+    ): Promise<Routine & { confirmation?: ConfirmationOutcome }> =>
+      request("POST", "/routines", input),
     update: (id: string, patch: UpdateRoutineInput): Promise<Routine> =>
       request("PATCH", `/routines/${id}`, patch),
     remove: (id: string): Promise<void> => request("DELETE", `/routines/${id}`),
@@ -850,6 +898,13 @@ export const api = {
      */
     test: (id: string): Promise<void> => request("POST", `/delivery-channels/${id}/test`),
     remove: (id: string): Promise<void> => request("DELETE", `/delivery-channels/${id}`),
+  },
+  /**
+   * An address saying yes to routine results, from the link it was mailed.
+   * Needs no session: whoever is at the address may have no account.
+   */
+  addressConfirmations: {
+    confirm: (token: string): Promise<void> => request("POST", "/address-confirmations", { token }),
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
   /** The active workspace's recent charges and grants. Admins only, by policy. */

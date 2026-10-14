@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getActiveWorkspaceId } from "./workspace";
+import { callerWorkspaceId, getActiveWorkspaceId } from "./workspace";
 import { fakeDb, type QueryContext } from "../test-support/fake-db";
 
 /**
@@ -107,5 +107,29 @@ describe("getActiveWorkspaceId", () => {
     });
 
     expect(await getActiveWorkspaceId(client.db as unknown as SupabaseClient, USER)).toBeNull();
+  });
+});
+
+describe("callerWorkspaceId", () => {
+  /** Just enough of a Hono context: the three things the function reads. */
+  function context(client: unknown, apiKeyWorkspaceId?: string) {
+    const vars: Record<string, unknown> = { db: client, user: { id: USER }, apiKeyWorkspaceId };
+    return { get: (key: string) => vars[key] } as never;
+  }
+
+  it("answers a session with its active workspace", async () => {
+    const { db: client } = db(["ws-a", "ws-b"], "ws-b");
+
+    expect(await callerWorkspaceId(context(client))).toBe("ws-b");
+  });
+
+  it("answers a key with the workspace it was made in, whatever the owner chose since", async () => {
+    // The owner's profile says ws-b. The key was made in ws-a, and acts there.
+    const { db: client, calls } = db(["ws-a", "ws-b"], "ws-b");
+
+    expect(await callerWorkspaceId(context(client, "ws-a"))).toBe("ws-a");
+    // And asks nothing, so the fallback that writes the owner's profile cannot
+    // run on a script's behalf.
+    expect(calls).toHaveLength(0);
   });
 });

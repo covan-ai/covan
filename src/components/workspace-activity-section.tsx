@@ -150,6 +150,8 @@ function describe(e: WorkspaceEvent): string {
       return `Invited ${what}${role ? ` as ${role}` : ""}`;
     case "invitation.revoked":
       return `Revoked the invitation to ${what}`;
+    case "invitation.resent":
+      return `Sent a new invitation link to ${what}`;
     default:
       return `${e.action} — ${what}`;
   }

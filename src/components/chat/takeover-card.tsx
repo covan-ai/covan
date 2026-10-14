@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, type BrowserTask, type ConversationBrowser, type Takeover } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { useConversationBrowser } from "./use-conversation-browser";
+import { safeNavigationUrl } from "@/lib/safe-url";
 
 /**
  * The v2 takeover card — the legacy path, kept in the transcript (ruling R18).
@@ -143,10 +144,11 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
   const open = useMutation({
     mutationFn: async (browserTaskId: string) => {
       const result = await api.takeovers.takeOver(browserTaskId);
-      if (!result.liveUrl) {
+      const liveUrl = safeNavigationUrl(result.liveUrl);
+      if (!liveUrl) {
         throw new Error("That browser started but there is no address to open it at.");
       }
-      return result;
+      return { ...result, liveUrl };
     },
     onSuccess: (result) => {
       setMinted(result);
@@ -204,11 +206,11 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
           you type. <strong>Nothing is saved until you press done below</strong>, so press it even
           if the site looks finished.
         </p>
-        {takeover.liveUrl && (
+        {safeNavigationUrl(takeover.liveUrl) && (
           <p className="mt-2">
             <a
               className="underline"
-              href={takeover.liveUrl}
+              href={safeNavigationUrl(takeover.liveUrl)!}
               target="_blank"
               rel="noopener noreferrer"
             >

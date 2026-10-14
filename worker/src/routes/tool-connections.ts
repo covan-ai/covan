@@ -2,13 +2,14 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
-import { getActiveWorkspaceId, memberRole } from "../lib/workspace";
+import { callerWorkspaceId, memberRole } from "../lib/workspace";
 import { encryptSecret } from "../lib/secret-box";
 import { mapToolConnection } from "../lib/dto";
 import { toolAvailability } from "../lib/harness/registry";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { revokeConnectedAccounts } from "../lib/composio/revoke";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 /**
  * Connecting a service an agent can call.
@@ -59,6 +60,11 @@ const createSchema = z.object({
   rpc: z.string().min(1).max(120).optional(),
   /** For `http`: what the team wants the agent to know about this API. */
   summary: z.string().max(20_000).optional(),
+  /**
+   * Whether every member may use it. Personal unless asked (0098): a key is
+   * somebody's, and sharing it is a decision they make, not a default.
+   */
+  shared: z.boolean().optional(),
 });
 
 const updateSchema = z.object({
@@ -66,7 +72,15 @@ const updateSchema = z.object({
   allowedMethods: z.array(z.enum(METHODS)).optional(),
   rpc: z.string().min(1).max(120).optional(),
   summary: z.string().max(20_000).optional(),
+  /**
+   * Share it with the workspace, or take it back. Through the caller's own
+   * client, so 0098 decides: only the person who connected it can do either.
+   */
+  shared: z.boolean().optional(),
 });
+
+const COLUMNS =
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, scope, created_by, created_at, updated_at";
 
 /** Whether this caller may change what agents in this workspace can reach. */
 async function mayWrite(
@@ -86,13 +100,12 @@ toolConnections.get("/tool-connections", async (c) => {
   const db = c.get("db");
   const { data, error } = await db
     .from("tool_connections")
-    .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, created_by, created_at, updated_at",
-    )
+    .select(COLUMNS)
     .order("label", { ascending: true });
   if (error) return c.json({ error: "failed to load connections" }, 500);
+  const callerId = c.get("user").id;
   return c.json({
-    connections: (data ?? []).map(mapToolConnection),
+    connections: (data ?? []).map((row) => mapToolConnection(row, callerId)),
     // Every tool this build has, and whether this deployment can run it. Not
     // filtered to the configured ones, for the reason `providerAvailability`
     // is not: a self-hoster reading the docs for a feature their own build
@@ -102,6 +115,9 @@ toolConnections.get("/tool-connections", async (c) => {
 });
 
 toolConnections.post("/tool-connections", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "connect a service");
+  if (refusal) return c.json(refusal, 403);
+
   const parsed = createSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const body = parsed.data;
@@ -112,7 +128,7 @@ toolConnections.post("/tool-connections", async (c) => {
 
   const db = c.get("db");
   const userId = c.get("user").id;
-  const workspaceId = await getActiveWorkspaceId(db, userId);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
   if (!(await mayWrite(db, workspaceId, userId))) {
     return c.json({ error: "read-only in this workspace" }, 403);
@@ -151,8 +167,9 @@ toolConnections.post("/tool-connections", async (c) => {
       config,
       secret_ciphertext: secret,
       created_by: userId,
+      scope: body.shared ? "workspace" : "owner",
     })
-    .select("*")
+    .select(COLUMNS)
     .single();
 
   if (error || !data) {
@@ -161,14 +178,24 @@ toolConnections.post("/tool-connections", async (c) => {
     // because two connections called "Covan Supabase" and "covan supabase"
     // is a support ticket.
     if (error?.code === "23505") {
-      return c.json({ error: "a connection with that name already exists here" }, 400);
+      return c.json(
+        {
+          error: body.shared
+            ? "a shared connection with that name already exists here"
+            : "you already have a connection with that name",
+        },
+        400,
+      );
     }
     return c.json({ error: "failed to create connection" }, insertErrorStatus(error));
   }
-  return c.json(mapToolConnection(data), 201);
+  return c.json(mapToolConnection(data, userId), 201);
 });
 
 toolConnections.patch("/tool-connections/:id", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "change a connected service");
+  if (refusal) return c.json(refusal, 403);
+
   const parsed = updateSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const body = parsed.data;
@@ -203,15 +230,25 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
       ...(body.label !== undefined ? { label: body.label.trim() } : {}),
       ...(body.allowedMethods !== undefined ? { allowed_methods: body.allowedMethods } : {}),
       ...(body.rpc !== undefined || body.summary !== undefined ? { config } : {}),
+      ...(body.shared !== undefined ? { scope: body.shared ? "workspace" : "owner" } : {}),
     })
     .eq("id", c.req.param("id"))
-    .select(
-      "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, created_by, created_at, updated_at",
-    )
+    .select(COLUMNS)
     .maybeSingle();
-  if (error) return c.json({ error: "failed to update connection" }, insertErrorStatus(error));
+  if (error) {
+    if (error.code === "23505") {
+      return c.json({ error: "a shared connection with that name already exists here" }, 400);
+    }
+    // 42501: an admin taking back a colleague's shared connection would leave
+    // a row they may not read, which Postgres refuses (0098). Only the person
+    // who connected it can unshare it; an admin can remove it.
+    if (error.code === "42501") {
+      return c.json({ error: "only the person who connected it can change who may use it" }, 403);
+    }
+    return c.json({ error: "failed to update connection" }, insertErrorStatus(error));
+  }
   if (!data) return c.json({ error: "not found" }, 404);
-  return c.json(mapToolConnection(data));
+  return c.json(mapToolConnection(data, c.get("user").id));
 });
 
 /**
@@ -233,6 +270,9 @@ toolConnections.patch("/tool-connections/:id", async (c) => {
  * because it is the only step that cannot be taken back.
  */
 toolConnections.delete("/tool-connections/:id", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "remove a connected service");
+  if (refusal) return c.json(refusal, 403);
+
   const db = c.get("db");
   const id = c.req.param("id");
 

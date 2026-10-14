@@ -26,8 +26,8 @@
  *
  * Code fences and inline code are the same in both, and are the reason this is
  * a small parser rather than a list of replacements: the contents of a fence
- * must survive untouched, or an answer explaining a Markdown syntax error
- * rewrites the very thing it is explaining.
+ * must survive unconverted, or an answer explaining a Markdown syntax error
+ * rewrites the very thing it is explaining. (Escaped, though — see `toMrkdwn`.)
  *
  * There are no placeholders anywhere below, deliberately. The obvious way to
  * write this is to swap the awkward constructs for sentinels and swap them back
@@ -46,8 +46,26 @@ const LINK = /\[([^\]\n]*)\]\(([^)\s]+)\)/g;
  * mrkdwn too, and escaping it would turn every quoted passage into a visible
  * `&gt;`. Mid-sentence it is harmless, which is the trade this makes.
  */
-function escape(text: string): string {
+export function escapeMrkdwn(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+const escape = escapeMrkdwn;
+
+/**
+ * A link target Slack may be handed as one.
+ *
+ * Inside `<…>` Slack reads more than URLs: `<!channel>`, `<!here>`,
+ * `<!everyone>`, `<@U123>`, `<#C123>`. The answer is model output over
+ * retrieved documents, so `[read this](!channel)` in a document was a ping to
+ * the whole channel from the bot. Only an http(s) or mailto address with
+ * nothing in it that could close the link or start a second one is made a
+ * link; anything else is shown as the text it is.
+ */
+function linkTarget(raw: string): string | null {
+  if (!/^(https?:\/\/|mailto:)/i.test(raw)) return null;
+  if (/[<>|\s]/.test(raw)) return null;
+  return raw.replace(/&/g, "&amp;");
 }
 
 /** Prose with no links in it, converted. */
@@ -93,10 +111,14 @@ function convertProse(input: string): string {
     const at = match.index ?? 0;
     out.push(convertPlain(input.slice(last, at)));
 
-    // The label is text and is escaped; the URL is not, because escaping it is
-    // how you hand Slack a link that does not work.
+    // The label is text and is escaped. The URL is only checked, not escaped
+    // past its ampersands — escaping it is how you hand Slack a link that does
+    // not work — so anything that is not plainly a web or mail address stays
+    // text instead.
     const label = escape(match[1]).trim();
-    out.push(label ? `<${match[2]}|${label}>` : `<${match[2]}>`);
+    const target = linkTarget(match[2]);
+    if (!target) out.push(label ? `${label} (${escape(match[2])})` : escape(match[2]));
+    else out.push(label ? `<${target}|${label}>` : `<${target}>`);
     last = at + match[0].length;
   }
 
@@ -107,7 +129,7 @@ function convertProse(input: string): string {
 /**
  * An answer, ready for `chat.postMessage`.
  *
- * Code is split out first and passed through untouched — both fenced blocks and
+ * Code is split out first and passed through unconverted — both fenced blocks and
  * inline spans, since mrkdwn spells them the way Markdown does. An unclosed
  * fence is matched too, and deliberately: a model that runs out of room leaves
  * one open, and treating the remainder as code is a far better failure than
@@ -115,5 +137,8 @@ function convertProse(input: string): string {
  */
 export function toMrkdwn(markdown: string): string {
   const parts = markdown.split(/(```[\s\S]*?```|```[\s\S]*$|`[^`\n]+`)/g);
-  return parts.map((part, index) => (index % 2 === 1 ? part : convertProse(part))).join("");
+  // Code is not converted, but it is escaped: `<` opens a control sequence
+  // wherever it appears in a message's text, and Slack shows `&lt;` as `<`
+  // inside code exactly as it does outside it.
+  return parts.map((part, index) => (index % 2 === 1 ? escape(part) : convertProse(part))).join("");
 }

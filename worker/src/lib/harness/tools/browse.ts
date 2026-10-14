@@ -321,6 +321,48 @@ async function loginNote(ctx: ToolContext, site: string): Promise<string | null>
   }
 }
 
+/**
+ * Whether the login `site` would carry is a shared one, while the person's own
+ * browser jar already holds cookies for that site or a parent of it.
+ *
+ * The jar's domains are the provider's list, which includes ad-tech a page
+ * dropped — so this can hold back a shared login for a site the person never
+ * signed into themselves. That errs toward the person's own session, and the
+ * login wall that may follow offers the shared login from the panel, on a
+ * screen that names it. A read that fails is "no": the card still names
+ * whatever login is attached.
+ */
+async function sharedLoginOverOwnJar(
+  ctx: ToolContext,
+  profile: { id: string; cookieDomains?: string[] } | null,
+  site: string,
+): Promise<boolean> {
+  if (!profile) return false;
+  try {
+    const login = await savedLogin(ctx.env, {
+      agentId: ctx.agentId,
+      userId: ctx.userId,
+      host: site,
+    });
+    if (!login || login.scope !== "agent") return false;
+    const { data } = await ctx.db
+      .from("browser_profiles")
+      .select("cookie_domains")
+      .eq("id", profile.id)
+      .maybeSingle();
+    const jar = Array.isArray(data?.cookie_domains)
+      ? (data.cookie_domains as unknown[]).filter((d): d is string => typeof d === "string")
+      : [];
+    const host = login.siteHost.toLowerCase();
+    return jar.some((d) => {
+      const domain = d.toLowerCase().replace(/^\./, "");
+      return domain === host || domain.endsWith(`.${host}`) || host.endsWith(`.${domain}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
 export const browseTool: AgentTool = {
   name: "browse",
   description:
@@ -423,8 +465,28 @@ export const browseTool: AgentTool = {
       };
     }
 
-    // The model's `site`, or a host the task names that has a saved login.
-    const site = named ?? (await siteFromTask(ctx, task));
+    /**
+     * The profile is read first because it decides, below, whether a shared
+     * login may be typed at all.
+     */
+    const profile = await profileFor(ctx.env, ctx.userId);
+
+    /**
+     * The model's `site`, or a host the task names that has a saved login —
+     * with two exceptions that keep a login off a run its card did not show:
+     *
+     * - **A task approved as a line on another task's card** carries none.
+     *   That card listed the sentence and nothing else (`lineOf` already keeps
+     *   any task with a `site` out of a list), so a login found here from the
+     *   task's text would be one nobody was shown.
+     * - **A shared login is not typed into the person's own jar where it
+     *   already has that site.** Their browser carries their own sign-in
+     *   there; typing a colleague's shared account over it signs them out of
+     *   their own and into somebody else's, in the session they keep using.
+     *   Their own saved login still applies.
+     */
+    let site = named ?? (ctx.confirmedAsListed ? null : await siteFromTask(ctx, task));
+    if (site && (await sharedLoginOverOwnJar(ctx, profile, site))) site = null;
 
     /**
      * Whose cookie jar this browser will carry, resolved from `ctx.userId`.
@@ -442,8 +504,6 @@ export const browseTool: AgentTool = {
      * than provisioned here, because a proposal somebody declines must leave
      * nothing behind — a profile at the provider least of all.
      */
-    const profile = await profileFor(ctx.env, ctx.userId);
-
     if (ctx.confirmed !== true) {
       const cost = await creditNote(ctx);
       /**

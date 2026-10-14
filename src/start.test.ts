@@ -43,4 +43,20 @@ describe("securityHeaders", () => {
     expect(response.status).toBe(201);
     expect(await response.text()).toBe("hello");
   });
+
+  it("sends the policy it is heading towards as report-only, naming no third-party script host", async () => {
+    const response = await callMiddleware(new Response("ok"));
+    const policy = response.headers.get("Content-Security-Policy-Report-Only") ?? "";
+
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("base-uri 'none'");
+    expect(policy).toMatch(/script-src 'self'/);
+    // Report-only: nothing it says is enforced yet.
+    expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
+  });
+
+  it("asks for https on https only", async () => {
+    const response = await callMiddleware(new Response("ok"));
+    expect(response.headers.get("Strict-Transport-Security")).toBe("max-age=31536000");
+  });
 });

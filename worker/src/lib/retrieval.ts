@@ -174,10 +174,14 @@ export async function retrieveForAgent(
     : (bundleRows ?? []).map((r: { bundle_id: string }) => r.bundle_id);
 
   if (bundleIds.length > 0) {
+    // Without the trashed ones. Through a person's own client the policy
+    // hides them; Slack and routines read with the service role, and a
+    // document in Recently Deleted was still named to the model there.
     const { data: docRows, error: docError } = await db
       .from("documents")
       .select("name")
       .in("bundle_id", bundleIds)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false });
     if (!docError) docNames = (docRows ?? []).map((r: { name: string }) => r.name);
   }
@@ -266,10 +270,14 @@ export async function retrieveForAgent(
     (matched.length === 0 || namedAndUnmatched) &&
     refersToDocuments(question, docNames)
   ) {
+    // The trashed ones excluded here too, for the reason the name list gives:
+    // with the service role nothing else would, and this hands the model a
+    // deleted document's whole text.
     const { data: docRows, error: docError } = await db
       .from("documents")
       .select("id,name,content")
       .in("bundle_id", bundleIds)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false });
     const withContent = docError
       ? []

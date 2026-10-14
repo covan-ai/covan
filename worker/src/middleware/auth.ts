@@ -153,8 +153,9 @@ async function authenticateWithApiKey(c: Context<AppEnv>, token: string, next: N
 
   const resolved = await resolveApiKey(c.env, token);
 
-  // Unknown, revoked, or owned by an account that no longer exists — one answer
-  // for all three. Distinguishing them tells a holder about a key they do not have.
+  // Unknown, revoked, owned by an account that no longer exists, or owned by
+  // somebody no longer in the key's workspace — one answer for all four.
+  // Distinguishing them tells a holder about a key they do not have.
   if (!resolved) {
     return c.json({ error: "unauthorized" }, 401);
   }
@@ -162,9 +163,13 @@ async function authenticateWithApiKey(c: Context<AppEnv>, token: string, next: N
   c.set("user", { id: resolved.user.id, email: resolved.user.email ?? "" });
   c.set(
     "db",
-    userClient(withMeter(c.env, c.get("subrequests")), await mintUserToken(secret, resolved.user)),
+    userClient(
+      withMeter(c.env, c.get("subrequests")),
+      await mintUserToken(secret, resolved.user, resolved),
+    ),
   );
   c.set("apiKeyId", resolved.keyId);
+  c.set("apiKeyWorkspaceId", resolved.workspaceId);
 
   await next();
 

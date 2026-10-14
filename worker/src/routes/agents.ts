@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapAgent } from "../lib/dto";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
 import { REASONING_EFFORTS, MODEL_IDS } from "../lib/models";
 
@@ -113,9 +113,8 @@ function agentColumns(body: z.infer<typeof updateAgentSchema>): Record<string, u
 // GET /agents
 agents.get("/agents", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json([]);
   }
@@ -143,7 +142,7 @@ agents.post("/agents", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ error: "no workspace found for user" }, 400);
   }

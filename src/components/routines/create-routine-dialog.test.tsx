@@ -126,7 +126,9 @@ describe("CreateRoutineDialog", () => {
   });
 
   it("sends a channel id rather than an address when channels already exist", async () => {
-    channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0 }]);
+    channelsList.mockResolvedValue([
+      { id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0, confirmed: true },
+    ]);
     const user = userEvent.setup();
 
     renderDialog();
@@ -145,7 +147,9 @@ describe("CreateRoutineDialog", () => {
   // A draft the parser cannot read must not trap the user on step one retrying
   // prose; the form is always reachable.
   it("falls through to the editable form when the draft cannot be read", async () => {
-    channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0 }]);
+    channelsList.mockResolvedValue([
+      { id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0, confirmed: true },
+    ]);
     draft.mockRejectedValue(Object.assign(new Error("could not read that"), { status: 422 }));
     const user = userEvent.setup();
 
@@ -158,7 +162,9 @@ describe("CreateRoutineDialog", () => {
   });
 
   it("warns that the first run of a source-watching routine is silent", async () => {
-    channelsList.mockResolvedValue([{ id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0 }]);
+    channelsList.mockResolvedValue([
+      { id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0, confirmed: true },
+    ]);
     draft.mockResolvedValue({
       name: "r/SaaS",
       sourceKind: "rss",

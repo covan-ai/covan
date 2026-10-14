@@ -2,7 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DocumentEnv } from "../../types";
 import { getDocStore } from "../docstore";
-import { chunkText, embedTexts } from "../embeddings";
+import { chunkText, embedTexts, tokensSpentBefore } from "../embeddings";
 import { insertChunkRows } from "../chunk-store";
 import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
 
@@ -230,9 +230,10 @@ export async function fileRoutineOutput(
       }
     } catch (err) {
       console.error("routine filing: embedding failed (document saved unindexed)", err);
+      indexTokens = tokensSpentBefore(err);
     }
 
-    await pruneOldOutput(db, input.routineId, input.retention);
+    await pruneOldOutput(db, input.routineId, input.workspaceId, input.retention);
 
     return { filed: true, documentId: doc.id, indexTokens };
   } catch (err) {
@@ -261,13 +262,18 @@ export async function fileRoutineOutput(
 async function pruneOldOutput(
   db: SupabaseClient,
   routineId: string,
+  workspaceId: string,
   retention: number,
 ): Promise<void> {
   try {
+    // The routine's own workspace, for the reason `fileRoutineOutput` scopes
+    // the bundle: a row elsewhere claiming this routine would otherwise count
+    // towards its retention and push its real output out of view.
     const { data, error } = await db
       .from("documents")
-      .select("id")
+      .select("id, knowledge_bundles!inner(workspace_id)")
       .eq("routine_id", routineId)
+      .eq("knowledge_bundles.workspace_id", workspaceId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .range(retention, retention + MAX_PRUNE_PER_RUN - 1);

@@ -20,8 +20,9 @@ import { resolveModel } from "../models";
 import { complete, type CompletionMessage } from "../completion";
 import { replyOutcome } from "../harness/usage";
 import { decryptSecret } from "../secret-box";
-import { lookupEmail, postMessage } from "./api";
-import { toMrkdwn } from "./mrkdwn";
+import { isPublicChannel, lookupEmail, postMessage } from "./api";
+import { escapeMrkdwn, toMrkdwn } from "./mrkdwn";
+import { getRateLimiter, userRateKey } from "../ratelimit";
 
 /**
  * A question asked in Slack, answered by the agent, in the thread.
@@ -141,6 +142,15 @@ export async function handleSlackEvent(
     return;
   }
 
+  // The same per-person allowance the chat screen spends, in the same bucket:
+  // a question asked in Slack buys the same completion, and a person who is
+  // out of turns in one place is out in the other.
+  const rate = await getRateLimiter(deps.env, "expensive").check(userRateKey("expensive", userId));
+  if (!rate.allowed) {
+    await say("You're asking faster than I can answer. Give it a minute, then try again.");
+    return;
+  }
+
   // The installation's workspace pays — the one this Slack team is connected
   // to — and the asker is who the charge is attributed to.
   const verdict = await deps.entitlements.check(installation.workspace_id);
@@ -165,6 +175,8 @@ export async function handleSlackEvent(
     .select("id,name,persona,model,mode,temperature,reasoning_effort,web_search,workspace_id")
     .eq("id", installation.agent_id)
     .eq("workspace_id", installation.workspace_id)
+    // A deleted agent is gone everywhere else; the service role sees it anyway.
+    .is("deleted_at", null)
     .maybeSingle();
   if (agentError || !agent) {
     await say("The agent this Slack app points at is gone. Pick another one in Covan.");
@@ -179,10 +191,17 @@ export async function handleSlackEvent(
     agentId: agent.id,
     userId,
     title: question.slice(0, TITLE_LIMIT),
-    // A question asked in a channel was asked in front of everyone, so the
-    // conversation it creates is shared. A DM is a private room, and 0008's
-    // default is the right one for it.
-    visibility: event.channel_type === "im" ? "private" : "shared",
+    // A question asked in a public channel was asked in front of everyone, so
+    // the conversation it creates is shared. Anywhere else — a DM, a private
+    // channel, a group DM — it was asked in a room most of the workspace is not
+    // in, and 0008's private default is the right one. An `app_mention` does
+    // not say which kind of channel it came from, so Slack is asked, once, when
+    // the thread's conversation is made; an answer it will not give (an install
+    // from before `channels:read` was requested) is the private one.
+    visibility: async () =>
+      event.channel_type !== "im" && (await isPublicChannel(deps.fetchImpl, token, channel))
+        ? "shared"
+        : "private",
   });
   if (!sessionId) {
     await say("I couldn't open a conversation for this thread. Nothing was lost — try again.");
@@ -367,7 +386,9 @@ export async function handleSlackEvent(
  */
 function withCitations(answer: string, sources: Array<{ name: string }>): string {
   if (sources.length === 0) return answer;
-  return `${answer}\n\n_From: ${sources.map((s) => s.name).join(", ")}_`;
+  // Names are whatever somebody called a file, and a file called `<!here>`
+  // would otherwise ping the channel.
+  return `${answer}\n\n_From: ${sources.map((s) => escapeMrkdwn(s.name)).join(", ")}_`;
 }
 
 /** Whether this account is, right now, a member of the installed workspace. */
@@ -428,10 +449,15 @@ async function resolveIdentity(
   const email = await lookupEmail(deps.fetchImpl, botToken, slackUserId);
   if (!email) return null;
 
+  // An exact match on the lowercased address — GoTrue stores addresses in
+  // lower case, and `lookupEmail` lowers Slack's. Not `ilike`: PostgREST reads
+  // `*` in a pattern as `%`, and `*` is a legal character in an address, so a
+  // Slack account named `*@company.com` would have matched whichever single
+  // member had an address at that domain.
   const { data: profile } = await deps.db
     .from("profiles")
     .select("id")
-    .ilike("email", email.replace(/[%_]/g, "\\$&"))
+    .eq("email", email)
     .maybeSingle();
   if (!profile?.id) return null;
 
@@ -457,7 +483,7 @@ async function sessionForThread(
     agentId: string;
     userId: string;
     title: string;
-    visibility: "private" | "shared";
+    visibility: () => Promise<"private" | "shared">;
   },
 ): Promise<string | null> {
   const channel = event.channel!;
@@ -480,7 +506,7 @@ async function sessionForThread(
       workspace_id: installation.workspace_id,
       title: deps.title,
       kind: "chat",
-      visibility: deps.visibility,
+      visibility: await deps.visibility(),
     })
     .select("id")
     .single();

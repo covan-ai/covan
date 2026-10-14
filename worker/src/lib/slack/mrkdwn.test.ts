@@ -89,3 +89,35 @@ describe("markdown as Slack reads it", () => {
     );
   });
 });
+
+describe("what an answer cannot make the app say", () => {
+  // The answer is model output over retrieved documents, and Slack reads more
+  // than URLs between angle brackets. A document could make the bot ping.
+  it.each([
+    ["[urgent](!channel)", "urgent (!channel)"],
+    ["[urgent](!here)", "urgent (!here)"],
+    ["[ask](@U012AB3CD)", "ask (@U012AB3CD)"],
+    ["[x](javascript:alert(1))", "x (javascript:alert(1)"],
+    ["[x](https://a.example/|<!channel>)", "x (https://a.example/|&lt;!channel>)"],
+  ])("does not turn %s into a link", (markdown, expected) => {
+    const text = toMrkdwn(markdown);
+    expect(text.startsWith(expected)).toBe(true);
+    expect(text).not.toMatch(/<[!@#]/);
+  });
+
+  it("still links an ordinary address, with its ampersands escaped", () => {
+    expect(toMrkdwn("[the policy](https://example.com/p?a=1&b=2)")).toBe(
+      "<https://example.com/p?a=1&amp;b=2|the policy>",
+    );
+    expect(toMrkdwn("[write](mailto:hr@example.com)")).toBe("<mailto:hr@example.com|write>");
+  });
+
+  it("escapes a control sequence inside code, where it would still be read", () => {
+    expect(toMrkdwn("use `<!channel>` sparingly")).toBe("use `&lt;!channel>` sparingly");
+    expect(toMrkdwn("```\n<!here> & <@U1>\n```")).toBe("```\n&lt;!here> &amp; &lt;@U1>\n```");
+  });
+
+  it("escapes one in prose", () => {
+    expect(toMrkdwn("hey <!everyone>")).toBe("hey &lt;!everyone>");
+  });
+});

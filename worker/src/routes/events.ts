@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { getActiveWorkspaceId } from "../lib/workspace";
+import { callerWorkspaceId } from "../lib/workspace";
 import { toEpochMs } from "../lib/dto";
 
 const events = new Hono<AppEnv>();
@@ -39,7 +39,6 @@ type EventRow = {
  */
 events.get("/events", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
   const parsed = querySchema.safeParse(c.req.query());
   if (!parsed.success) {
@@ -47,7 +46,7 @@ events.get("/events", async (c) => {
   }
   const { limit, before } = parsed.data;
 
-  const workspaceId = await getActiveWorkspaceId(db, user.id);
+  const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ events: [], hasMore: false });
 
   let query = db

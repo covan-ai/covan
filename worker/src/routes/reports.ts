@@ -16,7 +16,7 @@ import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } f
 import { reportTitle, reportFileName } from "../lib/report";
 import { EXCERPT_LIMIT, safeName } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
-import { chunkText, embedTexts } from "../lib/embeddings";
+import { chunkText, embedTexts, tokensSpentBefore } from "../lib/embeddings";
 import { insertChunkRows } from "../lib/chunk-store";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { completionSpend, embeddingSpend, spends } from "../lib/entitlements";
@@ -292,6 +292,7 @@ reports.post("/sessions/:id/report", async (c) => {
     }
   } catch (e) {
     console.error("report embedding failed (report saved without chunks)", e);
+    indexTokens = tokensSpentBefore(e);
   }
 
   await recordCredits(

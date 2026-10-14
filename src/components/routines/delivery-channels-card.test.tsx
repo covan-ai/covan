@@ -22,11 +22,14 @@ vi.mock("@/lib/api-client", () => ({
   },
 }));
 
-const { toastError, toastSuccess } = vi.hoisted(() => ({
+const { toastError, toastSuccess, toastMessage } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  toastMessage: vi.fn(),
 }));
-vi.mock("sonner", () => ({ toast: { error: toastError, success: toastSuccess } }));
+vi.mock("sonner", () => ({
+  toast: { error: toastError, success: toastSuccess, message: toastMessage },
+}));
 
 function renderCard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -42,17 +45,26 @@ const WEBHOOK = {
   kind: "webhook" as const,
   label: "deploy.acme.example/…7f2c",
   createdAt: 0,
+  confirmed: true,
 };
 
 describe("DeliveryChannelsCard", () => {
   beforeEach(() => {
-    [list, remove, create, test, rotate, toastError, toastSuccess].forEach((m) => m.mockReset());
+    [list, remove, create, test, rotate, toastError, toastSuccess, toastMessage].forEach((m) =>
+      m.mockReset(),
+    );
   });
 
   it("shows each channel by its masked label", async () => {
     list.mockResolvedValue([
-      { id: "c1", kind: "email", label: "m…a@gmail.com", createdAt: 0 },
-      { id: "c2", kind: "slack_webhook", label: "hooks.slack.com/…a3f9", createdAt: 0 },
+      { id: "c1", kind: "email", label: "m…a@gmail.com", createdAt: 0, confirmed: true },
+      {
+        id: "c2",
+        kind: "slack_webhook",
+        label: "hooks.slack.com/…a3f9",
+        createdAt: 0,
+        confirmed: true,
+      },
       WEBHOOK,
     ]);
 
@@ -90,7 +102,7 @@ describe("DeliveryChannelsCard", () => {
 
   it("offers a rotate only for the kind that has a signature", async () => {
     list.mockResolvedValue([
-      { id: "c1", kind: "email", label: "m…a@gmail.com", createdAt: 0 },
+      { id: "c1", kind: "email", label: "m…a@gmail.com", createdAt: 0, confirmed: true },
       WEBHOOK,
     ]);
 
@@ -128,7 +140,13 @@ describe("DeliveryChannelsCard", () => {
   it("closes without a reveal for a kind that has no secret", async () => {
     const user = userEvent.setup();
     list.mockResolvedValue([]);
-    create.mockResolvedValue({ id: "c1", kind: "email", label: "d…z@e.com", createdAt: 0 });
+    create.mockResolvedValue({
+      id: "c1",
+      kind: "email",
+      label: "d…z@e.com",
+      createdAt: 0,
+      confirmed: true,
+    });
 
     renderCard();
     await screen.findByText(/No delivery channels yet/i);
@@ -164,5 +182,56 @@ describe("DeliveryChannelsCard", () => {
     await user.click(await screen.findByRole("button", { name: /^Send a test/ }));
 
     expect(toastSuccess).toHaveBeenCalledWith("Test sent to deploy.acme.example/…7f2c");
+  });
+
+  // 0096: an address that is not your own has to say yes before anything is
+  // sent there, and the list says which ones are still waiting.
+  it("marks an address that has not confirmed", async () => {
+    list.mockResolvedValue([
+      { id: "c9", kind: "email", label: "s…r@example.org", createdAt: 0, confirmed: false },
+    ]);
+
+    renderCard();
+
+    expect(await screen.findByText("Waiting for confirmation")).toBeInTheDocument();
+  });
+
+  it("says the address was asked, rather than that the channel is ready", async () => {
+    const user = userEvent.setup();
+    list.mockResolvedValue([]);
+    create.mockResolvedValue({
+      id: "c9",
+      kind: "email",
+      label: "s…r@example.org",
+      createdAt: 0,
+      confirmed: false,
+      confirmation: "sent",
+    });
+
+    renderCard();
+    await screen.findByText(/No delivery channels yet/i);
+    await user.click(screen.getByRole("button", { name: /Add channel/i }));
+    await user.type(screen.getByLabelText(/Email address/i), "stranger@example.org");
+    await user.click(screen.getByRole("button", { name: /^Add channel$/ }));
+
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringMatching(/emailed that address a link/));
+  });
+
+  it("explains a test refused for an unconfirmed address instead of calling it an error", async () => {
+    const user = userEvent.setup();
+    list.mockResolvedValue([
+      { id: "c9", kind: "email", label: "s…r@example.org", createdAt: 0, confirmed: false },
+    ]);
+    const { ApiError } = await import("@/lib/api-client");
+    test.mockRejectedValue(new ApiError(409, "unconfirmed"));
+
+    renderCard();
+    await user.click(await screen.findByRole("button", { name: /^Send a test/ }));
+
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastMessage).toHaveBeenCalledWith(
+      "This address hasn't confirmed yet",
+      expect.anything(),
+    );
   });
 });

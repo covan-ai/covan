@@ -36,7 +36,11 @@ describe("InviteStep", () => {
   it("does not claim an email was sent when the install has no mail", async () => {
     // The exact regression: three rows, three rows' worth of "sent", and an
     // install with no RESEND_API_KEY behind it.
-    create.mockImplementation(async ({ email }: { email: string }) => ({ email, emailed: false }));
+    create.mockImplementation(async ({ email }: { email: string }) => ({
+      email,
+      emailed: false,
+      inviteUrl: `https://covan.app/invite#id=${email}&token=t`,
+    }));
     const onDone = vi.fn();
     render(<InviteStep onDone={onDone} />);
 
@@ -56,6 +60,7 @@ describe("InviteStep", () => {
     create.mockImplementation(async ({ email }: { email: string }) => ({
       email,
       emailed: email === "a@x.com",
+      inviteUrl: `https://covan.app/invite#id=${email}&token=t`,
     }));
     render(<InviteStep onDone={vi.fn()} />);
 
@@ -64,7 +69,11 @@ describe("InviteStep", () => {
     const [, options] = toast.warning.mock.calls[0] ?? toast.success.mock.calls[0];
     expect(options.action.label).toBe("Copy invite text");
     options.action.onClick();
-    expect(copyInviteText).toHaveBeenCalledWith(["b@x.com"]);
+    // With the link the create response carried: since migration 0090 it is
+    // what accepting takes, and it exists nowhere else.
+    expect(copyInviteText).toHaveBeenCalledWith([
+      { email: "b@x.com", url: "https://covan.app/invite#id=b@x.com&token=t" },
+    ]);
   });
 
   it("says plainly that they were emailed when they were, and offers nothing to copy", async () => {

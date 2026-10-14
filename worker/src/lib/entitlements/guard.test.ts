@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { guardCredits, recordCredits } from "./guard";
 import type { Entitlements } from "./index";
-import { getActiveWorkspaceId } from "../workspace";
+import { callerWorkspaceId } from "../workspace";
 
-vi.mock("../workspace", () => ({ getActiveWorkspaceId: vi.fn() }));
+vi.mock("../workspace", () => ({ callerWorkspaceId: vi.fn() }));
 
 /** The things the guard touches on a Hono context, and nothing else. */
 function ctx(entitlements: Partial<Entitlements>, store: Record<string, unknown> = {}) {
@@ -24,7 +24,7 @@ function ctx(entitlements: Partial<Entitlements>, store: Record<string, unknown>
 
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.mocked(getActiveWorkspaceId).mockReset();
+  vi.mocked(callerWorkspaceId).mockReset();
 });
 
 describe("guardCredits", () => {
@@ -36,11 +36,11 @@ describe("guardCredits", () => {
 
     expect(check).toHaveBeenCalledWith("w-session");
     expect(c.values.workspaceId).toBe("w-session");
-    expect(getActiveWorkspaceId).not.toHaveBeenCalled();
+    expect(callerWorkspaceId).not.toHaveBeenCalled();
   });
 
   it("falls back to the caller's active workspace when the route has no row", async () => {
-    vi.mocked(getActiveWorkspaceId).mockResolvedValue("w-active");
+    vi.mocked(callerWorkspaceId).mockResolvedValue("w-active");
     const check = vi.fn().mockResolvedValue({ allowed: true });
     const c = ctx({ check });
 

@@ -109,14 +109,17 @@ describe("a connection outliving its grant holder", () => {
 
   it("keeps the documents it imported attached to it", async () => {
     const connectionId = await makeConnection(null);
-    const { error } = await serviceClient().from("documents").insert({
-      bundle_id: bundleId,
-      connection_id: connectionId,
-      external_id: "page-1",
-      name: "Handbook.md",
-      size: 10,
-      r2_key: "k/handbook",
-    });
+    const { error } = await serviceClient()
+      .from("documents")
+      .insert({
+        bundle_id: bundleId,
+        connection_id: connectionId,
+        external_id: "page-1",
+        name: "Handbook.md",
+        size: 10,
+        // Unique since 0085: one stored object belongs to one row.
+        r2_key: `${bundleId}/${crypto.randomUUID()}-Handbook.md`,
+      });
     expect(error).toBeNull();
 
     const { data } = await serviceClient()

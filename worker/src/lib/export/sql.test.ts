@@ -162,6 +162,29 @@ describe("references that point outside what the caller could see", () => {
     expect(droppedReferences["ideas.source_message_id"]).toBe(1);
   });
 
+  it("drop the API key a routine was made with, which no archive carries", () => {
+    // Keys are never exported, so `routines.api_key_id` (0088) always points
+    // outside the archive, and restoring it would fail the foreign key.
+    const { sql, droppedReferences } = renderSql(
+      base({
+        delivery_channels: [{ id: "c1", workspace_id: "w1", user_id: "u1", kind: "slack" }],
+        routines: [
+          {
+            id: "r1",
+            workspace_id: "w1",
+            user_id: "u1",
+            delivery_channel_id: "c1",
+            name: "x",
+            api_key_id: "key-1",
+          },
+        ],
+      }),
+    );
+
+    expect(sql).not.toContain("'key-1'");
+    expect(droppedReferences["routines.api_key_id"]).toBe(1);
+  });
+
   it("are counted, so the loss is stated rather than discovered", () => {
     const { droppedReferences } = renderSql(base());
     expect(droppedReferences).toEqual({});

@@ -151,6 +151,13 @@ export type ToolConnectionDTO = {
    * is at a consent screen; every transport but `composio` is born `active`.
    */
   status: "pending" | "active" | "failed";
+  /**
+   * `owner`: only the person who connected it, and only their turns, can use
+   * it. `workspace`: shared with every member (0098).
+   */
+  scope: "owner" | "workspace";
+  /** Whether the caller connected it — the one person who may share it or take it back. */
+  mine: boolean;
   createdAt: number;
 };
 
@@ -164,17 +171,22 @@ function logoPathOf(stored: unknown): string {
   return url ? `/composio/logo?u=${encodeURIComponent(url.toString())}` : "";
 }
 
-export function mapToolConnection(row: {
-  id: string;
-  label: string;
-  transport: string;
-  base_url: string;
-  allowed_methods?: unknown;
-  config?: unknown;
-  toolkit_slug?: unknown;
-  status?: unknown;
-  created_at: string;
-}): ToolConnectionDTO {
+export function mapToolConnection(
+  row: {
+    id: string;
+    label: string;
+    transport: string;
+    base_url: string;
+    allowed_methods?: unknown;
+    config?: unknown;
+    toolkit_slug?: unknown;
+    status?: unknown;
+    scope?: unknown;
+    created_by?: unknown;
+    created_at: string;
+  },
+  callerId: string,
+): ToolConnectionDTO {
   const config =
     row.config && typeof row.config === "object" ? (row.config as Record<string, unknown>) : {};
   return {
@@ -199,6 +211,8 @@ export function mapToolConnection(row: {
     // because it was well-formed when it was written.
     logoPath: logoPathOf(config.logo),
     status: row.status === "pending" || row.status === "failed" ? row.status : "active",
+    scope: row.scope === "workspace" ? "workspace" : "owner",
+    mine: typeof row.created_by === "string" && row.created_by === callerId,
     createdAt: toEpochMs(row.created_at),
   };
 }
@@ -343,6 +357,18 @@ export type PendingInvitationDTO = {
    * invite dialog uses it to describe what happened instead of assuming.
    */
   emailed?: boolean;
+  /**
+   * The link with the token in it (0090). Only on the response that minted
+   * it — creating or resending — because the database keeps a hash and
+   * nothing can show it again. With no mail configured, passing this on is
+   * the only way the invitee receives it.
+   */
+  inviteUrl?: string;
+  /**
+   * The link has run out, or the invitation predates links altogether.
+   * Accepting needs a new one: `POST /invitations/:id/resend`.
+   */
+  needsResend: boolean;
 };
 
 export type ApiKeyDTO = {
@@ -949,6 +975,11 @@ export type DeliveryChannelDTO = {
   kind: "slack_webhook" | "email" | "webhook";
   label: string;
   createdAt: number;
+  /**
+   * False only for an email channel whose address has not agreed to these
+   * messages yet (0096). Nothing is sent to it until it does.
+   */
+  confirmed: boolean;
 };
 
 /**
@@ -966,6 +997,7 @@ export function mapDeliveryChannel(row: {
   kind: string;
   label: string;
   created_at: string;
+  confirmed_at?: string | null;
 }): DeliveryChannelDTO {
   const kind = CHANNEL_KINDS.find((k) => k === row.kind) ?? "slack_webhook";
   return {
@@ -973,6 +1005,7 @@ export function mapDeliveryChannel(row: {
     kind,
     label: row.label,
     createdAt: toEpochMs(row.created_at),
+    confirmed: kind !== "email" || Boolean(row.confirmed_at),
   };
 }
 

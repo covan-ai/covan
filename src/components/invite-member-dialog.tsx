@@ -52,17 +52,19 @@ export function InviteMemberDialog({
       });
       // Nothing went out, so "let them know" is now a job with a tool attached.
       // Twelve seconds rather than the default four: an action nobody has time
-      // to read is the same as no action. The durable copy is on the Team page,
-      // one button per waiting invitation, for whenever this toast is gone.
+      // to read is the same as no action.
+      // The link exists only in this response: the database keeps a hash of
+      // its token. After this toast, Resend on the Team page mints a new one.
+      const url = invite.inviteUrl;
       toast[notice.tone](
         notice.message,
-        invite.emailed
+        invite.emailed || !url
           ? undefined
           : {
               duration: 12000,
               action: {
                 label: "Copy invite text",
-                onClick: () => copyInviteText([invite.email]),
+                onClick: () => copyInviteText([{ email: invite.email, url }]),
               },
             },
       );

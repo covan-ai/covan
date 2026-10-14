@@ -11,8 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthedRouteImport } from './routes/_authed'
+import { Route as ConfirmAddressRouteImport } from './routes/confirm-address'
 import { Route as ConfirmedRouteImport } from './routes/confirmed'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
+import { Route as InviteRouteImport } from './routes/invite'
 import { Route as LicenseRouteImport } from './routes/license'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
@@ -48,6 +50,11 @@ const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConfirmAddressRoute = ConfirmAddressRouteImport.update({
+  id: '/confirm-address',
+  path: '/confirm-address',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConfirmedRoute = ConfirmedRouteImport.update({
   id: '/confirmed',
   path: '/confirmed',
@@ -56,6 +63,11 @@ const ConfirmedRoute = ConfirmedRouteImport.update({
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
   id: '/forgot-password',
   path: '/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InviteRoute = InviteRouteImport.update({
+  id: '/invite',
+  path: '/invite',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LicenseRoute = LicenseRouteImport.update({
@@ -192,8 +204,10 @@ const AuthedAgentsAgentIdRoutinesRoutineIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/confirm-address': typeof ConfirmAddressRoute
   '/confirmed': typeof ConfirmedRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/invite': typeof InviteRoute
   '/license': typeof LicenseRoute
   '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -222,8 +236,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/confirm-address': typeof ConfirmAddressRoute
   '/confirmed': typeof ConfirmedRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/invite': typeof InviteRoute
   '/license': typeof LicenseRoute
   '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -252,8 +268,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authed': typeof AuthedRouteWithChildren
+  '/confirm-address': typeof ConfirmAddressRoute
   '/confirmed': typeof ConfirmedRoute
   '/forgot-password': typeof ForgotPasswordRoute
+  '/invite': typeof InviteRoute
   '/license': typeof LicenseRoute
   '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
@@ -284,8 +302,10 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/confirm-address'
     | '/confirmed'
     | '/forgot-password'
+    | '/invite'
     | '/license'
     | '/privacy'
     | '/reset-password'
@@ -314,8 +334,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/confirm-address'
     | '/confirmed'
     | '/forgot-password'
+    | '/invite'
     | '/license'
     | '/privacy'
     | '/reset-password'
@@ -343,8 +365,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_authed'
+    | '/confirm-address'
     | '/confirmed'
     | '/forgot-password'
+    | '/invite'
     | '/license'
     | '/privacy'
     | '/reset-password'
@@ -375,8 +399,10 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthedRoute: typeof AuthedRouteWithChildren
+  ConfirmAddressRoute: typeof ConfirmAddressRoute
   ConfirmedRoute: typeof ConfirmedRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
+  InviteRoute: typeof InviteRoute
   LicenseRoute: typeof LicenseRoute
   PrivacyRoute: typeof PrivacyRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
@@ -401,6 +427,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/confirm-address': {
+      id: '/confirm-address'
+      path: '/confirm-address'
+      fullPath: '/confirm-address'
+      preLoaderRoute: typeof ConfirmAddressRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/confirmed': {
       id: '/confirmed'
       path: '/confirmed'
@@ -413,6 +446,13 @@ declare module '@tanstack/react-router' {
       path: '/forgot-password'
       fullPath: '/forgot-password'
       preLoaderRoute: typeof ForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invite': {
+      id: '/invite'
+      path: '/invite'
+      fullPath: '/invite'
+      preLoaderRoute: typeof InviteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/license': {
@@ -663,8 +703,10 @@ const AuthedRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthedRoute: AuthedRouteWithChildren,
+  ConfirmAddressRoute: ConfirmAddressRoute,
   ConfirmedRoute: ConfirmedRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
+  InviteRoute: InviteRoute,
   LicenseRoute: LicenseRoute,
   PrivacyRoute: PrivacyRoute,
   ResetPasswordRoute: ResetPasswordRoute,

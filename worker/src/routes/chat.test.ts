@@ -341,7 +341,22 @@ function appWith(spec: {
   /** The agent's stored model. Defaults to `AGENT.model` (null → the default). */
   agentModel?: string | null;
   /** The agent's own tuning (0048). Undefined leaves both on Auto. */
-  agentTuning?: { temperature?: number | null; reasoning_effort?: string | null };
+  agentTuning?: {
+    temperature?: number | null;
+    reasoning_effort?: string | null;
+    web_search?: boolean | null;
+    mode?: string | null;
+  };
+  /**
+   * What this conversation chose for itself in the composer (0099). Undefined
+   * leaves the session's four columns absent, which is every session before it.
+   */
+  sessionDial?: {
+    model?: string | null;
+    reasoning_effort?: string | null;
+    web_search?: boolean | null;
+    mode?: string | null;
+  };
   /**
    * A reply already sitting at the end of the conversation, stopped at its
    * length cap. What "continue" has to work from.
@@ -397,7 +412,10 @@ function appWith(spec: {
   const dbSpec: FakeDbSpec = {
     tables: {
       chat_sessions: {
-        select: () => ({ data: { ...SESSION, title: spec.sessionTitle ?? null }, error: null }),
+        select: () => ({
+          data: { ...SESSION, title: spec.sessionTitle ?? null, ...(spec.sessionDial ?? {}) },
+          error: null,
+        }),
       },
       agents: { select: () => ({ data: agent, error: null }) },
       // The route reads newest-first and reverses, so hand it back reversed.
@@ -1001,6 +1019,153 @@ describe("the agent's own tuning", () => {
     await ask(app);
 
     expect(requestBody()).not.toHaveProperty("reasoning_effort");
+  });
+});
+
+describe("the conversation's own dial (0099)", () => {
+  const requestBody = () => completionCreate.mock.calls.find((c) => c[0].stream)![0];
+  const searchLine = "You can search the web when needed";
+
+  it("answers on the model the session chose, over the agent's", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-4o",
+      sessionDial: { model: "gpt-4.1-mini" },
+    });
+
+    await ask(app);
+
+    expect(requestBody().model).toBe("gpt-4.1-mini");
+  });
+
+  it("answers on the agent's model when the session's is null", async () => {
+    const { app } = appWith({ question: "Hi", agentModel: "gpt-4o", sessionDial: { model: null } });
+
+    await ask(app);
+
+    expect(requestBody().model).toBe("gpt-4o");
+  });
+
+  it("passes over a session model this deployment cannot serve for the agent's", async () => {
+    // No Anthropic key in ENV: a thread pinned to Claude before the key went
+    // keeps answering on the agent's model, not on the deployment default.
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-4o",
+      sessionDial: { model: "claude-opus-5" },
+    });
+
+    await ask(app);
+
+    expect(requestBody().model).toBe("gpt-4o");
+  });
+
+  it("still lets one reply ask for another model over the session's", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      cutOffReply: "Half an answer",
+      agentModel: "gpt-4o",
+      sessionDial: { model: "gpt-4.1" },
+    });
+
+    await again(app, "gpt-4.1-mini");
+
+    expect(requestBody().model).toBe("gpt-4.1-mini");
+  });
+
+  it("asks for the session's effort over the agent's", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-5-mini",
+      agentTuning: { reasoning_effort: "low" },
+      sessionDial: { reasoning_effort: "high" },
+    });
+
+    await ask(app);
+
+    expect(requestBody().reasoning_effort).toBe("high");
+  });
+
+  it("takes thinking off ('minimal') as a choice over the agent's effort", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-5-mini",
+      agentTuning: { reasoning_effort: "high" },
+      sessionDial: { reasoning_effort: "minimal" },
+    });
+
+    await ask(app);
+
+    expect(requestBody().reasoning_effort).toBe("minimal");
+  });
+
+  it("inherits the agent's effort when the session's is null", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-5-mini",
+      agentTuning: { reasoning_effort: "low" },
+      sessionDial: { reasoning_effort: null },
+    });
+
+    await ask(app);
+
+    expect(requestBody().reasoning_effort).toBe("low");
+  });
+
+  it("tells the model it may search when the session turned web search on", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentTuning: { web_search: false },
+      sessionDial: { web_search: true },
+    });
+
+    await ask(app);
+
+    expect(String(sentMessages()[0].content)).toContain(searchLine);
+  });
+
+  it("does not, when the session turned it off on an agent that searches", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentTuning: { web_search: true },
+      sessionDial: { web_search: false },
+    });
+
+    await ask(app);
+
+    expect(String(sentMessages()[0].content)).not.toContain(searchLine);
+  });
+
+  it("inherits the agent's web search when the session's is null", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentTuning: { web_search: true },
+      sessionDial: { web_search: null },
+    });
+
+    await ask(app);
+
+    expect(String(sentMessages()[0].content)).toContain(searchLine);
+  });
+
+  it("brainstorms when the session chose it, with brainstorm's temperature", async () => {
+    const { app } = appWith({ question: "Hi", sessionDial: { mode: "brainstorm" } });
+
+    await ask(app);
+
+    expect(requestBody().temperature).toBe(0.9);
+  });
+
+  it("answers plainly when the session chose normal on a brainstorm agent", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentTuning: { mode: "brainstorm" },
+      sessionDial: { mode: "normal" },
+    });
+
+    await ask(app);
+
+    expect(requestBody()).not.toHaveProperty("temperature");
   });
 });
 
@@ -1919,6 +2084,56 @@ describe("POST /chat/confirm/:id", () => {
     // And on the model the turn started on, which must not move even if the
     // agent's setting has.
     expect(body.model).toBe("gpt-4.1");
+  });
+
+  it("finishes the answer on the conversation's own dial over the agent's", async () => {
+    parked = { ...PARKED, model: "gpt-5-mini" };
+    const { app } = appWith({
+      question: "every monday",
+      agentTuning: { reasoning_effort: "low", mode: "normal" },
+      sessionDial: { reasoning_effort: "high", mode: "brainstorm", model: "gpt-4o" },
+    });
+    answersWith(streamOf("Done."));
+
+    await (await confirm(app, false)).text();
+
+    const body = completionCreate.mock.calls.find((c) => c[0].stream)?.[0];
+    expect(body.reasoning_effort).toBe("high");
+    // The parked model still wins: the two halves of one answer are one model.
+    expect(body.model).toBe("gpt-5-mini");
+  });
+
+  it("finishes in the mode the conversation chose", async () => {
+    // On the parked gpt-4.1, which takes a temperature — a reasoning model is
+    // sent none, so brainstorm's 0.9 is only visible on one that does not.
+    parked = PARKED;
+    const { app } = appWith({
+      question: "every monday",
+      agentTuning: { mode: "normal" },
+      sessionDial: { mode: "brainstorm" },
+    });
+    answersWith(streamOf("Done."));
+
+    await (await confirm(app, false)).text();
+
+    const body = completionCreate.mock.calls.find((c) => c[0].stream)?.[0];
+    expect(body.temperature).toBe(0.9);
+  });
+
+  it("finishes on the agent's settings when the conversation chose nothing", async () => {
+    parked = { ...PARKED, model: "gpt-5-mini" };
+    const { app } = appWith({
+      question: "every monday",
+      agentTuning: { reasoning_effort: "low" },
+      sessionDial: { reasoning_effort: null, mode: null },
+    });
+    answersWith(streamOf("Done."));
+
+    await (await confirm(app, false)).text();
+
+    const body = completionCreate.mock.calls.find((c) => c[0].stream)?.[0];
+    expect(body.reasoning_effort).toBe("low");
+    expect(body).not.toHaveProperty("temperature");
   });
 
   it("records how much the resolved call actually put in front of the model", async () => {

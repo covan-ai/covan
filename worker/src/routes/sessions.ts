@@ -6,14 +6,58 @@ import { pollConversationBrowser } from "../lib/browser/live";
 import { NOT_STARTED } from "../lib/browser/queue";
 import { deferred } from "../lib/defer";
 import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
+import { availableModels, REASONING_EFFORTS, type ModelEnv } from "../lib/models";
 import { callerWorkspaceId } from "../lib/workspace";
 
 const sessions = new Hono<AppEnv>();
+
+/**
+ * The dial a conversation may turn for itself (0099): model, how hard it
+ * thinks, web search, mode. Each optional, and each nullable because null is
+ * a choice too — "back to the agent's own" — rather than a missing value.
+ *
+ * `model` is any string here and checked against `availableModels` in the
+ * handler, not in the schema: the list depends on which provider keys this
+ * deployment has, which only the request's `env` knows.
+ */
+const dialFields = {
+  model: z.string().min(1).nullable().optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
+  webSearch: z.boolean().nullable().optional(),
+  mode: z.enum(["normal", "brainstorm"]).nullable().optional(),
+};
+
+type Dial = {
+  model?: string | null;
+  reasoningEffort?: string | null;
+  webSearch?: boolean | null;
+  mode?: string | null;
+};
+
+/** A model id this deployment cannot answer on, or null when there is none. */
+function unservedModel(dial: Dial, env: ModelEnv | undefined): string | null {
+  if (dial.model == null) return null;
+  return (availableModels(env) as string[]).includes(dial.model) ? null : dial.model;
+}
+
+/**
+ * The dial's columns, named only when the request named them — the same rule
+ * as title and visibility below, so turning one knob never resets another.
+ */
+function dialColumns(dial: Dial) {
+  return {
+    ...(dial.model !== undefined ? { model: dial.model } : {}),
+    ...(dial.reasoningEffort !== undefined ? { reasoning_effort: dial.reasoningEffort } : {}),
+    ...(dial.webSearch !== undefined ? { web_search: dial.webSearch } : {}),
+    ...(dial.mode !== undefined ? { mode: dial.mode } : {}),
+  };
+}
 
 const createSessionSchema = z.object({
   agentId: z.string().min(1),
   title: z.string().optional(),
   kind: z.enum(["chat", "brainstorm"]).optional(),
+  ...dialFields,
 });
 
 // How long a name a person may type. Deliberately wider than the ~60 characters
@@ -23,14 +67,15 @@ const createSessionSchema = z.object({
 // way.
 const TITLE_INPUT_MAX_CHARS = 120;
 
-// Both fields optional, at least one required. A PATCH that named both columns
+// Every field optional, at least one required. A PATCH that named both columns
 // unconditionally would blank the title of every session somebody shared.
 const updateSessionSchema = z
   .object({
     visibility: z.enum(["private", "shared"]).optional(),
     title: z.string().trim().min(1).max(TITLE_INPUT_MAX_CHARS).optional(),
+    ...dialFields,
   })
-  .refine((v) => v.visibility !== undefined || v.title !== undefined, {
+  .refine((v) => Object.values(v).some((field) => field !== undefined), {
     message: "nothing to update",
   });
 
@@ -67,6 +112,10 @@ sessions.post("/sessions", async (c) => {
   }
 
   const { agentId, title, kind } = parsed.data;
+  const unserved = unservedModel(parsed.data, c.env);
+  if (unserved) {
+    return c.json({ error: `model not available: ${unserved}` }, 400);
+  }
 
   const { data: agent, error: agentError } = await db
     .from("agents")
@@ -89,6 +138,7 @@ sessions.post("/sessions", async (c) => {
       workspace_id: agent.workspace_id,
       kind: kind ?? "chat",
       visibility: kind === "brainstorm" ? "shared" : "private",
+      ...dialColumns(parsed.data),
     })
     .select("*")
     .single();
@@ -111,15 +161,23 @@ sessions.patch("/sessions/:id", async (c) => {
   }
 
   const { visibility, title } = parsed.data;
+  // Refused rather than stored and quietly ignored: the chat route would pass
+  // over an id it cannot serve for the agent's, and the composer would go on
+  // showing a model that is not the one answering.
+  const unserved = unservedModel(parsed.data, c.env);
+  if (unserved) {
+    return c.json({ error: `model not available: ${unserved}` }, 400);
+  }
 
   // RLS restricts UPDATE to the session owner — so on a shared session, only
-  // the person who started it can rename it, the same rule that already
-  // governs sharing it in the first place.
+  // the person who started it can rename it or turn its dial, the same rule
+  // that already governs sharing it in the first place.
   const { data, error } = await db
     .from("chat_sessions")
     .update({
       ...(visibility !== undefined ? { visibility } : {}),
       ...(title !== undefined ? { title } : {}),
+      ...dialColumns(parsed.data),
     })
     .eq("id", id)
     .select("*, messages(count)")

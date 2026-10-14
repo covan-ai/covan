@@ -42,8 +42,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "api_keys INSERT": "name,prefix,token_hash,user_id,workspace_id",
   "api_keys UPDATE": "name,revoked_at",
   "capability_calls UPDATE": "status",
-  "chat_sessions INSERT": "agent_id,kind,title,user_id,visibility,workspace_id",
-  "chat_sessions UPDATE": "title,visibility",
+  "chat_sessions INSERT":
+    "agent_id,kind,mode,model,reasoning_effort,title,user_id,visibility,web_search,workspace_id",
+  "chat_sessions UPDATE": "mode,model,reasoning_effort,title,visibility,web_search",
   "connection_grants INSERT":
     "agent_id,capability,connection_id,granted_at,granted_by,mode,provider,workspace_id",
   "connection_grants UPDATE":

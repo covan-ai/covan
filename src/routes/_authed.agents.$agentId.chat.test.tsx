@@ -47,6 +47,12 @@ const session = {
   kind: "chat" as const,
   title: "Pricing",
   updatedAt: Date.parse("2026-09-17T10:00:00Z"),
+  // The composer's dial, untouched: every one the agent's. Typed wide so a
+  // test can turn one and put it back, the way `ownerId` is borrowed below.
+  model: null as string | null,
+  reasoningEffort: null as "minimal" | "low" | "medium" | "high" | null,
+  webSearch: null as boolean | null,
+  mode: null as "normal" | "brainstorm" | null,
 };
 
 const store = {
@@ -64,6 +70,15 @@ const browserTasks = vi.fn();
 const browserLive = vi.fn();
 const takeoverCurrent = vi.fn();
 const takeoverOpen = vi.fn();
+const tuneSession = vi.fn();
+/**
+ * What `/me` answers. A variable rather than a literal so the dial's tests can
+ * add `modelSpecs` — without it every model reads as one that does not
+ * reason, which is the server's own answer for an id it does not know, and
+ * the Thinking chip has nothing to show.
+ */
+const meDefault = { user: { id: "user-1" }, models: ["gpt-4.1", "claude-opus-5"] };
+let meReply: Record<string, unknown> = meDefault;
 vi.mock("@/lib/api-client", () => ({
   ApiError: class ApiError extends Error {
     status = 500;
@@ -74,8 +89,8 @@ vi.mock("@/lib/api-client", () => ({
   // throws before it can fall back to a monogram.
   assetSrc: (path: string) => (path ? `https://api.test${path}` : ""),
   api: {
-    me: () => Promise.resolve({ user: { id: "user-1" }, models: ["gpt-4.1", "claude-opus-5"] }),
-    sessions: { messages: listMessages, setVisibility: vi.fn(), browserTasks },
+    me: () => Promise.resolve(meReply),
+    sessions: { messages: listMessages, setVisibility: vi.fn(), browserTasks, tune: tuneSession },
     browser: { live: browserLive, takeOver: vi.fn(), handBack: vi.fn(), stop: vi.fn() },
     takeovers: { takeOver: vi.fn(), open: takeoverOpen, current: takeoverCurrent, close: vi.fn() },
     messages: {
@@ -285,6 +300,7 @@ let scrollTo: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  meReply = meDefault;
   onAPhone = false;
   stubMatchMedia();
   listMessages.mockResolvedValue([question]);
@@ -1508,5 +1524,71 @@ describe("the browser beside the conversation", () => {
 
     expect(await screen.findByRole("button", { name: /sign in myself/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Browser" })).toBeNull();
+  });
+});
+
+// The whole screen and then a Radix menu on top of it: slow on a loaded
+// laptop, not stuck, so the same leash as the heaviest case above.
+describe("the dial beside the question", { timeout: 20_000 }, () => {
+  // Put back before each case rather than only in a `finally`, which a timed
+  // out test never reaches — and a dial left turned would fail every test
+  // after it for a reason none of them is about.
+  beforeEach(() => {
+    Object.assign(session, { model: null, reasoningEffort: null, webSearch: null, mode: null });
+  });
+
+  const opusThinks = {
+    ...meDefault,
+    modelSpecs: {
+      "gpt-4.1": { temperature: true, reasoning: false },
+      "claude-opus-5": { temperature: false, reasoning: true },
+    },
+  };
+
+  it("shows what this conversation is answered with, and says the same under the composer", async () => {
+    meReply = opusThinks;
+    Object.assign(session, { model: "claude-opus-5", reasoningEffort: "high" });
+    try {
+      await renderChat();
+
+      expect(await screen.findByLabelText("Model: claude-opus-5")).toBeInTheDocument();
+      expect(await screen.findByLabelText("Thinking: High")).toBeInTheDocument();
+      expect(screen.getByLabelText("Web search: Off")).toBeInTheDocument();
+      expect(screen.getByText(/GTM Agent · claude-opus-5 · High ·/)).toBeInTheDocument();
+    } finally {
+      Object.assign(session, { model: null, reasoningEffort: null });
+    }
+  });
+
+  it("asks the server to change the conversation, not the agent", async () => {
+    tuneSession.mockResolvedValue({ ...session, model: "claude-opus-5" });
+    await renderChat();
+
+    fireEvent.keyDown(screen.getByLabelText("Model: gpt-4.1"), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /claude-opus-5/ }));
+
+    await waitFor(() =>
+      expect(tuneSession).toHaveBeenCalledWith("session-1", { model: "claude-opus-5" }),
+    );
+  });
+
+  it("leaves a conversation somebody else started as a reading of it", async () => {
+    session.ownerId = "someone-else";
+    try {
+      render(
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <ChatTab />
+        </QueryClientProvider>,
+      );
+      const model = await screen.findByLabelText("Model: gpt-4.1");
+      expect(model).toHaveAttribute("aria-disabled", "true");
+      fireEvent.keyDown(model, { key: "Enter" });
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(tuneSession).not.toHaveBeenCalled();
+    } finally {
+      session.ownerId = "user-1";
+    }
   });
 });

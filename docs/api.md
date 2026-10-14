@@ -203,7 +203,7 @@ client for all of it.
 |                                                |                                 |
 | ---------------------------------------------- | ------------------------------- |
 | `GET /sessions` · `POST /sessions`             | List and open conversations     |
-| `PATCH /sessions/:id` · `DELETE /sessions/:id` | Rename, share, delete           |
+| `PATCH /sessions/:id` · `DELETE /sessions/:id` | Rename, share, tune, delete     |
 | `GET /sessions/:id/messages`                   | The transcript, newest first    |
 | `POST /messages` · `PATCH /messages/:id`       | Write and edit your own lines   |
 | `DELETE /messages/after/:id`                   | Truncate, after an edit         |
@@ -219,6 +219,19 @@ rest into the same message. `regenerate: true` answers the last question again
 and keeps the reply it replaces — the old one stops showing rather than being
 deleted, and `POST /messages/:id/show` brings it back. `model` answers on
 another model for that one reply, without moving the agent to it.
+
+`PATCH /sessions/:id` takes any of `title`, `visibility` and four settings the
+conversation can choose for itself instead of taking the agent's: `model`,
+`reasoningEffort` (`minimal` — thinking off — `low`, `medium` or `high`),
+`webSearch` (`true` or `false`) and `mode` (`normal` or `brainstorm`). Each is
+optional, a field you leave out is left alone, and `null` hands that setting
+back to the agent's own. A chosen value applies to every reply in that
+conversation — a new question, `continue`, `regenerate` and the rest of a
+reply after `POST /chat/confirm/:id` — and to no other; a per-reply `model` on
+`POST /chat/stream` still wins for its one reply. A `model` this deployment
+cannot answer on is a `400`. `POST /sessions` accepts the same four, and every
+session comes back with all four, `null` where it takes the agent's. Only the
+person who started the conversation can change them.
 
 The stream may carry three frames beyond `delta`, `thinking`, `truncated`,
 `suggestions`, `done` and `error`, and a client that does not know them should

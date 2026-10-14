@@ -4,6 +4,7 @@
  */
 import { NOTHING_RELEVANT_REASON } from "./routines/executor";
 import { allowedLogoUrl } from "./composio/client";
+import { REASONING_EFFORTS, type ReasoningEffort } from "./models";
 
 export type DocumentDTO = {
   id: string;
@@ -341,6 +342,15 @@ export type ChatSessionDTO = {
   messages: MessageDTO[];
   messageCount: number;
   updatedAt: number;
+  /**
+   * The dial this conversation turned for itself (0099). Each is null when
+   * nobody did, and null means the agent's own setting answers — not "off".
+   * `lib/session-mode.ts` is where a value and the agent's combine.
+   */
+  model: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  webSearch: boolean | null;
+  mode: "normal" | "brainstorm" | null;
 };
 
 export type WorkspaceSummaryDTO = { id: string; name: string; slug: string; role: string };
@@ -721,6 +731,10 @@ export function mapChatSession(
     kind?: string | null;
     updated_at: string;
     messages?: Array<{ count: number }> | null;
+    model?: string | null;
+    reasoning_effort?: string | null;
+    web_search?: boolean | null;
+    mode?: string | null;
   },
   messages: MessageDTO[] = [],
 ): ChatSessionDTO {
@@ -734,6 +748,15 @@ export function mapChatSession(
     messages,
     messageCount: Array.isArray(row.messages) ? (row.messages[0]?.count ?? 0) : 0,
     updatedAt: toEpochMs(row.updated_at),
+    // Narrowed rather than passed through: the columns are checked in the
+    // database, but a row from before 0099 has none of them and a value the
+    // client cannot name is better sent as "the agent's" than as itself.
+    model: typeof row.model === "string" && row.model ? row.model : null,
+    reasoningEffort: (REASONING_EFFORTS as readonly string[]).includes(row.reasoning_effort ?? "")
+      ? (row.reasoning_effort as ReasoningEffort)
+      : null,
+    webSearch: typeof row.web_search === "boolean" ? row.web_search : null,
+    mode: row.mode === "normal" || row.mode === "brainstorm" ? row.mode : null,
   };
 }
 

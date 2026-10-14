@@ -12,6 +12,12 @@ import {
   modelsFor,
   specFor,
   DEFAULT_NEW_AGENT_MODEL,
+  DIAL_EFFORTS,
+  DIAL_EFFORT_HINTS,
+  REASONING_EFFORT_HINTS,
+  thinkingOf,
+  effortLevelOf,
+  dialLabel,
 } from "./agent-meta";
 
 /**
@@ -240,5 +246,42 @@ describe("the frontend model list and the worker catalogue", () => {
     // compare two empty arrays happily. This is what makes that a failure.
     const here = idsIn(readFileSync("src/lib/agent-meta.ts", "utf8"), "export const MODELS = [");
     expect(here).toEqual([...MODELS]);
+  });
+});
+
+/**
+ * The composer's dial reads two controls out of one stored value, and these
+ * are the readings. The one worth pinning is null: it is "the agent's", and a
+ * helper that turned it into Off or Medium would show the person a choice
+ * they never made.
+ */
+describe("the conversation's thinking dial", () => {
+  it("reads null as not chosen, minimal as off, and the rest as on", () => {
+    expect(thinkingOf(null)).toBe("auto");
+    expect(thinkingOf(undefined)).toBe("auto");
+    expect(thinkingOf("minimal")).toBe("off");
+    expect(thinkingOf("low")).toBe("on");
+    expect(thinkingOf("medium")).toBe("on");
+    expect(thinkingOf("high")).toBe("on");
+  });
+
+  it("has a level only when thinking is on", () => {
+    expect(effortLevelOf(null)).toBeNull();
+    expect(effortLevelOf("minimal")).toBeNull();
+    expect(effortLevelOf("high")).toBe("high");
+  });
+
+  it("offers the three levels with the settings page's own sentences", () => {
+    expect(DIAL_EFFORTS).toEqual(["low", "medium", "high"]);
+    for (const level of DIAL_EFFORTS) {
+      expect(DIAL_EFFORT_HINTS[level]).toBe(REASONING_EFFORT_HINTS[level]);
+    }
+  });
+
+  it("names the effort beside a model that reasons, and nowhere else", () => {
+    expect(dialLabel("claude-opus-5", "medium", true)).toBe("claude-opus-5 · Medium");
+    expect(dialLabel("claude-opus-5", "minimal", true)).toBe("claude-opus-5 · Thinking off");
+    expect(dialLabel("claude-opus-5", null, true)).toBe("claude-opus-5");
+    expect(dialLabel("gpt-4.1", "high", false)).toBe("gpt-4.1");
   });
 });

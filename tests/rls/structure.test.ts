@@ -23,6 +23,10 @@ import { anonClient, closeSql, sql } from "./harness";
  */
 const SERVICE_ROLE_ONLY = new Set(["routine_deliveries", "credit_holds", "signup_grant_addresses"]);
 
+// The two that exist only where supabase/cloud/ is applied. A database without
+// them is the open-source one, not a stale list.
+const HOSTED_ONLY = new Set(["credit_holds", "signup_grant_addresses"]);
+
 let tables: string[] = [];
 
 beforeAll(async () => {
@@ -88,6 +92,7 @@ describe("row level security", () => {
     const byName = new Map(rows.map((r) => [r.name, r.policies]));
 
     for (const name of SERVICE_ROLE_ONLY) {
+      if (HOSTED_ONLY.has(name) && !byName.has(name)) continue;
       expect(byName.has(name), `${name} is listed as service-role-only but no longer exists`).toBe(
         true,
       );

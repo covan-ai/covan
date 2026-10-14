@@ -33,6 +33,8 @@
     "check:self-host": "node scripts/check-self-host.mjs",
     "//fonts": "Re-downloads DM Sans and Geist into public/fonts and rewrites src/fonts.css. Not in build or CI on purpose: a build that fetches binaries from a third party is a build that fails when that third party does, and these files change roughly never. Run it on a laptop only when a family or a weight actually does, and commit what it writes.",
     "fonts": "node scripts/fetch-fonts.mjs",
+    "//og": "Redraws public/og.png, the social card, with headless Chrome. Laptop-only like `fonts`, and for the same reason: a build has no business needing a browser. Commit the PNG and bump the `?v=` on og:image in src/routes/__root.tsx.",
+    "og": "node scripts/generate-social-card.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",

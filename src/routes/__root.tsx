@@ -116,12 +116,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       // reason: Slack, X and LinkedIn cache a scraped card by URL and will keep
       // serving the old artwork long after the file changes. Bump it whenever
       // og.png is redrawn.
-      { property: "og:image", content: "/og.png?v=2" },
+      { property: "og:image", content: "/og.png?v=3" },
       { property: "og:image:width", content: "1200" },
       { property: "og:image:height", content: "630" },
       { property: "og:image:alt", content: "Covan — the colleague who has read everything" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:image", content: "/og.png?v=2" },
+      { name: "twitter:image", content: "/og.png?v=3" },
     ],
     links: [
       {

@@ -106,7 +106,7 @@ export type Me = {
    * `models` is: a frontend deployed ahead of its API gets nothing here, and
    * `specFor` in `lib/agent-meta` answers for an id it was told nothing about.
    */
-  modelSpecs?: Record<string, { temperature: boolean; reasoning: boolean }>;
+  modelSpecs?: Record<string, { temperature: boolean; reasoning: boolean; webSearch: boolean }>;
   /**
    * Estimated USD for one reference reply per model. Optional because an API
    * older than this field sends none, and empty on a deployment whose

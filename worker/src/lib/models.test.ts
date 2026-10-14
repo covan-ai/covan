@@ -210,10 +210,21 @@ describe("titleModelFor", () => {
 
 describe("modelSpecsFor", () => {
   it("describes each id the picker was given", () => {
-    expect(modelSpecsFor(["gpt-4o", "gpt-5-mini"])).toEqual({
-      "gpt-4o": { temperature: true, reasoning: false },
-      "gpt-5-mini": { temperature: false, reasoning: true },
+    expect(modelSpecsFor(["gpt-4o", "gpt-5-mini", "claude-sonnet-4-6"])).toEqual({
+      "gpt-4o": { temperature: true, reasoning: false, webSearch: false },
+      "gpt-5-mini": { temperature: false, reasoning: true, webSearch: false },
+      "claude-sonnet-4-6": { temperature: true, reasoning: true, webSearch: true },
     });
+  });
+
+  it("says a model can search exactly when it has a web search tool", () => {
+    // The settings screen disables its web search checkbox on this, so the two
+    // must not drift: a `true` here over a `null` tool is a checkbox that
+    // promises a search nothing will run.
+    const specs = modelSpecsFor(MODEL_IDS);
+    for (const id of MODEL_IDS) {
+      expect(specs[id].webSearch).toBe(webSearchToolFor(id) !== null);
+    }
   });
 
   it("says nothing about an id this build does not know", () => {

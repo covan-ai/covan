@@ -496,13 +496,14 @@ export type MeDTO = {
    * The same reasoning as `models`, one level down. Whether a temperature can
    * be sent and whether the model thinks before it answers are facts about the
    * model, decided in `lib/models.ts`, and the agent settings screen needs them
-   * to know which of its two tuning controls mean anything: the GPT-5 family
-   * rejects any temperature but its own with a 400, and nothing but that family
-   * has a reasoning effort at all. A frontend holding its own copy of that
+   * to know which of its controls mean anything: the GPT-5 family rejects any
+   * temperature but its own with a 400, only some models have a reasoning
+   * effort at all, and only the Claude models have a web search tool — the
+   * flag is accepted on the others and changes nothing. A frontend holding its own copy of that
    * table would be a second source of truth for something the server already
    * decides — and would be wrong for exactly the ids it had not heard of.
    */
-  modelSpecs: Record<string, { temperature: boolean; reasoning: boolean }>;
+  modelSpecs: Record<string, { temperature: boolean; reasoning: boolean; webSearch: boolean }>;
   /**
    * Estimated USD for one reference reply on each model the picker may offer,
    * so a choice between two names is a choice between two numbers.

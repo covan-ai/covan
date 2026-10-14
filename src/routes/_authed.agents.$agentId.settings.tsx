@@ -191,11 +191,16 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 answering directly.
               </p>
             </div>
+            {/* Disabled rather than hidden on a model with no search tool, for
+                the reason ReasoningField gives. The stored value is left alone,
+                so an agent moved back to a model that can search finds it as
+                it was. */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="web-search"
                   checked={webSearch}
+                  disabled={!spec.webSearch}
                   onCheckedChange={(checked) => setWebSearch(checked === true)}
                 />
                 <Label htmlFor="web-search" className="text-sm font-normal cursor-pointer">
@@ -203,8 +208,14 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 </Label>
               </div>
               <p className="text-xs text-muted-foreground">
-                Allow this agent to search the internet when your team's documents don't contain the
-                answer.
+                {spec.webSearch ? (
+                  "Allow this agent to search the internet when your team's documents don't contain the answer."
+                ) : (
+                  <>
+                    <span className="font-mono">{model}</span> cannot search the web, so this has no
+                    effect on it.
+                  </>
+                )}
               </p>
             </div>
             <TemperatureField

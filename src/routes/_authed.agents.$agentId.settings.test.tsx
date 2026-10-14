@@ -23,10 +23,11 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const me = {
-  models: ["gpt-4o", "gpt-5-mini"],
+  models: ["gpt-4o", "gpt-5-mini", "claude-sonnet-4-6"],
   modelSpecs: {
-    "gpt-4o": { temperature: true, reasoning: false },
-    "gpt-5-mini": { temperature: false, reasoning: true },
+    "gpt-4o": { temperature: true, reasoning: false, webSearch: false },
+    "gpt-5-mini": { temperature: false, reasoning: true, webSearch: false },
+    "claude-sonnet-4-6": { temperature: true, reasoning: true, webSearch: true },
   },
 };
 
@@ -51,6 +52,7 @@ const agent = {
   mode: "normal" as const,
   temperature: null as number | null,
   reasoningEffort: null as string | null,
+  webSearch: true,
   documents: [],
   bundleIds: [],
   createdAt: Date.parse("2026-09-01T10:00:00Z"),
@@ -76,6 +78,7 @@ beforeEach(() => {
   agent.model = "gpt-4o";
   agent.temperature = null;
   agent.reasoningEffort = null;
+  agent.webSearch = true;
 });
 
 describe("the tuning controls", () => {
@@ -148,6 +151,37 @@ describe("the tuning controls", () => {
     renderSettings();
 
     expect(await screen.findByText(/answers without a separate thinking step/)).toBeInTheDocument();
+  });
+});
+
+describe("web search", () => {
+  it("is offered on a model that can search", async () => {
+    agent.model = "claude-sonnet-4-6";
+    renderSettings();
+
+    // Waited for by the hint, which only reads this way once /me has said the
+    // model has a search tool; before that every model is assumed not to.
+    expect(await screen.findByText(/Allow this agent to search the internet/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Enable web search")).toBeEnabled();
+    expect(screen.getByLabelText("Enable web search")).toBeChecked();
+  });
+
+  it("says why it is dead on a model that cannot search, and keeps what was stored", async () => {
+    // gpt-4o is sent no search tool, so a checked box here was a promise
+    // nothing kept. Disabled, not hidden, and not unticked: the agent's own
+    // setting is still there for the day it moves back to a model that can.
+    renderSettings();
+
+    expect(await screen.findByText(/cannot search the web/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Enable web search")).toBeDisabled();
+    expect(screen.getByLabelText("Enable web search")).toBeChecked();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(updateAgent).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({ webSearch: true }),
+    );
   });
 });
 

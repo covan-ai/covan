@@ -93,26 +93,35 @@ describe("modelsFor", () => {
 
 describe("specFor", () => {
   const specs = {
-    "gpt-4o": { temperature: true, reasoning: false },
-    "gpt-5-mini": { temperature: false, reasoning: true },
+    "gpt-4o": { temperature: true, reasoning: false, webSearch: false },
+    "gpt-5-mini": { temperature: false, reasoning: true, webSearch: false },
+    "claude-sonnet-4-6": { temperature: true, reasoning: true, webSearch: true },
   };
+  const UNKNOWN = { temperature: true, reasoning: false, webSearch: false };
 
   it("answers from what the server said", () => {
-    expect(specFor(specs, "gpt-5-mini")).toEqual({ temperature: false, reasoning: true });
+    expect(specFor(specs, "gpt-5-mini")).toEqual({
+      temperature: false,
+      reasoning: true,
+      webSearch: false,
+    });
+    expect(specFor(specs, "claude-sonnet-4-6").webSearch).toBe(true);
   });
 
-  it("assumes a model it was told nothing about takes a temperature and does not reason", () => {
+  it("assumes a model it was told nothing about takes a temperature, does not reason and cannot search", () => {
     // The server's own answer for an unknown id, and the situation is normal
     // rather than exceptional: under a custom endpoint every id is unknown, and
     // an agent can sit on a Claude model after the key was rotated out.
     // Optimistic about the control that is harmless to offer, conservative
-    // about the one that is not.
-    expect(specFor(specs, "llama3.3:70b")).toEqual({ temperature: true, reasoning: false });
+    // about the ones that are not. Web search is conservative because an id
+    // the server does not list is answered by the OpenAI-compatible endpoint,
+    // which is sent no search tool.
+    expect(specFor(specs, "llama3.3:70b")).toEqual(UNKNOWN);
   });
 
   it("answers the same way before /me has said anything at all", () => {
-    expect(specFor(undefined, "gpt-5-mini")).toEqual({ temperature: true, reasoning: false });
-    expect(specFor(specs, null)).toEqual({ temperature: true, reasoning: false });
+    expect(specFor(undefined, "gpt-5-mini")).toEqual(UNKNOWN);
+    expect(specFor(specs, null)).toEqual(UNKNOWN);
   });
 });
 

@@ -24,8 +24,8 @@ const open = (label: string) => fireEvent.keyDown(screen.getByLabelText(label), 
 const pick = (el: HTMLElement) => fireEvent.click(el);
 
 const specs = {
-  "gpt-4.1": { temperature: true, reasoning: false },
-  "claude-opus-5": { temperature: false, reasoning: true },
+  "gpt-4.1": { temperature: true, reasoning: false, webSearch: false },
+  "claude-opus-5": { temperature: false, reasoning: true, webSearch: true },
 };
 
 function renderDial(over: Partial<TurnDialProps> = {}) {

@@ -52,7 +52,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await destroyTestUsers([owner, outsider]);
+  await destroyTestUsers();
   await closeSql();
 });
 

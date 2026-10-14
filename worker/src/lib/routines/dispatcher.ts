@@ -292,6 +292,15 @@ const CLUSTER_INSTRUCTION =
   "out rather than forcing it into a topic it does not belong to.";
 
 /**
+ * A ceiling on the clustering reply, so "eight topics" is bounded in fact and
+ * not only in the instruction. The largest honest answer is eight short labels
+ * plus every index `workspace_coverage_gaps` can return (its `limit 150`), which
+ * is well under a thousand tokens; this leaves room for that twice over. A reply
+ * cut off here fails `JSON.parse` below and becomes a skip, never a crash.
+ */
+const CLUSTER_MAX_TOKENS = 2048;
+
+/**
  * The one model call this feature ever makes.
  *
  * `gpt-4.1-mini` rather than whatever an agent's own settings say, because
@@ -315,6 +324,7 @@ export async function clusterQuestions(
   const { text, usage } = await complete(env, {
     model,
     json: true,
+    maxTokens: CLUSTER_MAX_TOKENS,
     messages: [
       { role: "system", content: CLUSTER_INSTRUCTION },
       { role: "user", content: questions.map((q, i) => `${i}. ${q}`).join("\n") },

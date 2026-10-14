@@ -541,6 +541,8 @@ describe("clusterQuestions", () => {
 
     const sent = createMock.mock.calls[0][0];
     expect(sent.response_format).toEqual({ type: "json_object" });
+    // Bounded in fact, not only by "at most eight topics" in the instruction.
+    expect(sent.max_completion_tokens).toBe(2048);
     const systemMessage = sent.messages.find((m: any) => m.role === "system").content;
     // Names the exact key `parseClusters` reads — the fix for the brief's own
     // bug, which asked for a bare array instead.

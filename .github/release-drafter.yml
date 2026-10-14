@@ -1,0 +1,59 @@
+# The draft GitHub Release that `.github/workflows/release-drafter.yml` keeps
+# current on every merge to main. Publishing it creates the tag, and the tag is
+# what fires release.yml.
+#
+# Fed by PR LABELS, not commit prefixes. release-please and semantic-release
+# compute the bump from `feat:` / `fix:` titles, and this repository's titles are
+# prose; replacing the house style to suit a tool was considered and rejected.
+# So a label goes on each PR at merge time — an unlabelled PR still appears,
+# under "Other changes", and bumps the patch version.
+
+name-template: "Covan $RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+
+categories:
+  - title: "What's new"
+    labels: ["enhancement"]
+  - title: "Fixes"
+    labels: ["bug"]
+  - title: "Docs"
+    labels: ["documentation"]
+  - title: "Dependencies"
+    labels: ["dependencies"]
+
+change-template: "- $TITLE (#$NUMBER)"
+change-title-escapes: '\<*_&'
+
+# `breaking` and `dependencies` are not labels on the repository yet; create
+# them by hand. Until `breaking` exists nothing can ask for a major bump, and
+# until `dependencies` exists Dependabot's PRs (dependabot.yml names it) land
+# unlabelled, under "Other changes".
+version-resolver:
+  major:
+    labels: ["breaking"]
+  minor:
+    labels: ["enhancement"]
+  patch:
+    labels: ["bug", "documentation", "dependencies"]
+  default: patch
+
+exclude-labels: ["invalid", "duplicate", "wontfix"]
+
+# "Read this before upgrading" is editorial on purpose. v0.4.0's was the removal
+# of the Supabase account connection and two new optional variables; no
+# generator produces that. The placeholder is loud so a release cannot be
+# published with it still in place without somebody noticing.
+template: |
+  ## Read this before upgrading
+
+  > **TO WRITE BY HAND before publishing.** What an operator must do or will
+  > notice: removed features, new required or optional variables, anything that
+  > changes behaviour on upgrade. Write "Nothing." if that is the answer.
+  > Then set `version` in `package.json` and `worker/package.json` to
+  > `$RESOLVED_VERSION` — release.yml refuses a tag the two files disagree with.
+
+  ## What changed since $PREVIOUS_TAG
+
+  $CHANGES
+
+  **Full diff:** https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION

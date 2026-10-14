@@ -474,11 +474,19 @@ carries the forgotten cookies.
 
 Every human action in this is still an ordinary policy, because every one of
 them is a person changing a row: members see grants, anyone who can write may
-create one or take one away, and only an admin may promote a **destructive**
-capability to `always` — a standing permission to do something that cannot be
-undone is a decision about the workspace rather than about one piece of work.
-Lowering or revoking that same grant needs no admin, because taking a permission
-away is never the unsafe direction.
+create one at `ask` or take one away, and only an admin may promote **any**
+grant to `always`, destructive or not. A standing permission ends the asking for
+good, and that is a decision about the workspace rather than about one piece of
+work whatever the operation does — "this agent may read our mail without asking"
+is the workspace's call as surely as "this agent may send it". Whether an
+operation is destructive decides something else: how far one approval reaches,
+since a destructive call is covered only by an approval of that very operation,
+never by the app's turn-long one. It does not decide who may say *always*.
+(A connected *source*'s grants are the one place the two meet: 0058 asks its
+catalogue which capabilities are harmless and lets a writer stand those up. A
+connected app has no catalogue to ask, so 0063 exempts nothing.) Lowering or
+revoking a grant needs no admin, because taking a permission away is never the
+unsafe direction.
 
 The one thing without a policy in front of it is the process that reads these
 rows at 3am, which has no caller to have a policy about. It goes through a

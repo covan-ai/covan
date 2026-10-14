@@ -5,6 +5,8 @@
 import { NOTHING_RELEVANT_REASON } from "./routines/executor";
 import { allowedLogoUrl } from "./composio/client";
 import { REASONING_EFFORTS, type ReasoningEffort } from "./models";
+import { hiddenOperations } from "./harness/connections";
+import { MESSAGE_OUTCOMES, type MessageOutcome } from "./harness/usage";
 
 export type DocumentDTO = {
   id: string;
@@ -159,6 +161,19 @@ export type ToolConnectionDTO = {
   scope: "owner" | "workspace";
   /** Whether the caller connected it — the one person who may share it or take it back. */
   mine: boolean;
+  /**
+   * Operations this connection has already been refused and that the agent is
+   * therefore not shown, and when the oldest of them is tried again (epoch
+   * ms). Null when nothing is hidden.
+   *
+   * The card's rule is "say connected, never working" (0072), and this is the
+   * case where the database already knows better: an app whose one useful
+   * operation answered 404 stays hidden for thirty days, and until covan#276
+   * no screen said so. A count rather than a verdict, because seven dead slugs
+   * on GitHub is a usable connection and one on `browser_tool` is not, and
+   * telling those apart needs the catalogue.
+   */
+  unavailable: { count: number; hiddenUntil: number | null } | null;
   createdAt: number;
 };
 
@@ -214,6 +229,7 @@ export function mapToolConnection(
     status: row.status === "pending" || row.status === "failed" ? row.status : "active",
     scope: row.scope === "workspace" ? "workspace" : "owner",
     mine: typeof row.created_by === "string" && row.created_by === callerId,
+    unavailable: hiddenOperations(config),
     createdAt: toEpochMs(row.created_at),
   };
 }
@@ -496,13 +512,14 @@ export type MeDTO = {
    * The same reasoning as `models`, one level down. Whether a temperature can
    * be sent and whether the model thinks before it answers are facts about the
    * model, decided in `lib/models.ts`, and the agent settings screen needs them
-   * to know which of its two tuning controls mean anything: the GPT-5 family
-   * rejects any temperature but its own with a 400, and nothing but that family
-   * has a reasoning effort at all. A frontend holding its own copy of that
+   * to know which of its controls mean anything: the GPT-5 family rejects any
+   * temperature but its own with a 400, only some models have a reasoning
+   * effort at all, and only the Claude models have a web search tool — the
+   * flag is accepted on the others and changes nothing. A frontend holding its own copy of that
    * table would be a second source of truth for something the server already
    * decides — and would be wrong for exactly the ids it had not heard of.
    */
-  modelSpecs: Record<string, { temperature: boolean; reasoning: boolean }>;
+  modelSpecs: Record<string, { temperature: boolean; reasoning: boolean; webSearch: boolean }>;
   /**
    * Estimated USD for one reference reply on each model the picker may offer,
    * so a choice between two names is a choice between two numbers.
@@ -962,6 +979,20 @@ export type RoutineRunDTO = {
    * storage bound, or that they were demoted to viewer last month.
    */
   filingNote: string | null;
+  /**
+   * How the model stopped, in `messages.outcome`'s vocabulary (0070). Null for
+   * a run that never reached a model — every `skipped` one — and for runs
+   * recorded before the column.
+   *
+   * Forwarded because `status` cannot say it: `ok` means the RUN completed,
+   * and a run whose turn was `cut_short` did complete, spent its tokens and
+   * delivered what it had. On 2026-10-02 one did exactly that — 41k tokens,
+   * a sixth of the usual summary — and read as a third successful run
+   * (covan#243). The screen now says it stopped before it finished.
+   */
+  outcome: MessageOutcome | null;
+  /** The model that answered, when one did. Null on the same runs as `outcome`. */
+  model: string | null;
   startedAt: number;
 };
 
@@ -975,6 +1006,8 @@ export function mapRoutineRun(row: {
   summary?: string | null;
   document_id?: string | null;
   filing_note?: string | null;
+  outcome?: string | null;
+  model?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -988,6 +1021,12 @@ export function mapRoutineRun(row: {
     summary: row.summary ?? null,
     documentId: row.document_id ?? null,
     filingNote: row.filing_note ?? null,
+    // Narrowed rather than cast: a value a newer build wrote reads as "not
+    // known", which renders as an ordinary run rather than a wrong claim.
+    outcome: (MESSAGE_OUTCOMES as readonly string[]).includes(row.outcome ?? "")
+      ? (row.outcome as MessageOutcome)
+      : null,
+    model: row.model || null,
     startedAt: toEpochMs(row.started_at),
   };
 }

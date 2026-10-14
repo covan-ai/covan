@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   mapDocument,
   mapMessage,
@@ -8,6 +8,7 @@ import {
   mapRoutine,
   mapRoutineRun,
   mapConnection,
+  mapToolConnection,
   mapBrowserTask,
   BROWSER_TASK_COLUMNS,
 } from "./dto";
@@ -437,6 +438,41 @@ describe("mapRoutineRun filing", () => {
   });
 });
 
+/**
+ * covan#243. `status` says the run completed; `outcome` says whether the turn
+ * inside it did. A cut-short turn under an `ok` run read as a finished answer
+ * because the mapper dropped the column 0070 added.
+ */
+describe("mapRoutineRun outcome", () => {
+  const row = {
+    id: "run1",
+    status: "ok",
+    items_new: 0,
+    duration_ms: 53000,
+    error: null,
+    started_at: "2026-10-02T06:00:00Z",
+  };
+
+  it("carries how the model stopped, and which model it was", () => {
+    const dto = mapRoutineRun({ ...row, outcome: "cut_short", model: "claude-sonnet-4-5" });
+    expect(dto.status).toBe("ok");
+    expect(dto.outcome).toBe("cut_short");
+    expect(dto.model).toBe("claude-sonnet-4-5");
+  });
+
+  it("reads a run that never reached a model, or predates the column, as no outcome", () => {
+    expect(mapRoutineRun({ ...row, status: "skipped", outcome: null, model: null })).toMatchObject({
+      outcome: null,
+      model: null,
+    });
+    expect(mapRoutineRun(row)).toMatchObject({ outcome: null, model: null });
+  });
+
+  it("refuses an outcome it does not know rather than passing it on", () => {
+    expect(mapRoutineRun({ ...row, outcome: "something_new" }).outcome).toBeNull();
+  });
+});
+
 describe("mapDocument provenance", () => {
   const row = { id: "d1", name: "Digest.md", size: 100, created_at: "2026-09-20T09:00:00Z" };
 
@@ -509,6 +545,66 @@ describe("mapConnection", () => {
   // Before it, closing an account DELETED the connection.
   it("says plainly that nobody holds the grant", () => {
     expect(mapConnection({ ...row, user_id: null }).userId).toBeNull();
+  });
+});
+
+/**
+ * covan#276. A connected app whose only useful operation answered 404 is
+ * hidden from the agent for thirty days, and the card said "connected" and
+ * nothing else for all of them. The card is now handed how many are hidden and
+ * when the oldest comes back.
+ */
+describe("mapToolConnection unavailable", () => {
+  const NOW = Date.parse("2026-10-09T12:00:00Z");
+  const DAY = 24 * 60 * 60 * 1000;
+  const row = (unavailable_tools?: unknown) => ({
+    id: "tc1",
+    label: "Browser",
+    transport: "composio",
+    base_url: "https://backend.composio.dev",
+    toolkit_slug: "browser_tool",
+    status: "active",
+    config: unavailable_tools === undefined ? {} : { unavailable_tools },
+    created_at: "2026-10-01T00:00:00Z",
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it("counts a recent refusal and says when it is tried again", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const at = new Date(NOW - 2 * DAY).toISOString();
+    expect(mapToolConnection(row({ BROWSER_TOOL_CREATE_TASK: at }), "user-1").unavailable).toEqual({
+      count: 1,
+      hiddenUntil: Date.parse(at) + 30 * DAY,
+    });
+  });
+
+  it("names the oldest entry's expiry, which is when anything first comes back", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const older = new Date(NOW - 10 * DAY).toISOString();
+    const newer = new Date(NOW - 1 * DAY).toISOString();
+    expect(
+      mapToolConnection(row({ A: newer, B: older, C: "not a date" }), "user-1").unavailable,
+    ).toEqual({
+      count: 3,
+      hiddenUntil: Date.parse(older) + 30 * DAY,
+    });
+  });
+
+  it("says nothing is hidden once the only entry is past thirty days", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const at = new Date(NOW - 40 * DAY).toISOString();
+    expect(
+      mapToolConnection(row({ BROWSER_TOOL_CREATE_TASK: at }), "user-1").unavailable,
+    ).toBeNull();
+  });
+
+  it("says nothing is hidden when there is no bag, or a malformed one", () => {
+    expect(mapToolConnection(row(), "user-1").unavailable).toBeNull();
+    expect(mapToolConnection(row(["A"]), "user-1").unavailable).toBeNull();
   });
 });
 

@@ -208,6 +208,15 @@ function ConnectedApp({
           ) : connection.status === "failed" ? (
             <Chip tone="neutral">Not connected</Chip>
           ) : null}
+          {/* Neutral, like every other chip on this row: it is a count, not a
+              verdict. Seven hidden on GitHub is a usable app; one on a
+              browser toolkit may be all it had (covan#276). */}
+          {connection.unavailable ? (
+            <Chip tone="neutral">
+              {connection.unavailable.count} operation
+              {connection.unavailable.count === 1 ? "" : "s"} hidden
+            </Chip>
+          ) : null}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {connection.status === "active" ? <ConnectionScope connection={connection} /> : null}
@@ -241,6 +250,24 @@ function ConnectedApp({
         </span>
       </div>
 
+      {/* What the worker already knows and the card used to keep to itself:
+          the service answered "no such operation" for these, so the agent is
+          not offered them, and the thirty days `unavailable_tools` trusts
+          that answer for is when they are tried again. Without this line an
+          app whose only useful operation was refused reads as connected and
+          nothing else for a month. */}
+      {connection.unavailable ? (
+        <p className="text-meta text-muted-foreground">
+          {connection.label} refused{" "}
+          {connection.unavailable.count === 1 ? "an operation" : "some operations"} when an agent
+          tried {connection.unavailable.count === 1 ? "it" : "them"}, so agents are not offered{" "}
+          {connection.unavailable.count === 1 ? "it" : "them"}
+          {connection.unavailable.hiddenUntil !== null
+            ? `. Tried again from ${retryDate(connection.unavailable.hiddenUntil)}.`
+            : "."}
+        </p>
+      ) : null}
+
       {/* Only the standing permissions are listed, because only they are a
           thing somebody granted. Everything else on this app asks, and there
           is no row saying so — the absence of one IS the asking (0063). A list
@@ -260,6 +287,11 @@ function ConnectedApp({
       ) : null}
     </li>
   );
+}
+
+/** The day a hidden operation is offered again, in the interface's language. */
+function retryDate(at: number): string {
+  return new Date(at).toLocaleDateString("en", { day: "numeric", month: "long", year: "numeric" });
 }
 
 /**

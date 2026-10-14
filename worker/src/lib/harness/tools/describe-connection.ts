@@ -152,7 +152,10 @@ export const describeConnectionTool: AgentTool = {
     additionalProperties: false,
   },
   destructive: false,
-  needs: "connection",
+  // Not `composio`: a connected app has nothing to describe, the answer below
+  // only points at `find_tool`, and the manifest already tells the model to
+  // skip this step for one. A workspace of apps alone is not offered it.
+  needs: { connection: ["sql", "http"] },
   isConfigured: (env: ToolEnv) => Boolean(env.ROUTINE_SECRET_KEY),
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = args as { connectionId?: unknown; refresh?: unknown };

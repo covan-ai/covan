@@ -301,7 +301,7 @@ export const runToolTool: AgentTool = {
   // answerable without reading the code. A tool that can send mail as somebody
   // is the most destructive thing in the list.
   destructive: true,
-  needs: "connection",
+  needs: { connection: ["composio"] },
   isConfigured: (env: ToolEnv) => composioConfigured(env),
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = args as { connectionId?: unknown; slug?: unknown; arguments?: unknown };

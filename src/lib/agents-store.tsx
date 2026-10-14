@@ -146,6 +146,15 @@ export type Message = {
   completionTokens?: number | null;
   cachedTokens?: number | null;
   cacheWriteTokens?: number | null;
+  /**
+   * How the turn ended, as `messages.outcome` recorded it (0065): `answered`,
+   * or the ceiling (`budget`, `tokens`, `runtime`) or other reason it stopped.
+   * Absent on replies written before it existed.
+   *
+   * What tells a reloaded transcript that its last reply stopped short — the
+   * stream that said so live is gone by then.
+   */
+  outcome?: string;
 };
 
 export type ChatSession = {

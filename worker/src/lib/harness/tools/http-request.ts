@@ -127,7 +127,7 @@ export const httpRequestTool: AgentTool = {
   // A deployment with no ALLOWED_ORIGIN cannot refuse a request pointed back
   // at itself, and offering the tool in that state would be offering it
   // broken.
-  needs: "connection",
+  needs: { connection: ["http"] },
   isConfigured: (env: ToolEnv) => Boolean(env.ALLOWED_ORIGIN),
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = args as {

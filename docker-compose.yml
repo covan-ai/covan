@@ -289,11 +289,17 @@ services:
 
   covan-api:
     container_name: covan-api
-    # Both `image` and `build`, on purpose. `docker compose up` builds from
-    # source when the image is not present locally, so a fresh clone works with
-    # no registry at all; `docker compose pull` fetches the published image
-    # instead and skips the build entirely. COVAN_VERSION pins a release.
-    image: ghcr.io/covan-ai/covan-api:${COVAN_VERSION:-latest}
+    # Both `image` and `build`, and by default `up` builds this checkout.
+    # Without `pull_policy` compose asks the registry first and builds only if
+    # that fails — and the images are public, so a fresh clone ran the last
+    # release while `migrate` applied the clone's migrations: a new schema
+    # under an old binary. `COVAN_PULL=always` (or `missing`) opts into the
+    # published image instead; COVAN_VERSION picks its tag, `edge` by default
+    # because a clone is on the branch, a semver like 0.4.0 to pin a release.
+    # `docker compose pull` alone does nothing here: it skips a service whose
+    # policy is `build`.
+    image: ghcr.io/covan-ai/covan-api:${COVAN_VERSION:-edge}
+    pull_policy: ${COVAN_PULL:-build}
     build:
       context: .
       dockerfile: Dockerfile.api
@@ -411,7 +417,9 @@ services:
 
   covan-web:
     container_name: covan-web
-    image: ghcr.io/covan-ai/covan-web:${COVAN_VERSION:-latest}
+    # Same as covan-api: built from this checkout unless COVAN_PULL says pull.
+    image: ghcr.io/covan-ai/covan-web:${COVAN_VERSION:-edge}
+    pull_policy: ${COVAN_PULL:-build}
     build:
       context: .
       dockerfile: Dockerfile.web

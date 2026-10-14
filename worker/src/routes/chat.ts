@@ -761,11 +761,15 @@ chat.post("/chat/stream", async (c) => {
             egressCountry: egressCountry(c.req.header("CF-IPCountry")),
           }),
           // What the first half spent, so the second half's steps and passes are
-          // numbered after it — and `stepsCharged: 0` because the budget does
+          // numbered after it — each marked `uncharged` because the budget does
           // not come with them: the transcript above is the conversation and
           // the half-answer, not the first half's tool results, so nothing is
-          // re-sent and there is no cost for the ceiling to bound.
-          ...(continuing ? { stepsSoFar: carriedSteps, stepsCharged: 0 } : {}),
+          // re-sent and there is no cost for the ceiling to bound. On the steps
+          // rather than as `stepsCharged: 0`, so the mark is still there if
+          // this half stops to ask and its steps are parked (#237).
+          ...(continuing
+            ? { stepsSoFar: carriedSteps.map((s) => ({ ...s, uncharged: true as const })) }
+            : {}),
           signal,
           send,
           spend,
@@ -898,14 +902,14 @@ chat.post("/chat/stream", async (c) => {
           // question, because from here on `announcePause` treats it as the
           // accumulator and writes none of its own.
           //
-          // One known consequence, conservative and deliberate: the parked turn
-          // carries the whole reply's steps, because the loop's next index is
-          // `steps.length` and the first half's have to be in there for the
-          // numbering to continue. `POST /chat/confirm/:id` then charges its
-          // ceiling for all of them, so the resumed half of a continuation gets
-          // a smaller tool budget than a resumed first half would. It can only
-          // ever be smaller, never unbounded — and the alternative needs either
-          // a column on `paused_turns` or a monotonic index in the loop.
+          // The parked turn carries the whole reply's steps, because the loop's
+          // next index is `steps.length` and the first half's have to be in
+          // there for the numbering to continue. They are parked still marked
+          // `uncharged`, so `POST /chat/confirm/:id` — which hands them back as
+          // `stepsSoFar` and nothing else — charges its ceiling only for this
+          // half's own steps, with no change there (#237). A row parked before
+          // the mark existed carries none and is charged in full, as it was:
+          // a smaller budget than it is owed, never an unbounded one.
           const row = continuing
             ? await persistAssistant("", {
                 promptTokens,
@@ -1693,8 +1697,8 @@ async function priorReply(
  * second half that numbers from zero does not add to the trail, it overwrites
  * it — and the first half's tool calls leave the transcript. Handing them to
  * the loop as `stepsSoFar` makes the indices and the pass numbers continue,
- * which is the whole of the fix; `stepsCharged: 0` is what stops the budget
- * coming with them.
+ * which is the whole of the fix; marking them `uncharged` is what stops the
+ * budget coming with them.
  *
  * Ordered, because the loop's next index is the length of what it carries and
  * a gap in the middle would put two steps on one number.

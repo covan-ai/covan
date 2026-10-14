@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   connectionsManifest,
   loadConnection,
+  MANIFEST_MAX_LINES,
   unavailableTools,
   type ToolConnection,
 } from "./connections";
@@ -80,6 +81,53 @@ describe("connectionsManifest", () => {
     for (const set of [[GMAIL], [WAREHOUSE], [GMAIL, WAREHOUSE]]) {
       expect(connectionsManifest(set)).toContain("Never guess an id that is not on this list");
     }
+  });
+
+  /** `n` connected apps, labelled so they sort in index order. */
+  const apps = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      connection({
+        id: `conn-app-${i}`,
+        label: `App ${String(i).padStart(3, "0")}`,
+        transport: "composio",
+        auth_kind: "composio",
+        toolkit_slug: `tk${i}`,
+      }),
+    );
+  const listedLines = (text: string) => text.split("\n").filter((l) => l.includes("(id: "));
+
+  it("lists at most MANIFEST_MAX_LINES connections and names the rest", () => {
+    const text = connectionsManifest(apps(200));
+    const listed = listedLines(text);
+
+    expect(listed).toHaveLength(MANIFEST_MAX_LINES);
+    // The first ones in label order, which is what keeps the prefix stable.
+    expect(listed[0]).toContain("conn-app-0");
+    expect(text).not.toContain(`conn-app-${MANIFEST_MAX_LINES}`);
+    // The rest are counted and named by toolkit, and the model is told where
+    // their ids come from instead.
+    expect(text).toContain(`and ${200 - MANIFEST_MAX_LINES} more connected apps`);
+    expect(text).toContain(`tk${MANIFEST_MAX_LINES}`);
+    expect(text).toContain("tk199");
+    expect(text).toContain("A connectionId find_tool gives you counts as on it.");
+    expect(text).toContain("Never guess an id that is not on this list");
+  });
+
+  it("does not mention an overflow that is not there", () => {
+    const text = connectionsManifest(apps(MANIFEST_MAX_LINES));
+    expect(listedLines(text)).toHaveLength(MANIFEST_MAX_LINES);
+    expect(text).not.toContain("more connected apps");
+    expect(text).not.toContain("counts as on it");
+  });
+
+  it("always lists a database, which find_tool cannot find", () => {
+    // Sorted after every app, so a plain cut would have dropped it.
+    const late = connection({ id: "conn-zz-db", label: "Zz Warehouse", transport: "sql" });
+    const text = connectionsManifest([...apps(100), late]);
+
+    expect(text).toContain("conn-zz-db");
+    expect(listedLines(text)).toHaveLength(MANIFEST_MAX_LINES);
+    expect(text).toContain(`and ${100 - (MANIFEST_MAX_LINES - 1)} more connected apps`);
   });
 });
 

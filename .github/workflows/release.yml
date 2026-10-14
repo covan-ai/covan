@@ -1,8 +1,8 @@
 name: Release
 
-# Publishes the two images to GitHub's registry, so self-hosting is `docker
-# compose pull` rather than compiling a frontend on every machine that wants to
-# try it. It is also the only measurement we get: the repository is deliberately
+# Publishes the two images to GitHub's registry, so a self-hoster can set
+# `COVAN_PULL=always` rather than compile a frontend on every machine that wants
+# to try it. It is also the only measurement we get: the repository is deliberately
 # free of analytics, so image pulls are the one honest signal of whether anyone
 # is running this.
 #
@@ -100,6 +100,25 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
+
+      # metadata-action names and labels the images from the git ref, not from
+      # package.json, so a tag pushed at the wrong number would publish images
+      # named and labelled with that number — visible only to someone running
+      # `docker inspect` against a label they have no reason to doubt. This
+      # fails the run before the registry is touched. Both package.json files,
+      # because the API image is built from worker/ and carries its own. The
+      # ref goes through the environment, for the reason given at "Assemble the
+      # manifest list" below.
+      - name: The tag and both package.json files agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          for file in package.json worker/package.json; do
+            want="v$(jq -r .version "$file")"
+            test "$want" = "$TAG" || {
+              echo "::error file=$file::$file is $want, the tag is $TAG"; exit 1; }
+          done
 
       - uses: docker/setup-buildx-action@v4
 

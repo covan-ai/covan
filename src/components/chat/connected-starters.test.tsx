@@ -33,6 +33,7 @@ const tool = (over: Partial<ToolConnection> = {}): ToolConnection => ({
   logoPath: "/composio/logo?u=gmail",
   scope: "owner",
   mine: true,
+  unavailable: null,
   createdAt: 0,
   ...over,
 });

@@ -257,9 +257,10 @@ export async function runChatTurn(opts: {
   /** Steps spent before this call, so a resume continues its budget. */
   stepsSoFar?: AgentStep[];
   /**
-   * How many of those count against the ceiling. Absent means all of them,
-   * which is the resume; the continuation passes 0 — see `stepsCharged` in
-   * `lib/harness/loop.ts` for why the two differ.
+   * How many of those count against the ceiling. Absent means every one not
+   * marked `uncharged`, which is the resume; the continuation marks its
+   * carried steps rather than passing a count — see `stepsCharged` and
+   * `AgentStep.uncharged` in `lib/harness/loop.ts` for why the two differ.
    */
   stepsCharged?: number;
   signal?: AbortSignal;

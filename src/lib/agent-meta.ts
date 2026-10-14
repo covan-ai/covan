@@ -104,7 +104,7 @@ export const REASONING_EFFORT_HINTS: Record<ReasoningEffort, string> = {
   high: "Thinks at length first. Best for analysis, and the most expensive.",
 };
 
-export type ModelSpec = { temperature: boolean; reasoning: boolean };
+export type ModelSpec = { temperature: boolean; reasoning: boolean; webSearch: boolean };
 
 /**
  * The three levels the composer's Thinking menu offers once thinking is on.
@@ -232,14 +232,16 @@ export function formatReplyCost(cost: number): string {
  * custom endpoint, where every id is unknown by design. The answer for those is
  * the server's own answer for an unknown id (`lib/models.ts`): a temperature is
  * accepted, and the model does not reason. Optimistic about the control that is
- * harmless to offer and conservative about the one that is not.
+ * harmless to offer and conservative about the ones that are not. It cannot
+ * search either: an id the server does not serve is answered by the
+ * OpenAI-compatible endpoint, and nothing sends a search tool there.
  */
 export function specFor(
   specs: Record<string, ModelSpec> | undefined,
   model: string | null | undefined,
 ): ModelSpec {
   const known = model ? specs?.[model] : undefined;
-  return known ?? { temperature: true, reasoning: false };
+  return known ?? { temperature: true, reasoning: false, webSearch: false };
 }
 
 // A per-model colour used to live here — emerald for GPT, violet for Llama and

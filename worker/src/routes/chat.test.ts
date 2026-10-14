@@ -1636,6 +1636,9 @@ describe("finishing a reply that stopped mid-sentence", () => {
       });
       expect(written[2]).toMatchObject({ request: { query: "rest" }, pass_index: 2 });
       expect(written.every((r) => r.message_id === "m1")).toBe(true);
+      // The first half's steps arrive marked `uncharged`, and the mark is a
+      // fact about this turn's budget, not about the step: it is not a column.
+      expect(written.some((r) => "uncharged" in r)).toBe(false);
     });
 
     it("does not restart the pass numbering", async () => {
@@ -1671,6 +1674,15 @@ describe("finishing a reply that stopped mid-sentence", () => {
 
       expect(serviceInsert).not.toHaveBeenCalled();
       expect(pausedWritten.mock.calls.at(-1)?.[0].message_id).toBe("m1");
+      // Parked still marked, so the confirm route — which reads these back and
+      // nothing else — charges only the continuation's own steps (#237). The
+      // step that asked is this half's own, and is charged.
+      const parkedSteps = pausedWritten.mock.calls.at(-1)?.[0].steps as Array<
+        Record<string, unknown>
+      >;
+      expect(parkedSteps.slice(0, 2).every((s) => s.uncharged === true)).toBe(true);
+      expect(parkedSteps.at(-1)).toMatchObject({ status: "pending" });
+      expect(parkedSteps.at(-1)).not.toHaveProperty("uncharged");
     });
 
     it("records what the continuation spent before it stopped to ask", async () => {
@@ -2156,6 +2168,40 @@ describe("POST /chat/confirm/:id", () => {
     // And the budget applies here too, which it did not: this path handed the
     // model the tool's whole output while `loop.ts` capped every other one.
     expect(row.result_chars).toBeLessThanOrEqual(MAX_TOOL_OUTPUT_CHARS);
+  });
+
+  it("charges a resumed continuation only for its own steps", async () => {
+    // #237: a continuation that stopped to ask parks the whole reply's steps,
+    // the first half's marked `uncharged`. A whole budget of them here, so a
+    // resume charged for them would refuse the first call it was asked for.
+    parked = {
+      ...PARKED,
+      steps: [
+        ...Array.from({ length: MAX_STEPS }, (_, index) => ({
+          index,
+          tool: "search_documents",
+          request: {},
+          resultExcerpt: "",
+          status: "ok",
+          durationMs: 1,
+          uncharged: true,
+        })),
+        { ...PARKED.steps[0], index: MAX_STEPS },
+      ],
+    };
+    const { app } = appWith({ question: "every monday", documents: [HANDBOOK] });
+    completionCreate.mockImplementation(
+      toolThenAnswer("search_documents", '{"query":"rest"}', "Twenty days."),
+    );
+
+    await (await confirm(app, false)).text();
+
+    const written = stepsWritten.mock.calls.at(-1)?.[0] as Array<Record<string, unknown>>;
+    expect(written.at(-1)).toMatchObject({
+      step_index: MAX_STEPS + 1,
+      tool: "search_documents",
+      status: "ok",
+    });
   });
 
   it("carries the steps already taken, so approving again cannot buy a fresh budget", async () => {

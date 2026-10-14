@@ -1,0 +1,94 @@
+name: Unreleased migrations
+
+# A release lagging main is normal: `latest` follows tags and `edge` follows the
+# branch. An unreleased SCHEMA change is not. An upgrader runs `migrate` from a
+# checkout while the application can come from a tag, so every migration that
+# exists only on main widens the window in which the two disagree.
+#
+# Once a week this lists the migrations added since the last tag and keeps ONE
+# standing issue saying so: updated while the list is non-empty, closed with a
+# comment the moment a release ships them. One issue rather than one per run,
+# so this never becomes a pile of near-identical reports, and so the open issue
+# is true exactly as long as the condition is.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: unreleased-migrations
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      # The full history, because the default depth of 1 has no tags and
+      # `git describe` would have nothing to describe against.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: List migrations no release contains
+        id: diff
+        run: |
+          tag=$(git describe --tags --abbrev=0)
+          git diff --name-only --diff-filter=A "$tag" HEAD -- supabase/migrations \
+            > "$RUNNER_TEMP/unreleased.txt"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "count=$(grep -c . "$RUNNER_TEMP/unreleased.txt" || true)" >> "$GITHUB_OUTPUT"
+          echo "Compared against $tag:"
+          cat "$RUNNER_TEMP/unreleased.txt"
+
+      # Found by exact title, not by search: a search would also match an issue
+      # that merely quotes the title, and the second run would edit the wrong one.
+      - name: Update the standing issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: Migrations on main that no release has shipped
+          TAG: ${{ steps.diff.outputs.tag }}
+          COUNT: ${{ steps.diff.outputs.count }}
+        run: |
+          number=$(gh issue list --state all --limit 200 --json number,title,state \
+            --jq '[.[] | select(.title == env.TITLE)] | sort_by(.state != "OPEN") | .[0].number // empty')
+          state=""
+          if [ -n "$number" ]; then
+            state=$(gh issue view "$number" --json state --jq .state)
+          fi
+
+          if [ "$COUNT" -eq 0 ]; then
+            if [ "$state" = "OPEN" ]; then
+              gh issue close "$number" --comment \
+                "Every migration on \`main\` is in a release as of \`$TAG\`. Closing; this reopens when the next one lands."
+            fi
+            echo "Nothing unreleased since $TAG."
+            exit 0
+          fi
+
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "\`main\` carries **$COUNT** migration(s) that no release has shipped."
+            echo
+            echo "Compared \`$TAG\` with \`main\` at \`$GITHUB_SHA\` on $(date -u +%Y-%m-%d)."
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/unreleased.txt"
+            echo '```'
+            echo
+            echo "An upgrader runs \`migrate\` from a checkout while the app can come from a tag, so each of these is a schema the last release's binary has never seen. Cutting a release closes this issue on the next run."
+            echo
+            echo "_Kept up to date by \`.github/workflows/unreleased-migrations.yml\`; edits here are overwritten._"
+          } > "$body"
+
+          if [ -z "$number" ]; then
+            gh issue create --title "$TITLE" --body-file "$body"
+          else
+            [ "$state" = "OPEN" ] || gh issue reopen "$number"
+            gh issue edit "$number" --body-file "$body"
+          fi

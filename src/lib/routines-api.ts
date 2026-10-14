@@ -88,8 +88,25 @@ export type RoutineRun = {
    * that they were demoted to viewer last month.
    */
   filingNote: string | null;
+  /**
+   * How the model stopped (`messages.outcome`'s words). Null when the run
+   * never reached a model, which every skipped run is, and for runs recorded
+   * before 0070.
+   *
+   * Not the same question as `status`: `ok` says the run completed, and a run
+   * whose turn was cut short did — it spent its tokens and delivered what it
+   * had. Anything but `answered` on an `ok` run means it stopped before it
+   * finished (covan#243).
+   */
+  outcome: RunOutcome | null;
+  /** The model that answered. Null on the same runs as `outcome`. */
+  model: string | null;
   startedAt: number;
 };
+
+/** How a scheduled run's turn ended; the worker's `MESSAGE_OUTCOMES`. */
+export type RunOutcome =
+  "answered" | "paused" | "budget" | "tokens" | "runtime" | "cut_short" | "empty" | "truncated";
 
 export type DeliveryChannelKind = "slack_webhook" | "email" | "webhook";
 

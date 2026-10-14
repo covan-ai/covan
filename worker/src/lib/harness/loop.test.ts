@@ -665,6 +665,54 @@ describe("the budget", () => {
       expect(turn.steps.some((s) => s.status === "refused")).toBe(false);
     });
 
+    it("does not charge steps marked uncharged", async () => {
+      // The same three carried and the same ceiling, with no count passed: the
+      // mark on each step is what says they are only being carried.
+      scripted([
+        pass("", [{ id: "c1", name: "search", arguments: "{}" }]),
+        pass("", [{ id: "c2", name: "search", arguments: "{}" }]),
+        pass("done"),
+      ]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 3 },
+        stepsSoFar: carried(3).map((step) => ({ ...step, uncharged: true as const })),
+      });
+
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(5);
+      expect(turn.steps.some((s) => s.status === "refused")).toBe(false);
+    });
+
+    it("charges a re-parked continuation only for its own steps", async () => {
+      // #237: a continuation that stopped to ask parks `turn.steps` whole, and
+      // the confirm route hands them back with no count. Three carried from
+      // the first half and one of the continuation's own, against a ceiling of
+      // three: two calls are left, and then the turn has spent its budget.
+      // Charged for all four, the first call would have been refused.
+      scripted([
+        pass("", [{ id: "c1", name: "search", arguments: "{}" }]),
+        pass("", [{ id: "c2", name: "search", arguments: "{}" }]),
+        pass("", [{ id: "c3", name: "search", arguments: "{}" }]),
+        pass("done"),
+      ]);
+      const parked = [
+        ...carried(3).map((step) => ({ ...step, uncharged: true as const })),
+        { ...carried(1)[0], index: 3 },
+      ];
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 3 },
+        stepsSoFar: parked,
+      });
+
+      expect(turn.steps.slice(4).map((s) => s.status)).toEqual(["ok", "ok"]);
+      expect(turn.paused?.reason).toBe("budget");
+      // The mark rides along with the steps it was put on, and no others.
+      expect(turn.steps.filter((s) => s.uncharged)).toHaveLength(3);
+    });
+
     it("numbers a continuation's passes after the half it is finishing", async () => {
       // The defect this pair exists for: without `stepsSoFar` the pass counter
       // restarts, and one row's `pass_usage` reads [0, 1, 0, 1].
@@ -875,7 +923,8 @@ describe("the budget", () => {
         const turn = await runAgentTurn({
           ...base,
           tools: searching(),
-          // A pass costs 15 (10 prompt + 5 completion), so the third crosses.
+          // A pass costs 15 (10 prompt + 5 completion) and the next is forecast
+          // at 16, so after the second, 30 + 16 reaches 40 and the third answers.
           budget: { maxSteps: 50, maxTurnTokens: 40 },
         });
 
@@ -923,6 +972,47 @@ describe("the budget", () => {
         expect(answered).toHaveLength(2);
       });
 
+      /**
+       * #248: checked only after a pass, the ceiling was crossed by as much as
+       * the crossing pass cost. The forecast stops before buying it, so every
+       * pass but the unavoidable answering one stays under the line.
+       */
+      it("does not buy a tool pass that would cross it", async () => {
+        forever();
+        const turn = await runAgentTurn({
+          ...base,
+          tools: searching(),
+          // 15 a pass, and the next one forecast at 16 (10 + 5 + one token of
+          // "x"): after the sixth, 90 + 16 reaches 100, so the seventh answers.
+          budget: { maxSteps: 50, maxTurnTokens: 100 },
+        });
+
+        expect(turn.paused?.reason).toBe("tokens");
+        // Six tool passes, every one of them run rather than refused: the
+        // turn stopped before asking, not by turning a call away.
+        expect(turn.steps).toHaveLength(6);
+        expect(turn.steps.every((s) => s.status === "ok")).toBe(true);
+        const toolPasses = turn.passes
+          .slice(0, 6)
+          .reduce((sum, p) => sum + (p.prompt ?? 0) + (p.completion ?? 0), 0);
+        expect(toolPasses).toBeLessThanOrEqual(100);
+      });
+
+      it("counts the results it was just handed in the forecast", async () => {
+        // 240 characters is 100 tokens at TOOL_OUTPUT_CHARS_PER_TOKEN: 15 spent
+        // plus 10 + 5 + 100 for the next pass is 130, past 120. Without the
+        // results the forecast would be 31 and the turn would carry on.
+        scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
+        const turn = await runAgentTurn({
+          ...base,
+          tools: [tool("search", async () => ({ kind: "ok", content: "y".repeat(240) }))],
+          budget: { maxSteps: 50, maxTurnTokens: 120 },
+        });
+
+        expect(streamCompletion).toHaveBeenCalledTimes(2);
+        expect(turn.paused?.reason).toBe("tokens");
+      });
+
       it("leaves a turn under the ceiling completely alone", async () => {
         scripted([pass("", [{ id: "c", name: "search", arguments: "{}" }]), pass("done")]);
         const turn = await runAgentTurn({
@@ -943,7 +1033,8 @@ describe("the budget", () => {
         await runAgentTurn({
           ...base,
           tools: searching(),
-          // 15 a pass: the fifth reaches 75, past 70% of 100; the seventh stops.
+          // 15 a pass: the fifth reaches 75, past 70% of 100; after the sixth
+          // the forecast reaches 100 and the seventh answers.
           budget: { maxSteps: 50, maxTurnTokens: 100 },
         });
         const warnings = (t: CompletionMessage[]) =>

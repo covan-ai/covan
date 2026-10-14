@@ -413,16 +413,24 @@ export function availableModels(env?: ModelEnv): ModelId[] {
  * What each of `ids` accepts, for the agent settings screen to render against.
  *
  * `SPECS` stays private — `provider` is a routing decision and nothing outside
- * this file has any business reading it — so this projects the two fields a
- * picker needs and no more.
+ * this file has any business reading it — so this projects the three fields
+ * the settings screen needs and no more. `webSearch` is a yes/no rather than
+ * the tool's version string: which tool goes on the request is the server's
+ * business, whether the checkbox means anything is the screen's.
  */
 export function modelSpecsFor(
   ids: readonly string[],
-): Record<string, { temperature: boolean; reasoning: boolean }> {
-  const out: Record<string, { temperature: boolean; reasoning: boolean }> = {};
+): Record<string, { temperature: boolean; reasoning: boolean; webSearch: boolean }> {
+  const out: Record<string, { temperature: boolean; reasoning: boolean; webSearch: boolean }> = {};
   for (const id of ids) {
     const spec = modelSpec(id);
-    if (spec) out[id] = { temperature: spec.temperature, reasoning: spec.reasoning };
+    if (spec) {
+      out[id] = {
+        temperature: spec.temperature,
+        reasoning: spec.reasoning,
+        webSearch: spec.webSearchTool !== null,
+      };
+    }
   }
   return out;
 }

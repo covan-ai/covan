@@ -851,6 +851,37 @@ describe("an answer that stopped at a ceiling", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("says so after a reload, from what the reply recorded", async () => {
+    // #248: the stream that said so live is gone after a reload, and the reply
+    // looked whole again. `messages.outcome` is what remembers.
+    listMessages.mockResolvedValue([question, { ...partial, outcome: "tokens" }]);
+    await renderChat();
+
+    expect(
+      await screen.findByText("This turn reached the most one answer is allowed to spend."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep going" })).toBeInTheDocument();
+  });
+
+  it("not under an older reply", async () => {
+    // A reply that was followed by something is one the person already moved
+    // past; offering to keep it going there would continue the wrong turn.
+    const at = (seconds: number) => Date.parse("2026-09-17T10:00:00Z") + seconds * 1000;
+    listMessages.mockResolvedValue([
+      question,
+      { ...partial, outcome: "budget" },
+      { ...question, id: "msg-3", content: "and now?", createdAt: at(10) },
+      { ...answer, id: "msg-4", content: "Two seats are free.", createdAt: at(15) },
+    ]);
+    await renderChat();
+
+    expect(await screen.findByText("Two seats are free.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("This turn used every tool call it is allowed."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Keep going" })).not.toBeInTheDocument();
+  });
+
   it("asks again as a new turn, not as a hidden continuation", async () => {
     // The turn is over and its budget is spent, so carrying on is a person
     // deciding to spend more: a fresh ceiling, the transcript read again, and a

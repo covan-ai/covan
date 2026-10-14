@@ -14,6 +14,7 @@ const tool = (over: Partial<ToolConnection> & { id: string }): ToolConnection =>
   logoPath: "/composio/logo?u=gmail",
   scope: "owner",
   mine: true,
+  unavailable: null,
   createdAt: 0,
   ...over,
 });

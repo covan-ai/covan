@@ -13,6 +13,7 @@ import {
   MAX_STEP_EXCERPT_CHARS,
   MAX_TOOL_OUTPUT_CHARS,
   TOKEN_WARNING_SHARE,
+  TOOL_OUTPUT_CHARS_PER_TOKEN,
   TOOL_TIMEOUT_MS,
   TRIM_ABOVE_PROMPT_TOKENS,
   cap,
@@ -99,6 +100,20 @@ export type AgentStep = {
    * Undefined on every step that added none, which is every other tool.
    */
   offered?: string[];
+  /**
+   * Carried from a half whose tool results this transcript does not re-send:
+   * numbered, so the indices and passes continue, but not charged against the
+   * step ceiling.
+   *
+   * Set by a continuation on the first half's steps (`routes/chat.ts`). It has
+   * to travel on the step rather than as a count beside the list, because a
+   * continuation that stops to ask parks `turn.steps` whole in
+   * `paused_turns.steps`, and the confirm route reads them back as
+   * `stepsSoFar` with nothing else — a count passed to this call would be
+   * gone by then (#237). Lives only in memory and in that jsonb; never in
+   * `message_steps`, whose columns `writeSteps` names one by one.
+   */
+  uncharged?: true;
 };
 
 /**
@@ -248,9 +263,11 @@ export type AgentTurnOptions = {
   /**
    * How many of `stepsSoFar` count against this turn's ceiling.
    *
-   * Defaults to all of them, which is what a resume means and what every
-   * caller meant before this existed. The one caller that passes something
-   * else is a CONTINUATION — the person pressed Continue on a reply that hit
+   * Defaults to every step not marked `uncharged`, which is what a resume
+   * means and what every caller meant before this existed. A continuation
+   * marks the steps it carries instead of passing a count here, so the mark
+   * survives a re-park — see `AgentStep.uncharged`. The case it covers is a
+   * CONTINUATION — the person pressed Continue on a reply that hit
    * its length limit — and the difference is in the transcript rather than in
    * a preference:
    *
@@ -334,7 +351,9 @@ const BUDGET_INSTRUCTION =
   "what you would need to do next — do not pretend the work is complete.";
 
 /**
- * What the model is told when the turn has spent its token allowance.
+ * What the model is told when the turn has spent its token allowance — or has
+ * spent so much of it that the next pass would cross, which is how it is
+ * usually met now that the ceiling is forecast (#248).
  *
  * Beside `BUDGET_INSTRUCTION` rather than folded into it, because they are
  * different facts and lead to different advice. "You ran out of tool calls"
@@ -353,10 +372,10 @@ const CREDITS_INSTRUCTION =
   "pretend the work is complete.";
 
 const TOKEN_INSTRUCTION =
-  "This turn has used the whole token allowance one turn is given. Answer now with what " +
-  "you already have. Say plainly, in one sentence, what you were not able to finish — and " +
-  "if the material you were working through was large, say so, because that is the thing " +
-  "to narrow next time.";
+  "This turn has used so much of the token allowance one turn is given that not enough is " +
+  "left for another tool call. Answer now with what you already have. Say plainly, in one " +
+  "sentence, what you were not able to finish — and if the material you were working " +
+  "through was large, say so, because that is the thing to narrow next time.";
 
 /**
  * What the model is told, once, when the turn has spent `TOKEN_WARNING_SHARE`
@@ -904,6 +923,14 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * where `tokensSpent` is summed. Null until the first pass answers.
    */
   let lastPromptTokens: number | null = null;
+  /**
+   * What the last pass reported writing — its words and its tool calls.
+   *
+   * Beside `lastPromptTokens` because the next pass re-sends both: the
+   * assistant turn that asked for the tools is part of the transcript it reads.
+   * Zero until the first pass answers, which is when the forecast first runs.
+   */
+  let lastCompletionTokens = 0;
   const toolTimeoutMs = opts.budget?.toolTimeoutMs ?? TOOL_TIMEOUT_MS;
   const maxOutputChars = opts.budget?.maxOutputChars ?? MAX_TOOL_OUTPUT_CHARS;
 
@@ -927,11 +954,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * `steps` is the accumulator: it carries the earlier half so the indices and
    * the pass numbers continue, and it is what gets written out. The budget is
    * counted from here instead, so a caller can carry steps without paying for
-   * them — see `stepsCharged`. With the default the two are identical, which
-   * is why every existing caller is unaffected.
+   * them — see `stepsCharged` and `AgentStep.uncharged`. A list with no marks
+   * and no count is charged in full, which is why every existing caller, and
+   * every turn parked before the mark existed, is unaffected.
    */
   const carriedSteps = steps.length;
-  const chargedBefore = opts.stepsCharged ?? carriedSteps;
+  const chargedBefore = opts.stepsCharged ?? steps.filter((s) => !s.uncharged).length;
   const spentSteps = () => chargedBefore + (steps.length - carriedSteps);
   /**
    * The one way a step enters the record, so `onStep` cannot be forgotten at
@@ -1008,9 +1036,10 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * A pure function of the count charged so far, which is what lets a turn
    * pause for an approval at step 27, resume with 27 entries in `stepsSoFar`,
    * and work out where it is again from nothing but those. No column, no
-   * migration. A continuation passes `stepsCharged: 0` and is therefore in
-   * leg 0, which is the same answer read off the transcript it actually
-   * carries.
+   * migration. A continuation's carried steps are `uncharged`, so it starts
+   * in leg 0, which is the same answer read off the transcript it actually
+   * carries — and so does the resume of a continuation that stopped to ask,
+   * because the mark is parked with the steps.
    */
   const legOf = (n: number) => (n < softSteps ? 0 : Math.floor((n - softSteps) / legSteps) + 1);
   /**
@@ -1102,10 +1131,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // `onPass` gives: what the caller cannot reach is what a throw takes
         // with it, and everything after this line can throw.
         opts.onPass?.(spent);
-        // And the running total the cost ceiling is measured against. Checked here rather than before the
-        // next request because this is where it changes — a pass that has
+        // And the running total the cost ceiling is measured against. Checked
+        // here as well as forecast at the foot of the loop: the forecast is
+        // what stops a turn before it buys a pass that would cross, and this
+        // is the backstop for a pass that crossed anyway — a pass that has
         // already been paid for is not un-spent by noticing late.
         lastPromptTokens = event.usage.promptTokens ?? lastPromptTokens;
+        lastCompletionTokens = event.usage.completionTokens ?? lastCompletionTokens;
         tokensSpent += (event.usage.promptTokens ?? 0) + (event.usage.completionTokens ?? 0);
         if (maxTurnTokens && tokensSpent >= maxTurnTokens && !stopped) stopped = "tokens";
         // The platform's ceiling, checked in the same place and for the same
@@ -1155,6 +1187,8 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     // the provider needs it in front of every result, and a tool that throws
     // must not leave the transcript with results answering nothing.
     messages.push({ role: "assistant", content: passText, toolCalls: calls });
+    /** Where this pass's results start, for the token forecast at the foot. */
+    const resultsFrom = messages.length;
 
     for (const call of calls) {
       // Any ceiling, met mid-batch. `stopped` is already set when the token or
@@ -1277,6 +1311,22 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     }
 
     if (spentSteps() >= hardSteps && !stopped) stopped = "budget";
+    // The token ceiling, forecast rather than noticed. The check after each
+    // pass only fires once a pass has crossed, and a pass of a 200k-token
+    // transcript crosses by as much as it costs: on 2026-10-05 the turns it
+    // stopped had landed 22% to 105% past it (#248). So ask before buying the
+    // next one instead — it re-sends everything the last one read, what the
+    // last one wrote, and the results it was just handed — and stop if that
+    // would reach the line. A turn that would have finished on that pass is
+    // stopped one pass early; for a ceiling, short is the right way to miss.
+    if (!stopped && maxTurnTokens && lastPromptTokens !== null) {
+      const handedChars = messages.slice(resultsFrom).reduce((sum, m) => sum + m.content.length, 0);
+      const nextPass =
+        lastPromptTokens +
+        lastCompletionTokens +
+        Math.ceil(handedChars / TOOL_OUTPUT_CHARS_PER_TOKEN);
+      if (tokensSpent + nextPass >= maxTurnTokens) stopped = "tokens";
+    }
     // And again after the tools have run, because they are what actually
     // spends the count: eight connected-app calls is eight subrequests that
     // were not there when this pass began.

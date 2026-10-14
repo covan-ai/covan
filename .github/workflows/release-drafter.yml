@@ -1,0 +1,37 @@
+name: Release drafter
+
+# Keeps one draft GitHub Release up to date with every PR merged to main since
+# the last tag, grouped by label, with the next version computed from those
+# labels. Configuration and the reasoning live in .github/release-drafter.yml.
+#
+# Drafting only. Nothing here publishes, tags or pushes an image: a person
+# writes the "Read this before upgrading" section and presses Publish, which
+# creates the tag, which fires release.yml.
+#
+# No autolabeler and no pull_request trigger. Labels are applied by hand at
+# merge, which is the one step this cannot do for us.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-drafter
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    permissions:
+      # To create and edit the draft release.
+      contents: write
+      # To read the labels of merged pull requests.
+      pull-requests: read
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

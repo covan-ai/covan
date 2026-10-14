@@ -101,6 +101,17 @@ const MESSAGE_PAGE = 100;
  */
 const STEP_STATUSES = new Set(["running", "ok", "failed", "refused", "pending"]);
 
+/**
+ * Which ceiling a stored reply stopped at, read from `messages.outcome`.
+ *
+ * The other outcomes are not ceilings: `answered` finished, `paused` is waiting
+ * on a card, `truncated` is the length limit and draws a different row, and an
+ * outcome this build does not know says nothing rather than something wrong.
+ */
+function ceilingOf(outcome: string | undefined): "budget" | "tokens" | "runtime" | null {
+  return outcome === "budget" || outcome === "tokens" || outcome === "runtime" ? outcome : null;
+}
+
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -1695,9 +1706,18 @@ function ChatTab() {
                           truncated?.messageId === m.id && truncated.sessionId === active?.id
                         }
                         stoppedShort={
-                          stoppedShort?.messageId === m.id && stoppedShort.sessionId === active?.id
-                            ? stoppedShort.reason
-                            : null
+                          stoppedShort && stoppedShort.sessionId === active?.id
+                            ? stoppedShort.messageId === m.id
+                              ? stoppedShort.reason
+                              : null
+                            : // No live word on it, so what the reply recorded:
+                              // after a reload the stream that said so is gone,
+                              // and the row is all that remembers. The last
+                              // reply only — an older one was followed by
+                              // something, so the person already moved on.
+                              isLast
+                              ? ceilingOf(m.outcome)
+                              : null
                         }
                         agentName={agent.name}
                         agentEmoji={agent.emoji}

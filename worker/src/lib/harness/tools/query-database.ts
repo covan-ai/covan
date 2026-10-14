@@ -134,7 +134,7 @@ export const queryDatabaseTool: AgentTool = {
     additionalProperties: false,
   },
   destructive: false,
-  needs: "connection",
+  needs: { connection: ["sql"] },
   isConfigured: (env: ToolEnv) => Boolean(env.ALLOWED_ORIGIN && env.ROUTINE_SECRET_KEY),
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = args as { connectionId?: unknown; sql?: unknown; limit?: unknown };

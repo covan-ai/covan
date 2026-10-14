@@ -16,8 +16,10 @@ import { connectionsManifest, listConnections } from "./connections";
  *  - `isConfigured` — can this DEPLOYMENT run the tool. No Resend key, no
  *    `send_email`.
  *  - `needs` — does this WORKSPACE have anything for it to point at. No
- *    connected services, no `query_database`: the tokens are wasted and the
- *    prompt is inviting the model to invent a connection id.
+ *    database connected, no `query_database`: the tokens are wasted and the
+ *    prompt is inviting the model to invent a connection id. "Anything" is
+ *    per transport — a workspace of Composio apps has connections, and none
+ *    of them is a database or an HTTP API.
  *  - RLS — may this CALLER see what it points at. Not applied here at all;
  *    the reads below go through the caller's own client, so a connection in
  *    another workspace is already not in the list.
@@ -67,8 +69,11 @@ export async function capabilitiesFor(input: {
   const channels = scheduled ? [] : await ownChannels(input.db, input.userId);
 
   const tools = configuredTools(input.env).filter((tool) => {
-    if (tool.needs === "connection") return connections.length > 0;
     if (tool.needs === "channel") return channels.length > 0;
+    if (tool.needs) {
+      const usable = tool.needs.connection;
+      return connections.some((c) => usable.includes(c.transport));
+    }
     return true;
   });
 

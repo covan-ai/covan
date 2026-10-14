@@ -126,7 +126,7 @@ export function CreateRoutineDialog({
   const [emailTouched, setEmailTouched] = useState(false);
   const [endsAfterRuns, setEndsAfterRuns] = useState<number | null>(null);
   const [fieldError, setFieldError] = useState<{
-    field: "schedule";
+    field: "schedule" | "email";
     message: string;
   } | null>(null);
 
@@ -328,6 +328,17 @@ export function CreateRoutineDialog({
         });
         return;
       }
+      // The channel check answers exactly "not an email address", and the only
+      // address this dialog sends is the one in its own Deliver to field — the
+      // field a first routine cannot be created without, so its refusal belongs
+      // under it rather than in a toast that has to be matched to a field.
+      if (message.includes("not an email address")) {
+        setFieldError({
+          field: "email",
+          message: "That doesn't look like an email address. Check it for a typo.",
+        });
+        return;
+      }
       toast.error(message);
     }
   };
@@ -519,6 +530,9 @@ export function CreateRoutineDialog({
                         setDeliveryEmail(e.target.value);
                       }}
                     />
+                    {fieldError?.field === "email" && (
+                      <p className="text-xs text-destructive">{fieldError.message}</p>
+                    )}
                     <p className="text-meta leading-[1.45] text-muted-foreground">
                       The result arrives here. You can add Slack or another address in Settings
                       later.

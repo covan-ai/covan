@@ -2,14 +2,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiError } from "@/lib/api-client";
 import { CreateRoutineDialog } from "./create-routine-dialog";
 
-const { draft, channelsList, me, createRoutine } = vi.hoisted(() => ({
+const { draft, channelsList, me, createRoutine, toast } = vi.hoisted(() => ({
   draft: vi.fn(),
   channelsList: vi.fn(),
   me: vi.fn(),
   createRoutine: vi.fn(),
+  toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
+
+vi.mock("sonner", () => ({ toast }));
 
 vi.mock("@/lib/api-client", () => ({
   api: {
@@ -50,6 +54,9 @@ describe("CreateRoutineDialog", () => {
     me.mockReset();
     createRoutine.mockReset();
     createRoutine.mockResolvedValue({});
+    toast.success.mockReset();
+    toast.error.mockReset();
+    toast.message.mockReset();
     me.mockResolvedValue({
       user: { id: "u1", name: "Ada", email: "ada@example.com", avatarUrl: null },
       workspace: {
@@ -123,6 +130,49 @@ describe("CreateRoutineDialog", () => {
     const payload = createRoutine.mock.calls[0][0];
     expect(payload.deliveryEmail).toBe("me@example.com");
     expect(payload).not.toHaveProperty("deliveryChannelId");
+  });
+
+  /** Fills the hand-written form with no channel yet, so step 2 asks for an address. */
+  async function fillFirstRoutine(address: string) {
+    channelsList.mockResolvedValue([]);
+    me.mockResolvedValue({
+      user: { id: "u1", email: "me@example.com" },
+      workspace: {},
+      members: [{ id: "u1", role: "admin" }],
+    });
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+    await user.clear(screen.getByLabelText(/deliver to/i));
+    await user.type(screen.getByLabelText(/deliver to/i), address);
+    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
+  }
+
+  it("puts the server's email refusal under the address it refused, not in a toast", async () => {
+    // The schedule's refusal already lands on its field. The address is the
+    // one field a first routine cannot be created without, so a toast for it
+    // left the person to work out which field it meant.
+    createRoutine.mockRejectedValue(new ApiError(400, "not an email address"));
+
+    await fillFirstRoutine("me@example");
+
+    expect(await screen.findByText(/doesn't look like an email address/i)).toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+    // Still open, with the address there to correct.
+    expect(screen.getByLabelText(/deliver to/i)).toHaveValue("me@example");
+  });
+
+  it("still toasts a refusal that belongs to no field", async () => {
+    createRoutine.mockRejectedValue(new ApiError(500, "something else went wrong"));
+
+    await fillFirstRoutine("me@example.com");
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("something else went wrong"));
+    expect(screen.queryByText(/doesn't look like an email address/i)).not.toBeInTheDocument();
   });
 
   it("sends a channel id rather than an address when channels already exist", async () => {

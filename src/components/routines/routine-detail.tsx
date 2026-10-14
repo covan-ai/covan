@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Minus, X } from "lucide-react";
-import { SectionCard } from "@/components/section-card";
+import { Chip, SectionCard } from "@/components/section-card";
 import { RoutineWebhookCard } from "@/components/routines/routine-webhook-card";
 import { RoutineOutputCard } from "@/components/routines/routine-output-card";
 import { SectionHeading } from "@/components/page-container";
@@ -20,7 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { RoutineStatus } from "@/components/routines/routine-status";
 import { cronToProse } from "@/lib/cron-to-prose";
 import { formatRelative } from "@/lib/relative-time";
-import type { Routine, RoutineRun, UpdateRoutineInput } from "@/lib/routines-api";
+import type { Routine, RoutineRun, RunOutcome, UpdateRoutineInput } from "@/lib/routines-api";
 import type { Connection } from "@/lib/connections-api";
 
 /**
@@ -51,10 +51,33 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/**
+ * The ways a turn ends without having finished. `answered` is the ordinary
+ * case and `paused` is waiting on a person, so neither is here.
+ */
+const STOPPED_SHORT: ReadonlySet<RunOutcome> = new Set([
+  "cut_short",
+  "budget",
+  "tokens",
+  "runtime",
+  "truncated",
+  "empty",
+]);
+
 function RunRow({ run }: { run: RoutineRun }) {
   const [open, setOpen] = useState(false);
+  // `ok` says the run completed, which a cut-short one did: it spent its
+  // tokens and delivered what it had. What it did not do is finish the
+  // answer, and until covan#243 the row said "Delivered" with a check mark
+  // and nothing else, so a run that stopped at 40% of the usual time with a
+  // sixth of the usual summary read as the third success in a row. The rest
+  // of the row stays — it is still true — and a neutral chip says the part
+  // that was missing. Not destructive: nothing failed (DESIGN.md).
+  const stoppedShort =
+    run.status === "ok" && run.outcome !== null && STOPPED_SHORT.has(run.outcome);
+  const stoppedChip = stoppedShort ? <Chip tone="neutral">Stopped before it finished</Chip> : null;
   const icon =
-    run.status === "ok" ? (
+    run.status === "ok" && !stoppedShort ? (
       <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     ) : run.status === "failed" ? (
       <X className="h-3.5 w-3.5 shrink-0 text-destructive" />
@@ -140,6 +163,7 @@ function RunRow({ run }: { run: RoutineRun }) {
         <div className="flex items-center gap-3">
           {icon}
           <span className="min-w-0 flex-1 truncate">{label}</span>
+          {stoppedChip}
           {when}
         </div>
         {filingNote}
@@ -159,6 +183,7 @@ function RunRow({ run }: { run: RoutineRun }) {
         >
           {label}
         </button>
+        {stoppedChip}
         {when}
       </div>
       {filingNote}

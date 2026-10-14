@@ -194,16 +194,53 @@ function describe(c: ToolConnection): string {
 }
 
 /**
+ * How many connections the manifest names one by one.
+ *
+ * The manifest is in the system prefix of every pass of every turn, at roughly
+ * twenty tokens a line, and nothing bounded it: two hundred connections was
+ * ~4,000 tokens of context each pass — the failure `find-tool.ts` was built to
+ * avoid, putting every service into every prompt, reproduced one layer up
+ * (#257). Twenty-four is generous for a workspace that uses what it connected
+ * and cheap for one that connected everything.
+ */
+export const MANIFEST_MAX_LINES = 24;
+
+/**
  * The line in the system prefix that tells the agent what it can reach.
  *
  * Built from the same rows and in the same spirit as the document manifest in
  * `lib/prompt.ts`: stable turn over turn, so it caches, and naming things the
  * agent would otherwise have to guess at. A tool takes `connectionId`, and
  * without this the model has no way to know one.
+ *
+ * CAPPED AT `MANIFEST_MAX_LINES`, and what is dropped is chosen, not cut. A
+ * database or an HTTP API is always listed: nothing else ever tells the model
+ * its id, because `find_tool` searches the app catalogue and never surfaces one.
+ * A connected app can afford to be left off — `find_tool` hands back the
+ * connectionId beside every result from an app the workspace has connected — so
+ * those fill the remaining lines in label order (the order `listConnections`
+ * reads, which keeps the prefix stable), and the rest are named in one line by
+ * toolkit, which costs a few tokens each rather than twenty and still tells the
+ * model they exist.
  */
 export function connectionsManifest(connections: ToolConnection[]): string {
   if (connections.length === 0) return "";
-  const lines = connections.map((c) => `- ${c.label} (id: ${c.id}, ${describe(c)})`);
+  const others = connections.filter((c) => c.transport !== "composio");
+  const appRoom = Math.max(0, MANIFEST_MAX_LINES - others.length);
+  const apps = connections.filter((c) => c.transport === "composio");
+  const listed = new Set([...others, ...apps.slice(0, appRoom)]);
+  const unlisted = apps.slice(appRoom);
+  const lines = connections
+    .filter((c) => listed.has(c))
+    .map((c) => `- ${c.label} (id: ${c.id}, ${describe(c)})`);
+  if (unlisted.length > 0) {
+    const slugs = [...new Set(unlisted.map((c) => c.toolkit_slug ?? "app"))].join(", ");
+    lines.push(
+      `- …and ${unlisted.length} more connected apps (${slugs}); find_tool searches all of ` +
+        "them and gives the connectionId with each result — name the app in your query or " +
+        "pass it as toolkit.",
+    );
+  }
   const hasComposio = connections.some((c) => c.transport === "composio");
   const hasOther = connections.some((c) => c.transport !== "composio");
 
@@ -233,6 +270,9 @@ export function connectionsManifest(connections: ToolConnection[]): string {
         "you need, then run_tool with that app's connection id."
       : "",
     "Never guess an id that is not on this list.",
+    // Without this the sentence above forbids the very ids the overflow line
+    // says find_tool will hand over.
+    unlisted.length > 0 ? "A connectionId find_tool gives you counts as on it." : "",
   ].filter(Boolean);
 
   return `Connected services you can reach with your tools:\n${lines.join("\n")}\n${guidance.join(" ")}`;
@@ -251,6 +291,53 @@ export function connectionsManifest(connections: ToolConnection[]): string {
  * failed call per operation to rediscover it, once a month at worst.
  */
 const UNAVAILABLE_TRUSTED_DAYS = 30;
+const UNAVAILABLE_TRUSTED_MS = UNAVAILABLE_TRUSTED_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * The entries of a connection's `unavailable_tools` bag that are still
+ * trusted, with when each was recorded (NaN for a date nobody can read).
+ *
+ * An unparseable date is trusted rather than discarded. It means an older or
+ * hand-edited bag, and the slug was still put there by a real 404.
+ */
+function trustedUnavailable(config: Record<string, unknown>, now: number): Array<[string, number]> {
+  const raw = config.unavailable_tools;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const cutoff = now - UNAVAILABLE_TRUSTED_MS;
+  const live: Array<[string, number]> = [];
+  for (const [slug, at] of Object.entries(raw as Record<string, unknown>)) {
+    const seen = typeof at === "string" ? Date.parse(at) : NaN;
+    if (Number.isNaN(seen) || seen >= cutoff) live.push([slug, seen]);
+  }
+  return live;
+}
+
+/**
+ * How many operations this connection is hiding, and until when — what the
+ * Integrations card says so a person is not shown "connected" and nothing
+ * else for a month (covan#276).
+ *
+ * `hiddenUntil` is when the OLDEST trusted entry expires, in epoch ms: the
+ * first moment anything comes back. Null when every entry's date is
+ * unreadable, which is trusted indefinitely. The whole answer is null when
+ * nothing is hidden, so the card has one thing to check.
+ *
+ * Here rather than in the DTO because the thirty days are this file's, and a
+ * second copy of the arithmetic would be free to drift from the one that
+ * actually decides what `find_tool` hides.
+ */
+export function hiddenOperations(
+  config: Record<string, unknown>,
+  now: number = Date.now(),
+): { count: number; hiddenUntil: number | null } | null {
+  const live = trustedUnavailable(config, now);
+  if (live.length === 0) return null;
+  const dated = live.map(([, seen]) => seen).filter((seen) => !Number.isNaN(seen));
+  return {
+    count: live.length,
+    hiddenUntil: dated.length > 0 ? Math.min(...dated) + UNAVAILABLE_TRUSTED_MS : null,
+  };
+}
 
 /**
  * The operations this connection has already proven it cannot run.
@@ -278,15 +365,5 @@ const UNAVAILABLE_TRUSTED_DAYS = 30;
  * know nothing", which is where this started.
  */
 export function unavailableTools(connection: ToolConnection): Set<string> {
-  const raw = connection.config.unavailable_tools;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return new Set();
-  const cutoff = Date.now() - UNAVAILABLE_TRUSTED_DAYS * 24 * 60 * 60 * 1000;
-  const live = new Set<string>();
-  for (const [slug, at] of Object.entries(raw as Record<string, unknown>)) {
-    const seen = typeof at === "string" ? Date.parse(at) : NaN;
-    // An unparseable date is trusted rather than discarded. It means an older
-    // or hand-edited bag, and the slug was still put there by a real 404.
-    if (Number.isNaN(seen) || seen >= cutoff) live.add(slug);
-  }
-  return live;
+  return new Set(trustedUnavailable(connection.config, Date.now()).map(([slug]) => slug));
 }

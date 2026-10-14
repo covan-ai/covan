@@ -81,11 +81,52 @@ describe("capabilitiesFor", () => {
       "search_documents",
       "describe_connection",
       "query_database",
-      "http_request",
     ]);
     expect(manifest).toContain("conn-1");
     expect(manifest).toContain("Covan Supabase");
     expect(manifest).toContain("Never guess an id");
+  });
+
+  /**
+   * covan#251. A workspace whose only connections are Composio apps used to
+   * be offered `query_database` and `http_request` because it had "a
+   * connection", and the model, shown an app called Supabase, called
+   * `query_database` on it six times out of six. A tool is offered for the
+   * transports it can use, not for any row.
+   */
+  it("offers a workspace of connected apps run_tool, and nothing that cannot reach an app", async () => {
+    const app = {
+      ...CONNECTION,
+      id: "conn-app",
+      label: "Supabase",
+      transport: "composio",
+      toolkit_slug: "supabase",
+      base_url: "",
+    };
+    const { tools } = await ask(dbWith([app], []), { ...FULL, COMPOSIO_API_KEY: "ck" } as ToolEnv);
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("run_tool");
+    expect(names).toContain("find_tool");
+    expect(names).not.toContain("query_database");
+    expect(names).not.toContain("http_request");
+    // An app has nothing to describe, and the manifest says so.
+    expect(names).not.toContain("describe_connection");
+  });
+
+  it("offers an HTTP API http_request, and neither the database nor the app tool", async () => {
+    const api = { ...CONNECTION, id: "conn-api", label: "Billing API", transport: "http" };
+    const { tools } = await ask(dbWith([api], []), { ...FULL, COMPOSIO_API_KEY: "ck" } as ToolEnv);
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("http_request");
+    expect(names).toContain("describe_connection");
+    expect(names).not.toContain("query_database");
+    expect(names).not.toContain("run_tool");
+  });
+
+  it("offers nothing that needs a connection for one this build does not recognise", async () => {
+    const odd = { ...CONNECTION, id: "conn-odd", transport: "unknown" };
+    const { tools } = await ask(dbWith([odd], []));
+    expect(tools.map((t) => t.name)).toEqual(["search_documents"]);
   });
 
   it("adds the sending tools, and says an address is not an option", async () => {

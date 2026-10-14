@@ -4,6 +4,7 @@ import type { RetrievalConfig } from "../retrieval";
 import type { ToolSpec } from "../completion";
 import type { RuntimeLimitFlag } from "../runtime-limit";
 import type { ComposioTool } from "../composio/client";
+import type { ToolTransport } from "./connections";
 import { searchDocumentsTool } from "./tools/search-documents";
 import { describeConnectionTool } from "./tools/describe-connection";
 import { queryDatabaseTool } from "./tools/query-database";
@@ -325,8 +326,17 @@ export type AgentTool = {
    * at. A workspace with no connected services gets no `query_database` in
    * its prompt, which saves the tokens and, more usefully, removes the
    * invitation to invent a connection id. See `lib/harness/available.ts`.
+   *
+   * A connection tool names the transports it can actually use, because "is
+   * there a connection" stopped being the question once a workspace could
+   * hold more than one kind. Until 2026-10 it was `"connection"`, satisfied by
+   * any row, so a workspace whose only connections were Composio apps was
+   * offered `query_database`, saw an app called "Supabase", and spent six of
+   * six calls being told by the tool's own transport check that an app is not
+   * a database (covan#251). The run-time refusal in each tool stays; this only
+   * stops the offer.
    */
-  needs?: "connection" | "channel";
+  needs?: "channel" | { connection: readonly ToolTransport[] };
   /**
    * Several calls of this tool in one batch go on ONE card, and one yes covers
    * them all.

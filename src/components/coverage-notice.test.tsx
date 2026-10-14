@@ -128,6 +128,23 @@ describe("the coverage notice", () => {
     expect(document.body).not.toHaveTextContent(/keep me in/i);
   });
 
+  /**
+   * covan-cloud#311. The notice is the one place a member is told the report
+   * exists, so a preference read that fails must not hide it — a member whose
+   * read kept failing used to be told nothing, ever.
+   */
+  it("still tells them when their preference cannot be read", async () => {
+    preference.mockRejectedValue(new Error("network"));
+    renderNotice(true, "w-read-fails");
+    expect(await screen.findByRole("button", { name: /keep me in/i })).toBeInTheDocument();
+    expect(
+      screen.getByText(/couldn.t check whether you.ve already left them out/i),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /exclude my questions/i }));
+    expect(setPreference).toHaveBeenCalledWith(true);
+  });
+
   it("survives storage that throws", async () => {
     const getItem = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("private mode");

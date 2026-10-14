@@ -59,6 +59,8 @@ const runs: RoutineRun[] = [
     summary: "Three new posts about pricing.",
     documentId: null,
     filingNote: null,
+    outcome: null,
+    model: null,
     startedAt: 0,
   },
   {
@@ -72,6 +74,8 @@ const runs: RoutineRun[] = [
     summary: null,
     documentId: null,
     filingNote: null,
+    outcome: null,
+    model: null,
     startedAt: 0,
   },
   {
@@ -85,6 +89,8 @@ const runs: RoutineRun[] = [
     summary: null,
     documentId: null,
     filingNote: null,
+    outcome: null,
+    model: null,
     startedAt: 0,
   },
 ];
@@ -150,6 +156,32 @@ describe("RoutineDetail", () => {
     const row = screen.getByText(/Nothing to report/);
     expect(row.className).toContain("text-muted-foreground");
     expect(row.className).not.toContain("destructive");
+  });
+
+  /**
+   * covan#243. The run completed — `status` is right to say `ok` — but the
+   * turn inside it stopped before it answered, and the row read as a third
+   * finished run. It now says so, without calling it a failure.
+   */
+  it("says a run that was cut short did not finish", () => {
+    const cut = [{ ...runs[0], outcome: "cut_short" as const, summary: "Partial." }];
+    render(<RoutineDetail {...props} runs={cut} />);
+    const chip = screen.getByText("Stopped before it finished");
+    expect(chip.className).not.toContain("destructive");
+    expect(chip.className).not.toContain("accent-orange");
+    // The rest of the row is still true, so it stays.
+    expect(screen.getByText(/Delivered/)).toBeInTheDocument();
+  });
+
+  it("says nothing extra about a run that answered", () => {
+    const answered = [{ ...runs[0], outcome: "answered" as const }];
+    render(<RoutineDetail {...props} runs={answered} />);
+    expect(screen.queryByText("Stopped before it finished")).not.toBeInTheDocument();
+  });
+
+  it("says nothing extra about a run from before outcomes were recorded", () => {
+    render(<RoutineDetail {...props} />);
+    expect(screen.queryByText("Stopped before it finished")).not.toBeInTheDocument();
   });
 
   it("says nothing about drops when there were none", () => {

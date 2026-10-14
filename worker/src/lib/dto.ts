@@ -6,6 +6,7 @@ import { NOTHING_RELEVANT_REASON } from "./routines/executor";
 import { allowedLogoUrl } from "./composio/client";
 import { REASONING_EFFORTS, type ReasoningEffort } from "./models";
 import { hiddenOperations } from "./harness/connections";
+import { MESSAGE_OUTCOMES, type MessageOutcome } from "./harness/usage";
 
 export type DocumentDTO = {
   id: string;
@@ -978,6 +979,20 @@ export type RoutineRunDTO = {
    * storage bound, or that they were demoted to viewer last month.
    */
   filingNote: string | null;
+  /**
+   * How the model stopped, in `messages.outcome`'s vocabulary (0070). Null for
+   * a run that never reached a model — every `skipped` one — and for runs
+   * recorded before the column.
+   *
+   * Forwarded because `status` cannot say it: `ok` means the RUN completed,
+   * and a run whose turn was `cut_short` did complete, spent its tokens and
+   * delivered what it had. On 2026-10-02 one did exactly that — 41k tokens,
+   * a sixth of the usual summary — and read as a third successful run
+   * (covan#243). The screen now says it stopped before it finished.
+   */
+  outcome: MessageOutcome | null;
+  /** The model that answered, when one did. Null on the same runs as `outcome`. */
+  model: string | null;
   startedAt: number;
 };
 
@@ -991,6 +1006,8 @@ export function mapRoutineRun(row: {
   summary?: string | null;
   document_id?: string | null;
   filing_note?: string | null;
+  outcome?: string | null;
+  model?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -1004,6 +1021,12 @@ export function mapRoutineRun(row: {
     summary: row.summary ?? null,
     documentId: row.document_id ?? null,
     filingNote: row.filing_note ?? null,
+    // Narrowed rather than cast: a value a newer build wrote reads as "not
+    // known", which renders as an ordinary run rather than a wrong claim.
+    outcome: (MESSAGE_OUTCOMES as readonly string[]).includes(row.outcome ?? "")
+      ? (row.outcome as MessageOutcome)
+      : null,
+    model: row.model || null,
     startedAt: toEpochMs(row.started_at),
   };
 }

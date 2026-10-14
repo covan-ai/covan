@@ -438,6 +438,41 @@ describe("mapRoutineRun filing", () => {
   });
 });
 
+/**
+ * covan#243. `status` says the run completed; `outcome` says whether the turn
+ * inside it did. A cut-short turn under an `ok` run read as a finished answer
+ * because the mapper dropped the column 0070 added.
+ */
+describe("mapRoutineRun outcome", () => {
+  const row = {
+    id: "run1",
+    status: "ok",
+    items_new: 0,
+    duration_ms: 53000,
+    error: null,
+    started_at: "2026-10-02T06:00:00Z",
+  };
+
+  it("carries how the model stopped, and which model it was", () => {
+    const dto = mapRoutineRun({ ...row, outcome: "cut_short", model: "claude-sonnet-4-5" });
+    expect(dto.status).toBe("ok");
+    expect(dto.outcome).toBe("cut_short");
+    expect(dto.model).toBe("claude-sonnet-4-5");
+  });
+
+  it("reads a run that never reached a model, or predates the column, as no outcome", () => {
+    expect(mapRoutineRun({ ...row, status: "skipped", outcome: null, model: null })).toMatchObject({
+      outcome: null,
+      model: null,
+    });
+    expect(mapRoutineRun(row)).toMatchObject({ outcome: null, model: null });
+  });
+
+  it("refuses an outcome it does not know rather than passing it on", () => {
+    expect(mapRoutineRun({ ...row, outcome: "something_new" }).outcome).toBeNull();
+  });
+});
+
 describe("mapDocument provenance", () => {
   const row = { id: "d1", name: "Digest.md", size: 100, created_at: "2026-09-20T09:00:00Z" };
 

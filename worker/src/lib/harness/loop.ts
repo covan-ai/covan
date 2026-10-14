@@ -100,6 +100,20 @@ export type AgentStep = {
    * Undefined on every step that added none, which is every other tool.
    */
   offered?: string[];
+  /**
+   * Carried from a half whose tool results this transcript does not re-send:
+   * numbered, so the indices and passes continue, but not charged against the
+   * step ceiling.
+   *
+   * Set by a continuation on the first half's steps (`routes/chat.ts`). It has
+   * to travel on the step rather than as a count beside the list, because a
+   * continuation that stops to ask parks `turn.steps` whole in
+   * `paused_turns.steps`, and the confirm route reads them back as
+   * `stepsSoFar` with nothing else — a count passed to this call would be
+   * gone by then (#237). Lives only in memory and in that jsonb; never in
+   * `message_steps`, whose columns `writeSteps` names one by one.
+   */
+  uncharged?: true;
 };
 
 /**
@@ -249,9 +263,11 @@ export type AgentTurnOptions = {
   /**
    * How many of `stepsSoFar` count against this turn's ceiling.
    *
-   * Defaults to all of them, which is what a resume means and what every
-   * caller meant before this existed. The one caller that passes something
-   * else is a CONTINUATION — the person pressed Continue on a reply that hit
+   * Defaults to every step not marked `uncharged`, which is what a resume
+   * means and what every caller meant before this existed. A continuation
+   * marks the steps it carries instead of passing a count here, so the mark
+   * survives a re-park — see `AgentStep.uncharged`. The case it covers is a
+   * CONTINUATION — the person pressed Continue on a reply that hit
    * its length limit — and the difference is in the transcript rather than in
    * a preference:
    *
@@ -938,11 +954,12 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * `steps` is the accumulator: it carries the earlier half so the indices and
    * the pass numbers continue, and it is what gets written out. The budget is
    * counted from here instead, so a caller can carry steps without paying for
-   * them — see `stepsCharged`. With the default the two are identical, which
-   * is why every existing caller is unaffected.
+   * them — see `stepsCharged` and `AgentStep.uncharged`. A list with no marks
+   * and no count is charged in full, which is why every existing caller, and
+   * every turn parked before the mark existed, is unaffected.
    */
   const carriedSteps = steps.length;
-  const chargedBefore = opts.stepsCharged ?? carriedSteps;
+  const chargedBefore = opts.stepsCharged ?? steps.filter((s) => !s.uncharged).length;
   const spentSteps = () => chargedBefore + (steps.length - carriedSteps);
   /**
    * The one way a step enters the record, so `onStep` cannot be forgotten at
@@ -1019,9 +1036,10 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * A pure function of the count charged so far, which is what lets a turn
    * pause for an approval at step 27, resume with 27 entries in `stepsSoFar`,
    * and work out where it is again from nothing but those. No column, no
-   * migration. A continuation passes `stepsCharged: 0` and is therefore in
-   * leg 0, which is the same answer read off the transcript it actually
-   * carries.
+   * migration. A continuation's carried steps are `uncharged`, so it starts
+   * in leg 0, which is the same answer read off the transcript it actually
+   * carries — and so does the resume of a continuation that stopped to ask,
+   * because the mark is parked with the steps.
    */
   const legOf = (n: number) => (n < softSteps ? 0 : Math.floor((n - softSteps) / legSteps) + 1);
   /**

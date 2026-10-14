@@ -665,6 +665,54 @@ describe("the budget", () => {
       expect(turn.steps.some((s) => s.status === "refused")).toBe(false);
     });
 
+    it("does not charge steps marked uncharged", async () => {
+      // The same three carried and the same ceiling, with no count passed: the
+      // mark on each step is what says they are only being carried.
+      scripted([
+        pass("", [{ id: "c1", name: "search", arguments: "{}" }]),
+        pass("", [{ id: "c2", name: "search", arguments: "{}" }]),
+        pass("done"),
+      ]);
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 3 },
+        stepsSoFar: carried(3).map((step) => ({ ...step, uncharged: true as const })),
+      });
+
+      expect(turn.steps.filter((s) => s.status === "ok")).toHaveLength(5);
+      expect(turn.steps.some((s) => s.status === "refused")).toBe(false);
+    });
+
+    it("charges a re-parked continuation only for its own steps", async () => {
+      // #237: a continuation that stopped to ask parks `turn.steps` whole, and
+      // the confirm route hands them back with no count. Three carried from
+      // the first half and one of the continuation's own, against a ceiling of
+      // three: two calls are left, and then the turn has spent its budget.
+      // Charged for all four, the first call would have been refused.
+      scripted([
+        pass("", [{ id: "c1", name: "search", arguments: "{}" }]),
+        pass("", [{ id: "c2", name: "search", arguments: "{}" }]),
+        pass("", [{ id: "c3", name: "search", arguments: "{}" }]),
+        pass("done"),
+      ]);
+      const parked = [
+        ...carried(3).map((step) => ({ ...step, uncharged: true as const })),
+        { ...carried(1)[0], index: 3 },
+      ];
+      const turn = await runAgentTurn({
+        ...base,
+        tools: searching(),
+        budget: { maxSteps: 3 },
+        stepsSoFar: parked,
+      });
+
+      expect(turn.steps.slice(4).map((s) => s.status)).toEqual(["ok", "ok"]);
+      expect(turn.paused?.reason).toBe("budget");
+      // The mark rides along with the steps it was put on, and no others.
+      expect(turn.steps.filter((s) => s.uncharged)).toHaveLength(3);
+    });
+
     it("numbers a continuation's passes after the half it is finishing", async () => {
       // The defect this pair exists for: without `stepsSoFar` the pass counter
       // restarts, and one row's `pass_usage` reads [0, 1, 0, 1].

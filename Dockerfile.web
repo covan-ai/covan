@@ -9,7 +9,7 @@
 # security, not by being hidden, and it ships inside the browser bundle either
 # way. A warning nobody can act on only teaches people to skip warnings.
 
-FROM oven/bun:1.3.0-alpine AS build
+FROM oven/bun:1.4.3-alpine AS build
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml ./
 RUN bun install --frozen-lockfile

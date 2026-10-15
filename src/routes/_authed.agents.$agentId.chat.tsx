@@ -31,6 +31,8 @@ import { ChatReport } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
+import { findChatBundle } from "@/lib/chat-uploads";
+import { canEditAgent } from "@/lib/agent-access";
 import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
 import { useCredits, creditsSentence } from "@/lib/credits";
@@ -122,8 +124,16 @@ function ChatTab() {
   const { agentId } = Route.useParams();
   const { s: activeId } = Route.useSearch();
   const navigate = useNavigate();
-  const { agents, sessions, startSession, canWrite } = useAgentsStore();
+  const { agents, sessions, bundles, startSession, canWrite } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId)!;
+  // A file dropped here goes into the agent's chat bundle, and the first one
+  // attaches that bundle to the agent — which since 0104 takes Can edit on it.
+  // Once the bundle is attached, uploading into it is only a workspace write,
+  // so somebody who can only use the agent can add to it from then on.
+  const chatBundle = findChatBundle(bundles ?? [], agent.id);
+  const canUpload =
+    canWrite &&
+    (canEditAgent(agent) || (!!chatBundle && (agent.bundleIds ?? []).includes(chatBundle.id)));
   const queryClient = useQueryClient();
 
   // Files dropped, pasted or picked in this conversation. They land in the
@@ -1569,7 +1579,7 @@ function ChatTab() {
       // conversation is aimed at the conversation, and a 40px target under the
       // text is a worse answer than the obvious one.
       onDragOver={(e) => {
-        if (!canWrite || !e.dataTransfer.types.includes("Files")) return;
+        if (!canUpload || !e.dataTransfer.types.includes("Files")) return;
         e.preventDefault();
         setDragging(true);
       }}
@@ -1579,7 +1589,7 @@ function ChatTab() {
         setDragging(false);
       }}
       onDrop={(e) => {
-        if (!canWrite) return;
+        if (!canUpload) return;
         e.preventDefault();
         setDragging(false);
         const files = Array.from(e.dataTransfer.files);
@@ -2093,7 +2103,7 @@ function ChatTab() {
                 // A file on the clipboard is an upload; text on the clipboard is
                 // just typing, and must fall through untouched.
                 const files = Array.from(e.clipboardData.files);
-                if (!canWrite || files.length === 0) return;
+                if (!canUpload || files.length === 0) return;
                 e.preventDefault();
                 void uploads.addFiles(files);
               }}
@@ -2149,7 +2159,7 @@ function ChatTab() {
             />
             <PromptInputActions className="justify-between px-3 pb-2.5">
               <div className="flex min-w-0 items-center gap-1">
-                <ChatAttach uploads={uploads} canWrite={canWrite} />
+                <ChatAttach uploads={uploads} canWrite={canUpload} />
                 <ChatReport reports={reports} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
                 {active && (

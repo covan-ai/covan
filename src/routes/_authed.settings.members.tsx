@@ -364,7 +364,7 @@ function TeamPage() {
               <EmptyState
                 className="mt-6"
                 title="No invitations out"
-                description="Invite a teammate and they'll land in this workspace with access to every shared agent."
+                description="Invite a teammate and they'll land in this workspace with access to every agent shared with everyone."
                 action={
                   <Button variant="secondary" onClick={() => setInviteOpen(true)}>
                     <MailPlus className="h-4 w-4" /> Invite someone

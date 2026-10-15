@@ -103,7 +103,28 @@ export type AgentDTO = {
   documents: DocumentDTO[];
   bundleIds: string[];
   createdAt: number;
+  /**
+   * Who reaches this agent, and how far (0104). `workspaceAccess` is what
+   * every member gets, null when it is not shared with the workspace; `shares`
+   * are the people named on top of that. `myAccess` is the caller's own
+   * level, read from the same function the policies ask, so the screen never
+   * offers a control the database would refuse.
+   */
+  createdBy: string | null;
+  workspaceAccess: AgentAccess | null;
+  myAccess: AgentAccess;
+  shares: AgentShareDTO[];
 };
+
+export const AGENT_ACCESS = ["use", "edit", "manage"] as const;
+export type AgentAccess = (typeof AGENT_ACCESS)[number];
+export type AgentShareDTO = { userId: string; access: AgentAccess };
+
+function asAccess(value: unknown): AgentAccess | null {
+  return typeof value === "string" && (AGENT_ACCESS as readonly string[]).includes(value)
+    ? (value as AgentAccess)
+    : null;
+}
 
 /**
  * One document that grounded an answer.
@@ -632,6 +653,10 @@ export function mapAgent(row: {
   reasoning_effort?: string | null;
   web_search?: boolean | null;
   created_at: string;
+  created_by?: string | null;
+  workspace_access?: string | null;
+  my_access?: string | null;
+  agent_shares?: Array<{ user_id: string; access: string }> | null;
   agent_bundles?: Array<{
     bundle_id: string;
     knowledge_bundles?: {
@@ -668,6 +693,15 @@ export function mapAgent(row: {
     documents: agentBundles.flatMap((ab) => ab.knowledge_bundles?.documents ?? []).map(mapDocument),
     bundleIds: agentBundles.map((ab) => ab.bundle_id),
     createdAt: toEpochMs(row.created_at),
+    createdBy: row.created_by ?? null,
+    workspaceAccess: asAccess(row.workspace_access),
+    // A row the caller could read is at least usable; "use" is the floor
+    // rather than a guess, and never offers a control the policies would refuse.
+    myAccess: asAccess(row.my_access) ?? "use",
+    shares: (row.agent_shares ?? []).flatMap((s) => {
+      const access = asAccess(s.access);
+      return access ? [{ userId: s.user_id, access }] : [];
+    }),
   };
 }
 

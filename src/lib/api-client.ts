@@ -3,6 +3,8 @@ import { ApiError, errorMessage } from "./api-error";
 import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-store";
+import type { AgentSharing } from "./agent-access";
+
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
 import type {
   Connection,
@@ -31,6 +33,10 @@ import type {
   CreateRoutineInput,
   UpdateRoutineInput,
 } from "./routines-api";
+
+// Where the sharing vocabulary lives, re-exported so a caller that already
+// imports the client's types does not need a second import for these.
+export type { AgentAccess, AgentShare, AgentSharing } from "./agent-access";
 
 export type Workspace = {
   id: string;
@@ -527,6 +533,8 @@ export const api = {
       model?: string;
       persona?: string;
       mode?: "normal" | "brainstorm";
+      /** Who else can reach it. Left out, the server makes it Only me. */
+      sharing?: AgentSharing;
     }): Promise<Agent> => request("POST", "/agents", input),
     update: (
       id: string,
@@ -538,6 +546,12 @@ export const api = {
       >,
     ): Promise<Agent> => request("PATCH", `/agents/${id}`, patch),
     remove: (id: string): Promise<void> => request("DELETE", `/agents/${id}`),
+    /**
+     * Who can reach the agent, and how far. The list is the whole list: anybody
+     * left out of `shares` loses their row. 403 for anyone short of Full access.
+     */
+    setSharing: (id: string, sharing: AgentSharing): Promise<Agent> =>
+      request("PUT", `/agents/${id}/sharing`, sharing),
     toggleFavorite: (id: string): Promise<{ favorited: boolean }> =>
       request("POST", `/agents/${id}/favorite`),
   },

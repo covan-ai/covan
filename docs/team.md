@@ -161,16 +161,17 @@ It also _sees_ one thing nobody else does — what the workspace as a whole has
 spent, by agent and by month — which is a read and not a control, and is
 described under [Usage figures](#usage-figures-are-yours-alone) below.
 
-**Everything a workspace shares** — `agents`, `knowledge_bundles`, `documents`,
-`agent_bundles` and `document_chunks` — asks `can_write_in_workspace()`, which
-is a membership check plus `role <> 'viewer'`. So a member can create an agent,
-rewrite another agent's persona, change its model, upload to any bundle, detach
-a bundle, and delete any agent, bundle or document in the workspace, with no
-approval anywhere in the path. That is deliberate — the product's claim is that
-a team trains one agent together — but it is worth knowing how large it is:
-deleting an agent takes every session anybody ever had with it, every message in
-those sessions and every routine pointed at it, and deleting a bundle takes its
-documents and their embeddings. A `viewer` is refused all of it.
+**Everything a workspace shares** — `knowledge_bundles`, `documents` and
+`document_chunks` — asks `can_write_in_workspace()`, which is a membership check
+plus `role <> 'viewer'`. So a member can upload to any bundle and delete any
+bundle or document in the workspace, with no approval anywhere in the path.
+Agents are the exception since `0104`: each one says who can use it and how far,
+and [Who can use an agent](#who-can-use-an-agent) below is that answer.
+
+It is worth knowing how large those deletions are: deleting a bundle takes its
+documents and their embeddings, and deleting an agent — which needs full access
+to it — takes every session anybody ever had with it, every message in those
+sessions and every routine pointed at it. A `viewer` is refused all of it.
 
 Until `0040` none of that was recoverable from inside the product, and this page
 said so. [Deleting, and taking it back](#deleting-and-taking-it-back) is the
@@ -181,7 +182,7 @@ either way.
 **Everything that is yours** asks only whether you are a member: your own
 sessions, messages, brainstorm ideas, routines, delivery channels, favourites
 and notification preferences are keyed to your user id, and no role gates them.
-That is why a viewer can chat with every agent in the workspace and share a
+That is why a viewer can chat with every agent shared with them and share a
 session with it, and why a viewer is a usable seat rather than a login with
 nothing behind it.
 
@@ -191,6 +192,50 @@ not change things. On the only question people ask of a role — can this person
 destroy our work — the screen was wrong. It says the true thing now, and the
 chip's colour answers "can this person change things" rather than naming one
 role, which is what DESIGN.md §7.8 asked for all along.
+
+### Who can use an agent
+
+Whoever makes an agent decides who else can reach it, from **Share** on the
+agent's settings. There are three answers:
+
+| Choice | Who sees the agent |
+|---|---|
+| **Only me** | its creator, and the workspace's admins |
+| **Specific people** | the people named, each at their own level |
+| **Whole workspace** | every member, at one level; a named person can still be given more |
+
+and three levels:
+
+| Level | What it allows |
+|---|---|
+| **Can use** | see it and talk to it; its settings are read-only |
+| **Can edit** | change its persona, model and tuning, which bundles it reads, and what it may do on a connection without asking |
+| **Full access** | share it with others, delete it, and restore it from the trash |
+
+A new agent starts as **Only me**. Agents made before `0104` became **Whole
+workspace · Can edit**, which is what everybody could already do with them, minus
+one thing: deleting an agent somebody else made now needs full access.
+
+Two people always have full access without being named: the agent's creator
+and every admin. The admin half is what keeps an agent from being orphaned —
+when its creator leaves the workspace or deletes their account, somebody can
+still reach it. A **viewer** is capped at **Can use** whatever they are granted;
+the grant is kept, and promoting them is what turns it on.
+
+**Losing access hides; it does not delete.** When an agent stops being shared
+with somebody, it disappears from their list, and so do its conversations —
+their own included — and its routines, which stop running. Nothing is removed:
+share it with them again and everything is where they left it. Removing somebody
+from the workspace removes every share they held.
+
+The same rule reaches past the screen. A question asked of the agent in Slack is
+answered only for somebody it is shared with, and everybody else is told to ask
+its owner. A routine runs only while its owner can still use its agent. Both run
+as the service role, so they ask `agent_access_for` — the function every policy
+is built on — rather than trusting RLS to have filtered them.
+
+Knowledge bundles are not part of this. A bundle is the workspace's, attached to
+any number of agents, and who sees one is its own question.
 
 ### The last admin
 
@@ -252,8 +297,8 @@ another person's name.
 ### Usage figures are yours alone
 
 The usage breakdown on Settings → Usage counts your conversations and nobody else's.
-`workspace_usage` still lists every agent in the workspace — at zero for ones
-you have not used — but the tokens against each are yours.
+`workspace_usage` still lists every agent you can use — at zero for ones you
+have not used — but the tokens against each are yours.
 
 That took a correction. The function runs as the caller, and `0006` relied on
 that alone: sessions were private per user, so the select policy did the

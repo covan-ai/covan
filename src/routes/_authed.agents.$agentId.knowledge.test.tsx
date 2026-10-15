@@ -40,6 +40,7 @@ const store = {
       id: "agent-1",
       name: "GTM Agent",
       bundleIds: ["bundle-1"],
+      myAccess: "edit" as "use" | "edit" | "manage",
       documents: [
         {
           id: "doc-1",
@@ -75,6 +76,7 @@ vi.mock("@/lib/agents-store", () => ({
 function withKnowledge() {
   store.bundles = [{ id: "bundle-1", name: "GTM knowledge", description: null, documentCount: 1 }];
   store.agents[0].bundleIds = ["bundle-1"];
+  store.agents[0].myAccess = "edit";
   listDocuments.mockReset().mockResolvedValue([]);
 }
 
@@ -198,7 +200,20 @@ describe("the Knowledge tab", () => {
     expect(screen.getByText("Not attached")).toBeInTheDocument();
     // The switch is how a bundle crosses between the two groups, and it is the
     // only control on this tab that changes what the agent knows.
-    expect(screen.getByLabelText(/attach old pricing to gtm agent/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/attach old pricing to gtm agent/i)).toBeEnabled();
+  });
+
+  it("shows somebody who can only use the agent what it reads, without the switch to change it", async () => {
+    // 0104: attaching a bundle is an edit to the agent, whatever the caller's
+    // role in the workspace.
+    store.bundles = [
+      ...store.bundles,
+      { id: "bundle-2", name: "Old pricing", description: null, documentCount: 1 },
+    ];
+    store.agents[0].myAccess = "use";
+    renderTab(true);
+
+    expect(screen.getByLabelText(/attach old pricing to gtm agent/i)).toBeDisabled();
   });
 });
 

@@ -25,6 +25,8 @@ import {
   costFor,
 } from "@/lib/agent-meta";
 import { ModelCost, ModelCostScale } from "@/components/model-cost";
+import { NewAgentSharingSelect } from "@/components/new-agent-sharing-select";
+import { newAgentSharing, type NewAgentSharing } from "@/lib/agent-access";
 import { cn } from "@/lib/utils";
 import { ACCEPT, validateUpload } from "@/lib/uploads";
 import { toast } from "sonner";
@@ -74,6 +76,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
   const [model, setModel] = useState<string>(startingModel);
   const [persona, setPersona] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
+  const [sharing, setSharing] = useState<NewAgentSharing>("only");
   // Hold the real File objects picked in the Train step. The agent doesn't
   // exist yet, so they can only be uploaded after createAgent returns an id.
   const [docs, setDocs] = useState<{ id: string; name: string; size: number; file: File }[]>([]);
@@ -119,6 +122,9 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
 
   const save = async () => {
     if (!name.trim() || saving) return;
+    // "Live for your team" only when it is: an Only me agent is live for you.
+    const created =
+      sharing === "only" ? `${name.trim()} is ready` : `${name.trim()} is live for your team`;
     setSaving(true);
     try {
       const agent = await createAgent({
@@ -128,6 +134,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
         persona,
         mode: "normal",
         webSearch: true,
+        sharing: newAgentSharing(sharing),
       });
       // Documents are bundle-scoped now. Put the Train-step files into a fresh
       // bundle named after the agent and attach it, so they're retrievable in
@@ -155,11 +162,11 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
               `${name.trim()} created, but ${failed} document${failed === 1 ? "" : "s"} failed to upload. Retry from the Knowledge tab.`,
             );
           } else {
-            toast.success(`${name.trim()} is live for your team`);
+            toast.success(created);
           }
         }
       } else {
-        toast.success(`${name.trim()} is live for your team`);
+        toast.success(created);
       }
       onDone();
       navigate({ to: "/agents/$agentId", params: { agentId: agent.id } });
@@ -279,6 +286,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
               rows={5}
             />
           </div>
+          <NewAgentSharingSelect value={sharing} onChange={setSharing} labelClassName="text-xs" />
         </div>
       ) : (
         <div className="space-y-4">

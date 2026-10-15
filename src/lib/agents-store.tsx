@@ -1,10 +1,11 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, type Bundle, type UploadPhase } from "./api-client";
+import { api, ApiError, type Bundle, type UploadPhase } from "./api-client";
 import { indexingNow } from "./index-status";
 import { canWriteAsRole } from "./roles";
 import type { ReasoningEffort } from "./agent-meta";
+import type { AgentAccess, AgentShare, AgentSharing } from "./agent-access";
 import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
 import { useHasSession } from "./session-presence";
 
@@ -93,6 +94,30 @@ export type Agent = {
   }[];
   bundleIds: string[];
   createdAt: number;
+  /**
+   * Who made it, and so who always has Full access to it. Null once that
+   * account is deleted — admins are then the ones who can still manage it.
+   */
+  createdBy: string | null;
+  /** What every member gets, or null when it is not shared with the workspace. */
+  workspaceAccess: AgentAccess | null;
+  /** The people it is shared with by name, each at a level. Never the owner. */
+  shares: AgentShare[];
+  /**
+   * What the caller may do with it, as the database worked it out — the owner,
+   * an admin, the workspace level, a share and the viewer cap already folded
+   * in. Read through `canEditAgent` and `canManageAgent`, never compared by
+   * hand, so a fourth level would have one place to go.
+   */
+  myAccess: AgentAccess;
+};
+
+/** What creating an agent takes. Sharing left out means Only me. */
+export type NewAgent = Pick<
+  Agent,
+  "name" | "emoji" | "model" | "persona" | "mode" | "webSearch"
+> & {
+  sharing?: AgentSharing;
 };
 
 export type Message = {
@@ -236,22 +261,28 @@ type Store = {
    *
    * It gates the CONTROLS, not the calls. The policies refuse a viewer whether
    * or not the button was there; this is so the button is not there.
+   *
+   * Since 0104 it is only half the answer for an agent that already exists:
+   * changing one takes Can edit on that agent, and sharing or deleting it Full
+   * access — `canEditAgent` and `canManageAgent` in `lib/agent-access`. This
+   * flag still decides creating an agent, and everything about bundles and
+   * documents, which are the workspace's rather than any one agent's.
    */
   canWrite: boolean;
   /**
-   * The tuning settings (temperature, reasoningEffort) are optional here and
+   * The tuning settings (temperature, reasoningEffort) are absent here and
    * required nowhere else: a new agent is created on Auto, and both surfaces
    * that create one say so by not mentioning them. Settings is where they are
    * chosen, once there is an agent to choose them for. webSearch is required
    * and defaults to false.
    */
-  createAgent: (
-    a: Omit<
-      Agent,
-      "id" | "createdAt" | "documents" | "bundleIds" | "temperature" | "reasoningEffort"
-    >,
-  ) => Promise<Agent>;
+  createAgent: (a: NewAgent) => Promise<Agent>;
   updateAgent: (id: string, patch: Partial<Agent>) => void;
+  /**
+   * Who can reach the agent. Awaited, unlike `updateAgent`: the dialog that
+   * calls it stays open until the server has agreed, and shows its refusal.
+   */
+  setSharing: (id: string, sharing: AgentSharing) => Promise<Agent>;
   removeDocument: (docId: string) => Promise<void>;
   reindexDocument: (docId: string) => Promise<Agent["documents"][number]>;
   moveDocument: (docId: string, bundleId: string) => Promise<void>;
@@ -343,7 +374,26 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         void api.agents
           .update(id, patch)
           .then(() => queryClient.invalidateQueries({ queryKey: ["agents"] }))
-          .catch(() => toast.error("Couldn't save the agent."));
+          // The server's sentence when it has one: a 403 here means the
+          // caller's access was narrowed after this screen loaded, and "could
+          // not save" would not tell them that.
+          .catch((e) =>
+            toast.error(e instanceof ApiError ? e.message : "Couldn't save the agent."),
+          );
+      },
+
+      // Written straight into the cache from the answer, which is the agent
+      // as the server now has it. A refetch follows anyway: the list is the
+      // one place the caller's own `myAccess` could have changed, and an admin
+      // narrowing an agent is still an admin, but nothing else on this screen
+      // should have to know that to be right.
+      setSharing: async (id, sharing) => {
+        const agent = await api.agents.setSharing(id, sharing);
+        queryClient.setQueryData<Agent[]>(["agents"], (old = []) =>
+          old.map((a) => (a.id === id ? agent : a)),
+        );
+        void queryClient.invalidateQueries({ queryKey: ["agents"] });
+        return agent;
       },
 
       removeDocument: async (docId) => {

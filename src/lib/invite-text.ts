@@ -27,7 +27,7 @@ export function inviteText(invites: InviteToSend[]): string {
 
 function oneInvitation({ email, url }: InviteToSend): string {
   return [
-    `You've been invited to Covan — a shared AI agent our team trains together.`,
+    `You've been invited to Covan — where our team builds AI agents and shares them.`,
     `Open ${url} and sign up (or sign in) with ${email} to accept.`,
   ].join(" ");
 }

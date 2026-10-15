@@ -240,6 +240,11 @@ bundles.post("/agents/:id/bundles/:bundleId", async (c) => {
   const { error } = await db
     .from("agent_bundles")
     .insert({ agent_id: c.req.param("id"), bundle_id: c.req.param("bundleId") });
+  // Choosing what an agent reads is editing it (0104): somebody the agent is
+  // shared with to use is refused by the policy, and told so.
+  if (error?.code === "42501") {
+    return c.json({ error: "you need edit access to this agent to change what it reads" }, 403);
+  }
   if (error) return c.json({ error: "failed to attach bundle" }, 500);
   return c.json({ ok: true }, 201);
 });

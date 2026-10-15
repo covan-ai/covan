@@ -153,6 +153,8 @@ describe("an anonymous caller", () => {
       ["is_workspace_member", { p_workspace_id: id }],
       ["soft_delete_document", { p_document_id: id }],
       ["restore_agent", { p_agent_id: id }],
+      ["set_agent_sharing", { p_agent_id: id, p_workspace_access: null, p_shares: [] }],
+      ["agent_access", { p_agent_id: id }],
       ["workspace_usage_all", { p_workspace_id: id }],
     ];
 

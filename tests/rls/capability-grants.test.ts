@@ -64,9 +64,19 @@ beforeAll(async () => {
   ]);
   if (membersError) throw new Error(`seeding members failed: ${membersError.message}`);
 
+  // Shared with the workspace for editing, which is what every agent was when
+  // this file was written. Since 0104 a grant is an edit of the agent
+  // (`can_edit_agent`), and a new agent is Only me — left at that, `writer`
+  // would be refused below for not being able to reach the agent at all, and
+  // every "lets a writer" case would test 0104 instead of 0058.
   const { data: agent, error: agentError } = await admin.db
     .from("agents")
-    .insert({ workspace_id: admin.workspaceId, name: "Filer", created_by: admin.id })
+    .insert({
+      workspace_id: admin.workspaceId,
+      name: "Filer",
+      created_by: admin.id,
+      workspace_access: "edit",
+    })
     .select("id")
     .single();
   if (agentError || !agent) throw new Error(`seeding agent failed: ${agentError?.message}`);

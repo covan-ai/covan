@@ -44,7 +44,9 @@ import {
 } from "@/lib/agent-meta";
 import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { Checkbox } from "@/components/ui/checkbox";
-import { AgentAvatar } from "@/components/avatars";
+import { AgentAvatar, AvatarStack } from "@/components/avatars";
+import { ShareAgentDialog } from "@/components/share-agent-dialog";
+import { ACCESS_LABEL, canEditAgent, canManageAgent, sharingSummary } from "@/lib/agent-access";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
 import { SavedLoginsList } from "@/components/saved-logins";
 
@@ -83,6 +85,13 @@ function SettingsTab() {
 function AgentSettingsForm({ agent }: { agent: Agent }) {
   const { updateAgent, deleteAgent, canWrite } = useAgentsStore();
   const navigate = useNavigate();
+  // Per agent since 0104, read off what the server says the caller has. Can
+  // use sees the form as it is; Can edit changes it; Full access also shares
+  // and deletes. A viewer is capped at Can use by the server, so `canWrite`
+  // no longer has to be asked here — only how to word the read-only line.
+  const canEdit = canEditAgent(agent);
+  const canManage = canManageAgent(agent);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const [name, setName] = useState(agent.name);
   const [emoji, setEmoji] = useState(agent.emoji);
@@ -106,6 +115,12 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
   // switching to gpt-5 in this form greys the temperature out before you save,
   // rather than after the reply comes back wrong.
   const spec = specFor(me?.modelSpecs, model);
+  const sharing = sharingSummary(agent, me?.user.id);
+  const membersById = new Map((me?.members ?? []).map((m) => [m.id, m]));
+  const sharedWith = agent.shares.flatMap((s) => {
+    const m = membersById.get(s.userId);
+    return m ? [m] : [];
+  });
 
   const save = () => {
     updateAgent(agent.id, {
@@ -132,7 +147,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
               added here later is covered without anybody remembering to. It
               needs `display: contents` so SectionCard's own spacing still sees
               these as its children. */}
-          <fieldset disabled={!canWrite} className="contents">
+          <fieldset disabled={!canEdit} className="contents">
             <div className="grid grid-cols-[auto_1fr] gap-3">
               <div className="flex flex-col gap-2">
                 <Label className="text-xs">Icon</Label>
@@ -235,12 +250,14 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 <Label className="text-xs" htmlFor="a-persona">
                   Persona / system prompt
                 </Label>
-                <GeneratePersonaButton
-                  name={name}
-                  model={model}
-                  hasPersona={persona.trim().length > 0}
-                  onGenerated={setPersona}
-                />
+                {canEdit ? (
+                  <GeneratePersonaButton
+                    name={name}
+                    model={model}
+                    hasPersona={persona.trim().length > 0}
+                    onGenerated={setPersona}
+                  />
+                ) : null}
               </div>
               <Textarea
                 id="a-persona"
@@ -249,16 +266,18 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 onChange={(e) => setPersona(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Applied to every private conversation your team has with this agent.
+                Applied to every private conversation anyone has with this agent.
               </p>
             </div>
           </fieldset>
           <div className="flex justify-end border-t border-hairline pt-4">
-            {canWrite ? (
+            {canEdit ? (
               <Button onClick={save}>Save changes</Button>
             ) : (
               <p className="text-sm text-muted-foreground">
-                This is how the agent is set up. Changing it is a member's job.
+                {canWrite
+                  ? "This is how the agent is set up. Changing it takes Can edit, which its owner or an admin can give you."
+                  : "This is how the agent is set up. Changing it is a member's job."}
               </p>
             )}
           </div>
@@ -281,9 +300,32 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 {new Date(agent.createdAt).toLocaleString()}
               </dd>
             </div>
+            {/* The state, for everyone; the button that changes it, only for
+                whoever the server would let change it. The rail's Share does
+                the same thing from every tab — this is where the answer is
+                read. */}
+            <div className="flex items-center gap-4 px-5 py-3">
+              <dt className="w-28 shrink-0 text-sm text-muted-foreground">Shared with</dt>
+              <dd className="flex min-w-0 flex-1 items-center gap-2.5 text-sm">
+                {sharing.mode === "people" ? (
+                  <AvatarStack people={sharedWith} className="h-6 w-6 text-[10px]" />
+                ) : null}
+                <span className="truncate">{sharing.label}</span>
+              </dd>
+              {canManage ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setShareOpen(true)}
+                >
+                  Share
+                </Button>
+              ) : null}
+            </div>
             <div className="flex items-center gap-4 px-5 py-3.5">
-              <dt className="w-28 shrink-0 text-sm text-muted-foreground">Visibility</dt>
-              <dd className="min-w-0 flex-1 truncate text-sm">Shared with the whole workspace</dd>
+              <dt className="w-28 shrink-0 text-sm text-muted-foreground">Your access</dt>
+              <dd className="min-w-0 flex-1 truncate text-sm">{ACCESS_LABEL[agent.myAccess]}</dd>
             </div>
           </dl>
         </SectionCard>
@@ -305,11 +347,11 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
         </SectionCard>
       </section>
 
-      {canWrite && (
+      {canManage && (
         <section className="mt-10">
           <SectionHeading
             title="Danger zone"
-            description="Deleting the agent takes it away from the entire team, along with everyone's private chats. Recoverable for 30 days."
+            description="Deleting the agent takes it away from everyone it's shared with, along with their private chats. Recoverable for 30 days."
           />
           <SectionCard className="mt-3 flex items-center justify-between gap-4 border-destructive/30">
             <div className="min-w-0">
@@ -331,7 +373,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This takes the shared agent away from the whole team, along with every chat and
+                    This takes it away from everyone it's shared with, along with every chat and
                     routine attached to it. It waits 30 days in Settings → Recently deleted, and
                     comes back whole if you restore it.
                   </AlertDialogDescription>
@@ -354,6 +396,10 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
           </SectionCard>
         </section>
       )}
+
+      {canManage ? (
+        <ShareAgentDialog agent={agent} open={shareOpen} onOpenChange={setShareOpen} />
+      ) : null}
     </PageContainer>
   );
 }

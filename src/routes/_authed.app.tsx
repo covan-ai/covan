@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { Badge, Headline, SectionHeading } from "@/components/page-container";
 import { Chip, DataRow, EmptyState } from "@/components/section-card";
-import { AgentAvatar, UserAvatar } from "@/components/avatars";
+import { AgentAvatar, AvatarStack, UserAvatar } from "@/components/avatars";
 import { useCredits, creditsSentence } from "@/lib/credits";
 import { CoverageNotice } from "@/components/coverage-notice";
 import { FirstWeekChecklist } from "@/components/first-week-checklist";
@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAgentsStore, type Agent, type ChatSession } from "@/lib/agents-store";
+import { sharingSummary } from "@/lib/agent-access";
 import { formatRelative } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -115,8 +116,8 @@ function Home() {
               the workspace the composer below is the instruction. */}
           {agents.length === 0 ? (
             <p className="max-w-[480px] text-base leading-[1.45] text-muted-foreground">
-              Create your team's first shared agent — everyone gets it, and every conversation stays
-              private.
+              Create your first agent — keep it to yourself or share it with the team. Every
+              conversation with it stays private.
             </p>
           ) : null}
         </div>
@@ -161,7 +162,8 @@ function Home() {
           agents={agents}
           favorites={favorites}
           sessions={sessions}
-          memberCount={members.length}
+          members={members}
+          myId={me?.user.id}
           canCreate={canWrite}
           onCreate={() => setCreateOpen(true)}
         />
@@ -264,7 +266,7 @@ function HomeComposer({
             empty
               ? canCreate
                 ? "Create an agent to get started…"
-                : "No agents yet — a member has to make the first one…"
+                : "No agents shared with you yet…"
               : `Message ${selected?.name ?? "your agent"}…`
           }
           disabled={empty}
@@ -289,7 +291,7 @@ function HomeComposer({
               </button>
             ) : (
               <span className="px-1 text-sm text-muted-foreground">
-                Ask an admin or a member to create one.
+                Ask an admin or a member to share one with you.
               </span>
             )
           ) : (
@@ -347,14 +349,16 @@ function AgentGallery({
   agents,
   favorites,
   sessions,
-  memberCount,
+  members,
+  myId,
   canCreate,
   onCreate,
 }: {
   agents: Agent[];
   favorites: string[];
   sessions: ChatSession[];
-  memberCount: number;
+  members: WorkspaceMember[];
+  myId: string | undefined;
   /** False for a viewer. The policies refuse them either way; this is so the
       button is not there to press. */
   canCreate: boolean;
@@ -394,8 +398,8 @@ function AgentGallery({
     <section>
       <SectionHeading
         badge="Your agents"
-        title="Trained by everyone."
-        turn="Used by you alone."
+        title="Shared on purpose."
+        turn="Talked to in private."
         action={
           canCreate ? (
             <Button onClick={onCreate} variant="secondary" className="gap-1.5">
@@ -439,8 +443,8 @@ function AgentGallery({
           description={
             agents.length === 0
               ? canCreate
-                ? "Agents are shared with everyone in the workspace."
-                : "Agents are shared with everyone in the workspace. Ask an admin or a member to start one."
+                ? "Make one for yourself or for the whole team — you choose who else can use it."
+                : "Nobody has shared an agent with you yet. Ask an admin or a member to share one."
               : tab === "favorites"
                 ? "Star an agent to keep it at the top of this list."
                 : undefined
@@ -460,7 +464,8 @@ function AgentGallery({
               key={a.id}
               agent={a}
               favorite={favorites.includes(a.id)}
-              memberCount={memberCount}
+              members={members}
+              myId={myId}
               lastUsed={lastUsed.get(a.id)}
             />
           ))}
@@ -502,12 +507,14 @@ function TabButton({
 function AgentCard({
   agent: a,
   favorite,
-  memberCount,
+  members,
+  myId,
   lastUsed,
 }: {
   agent: Agent;
   favorite: boolean;
-  memberCount: number;
+  members: WorkspaceMember[];
+  myId: string | undefined;
   lastUsed?: number;
 }) {
   const { startSession, toggleFavorite } = useAgentsStore();
@@ -579,11 +586,7 @@ function AgentCard({
       </p>
 
       <div className="pointer-events-none mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-meta text-muted-foreground">
-        <span className="inline-flex items-center gap-2">
-          <span aria-hidden className="h-2 w-2 shrink-0 bg-accent-orange" />
-          Shared with{" "}
-          {memberCount > 0 ? <span className="tabular-nums">{memberCount}</span> : "the team"}
-        </span>
+        <SharedWith agent={a} members={members} myId={myId} />
         {lastUsed ? <span className="ml-auto">Used {formatRelative(lastUsed)}</span> : null}
       </div>
     </div>
@@ -694,5 +697,45 @@ function ActivityRow({
         </span>
       }
     />
+  );
+}
+
+/**
+ * Who else has the agent, at the foot of its card: the people's faces when it
+ * is shared by name, and a word when it is everyone or nobody. The amber square
+ * marks an agent somebody else can reach, which is the live state worth seeing
+ * across a gallery; one only you can reach takes the neutral square.
+ */
+function SharedWith({
+  agent,
+  members,
+  myId,
+}: {
+  agent: Agent;
+  members: WorkspaceMember[];
+  myId: string | undefined;
+}) {
+  const { mode, label } = sharingSummary(agent, myId);
+  if (mode === "people") {
+    const byId = new Map(members.map((m) => [m.id, m]));
+    const people = agent.shares.flatMap((s) => {
+      const m = byId.get(s.userId);
+      return m ? [m] : [];
+    });
+    return (
+      <span className="inline-flex items-center gap-2">
+        <AvatarStack people={people} max={3} className="h-6 w-6 text-[10px]" />
+        <span className="tabular-nums">{label}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span
+        aria-hidden
+        className={cn("h-2 w-2 shrink-0", mode === "workspace" ? "bg-accent-orange" : "bg-border")}
+      />
+      {mode === "workspace" ? "Everyone" : label}
+    </span>
   );
 }

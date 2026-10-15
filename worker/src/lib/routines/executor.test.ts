@@ -100,6 +100,12 @@ function makeDb(
     claimWins?: (keys: string[]) => string[];
     /** Rows a `connection` routine's document read resolves to. */
     documents?: any[];
+    /**
+     * What `agent_access_for` answers for the routine's owner (0104). Defaults
+     * to "use": every test above the sharing one means an owner who can still
+     * reach their agent.
+     */
+    agentAccess?: string | null;
   } = {},
 ) {
   const updates: Array<{ table: string; values: any }> = [];
@@ -130,6 +136,10 @@ function makeDb(
   };
 
   const db = {
+    rpc: async (name: string) => {
+      if (name !== "agent_access_for") throw new Error(`unexpected rpc ${name}`);
+      return { data: over.agentAccess === undefined ? "use" : over.agentAccess, error: null };
+    },
     from: (table: string) => ({
       select: () => {
         const chain: any = {
@@ -1138,6 +1148,28 @@ describe("runRoutine", () => {
     expect(run.values.error).toMatch(/no longer a member/);
     // Nothing is deleted — the routine survives being re-added to the workspace.
     expect(saved.values.cursor).toBeUndefined();
+  });
+
+  it("skips without pausing when the agent is no longer shared with the owner", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, updates, inserts } = makeDb({ agentAccess: null });
+
+    const out = await runRoutine(
+      routine({
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+      }),
+      makeDeps(db) as any,
+    );
+
+    expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(deliverCalls).toHaveLength(0);
+    // Not paused: sharing the agent again is the whole fix, and the routine
+    // should be running when it happens rather than waiting on a switch.
+    const saved = updates.find((u) => u.table === "routines")!;
+    expect(saved.values.status).not.toBe("paused");
+    const run = inserts.find((i) => i.table === "routine_runs")!;
+    expect(run.values.error).toMatch(/no longer shared/);
   });
 
   // ---- database errors are results, not exceptions --------------------------

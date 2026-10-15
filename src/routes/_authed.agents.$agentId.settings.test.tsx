@@ -23,6 +23,12 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const me = {
+  user: { id: "u1", name: "Ada" },
+  workspace: { id: "w1", name: "Acme" },
+  members: [
+    { id: "u1", name: "Ada", email: "ada@acme.test", role: "member", avatarUrl: null },
+    { id: "u2", name: "Grace Hopper", email: "grace@acme.test", role: "member", avatarUrl: null },
+  ],
   models: ["gpt-4o", "gpt-5-mini", "claude-sonnet-4-6"],
   modelSpecs: {
     "gpt-4o": { temperature: true, reasoning: false, webSearch: false },
@@ -41,6 +47,11 @@ vi.mock("@/components/saved-logins", () => ({
 vi.mock("@/components/generate-persona-button", () => ({
   GeneratePersonaButton: () => null,
 }));
+// The dialog has tests of its own; here the question is only who gets to open it.
+vi.mock("@/components/share-agent-dialog", () => ({
+  ShareAgentDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="share-dialog" /> : null,
+}));
 
 const updateAgent = vi.fn();
 const agent = {
@@ -56,6 +67,10 @@ const agent = {
   documents: [],
   bundleIds: [],
   createdAt: Date.parse("2026-09-01T10:00:00Z"),
+  createdBy: "u1" as string | null,
+  workspaceAccess: null as string | null,
+  shares: [] as { userId: string; access: string }[],
+  myAccess: "manage" as "use" | "edit" | "manage",
 };
 const store = { agents: [agent], updateAgent, deleteAgent: vi.fn(), canWrite: true };
 
@@ -79,6 +94,10 @@ beforeEach(() => {
   agent.temperature = null;
   agent.reasoningEffort = null;
   agent.webSearch = true;
+  agent.createdBy = "u1";
+  agent.workspaceAccess = null;
+  agent.shares = [];
+  agent.myAccess = "manage";
 });
 
 describe("the tuning controls", () => {
@@ -203,5 +222,59 @@ describe("saved logins", () => {
         "What this agent's browser signs in with. Encrypted; Covan's AI model is never given them.",
       ),
     ).toBeInTheDocument();
+  });
+});
+
+// 0104: what the screen offers follows the caller's access to THIS agent, not
+// their role in the workspace. A control the server would refuse is not drawn.
+describe("access to this agent", () => {
+  it("shows somebody who can only use it the settings, and nothing to change them with", async () => {
+    agent.myAccess = "use";
+    agent.createdBy = "u2";
+    agent.workspaceAccess = "use";
+    renderSettings();
+
+    expect(
+      await screen.findByText("This is how the agent is set up.", { exact: false }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Danger zone")).not.toBeInTheDocument();
+    expect(screen.getByText("Can use")).toBeInTheDocument();
+  });
+
+  it("lets somebody who can edit it save, but not share or delete it", async () => {
+    agent.myAccess = "edit";
+    agent.createdBy = "u2";
+    agent.workspaceAccess = "edit";
+    renderSettings();
+
+    expect(await screen.findByRole("button", { name: "Save changes" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Danger zone")).not.toBeInTheDocument();
+    expect(screen.getByText("Everyone · Can edit")).toBeInTheDocument();
+  });
+
+  it("gives Full access the Share button and the Danger zone", async () => {
+    renderSettings();
+
+    expect(await screen.findByText("Only you")).toBeInTheDocument();
+    expect(screen.getByText("Danger zone")).toBeInTheDocument();
+    expect(screen.queryByTestId("share-dialog")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Share" }));
+
+    expect(screen.getByTestId("share-dialog")).toBeInTheDocument();
+  });
+
+  it("names how many people it is shared with", async () => {
+    agent.shares = [{ userId: "u2", access: "use" }];
+    renderSettings();
+
+    expect(await screen.findByText("1 person")).toBeInTheDocument();
+    // The faces come from /me, which answers after the first render.
+    expect(await screen.findByText("GH")).toBeInTheDocument();
   });
 });

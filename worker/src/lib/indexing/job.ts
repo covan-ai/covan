@@ -3,10 +3,11 @@ import type { SyncEnv } from "../../types";
 import { getDocStore, type DocStore } from "../docstore";
 import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../embeddings";
 import { insertChunkRows } from "../chunk-store";
-import { embeddingSpend, entitlementsFor, spends } from "../entitlements";
+import { completionSpend, embeddingSpend, entitlementsFor, spends } from "../entitlements";
+import { ocrAvailable, ocrPdf, OCR_MAX_BYTES, type OcrEnv } from "../formats/read/ocr";
 import { EXCERPT_LIMIT, hasIndexableText, MAX_INDEX_CHARS, extOf } from "../extract";
 import { UnreadableFile } from "../formats/read";
-import { readStoredText, sidecarKey } from "../document-text";
+import { readStoredText, sidecarKey, type StoredText } from "../document-text";
 
 /**
  * One document's indexing, a unit at a time.
@@ -90,7 +91,7 @@ export async function advanceIndexJob(
   let tokens = 0;
   try {
     if (doc.index_status === "queued" || doc.index_total === null) {
-      return await begin(db, store, doc, now);
+      return await begin(db, env, workspaceId, store, doc, now);
     }
 
     const text = await sidecarText(store, doc);
@@ -174,13 +175,20 @@ export async function advanceIndexJob(
  */
 async function begin(
   db: SupabaseClient,
+  env: SyncEnv,
+  workspaceId: string,
   store: DocStore,
   doc: DocumentRow,
   now: () => Date,
 ): Promise<Advance> {
   if (!doc.r2_key) throw new Permanent("this document has no stored file to index");
 
-  const found = await readStoredText(store, doc, MAX_INDEX_CHARS);
+  let found = await readStoredText(store, doc, MAX_INDEX_CHARS);
+  // A PDF with no text of its own — a scan — is read by Claude, when this
+  // deployment has a key for it. See `lib/formats/read/ocr.ts`.
+  if (extOf(doc.name) === "pdf" && (!found || !hasIndexableText(found.text)) && ocrAvailable(env)) {
+    found = await readByOcr(env, workspaceId, store, doc);
+  }
   if (!found) {
     throw new Permanent(
       extOf(doc.name) === "pdf"
@@ -191,7 +199,7 @@ async function begin(
   if (!hasIndexableText(found.text)) {
     throw new Permanent(
       extOf(doc.name) === "pdf"
-        ? "no readable text in this PDF — it looks like a scan, so run it through OCR and upload the text"
+        ? "no readable text in this PDF, and it could not be read as a scan either"
         : "no readable text in this file — check it is really the format its name claims",
     );
   }
@@ -335,6 +343,57 @@ async function heldOrDone(db: SupabaseClient, documentId: string): Promise<Advan
   }
   const until = row.index_lease_until ? Date.parse(row.index_lease_until) : Date.now();
   return { next: "at", at: until + 1_000 };
+}
+
+/**
+ * A scanned PDF, read by Claude, and charged to its workspace.
+ *
+ * Refused past one request's worth (`OCR_MAX_BYTES`) rather than read in part.
+ * Claude refuses past 100 pages, which arrives as an API error and is turned
+ * into the same kind of answer: a document that says why it was not indexed.
+ */
+async function readByOcr(
+  env: SyncEnv,
+  workspaceId: string,
+  store: DocStore,
+  doc: DocumentRow,
+): Promise<StoredText | null> {
+  const head = await store.getRange(doc.r2_key!, 0, 0);
+  if (!head) return null;
+  if (head.size > OCR_MAX_BYTES) {
+    throw new Permanent(
+      "this PDF has no text layer and is too large to read as a scan (over 24 MB) — split it and upload the parts",
+    );
+  }
+  const whole = await store.getRange(doc.r2_key!, 0, head.size);
+  let result;
+  try {
+    result = await ocrPdf(env as OcrEnv, whole!.bytes);
+  } catch (err) {
+    const message = (err as Error)?.message ?? String(err);
+    if (/100 pages|page limit|too many pages/i.test(message)) {
+      throw new Permanent(
+        "this PDF has no text layer and more than 100 pages, too many to read as a scan — split it and upload the parts",
+      );
+    }
+    throw err;
+  }
+  const spent = spends(completionSpend(result.model, result.usage, "ocr"));
+  if (spent.length > 0) {
+    try {
+      await entitlementsFor(env).record(workspaceId, spent, {
+        userId: doc.created_by ?? undefined,
+      });
+    } catch (err) {
+      console.error(`index ${doc.id}: could not record OCR credits`, err);
+    }
+  }
+  if (!result.text.trim()) return null;
+  return {
+    text: result.text.slice(0, MAX_INDEX_CHARS),
+    truncated: result.truncated || result.text.length > MAX_INDEX_CHARS,
+    fromSidecar: false,
+  };
 }
 
 /** The header row of a table-shaped document, or "" for anything else. */

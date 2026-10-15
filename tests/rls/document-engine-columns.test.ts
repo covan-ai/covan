@@ -143,11 +143,31 @@ describe("columns only the engine writes", () => {
       { routine_id: ownerSeed.routineId },
       { external_url: "javascript:alert(1)" },
       { synced_at: "2000-01-01T00:00:00Z" },
-      { name: "renamed.txt" },
     ]) {
       const { error } = await owner.db.from("documents").update(change).eq("id", doc!.id);
       expect(error?.code, JSON.stringify(change)).toBe("42501");
     }
+  });
+
+  // 0107: a document can be renamed by whoever can write it. The name was
+  // engine-only while nothing in the app offered a rename; a synced file's name
+  // is still its source's, which the route enforces and the next sync restores.
+  it("can be renamed, and its passages' context with it", async () => {
+    const { data: doc } = await upload(owner, ownerSeed.bundleId);
+    const renamed = await owner.db
+      .from("documents")
+      .update({ name: "renamed.txt" })
+      .eq("id", doc!.id)
+      .select("name")
+      .single();
+    expect(renamed.error).toBeNull();
+    expect(renamed.data?.name).toBe("renamed.txt");
+
+    const passages = await owner.db
+      .from("document_chunks")
+      .update({ context: "renamed.txt" })
+      .eq("document_id", doc!.id);
+    expect(passages.error).toBeNull();
   });
 });
 

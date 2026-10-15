@@ -385,6 +385,13 @@ chunks and every agent's attachment to it with it, and the interface asks first
 for that reason. Deleting a single document removes its chunks with it, and makes
 a best-effort attempt on the stored bytes.
 
+A document can be renamed from its menu (a synced one keeps its source's
+name). Uploading a file with the same name as one already in the bundle asks
+whether to replace it; the old one goes to Recently deleted. Anything in
+Recently deleted can be **deleted for good** before its thirty days are up —
+the file and everything indexed from it go at once, and API keys cannot do
+this. A whole folder can be dropped, or picked with **Upload a folder**.
+
 ## What happens when somebody asks a question
 
 Each turn starts by embedding the message that was just sent, with the same model

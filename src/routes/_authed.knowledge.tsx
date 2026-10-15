@@ -1,4 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api-client";
+import { formatFileSize } from "@/lib/file-size";
 
 import { AppShell } from "@/components/app-shell";
 import { DocsLink } from "@/components/docs-link";
@@ -38,10 +41,42 @@ function KnowledgePage() {
           <DocsLink page="knowledge">How retrieval picks a passage</DocsLink>
         </PageHeader>
 
+        <KnowledgeUsage />
+
         <div className="mt-8">
           <KnowledgeExplorer />
         </div>
       </PageContainer>
     </AppShell>
+  );
+}
+
+/**
+ * How much there is, in one line, and where deleted things went.
+ *
+ * Counted by the caller's own policies, so it is what *you* can see — a
+ * colleague's private bundles are not in it. Recently deleted lives in
+ * workspace settings, which nobody looking at their files would think to open.
+ */
+function KnowledgeUsage() {
+  const usage = useQuery({ queryKey: ["knowledge-usage"], queryFn: () => api.knowledge.usage() });
+  const u = usage.data;
+  return (
+    <p className="mt-4 text-meta text-muted-foreground">
+      {u ? (
+        <>
+          {u.documents} {u.documents === 1 ? "file" : "files"} in {u.bundles}{" "}
+          {u.bundles === 1 ? "bundle" : "bundles"} · {formatFileSize(u.bytes)} ·{" "}
+          {u.passages.toLocaleString("en")} searchable passages ·{" "}
+        </>
+      ) : null}
+      <Link
+        to="/settings/workspace"
+        hash="recently-deleted"
+        className="underline hover:text-foreground"
+      >
+        Recently deleted
+      </Link>
+    </p>
   );
 }

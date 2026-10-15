@@ -20,6 +20,7 @@ import { sidecarKey, storedKeysOf } from "../lib/document-text";
 import { hmacSha256Hex, timingSafeEqual } from "../lib/hmac";
 import { deferred } from "../lib/defer";
 import { kickIndexJob } from "../lib/indexing/host";
+import { ocrAvailable, OCR_MAX_BYTES } from "../lib/formats/read/ocr";
 import { UPLOADED_SELECT } from "./bundles";
 
 /**
@@ -234,11 +235,17 @@ uploads.post("/uploads/complete", async (c) => {
   if (extOf(token.name) === "pdf") {
     const sidecar = await store.get(sidecarKey(token.key));
     const text = sidecar ? new TextDecoder().decode(await sidecar.arrayBuffer()) : "";
+    // A scan is taken when it can be read as one; see `lib/formats/read/ocr`.
+    const scan = ocrAvailable(c.env) && token.size <= OCR_MAX_BYTES;
     if (!hasIndexableText(text)) {
-      await discard();
-      return c.json({ error: noTextMessage(token.name) }, 422);
+      if (!scan) {
+        await discard();
+        return c.json({ error: noTextMessage(token.name) }, 422);
+      }
+      await store.delete(sidecarKey(token.key)).catch(() => {});
+    } else {
+      excerpt = text.slice(0, Math.min(EXCERPT_LIMIT, MAX_INDEX_CHARS));
     }
-    excerpt = text.slice(0, Math.min(EXCERPT_LIMIT, MAX_INDEX_CHARS));
   }
 
   const { data: doc, error } = await db

@@ -70,8 +70,26 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
     }
   };
 
+  // Bundles and documents only: they own the stored files, and a file somebody
+  // should never have uploaded is the reason to want this. Asked for in words,
+  // because it is the one button here with no way back.
+  const forget = async (item: TrashItem) => {
+    if (restoring || (item.kind !== "bundle" && item.kind !== "document")) return;
+    if (!confirm(`Delete "${item.name}" for good? This cannot be undone.`)) return;
+    setRestoring(item.id);
+    try {
+      await api.trash.forget(item.kind, item.id);
+      await queryClient.invalidateQueries({ queryKey: ["trash"] });
+      toast.success(`${item.name} is gone for good`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't delete that");
+    } finally {
+      setRestoring(null);
+    }
+  };
+
   return (
-    <section className="mt-16">
+    <section className="mt-16" id="recently-deleted">
       <SectionHeading
         title="Recently deleted"
         turn={`Yours for ${days} more days.`}
@@ -101,15 +119,28 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
                     title={item.name}
                     meta={metaFor(item, days)}
                     trailing={
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => restore(item)}
-                        disabled={restoring === item.id}
-                      >
-                        <Undo2 className="h-4 w-4" />
-                        {restoring === item.id ? "Restoring…" : "Restore"}
-                      </Button>
+                      <span className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => restore(item)}
+                          disabled={restoring === item.id}
+                        >
+                          <Undo2 className="h-4 w-4" />
+                          {restoring === item.id ? "Working…" : "Restore"}
+                        </Button>
+                        {item.kind === "bundle" || item.kind === "document" ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => forget(item)}
+                            disabled={restoring === item.id}
+                            aria-label={`Delete ${item.name} for good`}
+                          >
+                            Delete for good
+                          </Button>
+                        ) : null}
+                      </span>
                     }
                   />
                 </li>

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   DragOverlay,
@@ -58,6 +58,7 @@ import { formatFileSize } from "@/lib/file-size";
 import { dropPayload, rangeSelect } from "@/lib/knowledge-selection";
 import { documentAge } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
+import { filesFromDrop } from "@/lib/dropped-files";
 
 type ExplorerDocument = Agent["documents"][number];
 
@@ -323,6 +324,19 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
       accepted.push({ id: `u_${crypto.randomUUID()}`, file });
     }
     if (accepted.length === 0) return;
+
+    // The same name again in the same bundle is nearly always a new version of
+    // a file, and two "pricing.pdf" side by side is how an agent ends up quoting
+    // last year's. Asked once for the whole drop; Cancel keeps both.
+    const already = new Map(
+      (bundleDocuments.data ?? []).map((d) => [d.name.toLowerCase(), d] as const),
+    );
+    const repeats = accepted.filter(({ file }) => already.has(file.name.toLowerCase()));
+    const replacing =
+      repeats.length > 0 &&
+      confirm(
+        `${repeats.length === 1 ? `"${repeats[0].file.name}" is` : `${repeats.length} of these files are`} already in ${openBundle.name}. Replace ${repeats.length === 1 ? "it" : "them"} with the new upload? Cancel keeps both.`,
+      );
     setUploading((prev) => [
       ...prev,
       ...accepted.map(({ id, file }) => ({
@@ -343,7 +357,13 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
           (pct) => patch(id, { progress: pct }),
           (phase) => patch(id, { phase }),
         );
-        if (doc.indexStatus === "queued" || doc.indexStatus === "indexing") {
+        const previous = replacing ? already.get(file.name.toLowerCase()) : undefined;
+        // Only once the new one is safely in: the old one goes to Recently
+        // deleted, from where it can still come back.
+        if (previous) await store.removeDocument(previous.id).catch(() => undefined);
+        if (previous) {
+          toast.success(`Replaced ${file.name} — indexing the new version`);
+        } else if (doc.indexStatus === "queued" || doc.indexStatus === "indexing") {
           toast.success(`Added ${file.name} — indexing it now`);
         } else if (doc.indexed) {
           toast.success(`Added ${file.name}`);
@@ -1749,6 +1769,31 @@ function DocumentActions({
   onRemove: (d: ExplorerDocument) => void;
 }) {
   const elsewhere = bundles.filter((b) => b.id !== doc.bundleId);
+  const queryClient = useQueryClient();
+
+  const resync = async () => {
+    try {
+      await api.documents.resync(doc.id);
+      toast.success(`${doc.name} will be synced in the next minute or two`);
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not sync it");
+    }
+  };
+
+  const rename = async () => {
+    const next = window.prompt(`Rename ${doc.name}`, doc.name)?.trim();
+    if (!next || next === doc.name) return;
+    try {
+      await api.documents.rename(doc.id, next);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["bundle-documents"] }),
+        queryClient.invalidateQueries({ queryKey: ["agents"] }),
+      ]);
+      toast.success(`Renamed to ${next}`);
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Rename failed");
+    }
+  };
 
   return (
     <DropdownMenu>
@@ -1799,6 +1844,19 @@ function DocumentActions({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             ) : null}
+            {/* A synced file's name is its source's; the next sync would undo it. */}
+            {!doc.connectionId ? (
+              <DropdownMenuItem onSelect={() => void rename()}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Rename
+              </DropdownMenuItem>
+            ) : null}
+            {doc.connectionId ? (
+              <DropdownMenuItem onSelect={() => void resync()}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Sync now
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={() => onReindex(doc)}>
               <RefreshCw className="mr-2 h-4 w-4" />
               Reindex
@@ -1812,6 +1870,45 @@ function DocumentActions({
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * A web page, as a document. The server fetches it — a browser could not read
+ * most sites from here anyway — keeps the HTML and indexes its text. A
+ * snapshot: adding the page again later is how it is refreshed.
+ */
+function AddWebPage({ bundleId }: { bundleId: string }) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    const url = window.prompt("The address of the page to add")?.trim();
+    if (!url) return;
+    setBusy(true);
+    try {
+      const doc = await api.bundles.addUrl(bundleId, url);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["bundle-documents"] }),
+        queryClient.invalidateQueries({ queryKey: ["bundles"] }),
+        queryClient.invalidateQueries({ queryKey: ["agents"] }),
+      ]);
+      toast.success(`Added ${doc.name} — indexing it now`);
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not add that page");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => void add()}
+      disabled={busy}
+      className="mr-4 mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+    >
+      <ExternalLink className="h-3.5 w-3.5" />
+      {busy ? "Fetching the page…" : "Add a web page"}
+    </button>
   );
 }
 
@@ -1848,7 +1945,8 @@ function UploadWell({
           if (!e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           setDragging(false);
-          onFiles(e.dataTransfer.files);
+          // Read synchronously, inside the event: the entries are gone after it.
+          void filesFromDrop(e.dataTransfer).then(onFiles);
         }}
         className={cn(
           "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed py-7 text-center transition-colors",
@@ -1867,7 +1965,9 @@ function UploadWell({
               : `Drop files into ${bundle.name}`
             : "Pick a bundle to upload into"}
         </span>
-        <span className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</span>
+        <span className="text-xs text-muted-foreground">
+          PDF, Word, PowerPoint, Excel, Markdown, text and more · folders too · up to 100 MB each
+        </span>
         <input
           type="file"
           multiple
@@ -1881,6 +1981,27 @@ function UploadWell({
           }}
         />
       </label>
+      {bundle ? <AddWebPage bundleId={bundle.id} /> : null}
+      {/* A folder picker of its own: the same input cannot pick both files and
+          folders, and the drop target above already takes both. */}
+      {bundle ? (
+        <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+          <FolderOpen className="h-3.5 w-3.5" />
+          Upload a folder
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            aria-label="Upload a folder"
+            {...({ webkitdirectory: "" } as Record<string, string>)}
+            onChange={(e) => {
+              const files = e.target.files;
+              e.target.value = "";
+              onFiles(files ? Array.from(files).filter((f) => !f.name.startsWith(".")) : null);
+            }}
+          />
+        </label>
+      ) : null}
 
       {uploading.length > 0 ? (
         <div className="mt-3 space-y-2">

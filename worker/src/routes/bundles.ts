@@ -22,6 +22,10 @@ import { uploadLimit } from "../lib/body-limit";
 import { readStoredText, sidecarKey, storedKeysOf } from "../lib/document-text";
 import { extractFromBytes, UnreadableFile } from "../lib/formats/read";
 import { deferred } from "../lib/defer";
+import { ocrAvailable, OCR_MAX_BYTES } from "../lib/formats/read/ocr";
+import { decodeEntities, htmlToText } from "../lib/formats/read/text";
+import { fetchSource } from "../lib/routines/source";
+import { ownHostsFrom } from "../lib/routines/url-guard";
 import { kickIndexJob } from "../lib/indexing/host";
 import { callDeletionFn } from "../lib/deletion";
 
@@ -93,6 +97,29 @@ bundles.get("/bundles", async (c) => {
   if (error) return c.json({ error: "failed to load bundles" }, 500);
   const viewer = c.get("user").id;
   return c.json((data ?? []).map((row) => mapBundle(row, viewer)));
+});
+
+// GET /knowledge/usage — how much of the workspace's knowledge the caller can
+// see: bundles, files, bytes and passages. Counted by the caller's own
+// policies (0107's `knowledge_usage` is an invoker), so a colleague's private
+// bundles are in nobody else's numbers.
+bundles.get("/knowledge/usage", async (c) => {
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ bundles: 0, documents: 0, bytes: 0, passages: 0 });
+  const { data, error } = await c
+    .get("db")
+    .rpc("knowledge_usage", { p_workspace_id: workspaceId })
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to count" }, 500);
+  const row = (data ?? {}) as Partial<
+    Record<"bundles" | "documents" | "bytes" | "passages", number>
+  >;
+  return c.json({
+    bundles: Number(row.bundles ?? 0),
+    documents: Number(row.documents ?? 0),
+    bytes: Number(row.bytes ?? 0),
+    passages: Number(row.passages ?? 0),
+  });
 });
 
 // GET /bundles/citations — how many answers cite each document, workspace-wide.
@@ -346,9 +373,14 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
       throw e;
     }
   }
-  if (!hasIndexableText(fullText)) {
+  // A scanned PDF is taken when it can be read as one (`lib/formats/read/ocr`):
+  // the indexing job sends it to Claude. Otherwise, and for anything else
+  // without text, refused here as it always was.
+  const scan = extOf(file.name) === "pdf" && ocrAvailable(c.env) && file.size <= OCR_MAX_BYTES;
+  if (!hasIndexableText(fullText) && !scan) {
     return c.json({ error: noTextMessage(file.name) }, 422);
   }
+  if (!hasIndexableText(fullText)) fullText = "";
 
   // Resolve the bundle's workspace (also acts as an RLS existence check).
   const { data: bundle, error: bErr } = await db
@@ -376,10 +408,12 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
     await store.put(r2Key, bytes, { contentType });
     // The text, kept whole beside the file: what the indexing job reads, and
     // what any later reindex reads. See `lib/document-text.ts`.
-    const encoded = new TextEncoder().encode(fullText);
-    await store.put(sidecarKey(r2Key), encoded.buffer as ArrayBuffer, {
-      contentType: "text/plain; charset=utf-8",
-    });
+    if (fullText) {
+      const encoded = new TextEncoder().encode(fullText);
+      await store.put(sidecarKey(r2Key), encoded.buffer as ArrayBuffer, {
+        contentType: "text/plain; charset=utf-8",
+      });
+    }
   } catch (e) {
     console.error("failed to store document", e);
     for (const key of storedKeysOf(r2Key)) await store.delete(key).catch(() => {});
@@ -410,6 +444,100 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
     return c.json({ error: "failed to save document" }, 500);
   }
 
+  deferred(c, kickIndexJob(c.env, doc.id));
+  return c.json(mapDocument({ ...doc, document_chunks: [{ count: 0 }] }), 201);
+});
+
+// POST /bundles/:id/documents/url — a web page, added as a document.
+//
+// Fetched the way a routine's web source is (`lib/routines/source.ts`): https
+// or http to a public address only, every redirect re-checked, the body capped
+// at 2 MB, no fetching ourselves. Stored as the HTML it was, under the page's
+// title, and indexed like any upload — the job reads the text out of the
+// markup. A page is a snapshot: adding it again later is how it is refreshed.
+const urlSchema = z.object({ url: z.string().url().max(2048) });
+
+bundles.post("/bundles/:id/documents/url", async (c) => {
+  const db = c.get("db");
+  const bundleId = c.req.param("id");
+  const parsed = urlSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "a web address is required" }, 400);
+
+  const { data: bundle, error: bErr } = await db
+    .from("knowledge_bundles")
+    .select("id,workspace_id")
+    .eq("id", bundleId)
+    .maybeSingle();
+  if (bErr) return c.json({ error: "failed to load bundle" }, 500);
+  if (!bundle) return c.json({ error: "not found" }, 404);
+  const denied = await guardCredits(c, bundle.workspace_id as string);
+  if (denied) return denied;
+
+  let html: string;
+  try {
+    const page = await fetchSource(
+      { source_kind: "web", source_config: { url: parsed.data.url } },
+      null,
+      {
+        fetchImpl: fetch.bind(globalThis),
+        ownHosts: ownHostsFrom(c.env),
+      },
+    );
+    if (page.status !== "content") throw new Error("the page sent nothing back");
+    html = page.text;
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    return c.json({ error: `could not fetch that page: ${reason}` }, 422);
+  }
+
+  const text = htmlToText(html);
+  if (!hasIndexableText(text)) {
+    return c.json(
+      { error: "that page has no readable text — it may need a browser to render" },
+      422,
+    );
+  }
+
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim();
+  const host = new URL(parsed.data.url).hostname.replace(/^www\./, "");
+  const name = `${(title ? decodeEntities(title) : host).slice(0, 180)}.html`;
+  const r2Key = `${bundleId}/${crypto.randomUUID()}-${safeName(name)}`;
+  const store = getDocStore(c.env);
+  const bytes = new TextEncoder().encode(html);
+  // The source address, at the top of the text the agent reads, so an answer
+  // grounded on the page can say where it came from.
+  const sidecar = new TextEncoder().encode(
+    `Source: ${parsed.data.url}
+
+${text}`.slice(0, MAX_INDEX_CHARS),
+  );
+  try {
+    await store.put(r2Key, bytes.buffer as ArrayBuffer, { contentType: contentTypeFor(name) });
+    await store.put(sidecarKey(r2Key), sidecar.buffer as ArrayBuffer, {
+      contentType: "text/plain; charset=utf-8",
+    });
+  } catch (e) {
+    console.error("failed to store a fetched page", e);
+    for (const key of storedKeysOf(r2Key)) await store.delete(key).catch(() => {});
+    return c.json({ error: "failed to store the page" }, 500);
+  }
+
+  const { data: doc, error } = await db
+    .from("documents")
+    .insert({
+      bundle_id: bundleId,
+      name,
+      size: bytes.byteLength,
+      r2_key: r2Key,
+      content: text.slice(0, EXCERPT_LIMIT),
+      index_status: "queued",
+    })
+    .select(UPLOADED_SELECT)
+    .single();
+  if (error || !doc) {
+    for (const key of storedKeysOf(r2Key)) await store.delete(key).catch(() => {});
+    return c.json({ error: "you cannot add documents here" }, error?.code === "42501" ? 403 : 500);
+  }
   deferred(c, kickIndexJob(c.env, doc.id));
   return c.json(mapDocument({ ...doc, document_chunks: [{ count: 0 }] }), 201);
 });

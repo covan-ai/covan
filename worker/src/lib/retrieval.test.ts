@@ -32,6 +32,8 @@ describe("retrieveForAgent", () => {
             error: null,
           }),
         },
+        // The named document's own passages, read in order.
+        document_chunks: { select: () => ({ data: [], error: null }) },
       },
     });
 
@@ -43,8 +45,9 @@ describe("retrieveForAgent", () => {
       [{ role: "user", content: "what does handbook.md say about holidays?" }],
     );
 
+    // The manifest, the newest twenty, and the one asked for by name.
     const reads = fake.callsTo("documents").filter((c) => c.op === "select");
-    expect(reads.length).toBe(2);
+    expect(reads.length).toBe(3);
     for (const read of reads) {
       expect(read.filters).toContainEqual({ column: "deleted_at", value: null, kind: "is" });
     }

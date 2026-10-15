@@ -434,6 +434,9 @@ function appWith(spec: {
           error: null,
         }),
       },
+      // A document asked for by name is read from its passages, in order;
+      // none here, so the excerpt stands as it always did.
+      document_chunks: { select: () => ({ data: [], error: null }) },
       // What the agent can reach, which the route now reads before it builds
       // the prompt. Empty in every test here but the ones about tools: a
       // workspace with no connected service and no delivery channel is

@@ -53,7 +53,38 @@ documents.patch("/documents/:id", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
-  const body = (await c.req.json().catch(() => ({}))) as { bundleId?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { bundleId?: unknown; name?: unknown };
+
+  // A rename. Its own small path: the passages carry the name as their
+  // `context`, so they are renamed with it, or a lexical search for the new
+  // name would find nothing and one for the old would still match.
+  if (typeof body.name === "string" && body.bundleId === undefined) {
+    const name = body.name.trim();
+    if (!name || name.length > 255) return c.json({ error: "a name is required" }, 400);
+    const { data: current } = await db
+      .from("documents")
+      .select("id,name,connection_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (!current) return c.json({ error: "not found" }, 404);
+    // A synced file's name is its source's; the next sync would put it back.
+    if (current.connection_id) {
+      return c.json(
+        { error: "rename it where it comes from — the next sync would undo this" },
+        409,
+      );
+    }
+    const { data: renamed, error } = await db
+      .from("documents")
+      .update({ name })
+      .eq("id", id)
+      .select("id,name,size,created_at,bundle_id,connection_id,external_url,document_chunks(count)")
+      .maybeSingle();
+    if (error || !renamed) return c.json({ error: "you cannot rename this document" }, 403);
+    await db.from("document_chunks").update({ context: name }).eq("document_id", id);
+    return c.json(mapDocument(renamed));
+  }
+
   const bundleId = typeof body.bundleId === "string" ? body.bundleId : "";
   if (!bundleId) return c.json({ error: "bundleId required" }, 400);
 
@@ -298,6 +329,23 @@ documents.get("/documents/:id/export/:format", async (c) => {
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(exportName(row.name, extension))}`,
     },
   });
+});
+
+// POST /documents/:id/resync — "Sync now" for one synced file. Queues it for
+// the connection's next run (0107's `resync_document`), which is made due now;
+// the sync engine stays the only thing that reads the source and writes the
+// document.
+documents.post("/documents/:id/resync", async (c) => {
+  const { error } = await c.get("db").rpc("resync_document", { p_document_id: c.req.param("id") });
+  if (error) {
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    if (error.code === "22023")
+      return c.json({ error: "this document was uploaded, not synced" }, 400);
+    if (error.code === "42501") return c.json({ error: "you cannot change this document" }, 403);
+    console.error("could not queue a resync", error);
+    return c.json({ error: "failed to queue the sync" }, 500);
+  }
+  return c.json({ ok: true }, 202);
 });
 
 // POST /documents/:id/reindex — put a document back in the indexing queue.

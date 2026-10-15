@@ -565,6 +565,11 @@ export const api = {
   },
   documents: {
     remove: (id: string): Promise<void> => request("DELETE", `/documents/${id}`),
+    /** "Sync now" for one synced file: re-imported on its connection's next run, made due now. */
+    resync: (id: string): Promise<{ ok: true }> => request("POST", `/documents/${id}/resync`),
+    /** A new name. Refused (409) for a synced file, whose name is its source's. */
+    rename: (id: string, name: string): Promise<Agent["documents"][number]> =>
+      request("PATCH", `/documents/${id}`, { name }),
     reindex: (id: string): Promise<Agent["documents"][number]> =>
       request("POST", `/documents/${id}/reindex`),
     // Takes the document's chunks with it — retrieval scope is read from those,
@@ -657,6 +662,9 @@ export const api = {
       patch: { name?: string; description?: string; shared?: boolean },
     ): Promise<Bundle> => request("PATCH", `/bundles/${id}`, patch),
     remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/bundles/${id}`),
+    /** A web page, fetched by the server and added as a document. */
+    addUrl: (bundleId: string, url: string): Promise<Agent["documents"][number]> =>
+      request("POST", `/bundles/${bundleId}/documents/url`, { url }),
     attach: (agentId: string, bundleId: string): Promise<{ ok: true }> =>
       request("POST", `/agents/${agentId}/bundles/${bundleId}`),
     detach: (agentId: string, bundleId: string): Promise<{ ok: true }> =>
@@ -1350,6 +1358,14 @@ export const api = {
      */
     restore: (kind: TrashKind, id: string): Promise<{ ok: true }> =>
       request("POST", `/trash/${kind}/${id}/restore`),
+    /** Gone for good, now. Bundles and documents only — they own the files. */
+    forget: (kind: "bundle" | "document", id: string): Promise<{ ok: true }> =>
+      request("DELETE", `/trash/${kind}/${id}`),
+  },
+  knowledge: {
+    /** What the caller can see of the workspace's knowledge, counted. */
+    usage: (): Promise<{ bundles: number; documents: number; bytes: number; passages: number }> =>
+      request("GET", "/knowledge/usage"),
   },
   events: {
     /** Admin-only at the policy, so a member gets an empty page, not an error. */

@@ -1,77 +1,41 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { mapDocument } from "../lib/dto";
-import { resolveModel } from "../lib/models";
-import { complete } from "../lib/completion";
-import type { CompletionMessage } from "../lib/completion";
-import { retrieveForAgent } from "../lib/retrieval";
-import {
-  selectHistory,
-  MSG_HISTORY_LIMIT,
-  HISTORY_CHAR_BUDGET,
-  PER_MESSAGE_CHAR_CAP,
-} from "../lib/history";
-import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../lib/prompt";
-import { reportTitle, reportFileName } from "../lib/report";
-import { EXCERPT_LIMIT, safeName } from "../lib/extract";
-import { getDocStore } from "../lib/docstore";
-import { chunkText, embedTexts, tokensSpentBefore } from "../lib/embeddings";
-import { insertChunkRows } from "../lib/chunk-store";
+import { canFileDocuments } from "../types";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
-import { completionSpend, embeddingSpend, spends } from "../lib/entitlements";
+import { embeddingSpend, spends } from "../lib/entitlements";
 import { embeddingModel } from "../lib/embeddings";
+import { enqueueDocumentJob } from "../lib/docs/enqueue";
 
 /**
- * How a report is cut for retrieval, and why it is not how an upload is cut.
+ * The Report button, on the document engine.
  *
- * It was not cut at all to begin with. A report was stored without embeddings
- * to save the ~17 KB a chunk costs, on the argument that the stored-text
- * fallback in `lib/retrieval.ts` would carry it. That was wrong, and wrong in a
- * way only production showed: the fallback runs only when retrieval matched
- * *nothing*, and an agent that has a report also has the documents the report
- * was written from — one of them always matches. Asked about by name, the
- * agent could see the file in its manifest and never read a word of it.
- *
- * So it is embedded now, and the storage argument is answered by the size of
- * the passages instead. Nearly all of a chunk's cost is its vector and its
- * index, both fixed per chunk however much text it holds, so cutting a report
- * into passages 2.4x the usual size costs roughly 2.4x less to keep. That is
- * safe here and would not be on an upload: a report is one coherent document
- * written in one pass, where a pile of unrelated pages is what the finer cut
- * exists for.
- *
- * Not larger than this. `buildContextBlock` gives a whole turn 4000 characters,
- * so a passage of 2400 already takes most of it — and a report that matched
- * would crowd out everything else in a turn that was only partly about it.
+ * This route used to write the whole report in one non-streamed model call —
+ * 8,192 output tokens, two or three minutes with nothing on screen, and
+ * nothing at all if the request died (covan-ai/covan-cloud#331). It now only
+ * asks: the job is created, the engine writes it section by section in the
+ * background (`lib/docs/engine.ts`), and the answer is a 202 with the job the
+ * conversation then shows filling in. The agent's `write_document` tool asks
+ * the same way, through the same function.
  */
-export const REPORT_CHUNK_SIZE = 2400;
-export const REPORT_CHUNK_OVERLAP = 200;
 
 const reports = new Hono<AppEnv>();
 
 const reportSchema = z.object({
   // What the report should be. Capped for the same reason a chat message is:
-  // this rides in the prompt, and an instruction long enough to matter is a
-  // document that belongs in a bundle rather than in a text field.
+  // this rides in every section's prompt.
   instruction: z.string().trim().min(1).max(2000),
-  bundleId: z.string().min(1),
+  // Unset means the agent's reports bundle, found or made on the server.
+  bundleId: z.string().min(1).optional(),
 });
 
-// POST /sessions/:id/report — write the conversation up as a document.
-//
-// One model call, deliberately. An agentic loop would turn a turn into three to
-// five calls with the quota check stranded in the middle of them, which is the
-// reason chat has no tools; asking once for the whole document keeps the shape
-// this product meters in — guard before, record after — and is also the only
-// shape in which a refusal can still be a 402 rather than a half-written file.
-//
-// Nothing here is embedded. A report is born with no chunks, which the Knowledge
-// tab shows as "Not indexed", and `POST /documents/:id/reindex` is how someone
-// decides it is worth the storage. That is not an omission: embedding every
-// report at birth costs roughly forty times its row, and whether a report is
-// worth retrieving later is a question only its reader can answer — the same
-// argument chat uploads make about which bundle a dropped file belongs in.
+/** A working title from the instruction; the outline call names it properly. */
+export function workingTitle(instruction: string): string {
+  const line = instruction.replace(/\s+/g, " ").trim();
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+}
+
+// POST /sessions/:id/report — start writing the conversation up as a document.
 reports.post("/sessions/:id/report", async (c) => {
   const db = c.get("db");
 
@@ -81,231 +45,51 @@ reports.post("/sessions/:id/report", async (c) => {
   }
   const { instruction, bundleId } = parsed.data;
 
-  const env = c.env;
+  if (!canFileDocuments(c.env)) {
+    return c.json({ error: "this deployment has no document storage" }, 501);
+  }
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
-    .select("*")
+    .select("id, workspace_id, agent_id")
     .eq("id", c.req.param("id"))
     .maybeSingle();
   if (sessionError) return c.json({ error: "failed to load session" }, 500);
   if (!session) return c.json({ error: "not found" }, 404);
 
-  // Before anything is embedded or generated. The session's workspace pays.
+  // Before anything is retrieved or written. The session's workspace pays.
   const denied = await guardCredits(c, session.workspace_id as string);
   if (denied) return denied;
 
   const { data: agent, error: agentError } = await db
     .from("agents")
-    .select("*")
+    .select("id, name")
     .eq("id", session.agent_id)
     .maybeSingle();
   if (agentError) return c.json({ error: "failed to load agent" }, 500);
   if (!agent) return c.json({ error: "not found" }, 404);
 
-  // Asked before the model is, and that order is the whole point of the query.
-  // RLS would refuse the insert at the end anyway, but by then the report has
-  // been generated and paid for — so a bundle the caller cannot write to would
-  // cost them a full report to be told "not found".
-  const { data: bundle, error: bundleError } = await db
-    .from("knowledge_bundles")
-    .select("id,workspace_id")
-    .eq("id", bundleId)
-    .maybeSingle();
-  if (bundleError) return c.json({ error: "failed to load bundle" }, 500);
-  if (!bundle) return c.json({ error: "not found" }, 404);
-
-  const { data: recentDesc, error: messagesError } = await db
-    .from("messages")
-    .select("*")
-    .eq("session_id", session.id)
-    .order("created_at", { ascending: false })
-    .limit(MSG_HISTORY_LIMIT);
-  if (messagesError) return c.json({ error: "failed to load messages" }, 500);
-
-  const rows = (recentDesc ?? []).slice().reverse();
-  const turns = rows.map((m: { role: string; content: string }) => ({
-    role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
-    content: m.content,
-  }));
-
-  // The instruction is the question retrieval answers, not the last thing said
-  // in the conversation: "write this up for the board" is what the report is
-  // about, and the history is only there to say what "this" refers to.
-  const { docNames, ragBlock, embeddingTokens } = await retrieveForAgent(
+  const started = await enqueueDocumentJob({
     db,
-    env,
-    session.agent_id,
+    env: c.env,
+    workspaceId: session.workspace_id as string,
+    agent: { id: agent.id as string, name: agent.name as string },
+    userId: c.get("user").id,
+    sessionId: session.id as string,
     instruction,
-    turns,
-  );
-
-  const history = selectHistory(turns, {
-    maxChars: HISTORY_CHAR_BUDGET,
-    perMessageCap: PER_MESSAGE_CHAR_CAP,
+    title: workingTitle(instruction),
+    bundleId,
+    origin: "button",
   });
-
-  const messages: CompletionMessage[] = [
-    {
-      role: "system",
-      content: buildSystemPrefix({
-        persona: agent.persona,
-        mode: "report",
-        docNames,
-        webSearchEnabled: agent.web_search ?? false,
-        // A report is the surface most likely to carry a date on its face —
-        // "this quarter", "since the last one" — and it was the one with no
-        // clock at all. No zone here either; see the note on the Slack path.
-        now: new Date(),
-      }),
-    },
-    ...history,
-    // `user`, not `system`: quoted document text, not this server's own words.
-    // See `lib/rag.ts` and the assembly comment in `routes/chat.ts`.
-    ...(ragBlock ? [{ role: "user" as const, content: ragBlock, volatile: true as const }] : []),
-    { role: "user", content: instruction },
-  ];
-
-  let markdown: string;
-  let usage;
-  const model = resolveModel(agent.model, env);
-  const embedModel = embeddingModel(env);
-  const ref = { sessionId: session.id as string };
-  try {
-    const result = await complete(
-      env,
-      {
-        model,
-        messages,
-        maxTokens: maxTokensFor("report"),
-        temperature: temperatureFor("report", agent.temperature),
-        reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
-      },
-      { signal: c.req.raw.signal },
-    );
-    markdown = result.text.trim();
-    usage = result.usage;
-  } catch (e) {
-    console.error("report generation failed", e);
-    // The embedding above was really bought. Charging only for it is the honest
-    // answer to a turn that got that far and no further.
-    await recordCredits(c, spends(embeddingSpend(embedModel, embeddingTokens, "retrieval")), ref);
-    return c.json({ error: "failed to write the report" }, 502);
-  }
-
-  if (markdown.length === 0) {
-    await recordCredits(
-      c,
-      spends(
-        embeddingSpend(embedModel, embeddingTokens, "retrieval"),
-        completionSpend(model, usage, "report"),
-      ),
-      ref,
-    );
-    return c.json({ error: "the model returned an empty report" }, 502);
-  }
-
-  const title = reportTitle(markdown);
-  const name = reportFileName(title, new Date().toISOString().slice(0, 10));
-  const encoded = new TextEncoder().encode(markdown);
-  // `encode` always allocates a fresh, exactly-sized buffer, so this is the
-  // whole file rather than a view into something larger — and never the
-  // SharedArrayBuffer the `ArrayBufferLike` type leaves room for.
-  const bytes = encoded.buffer as ArrayBuffer;
-
-  // The row keeps the name a person reads; only the key is sanitised, which is
-  // the split the upload route already makes. A Turkish title survives into the
-  // Knowledge tab and turns into underscores no further than the object store.
-  const r2Key = `${bundleId}/${crypto.randomUUID()}-${safeName(name)}`;
-  try {
-    await getDocStore(c.env).put(r2Key, bytes, { contentType: "text/markdown" });
-  } catch (e) {
-    console.error("failed to store report", e);
-    await recordCredits(
-      c,
-      spends(
-        embeddingSpend(embedModel, embeddingTokens, "retrieval"),
-        completionSpend(model, usage, "report"),
-      ),
-      ref,
-    );
-    return c.json({ error: "failed to store the report; check the server logs" }, 500);
-  }
-
-  // The caller's client, not the service one: writing a document is
-  // `can_write_in_workspace` (0021), and a viewer who can read this session must
-  // still be refused here. RLS answers that refusal by matching no rows.
-  const { data: doc, error } = await db
-    .from("documents")
-    .insert({
-      bundle_id: bundleId,
-      name,
-      size: encoded.byteLength,
-      r2_key: r2Key,
-      content: markdown.slice(0, EXCERPT_LIMIT),
-    })
-    .select("id,name,size,created_at")
-    .single();
-
-  if (error || !doc) {
-    try {
-      await getDocStore(c.env).delete(r2Key);
-    } catch (e) {
-      console.error("r2 rollback failed", e);
-    }
-    console.error("failed to insert report row", error);
-    await recordCredits(
-      c,
-      spends(
-        embeddingSpend(embedModel, embeddingTokens, "retrieval"),
-        completionSpend(model, usage, "report"),
-      ),
-      ref,
-    );
-    return c.json({ error: "failed to save the report" }, 500);
-  }
-
-  // Best effort, the same bargain the upload route makes: a document that
-  // exists and retrieves nothing beats losing what the model just wrote — and
-  // charging for it — because the embedding provider was down. A report that
-  // lands with no chunks reads as "Not indexed" in the Knowledge tab, and the
-  // reindex control beside it is the way back.
-  let chunkCount = 0;
-  let indexTokens = 0;
-  try {
-    const chunks = chunkText(markdown, REPORT_CHUNK_SIZE, REPORT_CHUNK_OVERLAP);
-    if (chunks.length > 0) {
-      const embedded = await embedTexts(env, chunks);
-      indexTokens = embedded.tokens;
-      const rows = chunks.map((ch, i) => ({
-        document_id: doc.id,
-        bundle_id: bundleId,
-        workspace_id: bundle.workspace_id,
-        chunk_index: i,
-        content: ch,
-        context: doc.name,
-        embedding: embedded.vectors[i],
-      }));
-      const { error: chunkErr } = await insertChunkRows(db, rows);
-      if (chunkErr) console.error("failed to insert report chunks", chunkErr);
-      else chunkCount = rows.length;
-    }
-  } catch (e) {
-    console.error("report embedding failed (report saved without chunks)", e);
-    indexTokens = tokensSpentBefore(e);
-  }
+  if (!started.ok) return c.json({ error: started.reason }, started.status);
 
   await recordCredits(
     c,
-    spends(
-      embeddingSpend(embedModel, embeddingTokens, "retrieval"),
-      embeddingSpend(embedModel, indexTokens, "report"),
-      completionSpend(model, usage, "report"),
-    ),
-    ref,
+    spends(embeddingSpend(embeddingModel(c.env), started.embeddingTokens, "retrieval")),
+    { sessionId: session.id as string },
   );
 
-  return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunkCount }] }), 201);
+  return c.json(started.job, 202);
 });
 
 export { reports };

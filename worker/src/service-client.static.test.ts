@@ -23,6 +23,18 @@ import { dirname, join, normalize } from "node:path";
 const SERVICE_CLIENT_ALLOWLIST = new Map([
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
   [
+    "lib/docs/enqueue.ts",
+    "the one insert into document_jobs, which 0102 gives no client role a write on: a client that could write a job could put words in `sources` that every section is then written from, or name another workspace's bundle. It decides nothing a caller sent: before the insert, the bundle is checked writable and in the workspace, and the conversation is read, all through the caller's own client; the row is then written with exactly the workspace, agent, session and user those reads established",
+  ],
+  [
+    "lib/docs/host.ts",
+    "the document engine's clocks — the Durable Object's alarm, the Node timer, the cron — none of which has a caller, so there is no JWT for RLS to resolve. What each may touch is bounded to one job id: the one a route's own read returned when it kicked the host, or the one claim_due_document_jobs (0102, service role only) handed the cron",
+  ],
+  [
+    "routes/document-jobs.ts",
+    "stopping and retrying a document, and advancing it from the open tab when the deployment has no document host. 0102 gives document_jobs no client write grant, because every column is the worker's account of what it did with somebody's allowance. Every handler reads the job through c.get(\"db\") first — 0102's policy shows a job to its requester alone — and every write is then keyed to the row id that read returned, conditional on the status it was read in",
+  ],
+  [
     "routes/routines.ts",
     "delivery_channels has no INSERT policy: the row holds a secret the route encrypts, so the route decides what goes in it, not the database. The same column is why rotating a webhook's signing secret and sending a test both go this way — 0023 grants authenticated `update (label)` and no sight of secret_ciphertext at all, so neither reading the destination back nor writing a new secret over it is something a caller's own client can do. Both are scoped to `user_id = the caller` by hand, which is the job delivery_channels_select_own does everywhere else",
   ],
@@ -234,6 +246,10 @@ describe("the RLS bypass", () => {
  * factory, so some of these are listed from reading rather than found by it.
  */
 const RECEIVES_THE_SERVICE_CLIENT = new Map([
+  [
+    "lib/docs/engine.ts",
+    "one unit of work on one document job, for the clocks in lib/docs/host.ts and the tab's poll: every read and write is keyed to the job claim_document_job returned, and the agent and bundle are read with that job's own workspace_id",
+  ],
   [
     "lib/routines/address-confirmation.ts",
     "the channel routes hand it a service client for the 0096 bookkeeping on a channel the route has already scoped to the caller by user_id: the daily count is of that owner's rows, and the link update is keyed to that channel's id",

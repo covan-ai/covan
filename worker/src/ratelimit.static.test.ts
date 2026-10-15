@@ -22,7 +22,15 @@ import { describe, it, expect } from "vitest";
  * client is constructed outside those two, so a file cannot buy a completion
  * without naming one of these.
  */
-const SPENDING_IMPORTS = ["../lib/completion", "transcribeAudio"];
+// The document engine is a seam of its own: the Report button and a retry
+// start a job that buys a model call per section, and neither route imports
+// the completion seam to do it (`lib/docs/`).
+const SPENDING_IMPORTS = [
+  "../lib/completion",
+  "transcribeAudio",
+  "../lib/docs/enqueue",
+  "../lib/docs/engine",
+];
 
 /**
  * Paths behind the expensive tier that buy something other than a completion.
@@ -121,6 +129,15 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   // routine engine. Until the detection is widened, a new one has to be
   // remembered here, which is a review item rather than a guarantee.
   "routine-hooks.ts": "runPokedRoutine",
+  // The document poll, `GET /sessions/:id/document-jobs`. On a deployment
+  // with no document host it advances the caller's own job one unit per poll,
+  // which is a model call — and it is a GET the tab makes every few seconds,
+  // so the expensive tier would refuse the poll that shows the document.
+  // Bounded anyway: the work is the job's, fixed when the job was started
+  // behind the expensive tier (`/sessions/:id/report`, or a chat turn calling
+  // `write_document`); a poll only makes it happen sooner, never makes more of
+  // it, and the engine asks the allowance before every unit.
+  "document-jobs.ts": "advanceDocumentJob",
 };
 
 /**
@@ -149,6 +166,7 @@ const PAID_ENDPOINTS: Record<string, string[]> = {
   "persona.ts": ["/persona/suggest"],
   "routines.ts": ["/routines/draft", "/routines/:id/run"],
   "reports.ts": ["/sessions/:id/report"],
+  "document-jobs.ts": ["/document-jobs/:id/retry"],
 };
 
 describe("the expensive rate limit", () => {

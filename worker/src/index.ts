@@ -20,6 +20,7 @@ import { transcribe } from "./routes/transcribe";
 import { documents } from "./routes/documents";
 import { bundles } from "./routes/bundles";
 import { reports } from "./routes/reports";
+import { documentJobs } from "./routes/document-jobs";
 import { me } from "./routes/me";
 import { workspace } from "./routes/workspace";
 import { support } from "./routes/support";
@@ -182,9 +183,11 @@ api.use("/brainstorm/ideas/suggest", rateLimit("expensive"));
 api.use("/persona/suggest", rateLimit("expensive"));
 api.use("/routines/draft", rateLimit("expensive"));
 api.use("/routines/:id/run", rateLimit("expensive"));
-// The most expensive of the lot per call: a report is capped at 4096 output
-// tokens where a chat reply is capped at 1536, and output is the dear side.
+// The most expensive of the lot per call: a report is a document written
+// section by section, a model call per section, and output is the dear side.
 api.use("/sessions/:id/report", rateLimit("expensive"));
+// A retry starts the rest of a document again.
+api.use("/document-jobs/:id/retry", rateLimit("expensive"));
 // Not a model call, and dearer than one anyway: this rents a real browser for
 // fifteen minutes and makes four provider calls doing it, billed to the
 // operator by the minute with a minute as the floor. The §4 headroom check
@@ -213,6 +216,7 @@ api.route("/", transcribe);
 api.route("/", documents);
 api.route("/", bundles);
 api.route("/", reports);
+api.route("/", documentJobs);
 api.route("/", me);
 api.route("/", avatars);
 api.route("/", workspace);
@@ -267,6 +271,10 @@ export { app };
 // Worker's main module, and built from `app` because a turn is this API
 // answering the request that asked for it. Node never constructs it.
 export const TurnRoom = turnRoom(replay);
+
+// The document engine's Durable Object (`lib/docs/host.ts`). Exported here for
+// Cloudflare to find under `DOC_ROOMS`; Node never constructs it.
+export { DocumentRoom } from "./lib/docs/host";
 
 // The Worker now has two entry points. `fetch` is the API, unchanged.
 // `scheduled` is the routine engine: it wakes on the cron trigger, asks which

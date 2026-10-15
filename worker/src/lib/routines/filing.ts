@@ -1,10 +1,8 @@
 // worker/src/lib/routines/filing.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DocumentEnv } from "../../types";
-import { getDocStore } from "../docstore";
-import { chunkText, embedTexts, tokensSpentBefore } from "../embeddings";
-import { insertChunkRows } from "../chunk-store";
-import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
+import { hasIndexableText } from "../extract";
+import { fileGeneratedDocument } from "../docs/file";
 
 /**
  * Filing a routine's result into a knowledge bundle.
@@ -160,82 +158,28 @@ export async function fileRoutineOutput(
     // listed, named to the model on every turn, and answers nothing.
     if (!hasIndexableText(input.summary)) return { filed: false, note: NOTE_EMPTY };
 
-    const text = filedDocumentText(input.routineName, input.at, input.summary);
+    const filed = await fileGeneratedDocument(db, env, {
+      workspaceId: input.workspaceId,
+      bundleId: input.bundleId,
+      name: filedDocumentName(input.routineName, input.at),
+      text: filedDocumentText(input.routineName, input.at, input.summary),
+      routineId: input.routineId,
+      chunkSize: FILING_CHUNK_SIZE,
+      chunkOverlap: FILING_CHUNK_OVERLAP,
+    });
 
-    const { data: bundle, error: bundleError } = await db
-      .from("knowledge_bundles")
-      .select("id")
-      .eq("id", input.bundleId)
-      .eq("workspace_id", input.workspaceId)
-      .is("deleted_at", null)
-      .maybeSingle();
-
-    if (bundleError) {
-      return { filed: false, note: `not filed: ${bundleError.message}` };
-    }
-    if (!bundle) return { filed: false, note: NOTE_BUNDLE_GONE };
-
-    const name = filedDocumentName(input.routineName, input.at);
-    const encoded = new TextEncoder().encode(text);
-    // `encode` allocates a fresh, exactly-sized buffer, so this is the whole
-    // file rather than a view into something larger.
-    const bytes = encoded.buffer as ArrayBuffer;
-    const key = `${input.bundleId}/${crypto.randomUUID()}-${safeName(name)}`;
-
-    const store = getDocStore(env);
-    await store.put(key, bytes, { contentType: "text/markdown" });
-
-    const { data: doc, error: insertError } = await db
-      .from("documents")
-      .insert({
-        bundle_id: input.bundleId,
-        routine_id: input.routineId,
-        name,
-        size: encoded.byteLength,
-        r2_key: key,
-        content: text.slice(0, EXCERPT_LIMIT),
-      })
-      .select("id")
-      .single();
-
-    if (insertError || !doc) {
-      await safeDelete(store, key);
-      return { filed: false, note: `not filed: ${insertError?.message ?? "no row"}` };
+    if (!filed.filed) {
+      return {
+        filed: false,
+        note: filed.reason === "bundle_gone" ? NOTE_BUNDLE_GONE : `not filed: ${filed.note}`,
+      };
     }
 
-    // Past here the document exists and the run has filed something. Embedding
-    // and pruning are both best-effort on top of that, for the reason the
-    // upload route gives: a document that exists and retrieves nothing beats
-    // losing what was just written. It reads "Not indexed" in the Knowledge tab
-    // and the reindex control beside it is the way back.
-    let indexTokens = 0;
-    try {
-      const chunks = chunkText(text, FILING_CHUNK_SIZE, FILING_CHUNK_OVERLAP);
-      if (chunks.length > 0) {
-        const embedded = await embedTexts(env, chunks);
-        indexTokens = embedded.tokens;
-        const { error: chunkError } = await insertChunkRows(
-          db,
-          chunks.map((content, index) => ({
-            document_id: doc.id,
-            bundle_id: input.bundleId,
-            workspace_id: input.workspaceId,
-            chunk_index: index,
-            content,
-            context: name,
-            embedding: embedded.vectors[index],
-          })),
-        );
-        if (chunkError) console.error("routine filing: could not save passages", chunkError);
-      }
-    } catch (err) {
-      console.error("routine filing: embedding failed (document saved unindexed)", err);
-      indexTokens = tokensSpentBefore(err);
-    }
-
+    // Past here the run has filed something. Pruning is best-effort on top of
+    // that: a prune that fails leaves more documents than asked for.
     await pruneOldOutput(db, input.routineId, input.workspaceId, input.retention);
 
-    return { filed: true, documentId: doc.id, indexTokens };
+    return { filed: true, documentId: filed.documentId, indexTokens: filed.indexTokens };
   } catch (err) {
     return { filed: false, note: `not filed: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -290,13 +234,5 @@ async function pruneOldOutput(
     if (hideError) console.error("routine filing: retention prune failed", hideError);
   } catch (err) {
     console.error("routine filing: retention prune failed", err);
-  }
-}
-
-async function safeDelete(store: ReturnType<typeof getDocStore>, key: string): Promise<void> {
-  try {
-    await store.delete(key);
-  } catch (err) {
-    console.error("routine filing: document store rollback failed", err);
   }
 }

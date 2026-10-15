@@ -318,6 +318,19 @@ export type Bindings = SyncEnv & {
   RATE_LIMIT_STANDARD?: RateLimit;
   RATE_LIMIT_EXPENSIVE?: RateLimit;
   /**
+   * The document engine's clock on Cloudflare: one `DocumentRoom` Durable
+   * Object per job (`lib/docs/host.ts`). Optional — without it a job is
+   * advanced by the open tab's poll and by the cron, which is slower and loses
+   * nothing. Never present on Node, which drives jobs in-process.
+   */
+  DOC_ROOMS?: DurableObjectNamespace;
+  /**
+   * Cloudflare Browser Rendering, for PDF export (`lib/formats/pdf.ts`).
+   * Optional — without it the PDF button falls back to the browser's own
+   * print-to-PDF. Never present on Node.
+   */
+  BROWSER?: Fetcher;
+  /**
    * Requests per minute on the Node runtime. Unset takes the defaults in
    * `lib/ratelimit/types.ts`; `0` disables that tier, which is what an operator
    * who limits in nginx or Cloudflare in front of this should set rather than

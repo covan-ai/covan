@@ -122,6 +122,28 @@ new_sqlite_classes = ["TurnRoom"]
 binding = "DOCS"
 bucket_name = "covan-docs"
 
+# The document engine's clock: one Durable Object per document being written,
+# each section in its own alarm, so a long report keeps being written after its
+# tab closes (`src/lib/docs/host.ts`). Optional — leave both blocks out and the
+# open conversation moves a document along each time it checks, with the cron
+# finishing anything nobody is watching. Needs Workers Paid.
+#
+# `[[migrations]]` is an append-only history keyed by `tag`, applied in order:
+# this one comes after `TURN_ROOMS`' above, and both stay in the file for good.
+[[durable_objects.bindings]]
+name = "DOC_ROOMS"
+class_name = "DocumentRoom"
+
+[[migrations]]
+tag = "v2-doc-rooms"
+new_sqlite_classes = ["DocumentRoom"]
+
+# PDF export, printed by Cloudflare Browser Rendering (`src/lib/formats/pdf.ts`).
+# Optional — without it the PDF button falls back to the browser's own print
+# dialog. Billed by the browser-hour; one PDF is a few seconds of one.
+[browser]
+binding = "BROWSER"
+
 # No [triggers] here on purpose. The Workers Free plan caps an account at five
 # cron triggers, and registering one past the cap fails the deploy at the
 # schedules step — after the script has already uploaded, leaving a confusing

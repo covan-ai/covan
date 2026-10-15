@@ -731,6 +731,28 @@ mounted unconditionally — it does not ask whether this deployment is metered �
 so any signed-in user who reaches it sends mail to `efe@covan.app` through
 **your** Resend account. Unset means you cannot redirect that. Set it.
 
+### Documents the agent writes, and their two optional bindings
+
+Long documents — a report from the composer, or one the agent writes with its
+`write_document` tool — are written in the background, a section at a time
+([Knowledge bundles](knowledge.md#documents-the-agent-writes)). Two bindings in
+`wrangler.toml.example` make that better on Cloudflare, and both are optional:
+
+- **`DOC_ROOMS`**, a Durable Object (`DocumentRoom`). Each section runs in its
+  own alarm, so a document keeps being written after its tab closes and finishes
+  in about the time its sections take. Without it the open conversation moves
+  the document along each time it checks — every three seconds while somebody
+  is watching — and the scheduled tick finishes the rest, a section or two per
+  tick. Durable Objects need Workers Paid. The `[[migrations]]` block that
+  creates the class is append-only: give it the next tag after whatever your
+  `wrangler.toml` already has, never reuse one.
+- **`BROWSER`**, Cloudflare Browser Rendering, for PDF export. Without it the
+  PDF button opens the browser's own print dialog instead. Browser Rendering is
+  billed by the browser-hour; a PDF takes a few seconds of one.
+
+On Node and in Docker neither applies: the API process writes the document
+itself, and PDFs go through the print dialog, so the image needs no Chromium.
+
 ### The emails Supabase sends, and where their design lives
 
 Confirming an address, changing it, and resetting a password are sent by Supabase, not by this

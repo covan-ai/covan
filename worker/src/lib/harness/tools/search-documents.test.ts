@@ -70,6 +70,19 @@ describe("search_documents", () => {
       { id: "d2", name: "Pricing.md" },
     ]);
     // The question goes through as the question, not as history.
-    expect(retrieveForAgent.mock.calls.at(-1)?.slice(3)).toEqual(["pro price", []]);
+    expect(retrieveForAgent.mock.calls.at(-1)?.slice(3)).toEqual(["pro price", [], {}]);
+  });
+
+  // A search in a shared conversation reads what the conversation's own
+  // retrieval reads: shared knowledge only (0106).
+  it("searches only the knowledge the conversation may stand on", async () => {
+    retrieveForAgent.mockResolvedValue({ ragBlock: "", sources: [], embeddingTokens: 1 });
+
+    await searchDocumentsTool.run(
+      { query: "salary" },
+      { ...ctx, knowledgeScope: { sharedOnly: true } },
+    );
+
+    expect(retrieveForAgent.mock.calls.at(-1)?.[5]).toEqual({ sharedOnly: true });
   });
 });

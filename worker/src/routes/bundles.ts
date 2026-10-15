@@ -27,7 +27,7 @@ import { callDeletionFn } from "../lib/deletion";
 
 const bundles = new Hono<AppEnv>();
 
-const BUNDLE_SELECT = "id,name,description,created_at,documents(count)";
+const BUNDLE_SELECT = "id,name,description,created_at,scope,created_by,documents(count)";
 
 // Everything a row in the Knowledge explorer renders. `connection_id` and
 // `external_url` are here because a synced document is not freely movable —
@@ -51,9 +51,16 @@ export const UPLOADED_SELECT =
 const createSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
+  /** Shared with the workspace from the start. Private when absent (0106). */
+  shared: z.boolean().optional(),
 });
 const updateSchema = z
-  .object({ name: z.string().min(1).optional(), description: z.string().optional() })
+  .object({
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    /** Share it with the workspace, or take it back. Its maker's alone to do. */
+    shared: z.boolean().optional(),
+  })
   .refine((b) => Object.keys(b).length > 0, { message: "at least one field required" });
 
 function extOf(name: string): string {
@@ -84,7 +91,8 @@ bundles.get("/bundles", async (c) => {
     .eq("workspace_id", workspaceId)
     .order("created_at");
   if (error) return c.json({ error: "failed to load bundles" }, 500);
-  return c.json((data ?? []).map(mapBundle));
+  const viewer = c.get("user").id;
+  return c.json((data ?? []).map((row) => mapBundle(row, viewer)));
 });
 
 // GET /bundles/citations — how many answers cite each document, workspace-wide.
@@ -186,11 +194,12 @@ bundles.post("/bundles", async (c) => {
       name: parsed.data.name,
       description: parsed.data.description ?? null,
       created_by: user.id,
+      scope: parsed.data.shared ? "workspace" : "owner",
     })
     .select(BUNDLE_SELECT)
     .single();
   if (error || !data) return c.json({ error: "failed to create bundle" }, 500);
-  return c.json(mapBundle(data), 201);
+  return c.json(mapBundle(data, user.id), 201);
 });
 
 // PATCH /bundles/:id
@@ -200,7 +209,16 @@ bundles.patch("/bundles/:id", async (c) => {
   const parsed = updateSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const { error: upErr } = await db.from("knowledge_bundles").update(parsed.data).eq("id", id);
+  const { shared, ...rest } = parsed.data;
+  const patch = {
+    ...rest,
+    ...(shared === undefined ? {} : { scope: shared ? "workspace" : "owner" }),
+  };
+  const { error: upErr } = await db.from("knowledge_bundles").update(patch).eq("id", id);
+  // 0106's guard: only the person who made a bundle shares it or unshares it.
+  if (upErr?.code === "42501") {
+    return c.json({ error: "only the person who made this bundle can change who sees it" }, 403);
+  }
   if (upErr) return c.json({ error: "failed to update bundle" }, 500);
 
   const { data, error } = await db
@@ -210,7 +228,7 @@ bundles.patch("/bundles/:id", async (c) => {
     .maybeSingle();
   if (error) return c.json({ error: "failed to load bundle" }, 500);
   if (!data) return c.json({ error: "not found" }, 404);
-  return c.json(mapBundle(data));
+  return c.json(mapBundle(data, c.get("user").id));
 });
 
 // DELETE /bundles/:id
@@ -243,7 +261,14 @@ bundles.post("/agents/:id/bundles/:bundleId", async (c) => {
   // Choosing what an agent reads is editing it (0104): somebody the agent is
   // shared with to use is refused by the policy, and told so.
   if (error?.code === "42501") {
-    return c.json({ error: "you need edit access to this agent to change what it reads" }, 403);
+    return c.json(
+      {
+        error:
+          "you need edit access to this agent to change what it reads, and a private bundle " +
+          "can only be attached by the person who made it",
+      },
+      403,
+    );
   }
   if (error) return c.json({ error: "failed to attach bundle" }, 500);
   return c.json({ ok: true }, 201);

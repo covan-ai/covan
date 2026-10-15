@@ -1,4 +1,5 @@
 // worker/src/lib/routines/executor.ts
+import type { KnowledgeScope } from "../retrieval";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MessageOutcome } from "../harness/usage";
 import type { RoutineEnv } from "../../types";
@@ -71,6 +72,13 @@ export type RoutineRow = {
   id: string;
   agent_id: string;
   user_id: string;
+  /**
+   * Whether the workspace can read this routine and its runs (0012). Decides
+   * whose knowledge it may stand on (0106): a shared routine's report is read
+   * by everybody, so only shared bundles ground it. Optional for the
+   * projections that predate it, which read as private.
+   */
+  visibility?: string | null;
   workspace_id: string;
   name: string;
   source_kind: "rss" | "web" | "none" | "connection" | "workspace";
@@ -200,6 +208,8 @@ export type AgentRunInput = SummariseInput & {
    * browser (0100); absent otherwise, and then the tool is not offered.
    */
   browser?: Omit<RoutineBrowser, "started">;
+  /** Whose knowledge `search_documents` may read. See `knowledgeScopeOf`. */
+  knowledgeScope?: KnowledgeScope;
 };
 
 export type AgentRunResult = {
@@ -239,7 +249,19 @@ export type ModelCall = {
   modelOutcome: MessageOutcome;
 };
 
-export type RetrievalInput = { agentId: string; query: string };
+export type RetrievalInput = { agentId: string; query: string; scope?: KnowledgeScope };
+
+/**
+ * Whose knowledge a routine's run may stand on (0106). It runs for its owner,
+ * with the service role, which no policy narrows — so this is said out loud:
+ * the owner's own bundles and the shared ones for a private routine, shared
+ * only for one the workspace can read.
+ */
+export function knowledgeScopeOf(
+  routine: Pick<RoutineRow, "user_id" | "visibility">,
+): KnowledgeScope {
+  return routine.visibility === "shared" ? { sharedOnly: true } : { viewer: routine.user_id };
+}
 
 export type ExecutorDeps = {
   /** Service-role client — bypasses RLS. See the scoping note below. */
@@ -879,6 +901,7 @@ export async function runRoutine(
         {
           agentId: routine.agent_id,
           query: retrievalQueryFor(routine.instruction, items, pageText),
+          scope: knowledgeScopeOf(routine),
         },
         runEnv,
       );
@@ -938,6 +961,7 @@ export async function runRoutine(
           workspaceId: routine.workspace_id,
           userId: routine.user_id,
           routineRunId: runId,
+          knowledgeScope: knowledgeScopeOf(routine),
           ...(browser ? { browser } : {}),
         },
         runEnv,

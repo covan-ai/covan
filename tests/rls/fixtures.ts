@@ -73,10 +73,14 @@ export async function seedWorkspace(
     workspace_access: workspaceAccess,
   });
 
+  // Shared, as every bundle was before 0106: the suites built on this seed are
+  // about what a workspace member may do with the workspace's knowledge.
+  // `knowledge-scope.test.ts` is about a private one.
   const bundleId = await insert(user, "knowledge_bundles", {
     workspace_id: user.workspaceId,
     name: "Seeded bundle",
     created_by: user.id,
+    scope: "workspace",
   });
 
   const documentId = await insert(user, "documents", {

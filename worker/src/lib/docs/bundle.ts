@@ -52,6 +52,11 @@ export async function ensureReportBundle(
         name: reportBundleName(input.agentName),
         description: marker,
         created_by: input.userId,
+        // Shared, as reports were before 0106: a report is written from a
+        // conversation and shown to whoever the conversation is shown to, and
+        // a private bundle would leave the people it was shared with a card
+        // they cannot open.
+        scope: "workspace",
       })
       .select("id")
       .single();

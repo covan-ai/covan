@@ -256,7 +256,11 @@ export async function handleSlackEvent(
   // The same history the turn is assembled from. `retrievalQuery` reads the
   // turns before the last one, so a follow-up in a Slack thread carries its
   // subject the same way a follow-up in the chat screen does.
-  const retrieval = await retrieveForAgent(deps.db, runEnv, agent.id, question, history);
+  // Shared knowledge only: a thread is read by everybody in the channel, and
+  // nobody's private bundle may ground what they all see (0106).
+  const retrieval = await retrieveForAgent(deps.db, runEnv, agent.id, question, history, {
+    sharedOnly: true,
+  });
 
   const mode: "normal" | "brainstorm" = agent.mode === "brainstorm" ? "brainstorm" : "normal";
   const systemPrefix = buildSystemPrefix({

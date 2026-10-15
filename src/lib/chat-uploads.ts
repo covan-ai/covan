@@ -23,8 +23,16 @@ export function chatBundleName(agentName: string): string {
   return `${agentName} — chat uploads`;
 }
 
-/** This agent's chat bundle, or null if nothing has ever been dropped into one. */
+/**
+ * This person's chat bundle for this agent, or null if they have never dropped
+ * a file into a conversation with it.
+ *
+ * Their own and private (0106). There used to be one per agent, shared with
+ * the whole workspace, so a file somebody dropped into their own conversation
+ * became everybody's knowledge on the spot. A shared one made before then is
+ * left as it is, and new files go to a private one beside it.
+ */
 export function findChatBundle(bundles: Bundle[], agentId: string): Bundle | null {
   const marker = chatBundleMarker(agentId);
-  return bundles.find((b) => b.description === marker) ?? null;
+  return bundles.find((b) => b.description === marker && b.mine && b.shared === false) ?? null;
 }

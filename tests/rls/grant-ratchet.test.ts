@@ -69,8 +69,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "ideas UPDATE": "detail,position,stage,title,updated_at",
   // 0090: the token's hash added; status, expiry and acceptance taken away.
   "invitations INSERT": "email,invited_by,role,token_hash,workspace_id",
-  "knowledge_bundles INSERT": "created_by,description,name,workspace_id",
-  "knowledge_bundles UPDATE": "description,name",
+  // 0106: private until shared.
+  "knowledge_bundles INSERT": "created_by,description,name,scope,workspace_id",
+  "knowledge_bundles UPDATE": "description,name,scope",
   // 0094 onwards: each table the columns the API writes with a caller's client.
   "messages INSERT": "content,role,sender_id,session_id",
   "messages UPDATE": "content",

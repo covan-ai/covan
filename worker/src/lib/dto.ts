@@ -848,21 +848,36 @@ export type BundleDTO = {
   description: string | null;
   documentCount: number;
   createdAt: number;
+  /**
+   * Whether the workspace can see it (0106). A private bundle is its maker's
+   * alone — its documents, its passages, and what it grounds.
+   */
+  shared: boolean;
+  /** Whether the caller made it, which is who may share or unshare it. */
+  mine: boolean;
 };
 
-export function mapBundle(row: {
-  id: string;
-  name: string;
-  description: string | null;
-  created_at: string;
-  documents?: Array<{ count: number }> | null;
-}): BundleDTO {
+export function mapBundle(
+  row: {
+    id: string;
+    name: string;
+    description: string | null;
+    created_at: string;
+    documents?: Array<{ count: number }> | null;
+    scope?: string | null;
+    created_by?: string | null;
+  },
+  viewerId?: string,
+): BundleDTO {
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     documentCount: Array.isArray(row.documents) ? (row.documents[0]?.count ?? 0) : 0,
     createdAt: toEpochMs(row.created_at),
+    // A row from before 0106 has no scope and was shared with everybody.
+    shared: row.scope !== "owner",
+    mine: viewerId !== undefined && row.created_by === viewerId,
   };
 }
 

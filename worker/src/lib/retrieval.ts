@@ -76,6 +76,23 @@ export type Retrieval = {
   embeddingTokens: number;
 };
 
+/**
+ * Whose knowledge this answer may stand on (0106).
+ *
+ * A private bundle grounds its owner's turns and nobody else's. Through a
+ * person's own client the policies already hide everybody else's private
+ * bundles; what has to be said here is the rest:
+ *
+ * - `sharedOnly` — shared bundles only, for a reply other people can read: a
+ *   shared conversation, a Slack thread, a shared routine's report. The
+ *   asker's own private bundles are left out too, or one person's private file
+ *   would be quoted to everybody reading along.
+ * - `viewer` — shared bundles and this person's own, for the service-role
+ *   paths that act for one person (a private routine). Without it the service
+ *   role, which no policy filters, would read everybody's.
+ */
+export type KnowledgeScope = { viewer?: string; sharedOnly?: boolean };
+
 export type RetrievalConfig = EmbeddingConfig & {
   RAG_MIN_SIMILARITY?: string;
   RAG_LEXICAL?: string;
@@ -100,6 +117,7 @@ export async function retrieveForAgent(
   agentId: string,
   question: string,
   history: HistoryTurn[],
+  scope: KnowledgeScope = {},
 ): Promise<Retrieval> {
   // Documents that actually grounded this reply, deduped in relevance order.
   // Persisted with the assistant message so the UI can show real citations.
@@ -169,9 +187,10 @@ export async function retrieveForAgent(
     .from("agent_bundles")
     .select("bundle_id")
     .eq("agent_id", agentId);
-  const bundleIds = bundleError
+  const attached = bundleError
     ? []
     : (bundleRows ?? []).map((r: { bundle_id: string }) => r.bundle_id);
+  const bundleIds = await readableBundles(db, attached, scope);
 
   if (bundleIds.length > 0) {
     // Without the trashed ones. Through a person's own client the policy
@@ -222,6 +241,10 @@ export async function retrieveForAgent(
           p_match_count: RAG_MATCH_COUNT,
           p_min_similarity: ragMinSimilarity(env),
           p_query_terms: lexicalSearchEnabled(env) ? searchTerms(query) : [],
+          // Only when there is something to narrow by, so a call through a
+          // person's own client sends exactly what it always did.
+          ...(scope.viewer ? { p_viewer: scope.viewer } : {}),
+          ...(scope.sharedOnly ? { p_shared_only: true } : {}),
         });
         if (matchError) {
           console.error("match_chunks failed", matchError);
@@ -351,4 +374,35 @@ export async function retrieveForAgent(
     grounding,
     embeddingTokens,
   };
+}
+
+/**
+ * The attached bundles this answer may read, by `scope`.
+ *
+ * The manifest of document names and the stored-text fallback read documents
+ * by bundle, so they need the same narrowing `match_chunks` does in SQL: a
+ * private bundle's file names are as much its contents as its passages are.
+ * With no scope, every attached bundle the client can see — the policies have
+ * already decided for a person's own client.
+ */
+async function readableBundles(
+  db: SupabaseClient,
+  attached: string[],
+  scope: KnowledgeScope,
+): Promise<string[]> {
+  if (attached.length === 0 || (!scope.viewer && !scope.sharedOnly)) return attached;
+  const { data, error } = await db
+    .from("knowledge_bundles")
+    .select("id,scope,created_by")
+    .in("id", attached);
+  // Unreadable is nothing, not everything: the failure that grounds a shared
+  // reply on somebody's private file is the one this exists to prevent.
+  if (error) return [];
+  return ((data ?? []) as Array<{ id: string; scope: string; created_by: string | null }>)
+    .filter(
+      (b) =>
+        b.scope === "workspace" ||
+        (!scope.sharedOnly && scope.viewer !== undefined && b.created_by === scope.viewer),
+    )
+    .map((b) => b.id);
 }

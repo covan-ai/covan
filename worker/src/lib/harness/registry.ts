@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
-import type { RetrievalConfig, RetrievedSource } from "../retrieval";
+import type { KnowledgeScope, RetrievalConfig, RetrievedSource } from "../retrieval";
 import type { ToolSpec } from "../completion";
 import type { RuntimeLimitFlag } from "../runtime-limit";
 import type { ComposioTool } from "../composio/client";
@@ -133,6 +133,13 @@ export type ToolContext = {
    * nothing persists citations — a routine run.
    */
   foundSources?: RetrievedSource[];
+  /**
+   * Whose knowledge `search_documents` may read (0106): shared bundles only
+   * in a conversation others can read, the owner's own too in a private
+   * routine. Set by the route or the routine from the session or routine row,
+   * never from anything the model wrote. See `KnowledgeScope`.
+   */
+  knowledgeScope?: KnowledgeScope;
   /**
    * Whether a person has already said yes to this exact call.
    *

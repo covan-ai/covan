@@ -2,12 +2,18 @@ import { describe, it, expect } from "vitest";
 import { chatBundleMarker, chatBundleName, findChatBundle } from "./chat-uploads";
 import type { Bundle } from "./api-client";
 
-const bundle = (id: string, name: string, description: string | null): Bundle => ({
+const bundle = (
+  id: string,
+  name: string,
+  description: string | null,
+  own: { shared?: boolean; mine?: boolean } = { shared: false, mine: true },
+): Bundle => ({
   id,
   name,
   description,
   documentCount: 0,
   createdAt: 0,
+  ...own,
 });
 
 describe("chatBundleName", () => {
@@ -39,6 +45,21 @@ describe("findChatBundle", () => {
   it("ignores a hand-made bundle that merely looks like one", () => {
     const lookalike = bundle("b4", "Ops Assistant — chat uploads", null);
     expect(findChatBundle([lookalike], agentId)).toBeNull();
+  });
+
+  // A file dropped into a conversation is the dropper's (0106). The shared
+  // chat bundle an agent had before then is left alone, and so is a
+  // colleague's private one.
+  it("does not take a shared chat bundle, or somebody else's", () => {
+    const shared = bundle("b5", "Ops Assistant — chat uploads", chatBundleMarker(agentId), {
+      shared: true,
+      mine: true,
+    });
+    const colleagues = bundle("b6", "Ops Assistant — chat uploads", chatBundleMarker(agentId), {
+      shared: false,
+      mine: false,
+    });
+    expect(findChatBundle([shared, colleagues], agentId)).toBeNull();
   });
 
   it("returns null when the agent has never had a file dropped into a chat", () => {

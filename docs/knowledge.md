@@ -340,6 +340,30 @@ A routine keeps a bounded number of its own documents — 52 by default, about a
 year of weekly — and removes the oldest past that. They do not appear in
 **Recently deleted**, because nobody deleted them.
 
+## Who sees a bundle
+
+A new bundle is yours alone. Nobody else in the workspace sees it, its files or
+what is in them, and nobody else can add to it, rename it or delete it — an
+admin included. **Share with the workspace** (in the bundle's menu, or ticked
+when you make it) changes that: everyone sees it, and every member who can write
+can add to it, as every bundle could before. Only the person who made a bundle
+can share it or stop sharing it. Bundles that existed before this are shared.
+
+A private bundle can still be attached to an agent, by you. It then grounds
+your own private conversations with that agent and nothing else:
+
+| Where the answer appears            | What it may stand on                  |
+| ----------------------------------- | ------------------------------------- |
+| Your private conversation           | Shared bundles, and your private ones |
+| A conversation you shared           | Shared bundles only                   |
+| Slack                               | Shared bundles only                   |
+| Your private routine                | Shared bundles, and your private ones |
+| A routine shared with the workspace | Shared bundles only                   |
+
+A file dropped into a conversation goes to your own private chat-uploads bundle
+for that agent. Reports an agent writes go to its shared reports bundle, because
+a report is shown to everyone its conversation is shown to.
+
 ## Attaching, detaching and deleting
 
 The switch beside each bundle attaches it to the agent whose tab you are on.

@@ -22,12 +22,14 @@ import {
   FolderOpen,
   LayoutGrid,
   List,
+  Lock,
   MoreVertical,
   Pencil,
   RefreshCw,
   Search,
   Trash2,
   Upload,
+  Users,
 } from "lucide-react";
 
 import { api } from "@/lib/api-client";
@@ -945,6 +947,20 @@ function BundleRailRow({
   const [draft, setDraft] = useState(bundle.name);
   const { setNodeRef, isOver } = useDroppable({ id: bundle.id, disabled: !canWrite });
 
+  const toggleShared = () => {
+    const sharing = bundle.shared === false;
+    const ask = sharing
+      ? `Share "${bundle.name}" with the workspace? Everyone in it will be able to read its files, and the agents it is attached to will use it in their conversations too.`
+      : `Stop sharing "${bundle.name}"? Only you will see its files, and agents will use it only in your own private conversations.`;
+    if (!confirm(ask)) return;
+    store
+      .updateBundle(bundle.id, { shared: sharing })
+      .then(() =>
+        toast.success(sharing ? `Shared ${bundle.name}` : `${bundle.name} is only yours now`),
+      )
+      .catch((err) => toast.error(err?.message ?? "Could not change who sees it"));
+  };
+
   const commit = () => {
     const name = draft.trim();
     setRenaming(false);
@@ -1009,6 +1025,8 @@ function BundleRailRow({
               readers?.length === 0 && "text-amber-700 dark:text-amber-400",
             )}
           >
+            {/* Said first, because it decides who else can read the rest. */}
+            {bundle.shared === false ? "Only you · " : ""}
             {bundle.documentCount} {bundle.documentCount === 1 ? "file" : "files"}
             {readers
               ? readers.length === 0
@@ -1052,6 +1070,17 @@ function BundleRailRow({
               <Pencil className="mr-2 h-4 w-4" />
               Rename
             </DropdownMenuItem>
+            {/* Only its maker shares it or takes it back (0106). */}
+            {bundle.mine ? (
+              <DropdownMenuItem onSelect={() => toggleShared()}>
+                {bundle.shared === false ? (
+                  <Users className="mr-2 h-4 w-4" />
+                ) : (
+                  <Lock className="mr-2 h-4 w-4" />
+                )}
+                {bundle.shared === false ? "Share with the workspace" : "Stop sharing"}
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() => {
@@ -1077,45 +1106,60 @@ function BundleRailRow({
 function NewBundleForm({ onCreated }: { onCreated: (id: string) => void }) {
   const { createBundle } = useAgentsStore();
   const [name, setName] = useState("");
+  const [shared, setShared] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const create = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
     setCreating(true);
-    createBundle(trimmed)
+    createBundle(trimmed, undefined, shared)
       .then((bundle) => {
         setName("");
+        setShared(false);
         onCreated(bundle.id);
-        toast.success(`Created ${bundle.name}`);
+        toast.success(
+          shared ? `Created ${bundle.name}, shared with the workspace` : `Created ${bundle.name}`,
+        );
       })
       .catch((err) => toast.error(err?.message ? `Create failed: ${err.message}` : "Create failed"))
       .finally(() => setCreating(false));
   };
 
   return (
-    <div className="flex items-center gap-2 p-3">
-      <Input
-        placeholder="New bundle"
-        value={name}
-        disabled={creating}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            create();
-          }
-        }}
-      />
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={create}
-        disabled={creating || !name.trim()}
-      >
-        Add
-      </Button>
+    <div className="p-3">
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="New bundle"
+          value={name}
+          disabled={creating}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              create();
+            }
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={create}
+          disabled={creating || !name.trim()}
+        >
+          Add
+        </Button>
+      </div>
+      {/* Off by default (0106): a bundle is its maker's until they share it. */}
+      <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <Checkbox
+          checked={shared}
+          onCheckedChange={(on) => setShared(on === true)}
+          aria-label="Share the new bundle with the workspace"
+        />
+        Share with the workspace
+      </label>
     </div>
   );
 }

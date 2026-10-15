@@ -25,7 +25,16 @@ vi.mock("sonner", () => ({
   },
 }));
 
-const BUNDLES = [
+type TestBundle = {
+  id: string;
+  name: string;
+  description: string | null;
+  documentCount: number;
+  shared?: boolean;
+  mine?: boolean;
+};
+
+const BUNDLES: TestBundle[] = [
   { id: "bundle-1", name: "GTM knowledge", description: "What sales asks", documentCount: 2 },
   { id: "bundle-2", name: "Old pricing", description: null, documentCount: 0 },
 ];
@@ -254,6 +263,37 @@ describe("the Knowledge explorer, on the workspace page", () => {
     await userEvent.type(field, "Sales knowledge{Enter}");
 
     expect(store.updateBundle).toHaveBeenCalledWith("bundle-1", { name: "Sales knowledge" });
+  });
+
+  // A bundle is its maker's until they share it (0106), and the rail says so
+  // before anything else about it.
+  it("says which bundles are only yours, and lets their maker share one", async () => {
+    const saved = store.bundles;
+    store.bundles = [
+      { ...BUNDLES[0], shared: false, mine: true },
+      { ...BUNDLES[1], shared: true, mine: false },
+    ];
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    try {
+      renderExplorer();
+      await screen.findByText("zebra-notes.md");
+
+      const rail = (name: RegExp) => screen.getByLabelText(name).closest("button") as HTMLElement;
+      expect(within(rail(/open gtm knowledge/i)).getByText(/only you/i)).toBeInTheDocument();
+      expect(within(rail(/open old pricing/i)).queryByText(/only you/i)).toBeNull();
+
+      await userEvent.click(screen.getByLabelText(/actions for gtm knowledge/i));
+      await userEvent.click(screen.getByRole("menuitem", { name: /share with the workspace/i }));
+      expect(store.updateBundle).toHaveBeenCalledWith("bundle-1", { shared: true });
+
+      // Somebody else's bundle offers no sharing control at all.
+      await userEvent.keyboard("{Escape}");
+      await userEvent.click(screen.getByLabelText(/actions for old pricing/i));
+      expect(screen.queryByRole("menuitem", { name: /shar/i })).toBeNull();
+    } finally {
+      confirmSpy.mockRestore();
+      store.bundles = saved;
+    }
   });
 
   it("switches to a grid without losing the filter", async () => {

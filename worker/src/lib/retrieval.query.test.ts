@@ -57,3 +57,72 @@ describe("retrieveForAgent with no history", () => {
     expect(result.sources).toEqual([{ id: "d1", name: "pricing.md" }]);
   });
 });
+
+/**
+ * Whose knowledge a service-role read may stand on (0106).
+ *
+ * Slack and routines read with the service role, which no policy narrows, so
+ * the scope is the only thing keeping somebody's private bundle out of a reply
+ * everybody can read — the file names in the manifest as much as the passages.
+ */
+describe("retrieveForAgent with a knowledge scope", () => {
+  function world() {
+    let rpcArgs: Record<string, unknown> | null = null;
+    const fake = fakeDb({
+      tables: {
+        agent_bundles: {
+          select: () => ({
+            data: [{ bundle_id: "shared" }, { bundle_id: "mine" }, { bundle_id: "theirs" }],
+            error: null,
+          }),
+        },
+        knowledge_bundles: {
+          select: () => ({
+            data: [
+              { id: "shared", scope: "workspace", created_by: "u-other" },
+              { id: "mine", scope: "owner", created_by: "u-me" },
+              { id: "theirs", scope: "owner", created_by: "u-other" },
+            ],
+            error: null,
+          }),
+        },
+        documents: { select: () => ({ data: [{ name: "a.md" }], error: null }) },
+      },
+      rpc: {
+        match_chunks: (args) => {
+          rpcArgs = args;
+          return { data: [], error: null };
+        },
+      },
+    });
+    const docBundles = () =>
+      fake
+        .callsTo("documents")
+        .flatMap((c) => c.filters.filter((f) => f.kind === "in").map((f) => f.value));
+    return { fake, docBundles, rpc: () => rpcArgs };
+  }
+
+  it("reads shared bundles and the viewer's own, for a private routine", async () => {
+    const { fake, docBundles, rpc } = world();
+    await retrieveForAgent(fake.db as never, {} as never, "agent-1", "pay", [], { viewer: "u-me" });
+    expect(docBundles()[0]).toEqual(["shared", "mine"]);
+    expect(rpc()).toMatchObject({ p_viewer: "u-me" });
+  });
+
+  it("reads shared bundles only, for a reply other people read", async () => {
+    const { fake, docBundles, rpc } = world();
+    await retrieveForAgent(fake.db as never, {} as never, "agent-1", "pay", [], {
+      sharedOnly: true,
+    });
+    expect(docBundles()[0]).toEqual(["shared"]);
+    expect(rpc()).toMatchObject({ p_shared_only: true });
+  });
+
+  it("asks nothing extra through a person's own client", async () => {
+    const { fake, rpc } = world();
+    await retrieveForAgent(fake.db as never, {} as never, "agent-1", "pay", []);
+    expect(fake.callsTo("knowledge_bundles")).toEqual([]);
+    expect(rpc()).not.toHaveProperty("p_viewer");
+    expect(rpc()).not.toHaveProperty("p_shared_only");
+  });
+});

@@ -1016,7 +1016,14 @@ describe("what an agent knows and may do is an edit", () => {
   beforeAll(async () => {
     const { data: bundle, error: bundleError } = await host.db
       .from("knowledge_bundles")
-      .insert({ workspace_id: host.workspaceId, name: "Handbook", created_by: host.id })
+      // Shared (0106): this suite is about the agent, and a private bundle
+      // could not be attached by anybody but its maker.
+      .insert({
+        workspace_id: host.workspaceId,
+        name: "Handbook",
+        created_by: host.id,
+        scope: "workspace",
+      })
       .select("id")
       .single();
     if (bundleError) throw new Error(`could not seed a bundle: ${bundleError.message}`);

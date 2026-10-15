@@ -84,6 +84,7 @@ export const searchDocumentsTool: AgentTool = {
       // words, so there is no earlier turn carrying its subject — which is
       // the only thing `retrieveForAgent` reads history for.
       [],
+      ctx.knowledgeScope ?? {},
     );
 
     // The query was embedded to search with, and the route that charged for

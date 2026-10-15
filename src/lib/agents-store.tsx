@@ -286,8 +286,11 @@ type Store = {
   removeDocument: (docId: string) => Promise<void>;
   reindexDocument: (docId: string) => Promise<Agent["documents"][number]>;
   moveDocument: (docId: string, bundleId: string) => Promise<void>;
-  createBundle: (name: string, description?: string) => Promise<Bundle>;
-  updateBundle: (id: string, patch: { name?: string; description?: string }) => Promise<Bundle>;
+  createBundle: (name: string, description?: string, shared?: boolean) => Promise<Bundle>;
+  updateBundle: (
+    id: string,
+    patch: { name?: string; description?: string; shared?: boolean },
+  ) => Promise<Bundle>;
   ensureChatBundle: (agent: { id: string; name: string }) => Promise<Bundle>;
   uploadToBundle: (
     bundleId: string,
@@ -405,8 +408,8 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         ]);
       },
 
-      createBundle: async (name, description) => {
-        const bundle = await api.bundles.create(name, description);
+      createBundle: async (name, description, shared) => {
+        const bundle = await api.bundles.create(name, description, shared);
         await queryClient.invalidateQueries({ queryKey: ["bundles"] });
         return bundle;
       },
@@ -414,6 +417,10 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
       updateBundle: async (id, patch) => {
         const bundle = await api.bundles.update(id, patch);
         await queryClient.invalidateQueries({ queryKey: ["bundles"] });
+        // Sharing or unsharing changes which documents every agent's list shows.
+        if (patch.shared !== undefined) {
+          await queryClient.invalidateQueries({ queryKey: ["agents"] });
+        }
         return bundle;
       },
 

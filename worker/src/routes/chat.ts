@@ -32,7 +32,7 @@ import {
   type TurnUsage,
   sumOverPasses,
 } from "../lib/harness/usage";
-import { retrieveForAgent } from "../lib/retrieval";
+import { retrieveForAgent, type KnowledgeScope } from "../lib/retrieval";
 import { embeddingModel } from "../lib/embeddings";
 import {
   selectHistory,
@@ -228,6 +228,7 @@ chat.post("/chat/stream", async (c) => {
   // names, the grounding block, what grounded it, and which path found it. This
   // was written out here until a Slack thread needed to ask an agent the same
   // question — see `lib/retrieval.ts` for why one copy rather than two.
+  const knowledgeScope = knowledgeScopeFor(session);
   const { docNames, ragBlock, sources, grounding, embeddingTokens } = await retrieveForAgent(
     db,
     env,
@@ -237,6 +238,7 @@ chat.post("/chat/stream", async (c) => {
       role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
       content: m.content,
     })),
+    knowledgeScope,
   );
 
   // Manifest: a stable, cacheable line telling the agent which documents it has,
@@ -773,6 +775,7 @@ chat.post("/chat/stream", async (c) => {
             // The array the reply below is inserted with, so what a search
             // finds mid-turn is cited beside what retrieval found up front.
             foundSources: sources,
+            knowledgeScope,
           }),
           // What the first half spent, so the second half's steps and passes are
           // numbered after it — each marked `uncharged` because the budget does
@@ -1154,6 +1157,7 @@ chat.post("/chat/confirm/:id", async (c) => {
     // the proposal and this is where it is read back.
     approvedProposal: pause.proposal,
     foundSources: resumedSources,
+    knowledgeScope: knowledgeScopeFor(session),
   });
 
   const stream = new ReadableStream({
@@ -1769,6 +1773,19 @@ function joinHalves(before: string, addition: string): string {
   if (!before) return addition;
   if (!addition) return before;
   return `${before}\n\n${addition}`;
+}
+
+/**
+ * Whose knowledge a conversation's replies may stand on (0106).
+ *
+ * In a shared conversation every reply is read by everybody it is shared with,
+ * and so are its source chips: only shared bundles may ground it — the
+ * asker's own private ones included, or their private file would be quoted to
+ * the room. A private conversation is the asker's alone, and their own client
+ * already reads exactly what they may.
+ */
+function knowledgeScopeFor(session: { visibility?: unknown } | null | undefined): KnowledgeScope {
+  return session?.visibility === "shared" ? { sharedOnly: true } : {};
 }
 
 export { chat };

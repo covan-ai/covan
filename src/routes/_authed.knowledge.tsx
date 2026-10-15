@@ -33,7 +33,7 @@ function KnowledgePage() {
           badge="Knowledge"
           title="Everything the team"
           turn="has written down."
-          subtitle="Bundles are folders that belong to the workspace."
+          subtitle="Bundles are folders. A new one is yours alone until you share it with the workspace."
         >
           <DocsLink page="knowledge">How retrieval picks a passage</DocsLink>
         </PageHeader>

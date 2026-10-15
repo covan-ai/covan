@@ -159,6 +159,14 @@ export type Bundle = {
   description: string | null;
   documentCount: number;
   createdAt: number;
+  /**
+   * Whether the workspace can see it (0106). Private bundles are their maker's
+   * alone: the files, what they say, and the answers they ground. Optional so
+   * a fixture or an older response reads as the shared bundle it was.
+   */
+  shared?: boolean;
+  /** Whether the caller made it — who may share it or stop sharing it. */
+  mine?: boolean;
 };
 
 /**
@@ -640,11 +648,14 @@ export const api = {
      */
     documents: (id: string): Promise<Agent["documents"]> =>
       request("GET", `/bundles/${id}/documents`),
-    create: (name: string, description?: string): Promise<Bundle> =>
-      request("POST", "/bundles", { name, description }),
-    /** Rename one, or change the line under its name. */
-    update: (id: string, patch: { name?: string; description?: string }): Promise<Bundle> =>
-      request("PATCH", `/bundles/${id}`, patch),
+    /** Private to its maker unless `shared`. */
+    create: (name: string, description?: string, shared?: boolean): Promise<Bundle> =>
+      request("POST", "/bundles", { name, description, ...(shared ? { shared: true } : {}) }),
+    /** Rename one, change the line under its name, or share it / stop sharing it. */
+    update: (
+      id: string,
+      patch: { name?: string; description?: string; shared?: boolean },
+    ): Promise<Bundle> => request("PATCH", `/bundles/${id}`, patch),
     remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/bundles/${id}`),
     attach: (agentId: string, bundleId: string): Promise<{ ok: true }> =>
       request("POST", `/agents/${agentId}/bundles/${bundleId}`),

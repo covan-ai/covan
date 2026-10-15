@@ -120,8 +120,17 @@ function executorDeps(
     //
     // `runEnv` for the same reason `summarise` takes it: embedding is a paid
     // call and goes to whichever key is answering this run.
-    retrieve: async ({ agentId, query }, runEnv) => {
-      const { ragBlock, embeddingTokens } = await retrieveForAgent(db, runEnv, agentId, query, []);
+    retrieve: async ({ agentId, query, scope }, runEnv) => {
+      // A routine has no client of its own; the scope it is handed is the only
+      // thing between this service-role read and everybody's private bundles.
+      const { ragBlock, embeddingTokens } = await retrieveForAgent(
+        db,
+        runEnv,
+        agentId,
+        query,
+        [],
+        scope ?? { sharedOnly: true },
+      );
       return { ragBlock, embeddingTokens };
     },
     entitlements: entitlementsFor(env),

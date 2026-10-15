@@ -14,6 +14,8 @@ const bundles = [
     description: "covan:chat-uploads:agent-1",
     documentCount: 0,
     createdAt: 0,
+    shared: false,
+    mine: true,
   },
   { id: "runbooks", name: "Runbooks", description: null, documentCount: 3, createdAt: 0 },
 ];

@@ -57,6 +57,16 @@ const SUBSUMES: Record<string, string[]> = {
   can_use_agent: ["workspace_members", "is_workspace_member"],
   can_edit_agent: ["workspace_members", "is_workspace_member", "can_write_in_workspace"],
   can_manage_agent: ["workspace_members", "is_workspace_member", "can_write_in_workspace"],
+  // 0106. Both read the bundle row itself and ask the workspace question of
+  // its workspace — `is_workspace_member` to see it, `can_write_in_workspace`
+  // to change it — before adding the owner's.
+  bundle_is_visible: ["knowledge_bundles", "workspace_members", "is_workspace_member"],
+  bundle_is_writable: [
+    "knowledge_bundles",
+    "workspace_members",
+    "is_workspace_member",
+    "can_write_in_workspace",
+  ],
 };
 
 /**

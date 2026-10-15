@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bindings } from "../../types";
 import { serviceClient } from "../supabase";
-import { retrieveForAgent } from "../retrieval";
+import { retrieveForAgent, type KnowledgeScope } from "../retrieval";
 import {
   selectHistory,
   MSG_HISTORY_LIMIT,
@@ -75,6 +75,20 @@ export async function enqueueDocumentJob(input: EnqueueInput): Promise<EnqueueRe
   }
 
   let turns: HistoryTurn[] = [];
+  // A document written in a shared conversation is read by everybody in it,
+  // so it stands on shared knowledge only (0106), as the conversation's own
+  // replies do.
+  let scope: KnowledgeScope = {};
+  if (input.sessionId) {
+    const { data: session } = await db
+      .from("chat_sessions")
+      .select("visibility")
+      .eq("id", input.sessionId)
+      .maybeSingle();
+    if ((session as { visibility?: string } | null)?.visibility === "shared") {
+      scope = { sharedOnly: true };
+    }
+  }
   if (input.sessionId) {
     const { data: recent, error } = await db
       .from("messages")
@@ -101,6 +115,7 @@ export async function enqueueDocumentJob(input: EnqueueInput): Promise<EnqueueRe
     input.agent.id,
     input.instruction,
     turns,
+    scope,
   );
 
   const history = selectHistory(turns, {

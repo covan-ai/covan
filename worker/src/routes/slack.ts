@@ -314,14 +314,21 @@ slack.post("/slack/complete", async (c) => {
   // workspace's first and usually its main; the alternative is an app that is
   // installed and refuses every question until somebody visits a settings page
   // they have not been told about.
-  const { data: agent } = await admin
-    .from("agents")
-    .select("id")
-    .eq("workspace_id", state.workspaceId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  //
+  // The oldest one shared with the whole workspace, when there is one (0104).
+  // Slack answers only the people who can use the agent, and an agent shared
+  // with nobody would turn the install into a bot that refuses the channel.
+  const oldestAgent = (sharedOnly: boolean) => {
+    let query = admin
+      .from("agents")
+      .select("id")
+      .eq("workspace_id", state.workspaceId)
+      .is("deleted_at", null);
+    if (sharedOnly) query = query.not("workspace_access", "is", null);
+    return query.order("created_at", { ascending: true }).limit(1).maybeSingle();
+  };
+  const { data: shared } = await oldestAgent(true);
+  const agent = shared ?? (await oldestAgent(false)).data;
 
   const { error } = await admin.from("slack_installations").upsert(
     {

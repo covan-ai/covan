@@ -82,3 +82,47 @@ export function AgentAvatar({
     </span>
   );
 }
+
+/**
+ * A few people, overlapped, and a count for the rest.
+ *
+ * The team in the app bar and the people an agent is shared with are the same
+ * picture at two sizes, so they are one component: `className` sizes each tile
+ * (the `+N` tile takes the same box), and the ring is the background's colour
+ * so the overlap reads as a cut rather than a border.
+ */
+export function AvatarStack({
+  people,
+  max = 4,
+  className = "h-7 w-7 text-[10px]",
+}: {
+  people: { id: string; name: string | null; avatarUrl: string | null }[];
+  max?: number;
+  className?: string;
+}) {
+  if (people.length === 0) return null;
+  const shown = people.slice(0, max);
+  const extra = people.length - shown.length;
+  return (
+    <span className="flex -space-x-1.5">
+      {shown.map((p) => (
+        <UserAvatar
+          key={p.id}
+          name={p.name}
+          url={p.avatarUrl}
+          className={cn("ring-2 ring-background", className)}
+        />
+      ))}
+      {extra > 0 && (
+        <span
+          className={cn(
+            "grid shrink-0 place-items-center rounded-md bg-muted font-semibold text-muted-foreground ring-2 ring-background",
+            className,
+          )}
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
+}

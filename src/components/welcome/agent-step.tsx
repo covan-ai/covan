@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
+import { NewAgentSharingSelect } from "@/components/new-agent-sharing-select";
+import { newAgentSharing, type NewAgentSharing } from "@/lib/agent-access";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -37,6 +39,9 @@ export function AgentStep({
   const [emoji, setEmoji] = useState(template.emoji);
   const [persona, setPersona] = useState(template.persona);
   const [saving, setSaving] = useState(false);
+  // Only me, as everywhere an agent is made. The step after next invites the
+  // team, and whoever is setting up can widen this then, or pick it here.
+  const [sharing, setSharing] = useState<NewAgentSharing>("only");
 
   const model = defaultModel ?? template.model;
 
@@ -55,6 +60,7 @@ export function AgentStep({
         persona: persona.trim(),
         mode: "normal",
         webSearch: true,
+        sharing: newAgentSharing(sharing),
       });
       onCreated();
     } catch {
@@ -119,6 +125,8 @@ export function AgentStep({
           className="resize-none"
         />
       </div>
+
+      <NewAgentSharingSelect value={sharing} onChange={setSharing} />
 
       <div className="space-y-2.5">
         <Button type="submit" className="w-full" disabled={saving || !name.trim()}>

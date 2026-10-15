@@ -307,7 +307,7 @@ describe("RoutineDetail", () => {
 
     it("says a shared routine is visible to the workspace", () => {
       render(<RoutineDetail {...props} routine={{ ...routine, visibility: "shared" }} />);
-      expect(screen.getByText("Visible to everyone in the workspace")).toBeInTheDocument();
+      expect(screen.getByText("Visible to everyone who can use this agent")).toBeInTheDocument();
     });
 
     it("shares on toggle", async () => {

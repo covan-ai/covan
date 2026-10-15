@@ -52,7 +52,7 @@ const COPY: Record<OnboardingStep, { title: string; subtitle?: string }> = {
   },
   agent: {
     title: "Your first agent",
-    subtitle: "Shared with everyone. Every conversation stays private.",
+    subtitle: "You choose who else can use it. Every conversation stays private.",
   },
   knowledge: {
     title: "Give it something to read",
@@ -61,7 +61,7 @@ const COPY: Record<OnboardingStep, { title: string; subtitle?: string }> = {
   },
   invite: {
     title: "Bring the team",
-    subtitle: "Agents are shared, so they get everything you build.",
+    subtitle: "Share an agent with them and they get everything it knows.",
   },
   "invite-accept": { title: "You've been invited" },
 };

@@ -292,7 +292,7 @@ function IntegrationsPage() {
               <SurfaceCard
                 mark={<Code2 className="h-[22px] w-[22px]" />}
                 title="REST API"
-                meta="Call any shared agent programmatically, with a key you mint in Settings."
+                meta="Call any agent you can use programmatically, with a key you mint in Settings."
               />
               <SurfaceCard
                 mark={<SlackMark className="h-[22px] w-[22px]" />}

@@ -35,9 +35,21 @@ const AGENT_ROW = {
  * asked to write. `getActiveWorkspaceId` reads `profiles`; everything else is
  * the agents table.
  */
-function fakeDb() {
+function fakeDb(
+  opts: {
+    /** Rows an update matched; [] is RLS refusing it (0104). */
+    updated?: unknown[];
+    /** What `set_agent_sharing` answers. */
+    sharingError?: { code: string; message: string } | null;
+  } = {},
+) {
   const writes: Record<string, unknown>[] = [];
+  const rpcs: Array<{ name: string; args: Record<string, unknown> }> = [];
   const db = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      rpcs.push({ name, args });
+      return { data: null, error: opts.sharingError ?? null };
+    },
     from(table: string) {
       if (table === "profiles") {
         const chain = {
@@ -58,6 +70,9 @@ function fakeDb() {
           writes.push(patch);
           return chain;
         },
+        // An awaited chain is an update's `.select("id")`: the rows it matched.
+        then: (resolve: (v: unknown) => unknown) =>
+          resolve({ data: opts.updated ?? [{ id: AGENT_ROW.id }], error: null }),
         insert(row: Record<string, unknown>) {
           writes.push(row);
           return chain;
@@ -66,7 +81,7 @@ function fakeDb() {
       return chain;
     },
   };
-  return { db, writes };
+  return { db, writes, rpcs };
 }
 
 function appWith(db: unknown) {
@@ -253,5 +268,84 @@ describe("POST /agents", () => {
     });
 
     expect(writes[0]).toMatchObject({ temperature: 0.2, reasoning_effort: "low" });
+  });
+});
+
+describe("PATCH /agents/:id, for somebody who can only use the agent", () => {
+  // RLS answers an update it refuses by matching no rows. This route used to
+  // report that as a 200 with the unchanged agent — a save that said it worked.
+  it("says so instead of pretending the save worked", async () => {
+    const { db } = fakeDb({ updated: [] });
+
+    const res = await patch(appWith(db), { persona: "Something else" });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "you can use this agent but not change it" });
+  });
+});
+
+describe("PUT /agents/:id/sharing", () => {
+  const put = (app: Hono<AppEnv>, body: unknown) =>
+    app.request("/agents/agent-1/sharing", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const MEMBER = "33333333-3333-4333-8333-333333333333";
+
+  it("hands the whole list to set_agent_sharing, in the database's spelling", async () => {
+    const { db, rpcs } = fakeDb();
+
+    const res = await put(appWith(db), {
+      workspaceAccess: null,
+      shares: [{ userId: MEMBER, access: "edit" }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(rpcs).toEqual([
+      {
+        name: "set_agent_sharing",
+        args: {
+          p_agent_id: "agent-1",
+          p_workspace_access: null,
+          p_shares: [{ user_id: MEMBER, access: "edit" }],
+        },
+      },
+    ]);
+  });
+
+  it("refuses a level that is not one of the three", async () => {
+    const { db, rpcs } = fakeDb();
+
+    const res = await put(appWith(db), {
+      workspaceAccess: "admin",
+      shares: [],
+    });
+
+    expect(res.status).toBe(400);
+    expect(rpcs).toHaveLength(0);
+  });
+
+  it("turns not-full-access into a 403 a person can read", async () => {
+    const { db } = fakeDb({ sharingError: { code: "42501", message: "no" } });
+
+    const res = await put(appWith(db), { workspaceAccess: "use", shares: [] });
+
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toMatch(/full access/);
+  });
+
+  it("passes the database's own sentence through when the list is wrong", async () => {
+    const { db } = fakeDb({
+      sharingError: { code: "22023", message: "that person is not a member of this workspace" },
+    });
+
+    const res = await put(appWith(db), {
+      workspaceAccess: null,
+      shares: [{ userId: MEMBER, access: "use" }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "that person is not a member of this workspace" });
   });
 });

@@ -23,6 +23,7 @@ import { decryptSecret } from "../secret-box";
 import { isPublicChannel, lookupEmail, postMessage } from "./api";
 import { escapeMrkdwn, toMrkdwn } from "./mrkdwn";
 import { getRateLimiter, userRateKey } from "../ratelimit";
+import { agentAccessFor } from "../agent-access";
 
 /**
  * A question asked in Slack, answered by the agent, in the thread.
@@ -180,6 +181,24 @@ export async function handleSlackEvent(
     .maybeSingle();
   if (agentError || !agent) {
     await say("The agent this Slack app points at is gone. Pick another one in Covan.");
+    return;
+  }
+
+  // The asker has to be somebody the agent is shared with (0104). Everything
+  // here reads as the service role, past every policy, so this is the check
+  // the chat screen gets from RLS.
+  let access;
+  try {
+    access = await agentAccessFor(deps.db, agent.id, userId);
+  } catch (err) {
+    console.error("slack: agent access lookup failed", err);
+    await say("I couldn't check whether you can use this agent. Try again in a moment.");
+    return;
+  }
+  if (!access) {
+    await say(
+      `${escapeMrkdwn(agent.name)} isn't shared with you in Covan. Ask the person who made it to share it with you, then try again.`,
+    );
     return;
   }
 

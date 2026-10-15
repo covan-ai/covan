@@ -135,6 +135,15 @@ export function SlackCard({ state, agents }: { state: SlackState; agents: Agent[
           Disconnect
         </Button>
       </div>
+
+      {/* Slack answers as whoever asked, so an agent shared with a few people
+          answers a few people. Said here, where the agent is chosen, rather
+          than discovered in a channel. */}
+      {installation.agentId ? (
+        <p className="text-meta leading-[1.45] text-muted-foreground">
+          Anyone the agent isn't shared with gets a polite no in Slack instead of an answer.
+        </p>
+      ) : null}
     </SectionCard>
   );
 }

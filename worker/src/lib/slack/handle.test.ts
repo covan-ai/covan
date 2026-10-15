@@ -109,10 +109,18 @@ function db(
      * up and the operator's keys answer.
      */
     activeWorkspace?: string | null;
+    /** What `agent_access_for` says the asker may do (0104); null is nothing. */
+    access?: string | null;
   } = {},
 ) {
   const activeWorkspace = options.activeWorkspace ?? null;
   return fakeDb({
+    rpc: {
+      agent_access_for: () => ({
+        data: options.access === undefined ? "use" : options.access,
+        error: null,
+      }),
+    },
     tables: {
       slack_identities: {
         select: () => ({ data: options.identity ? { user_id: "user-1" } : null, error: null }),
@@ -458,6 +466,19 @@ describe("answering in a thread", () => {
     // And the mapping stays: see the comment in `resolveIdentity` for why
     // forgetting them is the worse of the two answers.
     expect(fake.callsTo("slack_identities").some((c) => c.op === "delete")).toBe(false);
+  });
+
+  // 0104: a member is not enough. The agent has to be shared with them, and
+  // the handler holds the service role, so nothing but this check says so.
+  it("refuses a member the agent is not shared with, and opens no conversation", async () => {
+    const fake = db({ identity: true, access: null });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(create).not.toHaveBeenCalled();
+    expect(posted().text).toMatch(/isn't shared with you/i);
+    expect(fake.callsTo("chat_sessions").some((c) => c.op === "insert")).toBe(false);
+    expect(fake.callsTo("messages").some((c) => c.op === "insert")).toBe(false);
   });
 
   it("spends nothing once the workspace's credits are gone", async () => {

@@ -179,6 +179,10 @@ const OPEN_TO_A_KEY = new Set([
   "routes/agents.ts POST /agents",
   "routes/agents.ts PATCH /agents/:id",
   "routes/agents.ts DELETE /agents/:id",
+  // Changing who can use an agent is a write the owner's own policies answer
+  // (only full access gets past `set_agent_sharing`), and nothing it does runs
+  // on after the key is gone: a share is a row, not a job.
+  "routes/agents.ts PUT /agents/:id/sharing",
   "routes/api-keys.ts GET /api-keys",
   "routes/avatars.ts PUT /me/avatar",
   "routes/avatars.ts DELETE /me/avatar",

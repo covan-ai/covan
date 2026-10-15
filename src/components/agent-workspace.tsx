@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { useAgentsStore } from "@/lib/agents-store";
+import { canManageAgent } from "@/lib/agent-access";
 import { AgentAvatar } from "@/components/avatars";
 import { SessionRow } from "@/components/session-row";
 import { cn } from "@/lib/utils";
@@ -42,7 +43,6 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
     startBrainstorm,
     deleteSession,
     renameSession,
-    canWrite,
   } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -56,9 +56,12 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
   if (!agent) {
     return (
       <div className="mx-auto max-w-md px-4 py-24">
+        {/* One sentence for both, because the server gives one answer for
+            both: an agent you cannot see and one that does not exist look the
+            same from here, and saying which would say it exists. */}
         <EmptyState
           title="Agent not found"
-          description="It may have been deleted by another admin, or the link is stale."
+          description="This agent was deleted or isn't shared with you."
           action={
             <Button asChild variant="outline">
               <Link to="/app">Back to home</Link>
@@ -68,6 +71,10 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
       </div>
     );
   }
+
+  // Sharing and deleting are Full access, per agent. A viewer never has it —
+  // the server caps them at Can use — so this covers the role as well.
+  const canManage = canManageAgent(agent);
 
   const agentSessions = sessions
     .filter((s) => s.agentId === agentId)
@@ -252,10 +259,11 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
         {/* Spacer keeps the footer pinned to the bottom when the history is hidden */}
         {collapsed && <div className="hidden flex-1 lg:block" />}
 
-        {/* Delete agent. Absent for a viewer: deleting an agent takes every
-            session, message and routine hanging off it, across the whole team,
-            and can_write_in_workspace refuses it — so it is not offered. */}
-        {canWrite && (
+        {/* Delete agent. Absent without Full access: deleting an agent takes
+            every session, message and routine hanging off it, for everyone it
+            is shared with, and the server refuses anybody short of manage — so
+            it is not offered. */}
+        {canManage && (
           <div className="border-t border-sidebar-border p-3">
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -274,7 +282,7 @@ export function AgentWorkspace({ agentId, children }: { agentId: string; childre
                 <AlertDialogHeader>
                   <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This takes the shared agent away from the whole team, along with every chat and
+                    This takes it away from everyone it's shared with, along with every chat and
                     routine attached to it — including private ones. It waits 30 days in Settings →
                     Recently deleted, and comes back whole if you restore it.
                   </AlertDialogDescription>

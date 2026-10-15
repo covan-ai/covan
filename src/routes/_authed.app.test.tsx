@@ -70,6 +70,23 @@ beforeEach(() => {
   queries.routines = [];
 });
 
+/** An agent as the gallery reads one, made by the person signed in and shared with nobody. */
+function agentNamed(name: string, sharing: Record<string, unknown> = {}) {
+  return {
+    id: `agent-${name}`,
+    name,
+    emoji: "🤖",
+    model: "gpt-4o",
+    persona: "",
+    documents: [] as unknown[],
+    createdBy: "u1",
+    workspaceAccess: null,
+    shares: [],
+    myAccess: "manage",
+    ...sharing,
+  };
+}
+
 // The composer owns the fold. With no agents in the workspace it was a closed
 // door: a disabled textarea, a disabled send button, and the inert words "No
 // agents yet" where the agent picker goes. The only real Create agent button
@@ -98,7 +115,7 @@ describe("the home composer, with no agents in the workspace", () => {
 
     const row = composerRow();
     expect(row.queryByRole("button", { name: /create agent/i })).not.toBeInTheDocument();
-    expect(row.getByText(/ask an admin or a member to create one/i)).toBeInTheDocument();
+    expect(row.getByText(/ask an admin or a member to share one with you/i)).toBeInTheDocument();
   });
 });
 
@@ -108,7 +125,10 @@ describe("the home composer, with no agents in the workspace", () => {
 describe("the first-week checklist", () => {
   const withAgent = (documents = 0) => {
     store.agents = [
-      { id: "agent-1", name: "GTM", documents: Array.from({ length: documents }, () => ({})) },
+      {
+        ...agentNamed("GTM"),
+        documents: Array.from({ length: documents }, () => ({})),
+      },
     ];
   };
 
@@ -160,5 +180,52 @@ describe("the first-week checklist", () => {
     // silence the next.
     expect(localStorage.getItem("covan:first-week-dismissed:w1")).toBe("1");
     expect(localStorage.getItem("covan:first-week-dismissed:w2")).toBeNull();
+  });
+});
+
+// The foot of each card used to say "Shared with 4" for every agent, which
+// stopped being true when an agent's owner started choosing (0104).
+describe("who an agent card says it is shared with", () => {
+  beforeEach(() => {
+    queries.me = {
+      user: { id: "u1", name: "Ada" },
+      workspace: { id: "w1", name: "Acme" },
+      members: [
+        { id: "u1", name: "Ada" },
+        { id: "u2", name: "Grace Hopper", avatarUrl: null },
+        { id: "u3", name: "Alan Turing", avatarUrl: null },
+      ],
+    };
+  });
+
+  it("says Only you for an agent nobody else can reach", async () => {
+    store.agents = [agentNamed("Solo")];
+    await renderHome(true);
+
+    expect(screen.getByText("Only you")).toBeInTheDocument();
+  });
+
+  it("says Everyone for an agent shared with the workspace", async () => {
+    store.agents = [agentNamed("Team", { workspaceAccess: "edit" })];
+    await renderHome(true);
+
+    expect(screen.getByText("Everyone")).toBeInTheDocument();
+  });
+
+  it("counts, and shows, the people it is shared with by name", async () => {
+    store.agents = [
+      agentNamed("Pair", {
+        shares: [
+          { userId: "u2", access: "use" },
+          { userId: "u3", access: "edit" },
+        ],
+      }),
+    ];
+    await renderHome(true);
+
+    expect(screen.getByText("2 people")).toBeInTheDocument();
+    // Monograms, because neither has a photo: the faces are the point.
+    expect(screen.getByText("GH")).toBeInTheDocument();
+    expect(screen.getByText("AT")).toBeInTheDocument();
   });
 });

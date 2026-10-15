@@ -58,6 +58,7 @@ function serviceDb(rows: Record<string, unknown> = {}) {
       const answer = {
         eq: () => answer,
         is: () => answer,
+        not: () => answer,
         order: () => answer,
         limit: () => answer,
         select: () => answer,

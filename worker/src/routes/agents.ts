@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { mapAgent } from "../lib/dto";
+import { AGENT_ACCESS, mapAgent } from "../lib/dto";
 import { callerWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
 import { REASONING_EFFORTS, MODEL_IDS } from "../lib/models";
@@ -26,8 +26,12 @@ const agents = new Hono<AppEnv>();
 // One string literal, not a concatenation. postgrest-js infers the row type
 // from the literal, and `"a," + "b"` widens the argument to `string`, which
 // turns every field on the result into `GenericStringError`.
+//
+// `my_access` is a computed field (0104's `my_access(agents)`): the caller's own
+// level, answered by the function the policies ask, so the screen and the
+// database cannot disagree about what this person may do.
 const AGENT_SELECT =
-  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count))))";
+  "*, my_access, agent_shares(user_id, access), agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count))))";
 
 /**
  * The two tuning settings, on both schemas.
@@ -61,6 +65,16 @@ const tuningFields = {
  * even when the key behind it is gone, and `resolveModel` falls it through at
  * read time rather than refusing to answer.
  */
+/**
+ * Who reaches an agent (0104), always sent whole: `shares` is the complete
+ * list, and anybody missing from it loses their share. `workspaceAccess` null
+ * means the agent is not shared with the workspace as a whole.
+ */
+const sharingSchema = z.object({
+  workspaceAccess: z.enum(AGENT_ACCESS).nullable(),
+  shares: z.array(z.object({ userId: z.string().uuid(), access: z.enum(AGENT_ACCESS) })).max(500),
+});
+
 const createAgentSchema = z.object({
   name: z.string().min(1),
   emoji: z.string().optional(),
@@ -68,6 +82,8 @@ const createAgentSchema = z.object({
   persona: z.string().optional(),
   mode: z.enum(["normal", "brainstorm"]).optional(),
   ...tuningFields,
+  // Absent is Only me, which is what a new agent is unless somebody says so.
+  sharing: sharingSchema.optional(),
 });
 
 const updateAgentSchema = z
@@ -147,7 +163,7 @@ agents.post("/agents", async (c) => {
     return c.json({ error: "no workspace found for user" }, 400);
   }
 
-  const { name, emoji, model, persona, mode, temperature, reasoningEffort, webSearch } =
+  const { name, emoji, model, persona, mode, temperature, reasoningEffort, webSearch, sharing } =
     parsed.data;
 
   const { data, error } = await db
@@ -182,15 +198,38 @@ agents.post("/agents", async (c) => {
       // of them — and the Settings toggle is unchanged. See covan-ai/covan#228.
       web_search: webSearch ?? false,
       created_by: user.id,
+      // Insertable, never updatable: after this, only `set_agent_sharing`.
+      workspace_access: sharing?.workspaceAccess ?? null,
     })
-    .select("*")
+    .select("id")
     .single();
 
   if (error || !data) {
     return c.json({ error: "failed to create agent" }, 500);
   }
 
-  return c.json(mapAgent({ ...data, agent_bundles: [] }), 201);
+  // The people come second because they are rows of their own, and the agent
+  // has to exist before anything can point at it. A list that fails to save
+  // leaves the agent shared with nobody named rather than with half of them,
+  // and says so.
+  if (sharing && sharing.shares.length > 0) {
+    const failure = await saveSharing(db, data.id, sharing);
+    if (failure) {
+      return c.json({ error: `the agent was created, but ${failure.message}` }, failure.status);
+    }
+  }
+
+  const { data: created, error: readError } = await db
+    .from("agents")
+    .select(AGENT_SELECT)
+    .eq("id", data.id)
+    .single();
+
+  if (readError || !created) {
+    return c.json({ error: "failed to load agent" }, 500);
+  }
+
+  return c.json(mapAgent(created), 201);
 });
 
 // PATCH /agents/:id
@@ -203,10 +242,14 @@ agents.patch("/agents/:id", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { error: updateError } = await db
+  // `.select("id")` so a refusal is visible. RLS answers an update it does not
+  // allow by matching no rows, and without the rows this route reported that
+  // as success — to somebody who can use the agent but not change it.
+  const { data: updated, error: updateError } = await db
     .from("agents")
     .update(agentColumns(parsed.data))
-    .eq("id", id);
+    .eq("id", id)
+    .select("id");
 
   if (updateError) {
     return c.json({ error: "failed to update agent" }, 500);
@@ -220,9 +263,74 @@ agents.patch("/agents/:id", async (c) => {
   if (!data) {
     return c.json({ error: "not found" }, 404);
   }
+  if ((updated ?? []).length === 0) {
+    return c.json({ error: "you can use this agent but not change it" }, 403);
+  }
 
   return c.json(mapAgent(data));
 });
+
+// PUT /agents/:id/sharing
+//
+// The whole sharing state at once — see `sharingSchema`. Only somebody with
+// full access gets past `set_agent_sharing`; everybody else is told so.
+agents.put("/agents/:id/sharing", async (c) => {
+  const db = c.get("db");
+  const id = c.req.param("id");
+
+  const parsed = sharingSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.flatten() }, 400);
+  }
+
+  const failure = await saveSharing(db, id, parsed.data);
+  if (failure) return c.json({ error: failure.message }, failure.status);
+
+  const { data, error } = await db.from("agents").select(AGENT_SELECT).eq("id", id).maybeSingle();
+  if (error) {
+    return c.json({ error: "failed to load agent" }, 500);
+  }
+  if (!data) {
+    return c.json({ error: "not found" }, 404);
+  }
+
+  return c.json(mapAgent(data));
+});
+
+/**
+ * `set_agent_sharing`, and its refusals as HTTP. The SQLSTATE is the contract,
+ * as it is for the deletion functions (`lib/deletion.ts`):
+ *
+ *   42501  not full access              -> 403
+ *   P0002  no such agent, or not yours  -> 404
+ *   22023  the list itself is wrong     -> 400, with the database's sentence,
+ *          which was written for a person ("that person is not a member of
+ *          this workspace")
+ */
+async function saveSharing(
+  db: AppEnv["Variables"]["db"],
+  agentId: string,
+  sharing: z.infer<typeof sharingSchema>,
+): Promise<{ status: 400 | 403 | 404 | 500; message: string } | null> {
+  const { error } = await db.rpc("set_agent_sharing", {
+    p_agent_id: agentId,
+    p_workspace_access: sharing.workspaceAccess,
+    p_shares: sharing.shares.map((s) => ({ user_id: s.userId, access: s.access })),
+  });
+  if (!error) return null;
+
+  if (error.code === "42501") {
+    return {
+      status: 403,
+      message: "only people with full access can change who can use this agent",
+    };
+  }
+  if (error.code === "P0002") return { status: 404, message: "not found" };
+  if (error.code === "22023") return { status: 400, message: error.message };
+
+  console.error("set_agent_sharing failed", error);
+  return { status: 500, message: "failed to save who can use this agent" };
+}
 
 // DELETE /agents/:id
 //
@@ -242,7 +350,15 @@ agents.delete("/agents/:id", async (c) => {
     { p_agent_id: c.req.param("id") },
     "failed to delete agent",
   );
-  if (failure) return c.json({ error: failure.message }, failure.status);
+  if (failure) {
+    // Deleting an agent is a full-access decision now (0104), not a
+    // workspace-writer one, so the generic sentence would be wrong.
+    const message =
+      failure.status === 403
+        ? "only people with full access can delete this agent"
+        : failure.message;
+    return c.json({ error: message }, failure.status);
+  }
 
   return c.json({ ok: true });
 });

@@ -26,6 +26,7 @@ import {
 } from "./address-confirmation";
 import type { RoutineBrowser } from "../harness/registry";
 import { openRoutineConversation } from "./held";
+import { agentAccessFor } from "../agent-access";
 
 export const MAX_FAILURES = 5;
 
@@ -472,6 +473,25 @@ export async function runRoutine(
         tokens: 0,
         error: reason,
         pause: reason,
+      });
+      return { status: "skipped", itemsNew: 0 };
+    }
+
+    // The agent has to be one its owner can still use (0104). Same reason as
+    // membership above — the service role reads past the policy that hides
+    // the routine from its owner once the agent stops being shared with them.
+    //
+    // Skipped WITHOUT a pause, and that is the difference from membership.
+    // Losing an agent is undone by somebody sharing it again, and the routine
+    // should simply be running again when that happens, not waiting for its
+    // owner to find a switch on a screen that, until then, hid it from them.
+    const access = await agentAccessFor(deps.db, routine.agent_id, routine.user_id);
+    if (!access) {
+      await finish(routine, deps, startedAt, {
+        status: "skipped",
+        itemsNew: 0,
+        tokens: 0,
+        error: "the routine's agent is no longer shared with its owner",
       });
       return { status: "skipped", itemsNew: 0 };
     }

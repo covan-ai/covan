@@ -32,6 +32,7 @@ import {
 
 import { api } from "@/lib/api-client";
 import { bundleDocumentsKey, useAgentsStore, type Agent } from "@/lib/agents-store";
+import { canEditAgent } from "@/lib/agent-access";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
 import { Button } from "@/components/ui/button";
@@ -975,12 +976,13 @@ function BundleRailRow({
         </span>
       </button>
 
-      {/* Attaching changes what the agent knows for everyone who uses it, so a
-          viewer sees the state and cannot change it. */}
+      {/* Attaching changes what the agent knows for everyone who uses it, so
+          it takes Can edit on the agent (0104) — somebody who can only use it,
+          or a viewer, sees the state and cannot change it. */}
       {agent ? (
         <Switch
           checked={agent.bundleIds.includes(bundle.id)}
-          disabled={!canWrite}
+          disabled={!canWrite || !canEditAgent(agent)}
           onCheckedChange={(on) =>
             on ? store.attachBundle(agent.id, bundle.id) : store.detachBundle(agent.id, bundle.id)
           }

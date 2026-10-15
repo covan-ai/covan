@@ -37,7 +37,7 @@ const AGENT_ROW = {
  */
 function fakeDb(
   opts: {
-    /** Rows an update matched; [] is RLS refusing it (0103). */
+    /** Rows an update matched; [] is RLS refusing it (0104). */
     updated?: unknown[];
     /** What `set_agent_sharing` answers. */
     sharingError?: { code: string; message: string } | null;

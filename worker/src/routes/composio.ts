@@ -704,7 +704,7 @@ composio.put("/composio/grants", async (c) => {
         error:
           body.mode === "always"
             ? "only an admin of this workspace can let an agent do this without asking"
-            : // The other policy refusal (0103): what an agent may do is part of
+            : // The other policy refusal (0104): what an agent may do is part of
               // the agent, and changing it needs edit access to that agent.
               error?.code === "42501"
               ? "you need edit access to this agent to change what it may do"

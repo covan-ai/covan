@@ -34,19 +34,19 @@ async function insert(
   return data.id as string;
 }
 
-/** What `agents.workspace_access` may hold (0103); null is "Only me". */
+/** What `agents.workspace_access` may hold (0104); null is "Only me". */
 export type AgentAccess = "use" | "edit" | "manage";
 
 export type SeedOptions = {
   /**
    * `agents.workspace_access` for the seeded agent. Defaults to 'edit', which
-   * is NOT the app's default: a new agent starts as Only me (null) since 0103.
+   * is NOT the app's default: a new agent starts as Only me (null) since 0104.
    *
-   * The default is the world every file here was written in. Before 0103 every
+   * The default is the world every file here was written in. Before 0104 every
    * member saw every agent and every writer could change it, so the dozens of
    * tests that hand a co-member `seeded.agentId` — to chat with, to attach
    * knowledge to, to grant a capability on — mean "a workspace agent", and
-   * 'edit' is exactly what 0103 backfilled existing agents to. What 'edit'
+   * 'edit' is exactly what 0104 backfilled existing agents to. What 'edit'
    * does not give a plain member is deleting or restoring an agent somebody
    * else made; viewer.test.ts says so out loud. Pass null to seed an agent
    * the way the app now makes one; agent-sharing.test.ts is where that

@@ -101,7 +101,7 @@ function makeDb(
     /** Rows a `connection` routine's document read resolves to. */
     documents?: any[];
     /**
-     * What `agent_access_for` answers for the routine's owner (0103). Defaults
+     * What `agent_access_for` answers for the routine's owner (0104). Defaults
      * to "use": every test above the sharing one means an owner who can still
      * reach their agent.
      */

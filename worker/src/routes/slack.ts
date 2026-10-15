@@ -315,7 +315,7 @@ slack.post("/slack/complete", async (c) => {
   // installed and refuses every question until somebody visits a settings page
   // they have not been told about.
   //
-  // The oldest one shared with the whole workspace, when there is one (0103).
+  // The oldest one shared with the whole workspace, when there is one (0104).
   // Slack answers only the people who can use the agent, and an agent shared
   // with nobody would turn the install into a bot that refuses the channel.
   const oldestAgent = (sharedOnly: boolean) => {

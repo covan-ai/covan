@@ -27,7 +27,7 @@ const agents = new Hono<AppEnv>();
 // from the literal, and `"a," + "b"` widens the argument to `string`, which
 // turns every field on the result into `GenericStringError`.
 //
-// `my_access` is a computed field (0103's `my_access(agents)`): the caller's own
+// `my_access` is a computed field (0104's `my_access(agents)`): the caller's own
 // level, answered by the function the policies ask, so the screen and the
 // database cannot disagree about what this person may do.
 const AGENT_SELECT =
@@ -66,7 +66,7 @@ const tuningFields = {
  * read time rather than refusing to answer.
  */
 /**
- * Who reaches an agent (0103), always sent whole: `shares` is the complete
+ * Who reaches an agent (0104), always sent whole: `shares` is the complete
  * list, and anybody missing from it loses their share. `workspaceAccess` null
  * means the agent is not shared with the workspace as a whole.
  */
@@ -350,7 +350,7 @@ agents.delete("/agents/:id", async (c) => {
     "failed to delete agent",
   );
   if (failure) {
-    // Deleting an agent is a full-access decision now (0103), not a
+    // Deleting an agent is a full-access decision now (0104), not a
     // workspace-writer one, so the generic sentence would be wrong.
     const message =
       failure.status === 403 ? "only people with full access can delete this agent" : failure.message;

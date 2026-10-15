@@ -91,7 +91,7 @@ export type AgentDTO = {
   bundleIds: string[];
   createdAt: number;
   /**
-   * Who reaches this agent, and how far (0103). `workspaceAccess` is what
+   * Who reaches this agent, and how far (0104). `workspaceAccess` is what
    * every member gets, null when it is not shared with the workspace; `shares`
    * are the people named on top of that. `myAccess` is the caller's own
    * level, read from the same function the policies ask, so the screen never

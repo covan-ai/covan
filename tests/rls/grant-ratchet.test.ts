@@ -36,7 +36,7 @@ import { closeSql, sql } from "./harness";
  */
 const AUTHENTICATED_WRITES: Record<string, string> = {
   "agent_bundles INSERT": "agent_id,bundle_id",
-  // 0103: `workspace_access` is chosen when the agent is made and is INSERT
+  // 0104: `workspace_access` is chosen when the agent is made and is INSERT
   // only. Changing it afterwards is `set_agent_sharing`'s, which checks for
   // `manage`; an UPDATE grant here would let anybody with `edit` reshare it.
   "agents INSERT":

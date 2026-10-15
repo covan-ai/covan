@@ -184,7 +184,7 @@ export async function handleSlackEvent(
     return;
   }
 
-  // The asker has to be somebody the agent is shared with (0103). Everything
+  // The asker has to be somebody the agent is shared with (0104). Everything
   // here reads as the service role, past every policy, so this is the check
   // the chat screen gets from RLS.
   let access;

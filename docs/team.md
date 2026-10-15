@@ -165,7 +165,7 @@ described under [Usage figures](#usage-figures-are-yours-alone) below.
 `document_chunks` — asks `can_write_in_workspace()`, which is a membership check
 plus `role <> 'viewer'`. So a member can upload to any bundle and delete any
 bundle or document in the workspace, with no approval anywhere in the path.
-Agents are the exception since `0103`: each one says who can use it and how far,
+Agents are the exception since `0104`: each one says who can use it and how far,
 and [Who can use an agent](#who-can-use-an-agent) below is that answer.
 
 It is worth knowing how large those deletions are: deleting a bundle takes its
@@ -212,7 +212,7 @@ and three levels:
 | **Can edit** | change its persona, model and tuning, which bundles it reads, and what it may do on a connection without asking |
 | **Full access** | share it with others, delete it, and restore it from the trash |
 
-A new agent starts as **Only me**. Agents made before `0103` became **Whole
+A new agent starts as **Only me**. Agents made before `0104` became **Whole
 workspace · Can edit**, which is what everybody could already do with them, minus
 one thing: deleting an agent somebody else made now needs full access.
 

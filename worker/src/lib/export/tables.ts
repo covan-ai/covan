@@ -89,7 +89,7 @@ export const EXPORTED: TableSpec[] = [
     order: "id",
   },
   { table: "agents", scope: { kind: "workspace", column: "workspace_id" }, order: "created_at" },
-  // Who each agent is shared with (0103). After the agents and the memberships
+  // Who each agent is shared with (0104). After the agents and the memberships
   // its two foreign keys point at; without it a restored agent shared with
   // three people by name would come back reachable by its owner alone.
   {

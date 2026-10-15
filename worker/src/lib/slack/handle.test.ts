@@ -109,7 +109,7 @@ function db(
      * up and the operator's keys answer.
      */
     activeWorkspace?: string | null;
-    /** What `agent_access_for` says the asker may do (0103); null is nothing. */
+    /** What `agent_access_for` says the asker may do (0104); null is nothing. */
     access?: string | null;
   } = {},
 ) {
@@ -468,7 +468,7 @@ describe("answering in a thread", () => {
     expect(fake.callsTo("slack_identities").some((c) => c.op === "delete")).toBe(false);
   });
 
-  // 0103: a member is not enough. The agent has to be shared with them, and
+  // 0104: a member is not enough. The agent has to be shared with them, and
   // the handler holds the service role, so nothing but this check says so.
   it("refuses a member the agent is not shared with, and opens no conversation", async () => {
     const fake = db({ identity: true, access: null });

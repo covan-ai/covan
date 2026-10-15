@@ -158,7 +158,7 @@ describe("a member still builds", () => {
   });
 
   /**
-   * Changed on purpose by 0103. Until then "member" meant "may delete any agent
+   * Changed on purpose by 0104. Until then "member" meant "may delete any agent
    * in the workspace", which is what this file used to prove for the member's
    * own agent and what the policy allowed for everybody's. Deleting an agent
    * takes its conversations and routines with it, so it is now a `manage`

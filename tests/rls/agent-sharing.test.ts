@@ -1,7 +1,7 @@
 /**
- * An agent shared on purpose (0103).
+ * An agent shared on purpose (0104).
  *
- * Until 0103 every member of a workspace saw every agent in it, and every
+ * Until 0104 every member of a workspace saw every agent in it, and every
  * writer could change or delete any of them. Now whoever makes an agent
  * decides who else reaches it — nobody (Only me), named people, or the whole
  * workspace — and at what level: `use`, `edit` or `manage`. The maker and every
@@ -430,7 +430,7 @@ describe("deleting and restoring", () => {
   });
 
   it("does not let a plain member delete a workspace agent they may edit", async () => {
-    // The one thing 0103 takes from a plain member on an agent that was
+    // The one thing 0104 takes from a plain member on an agent that was
     // workspace-wide before it: editing stays, deleting goes.
     const { error } = await plain.db.rpc("soft_delete_agent", { p_agent_id: wsEdit });
     expect(error?.code).toBe("42501");

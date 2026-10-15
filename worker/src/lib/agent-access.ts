@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AGENT_ACCESS, type AgentAccess } from "./dto";
 
 /**
- * What a person may do with an agent, asked on their behalf (0103).
+ * What a person may do with an agent, asked on their behalf (0104).
  *
  * For the paths that hold the service role and act for somebody — a routine
  * running for its owner, a Slack question asked by a member — and are

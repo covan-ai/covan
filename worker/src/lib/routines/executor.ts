@@ -477,7 +477,7 @@ export async function runRoutine(
       return { status: "skipped", itemsNew: 0 };
     }
 
-    // The agent has to be one its owner can still use (0103). Same reason as
+    // The agent has to be one its owner can still use (0104). Same reason as
     // membership above — the service role reads past the policy that hides
     // the routine from its owner once the agent stops being shared with them.
     //

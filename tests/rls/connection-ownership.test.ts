@@ -67,7 +67,14 @@ beforeAll(async () => {
 
   const { data: bundle, error } = await admin.db
     .from("knowledge_bundles")
-    .insert({ workspace_id: admin.workspaceId, name: "Handbook", created_by: admin.id })
+    // Shared (0106): the connection feeds the team's bundle, which every
+    // writer here has to be able to see.
+    .insert({
+      workspace_id: admin.workspaceId,
+      name: "Handbook",
+      created_by: admin.id,
+      scope: "workspace",
+    })
     .select("id")
     .single();
   if (error || !bundle) throw new Error(`seeding bundle failed: ${error?.message}`);

@@ -113,7 +113,13 @@ describe("documents.created_by is not editable", () => {
     const { data: doc } = await upload(owner, "the-owners-to-move.txt");
     const { data: bundle, error: bundleErr } = await owner.db
       .from("knowledge_bundles")
-      .insert({ workspace_id: owner.workspaceId, name: "Somewhere else", created_by: owner.id })
+      // Shared (0106): moving into a private bundle is its maker's alone.
+      .insert({
+        workspace_id: owner.workspaceId,
+        name: "Somewhere else",
+        created_by: owner.id,
+        scope: "workspace",
+      })
       .select("id")
       .single();
     if (bundleErr || !bundle)

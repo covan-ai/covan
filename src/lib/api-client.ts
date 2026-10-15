@@ -238,6 +238,40 @@ async function fetchDocumentBytes(id: string): Promise<{ blob: Blob; contentType
   return { blob: await res.blob(), contentType: res.headers.get("Content-Type") ?? "" };
 }
 
+/**
+ * A Markdown document as Word or PDF, saved to the person's downloads.
+ *
+ * Answers `"print"` instead of throwing when the server has no browser to
+ * print a PDF with (501, `fallback: "print"`): the caller then prints the
+ * document in this browser, which is the same PDF by another road.
+ */
+async function exportDocument(id: string, format: "docx" | "pdf"): Promise<"saved" | "print"> {
+  const token = await getAccessToken();
+  const res = await fetch(`${import.meta.env.VITE_API_URL}/documents/${id}/export/${format}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 501 && format === "pdf") return "print";
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      message = errorMessage(res.status, await res.json(), res.statusText);
+    } catch {
+      // not JSON; the status text stands
+    }
+    throw new ApiError(res.status, message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filenameFrom(res.headers.get("Content-Disposition")) ?? `document.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return "saved";
+}
+
 // Defined in asset-src.ts, which imports nothing, so the avatar helper that
 // builds on it can be tested without this module's Supabase client.
 export { assetSrc };
@@ -444,23 +478,28 @@ export const api = {
       a.remove();
       URL.revokeObjectURL(url);
     },
+    export: exportDocument,
   },
   reports: {
     /**
-     * Write this conversation up as a document in `bundleId`.
+     * Start writing this conversation up as a document.
      *
-     * Comes back the same shape an upload does, and unindexed: a report is born
-     * with no chunks, so it reads as "Not indexed" in the Knowledge tab until
-     * somebody decides it is worth embedding and presses reindex there.
-     *
-     * One request, and a slow one — the model is writing a whole document, not
-     * a reply. Callers need a pending state that survives tens of seconds.
+     * Answers at once with the job, not the document: the engine writes it
+     * section by section in the background and the conversation follows it
+     * through `sessions.documentJobs`. Unset `bundleId` means the agent's
+     * reports bundle, which the server finds or makes.
      */
     create: (
       sessionId: string,
-      body: { instruction: string; bundleId: string },
-    ): Promise<Agent["documents"][number]> =>
-      request("POST", `/sessions/${sessionId}/report`, body),
+      body: { instruction: string; bundleId?: string },
+    ): Promise<DocumentJob> => request("POST", `/sessions/${sessionId}/report`, body),
+  },
+  documentJobs: {
+    get: (id: string): Promise<DocumentJob> => request("GET", `/document-jobs/${id}`),
+    /** Keep what is written, write no more. */
+    stop: (id: string): Promise<void> => request("POST", `/document-jobs/${id}/stop`),
+    /** Pick a failed or stopped document up where it ended. */
+    retry: (id: string): Promise<void> => request("POST", `/document-jobs/${id}/retry`),
   },
   bundles: {
     list: (): Promise<Bundle[]> => request("GET", "/bundles"),
@@ -579,6 +618,13 @@ export const api = {
      */
     browserTasks: (id: string): Promise<ConversationBrowser> =>
       request("GET", `/sessions/${id}/browser-tasks`),
+    /**
+     * The documents this person asked for in one conversation, newest first,
+     * each with its sections so far. Polled while one is being written; on a
+     * deployment with no document host each poll is also what moves it on.
+     */
+    documentJobs: (id: string): Promise<DocumentJob[]> =>
+      request("GET", `/sessions/${id}/document-jobs`),
   },
   messages: {
     create: (input: { sessionId: string; role: "user"; content: string }): Promise<Message> =>
@@ -1427,6 +1473,34 @@ export type ApiKey = {
  * Two different sentences, and the section renders nothing for the first.
  */
 export type ApiKeyList = { available: boolean; keys: ApiKey[] };
+
+/** One section of a document being written. */
+export type DocumentSection = { index: number; heading: string; body: string; done: boolean };
+
+/**
+ * A document the engine is writing or has written. Mirrors the worker's
+ * `DocumentJobDto` (`worker/src/lib/docs/dto.ts`).
+ */
+export type DocumentJob = {
+  id: string;
+  agentId: string;
+  sessionId: string | null;
+  bundleId: string;
+  origin: "tool" | "button";
+  instruction: string;
+  title: string;
+  status: "queued" | "writing" | "filing" | "ready" | "failed" | "stopped";
+  /** Sections done, of how many. Zero of zero until the outline is in. */
+  written: number;
+  total: number;
+  /** The filed document, once `ready`. */
+  documentId: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  sections: DocumentSection[];
+};
 
 /** One browser task, as the browser panel reads it. Mirrors the worker's `BrowserTaskDTO`. */
 export type BrowserTask = {

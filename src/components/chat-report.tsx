@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { FileText, ScrollText, X } from "lucide-react";
-import { Chip } from "@/components/section-card";
+import { ScrollText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -20,9 +19,10 @@ import type { ReportWriter } from "@/lib/use-report";
  * model to guess which part of it the report is; one sentence of intent is the
  * difference between a summary and a document somebody asked for.
  *
- * Split from `ChatReportReceipt` because the two sit in different parts of the
- * composer — the button on the bottom row beside send, the receipt above the
- * text being typed.
+ * What it becomes is a document card in the conversation and the document
+ * beside it, filling in section by section (`chat/document-card.tsx`,
+ * `chat/document-panel.tsx`) — the same two things a document the agent
+ * started itself becomes.
  */
 export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWrite: boolean }) {
   const { dialogOpen, setDialogOpen } = reports;
@@ -68,8 +68,8 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
                 long it takes are both easier to accept as a description than as
                 a surprise. */}
             <p className="text-xs text-muted-foreground">
-              Lands as a document in this agent&rsquo;s reports bundle, searchable in chat from then
-              on. Takes up to a minute.
+              Written section by section beside the conversation, then filed in this agent&rsquo;s
+              reports bundle. You can close the tab while it is written.
             </p>
           </div>
           <div className="flex justify-end gap-2">
@@ -77,55 +77,11 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
               Cancel
             </Button>
             <Button onClick={submit} disabled={reports.pending || instruction.trim().length === 0}>
-              {reports.pending ? "Writing…" : "Write report"}
+              {reports.pending ? "Starting…" : "Write report"}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-/**
- * What the last report became, kept above the composer.
- *
- * Two things here outlive a toast: the name it was filed under, which is how
- * anyone finds it again, and whether it is retrievable — a report with no
- * embeddings is a document the agent can be handed but cannot search, and
- * assuming otherwise is the quiet way to misread the next answer.
- */
-export function ChatReportReceipt({ reports }: { reports: ReportWriter }) {
-  const { receipt } = reports;
-  if (!receipt) return null;
-
-  return (
-    <div className="flex flex-wrap gap-2 px-3 pb-1 pt-2.5">
-      <div className="flex max-w-full items-center gap-2 rounded-sm border border-border bg-surface px-2.5 py-1.5 text-xs">
-        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <button
-          type="button"
-          onClick={reports.download}
-          className="truncate font-medium hover:underline"
-          aria-label={`Download ${receipt.name}`}
-        >
-          {receipt.name}
-        </button>
-        {receipt.indexed ? (
-          <Chip tone="on">Indexed</Chip>
-        ) : (
-          <span title="No embeddings, so the agent cannot search inside it yet. Reindex it on the Knowledge tab.">
-            <Chip tone="neutral">Not indexed</Chip>
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={reports.dismiss}
-          className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
-          aria-label={`Dismiss ${receipt.name}`}
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
   );
 }

@@ -38,6 +38,7 @@ import { Route as AuthedAgentsAgentIdChatRouteImport } from './routes/_authed.ag
 import { Route as AuthedAgentsAgentIdConfigurationRouteImport } from './routes/_authed.agents.$agentId.configuration'
 import { Route as AuthedAgentsAgentIdKnowledgeRouteImport } from './routes/_authed.agents.$agentId.knowledge'
 import { Route as AuthedAgentsAgentIdSettingsRouteImport } from './routes/_authed.agents.$agentId.settings'
+import { Route as AuthedDocumentsDocumentIdPrintRouteImport } from './routes/_authed.documents.$documentId.print'
 import { Route as AuthedAgentsAgentIdRoutinesIndexRouteImport } from './routes/_authed.agents.$agentId.routines.index'
 import { Route as AuthedAgentsAgentIdRoutinesRoutineIdRouteImport } from './routes/_authed.agents.$agentId.routines.$routineId'
 
@@ -189,6 +190,12 @@ const AuthedAgentsAgentIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => AuthedAgentsAgentIdRoute,
   } as any)
+const AuthedDocumentsDocumentIdPrintRoute =
+  AuthedDocumentsDocumentIdPrintRouteImport.update({
+    id: '/documents/$documentId/print',
+    path: '/documents/$documentId/print',
+    getParentRoute: () => AuthedRoute,
+  } as any)
 const AuthedAgentsAgentIdRoutinesIndexRoute =
   AuthedAgentsAgentIdRoutinesIndexRouteImport.update({
     id: '/routines/',
@@ -230,6 +237,7 @@ export interface FileRoutesByFullPath {
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
   '/agents/$agentId/settings': typeof AuthedAgentsAgentIdSettingsRoute
+  '/documents/$documentId/print': typeof AuthedDocumentsDocumentIdPrintRoute
   '/agents/$agentId/': typeof AuthedAgentsAgentIdIndexRoute
   '/agents/$agentId/routines/$routineId': typeof AuthedAgentsAgentIdRoutinesRoutineIdRoute
   '/agents/$agentId/routines/': typeof AuthedAgentsAgentIdRoutinesIndexRoute
@@ -260,6 +268,7 @@ export interface FileRoutesByTo {
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
   '/agents/$agentId/settings': typeof AuthedAgentsAgentIdSettingsRoute
+  '/documents/$documentId/print': typeof AuthedDocumentsDocumentIdPrintRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdIndexRoute
   '/agents/$agentId/routines/$routineId': typeof AuthedAgentsAgentIdRoutinesRoutineIdRoute
   '/agents/$agentId/routines': typeof AuthedAgentsAgentIdRoutinesIndexRoute
@@ -294,6 +303,7 @@ export interface FileRoutesById {
   '/_authed/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/_authed/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
   '/_authed/agents/$agentId/settings': typeof AuthedAgentsAgentIdSettingsRoute
+  '/_authed/documents/$documentId/print': typeof AuthedDocumentsDocumentIdPrintRoute
   '/_authed/agents/$agentId/': typeof AuthedAgentsAgentIdIndexRoute
   '/_authed/agents/$agentId/routines/$routineId': typeof AuthedAgentsAgentIdRoutinesRoutineIdRoute
   '/_authed/agents/$agentId/routines/': typeof AuthedAgentsAgentIdRoutinesIndexRoute
@@ -328,6 +338,7 @@ export interface FileRouteTypes {
     | '/agents/$agentId/configuration'
     | '/agents/$agentId/knowledge'
     | '/agents/$agentId/settings'
+    | '/documents/$documentId/print'
     | '/agents/$agentId/'
     | '/agents/$agentId/routines/$routineId'
     | '/agents/$agentId/routines/'
@@ -358,6 +369,7 @@ export interface FileRouteTypes {
     | '/agents/$agentId/configuration'
     | '/agents/$agentId/knowledge'
     | '/agents/$agentId/settings'
+    | '/documents/$documentId/print'
     | '/agents/$agentId'
     | '/agents/$agentId/routines/$routineId'
     | '/agents/$agentId/routines'
@@ -391,6 +403,7 @@ export interface FileRouteTypes {
     | '/_authed/agents/$agentId/configuration'
     | '/_authed/agents/$agentId/knowledge'
     | '/_authed/agents/$agentId/settings'
+    | '/_authed/documents/$documentId/print'
     | '/_authed/agents/$agentId/'
     | '/_authed/agents/$agentId/routines/$routineId'
     | '/_authed/agents/$agentId/routines/'
@@ -616,6 +629,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAgentsAgentIdSettingsRouteImport
       parentRoute: typeof AuthedAgentsAgentIdRoute
     }
+    '/_authed/documents/$documentId/print': {
+      id: '/_authed/documents/$documentId/print'
+      path: '/documents/$documentId/print'
+      fullPath: '/documents/$documentId/print'
+      preLoaderRoute: typeof AuthedDocumentsDocumentIdPrintRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/agents/$agentId/routines/': {
       id: '/_authed/agents/$agentId/routines/'
       path: '/routines'
@@ -685,6 +705,7 @@ interface AuthedRouteChildren {
   AuthedTeamRoute: typeof AuthedTeamRoute
   AuthedWelcomeRoute: typeof AuthedWelcomeRoute
   AuthedAgentsAgentIdRoute: typeof AuthedAgentsAgentIdRouteWithChildren
+  AuthedDocumentsDocumentIdPrintRoute: typeof AuthedDocumentsDocumentIdPrintRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
@@ -695,6 +716,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedTeamRoute: AuthedTeamRoute,
   AuthedWelcomeRoute: AuthedWelcomeRoute,
   AuthedAgentsAgentIdRoute: AuthedAgentsAgentIdRouteWithChildren,
+  AuthedDocumentsDocumentIdPrintRoute: AuthedDocumentsDocumentIdPrintRoute,
 }
 
 const AuthedRouteWithChildren =

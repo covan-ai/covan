@@ -8,6 +8,7 @@ import { Chip } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { parseCsv } from "@/lib/csv-preview";
+import { isMarkdownName, saveDocument } from "@/lib/document-export";
 import { formatFileSize } from "@/lib/file-size";
 import { documentAge } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
@@ -131,6 +132,26 @@ export function DocumentPreviewDialog({
               <Download className="mr-1.5 h-3.5 w-3.5" />
               Download
             </Button>
+            {/* A Markdown document — every report and filed summary is one —
+                also goes out as the formats people pass around. */}
+            {isMarkdownName(name) ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void saveDocument(documentId, name, "docx")}
+                >
+                  Word
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void saveDocument(documentId, name, "pdf")}
+                >
+                  PDF
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
 

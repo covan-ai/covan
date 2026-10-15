@@ -25,10 +25,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Markdown } from "@/components/markdown";
 import { AgentAvatar } from "@/components/avatars";
 import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
-import { ChatReport, ChatReportReceipt } from "@/components/chat-report";
+import { ChatReport } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
@@ -49,6 +48,9 @@ import { BrowserPanel } from "@/components/chat/browser-panel";
 import { TakeoverCard } from "@/components/chat/takeover-card";
 import { browserKey, useBrowserPanel } from "@/components/chat/use-conversation-browser";
 import { LiveAnswer } from "@/components/chat/live-answer";
+import { DocumentCard } from "@/components/chat/document-card";
+import { DocumentPanel } from "@/components/chat/document-panel";
+import { documentJobsKey, placeJobs, useDocumentJobs } from "@/components/chat/use-document-jobs";
 import {
   PromptInput,
   PromptInputAction,
@@ -175,10 +177,26 @@ function ChatTab() {
   const active: ChatSession | undefined =
     agentSessions.find((s) => s.id === activeId) ?? agentSessions[0];
 
+  // The documents being written in this conversation — by the agent's
+  // `write_document` tool or the Report button — and which one is open beside
+  // it. The open one is held with its conversation, so switching chats never
+  // shows another conversation's document.
+  const documentJobs = useDocumentJobs(active?.id);
+  const [openDocument, setOpenDocument] = useState<{ sessionId: string; jobId: string } | null>(
+    null,
+  );
+  const openJob = useStableCallback((jobId: string) => {
+    if (active?.id) setOpenDocument({ sessionId: active.id, jobId });
+  });
+  const shownJob =
+    openDocument && openDocument.sessionId === active?.id
+      ? ((documentJobs.data ?? []).find((j) => j.id === openDocument.jobId) ?? null)
+      : null;
+
   // Writing this conversation up as a document. Declared here rather than
   // beside `uploads` above because it needs the session the report is written
-  // from, and that is only resolved on the line above this one.
-  const reports = useReportWriter(active?.id ?? null, agent);
+  // from, and that is only resolved a few lines above.
+  const reports = useReportWriter(active?.id ?? null, openJob);
 
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const currentUserId = me?.user.id;
@@ -327,6 +345,12 @@ function ChatTab() {
   // keystroke, so this rebuilds too — which is what it should do: the dividers
   // belong to what is on screen, and a filtered transcript has different ones.
   const dividers = useMemo(() => dateDividers(messages), [messages]);
+  // Each document's card sits under the reply that started it, or at the foot
+  // until that reply exists (`placeJobs`).
+  const placedJobs = useMemo(
+    () => placeJobs(documentJobs.data ?? [], messages),
+    [documentJobs.data, messages],
+  );
 
   // A full page came back, so there is probably another behind it. "Probably"
   // is the honest word: a conversation of exactly a hundred turns offers a
@@ -926,6 +950,11 @@ function ChatTab() {
             if (step.tool === "browse" && step.status !== "running" && step.status !== "pending") {
               void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
             }
+            // The same for a document: the poll is off while nothing is being
+            // written, so the settled step is what tells it to look.
+            if (step.tool === "write_document" && step.status === "ok") {
+              void queryClient.invalidateQueries({ queryKey: documentJobsKey(sessionId) });
+            }
             // Upsert by index: every step arrives twice, once running and
             // once settled, and the second is the same row changing rather
             // than a new one.
@@ -1317,6 +1346,24 @@ function ChatTab() {
    * `streamReply`'s `confirm` option for why that is one function and not
    * two.
    */
+  // Stop keeps what is written; retry picks a stopped or failed document up
+  // where it ended. Either way the poll is told to look, which also restarts
+  // it for a retry.
+  const controlDocument = async (jobId: string, action: "stop" | "retry") => {
+    try {
+      if (action === "stop") await api.documentJobs.stop(jobId);
+      else await api.documentJobs.retry(jobId);
+    } catch (e) {
+      const message = e instanceof Error && e.message ? `: ${e.message}` : "";
+      toast.error(
+        action === "stop"
+          ? `Couldn't stop the document${message}`
+          : `Couldn't start it again${message}`,
+      );
+    }
+    void queryClient.invalidateQueries({ queryKey: documentJobsKey(active?.id) });
+  };
+
   const answerConfirmation = async (approve: boolean) => {
     if (!active || busy || !pendingConfirm) return;
     const { id } = pendingConfirm;
@@ -1877,6 +1924,9 @@ function ChatTab() {
                         onKeepGoing={onKeepGoing}
                         onRegenerate={onRegenerate}
                       />
+                      {placedJobs.byMessage.get(m.id)?.map((job) => (
+                        <DocumentCard key={job.id} job={job} onOpen={openJob} className="mt-3" />
+                      ))}
                     </Fragment>
                   );
                 })}
@@ -1912,6 +1962,17 @@ function ChatTab() {
                   <p className="mt-3 text-xs text-muted-foreground">You stopped this answer.</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* A document asked for since the last reply — from the Report
+            button, or by a turn still running — until there is a reply to
+            hang it under. */}
+          {placedJobs.trailing.length > 0 && (
+            <div className="mt-4 space-y-3">
+              {placedJobs.trailing.map((job) => (
+                <DocumentCard key={job.id} job={job} onOpen={openJob} />
+              ))}
             </div>
           )}
 
@@ -2027,7 +2088,6 @@ function ChatTab() {
             className="border-border p-0 transition-colors duration-200"
           >
             <ChatReceipts uploads={uploads} />
-            <ChatReportReceipt reports={reports} />
             <PromptInputTextarea
               onPaste={(e) => {
                 // A file on the clipboard is an upload; text on the clipboard is
@@ -2179,6 +2239,24 @@ function ChatTab() {
         initialKind={rating?.kind ?? null}
       />
 
+      {/* Below `lg` a document is a full-height sheet too, for the browser's
+          reason below: a split at that width leaves neither side readable. */}
+      {belowLg && shownJob && active && (
+        <div
+          role="dialog"
+          aria-label="Document"
+          className="fixed inset-0 z-40 flex flex-col bg-background"
+        >
+          <DocumentPanel
+            key={shownJob.id}
+            job={shownJob}
+            onClose={() => setOpenDocument(null)}
+            onStop={(jobId) => void controlDocument(jobId, "stop")}
+            onRetry={(jobId) => void controlDocument(jobId, "retry")}
+          />
+        </div>
+      )}
+
       {/* Below `lg`, the browser is a full-height sheet over the conversation,
           opened from the header control. Inside the pane for the same reason
           the dialog above is: every layout returned below wraps this one
@@ -2203,53 +2281,24 @@ function ChatTab() {
   );
 
   /*
-   * What sits beside the conversation, if anything: the report preview (only
-   * ever open because somebody asked for it this moment), then the browser at
+   * What sits beside the conversation, if anything: a document (only ever
+   * open because somebody opened it, or just asked for it), then the browser at
    * `lg` and up (being driven, or waiting on a sign-in, it is the thing
    * happening right now — and closing it gives the Idea board back), then a
    * brainstorm's Idea board.
    */
   let side: ReactNode = null;
-  if (reports.content && active) {
-    side = (
-      <div className="flex h-full flex-col border-l border-border">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <FileText className="h-4 w-4 text-muted-foreground" /> Report preview
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={reports.download}
-              className="font-medium text-muted-foreground"
-            >
-              Download
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={reports.dismiss}
-              aria-label="Close preview"
-              className="font-medium text-muted-foreground"
-            >
-              Close
-            </Button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6">
-          {reports.loadingContent ? (
-            <div className="flex items-center justify-center py-12">
-              <p className="text-sm text-muted-foreground">Loading preview...</p>
-            </div>
-          ) : (
-            <div className="prose prose-sm max-w-none dark:prose-invert">
-              <Markdown content={reports.content} />
-            </div>
-          )}
-        </div>
-      </div>
-    );
+  const documentPanel = shownJob ? (
+    <DocumentPanel
+      key={shownJob.id}
+      job={shownJob}
+      onClose={() => setOpenDocument(null)}
+      onStop={(jobId) => void controlDocument(jobId, "stop")}
+      onRetry={(jobId) => void controlDocument(jobId, "retry")}
+    />
+  ) : null;
+  if (documentPanel && active && !belowLg) {
+    side = documentPanel;
   } else if (browserPanel.open && active && !belowLg) {
     // Keyed by the conversation so a second chat never inherits the first
     // one's live view.

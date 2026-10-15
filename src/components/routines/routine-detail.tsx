@@ -360,7 +360,7 @@ export function RoutineDetail({
                 />
                 <label htmlFor="routine-shared" className="text-sm text-muted-foreground">
                   {routine.visibility === "shared"
-                    ? "Visible to everyone in the workspace"
+                    ? "Visible to everyone who can use this agent"
                     : "Only you"}
                 </label>
               </div>

@@ -72,9 +72,7 @@ const tuningFields = {
  */
 const sharingSchema = z.object({
   workspaceAccess: z.enum(AGENT_ACCESS).nullable(),
-  shares: z
-    .array(z.object({ userId: z.string().uuid(), access: z.enum(AGENT_ACCESS) }))
-    .max(500),
+  shares: z.array(z.object({ userId: z.string().uuid(), access: z.enum(AGENT_ACCESS) })).max(500),
 });
 
 const createAgentSchema = z.object({
@@ -322,7 +320,10 @@ async function saveSharing(
   if (!error) return null;
 
   if (error.code === "42501") {
-    return { status: 403, message: "only people with full access can change who can use this agent" };
+    return {
+      status: 403,
+      message: "only people with full access can change who can use this agent",
+    };
   }
   if (error.code === "P0002") return { status: 404, message: "not found" };
   if (error.code === "22023") return { status: 400, message: error.message };
@@ -353,7 +354,9 @@ agents.delete("/agents/:id", async (c) => {
     // Deleting an agent is a full-access decision now (0104), not a
     // workspace-writer one, so the generic sentence would be wrong.
     const message =
-      failure.status === 403 ? "only people with full access can delete this agent" : failure.message;
+      failure.status === 403
+        ? "only people with full access can delete this agent"
+        : failure.message;
     return c.json({ error: message }, failure.status);
   }
 

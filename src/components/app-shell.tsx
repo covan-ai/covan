@@ -43,7 +43,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/lib/theme";
 import { BrandMark } from "@/components/brand-mark";
-import { AgentAvatar, UserAvatar } from "@/components/avatars";
+import { AgentAvatar, AvatarStack, UserAvatar } from "@/components/avatars";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api-client";
 import type { WorkspaceMember } from "@/lib/api-client";
@@ -374,29 +374,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     app can't show. Click through to the Team surface. */
 function TeamPresence({ members }: { members: WorkspaceMember[] }) {
   if (members.length === 0) return null;
-  const shown = members.slice(0, 4);
-  const extra = members.length - shown.length;
   return (
     <Link
       to="/settings/members"
       aria-label={`${members.length} team members`}
       className="mr-1 hidden items-center transition-opacity duration-200 hover:opacity-80 sm:flex"
     >
-      <div className="flex -space-x-1.5">
-        {shown.map((m) => (
-          <UserAvatar
-            key={m.id}
-            name={m.name}
-            url={m.avatarUrl}
-            className="h-7 w-7 text-[10px] ring-2 ring-background"
-          />
-        ))}
-        {extra > 0 && (
-          <span className="grid h-7 w-7 place-items-center rounded-md bg-muted text-[10px] font-semibold text-muted-foreground ring-2 ring-background">
-            +{extra}
-          </span>
-        )}
-      </div>
+      <AvatarStack people={members} />
     </Link>
   );
 }

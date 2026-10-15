@@ -53,7 +53,7 @@ export function firstWeekSteps({
     {
       key: "team",
       label: "Bring in a teammate",
-      hint: "They get the same agent, and their own conversations with it stay private.",
+      hint: "Share the agent with them, and their own conversations with it stay private.",
       // Membership, not a pending invitation. "Invited somebody" is a fact the
       // Team page already reports; this asks whether anyone actually arrived,
       // which is the thing an invitation that never reached anybody looks

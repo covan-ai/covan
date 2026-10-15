@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentStep } from "./agent-step";
 
-const createAgent = vi.fn(async () => ({ id: "agent-1" }));
+const createAgent = vi.fn(async (_input: unknown) => ({ id: "agent-1" }));
 
 vi.mock("@/lib/agents-store", () => ({
   useAgentsStore: () => ({ createAgent }),
@@ -51,5 +51,33 @@ describe("AgentStep", () => {
     expect(createAgent).toHaveBeenCalled();
     expect(onCreated).toHaveBeenCalled();
     expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  it("makes the first agent Only me unless somebody says otherwise", async () => {
+    // The server's default too (0104), sent explicitly so the two cannot drift.
+    createAgent.mockClear();
+    const user = userEvent.setup();
+    render(<AgentStep useCase="code" defaultModel={null} onCreated={vi.fn()} onSkip={vi.fn()} />);
+
+    expect(screen.getByLabelText("Who can use it")).toHaveTextContent("Only me");
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ sharing: { workspaceAccess: null, shares: [] } }),
+    );
+  });
+
+  it("shares it with the workspace when that is picked", async () => {
+    createAgent.mockClear();
+    const user = userEvent.setup();
+    render(<AgentStep useCase="code" defaultModel={null} onCreated={vi.fn()} onSkip={vi.fn()} />);
+
+    await user.click(screen.getByLabelText("Who can use it"));
+    await user.click(await screen.findByRole("option", { name: "Whole workspace · Can edit" }));
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ sharing: { workspaceAccess: "edit", shares: [] } }),
+    );
   });
 });

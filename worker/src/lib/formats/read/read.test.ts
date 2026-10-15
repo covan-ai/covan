@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun } from "docx";
+import {
+  Document,
+  HeadingLevel,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+} from "docx";
 import { extractFromBytes, UnreadableFile } from "./index";
 import { decodeText, htmlToText, rtfToText } from "./text";
 import { listZip, readZipEntry } from "./zip";
@@ -15,7 +24,11 @@ async function makeZip(files: Record<string, string>): Promise<Uint8Array> {
     const raw = enc.encode(content);
     const deflate = i++ > 0;
     const data = deflate
-      ? new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer())
+      ? new Uint8Array(
+          await new Response(
+            new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate-raw")),
+          ).arrayBuffer(),
+        )
       : raw;
     const nameBytes = enc.encode(name);
     const local = new Uint8Array(30 + nameBytes.length + data.length);
@@ -101,11 +114,26 @@ describe("docx", () => {
         {
           children: [
             new Paragraph({ text: "İzin Politikası", heading: HeadingLevel.HEADING_1 }),
-            new Paragraph({ children: [new TextRun("Yılda yirmi gün izin & "), new TextRun({ text: "ücretli", bold: true })] }),
+            new Paragraph({
+              children: [
+                new TextRun("Yılda yirmi gün izin & "),
+                new TextRun({ text: "ücretli", bold: true }),
+              ],
+            }),
             new Table({
               rows: [
-                new TableRow({ children: [new TableCell({ children: [new Paragraph("Kıdem")] }), new TableCell({ children: [new Paragraph("Gün")] })] }),
-                new TableRow({ children: [new TableCell({ children: [new Paragraph("5 yıl")] }), new TableCell({ children: [new Paragraph("25")] })] }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph("Kıdem")] }),
+                    new TableCell({ children: [new Paragraph("Gün")] }),
+                  ],
+                }),
+                new TableRow({
+                  children: [
+                    new TableCell({ children: [new Paragraph("5 yıl")] }),
+                    new TableCell({ children: [new Paragraph("25")] }),
+                  ],
+                }),
               ],
             }),
           ],
@@ -184,14 +212,19 @@ describe("odt", () => {
 describe("plain text and markup", () => {
   // The two files a Turkish office most often has that UTF-8 got wrong.
   it("reads a Windows-1254 file as Turkish, not as replacement marks", () => {
-    const bytes = new Uint8Array([0x49, 0x7a, 0x69, 0x6e, 0x20, 0xfd, 0xf0, 0xfe, 0x20, 0xdd, 0xd0, 0xde, 0x20, 0xe7, 0xf6, 0xfc]);
+    const bytes = new Uint8Array([
+      0x49, 0x7a, 0x69, 0x6e, 0x20, 0xfd, 0xf0, 0xfe, 0x20, 0xdd, 0xd0, 0xde, 0x20, 0xe7, 0xf6,
+      0xfc,
+    ]);
     expect(decodeText(bytes)).toBe("Izin ığş İĞŞ çöü");
   });
 
   it("reads UTF-16, with and without a byte-order mark", () => {
     const le = new Uint8Array([0xff, 0xfe, 0x41, 0x00, 0x31, 0x01]);
     expect(decodeText(le)).toBe("Aı");
-    const bare = new Uint8Array([...new TextEncoder().encode("name,price\n")].flatMap((b) => [b, 0]));
+    const bare = new Uint8Array(
+      [...new TextEncoder().encode("name,price\n")].flatMap((b) => [b, 0]),
+    );
     expect(decodeText(bare)).toBe("name,price\n");
   });
 

@@ -188,12 +188,19 @@ language plpgsql
 security definer
 set search_path = pg_catalog, public
 as $$
+declare
+  original record;
 begin
   if new.retry_of is not null then
-    select coalesce(new.routine_run_id, o.routine_run_id), (new.jarless or o.jarless)
-      into new.routine_run_id, new.jarless
+    -- Into a record of its own: a `select ... into new.x` that finds no row
+    -- sets its targets to null, and `jarless` is not null.
+    select o.routine_run_id, o.jarless into original
       from public.browser_tasks o
       where o.id = new.retry_of;
+    if found then
+      new.routine_run_id := coalesce(new.routine_run_id, original.routine_run_id);
+      new.jarless := new.jarless or original.jarless;
+    end if;
   end if;
   return new;
 end;

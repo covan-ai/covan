@@ -264,7 +264,10 @@ re-imports it. A shortcut to a subfolder is walked into like any other folder.
 If the folder holds both a file and a shortcut to that same file, it is imported
 once.
 
-Files larger than 10 MB are skipped, the same ceiling the upload form applies.
+Word, PowerPoint, Excel, OpenDocument and RTF files are read the way an upload
+is. Files larger than 10 MB are skipped — a sync still embeds inside its own run —
+and so are PDFs; both are named on the run, with the reason, rather than left
+out silently.
 
 **Limits.** One folder, two levels of subfolders, six listing requests and
 twenty-five resolved shortcuts per sync — enough for a few hundred files in an
@@ -413,12 +416,12 @@ Adding one is a form on the Integrations page. There is no per-service code
 behind it and there is not meant to be: the worker has eight general tools, and
 a service is a row telling one of them where to go.
 
-| What you want                                                       | What it takes                                                   |
-| ------------------------------------------------------------------- | --------------------------------------------------------------- |
-| A Postgres — hosted Supabase, self-hosted, any PostgREST            | One row, plus the function below installed on it                |
-| HubSpot, Stripe, Linear, any REST API with a token                  | One row                                                         |
-| Gmail, Slack, Notion, HubSpot and the other common apps             | A search, a read, and a consent screen. See **Connected apps**   |
-| A service that speaks MCP and has no HTTP API                       | A one-off addition to the code — not built, and deliberately so |
+| What you want                                            | What it takes                                                   |
+| -------------------------------------------------------- | --------------------------------------------------------------- |
+| A Postgres — hosted Supabase, self-hosted, any PostgREST | One row, plus the function below installed on it                |
+| HubSpot, Stripe, Linear, any REST API with a token       | One row                                                         |
+| Gmail, Slack, Notion, HubSpot and the other common apps  | A search, a read, and a consent screen. See **Connected apps**  |
+| A service that speaks MCP and has no HTTP API            | A one-off addition to the code — not built, and deliberately so |
 
 ### Whose a service is
 
@@ -701,7 +704,7 @@ Composio before the row goes, so does closing the account.
   PDF writer, a weather lookup, Yelp.
 
   Thirty-four rather than thirty-five, because `gemini` publishes both — no
-  sign-in *and* an API key — and the key is what most of its operations
+  sign-in _and_ an API key — and the key is what most of its operations
   actually need, so it is offered as a key application instead. Connecting it
   as a free one would have produced something that said "connected" and failed
   on first use.
@@ -748,7 +751,7 @@ out. The browser and the agent loop driving it are
 over, wait outside the conversation, and bring the answer back. It runs on
 browser-use's V4 API, with the same key as their earlier one; a browser-use
 project with Zero Data Retention switched on cannot use V4 (the provider answers
-403, *"Zero Data Retention is enabled on the project (V4 unsupported)"*), so the
+403, _"Zero Data Retention is enabled on the project (V4 unsupported)"_), so the
 key has to come from a project without it. A conversation keeps one browser
 across its tasks, so a follow-up ("now open the second result") continues in the
 same tabs rather than starting from a blank page.
@@ -773,8 +776,8 @@ that says who has the controls. It works as follows:
 
 - **The agent drives; you watch.** The frame is read-only while the agent has the
   browser. That is a restriction of the panel, not of the provider: the
-  provider's own words are *"View-only embeds are a UI restriction, not a
-  server-enforced permission."* So the address of the live view is treated as a
+  provider's own words are _"View-only embeds are a UI restriction, not a
+  server-enforced permission."_ So the address of the live view is treated as a
   credential — see [Security](security.md).
 - **Take over** cancels the agent's run, waits until the provider says the run
   has ended (so you are never typing into a field the agent is mid-way through),
@@ -834,7 +837,7 @@ to that browser, as the provider says (see [Security](security.md)). A login
 saved for everyone signs in inside a browser that carries nobody's profile, so
 the account it signs into is never kept in a person's cookies, and forgetting it
 stops the agent using it.
-Without a saved login, a browser task *can* carry a sign-in you performed
+Without a saved login, a browser task _can_ carry a sign-in you performed
 yourself: when a task
 stops at a login wall, you are offered the browser — take over in the panel (or
 open it in a tab of your own from there), sign in at the site — Covan sees

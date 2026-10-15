@@ -48,17 +48,28 @@ describe("what Drive can import", () => {
   // There is no browser in a cron tick, and `lib/extract` returns "" for a PDF
   // — so importing one would produce a document that is listed, named to the
   // model, and impossible to retrieve a sentence of.
-  it("refuses the formats it could not read a word of", () => {
+  it("refuses a PDF, whose text only the browser reads", () => {
     expect(
       importableName({ id: "5", name: "contract.pdf", mimeType: "application/pdf" }),
     ).toBeNull();
+  });
+
+  // Skipped without a word until the server could read them.
+  it("imports Office files under their own extension", () => {
     expect(
       importableName({
         id: "6",
-        name: "deck.pptx",
+        name: "deck",
         mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       }),
-    ).toBeNull();
+    ).toBe("deck.pptx");
+    expect(
+      importableName({
+        id: "7",
+        name: "Budget.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      }),
+    ).toBe("Budget.xlsx");
   });
 });
 
@@ -177,7 +188,9 @@ describe("google drive provider", () => {
 
     const files = await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root-folder" }));
 
-    expect(files.map((f) => f.externalId)).toEqual(["doc-1", "doc-2"]);
+    // The PDF is listed so the run can say why it was not imported.
+    expect(files.filter((f) => !f.skipReason).map((f) => f.externalId)).toEqual(["doc-1", "doc-2"]);
+    expect(files.find((f) => f.externalId === "scan")?.skipReason).toMatch(/PDFs from Drive/);
     expect(files[0]).toMatchObject({
       name: "Handbook.md",
       version: "2026-09-01T10:00:00Z",
@@ -315,7 +328,8 @@ describe("google drive provider", () => {
       });
     }) as unknown as typeof fetch;
 
-    expect(await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }))).toEqual([]);
+    const listed = await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }));
+    expect(listed.filter((f) => !f.skipReason)).toEqual([]);
   });
 
   // Listed with the reason rather than left out: left out, nobody was told, and

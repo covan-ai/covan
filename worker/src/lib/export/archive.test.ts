@@ -20,6 +20,12 @@ function store(files: Record<string, string>, opts: { throwOn?: string } = {}): 
     },
     async put() {},
     async delete() {},
+    // The export reads whole objects and writes nothing; these are never called.
+    getRange: async () => null,
+    createMultipart: async () => "",
+    uploadPart: async () => ({ partNumber: 1, etag: "" }),
+    completeMultipart: async () => {},
+    abortMultipart: async () => {},
   };
 }
 

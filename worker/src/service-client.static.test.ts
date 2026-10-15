@@ -31,6 +31,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the document engine's clocks — the Durable Object's alarm, the Node timer, the cron — none of which has a caller, so there is no JWT for RLS to resolve. What each may touch is bounded to one job id: the one a route's own read returned when it kicked the host, or the one claim_due_document_jobs (0102, service role only) handed the cron",
   ],
   [
+    "lib/indexing/host.ts",
+    "the indexing job's clocks (0105) — the Durable Object's alarm, the Node timer, the cron — none of which has a caller, so there is no JWT for RLS to resolve. What each may touch is bounded to one document id: the one an upload or reindex route's own insert or read returned when it kicked the host, or one claim_due_index_jobs (0105, service role only) handed the cron",
+  ],
+  [
     "routes/document-jobs.ts",
     "stopping and retrying a document, and advancing it from the open tab when the deployment has no document host. 0102 gives document_jobs no client write grant, because every column is the worker's account of what it did with somebody's allowance. Every handler reads the job through c.get(\"db\") first — 0102's policy shows a job to its requester alone — and every write is then keyed to the row id that read returned, conditional on the status it was read in",
   ],
@@ -246,6 +250,10 @@ describe("the RLS bypass", () => {
  * factory, so some of these are listed from reading rather than found by it.
  */
 const RECEIVES_THE_SERVICE_CLIENT = new Map([
+  [
+    "lib/indexing/job.ts",
+    "one unit of one document's indexing, for the clocks in lib/indexing/host.ts and the DocumentRoom alarm: every read and write is keyed to the document claim_index_job returned, its passages are written with that document's own bundle and its bundle's workspace_id, and the credits it spends are recorded against that workspace",
+  ],
   [
     "lib/docs/engine.ts",
     "one unit of work on one document job, for the clocks in lib/docs/host.ts and the tab's poll: every read and write is keyed to the job claim_document_job returned, and the agent and bundle are read with that job's own workspace_id",

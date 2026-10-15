@@ -31,7 +31,7 @@ const agents = new Hono<AppEnv>();
 // level, answered by the function the policies ask, so the screen and the
 // database cannot disagree about what this person may do.
 const AGENT_SELECT =
-  "*, my_access, agent_shares(user_id, access), agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count))))";
+  "*, my_access, agent_shares(user_id, access), agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count),index_status,index_cursor,index_total,index_error)))";
 
 /**
  * The two tuning settings, on both schemas.

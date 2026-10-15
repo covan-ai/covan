@@ -140,19 +140,27 @@ piping a workspace agent's output to a personal Slack forever.
 
 ## Retrieval
 
-### Indexing, at upload
+### Indexing, after upload
 
-`POST /bundles/:id/documents/upload` (`worker/src/routes/bundles.ts`):
+A file up to 10 MB goes in one request (`POST /bundles/:id/documents/upload`);
+anything larger, up to 100 MB, goes in 8 MiB parts (`worker/src/routes/uploads.ts`)
+that the document store assembles, so no request ever holds the file.
 
-1. Size and extension are checked (10 MB cap). PDFs are extracted to text **in
-   the browser** and the text posted alongside the file — `pdf.js` does not run
-   reliably on the Workers runtime. Text formats are decoded server-side.
-2. The bytes go to the document store under `<bundleId>/<uuid>-<safe filename>`.
-   A failed store write needs no rollback here: no row exists yet.
-3. A `documents` row is inserted, carrying an excerpt of the text. If the insert
-   fails, the stored object is deleted — the one place a rollback is needed.
-4. The text is chunked and embedded, **best-effort**. A failure here is logged
-   and the document still exists; it is simply unindexed until reindexed.
+1. Size and extension are checked. PDFs are extracted to text **in the browser**
+   and the text sent alongside the file — `pdf.js` does not run reliably on the
+   Workers runtime. Every other format is read on the server
+   (`worker/src/lib/formats/read`): Office and OpenDocument files through ranged
+   reads of the zip, so a 90 MB deck costs its slide XML and not its images.
+2. The bytes go to the document store under `<bundleId>/<uuid>-<safe filename>`,
+   with the extracted text beside them as `<key>.txt`.
+3. A `documents` row is inserted with `index_status = 'queued'` (0105), and the
+   indexing job is kicked: the `DocumentRoom` Durable Object on Cloudflare, a
+   timer on Node, the cron when neither answers.
+4. The job embeds 256 passages per unit under a new `generation` (0103) and
+   clears the older generations only after the last unit, so a reindex that
+   fails half-way leaves the old passages answering. A unit that fails is
+   retried with backoff; after four failures the document is `failed`, with the
+   reason, and Reindex starts it again.
 
 Chunking (`lib/embeddings.ts`) is structure-aware and has no tokenizer
 dependency: chunks are up to 1000 characters and break on the strongest natural

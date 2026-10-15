@@ -21,7 +21,7 @@ describe("upload limits", () => {
   it("the document upload limits the whole body by the shared constant", () => {
     const source = read("bundles.ts");
     expect(source).toMatch(
-      /bundles\.use\(\s*"\/bundles\/:id\/documents\/upload",\s*uploadLimit\(\s*MAX_UPLOAD_BYTES,[\s\S]{0,120}?MAX_EXTRACTED_TEXT_BYTES\s*\)/,
+      /bundles\.use\(\s*"\/bundles\/:id\/documents\/upload",\s*uploadLimit\(\s*MAX_DIRECT_UPLOAD_BYTES,[\s\S]{0,160}?MAX_EXTRACTED_TEXT_BYTES,?\s*\)/,
     );
   });
 

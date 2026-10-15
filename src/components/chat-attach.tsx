@@ -1,11 +1,9 @@
 import { useRef, useState } from "react";
 import { ChevronDown, FileText, Paperclip, X } from "lucide-react";
 import { Chip } from "@/components/section-card";
-import { ALLOWED_EXT } from "@/lib/uploads";
+import { ACCEPT } from "@/lib/uploads";
 import type { ChatUploads } from "@/lib/use-chat-uploads";
 import { cn } from "@/lib/utils";
-
-const ACCEPT = ALLOWED_EXT.map((e) => `.${e}`).join(",");
 
 /**
  * The attach control in the chat composer.

@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Upload, X } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useAgentsStore, type Agent } from "@/lib/agents-store";
-import { validateUpload } from "@/lib/uploads";
+import { ACCEPT, validateUpload } from "@/lib/uploads";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -147,12 +147,13 @@ export function KnowledgeStep({ agent, onDone }: { agent: Agent; onDone: () => v
             {dragging ? "Drop to add" : "Drop files here, or click to choose"}
           </span>
           <span className="text-xs text-micro-foreground">
-            md, txt, csv, json, pdf · up to 10 MB
+            pdf, docx, pptx, xlsx, md, txt, csv and more · up to 100 MB
           </span>
           <input
             id="welcome-files"
             type="file"
             multiple
+            accept={ACCEPT}
             className="hidden"
             onChange={(e) => {
               addFiles(e.target.files);

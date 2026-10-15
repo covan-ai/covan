@@ -19,6 +19,7 @@ import { chat } from "./routes/chat";
 import { transcribe } from "./routes/transcribe";
 import { documents } from "./routes/documents";
 import { bundles } from "./routes/bundles";
+import { uploads } from "./routes/uploads";
 import { reports } from "./routes/reports";
 import { documentJobs } from "./routes/document-jobs";
 import { me } from "./routes/me";
@@ -86,7 +87,9 @@ app.use(
       return allowed.split(",")[0].trim();
     },
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowHeaders: ["Authorization", "Content-Type"],
+    // `X-Upload-Token` carries a part's signed upload (`routes/uploads.ts`) —
+    // a header rather than the URL, so it stays out of access logs.
+    allowHeaders: ["Authorization", "Content-Type", "X-Upload-Token"],
     credentials: true,
   }),
 );
@@ -215,6 +218,7 @@ api.route("/", turns);
 api.route("/", transcribe);
 api.route("/", documents);
 api.route("/", bundles);
+api.route("/", uploads);
 api.route("/", reports);
 api.route("/", documentJobs);
 api.route("/", me);

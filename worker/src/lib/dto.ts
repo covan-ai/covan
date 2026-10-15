@@ -70,7 +70,20 @@ export type DocumentDTO = {
    * routine" and stops there.
    */
   routineName?: string | null;
+  /**
+   * Where its indexing has got (0105): `queued` and `indexing` while the job
+   * runs, `ready`, `partial` when the text was cut at the indexing limit, or
+   * `failed` with `indexError` saying why. Null for a document indexed before
+   * jobs existed, which `indexed` describes as it always did. Undefined when
+   * not fetched.
+   */
+  indexStatus?: IndexStatus | null;
+  /** Passages embedded so far, and how many there will be, while it runs. */
+  indexProgress?: { done: number; total: number } | null;
+  indexError?: string | null;
 };
+
+export type IndexStatus = "queued" | "indexing" | "ready" | "partial" | "failed";
 
 export type AgentDTO = {
   id: string;
@@ -595,6 +608,10 @@ export function mapDocument(row: {
   routine_id?: string | null;
   /** The embedded `routines(name)`, in either shape PostgREST returns it. */
   routines?: unknown;
+  index_status?: string | null;
+  index_cursor?: number | null;
+  index_total?: number | null;
+  index_error?: string | null;
 }): DocumentDTO {
   const chunkCount = row.document_chunks?.[0]?.count ?? 0;
   const routine = firstEmbedded<{ name?: string | null }>(row.routines);
@@ -612,6 +629,16 @@ export function mapDocument(row: {
     // Only when the id was fetched. A name on its own would be a claim about
     // provenance made by a query that never asked about it.
     ...(row.routine_id !== undefined ? { routineName: routine?.name ?? null } : {}),
+    ...(row.index_status !== undefined
+      ? {
+          indexStatus: (row.index_status as IndexStatus | null) ?? null,
+          indexProgress:
+            row.index_status === "indexing" && row.index_total
+              ? { done: row.index_cursor ?? 0, total: row.index_total }
+              : null,
+          indexError: row.index_status === "failed" ? (row.index_error ?? null) : null,
+        }
+      : {}),
   };
 }
 
@@ -644,6 +671,10 @@ export function mapAgent(row: {
         external_url?: string | null;
         routine_id?: string | null;
         routines?: unknown;
+        index_status?: string | null;
+        index_cursor?: number | null;
+        index_total?: number | null;
+        index_error?: string | null;
       }> | null;
     } | null;
   }> | null;

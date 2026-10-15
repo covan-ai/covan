@@ -8,6 +8,9 @@ import {
   type RemoteFile,
   type TokenEnvelope,
 } from "./types";
+import { decodeFileText, extOf, MAX_DIRECT_UPLOAD_BYTES, MAX_INDEX_CHARS } from "../extract";
+import { extractFromBytes, UnreadableFile } from "../formats/read";
+import { htmlToText } from "../formats/read/text";
 
 /**
  * Google Drive, as a source of documents.
@@ -66,13 +69,13 @@ const MAX_LIST_REQUESTS = 6;
 const MAX_FOLDER_DEPTH = 2;
 
 /**
- * The upload ceiling from `routes/bundles.ts`, restated for the same reason.
+ * The largest file a sync reads: the one-request upload's ceiling.
  *
- * A document that arrives through a connection is the same kind of thing as one
- * that arrives through the upload form, and being allowed to be ten times
- * bigger because of how it got here would be an accident rather than a policy.
+ * Not the 100 MB a file uploaded in parts may be. An upload hands its file to
+ * the indexing job; a sync still embeds what it reads inside its own run, five
+ * files to a tick, so it keeps the size that was safe for that.
  */
-const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_BYTES = MAX_DIRECT_UPLOAD_BYTES;
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
@@ -128,6 +131,20 @@ const NATIVE_EXPORTS: Record<string, { mimeType: string; extension: string }> = 
  * sentence of, which `hasIndexableText` exists to prevent at upload and would
  * catch here too. Skipping them with a reason is the honest version.
  */
+/**
+ * Office and OpenDocument files, read the way an upload is (`lib/formats/read`).
+ * They used to be skipped without a word, which in most companies' Drive is
+ * most of the folder.
+ */
+const OFFICE_MIME: Record<string, string> = {
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.oasis.opendocument.text": "odt",
+  "application/rtf": "rtf",
+  "text/rtf": "rtf",
+};
+
 const READABLE_MIME = new Set([
   "text/plain",
   "text/markdown",
@@ -158,7 +175,17 @@ function withExtension(name: string, extension: string): string {
 export function importableName(file: DriveFile): string | null {
   const native = NATIVE_EXPORTS[file.mimeType];
   if (native) return withExtension(file.name, native.extension);
+  const office = OFFICE_MIME[file.mimeType];
+  if (office) return withExtension(file.name, office);
   if (READABLE_MIME.has(file.mimeType)) return file.name;
+  return null;
+}
+
+/** Why a file Drive lists is not imported, when it is worth saying. */
+function notImportedBecause(file: DriveFile): string | null {
+  // A PDF's text is read in the browser at upload; a sync has no browser.
+  if (file.mimeType === "application/pdf")
+    return "PDFs from Drive are not read yet — upload it directly";
   return null;
 }
 
@@ -477,7 +504,19 @@ export const googleDriveProvider: ConnectionProvider = {
     const out: RemoteFile[] = [];
     for (const file of files) {
       const name = importableName(file);
-      if (!name) continue;
+      if (!name) {
+        const reason = notImportedBecause(file);
+        if (reason) {
+          out.push({
+            externalId: file.id,
+            name: file.name,
+            version: file.modifiedTime ?? "",
+            url: file.webViewLink ?? null,
+            skipReason: reason,
+          });
+        }
+        continue;
+      }
       const size = file.size ? Number(file.size) : 0;
       const tooLarge = Number.isFinite(size) && size > MAX_BYTES;
       out.push({
@@ -542,6 +581,18 @@ export const googleDriveProvider: ConnectionProvider = {
     if (bytes.byteLength > MAX_BYTES) {
       throw new FileSkip("larger than 10 MB");
     }
-    return new TextDecoder().decode(bytes);
+    const ext = extOf(file.name);
+    if (ext === "html" || ext === "htm") return htmlToText(decodeFileText(bytes));
+    if (Object.values(OFFICE_MIME).includes(ext)) {
+      try {
+        return (
+          (await extractFromBytes(file.name, new Uint8Array(bytes), MAX_INDEX_CHARS))?.text ?? ""
+        );
+      } catch (err) {
+        if (err instanceof UnreadableFile) throw new FileSkip(err.message);
+        throw err;
+      }
+    }
+    return decodeFileText(bytes);
   },
 };

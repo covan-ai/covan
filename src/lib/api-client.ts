@@ -363,6 +363,107 @@ async function extractPdfText(file: File): Promise<string> {
   return Array.isArray(text) ? text.join("\n\n") : (text ?? "");
 }
 
+/**
+ * How much of a document's text is indexed — `MAX_INDEX_CHARS` in
+ * `worker/src/lib/extract.ts`. A PDF's text is cut here before it is sent,
+ * since the server keeps no more than this of it anyway.
+ */
+const MAX_INDEX_CHARS = 2_000_000;
+
+/**
+ * Files up to this go in one request; anything bigger goes in parts. Under the
+ * one-request route's 10 MB, so the text a PDF carries beside it still fits.
+ */
+const ONE_REQUEST_BYTES = 8 * 1024 * 1024;
+
+/** What an upload is doing, for the line under the file's name. */
+export type UploadPhase = "reading" | "uploading";
+
+/** One part of an upload, PUT with progress. Retried twice on a dropped connection. */
+async function putPart(
+  token: string,
+  n: number,
+  body: Blob,
+  to: "file" | "text",
+  onLoaded: (bytes: number) => void,
+): Promise<{ partNumber: number; etag: string }> {
+  const auth = await getAccessToken();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", `${import.meta.env.VITE_API_URL}/uploads/parts?n=${n}&to=${to}`);
+        if (auth) xhr.setRequestHeader("Authorization", `Bearer ${auth}`);
+        xhr.setRequestHeader("X-Upload-Token", token);
+        xhr.upload.onprogress = (e) => onLoaded(e.loaded);
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            onLoaded(body.size);
+            resolve(JSON.parse(xhr.responseText));
+            return;
+          }
+          let message = xhr.statusText;
+          try {
+            message = errorMessage(xhr.status, JSON.parse(xhr.responseText), xhr.statusText);
+          } catch {
+            // fall back to statusText
+          }
+          reject(new ApiError(xhr.status, message));
+        };
+        xhr.onerror = () => reject(new ApiError(0, "network error"));
+        xhr.send(body);
+      });
+    } catch (e) {
+      const retryable = e instanceof ApiError && (e.status === 0 || e.status >= 500);
+      if (!retryable || attempt >= 2) throw e;
+      onLoaded(0);
+    }
+  }
+}
+
+/**
+ * A file sent in parts (`worker/src/routes/uploads.ts`): start, every part in
+ * order, then complete — or abort, so a failed upload leaves nothing behind.
+ */
+async function uploadInParts<T>(
+  bundleId: string,
+  file: File,
+  text: string,
+  onProgress?: (pct: number) => void,
+): Promise<T> {
+  const textBlob = text ? new Blob([text], { type: "text/plain" }) : null;
+  const { token, partSize } = await request<{ token: string; partSize: number }>(
+    "POST",
+    `/bundles/${bundleId}/uploads`,
+    { name: file.name, size: file.size, withText: Boolean(textBlob) },
+  );
+  const total = file.size + (textBlob?.size ?? 0);
+  let done = 0;
+  const report = (inFlight: number) =>
+    onProgress?.(Math.min(99, Math.round(((done + inFlight) / total) * 100)));
+
+  const send = async (blob: Blob, to: "file" | "text") => {
+    const parts: Array<{ partNumber: number; etag: string }> = [];
+    for (let offset = 0, n = 1; offset < blob.size; offset += partSize, n++) {
+      const slice = blob.slice(offset, offset + partSize);
+      parts.push(await putPart(token, n, slice, to, report));
+      done += slice.size;
+    }
+    return parts;
+  };
+
+  try {
+    const parts = await send(file, "file");
+    const textParts = textBlob ? await send(textBlob, "text") : undefined;
+    const doc = await request<T>("POST", "/uploads/complete", { token, parts, textParts });
+    onProgress?.(100);
+    return doc;
+  } catch (e) {
+    void request("POST", "/uploads/abort", { token }).catch(() => {});
+    throw e;
+  }
+}
+
 function uploadWithProgress<T>(
   path: string,
   file: File,
@@ -553,15 +654,34 @@ export const api = {
       bundleId: string,
       file: File,
       onProgress?: (pct: number) => void,
+      onPhase?: (phase: UploadPhase) => void,
     ): Promise<Agent["documents"][number]> => {
       // pdf.js can't run on the Workers runtime, so PDFs are parsed here in the
       // browser and the extracted text is sent alongside the file for indexing.
-      let fields: Record<string, string> | undefined;
+      let text = "";
       if (file.name.toLowerCase().endsWith(".pdf")) {
-        const text = await extractPdfText(file).catch(() => "");
-        if (text) fields = { text };
+        onPhase?.("reading");
+        try {
+          text = (await extractPdfText(file)).slice(0, MAX_INDEX_CHARS);
+        } catch {
+          // Said here rather than left to the server, which would only see "no
+          // text" and call a locked or damaged PDF a scan.
+          throw new ApiError(
+            0,
+            `${file.name}: this PDF could not be opened — it may be password-protected or damaged`,
+          );
+        }
       }
-      return uploadWithProgress(`/bundles/${bundleId}/documents/upload`, file, onProgress, fields);
+      onPhase?.("uploading");
+      if (file.size <= ONE_REQUEST_BYTES) {
+        return uploadWithProgress(
+          `/bundles/${bundleId}/documents/upload`,
+          file,
+          onProgress,
+          text ? { text } : undefined,
+        );
+      }
+      return uploadInParts(bundleId, file, text, onProgress);
     },
   },
   favorites: {

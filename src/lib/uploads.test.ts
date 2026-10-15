@@ -30,20 +30,26 @@ describe("validateUpload", () => {
   });
 
   it("refuses an unsupported extension and names the file", () => {
-    const result = validateUpload(file("deck.pptx"));
+    const result = validateUpload(file("setup.exe"));
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.reason).toContain("deck.pptx");
-    expect(result.ok === false && result.reason).toContain("md, txt, csv, json, pdf");
+    expect(result.ok === false && result.reason).toContain("setup.exe");
+    expect(result.ok === false && result.reason).toContain("pdf, docx, pptx, xlsx");
   });
 
   it("refuses a file with no extension at all", () => {
     expect(validateUpload(file("Makefile")).ok).toBe(false);
   });
 
-  it("refuses a file over 10 MB", () => {
+  it("accepts Office documents", () => {
+    for (const name of ["deck.pptx", "contract.docx", "budget.xlsx", "notes.odt"]) {
+      expect(validateUpload(file(name))).toEqual({ ok: true });
+    }
+  });
+
+  it("refuses a file over 100 MB", () => {
     const result = validateUpload(file("huge.md", MAX_SIZE + 1));
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.reason).toContain("10 MB");
+    expect(result.ok === false && result.reason).toContain("100 MB");
   });
 
   it("accepts a file exactly at the limit", () => {

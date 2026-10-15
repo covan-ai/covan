@@ -1,7 +1,8 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, ApiError, type Bundle } from "./api-client";
+import { api, ApiError, type Bundle, type UploadPhase } from "./api-client";
+import { indexingNow } from "./index-status";
 import { canWriteAsRole } from "./roles";
 import type { ReasoningEffort } from "./agent-meta";
 import type { AgentAccess, AgentShare, AgentSharing } from "./agent-access";
@@ -81,6 +82,15 @@ export type Agent = {
      * the routine is not theirs to see, so the line says "a routine".
      */
     routineName?: string | null;
+    /**
+     * Where its indexing has got: `queued` and `indexing` while the job runs,
+     * `ready`, `partial` when the text was cut at the indexing limit, `failed`
+     * with `indexError`. Null for a document indexed before jobs existed —
+     * `indexed` describes those. Mirrors `DocumentDTO` in worker/src/lib/dto.ts.
+     */
+    indexStatus?: "queued" | "indexing" | "ready" | "partial" | "failed" | null;
+    indexProgress?: { done: number; total: number } | null;
+    indexError?: string | null;
   }[];
   bundleIds: string[];
   createdAt: number;
@@ -283,6 +293,7 @@ type Store = {
     bundleId: string,
     file: File,
     onProgress?: (pct: number) => void,
+    onPhase?: (phase: UploadPhase) => void,
   ) => Promise<Agent["documents"][number]>;
   attachBundle: (agentId: string, bundleId: string) => void;
   detachBundle: (agentId: string, bundleId: string) => void;
@@ -315,6 +326,10 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
     queryKey: ["agents"],
     queryFn: () => api.agents.list(),
     enabled: signedIn,
+    // While any document is still being indexed, ask again every few seconds
+    // so its status moves on screen; once none is, stop asking.
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((a) => a.documents.some(indexingNow)) ? 4_000 : false,
   });
   const { data: sessions = [] } = useQuery({
     queryKey: ["sessions"],
@@ -421,8 +436,8 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         return bundle;
       },
 
-      uploadToBundle: async (bundleId, file, onProgress) => {
-        const doc = await api.bundles.upload(bundleId, file, onProgress);
+      uploadToBundle: async (bundleId, file, onProgress, onPhase) => {
+        const doc = await api.bundles.upload(bundleId, file, onProgress, onPhase);
         // Refresh bundles (doc counts), agents (the document list + per-doc
         // indexing status) and the explorer's per-bundle listing.
         await Promise.all([

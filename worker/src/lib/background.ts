@@ -8,6 +8,7 @@ import { startQueuedBrowserTasks } from "./browser/queue";
 import { sweepAbandonedTakeovers, sweepConversationBrowsers } from "./browser/sweep";
 import { PROVIDERS } from "./connections/registry";
 import { advanceDueDocumentJobs } from "./docs/host";
+import { advanceDueIndexJobs } from "./indexing/host";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -106,6 +107,12 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   // Worker (no document store) a job that is ready to be filed is put back for
   // the API Worker; see `advanceDocumentJob`.
   if (await advanceDueDocumentJobs(env)) return;
+
+  // Documents whose indexing nobody is driving (0105): no Durable Object bound,
+  // or a host that died holding the lease. Only where there is a document store
+  // to read the file from; one unit per document, two documents at most, and
+  // an idle tick costs the one claim.
+  if (canSyncConnections(env) && (await advanceDueIndexJobs(env))) return;
 
   if (!canSyncConnections(env)) {
     // Not an error, and not silent either. This is the cron-only Worker

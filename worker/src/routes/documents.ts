@@ -1,13 +1,12 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
-import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../lib/embeddings";
-import { contentTypeFor, EXCERPT_LIMIT } from "../lib/extract";
+import { contentTypeFor, EXCERPT_LIMIT, extOf } from "../lib/extract";
 import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
-import { guardCredits, recordCredits } from "../lib/entitlements/guard";
-import { embeddingSpend } from "../lib/entitlements";
-import { replaceChunks } from "../lib/chunk-store";
-import { fullTextOf } from "../lib/document-text";
+import { guardCredits } from "../lib/entitlements/guard";
+import { sidecarKey } from "../lib/document-text";
+import { deferred } from "../lib/defer";
+import { kickIndexJob } from "../lib/indexing/host";
 import { callDeletionFn } from "../lib/deletion";
 import { markdownToDocx } from "../lib/formats/docx";
 import { pdfRenderer } from "../lib/formats/pdf";
@@ -301,14 +300,20 @@ documents.get("/documents/:id/export/:format", async (c) => {
   });
 });
 
-// POST /documents/:id/reindex — re-extract, re-chunk and re-embed one document,
-// replacing its chunks. Recovers documents whose upload-time embedding failed
-// (they exist but retrieve nothing) and refreshes chunks after a chunker change.
+// POST /documents/:id/reindex — put a document back in the indexing queue.
+//
+// It used to re-embed the whole document inside this request, which had the
+// upload's ceiling and the upload's way of failing half-way. Now it queues the
+// job (`queue_document_index`, 0105) and returns at once; the explorer polls
+// the document's status like any upload. The passages it has keep answering
+// until the new set is complete.
+//
+// What it cannot do is invent text that was never kept: a PDF uploaded before
+// its text was stored beside it has only its 8,000-character excerpt, and is
+// refused here rather than indexed as though that were the document.
 documents.post("/documents/:id/reindex", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
-
-  const env = c.env;
 
   const { data: doc, error } = await db
     .from("documents")
@@ -327,16 +332,9 @@ documents.post("/documents/:id/reindex", async (c) => {
   const denied = await guardCredits(c, workspaceId);
   if (denied) return denied;
 
-  // The whole text: the sidecar the upload kept for a PDF, or the original
-  // re-read. This used to fall back to `documents.content` for every PDF —
-  // the first 8,000 characters — and so a reindex cut a long PDF down to its
-  // first few pages and called it repaired. A PDF uploaded before sidecars
-  // existed has nothing fuller than that excerpt, and is refused rather than
-  // shortened: uploading it again is the only way to get its text back.
-  let fullText: string;
-  try {
-    const found = await fullTextOf(getDocStore(c.env), doc);
-    if (!found.complete) {
+  if (extOf(doc.name) === "pdf" && doc.r2_key) {
+    const sidecar = await getDocStore(c.env).getRange(sidecarKey(doc.r2_key), 0, 0);
+    if (!sidecar && (doc.content ?? "").length >= EXCERPT_LIMIT) {
       return c.json(
         {
           error:
@@ -347,46 +345,24 @@ documents.post("/documents/:id/reindex", async (c) => {
         409,
       );
     }
-    fullText = found.text;
-  } catch (e) {
-    console.error("failed to read document from store", e);
-    return c.json({ error: "failed to load the document; check the server logs" }, 500);
   }
 
-  const chunks = chunkText(fullText);
-  if (chunks.length === 0) {
-    return c.json({ error: "document has no indexable text" }, 400);
+  const { error: queueError } = await db.rpc("queue_document_index", { p_document_id: id });
+  if (queueError) {
+    if (queueError.code === "42501") return c.json({ error: "you cannot reindex this" }, 403);
+    console.error("could not queue a reindex", queueError);
+    return c.json({ error: "failed to queue the reindex" }, 500);
   }
+  deferred(c, kickIndexJob(c.env, id));
 
-  // Embed first — only touch the stored chunks once we have vectors in hand, so
-  // a failure never leaves the document worse off than before.
-  let vectors: number[][];
-  try {
-    const embedded = await embedTexts(env, chunks);
-    vectors = embedded.vectors;
-    await recordCredits(c, embeddingSpend(embeddingModel(env), embedded.tokens, "reindex"));
-  } catch (e) {
-    console.error("reindex embed failed", id, e);
-    // What the batches before the failure cost was spent all the same.
-    await recordCredits(c, embeddingSpend(embeddingModel(env), tokensSpentBefore(e), "reindex"));
-    return c.json({ error: "failed to embed document" }, 502);
-  }
-
-  const rows = chunks.map((ch, i) => ({
-    document_id: id,
-    bundle_id: doc.bundle_id,
-    workspace_id: workspaceId,
-    chunk_index: i,
-    content: ch,
-    context: doc.name,
-    embedding: vectors[i],
-  }));
-  // Replaced, not cleared and refilled: a failure here leaves the passages the
-  // document had rather than none (`replaceChunks`).
-  const { error: insErr } = await replaceChunks(db, id, rows);
-  if (insErr) return c.json({ error: "failed to save chunks" }, 500);
-
-  return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunks.length }] }));
+  const { data: queued } = await db
+    .from("documents")
+    .select(
+      "id,name,size,created_at,bundle_id,index_status,index_cursor,index_total,index_error,document_chunks(count)",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  return c.json(mapDocument(queued ?? { ...doc, document_chunks: [{ count: 0 }] }), 202);
 });
 
 export { documents };

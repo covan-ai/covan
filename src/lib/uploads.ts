@@ -7,18 +7,37 @@
 // the three surfaces cannot drift into disagreeing about what an acceptable
 // file is.
 
-export const ALLOWED_EXT = ["md", "markdown", "txt", "csv", "json", "pdf"] as const;
+export const ALLOWED_EXT = [
+  "pdf",
+  "docx",
+  "pptx",
+  "xlsx",
+  "odt",
+  "rtf",
+  "md",
+  "markdown",
+  "txt",
+  "csv",
+  "tsv",
+  "json",
+  "html",
+  "htm",
+  "xml",
+] as const;
+
+/** The `accept` attribute every file picker uses, from the one list above. */
+export const ACCEPT = ALLOWED_EXT.map((e) => `.${e}`).join(",");
 
 // The same number as `MAX_UPLOAD_BYTES` in `worker/src/lib/extract.ts`, which is
 // the one that is enforced. `uploads.test.ts` reads both files and fails when
 // they disagree; this copy exists because the frontend cannot import from the
 // worker's tree.
-export const MAX_SIZE = 10 * 1024 * 1024;
+export const MAX_SIZE = 100 * 1024 * 1024;
 
 // What the extension list is called when a person has to read it. `markdown` is
 // left out on purpose: it is the same format as `md` and naming both explains
 // nothing.
-const SPOKEN_EXT = "md, txt, csv, json, pdf";
+const SPOKEN_EXT = "pdf, docx, pptx, xlsx, odt, rtf, md, txt, csv, json, html";
 
 /** The characters after the last dot, lowercased. "" when there is no dot. */
 export function extOf(name: string): string {
@@ -41,7 +60,7 @@ export function validateUpload(file: { name: string; size: number }): UploadChec
     return { ok: false, reason: `${file.name}: the file is empty` };
   }
   if (file.size > MAX_SIZE) {
-    return { ok: false, reason: `${file.name}: too large (max 10 MB)` };
+    return { ok: false, reason: `${file.name}: too large (max 100 MB)` };
   }
   return { ok: true };
 }

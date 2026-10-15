@@ -110,4 +110,14 @@ describe("write_document", () => {
     expect(writeDocumentTool.isConfigured({} as never)).toBe(false);
     expect(writeDocumentTool.isConfigured({ DOCS_DIR: "/tmp/docs" } as never)).toBe(true);
   });
+
+  it("asks for a short brief, not the document, and to not start a listed one again", () => {
+    const schema = writeDocumentTool.input as {
+      properties: { instruction: { description: string; maxLength: number } };
+    };
+    expect(schema.properties.instruction.description).toContain("No more than 600 characters");
+    expect(schema.properties.instruction.maxLength).toBe(2000);
+    expect(writeDocumentTool.description).toContain("never put the content");
+    expect(writeDocumentTool.description).toContain("do not call this again");
+  });
 });

@@ -81,4 +81,13 @@ describe("placeJobs", () => {
         ?.map((j) => j.id),
     ).toEqual(["a", "b"]);
   });
+
+  it("puts a Report-button card under the reply it wrote up, not the next one", () => {
+    // 2026-10-15: a report asked for at 12:01 was hung under the reply to a
+    // question asked half an hour later.
+    const button = job({ id: "btn", origin: "button", createdAt: "2026-10-15T12:01:00Z" });
+    const placed = placeJobs([button], messages);
+    expect(placed.byMessage.get("a1")?.map((j) => j.id)).toEqual(["btn"]);
+    expect(placed.byMessage.get("a2")).toBeUndefined();
+  });
 });

@@ -28,6 +28,14 @@ import { enqueueDocumentJob } from "../../docs/enqueue";
 
 const MAX_TITLE = 120;
 const MAX_INSTRUCTION = 2000;
+/**
+ * What the model is asked to keep the brief to. Far below `MAX_INSTRUCTION`
+ * on purpose: on 2026-10-15 a model put the whole report into this argument —
+ * 4,380 output tokens streamed with nothing on screen for forty seconds — and
+ * a second call like it was cut off mid-argument and never ran. The writer
+ * reads the conversation itself; the brief only has to say what it is for.
+ */
+const BRIEF_CHARS = 600;
 
 export const writeDocumentTool: AgentTool = {
   name: "write_document",
@@ -37,21 +45,27 @@ export const writeDocumentTool: AgentTool = {
     "(Markdown, Word or PDF) and search it. Use this whenever somebody asks for a report or " +
     "a document, or for something longer than a chat answer should be. Do NOT write the " +
     "document in the chat yourself: call this, then tell them in a sentence or two that it " +
-    "is being written and will appear in the conversation. It is written section by section " +
-    "from this conversation and the team's documents, so put everything the document must " +
-    "cover, who it is for and any structure they asked for into `instruction`.",
+    "is being written and will appear in the conversation. A separate writer plans and writes " +
+    "it section by section, and reads this whole conversation and the team's documents " +
+    "itself — so `instruction` is a short brief, not the document: never put the content, " +
+    "the outline or the text into it. If the documents listed for this conversation already " +
+    "include the one being asked about, do not call this again; point the person to its card.",
   input: {
     type: "object",
     properties: {
       title: {
         type: "string",
         description: "A short working title naming the document's subject.",
+        maxLength: MAX_TITLE,
       },
       instruction: {
         type: "string",
         description:
-          "What the document must cover, who it is for, and any sections, length or tone " +
-          "that were asked for — in the person's own language.",
+          "One to three sentences, in the person's own language: what the document is for, " +
+          "who will read it, and any sections, length or tone they asked for. No more than " +
+          `${BRIEF_CHARS} characters — the writer already has the conversation, so repeating it ` +
+          "here only delays the document.",
+        maxLength: MAX_INSTRUCTION,
       },
     },
     required: ["title", "instruction"],

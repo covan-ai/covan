@@ -18,6 +18,7 @@ import {
 import { capabilitiesFor } from "../lib/harness/available";
 import { egressCountry } from "../lib/browser/egress";
 import { browserTaskNote } from "../lib/browser/task-note";
+import { documentJobNote } from "../lib/docs/note";
 import { toolByName } from "../lib/harness/registry";
 import { cap, MAX_TOOL_OUTPUT_CHARS, TOOL_TIMEOUT_MS } from "../lib/harness/budget";
 import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
@@ -320,11 +321,20 @@ chat.post("/chat/stream", async (c) => {
     !continuing && tools.some((t) => t.name === "browse")
       ? await browserTaskNote(db, sessionId)
       : null;
+  // The same for documents (`lib/docs/note.ts`): without it a model asked
+  // "so?" after a document was filed starts writing it again.
+  const documentNote =
+    !continuing && tools.some((t) => t.name === "write_document")
+      ? await documentJobNote(db, sessionId)
+      : null;
   const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
     ...(ragBlock ? [{ role: "user" as const, content: ragBlock, volatile: true as const }] : []),
     ...(taskNote ? [{ role: "system" as const, content: taskNote, volatile: true as const }] : []),
+    ...(documentNote
+      ? [{ role: "system" as const, content: documentNote, volatile: true as const }]
+      : []),
     ...(latestTurn ? [latestTurn] : []),
     // On a continuation `latestTurn` is the cut-off answer, and this is the
     // turn that asks for the rest of it. See `CONTINUE_INSTRUCTION` for why it

@@ -63,6 +63,8 @@ const ASKS = ["refuseIfKeyAuthenticated(", 'c.get("apiKeyId")'];
  * Keyed `"<file> <METHOD> <path>"`.
  */
 const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
+  "routes/trash.ts DELETE /trash/:kind/:id":
+    "deleting for good: the thirty-day undo is gone the moment it runs, so a leaked key could destroy a workspace's knowledge past any revocation",
   // -- keys and the account
   "routes/api-keys.ts POST /api-keys":
     "mints a key, and a key that writes successors cannot be revoked: the moment one leaks it makes more",
@@ -188,6 +190,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/avatars.ts DELETE /me/avatar",
   "routes/brainstorm.ts POST /brainstorm/ideas/suggest",
   "routes/bundles.ts GET /bundles",
+  "routes/bundles.ts GET /knowledge/usage",
   "routes/bundles.ts GET /bundles/citations",
   "routes/bundles.ts GET /bundles/:id/documents",
   "routes/bundles.ts POST /bundles",

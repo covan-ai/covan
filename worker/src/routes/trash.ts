@@ -3,6 +3,9 @@ import type { AppEnv } from "../types";
 import { callerWorkspaceId } from "../lib/workspace";
 import { toEpochMs } from "../lib/dto";
 import { callDeletionFn, isRestorable, RESTORABLE, RETENTION_DAYS } from "../lib/deletion";
+import { getDocStore } from "../lib/docstore";
+import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { storedKeysOf } from "../lib/document-text";
 
 const trash = new Hono<AppEnv>();
 
@@ -90,6 +93,50 @@ trash.post("/trash/:kind/:id/restore", async (c) => {
   );
   if (failure) return c.json({ error: failure.message }, failure.status);
 
+  return c.json({ ok: true });
+});
+
+/**
+ * DELETE /trash/:kind/:id — gone for good, now, rather than in thirty days.
+ *
+ * Bundles and documents only: those are what own stored files, and what
+ * somebody deletes for good is usually a file they should not have uploaded.
+ * `forget_deleted` (0107) checks what a restore would check, deletes the rows
+ * and names the stored objects; the store is the worker's to empty. A file
+ * that fails to delete is logged — the row that named it is already gone, so
+ * the sweeper would never find it either.
+ */
+trash.delete("/trash/:kind/:id", async (c) => {
+  // The thirty days are the undo; this removes it. Not something a leaked key
+  // gets to do (`lib/api-key-rule.ts`).
+  const refusal = refuseIfKeyAuthenticated(c, "delete things for good");
+  if (refusal) return c.json(refusal, 403);
+  const kind = c.req.param("kind");
+  if (kind !== "bundle" && kind !== "document") return c.json({ error: "not found" }, 404);
+
+  const { data, error } = await c
+    .get("db")
+    .rpc("forget_deleted", { p_kind: kind, p_id: c.req.param("id") });
+  if (error) {
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    if (error.code === "42501") return c.json({ error: "you cannot delete things here" }, 403);
+    console.error("failed to delete for good", error);
+    return c.json({ error: "failed to delete" }, 500);
+  }
+
+  const keys = ((data ?? []) as Array<{ r2_key: string | null }>)
+    .map((r) => r.r2_key)
+    .filter((k): k is string => !!k);
+  if (keys.length > 0) {
+    const store = getDocStore(c.env);
+    for (const key of keys.flatMap(storedKeysOf)) {
+      try {
+        await store.delete(key);
+      } catch (e) {
+        console.error("delete for good: stored object left behind", key, e);
+      }
+    }
+  }
   return c.json({ ok: true });
 });
 

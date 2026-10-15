@@ -95,6 +95,29 @@ bundles.get("/bundles", async (c) => {
   return c.json((data ?? []).map((row) => mapBundle(row, viewer)));
 });
 
+// GET /knowledge/usage — how much of the workspace's knowledge the caller can
+// see: bundles, files, bytes and passages. Counted by the caller's own
+// policies (0107's `knowledge_usage` is an invoker), so a colleague's private
+// bundles are in nobody else's numbers.
+bundles.get("/knowledge/usage", async (c) => {
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ bundles: 0, documents: 0, bytes: 0, passages: 0 });
+  const { data, error } = await c
+    .get("db")
+    .rpc("knowledge_usage", { p_workspace_id: workspaceId })
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to count" }, 500);
+  const row = (data ?? {}) as Partial<
+    Record<"bundles" | "documents" | "bytes" | "passages", number>
+  >;
+  return c.json({
+    bundles: Number(row.bundles ?? 0),
+    documents: Number(row.documents ?? 0),
+    bytes: Number(row.bytes ?? 0),
+    passages: Number(row.passages ?? 0),
+  });
+});
+
 // GET /bundles/citations — how many answers cite each document, workspace-wide.
 //
 // Two calls rather than one because they answer two different questions, and

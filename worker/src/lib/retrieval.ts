@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EmbeddingConfig } from "./embeddings";
 import { embedTexts } from "./embeddings";
-import { buildContextBlock, ragMinSimilarity, retrievalQuery } from "./rag";
+import { buildContextBlock, RAG_BLOCK_CHARS, ragMinSimilarity, retrievalQuery } from "./rag";
 import type { RetrievedChunk } from "./rag";
 import { refersToDocuments, namesDocument } from "./doc-question";
 import { lexicalSearchEnabled, searchTerms } from "./search-terms";
@@ -55,6 +55,21 @@ const RAG_MATCH_COUNT = 10;
  * matched passage was read.
  */
 const STORED_SHARE = 2000;
+
+/**
+ * The budget when the question is about one document by name and no passage
+ * matched it — "summarise handbook.md", "what does the contract say".
+ *
+ * The ordinary budget (`RAG_BLOCK_CHARS`) is kept small on purpose, because it
+ * is paid on every turn; this one is paid only when somebody asks for a
+ * document by name, which is exactly when reading more of it is the answer.
+ * It used to be the 8,000-character excerpt cut to 4,000: "summarise the
+ * contract" summarised its first two pages.
+ */
+const NAMED_DOCUMENT_CHARS = 12_000;
+
+/** How many documents the no-match fallback reads, newest first. */
+const FALLBACK_DOCUMENTS = 20;
 
 export type RetrievedSource = { id: string | null; name: string };
 
@@ -175,6 +190,8 @@ export async function retrieveForAgent(
   // Embedding the question costs tokens too. Carried to the end of the turn and
   // recorded with the completion's, so one reply means one counter write.
   let embeddingTokens = 0;
+  /** What the block may hold. Raised only for a document asked for by name. */
+  let budget = RAG_BLOCK_CHARS;
 
   // Load only the agent's document *names* here (newest first) — that's all the
   // manifest needs so the agent knows what it can see and never denies having
@@ -304,17 +321,41 @@ export async function retrieveForAgent(
     // The trashed ones excluded here too, for the reason the name list gives:
     // with the service role nothing else would, and this hands the model a
     // deleted document's whole text.
-    const { data: docRows, error: docError } = await db
-      .from("documents")
-      .select("id,name,content")
-      .in("bundle_id", bundleIds)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
-    const withContent = docError
-      ? []
-      : ((docRows ?? []) as Array<{ id: string; name: string; content: string | null }>).filter(
-          (d) => d.content && d.content.trim().length > 0,
-        );
+    //
+    // Bounded: an agent with five hundred files used to load every excerpt —
+    // four megabytes — to use the first few. The named ones are fetched by
+    // name, so an old file asked for by name is never behind the newest twenty.
+    const named = docNames.filter((name) => namesDocument(question, name));
+    const [newest, byName] = await Promise.all([
+      db
+        .from("documents")
+        .select("id,name,content")
+        .in("bundle_id", bundleIds)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false })
+        .limit(FALLBACK_DOCUMENTS),
+      named.length > 0
+        ? db
+            .from("documents")
+            .select("id,name,content")
+            .in("bundle_id", bundleIds)
+            .is("deleted_at", null)
+            .in("name", named)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    const seen = new Set<string>();
+    const withContent = [
+      ...((byName.error ? [] : byName.data) ?? []),
+      ...((newest.error ? [] : newest.data) ?? []),
+    ]
+      .filter((d: { id: string }) => (seen.has(d.id) ? false : (seen.add(d.id), true)))
+      .filter(
+        (d: { content: string | null }) => d.content && d.content.trim().length > 0,
+      ) as Array<{
+      id: string;
+      name: string;
+      content: string;
+    }>;
     // Newest-first is the right default and the wrong answer when the user
     // named a file: the budget fills from the front, so "what does handbook.md
     // say?" against a dozen documents could ground on the three most recent
@@ -344,6 +385,18 @@ export async function retrieveForAgent(
         matched.length === 0 ? (d.content as string) : (d.content as string).slice(0, STORED_SHARE),
     }));
 
+    // One document asked for by name, and nothing matched: read it in order,
+    // from its passages, rather than from the excerpt on the row.
+    const subject =
+      matched.length === 0 ? storedDocs.filter((d) => namesDocument(question, d.name)) : [];
+    if (subject.length === 1) {
+      const fuller = await orderedText(db, subject[0].id, NAMED_DOCUMENT_CHARS);
+      if (fuller.length > stored[0].content.length) {
+        stored[0] = { ...stored[0], content: fuller };
+      }
+      budget = NAMED_DOCUMENT_CHARS;
+    }
+
     if (stored.length > 0) storedUsed = stored;
   }
 
@@ -354,7 +407,7 @@ export async function retrieveForAgent(
   // rest.
   const entries = [...storedUsed, ...matched];
   if (entries.length > 0) {
-    const block = buildContextBlock(entries);
+    const block = buildContextBlock(entries, budget);
     ragBlock = block.text;
     if (ragBlock) {
       // Truthful for the mixed case too: `chunks` answers "did a passage
@@ -405,4 +458,29 @@ async function readableBundles(
         (!scope.sharedOnly && scope.viewer !== undefined && b.created_by === scope.viewer),
     )
     .map((b) => b.id);
+}
+
+/**
+ * A document's text in order, from its newest passages, up to `limit`
+ * characters. Overlap between neighbouring passages is not removed — it costs
+ * a few hundred characters and saves guessing where one ends.
+ */
+async function orderedText(db: SupabaseClient, documentId: string, limit: number): Promise<string> {
+  const { data, error } = await db
+    .from("document_chunks")
+    .select("content,chunk_index,generation")
+    .eq("document_id", documentId)
+    .order("generation", { ascending: false })
+    .order("chunk_index", { ascending: true })
+    .limit(Math.ceil(limit / 600));
+  if (error || !data || data.length === 0) return "";
+  const rows = data as Array<{ content: string; generation: number }>;
+  const newest = rows[0].generation;
+  let text = "";
+  for (const row of rows) {
+    if (row.generation !== newest) break;
+    if (text.length + row.content.length > limit) break;
+    text += (text ? "\n\n" : "") + row.content;
+  }
+  return text;
 }

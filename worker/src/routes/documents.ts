@@ -53,7 +53,38 @@ documents.patch("/documents/:id", async (c) => {
   const db = c.get("db");
   const id = c.req.param("id");
 
-  const body = (await c.req.json().catch(() => ({}))) as { bundleId?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { bundleId?: unknown; name?: unknown };
+
+  // A rename. Its own small path: the passages carry the name as their
+  // `context`, so they are renamed with it, or a lexical search for the new
+  // name would find nothing and one for the old would still match.
+  if (typeof body.name === "string" && body.bundleId === undefined) {
+    const name = body.name.trim();
+    if (!name || name.length > 255) return c.json({ error: "a name is required" }, 400);
+    const { data: current } = await db
+      .from("documents")
+      .select("id,name,connection_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (!current) return c.json({ error: "not found" }, 404);
+    // A synced file's name is its source's; the next sync would put it back.
+    if (current.connection_id) {
+      return c.json(
+        { error: "rename it where it comes from — the next sync would undo this" },
+        409,
+      );
+    }
+    const { data: renamed, error } = await db
+      .from("documents")
+      .update({ name })
+      .eq("id", id)
+      .select("id,name,size,created_at,bundle_id,connection_id,external_url,document_chunks(count)")
+      .maybeSingle();
+    if (error || !renamed) return c.json({ error: "you cannot rename this document" }, 403);
+    await db.from("document_chunks").update({ context: name }).eq("document_id", id);
+    return c.json(mapDocument(renamed));
+  }
+
   const bundleId = typeof body.bundleId === "string" ? body.bundleId : "";
   if (!bundleId) return c.json({ error: "bundleId required" }, 400);
 

@@ -94,13 +94,22 @@ export async function advanceIndexJob(
     }
 
     const text = await sidecarText(store, doc);
+    const header = tableHeader(doc.name, text);
     const chunks = chunkText(text);
     const from = doc.index_cursor;
     const slice = chunks.slice(from, from + UNIT);
     const generation = doc.index_generation ?? 0;
 
     if (slice.length > 0) {
-      const embedded = await embedTexts(env, slice);
+      // What is embedded is the passage with its bearings: the document's name,
+      // and for a table its header row, which only the first passage of a
+      // CSV ever had. A row of numbers on its own embeds close to every other
+      // row of numbers. The stored passage stays as it was — this is what it is
+      // matched by, not what the model reads.
+      const embedded = await embedTexts(
+        env,
+        slice.map((content) => withBearings(doc.name, header, content)),
+      );
       tokens = embedded.tokens;
       const { error } = await insertChunkRows(
         db,
@@ -326,4 +335,19 @@ async function heldOrDone(db: SupabaseClient, documentId: string): Promise<Advan
   }
   const until = row.index_lease_until ? Date.parse(row.index_lease_until) : Date.now();
   return { next: "at", at: until + 1_000 };
+}
+
+/** The header row of a table-shaped document, or "" for anything else. */
+export function tableHeader(name: string, text: string): string {
+  const ext = extOf(name);
+  if (ext !== "csv" && ext !== "tsv" && ext !== "xlsx") return "";
+  // An Excel file's text opens with its first sheet's heading line.
+  const lines = text.split("\n", 4).filter((l) => l.trim() && !l.startsWith("## Sheet"));
+  return (lines[0] ?? "").slice(0, 300);
+}
+
+/** A passage as it is embedded: under its document's name, and its table's header. */
+export function withBearings(name: string, header: string, content: string): string {
+  const head = header && !content.startsWith(header) ? `${header}\n` : "";
+  return `${name}\n\n${head}${content}`;
 }

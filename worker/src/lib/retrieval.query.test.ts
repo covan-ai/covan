@@ -126,3 +126,51 @@ describe("retrieveForAgent with a knowledge scope", () => {
     expect(rpc()).not.toHaveProperty("p_shared_only");
   });
 });
+
+/**
+ * "Summarise handbook.md" with nothing matched used to ground on the first
+ * 8,000 characters of the excerpt, cut to the 4,000-character block.
+ */
+describe("retrieveForAgent asked about one document by name", () => {
+  it("reads that document in order, past the excerpt, under a larger budget", async () => {
+    const passage = (i: number) => `Section ${i}. ` + "Leave rules apply. ".repeat(40);
+    const fake = fakeDb({
+      tables: {
+        agent_bundles: { select: () => ({ data: [{ bundle_id: "b1" }], error: null }) },
+        documents: {
+          select: (ctx) =>
+            ctx.columns === "name"
+              ? { data: [{ name: "handbook.md" }], error: null }
+              : {
+                  data: [{ id: "d1", name: "handbook.md", content: "Short excerpt." }],
+                  error: null,
+                },
+        },
+        document_chunks: {
+          select: () => ({
+            data: Array.from({ length: 12 }, (_, i) => ({
+              content: passage(i),
+              chunk_index: i,
+              generation: 1,
+            })),
+            error: null,
+          }),
+        },
+      },
+      rpc: { match_chunks: () => ({ data: [], error: null }) },
+    });
+
+    const result = await retrieveForAgent(
+      fake.db as never,
+      { RAG_LEXICAL: "on" } as never,
+      "agent-1",
+      "summarise handbook.md for me",
+      [],
+    );
+
+    expect(result.ragBlock).toContain("Section 0.");
+    expect(result.ragBlock).toContain("Section 9.");
+    expect(result.ragBlock.length).toBeGreaterThan(8_000);
+    expect(result.grounding).toBe("documents");
+  });
+});

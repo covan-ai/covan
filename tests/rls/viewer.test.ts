@@ -156,6 +156,43 @@ describe("a member still builds", () => {
       .insert({ agent_id: seeded.agentId, bundle_id: seeded.bundleId });
     expect(error).toBeNull();
   });
+
+  /**
+   * Changed on purpose by 0103. Until then "member" meant "may delete any agent
+   * in the workspace", which is what this file used to prove for the member's
+   * own agent and what the policy allowed for everybody's. Deleting an agent
+   * takes its conversations and routines with it, so it is now a `manage`
+   * decision: the agent's maker, a workspace admin, or somebody it was shared
+   * with at that level. `seeded.agentId` is shared with the workspace for
+   * editing (fixtures.ts), so the member can still change it — and that half
+   * is asserted too, or this would pass by locking the member out.
+   */
+  it("edits an agent somebody else made, but does not delete it", async () => {
+    const { data: edited } = await member.db
+      .from("agents")
+      .update({ persona: "Edited by a member" })
+      .eq("id", seeded.agentId)
+      .select("id");
+    expect(edited ?? [], "a member can no longer edit a workspace agent").toHaveLength(1);
+
+    const { data: deleted } = await member.db
+      .from("agents")
+      .delete()
+      .eq("id", seeded.agentId)
+      .select("id");
+    expect(deleted ?? []).toEqual([]);
+
+    const { error } = await member.db.rpc("soft_delete_agent", { p_agent_id: seeded.agentId });
+    expect(error?.code).toBe("42501");
+
+    expect(await stillThere("agents", seeded.agentId), "a member deleted an agent").toBe(true);
+    const { data } = await serviceClient()
+      .from("agents")
+      .select("deleted_at")
+      .eq("id", seeded.agentId)
+      .single();
+    expect(data?.deleted_at ?? null).toBeNull();
+  });
 });
 
 describe("a viewer still uses what is there", () => {

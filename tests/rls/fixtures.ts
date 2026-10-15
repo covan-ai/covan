@@ -34,6 +34,27 @@ async function insert(
   return data.id as string;
 }
 
+/** What `agents.workspace_access` may hold (0103); null is "Only me". */
+export type AgentAccess = "use" | "edit" | "manage";
+
+export type SeedOptions = {
+  /**
+   * `agents.workspace_access` for the seeded agent. Defaults to 'edit', which
+   * is NOT the app's default: a new agent starts as Only me (null) since 0103.
+   *
+   * The default is the world every file here was written in. Before 0103 every
+   * member saw every agent and every writer could change it, so the dozens of
+   * tests that hand a co-member `seeded.agentId` — to chat with, to attach
+   * knowledge to, to grant a capability on — mean "a workspace agent", and
+   * 'edit' is exactly what 0103 backfilled existing agents to. What 'edit'
+   * does not give a plain member is deleting or restoring an agent somebody
+   * else made; viewer.test.ts says so out loud. Pass null to seed an agent
+   * the way the app now makes one; agent-sharing.test.ts is where that
+   * world is tested.
+   */
+  workspaceAccess?: AgentAccess | null;
+};
+
 /**
  * @param visibility applies to the chat session and the routine. 'private' is
  * the default the app uses; 'shared' opts them into workspace-wide visibility,
@@ -42,11 +63,14 @@ async function insert(
 export async function seedWorkspace(
   user: TestUser,
   visibility: "private" | "shared" = "private",
+  options: SeedOptions = {},
 ): Promise<Seeded> {
+  const workspaceAccess = options.workspaceAccess === undefined ? "edit" : options.workspaceAccess;
   const agentId = await insert(user, "agents", {
     workspace_id: user.workspaceId,
     name: "Seeded agent",
     created_by: user.id,
+    workspace_access: workspaceAccess,
   });
 
   const bundleId = await insert(user, "knowledge_bundles", {

@@ -49,6 +49,14 @@ const SUBSUMES: Record<string, string[]> = {
   is_workspace_member: ["workspace_members"],
   can_write_in_workspace: ["workspace_members", "is_workspace_member"],
   session_is_visible: ["chat_sessions", "workspace_members", "is_workspace_member"],
+  // 0103. `agent_access_for` returns null for anybody without a
+  // `workspace_members` row in the agent's workspace, and `agent_access`
+  // applies the API-key workspace claim exactly as `is_workspace_member` does.
+  // Edit and above also mean "not a viewer", because a viewer is capped at use
+  // — which is `can_write_in_workspace`'s question, asked of this agent.
+  can_use_agent: ["workspace_members", "is_workspace_member"],
+  can_edit_agent: ["workspace_members", "is_workspace_member", "can_write_in_workspace"],
+  can_manage_agent: ["workspace_members", "is_workspace_member", "can_write_in_workspace"],
 };
 
 /**

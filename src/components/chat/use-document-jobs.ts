@@ -72,11 +72,18 @@ export function useDocumentJobs(sessionId: string | undefined) {
 }
 
 /**
- * Which assistant message each job's card sits under: the first one written
- * at or after the job was created. A job is created during the turn that
- * asked for it and that turn's reply is written when it ends, so this is the
- * reply that said "I'm writing it" — and for the Report button, which is not a
- * turn, the next reply, or the foot of the conversation until there is one.
+ * Which assistant message each job's card sits under.
+ *
+ * Where it was asked from decides it. The agent's `write_document` is asked in
+ * a turn whose reply is written when the turn ends, after the job — so its card
+ * goes under the first reply written at or after the job: the one that said
+ * "I'm writing it". The Report button is not a turn and has no reply of its
+ * own; it writes up what was said before it, so its card goes under the last
+ * reply written before the job. Hanging it on the next reply instead put it
+ * under an answer to some later, unrelated question.
+ *
+ * A job with nowhere to go — a tool job whose turn is still running — waits
+ * at the foot of the conversation.
  */
 export function placeJobs(
   jobs: DocumentJob[],
@@ -89,11 +96,13 @@ export function placeJobs(
     .slice()
     .sort((a, b) => a.createdAt - b.createdAt);
   // Oldest first, so cards under one message read in the order they started.
-  for (const job of jobs
-    .slice()
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))) {
+  const ordered = jobs.slice().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  for (const job of ordered) {
     const at = Date.parse(job.createdAt);
-    const reply = replies.find((m) => m.createdAt >= at);
+    const reply =
+      job.origin === "button"
+        ? replies.filter((m) => m.createdAt <= at).pop()
+        : replies.find((m) => m.createdAt >= at);
     if (!reply) trailing.push(job);
     else byMessage.set(reply.id, [...(byMessage.get(reply.id) ?? []), job]);
   }

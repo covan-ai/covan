@@ -565,6 +565,8 @@ export const api = {
   },
   documents: {
     remove: (id: string): Promise<void> => request("DELETE", `/documents/${id}`),
+    /** "Sync now" for one synced file: re-imported on its connection's next run, made due now. */
+    resync: (id: string): Promise<{ ok: true }> => request("POST", `/documents/${id}/resync`),
     /** A new name. Refused (409) for a synced file, whose name is its source's. */
     rename: (id: string, name: string): Promise<Agent["documents"][number]> =>
       request("PATCH", `/documents/${id}`, { name }),
@@ -660,6 +662,9 @@ export const api = {
       patch: { name?: string; description?: string; shared?: boolean },
     ): Promise<Bundle> => request("PATCH", `/bundles/${id}`, patch),
     remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/bundles/${id}`),
+    /** A web page, fetched by the server and added as a document. */
+    addUrl: (bundleId: string, url: string): Promise<Agent["documents"][number]> =>
+      request("POST", `/bundles/${bundleId}/documents/url`, { url }),
     attach: (agentId: string, bundleId: string): Promise<{ ok: true }> =>
       request("POST", `/agents/${agentId}/bundles/${bundleId}`),
     detach: (agentId: string, bundleId: string): Promise<{ ok: true }> =>

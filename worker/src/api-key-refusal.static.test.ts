@@ -191,6 +191,8 @@ const OPEN_TO_A_KEY = new Set([
   "routes/brainstorm.ts POST /brainstorm/ideas/suggest",
   "routes/bundles.ts GET /bundles",
   "routes/bundles.ts GET /knowledge/usage",
+  "routes/bundles.ts POST /bundles/:id/documents/url",
+  "routes/documents.ts POST /documents/:id/resync",
   "routes/bundles.ts GET /bundles/citations",
   "routes/bundles.ts GET /bundles/:id/documents",
   "routes/bundles.ts POST /bundles",

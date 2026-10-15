@@ -204,3 +204,44 @@ $$;
 
 revoke all on function public.knowledge_usage(uuid) from public, anon;
 grant execute on function public.knowledge_usage(uuid) to authenticated, service_role;
+
+-- ===========================================================================
+-- 5. one synced file, now
+-- ===========================================================================
+
+-- "Sync now" for one document. The version the sync compares against is
+-- forgotten, which makes the file count as changed, and its connection is made
+-- due — so the next tick re-imports exactly this file along with anything else
+-- that moved. Nothing is fetched here; the sync engine stays the only writer.
+create or replace function public.resync_document(p_document_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_bundle_id uuid;
+  v_connection_id uuid;
+begin
+  select d.bundle_id, d.connection_id into v_bundle_id, v_connection_id
+  from public.documents d
+  where d.id = p_document_id and d.deleted_at is null;
+
+  if v_bundle_id is null or not public.bundle_is_visible(v_bundle_id) then
+    raise exception 'no such document' using errcode = 'P0002';
+  end if;
+  if v_connection_id is null then
+    raise exception 'this document was uploaded, not synced' using errcode = '22023';
+  end if;
+  if not public.bundle_is_writable(v_bundle_id) then
+    raise exception 'you cannot change documents in this workspace' using errcode = '42501';
+  end if;
+
+  update public.documents set external_version = null where id = p_document_id;
+  update public.connections
+     set next_sync_at = now()
+   where id = v_connection_id and status = 'active';
+end $$;
+
+revoke all on function public.resync_document(uuid) from public, anon;
+grant execute on function public.resync_document(uuid) to authenticated, service_role;

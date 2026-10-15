@@ -331,6 +331,23 @@ documents.get("/documents/:id/export/:format", async (c) => {
   });
 });
 
+// POST /documents/:id/resync — "Sync now" for one synced file. Queues it for
+// the connection's next run (0107's `resync_document`), which is made due now;
+// the sync engine stays the only thing that reads the source and writes the
+// document.
+documents.post("/documents/:id/resync", async (c) => {
+  const { error } = await c.get("db").rpc("resync_document", { p_document_id: c.req.param("id") });
+  if (error) {
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    if (error.code === "22023")
+      return c.json({ error: "this document was uploaded, not synced" }, 400);
+    if (error.code === "42501") return c.json({ error: "you cannot change this document" }, 403);
+    console.error("could not queue a resync", error);
+    return c.json({ error: "failed to queue the sync" }, 500);
+  }
+  return c.json({ ok: true }, 202);
+});
+
 // POST /documents/:id/reindex — put a document back in the indexing queue.
 //
 // It used to re-embed the whole document inside this request, which had the

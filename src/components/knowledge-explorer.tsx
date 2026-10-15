@@ -1771,6 +1771,15 @@ function DocumentActions({
   const elsewhere = bundles.filter((b) => b.id !== doc.bundleId);
   const queryClient = useQueryClient();
 
+  const resync = async () => {
+    try {
+      await api.documents.resync(doc.id);
+      toast.success(`${doc.name} will be synced in the next minute or two`);
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not sync it");
+    }
+  };
+
   const rename = async () => {
     const next = window.prompt(`Rename ${doc.name}`, doc.name)?.trim();
     if (!next || next === doc.name) return;
@@ -1842,6 +1851,12 @@ function DocumentActions({
                 Rename
               </DropdownMenuItem>
             ) : null}
+            {doc.connectionId ? (
+              <DropdownMenuItem onSelect={() => void resync()}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Sync now
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={() => onReindex(doc)}>
               <RefreshCw className="mr-2 h-4 w-4" />
               Reindex
@@ -1855,6 +1870,45 @@ function DocumentActions({
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * A web page, as a document. The server fetches it — a browser could not read
+ * most sites from here anyway — keeps the HTML and indexes its text. A
+ * snapshot: adding the page again later is how it is refreshed.
+ */
+function AddWebPage({ bundleId }: { bundleId: string }) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    const url = window.prompt("The address of the page to add")?.trim();
+    if (!url) return;
+    setBusy(true);
+    try {
+      const doc = await api.bundles.addUrl(bundleId, url);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["bundle-documents"] }),
+        queryClient.invalidateQueries({ queryKey: ["bundles"] }),
+        queryClient.invalidateQueries({ queryKey: ["agents"] }),
+      ]);
+      toast.success(`Added ${doc.name} — indexing it now`);
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not add that page");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => void add()}
+      disabled={busy}
+      className="mr-4 mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+    >
+      <ExternalLink className="h-3.5 w-3.5" />
+      {busy ? "Fetching the page…" : "Add a web page"}
+    </button>
   );
 }
 
@@ -1927,6 +1981,7 @@ function UploadWell({
           }}
         />
       </label>
+      {bundle ? <AddWebPage bundleId={bundle.id} /> : null}
       {/* A folder picker of its own: the same input cannot pick both files and
           folders, and the drop target above already takes both. */}
       {bundle ? (

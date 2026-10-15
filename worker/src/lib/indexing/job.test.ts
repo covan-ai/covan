@@ -225,3 +225,36 @@ describe("advanceIndexJob", () => {
     expect(await advanceIndexJob(db, env(), "d1")).toEqual({ next: "none" });
   });
 });
+
+describe("advanceIndexJob with a scanned PDF", () => {
+  it("reads it with OCR when it has no text of its own, and charges for the read", async () => {
+    const ocr = await import("../formats/read/ocr");
+    const spy = vi.spyOn(ocr, "ocrPdf").mockResolvedValue({
+      text: sentences(300),
+      truncated: false,
+      model: "claude-haiku-4-5",
+      usage: { promptTokens: 1200, completionTokens: 900 },
+    });
+    await store("b1/scan", "%PDF-1.7 a page of pixels");
+    const { state, db } = world(queued({ name: "scan.pdf", r2_key: "b1/scan", content: "" }));
+
+    const ocrEnv = { ...(env() as object), ANTHROPIC_API_KEY: "sk-ant-test" } as never;
+    for (let i = 0; i < 10; i++) {
+      if ((await advanceIndexJob(db, ocrEnv, "d1")).next === "none") break;
+    }
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(state.doc.index_status).toBe("ready");
+    expect(state.chunks.length).toBeGreaterThan(0);
+    spy.mockRestore();
+  });
+
+  it("fails it with the reason when this deployment cannot read scans", async () => {
+    await store("b1/scan", "%PDF-1.7 a page of pixels");
+    const { state, db } = world(queued({ name: "scan.pdf", r2_key: "b1/scan", content: "" }));
+
+    await drive(db);
+
+    expect(state.doc.index_status).toBe("failed");
+  });
+});

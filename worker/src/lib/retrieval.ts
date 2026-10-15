@@ -198,8 +198,16 @@ export async function retrieveForAgent(
       // Not `question` alone: a follow-up carries its subject in the
       // turn before it, and a pasted wall of text is longer than the embedding
       // model's own context window. See `retrievalQuery`.
+      //
+      // With no history the question is the only turn there is. The agent's
+      // own `search_documents` call and a routine's retrieval both pass none,
+      // and `retrievalQuery([])` is "" — so both used to embed an empty string
+      // and send no terms, and every search they ran came back with whatever
+      // sat nearest to nothing.
+      const turns: HistoryTurn[] =
+        history.length > 0 ? history : [{ role: "user", content: question }];
       const query = retrievalQuery(
-        history.map((m: { role: string; content: string }) => ({
+        turns.map((m: { role: string; content: string }) => ({
           role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
           content: m.content,
         })),

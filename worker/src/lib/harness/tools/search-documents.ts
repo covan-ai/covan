@@ -95,6 +95,18 @@ export const searchDocumentsTool: AgentTool = {
       return { kind: "ok", content: NO_PASSAGE_MATCHED };
     }
 
+    // Cited by the reply too, not only named to the model. Deduped the way
+    // `retrieveForAgent` dedupes: by id, by name when there is none.
+    if (ctx.foundSources) {
+      const key = (s: { id: string | null; name: string }) => s.id ?? `name:${s.name}`;
+      const seen = new Set(ctx.foundSources.map(key));
+      for (const s of sources) {
+        if (!s.name || seen.has(key(s))) continue;
+        seen.add(key(s));
+        ctx.foundSources.push(s);
+      }
+    }
+
     const cited = sources.map((s) => s.name).filter(Boolean);
     return {
       kind: "ok",

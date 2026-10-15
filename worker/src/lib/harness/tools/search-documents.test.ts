@@ -49,4 +49,27 @@ describe("search_documents", () => {
 
     expect(record).toHaveBeenCalledTimes(1);
   });
+
+  // An answer grounded on a mid-turn search used to show no source chips: the
+  // tool named the files to the model and nothing else heard about them.
+  it("adds what it found to the reply's citations, once each", async () => {
+    retrieveForAgent.mockResolvedValue({
+      ragBlock: "Document: Pricing.md\nPro is $20.",
+      sources: [
+        { id: "d1", name: "Handbook.md" },
+        { id: "d2", name: "Pricing.md" },
+      ],
+      embeddingTokens: 4,
+    });
+    const foundSources = [{ id: "d1", name: "Handbook.md" }];
+
+    await searchDocumentsTool.run({ query: "pro price" }, { ...ctx, foundSources });
+
+    expect(foundSources).toEqual([
+      { id: "d1", name: "Handbook.md" },
+      { id: "d2", name: "Pricing.md" },
+    ]);
+    // The question goes through as the question, not as history.
+    expect(retrieveForAgent.mock.calls.at(-1)?.slice(3)).toEqual(["pro price", []]);
+  });
 });

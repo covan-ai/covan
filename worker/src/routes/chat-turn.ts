@@ -13,6 +13,7 @@ import { priorOfferings, priorSearches } from "../lib/harness/offerings";
 import type { MessageOutcome, TurnUsage } from "../lib/harness/usage";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
 import type { ComposioTool } from "../lib/composio/client";
+import type { RetrievedSource } from "../lib/retrieval";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
 import { completionSpend, spends, type Entitlements } from "../lib/entitlements";
 
@@ -119,6 +120,8 @@ export async function buildToolContext(input: {
    * about the operation it is about to run.
    */
   approvedProposal?: unknown;
+  /** Where `search_documents` adds what it found. See `ToolContext`. */
+  foundSources?: RetrievedSource[];
 }): Promise<ToolContext> {
   // Two independent reads of the same table, both on the critical path of every
   // turn, so they overlap rather than queue. Neither can fail the turn: each
@@ -138,6 +141,7 @@ export async function buildToolContext(input: {
     runtimeLimit: input.runtimeLimit,
     egressCountry: input.egressCountry,
     ...(input.confirmed ? { confirmed: true } : {}),
+    ...(input.foundSources ? { foundSources: input.foundSources } : {}),
     // One per turn, so the same catalogue search asked twice is answered from
     // the first one. See `searchMemo` in `registry.ts`.
     searchMemo: new Map<string, string>(),

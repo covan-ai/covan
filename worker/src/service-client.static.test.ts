@@ -47,6 +47,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the same exemption as the routine dispatcher, one floor up: a sync is claimed by a cron tick with no caller, so there is no JWT for RLS to resolve. What it may touch is bounded by hand in lib/connections/sync.ts, to the workspace and bundle that came out of claim_due_connections rather than out of anything a caller sent",
   ],
   [
+    "lib/routines/held.ts",
+    "a routine's report held for its browser (0100) is finished by whatever settled the browser's last task — a cron tick or an open tab answering for another person's run — so there is no caller whose JWT could resolve the routine, its channel or its run. routine_runs has no client write grant at all (0094), and routines.browser_conversation_id is the engine's column. Every read is keyed to the run id a browser task row carried and the routine row that run names: the channel is held to the routine's own user_id, the agent to the routine's workspace, and the conversation it opens is the routine owner's own, private, under the routine's agent",
+  ],
+  [
     "lib/browser/tasks.ts",
     "the one write `browse` makes, and it has to reach past RLS because 0073 gives browser_tasks no write grant to any client role — a client that could insert could name an arbitrary provider_task_id, and one deployment-wide BROWSER_USE_API_KEY means that id addresses somebody's running browser, whose output the poller would then deliver into the fabricator's conversation. Same shape and same reason as savePausedTurn in lib/harness/turn.ts. It decides nothing: every id it writes comes from ToolContext, which the route resolved from the authenticated request before the tool ran",
   ],
@@ -241,6 +245,10 @@ const RECEIVES_THE_SERVICE_CLIENT = new Map([
   [
     "lib/routines/executor.ts",
     "a scheduled run has no caller. Every read is keyed to the routine row the claim returned and its own workspace_id, and the owner's membership is checked before a run",
+  ],
+  [
+    "lib/routines/held.ts",
+    "the executor hands it the run's service client to open the routine's conversation: the routine row it was given is the one the claim returned, and the conversation is opened for that row's owner, agent and workspace and no other",
   ],
   [
     "lib/routines/agent-run.ts",

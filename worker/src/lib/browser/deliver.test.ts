@@ -76,6 +76,11 @@ vi.mock("./credentials", () => ({
   ) => credentialCoversHost(env, args, overrides),
 }));
 
+const completeHeldRun = vi.fn(async (..._args: unknown[]): Promise<boolean> => true);
+vi.mock("../routines/held", () => ({
+  completeHeldRun: (...args: unknown[]) => completeHeldRun(...args),
+}));
+
 import { deliverBrowserTask } from "./deliver";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 
@@ -240,6 +245,7 @@ beforeEach(() => {
     finishReason: "stop",
   });
   deliverFn.mockReset();
+  completeHeldRun.mockReset();
   record.mockReset();
   hasSavedCredential.mockReset();
   hasSavedCredential.mockResolvedValue(false);
@@ -904,5 +910,54 @@ describe("which of their messages is shown", () => {
     await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
     expect(bound).toBeUndefined();
     expect(sent()[1]).toEqual({ role: "user", content: LATER });
+  });
+});
+
+/**
+ * A routine's task (0100). Its answer is written into the routine's report,
+ * which is phrased and sent once by `lib/routines/held.ts` — so here it is the
+ * browser's own words in the conversation, no model call, and no notice.
+ */
+describe("a routine's task", () => {
+  const ROUTINE_ROW: BrowserTaskRow = { ...ROW, routine_run_id: "run-1" };
+
+  it("writes the browser's own report into the conversation, without phrasing it", async () => {
+    await deliverBrowserTask(ROUTINE_ROW, FINISHED, ENV, fakeDb());
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].content).toBe(FINISHED.output);
+  });
+
+  it("notifies nobody, and asks the held report to finish", async () => {
+    await deliverBrowserTask(ROUTINE_ROW, FINISHED, ENV, fakeDb());
+
+    expect(deliverFn).not.toHaveBeenCalled();
+    expect(completeHeldRun).toHaveBeenCalledOnce();
+    expect(completeHeldRun.mock.calls[0][1]).toBe("run-1");
+  });
+
+  it("still asks the held report to finish when the conversation is gone", async () => {
+    sessionExists = false;
+    await deliverBrowserTask(ROUTINE_ROW, FINISHED, ENV, fakeDb());
+
+    expect(inserted).toHaveLength(0);
+    expect(completeHeldRun).toHaveBeenCalledOnce();
+  });
+
+  it("reads which run a task answers when its reader did not select the column", async () => {
+    tasks = { "bt-1": { routine_run_id: "run-7" } as never };
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+
+    expect(completeHeldRun.mock.calls[0][1]).toBe("run-7");
+    expect(deliverFn).not.toHaveBeenCalled();
+  });
+
+  it("leaves a conversation's own task as it was", async () => {
+    await deliverBrowserTask({ ...ROW, routine_run_id: null }, FINISHED, ENV, fakeDb());
+
+    expect(completeHeldRun).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(deliverFn).toHaveBeenCalledOnce();
   });
 });

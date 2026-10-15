@@ -109,6 +109,8 @@ function RoutineDetailPage() {
         }
       } else if (result.status === "skipped") {
         toast.message("No action needed");
+      } else if (result.status === "waiting") {
+        toast.message("The browser is working — the report is sent when it answers");
       } else {
         toast.error("That run failed — see the run history for why");
       }

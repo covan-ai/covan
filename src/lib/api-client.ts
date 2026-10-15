@@ -874,7 +874,9 @@ export const api = {
     remove: (id: string): Promise<void> => request("DELETE", `/routines/${id}`),
     runs: (id: string): Promise<RoutineRun[]> => request("GET", `/routines/${id}/runs`),
     /** Runs it now instead of waiting for the schedule. Resolves when the run ends. */
-    run: (id: string): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> =>
+    run: (
+      id: string,
+    ): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> =>
       request("POST", `/routines/${id}/run`),
     draft: (text: string, timezone: string): Promise<RoutineDraft> =>
       request("POST", "/routines/draft", { text, timezone }),

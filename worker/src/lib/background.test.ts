@@ -7,6 +7,7 @@ const {
   sweepAbandonedTakeovers,
   sweepConversationBrowsers,
   startQueuedBrowserTasks,
+  sweepHeldRuns,
 } = vi.hoisted(() => ({
   runDueRoutines: vi.fn(),
   runDueConnections: vi.fn(),
@@ -14,12 +15,14 @@ const {
   sweepAbandonedTakeovers: vi.fn(),
   sweepConversationBrowsers: vi.fn(),
   startQueuedBrowserTasks: vi.fn(async () => ({ expired: 0, started: 0 })),
+  sweepHeldRuns: vi.fn(async () => ({ finished: 0 })),
 }));
 vi.mock("./routines/dispatcher", () => ({ runDueRoutines }));
 vi.mock("./connections/dispatcher", () => ({ runDueConnections }));
 vi.mock("./browser/poller", () => ({ pollDueBrowserTasks }));
 vi.mock("./browser/sweep", () => ({ sweepAbandonedTakeovers, sweepConversationBrowsers }));
 vi.mock("./browser/queue", () => ({ startQueuedBrowserTasks }));
+vi.mock("./routines/held", () => ({ sweepHeldRuns }));
 
 import { runScheduledWork } from "./background";
 

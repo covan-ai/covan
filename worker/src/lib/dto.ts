@@ -874,6 +874,15 @@ export type RoutineDTO = {
   endsAfterRuns: number | null;
   /** How many it has delivered. */
   runsDone: number;
+  /**
+   * Whether a scheduled run may use the browser, and what it carries (0100):
+   * `off`; `all`, as in chat; or `site`, no cookie jar and only
+   * `browserSite`'s saved login.
+   */
+  browserAccess: "off" | "all" | "site";
+  browserSite: string | null;
+  /** The conversation this routine's browser reports into, once a run has opened one. */
+  browserConversationId: string | null;
   status: "active" | "paused" | "completed";
   pausedReason: string | null;
   nextRunAt: number | null;
@@ -898,6 +907,9 @@ export function mapRoutine(row: {
   output_retention?: number | null;
   ends_after_runs?: number | null;
   runs_done?: number | null;
+  browser_access?: string | null;
+  browser_site?: string | null;
+  browser_conversation_id?: string | null;
   status: string;
   paused_reason: string | null;
   next_run_at: string | null;
@@ -932,6 +944,11 @@ export function mapRoutine(row: {
     // `outputRetention` above falls back on.
     endsAfterRuns: row.ends_after_runs ?? null,
     runsDone: row.runs_done ?? 0,
+    // `off` for a row read before 0100, which is what every routine was.
+    browserAccess:
+      row.browser_access === "all" || row.browser_access === "site" ? row.browser_access : "off",
+    browserSite: row.browser_site ?? null,
+    browserConversationId: row.browser_conversation_id ?? null,
     status:
       row.status === "paused" ? "paused" : row.status === "completed" ? "completed" : "active",
     pausedReason: row.paused_reason ?? null,
@@ -943,7 +960,8 @@ export function mapRoutine(row: {
 
 export type RoutineRunDTO = {
   id: string;
-  status: "ok" | "skipped" | "failed";
+  /** `waiting`: the report is written and held for a browser task's answer (0100). */
+  status: "ok" | "skipped" | "failed" | "waiting";
   itemsNew: number;
   /**
    * New entries this run saw and did not deliver, dropped by the per-run cap.
@@ -1012,13 +1030,18 @@ export function mapRoutineRun(row: {
 }): RoutineRunDTO {
   return {
     id: row.id,
-    status: row.status === "ok" || row.status === "failed" ? row.status : "skipped",
+    status:
+      row.status === "ok" || row.status === "failed" || row.status === "waiting"
+        ? row.status
+        : "skipped",
     itemsNew: row.items_new ?? 0,
     itemsOverflow: row.items_overflow ?? 0,
     nothingRelevant: row.status === "skipped" && row.error === NOTHING_RELEVANT_REASON,
     durationMs: row.duration_ms ?? null,
     error: row.error ?? null,
-    summary: row.summary ?? null,
+    // A waiting run's `summary` is its draft, and the field means what was
+    // delivered — which, until the browser answers, is nothing.
+    summary: row.status === "waiting" ? null : (row.summary ?? null),
     documentId: row.document_id ?? null,
     filingNote: row.filing_note ?? null,
     // Narrowed rather than cast: a value a newer build wrote reads as "not

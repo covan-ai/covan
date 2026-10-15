@@ -33,6 +33,7 @@ import { generateIngestToken } from "../lib/routines/ingest";
 import { rateLimitKey } from "../middleware/ratelimit";
 import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
+import { siteHostOf } from "../lib/browser/credentials";
 import { createRoutine } from "../lib/routines/create";
 import { resolveModel } from "../lib/models";
 import { complete } from "../lib/completion";
@@ -486,6 +487,14 @@ const updateSchema = z
     // never off.
     outputBundleId: z.string().uuid().nullable().optional(),
     outputRetention: z.number().int().min(1).max(520).optional(),
+    /**
+     * Whether a scheduled run may use the browser, and what it carries (0100).
+     * `site` needs `browserSite`, here or already on the row; the host is
+     * normalised by `siteHostOf`, the function a saved login's host went
+     * through, so the two are compared without a second normaliser.
+     */
+    browserAccess: z.enum(["off", "all", "site"]).optional(),
+    browserSite: z.string().max(300).nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "no fields to update" });
 
@@ -632,7 +641,7 @@ routines.patch("/routines/:id", async (c) => {
   const db = c.get("db");
   const { data: current, error: loadError } = await db
     .from("routines")
-    .select("schedule_cron, timezone, status")
+    .select("schedule_cron, timezone, status, browser_site")
     .eq("id", c.req.param("id"))
     .maybeSingle();
 
@@ -662,6 +671,24 @@ routines.patch("/routines/:id", async (c) => {
   // filing off instead of being read as "no change".
   if (body.outputBundleId !== undefined) patch.output_bundle_id = body.outputBundleId;
   if (body.outputRetention !== undefined) patch.output_retention = body.outputRetention;
+
+  // The browser (0100). A site that is not a host is refused rather than
+  // stored: a login nothing can match is a setting that silently never works.
+  if (body.browserSite !== undefined) {
+    const site =
+      body.browserSite === null || !body.browserSite.trim() ? null : siteHostOf(body.browserSite);
+    if (body.browserSite !== null && body.browserSite.trim() && !site) {
+      return c.json({ error: "the browser site must be a website's host, like linkedin.com" }, 400);
+    }
+    patch.browser_site = site;
+  }
+  if (body.browserAccess !== undefined) {
+    const site = body.browserSite !== undefined ? patch.browser_site : current.browser_site;
+    if (body.browserAccess === "site" && !site) {
+      return c.json({ error: "name the one site this routine may sign in to" }, 400);
+    }
+    patch.browser_access = body.browserAccess;
+  }
 
   // Validate the pair that will actually be in effect, not just the field that
   // changed — a timezone the cron parser cannot resolve leaves the executor

@@ -11,6 +11,7 @@ import {
 } from "./executor";
 import { summariseWithModel } from "./summarise";
 import { runRoutineWithTools } from "./agent-run";
+import { completeHeldRun } from "./held";
 import { ownHostsFrom } from "./url-guard";
 import { deliveryDepsFrom } from "./delivery";
 import { fileRoutineOutput } from "./filing";
@@ -110,6 +111,7 @@ function executorDeps(
     // learn the same "no" several times over. Absent on the single-routine
     // paths, where there is nothing to amortise over and the run asks.
     runWithTools: (input, runEnv) => runRoutineWithTools(env, db, hasConnections)(input, runEnv),
+    completeHeld: (runId) => completeHeldRun(env, runId, { db }),
     // The same retrieval chat and Slack use, reached through the same module.
     // `retrieval.ts` exists precisely because a second surface needed to ask an
     // agent something and two copies would have drifted rather than failed —
@@ -354,7 +356,7 @@ export async function runOneRoutine(
   env: RoutineEnv,
   routine: RoutineRow,
   overrides: Partial<DispatcherDeps> = {},
-): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
+): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> {
   const db = overrides.db ?? serviceClient(env);
   const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
   // The one place a run has a person behind it. A webhook receiver is told, so
@@ -381,7 +383,7 @@ export async function runPokedRoutine(
   routine: RoutineRow,
   trigger: IngestTrigger,
   overrides: Partial<DispatcherDeps> = {},
-): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
+): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> {
   const db = overrides.db ?? serviceClient(env);
   const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
   return runRoutine(routine, executorDeps(env, db), trigger);

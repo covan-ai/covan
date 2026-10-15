@@ -17,6 +17,11 @@ import {
 } from "./queue";
 import type { BegunRun } from "./start";
 
+const completeHeldRun = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
+vi.mock("../routines/held", () => ({
+  completeHeldRun: (...args: unknown[]) => completeHeldRun(...args),
+}));
+
 /**
  * A conversation's browser tasks, one after another (0080).
  *
@@ -131,6 +136,7 @@ beforeEach(() => {
   browserRow = BROWSER;
   casWins = true;
   rpcCalls = [];
+  completeHeldRun.mockClear();
 });
 
 describe("waitingInLine", () => {
@@ -398,5 +404,61 @@ describe("startQueuedBrowserTasks (the cron stage)", () => {
     const { deps: d, calls } = deps();
     expect(await startQueuedBrowserTasks({} as RoutineEnv, d)).toEqual({ expired: 0, started: 0 });
     expect(calls).toHaveLength(0);
+  });
+});
+
+/** A routine's tasks in the line (0100). */
+describe("a routine's task in the line", () => {
+  it("is queued with the run it answers and whether it may carry the jar", async () => {
+    const { deps: d, calls } = deps();
+    await queueBrowserTask(
+      ENV,
+      {
+        workspaceId: "ws-1",
+        agentId: "agent-1",
+        userId: "user-1",
+        sessionId: "sess-1",
+        task: WAITING.task,
+        site: "linkedin.com",
+        browserSessionId: "bs-1",
+        routineRunId: "run-1",
+        jarless: true,
+      },
+      d,
+    );
+    const inserted = calls.find((c) => c.table === "browser_tasks" && c.op === "insert");
+    expect(inserted?.values).toMatchObject({ routine_run_id: "run-1", jarless: true });
+  });
+
+  it("starts without the jar when it was asked for without one", async () => {
+    claims = [[{ ...WAITING, jarless: true }]];
+    const { deps: d } = deps();
+
+    await advanceBrowserQueue(ENV, "bs-1", d);
+
+    expect(d.begin).toHaveBeenCalledWith(ENV, expect.objectContaining({ withoutJar: true }));
+  });
+
+  it("asks a held report to finish when its waiting task is taken out of the line", async () => {
+    const { deps: d } = deps();
+    const { db } = fakeDb({
+      tables: {
+        browser_tasks: {
+          update: () => ({ data: { id: "bt-2", routine_run_id: "run-1" }, error: null }),
+        },
+      },
+    });
+
+    expect(
+      await cancelWaitingTask(ENV, "bt-2", { ...d, db: db as unknown as SupabaseClient }),
+    ).toBe(true);
+    expect(completeHeldRun).toHaveBeenCalledOnce();
+    expect(completeHeldRun.mock.calls[0][1]).toBe("run-1");
+  });
+
+  it("asks nothing of a conversation's own task", async () => {
+    const { deps: d } = deps();
+    await cancelWaitingTasks(ENV, "bs-1", d);
+    expect(completeHeldRun).not.toHaveBeenCalled();
   });
 });

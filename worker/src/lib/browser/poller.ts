@@ -115,6 +115,11 @@ export type BrowserTaskRow = {
    */
   created_at?: string;
   retry_of?: string | null;
+  /**
+   * The waiting routine run this task answers (0100). Optional for
+   * `api_version`'s reason; `deliverBrowserTask` reads it when absent.
+   */
+  routine_run_id?: string | null;
 };
 
 /** How a task ended, in the shape the delivery step wants. */

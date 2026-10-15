@@ -205,3 +205,34 @@ describe("capabilitiesFor", () => {
     expect(tools.map((t) => t.name)).toEqual(["search_documents"]);
   });
 });
+
+/**
+ * `browse` on a schedule (0100): offered only to a routine whose owner allowed
+ * it, because anywhere else it can only refuse — tokens on every run and an
+ * invitation to try.
+ */
+describe("the browser on a schedule", () => {
+  const BROWSING = { ...FULL, BROWSER_USE_API_KEY: "bu_test" } as ToolEnv;
+  const names = async (input: { surface?: "chat" | "schedule"; browser?: boolean }) =>
+    (
+      await capabilitiesFor({
+        db: dbWith([], []),
+        env: BROWSING,
+        workspaceId: "ws-1",
+        userId: "user-1",
+        ...input,
+      })
+    ).tools.map((t) => t.name);
+
+  it("is left out of a routine that did not allow it", async () => {
+    expect(await names({ surface: "schedule" })).not.toContain("browse");
+  });
+
+  it("is offered to a routine that did", async () => {
+    expect(await names({ surface: "schedule", browser: true })).toContain("browse");
+  });
+
+  it("is offered in chat as it always was", async () => {
+    expect(await names({})).toContain("browse");
+  });
+});

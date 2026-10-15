@@ -275,7 +275,60 @@ What it changes for you:
 A workspace with no connected service runs exactly as it always did: one call,
 no loop, nothing extra to pay for. The tick asks once, for the whole batch,
 whether any of the workspaces it claimed has a service connected — so knowing
-the answer costs one database read per tick rather than one per routine.
+the answer costs one database read per tick rather than one per routine. A
+routine allowed the browser (below) is the exception: it goes through the loop
+whatever is connected, because the browser is a tool it has.
+
+### When it needs a browser
+
+A page that only renders with JavaScript, a number on a site with no API, a
+dashboard behind a sign-in: these are what `browse` is for in a conversation,
+and a routine can use it too — **once its owner allows it**. The routine's page
+has a **Use a browser** card, off by default.
+
+It is off by default because in a conversation every browser task is shown to
+you on a card before it starts, and a scheduled run has nobody to show one to.
+Turning the switch on is that approval, given once, for every run. Only the
+routine's owner can give it.
+
+Under the switch is the choice that matters, which is **what the unattended
+browser carries**:
+
+| Choice                           | What a run's browser has                                                                                               |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Everything, as in a conversation | Your browser's sign-ins (the sites you signed into in the browser panel) and any login you saved, by chat's rules      |
+| One site's saved login only      | None of your sign-ins at all, and only the saved login for the one site you name — typed on that site and nowhere else |
+
+Pick the second for a routine whose material is written by somebody else — a
+feed, a watched page, a webhook payload. That text reaches the model, the model
+writes the browser's instruction, and the second choice is what keeps an
+instruction a stranger shaped away from the accounts you are signed into. A run
+that asks to sign in anywhere but the named site is refused before anything is
+spent.
+
+**The report waits for the browser.** A browser task takes minutes and a run's
+turn does not, so a run that starts one writes its report as a draft, records
+the run as _Waiting on the browser_, and sends nothing yet. When the last task
+it started has answered, the report is rewritten with the browser's answers in
+it and sent **once** — not as a digest now and an addendum later. A task that
+waits in the browser's line (one browser does one thing at a time) is waited
+for too. A report that has waited **two hours** is sent with whatever has
+answered, and says what had not.
+
+Two things the waiting run does differently from one that did not wait:
+
+- **It does not decide to stay quiet.** A draft with a gap in it cannot be
+  judged "nothing worth sending", so a run that started browser work always
+  sends its report.
+- **It counts towards a series only when it is sent**, like any other run.
+
+**The browser works in a conversation of the routine's own.** The first run
+that browses opens one — yours, private, named _Routine: …_ — and every later
+run reuses it. Its link is on the routine's page. Each task's answer is written
+there word for word, so you can read exactly what the browser said, watch it
+work, or take it over and sign in when a site asks. A sign-in you make there
+during a take-over is picked up by the retry, and the retry is what the report
+waits for.
 
 ### It may not fit on Cloudflare Free
 

@@ -53,6 +53,13 @@ export async function capabilitiesFor(input: {
    * subrequest, which is the budget `lib/routines/dispatcher.ts` counts.
    */
   surface?: "chat" | "schedule";
+  /**
+   * Whether a scheduled run may use the browser — its routine's
+   * `browser_access` (0100). Ignored in chat, where every call is approved on
+   * a card. On a schedule `browse` is left out unless the owner allowed it: a
+   * tool that can only refuse is tokens on every run and an invitation to try.
+   */
+  browser?: boolean;
 }): Promise<AgentCapabilities> {
   const scheduled = input.surface === "schedule";
 
@@ -69,6 +76,7 @@ export async function capabilitiesFor(input: {
   const channels = scheduled ? [] : await ownChannels(input.db, input.userId);
 
   const tools = configuredTools(input.env).filter((tool) => {
+    if (tool.name === "browse" && scheduled && !input.browser) return false;
     if (tool.needs === "channel") return channels.length > 0;
     if (tool.needs) {
       const usable = tool.needs.connection;

@@ -9,6 +9,7 @@ import type { BrowserTaskRow, FinishedTask } from "./poller";
 import { beginConversationRun, finishRunStart, type RunBrowser } from "./start";
 import { heldTakeover } from "./takeover";
 import { cancelRun } from "./v4";
+import { completeHeldRun } from "../routines/held";
 
 /**
  * A conversation's browser tasks, one after another (0080).
@@ -104,6 +105,8 @@ function resolve(env: RoutineEnv, overrides: Partial<QueueDeps>): QueueDeps {
 type WaitingRow = BrowserTaskRow & {
   login_host?: string | null;
   browser_session_id?: string | null;
+  /** 0100. A routine's task that may not carry the owner's jar starts without it. */
+  jarless?: boolean | null;
 };
 
 function code(error: { code?: string } | null | undefined): string | undefined {
@@ -151,6 +154,9 @@ export async function queueBrowserTask(
     /** The host whose saved login it needs, looked up again when it starts. */
     site: string | null;
     browserSessionId: string;
+    /** As `recordBrowserTask` takes them: the routine run it answers, and no jar. */
+    routineRunId?: string;
+    jarless?: boolean;
   },
   overrides: Partial<QueueDeps> = {},
 ): Promise<string | null> {
@@ -167,6 +173,8 @@ export async function queueBrowserTask(
       api_version: "v4",
       browser_session_id: input.browserSessionId,
       login_host: input.site,
+      ...(input.routineRunId ? { routine_run_id: input.routineRunId } : {}),
+      ...(input.jarless ? { jarless: true } : {}),
     })
     .select("id")
     .single();
@@ -259,6 +267,7 @@ async function startWaiting(
       task: row.task,
       site: row.login_host ?? null,
       browser,
+      ...(row.jarless ? { withoutJar: true } : {}),
     });
     if (begun.kind === "error") {
       if (isTransient(begun.status)) return backOff(env, row, deps);
@@ -432,12 +441,16 @@ export async function cancelWaitingTasks(
       })
       .eq("browser_session_id", browserSessionId)
       .eq("status", "waiting")
-      .select("id, session_id, task");
+      .select("id, session_id, task, routine_run_id");
     if (error) {
       console.error("could not cancel the tasks waiting for a browser", code(error));
       return 0;
     }
-    const rows = (Array.isArray(data) ? data : []) as Array<{ session_id: string; task: string }>;
+    const rows = (Array.isArray(data) ? data : []) as Array<{
+      session_id: string;
+      task: string;
+      routine_run_id?: string | null;
+    }>;
     const bySession = new Map<string, string[]>();
     for (const row of rows) {
       bySession.set(row.session_id, [...(bySession.get(row.session_id) ?? []), row.task]);
@@ -445,6 +458,7 @@ export async function cancelWaitingTasks(
     for (const [sessionId, tasks] of bySession) {
       await postNotice(deps, sessionId, cancelledNotice(tasks));
     }
+    await finishHeldReports(env, deps, rows);
     return rows.length;
   } catch (err) {
     console.error("could not cancel the tasks waiting for a browser", err);
@@ -501,13 +515,33 @@ export async function cancelWaitingTask(
     })
     .eq("id", taskId)
     .eq("status", "waiting")
-    .select("id")
+    .select("id, routine_run_id")
     .maybeSingle();
   if (error) {
     console.error("could not remove a waiting browser task", code(error));
     return false;
   }
+  if (data) await finishHeldReports(env, deps, [data]);
   return Boolean(data);
+}
+
+/**
+ * A routine's report that was waiting on a task this cancelled (0100).
+ *
+ * The two cancels above end a task without `deliverBrowserTask`, which is where
+ * a held report is otherwise finished, so they ask here instead — or the report
+ * would wait out the sweep for a task that is never coming. Best-effort, and
+ * `completeHeldRun` does nothing while another of the run's tasks is unanswered.
+ */
+async function finishHeldReports(
+  env: RoutineEnv,
+  deps: QueueDeps,
+  rows: Array<{ routine_run_id?: unknown }>,
+): Promise<void> {
+  const runs = new Set(
+    rows.map((r) => r.routine_run_id).filter((id): id is string => typeof id === "string"),
+  );
+  for (const runId of runs) await completeHeldRun(env, runId, { db: deps.db });
 }
 
 /**

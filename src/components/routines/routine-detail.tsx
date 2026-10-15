@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Check, Minus, X } from "lucide-react";
+import { Check, Clock, Minus, X } from "lucide-react";
 import { Chip, SectionCard } from "@/components/section-card";
 import { RoutineWebhookCard } from "@/components/routines/routine-webhook-card";
 import { RoutineOutputCard } from "@/components/routines/routine-output-card";
+import { RoutineBrowserCard } from "@/components/routines/routine-browser-card";
 import { SectionHeading } from "@/components/page-container";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,6 +82,8 @@ function RunRow({ run }: { run: RoutineRun }) {
       <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     ) : run.status === "failed" ? (
       <X className="h-3.5 w-3.5 shrink-0 text-destructive" />
+    ) : run.status === "waiting" ? (
+      <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     ) : (
       <Minus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
     );
@@ -116,6 +119,12 @@ function RunRow({ run }: { run: RoutineRun }) {
       </span>
     ) : run.status === "failed" ? (
       <span className="text-sm text-destructive">{run.error ?? "Failed"}</span>
+    ) : run.status === "waiting" ? (
+      // Not delivered yet and not a failure: the report is written and held
+      // until the browser task it started answers (0100).
+      <span className="text-sm text-muted-foreground">
+        Waiting on the browser · the report is sent when it answers
+      </span>
     ) : run.nothingRelevant ? (
       // A different answer than no action needed: this run evaluated material
       // and judged that nothing warranted reporting.
@@ -397,6 +406,12 @@ export function RoutineDetail({
           onSave={onSave ?? (() => {})}
           saving={busy}
         />
+      )}
+
+      {/* Owner only, for the output card's reason: it is a PATCH somebody else
+          would have refused, and the approval it gives is the owner's to give. */}
+      {isOwner && (
+        <RoutineBrowserCard routine={routine} onSave={onSave ?? (() => {})} saving={busy} />
       )}
 
       <section className="mt-10">

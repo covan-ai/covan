@@ -914,3 +914,98 @@ describe("PATCH /routines/:id on a finished series", () => {
     expect(updates[0]).toMatchObject({ status: "active", consecutive_failures: 0 });
   });
 });
+
+/**
+ * The browser setting (0100): the owner's one approval for every run, and the
+ * one host a `site` run may sign in to — normalised the way a saved login's
+ * host is, and required before `site` can be chosen.
+ */
+describe("PATCH /routines/:id, the browser", () => {
+  function patchWith(current: { browser_site: string | null }) {
+    const updates: Array<Record<string, unknown>> = [];
+    const request = appWith({
+      tables: {
+        routines: {
+          select: async () => ({
+            data: { schedule_cron: "0 9 * * *", timezone: "UTC", status: "active", ...current },
+            error: null,
+          }),
+          update: async (ctx) => {
+            updates.push(ctx.values ?? {});
+            return {
+              data: {
+                id: "routine-1",
+                visibility: "private",
+                status: "active",
+                paused_reason: null,
+                last_run_at: null,
+                created_at: "2026-09-20T00:00:00.000Z",
+                ...ctx.values,
+              },
+              error: null,
+            };
+          },
+        },
+      },
+    });
+    return { request, updates };
+  }
+
+  it("turns it on as in a conversation", async () => {
+    const { request, updates } = patchWith({ browser_site: null });
+
+    const { status, body } = await request("PATCH", "/routines/routine-1", {
+      browserAccess: "all",
+    });
+
+    expect(status).toBe(200);
+    expect(updates[0]).toMatchObject({ browser_access: "all" });
+    expect(body.browserAccess).toBe("all");
+  });
+
+  it("stores the one site as a bare host", async () => {
+    const { request, updates } = patchWith({ browser_site: null });
+
+    const { status } = await request("PATCH", "/routines/routine-1", {
+      browserAccess: "site",
+      browserSite: "https://www.LinkedIn.com/login",
+    });
+
+    expect(status).toBe(200);
+    expect(updates[0]).toMatchObject({ browser_access: "site", browser_site: "linkedin.com" });
+  });
+
+  it("refuses `site` with no site, here or on the row", async () => {
+    const { request, updates } = patchWith({ browser_site: null });
+
+    const { status, body } = await request("PATCH", "/routines/routine-1", {
+      browserAccess: "site",
+    });
+
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/one site/);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("accepts `site` alone when the row already names one", async () => {
+    const { request, updates } = patchWith({ browser_site: "linkedin.com" });
+
+    const { status } = await request("PATCH", "/routines/routine-1", { browserAccess: "site" });
+
+    expect(status).toBe(200);
+    expect(updates[0]).toMatchObject({ browser_access: "site" });
+    expect(updates[0]).not.toHaveProperty("browser_site");
+  });
+
+  it("refuses a site that is not a host", async () => {
+    const { request, updates } = patchWith({ browser_site: null });
+
+    const { status } = await request("PATCH", "/routines/routine-1", {
+      browserAccess: "site",
+      browserSite: "intranet",
+    });
+
+    expect(status).toBe(400);
+    expect(updates).toHaveLength(0);
+  });
+});

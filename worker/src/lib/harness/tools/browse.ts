@@ -86,6 +86,37 @@ function queuedFor(position: number): string {
   );
 }
 
+/**
+ * What a routine's run is told once its task has started.
+ *
+ * Not "the answer will arrive as a message": a routine's report is held until
+ * its browser answers (0100), and the answer is written INTO it. So the model
+ * is asked to finish the report around the gap, and to say where the gap is,
+ * rather than to promise somebody a message.
+ */
+const ROUTINE_STARTED =
+  "Started. A browser is doing this now; it usually takes a few minutes. This routine's report " +
+  "is held until it answers, and its answer is then written into the report. Finish the report " +
+  "with what you have, say briefly what the browser is checking, and do not call browse again " +
+  "for this.";
+
+/** `queuedFor`, for a routine's run. */
+function routineQueuedFor(position: number): string {
+  return (
+    `Queued: this routine's browser is busy, so this task is number ${position} in line and ` +
+    "starts by itself. The report is held until it answers, and its answer is then written into " +
+    "the report. Finish the report with what you have, and do not call browse again for this."
+  );
+}
+
+/**
+ * Whether a host is the routine's allowed site or one of its subdomains — the
+ * same walk up from a host that `savedLogin` and `credentialsFor` make (R37).
+ */
+function withinSite(host: string, site: string): boolean {
+  return host === site || host.endsWith(`.${site}`);
+}
+
 /** What the model is told when the line is full (`QUEUE_MAX`). */
 const QUEUE_FULL =
   `${QUEUE_MAX} browser tasks are already waiting for this conversation's browser, which runs ` +
@@ -455,21 +486,45 @@ export const browseTool: AgentTool = {
      * conversation to arrive in, which is the same thing `paused_turns` says
      * by making `session_id` not null (0060:124-128). So this is an honest
      * failure rather than a task whose answer has nowhere to go.
+     *
+     * **Unless the routine's owner allowed it (0100).** Then the run has a
+     * conversation of the routine's own to report into, opened below, and the
+     * engine holds the routine's report until the answer is in it. Only
+     * `lib/routines/agent-run.ts` sets `routineBrowser`, from the routine row.
      */
-    if (!ctx.sessionId) {
+    const routine = ctx.routineBrowser;
+    if (!ctx.sessionId && !routine) {
       return {
         kind: "error",
         message:
           "a browser task reports back into a conversation and a scheduled run has none, so " +
-          "this cannot be done unattended. Say so plainly rather than retrying.",
+          "this cannot be done unattended unless the routine's owner allows the browser in its " +
+          "settings. Say so plainly rather than retrying.",
+      };
+    }
+
+    /**
+     * A routine allowed one site's login and nothing else (`'site'`): its
+     * browser carries no cookie jar, so nothing the owner signed into by hand
+     * is in reach of an instruction a feed entry may have shaped, and the only
+     * login it can be given is that site's. A `site` naming anywhere else is
+     * refused before anything is spent, rather than quietly dropped.
+     */
+    const jarless = routine?.access === "site";
+    if (jarless && named && routine.site && !withinSite(named, routine.site)) {
+      return {
+        kind: "error",
+        message:
+          `this routine may only sign in to ${routine.site}. Leave site out, or report that ` +
+          "the task needed a sign-in it is not allowed.",
       };
     }
 
     /**
      * The profile is read first because it decides, below, whether a shared
-     * login may be typed at all.
+     * login may be typed at all. A jarless run has none to read.
      */
-    const profile = await profileFor(ctx.env, ctx.userId);
+    const profile = jarless ? null : await profileFor(ctx.env, ctx.userId);
 
     /**
      * The model's `site`, or a host the task names that has a saved login —
@@ -485,7 +540,9 @@ export const browseTool: AgentTool = {
      *   their own and into somebody else's, in the session they keep using.
      *   Their own saved login still applies.
      */
-    let site = named ?? (ctx.confirmedAsListed ? null : await siteFromTask(ctx, task));
+    let site = jarless
+      ? (named ?? routine.site)
+      : (named ?? (ctx.confirmedAsListed ? null : await siteFromTask(ctx, task)));
     if (site && (await sharedLoginOverOwnJar(ctx, profile, site))) site = null;
 
     /**
@@ -504,7 +561,7 @@ export const browseTool: AgentTool = {
      * than provisioned here, because a proposal somebody declines must leave
      * nothing behind — a profile at the provider least of all.
      */
-    if (ctx.confirmed !== true) {
+    if (ctx.confirmed !== true && !routine) {
       const cost = await creditNote(ctx);
       /**
        * Which sites this browser is signed into, on the card.
@@ -551,9 +608,31 @@ export const browseTool: AgentTool = {
      * browser and this run would carry one jar, and the one that stops last
      * writes it. One read, through the service role keyed to `ctx.userId`.
      */
-    const ownBrowser = await heldTakeover(ctx.env, ctx.userId);
-    if (ownBrowser === null) return { kind: "error", message: CANNOT_TELL };
-    if (ownBrowser) return { kind: "error", message: OWN_BROWSER_OPEN };
+    // A jarless run writes no jar, so the person's own browser is no reason
+    // to wait for it.
+    if (!jarless) {
+      const ownBrowser = await heldTakeover(ctx.env, ctx.userId);
+      if (ownBrowser === null) return { kind: "error", message: CANNOT_TELL };
+      if (ownBrowser) return { kind: "error", message: OWN_BROWSER_OPEN };
+    }
+
+    /**
+     * Where the answer goes: this conversation, or the routine's own — opened
+     * here, after every refusal above, so a refused task opens nothing.
+     */
+    const sessionId = ctx.sessionId ?? (await routine?.conversation()) ?? null;
+    if (!sessionId) {
+      return {
+        kind: "error",
+        message:
+          "could not open the conversation this routine's browser reports into, so the " +
+          "browser was not started. Report that plainly; do not retry this run.",
+      };
+    }
+    // What a task started for a routine carries back to it (0100).
+    const forRoutine = routine
+      ? { ...(ctx.routineRunId ? { routineRunId: ctx.routineRunId } : {}), jarless }
+      : {};
 
     /**
      * This conversation's browser, found or claimed BEFORE the provider is
@@ -566,7 +645,7 @@ export const browseTool: AgentTool = {
       workspaceId: ctx.workspaceId,
       agentId: ctx.agentId,
       userId: ctx.userId,
-      chatSessionId: ctx.sessionId,
+      chatSessionId: sessionId,
       profileId: profile?.id ?? null,
     });
     if (session.kind === "error") {
@@ -609,10 +688,11 @@ export const browseTool: AgentTool = {
         workspaceId: ctx.workspaceId,
         agentId: ctx.agentId,
         userId: ctx.userId,
-        sessionId: ctx.sessionId,
+        sessionId,
         task,
         site,
         browserSessionId: session.value.id,
+        ...forRoutine,
       });
       if (!queued) {
         return {
@@ -622,7 +702,11 @@ export const browseTool: AgentTool = {
             "and offer to ask again once the current task is done; do not retry this turn.",
         };
       }
-      return { kind: "ok", content: queuedFor(waiting + 1) };
+      routine?.started.push(queued);
+      return {
+        kind: "ok",
+        content: routine ? routineQueuedFor(waiting + 1) : queuedFor(waiting + 1),
+      };
     }
 
     /**
@@ -642,6 +726,7 @@ export const browseTool: AgentTool = {
       profile,
       egressCountry: ctx.egressCountry ?? null,
       signal: ctx.signal,
+      ...(jarless ? { withoutJar: true } : {}),
     });
     const opening = session.value.providerSessionId === null;
 
@@ -701,7 +786,8 @@ export const browseTool: AgentTool = {
       workspaceId: ctx.workspaceId,
       agentId: ctx.agentId,
       userId: ctx.userId,
-      sessionId: ctx.sessionId,
+      sessionId,
+      ...forRoutine,
       // The person's sentence, not the preamble: it is what the answer is
       // delivered against and what a take-over runs again.
       task,
@@ -734,6 +820,10 @@ export const browseTool: AgentTool = {
       { browserTaskId: recorded },
     );
 
+    if (routine) {
+      routine.started.push(recorded);
+      return { kind: "ok", content: ROUTINE_STARTED };
+    }
     return {
       kind: "ok",
       content:

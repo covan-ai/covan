@@ -266,7 +266,10 @@ export async function enrollTotp(user: TestUser): Promise<string> {
 export async function passwordOnlyClient(user: TestUser): Promise<SupabaseClient> {
   const { url, anonKey } = stackConfig();
   const db = createClient(url, anonKey, CLIENT_OPTIONS);
-  const { error } = await db.auth.signInWithPassword({ email: user.email, password: user.password });
+  const { error } = await db.auth.signInWithPassword({
+    email: user.email,
+    password: user.password,
+  });
   if (error) throw new Error(`could not sign in again: ${error.message}`);
   return db;
 }

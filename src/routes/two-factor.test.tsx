@@ -88,9 +88,7 @@ describe("the second step of signing in", () => {
 
     await renderPage();
 
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({ to: "/sign-in", replace: true }),
-    );
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/sign-in", replace: true }));
   });
 
   it("sends a session that has nothing left to give onward", async () => {
@@ -108,18 +106,18 @@ describe("the second step of signing in", () => {
     await user.click(screen.getByRole("button", { name: /different account/i }));
 
     expect(signOut).toHaveBeenCalled();
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({ to: "/sign-in", replace: true }),
-    );
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/sign-in", replace: true }));
   });
 });
 
 describe("where the second step may send you afterwards", () => {
   it("only to a path on this site", async () => {
     const { Route } = await import("./two-factor");
-    const validate = (Route as unknown as {
-      validateSearch: (s: Record<string, unknown>) => { next?: string };
-    }).validateSearch;
+    const validate = (
+      Route as unknown as {
+        validateSearch: (s: Record<string, unknown>) => { next?: string };
+      }
+    ).validateSearch;
 
     expect(validate({ next: "/reset-password" })).toEqual({ next: "/reset-password" });
     expect(validate({ next: "https://evil.example" })).toEqual({ next: undefined });

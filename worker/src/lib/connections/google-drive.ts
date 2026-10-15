@@ -1,5 +1,6 @@
 import {
   errorForStatus,
+  FileSkip,
   ProviderError,
   type ConnectionProvider,
   type ProviderContext,
@@ -478,7 +479,7 @@ export const googleDriveProvider: ConnectionProvider = {
       const name = importableName(file);
       if (!name) continue;
       const size = file.size ? Number(file.size) : 0;
-      if (Number.isFinite(size) && size > MAX_BYTES) continue;
+      const tooLarge = Number.isFinite(size) && size > MAX_BYTES;
       out.push({
         externalId: file.id,
         name,
@@ -489,6 +490,7 @@ export const googleDriveProvider: ConnectionProvider = {
         // download of every file on every run to find out.
         version: file.modifiedTime ?? "",
         url: file.webViewLink ?? null,
+        ...(tooLarge ? { skipReason: "larger than 10 MB" } : {}),
       });
     }
     return out;
@@ -523,7 +525,13 @@ export const googleDriveProvider: ConnectionProvider = {
         if (plain.ok) return await plain.text();
         throw errorForStatus("Google Drive", plain.status, await plain.text().catch(() => ""));
       }
-      throw errorForStatus("Google Drive", exported.status, await exported.text().catch(() => ""));
+      const body = await exported.text().catch(() => "");
+      // A 403 on an export is about this file, not the grant: the listing that
+      // found it a moment ago used the same token. Drive says so in the reason.
+      if (exported.status === 403 && /exportSizeLimitExceeded|cannotExportFile/.test(body)) {
+        throw new FileSkip("Google Drive will not export it (too large to export)");
+      }
+      throw errorForStatus("Google Drive", exported.status, body);
     }
 
     const download = await driveFetch(ctx, `/files/${file.externalId}`, {
@@ -532,7 +540,7 @@ export const googleDriveProvider: ConnectionProvider = {
     });
     const bytes = await download.arrayBuffer();
     if (bytes.byteLength > MAX_BYTES) {
-      throw new ProviderError(`${file.name} is larger than 10 MB`, false);
+      throw new FileSkip("larger than 10 MB");
     }
     return new TextDecoder().decode(bytes);
   },

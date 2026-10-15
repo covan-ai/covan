@@ -37,7 +37,15 @@ import { fakeDb, type QueryContext } from "../../test-support/fake-db";
 import { embedTexts } from "../embeddings";
 import { runConnection, isNarrowing, MAX_DOCUMENTS_PER_RUN, type ConnectionRow } from "./sync";
 import { encryptSecret } from "../secret-box";
-import { ProviderError } from "./types";
+import { FileSkip, ProviderError } from "./types";
+
+/** Every `external_version` the run wrote, in order. */
+function versionWrites(fake: { callsTo: (t: string) => QueryContext[] }): unknown[] {
+  return fake
+    .callsTo("documents")
+    .filter((c) => c.op === "update" && c.values && "external_version" in c.values)
+    .map((c) => (c.values as { external_version: unknown }).external_version);
+}
 
 const KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const NOW = new Date("2026-09-02T12:00:00.000Z");
@@ -97,6 +105,8 @@ function db(
      * gives up and the operator's keys answer.
      */
     activeWorkspace?: string | null;
+    /** The connection's bundle is in Recently Deleted. */
+    bundleTrashed?: boolean;
   } = {},
 ) {
   const documents = options.documents ?? [];
@@ -114,6 +124,12 @@ function db(
         }),
       },
       connections: { update: () => ({ data: null, error: null }) },
+      knowledge_bundles: {
+        select: () => ({
+          data: { deleted_at: options.bundleTrashed ? NOW.toISOString() : null },
+          error: null,
+        }),
+      },
       connection_runs: { insert: () => ({ data: null, error: null }) },
       documents: {
         select: () => ({ data: documents, error: null }),
@@ -135,6 +151,7 @@ function db(
         }),
       },
       document_chunks: {
+        select: () => ({ data: [], error: null }),
         delete: () => ({ data: null, error: null }),
         insert: () => ({ data: null, error: null }),
       },
@@ -176,10 +193,13 @@ describe("syncing a connection", () => {
       bundle_id: "bundle-1",
       connection_id: "conn-1",
       external_id: "page-1",
-      external_version: "v1",
       external_url: "https://notion.so/page-1",
       name: "page-1.md",
     });
+    // The version is what marks the file done, so it is written last, once
+    // the passages are in — never with the row.
+    expect(inserted?.values).not.toHaveProperty("external_version");
+    expect(versionWrites(fake)).toEqual(["v1"]);
     // The excerpt the no-match fallback reads, same as an upload.
     expect(inserted?.values?.content).toContain("Twenty days");
     const chunkInsert = fake.callsTo("document_chunks").find((c) => c.op === "insert");
@@ -221,8 +241,7 @@ describe("syncing a connection", () => {
     const outcome = await runConnection(await connection(), deps(fake));
 
     expect(outcome).toMatchObject({ status: "ok", added: 0, updated: 1 });
-    const updated = fake.callsTo("documents").find((c) => c.op === "update" && c.single);
-    expect(updated?.values).toMatchObject({ external_version: "v2" });
+    expect(versionWrites(fake)).toEqual(["v2"]);
     // Stale passages have to go, or the old answer keeps being retrievable.
     expect(fake.callsTo("document_chunks").some((c) => c.op === "delete")).toBe(true);
   });
@@ -314,7 +333,90 @@ describe("syncing a connection", () => {
     // engine there is work here.
     expect(outcome).toMatchObject({ status: "ok", updated: 1 });
     const restored = fake.callsTo("documents").find((c) => c.op === "update" && c.single);
-    expect(restored?.values).toMatchObject({ deleted_at: null, external_version: "v1" });
+    expect(restored?.values).toMatchObject({ deleted_at: null });
+  });
+
+  // A person deleted it here. The file still being at the source is not a
+  // reason to undo that, and charge for the embedding while doing it.
+  it("leaves a document somebody deleted where they put it", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1", "v2")]);
+    const fake = db({
+      documents: [
+        {
+          id: "doc-1",
+          external_id: "page-1",
+          external_version: "v1",
+          r2_key: "bundle-1/old",
+          deleted_at: "2026-09-01T00:00:00.000Z",
+          deleted_by: "user-1",
+          deleted_via: null,
+        },
+      ],
+    });
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome).toMatchObject({ added: 0, updated: 0, removed: 0 });
+    expect(fakeProvider.readFile).not.toHaveBeenCalled();
+    // Neither re-imported nor un-deleted.
+    const touched = fake
+      .callsTo("documents")
+      .filter((c) => c.op === "update" && c.values && "deleted_at" in c.values);
+    expect(touched).toEqual([]);
+  });
+
+  it("syncs nothing into a bundle that is in Recently Deleted", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
+    const fake = db({ bundleTrashed: true });
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome.status).toBe("skipped");
+    expect(fakeProvider.listFiles).not.toHaveBeenCalled();
+    const connectionUpdate = fake.callsTo("connections").find((c) => c.op === "update");
+    // Skipped, not paused: restoring the bundle is all it takes to resume.
+    expect(connectionUpdate?.values).toMatchObject({ paused_reason: null });
+  });
+
+  it("records no version for a file whose passages could not be saved", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1", "v2")]);
+    fakeProvider.readFile.mockResolvedValue("Thirty days of leave a year.");
+    vi.mocked(embedTexts).mockRejectedValueOnce(new Error("embedding service down"));
+    const fake = db({
+      documents: [
+        { id: "doc-1", external_id: "page-1", external_version: "v1", r2_key: "bundle-1/old" },
+      ],
+    });
+
+    await runConnection(await connection(), deps(fake));
+
+    // Still "v1" on the row, so the next run sees the file as changed and
+    // tries again, rather than believing it is current.
+    expect(versionWrites(fake)).toEqual([]);
+  });
+
+  // One file's problem is one file's. Drive answers an oversized export with a
+  // 403, which used to pause the whole connection as a revoked grant.
+  it("carries on past a file it cannot read, and names it", async () => {
+    fakeProvider.listFiles.mockResolvedValue([
+      file("big"),
+      file("page-2"),
+      { ...file("huge"), skipReason: "larger than 10 MB" },
+    ]);
+    fakeProvider.readFile.mockImplementation(async (_ctx: unknown, f: { externalId: string }) => {
+      if (f.externalId === "big") throw new FileSkip("Google Drive will not export it");
+      return "Some readable text about leave.";
+    });
+    const fake = db();
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome).toMatchObject({ status: "ok", added: 1 });
+    const run = fake.callsTo("connection_runs")[0]?.values as { error?: string };
+    expect(run.error).toContain("big.md (Google Drive will not export it)");
+    expect(run.error).toContain("huge.md (larger than 10 MB)");
+    const connectionUpdate = fake.callsTo("connections").find((c) => c.op === "update");
+    expect(connectionUpdate?.values).toMatchObject({ status: "active", paused_reason: null });
   });
 
   // Reconnecting a source, or restoring a workspace from an export, must not

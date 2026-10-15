@@ -32,7 +32,9 @@ describe("retrieveForAgent with no history", () => {
         match_chunks: (args) => {
           rpcArgs = args;
           return {
-            data: [{ document_id: "d1", document_name: "pricing.md", content: "Pro is $20 a seat." }],
+            data: [
+              { document_id: "d1", document_name: "pricing.md", content: "Pro is $20 a seat." },
+            ],
             error: null,
           };
         },
@@ -49,7 +51,9 @@ describe("retrieveForAgent with no history", () => {
 
     expect(embedded).toEqual([["enterprise seat pricing"]]);
     expect(rpcArgs).not.toBeNull();
-    expect((rpcArgs as unknown as { p_query_terms: string[] }).p_query_terms.length).toBeGreaterThan(0);
+    expect(
+      (rpcArgs as unknown as { p_query_terms: string[] }).p_query_terms.length,
+    ).toBeGreaterThan(0);
     expect(result.sources).toEqual([{ id: "d1", name: "pricing.md" }]);
   });
 });

@@ -10,6 +10,7 @@ import { deleteProfile } from "../lib/browser/profiles";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { avatarKeyFromUrl } from "../lib/avatars";
 import { chunked, readAllPages } from "../lib/batch";
+import { storedKeysOf } from "../lib/document-text";
 
 /**
  * Closing an account.
@@ -134,7 +135,7 @@ async function collectDocumentKeys(
       console.error("account deletion: could not list documents to clean up");
       continue;
     }
-    for (const d of docs) if (d.r2_key) keys.push(d.r2_key);
+    for (const d of docs) if (d.r2_key) keys.push(...storedKeysOf(d.r2_key));
   }
   return keys;
 }

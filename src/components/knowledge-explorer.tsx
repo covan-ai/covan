@@ -148,11 +148,20 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
   // Derived rather than kept in sync by an effect: the first bundle is the
   // answer until somebody picks another, and a bundle that has since been
   // deleted falls back to it rather than leaving the pane pointed at nothing.
-  const fallback: Selection | null = agent
-    ? { kind: "all" }
-    : bundles.length > 0
-      ? { kind: "bundle", id: bundles[0].id }
-      : null;
+  //
+  // An agent opens on everything it reads — unless it reads nothing yet. That
+  // view cannot take an upload (there is no one bundle to put a file in), so an
+  // agent with no documents opened on a pane whose only control was disabled.
+  // It opens on a bundle instead, an attached one first.
+  const firstBundle = bundles.find((b) => agent?.bundleIds.includes(b.id)) ?? bundles[0] ?? null;
+  const fallback: Selection | null =
+    agent && agent.documents.length > 0
+      ? { kind: "all" }
+      : firstBundle
+        ? { kind: "bundle", id: firstBundle.id }
+        : agent
+          ? { kind: "all" }
+          : null;
   const selection =
     chosen && (chosen.kind === "all" || bundles.some((b) => b.id === chosen.id))
       ? chosen

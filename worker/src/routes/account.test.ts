@@ -448,7 +448,13 @@ describe("DELETE /account", () => {
 
     expect(status).toBe(200);
     // A row with no key is a document that was never uploaded, not a bug.
-    expect(storeDelete.mock.calls.map((c) => c[0])).toEqual(["doc/one", "doc/two"]);
+    // Each with the full text kept beside it, whether or not there was one.
+    expect(storeDelete.mock.calls.map((c) => c[0])).toEqual([
+      "doc/one",
+      "doc/one.txt",
+      "doc/two",
+      "doc/two.txt",
+    ]);
   });
 
   // The one stored object that belongs to a person rather than a workspace.

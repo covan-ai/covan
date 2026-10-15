@@ -31,7 +31,7 @@ export type QueryResult = {
 export type Filter = {
   column: string;
   value: unknown;
-  kind: "eq" | "neq" | "in" | "gt" | "ilike" | "is" | "not" | "or" | "textSearch";
+  kind: "eq" | "neq" | "in" | "gt" | "lt" | "ilike" | "is" | "not" | "or" | "textSearch";
 };
 
 export type QueryContext = {
@@ -122,6 +122,11 @@ class Chain implements PromiseLike<QueryResult> {
 
   gt(column: string, value: unknown) {
     this.ctx.filters.push({ column, value, kind: "gt" });
+    return this;
+  }
+
+  lt(column: string, value: unknown) {
+    this.ctx.filters.push({ column, value, kind: "lt" });
     return this;
   }
 

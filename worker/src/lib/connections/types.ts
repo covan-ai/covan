@@ -71,6 +71,17 @@ export type RemoteFile = {
    * without it.
    */
   listing?: Record<string, unknown>;
+  /**
+   * Set when the listing already knows this file cannot be imported, and why —
+   * too large, most often. The sync reports it and reads nothing.
+   *
+   * Listed rather than left out, which is what used to happen, for two
+   * reasons. Left out, the file was invisible: nobody was told their 40 MB
+   * spreadsheet was never read. And left out, a document that had been imported
+   * and then grew past the limit looked *gone* from the source, so the next run
+   * hid it — a file somebody edited disappeared from the agent for being edited.
+   */
+  skipReason?: string;
 };
 
 /** What a provider needs to talk to its API on one connection's behalf. */
@@ -165,6 +176,22 @@ export class ProviderError extends Error {
     super(message);
     this.name = "ProviderError";
     this.retryable = retryable;
+  }
+}
+
+/**
+ * One file the sync could not import, through no fault of the connection.
+ *
+ * Too large to read, or a file the provider will not export. The run carries
+ * on with the rest and says which were skipped. Thrown as a `ProviderError`
+ * these used to pause the whole connection as a revoked grant — Drive answers
+ * an oversized export with a 403 — and ask the person to reconnect, which
+ * could not help: the same file was first in line on every run after.
+ */
+export class FileSkip extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FileSkip";
   }
 }
 

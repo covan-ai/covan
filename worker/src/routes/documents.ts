@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../lib/embeddings";
-import { contentTypeFor, EXCERPT_LIMIT, extractDocumentText } from "../lib/extract";
+import { contentTypeFor, EXCERPT_LIMIT } from "../lib/extract";
 import { mapDocument } from "../lib/dto";
 import { getDocStore } from "../lib/docstore";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { embeddingSpend } from "../lib/entitlements";
-import { insertChunkRows } from "../lib/chunk-store";
+import { replaceChunks } from "../lib/chunk-store";
+import { fullTextOf } from "../lib/document-text";
 import { callDeletionFn } from "../lib/deletion";
 import { markdownToDocx } from "../lib/formats/docx";
 import { pdfRenderer } from "../lib/formats/pdf";
@@ -326,22 +327,30 @@ documents.post("/documents/:id/reindex", async (c) => {
   const denied = await guardCredits(c, workspaceId);
   if (denied) return denied;
 
-  // Re-decode the full text from R2 for text formats. PDFs can't be parsed
-  // server-side (extractDocumentText returns ""), so fall back to the stored
-  // excerpt, which holds the browser-extracted text captured at upload.
-  let fullText = doc.content ?? "";
-  if (doc.r2_key) {
-    let obj;
-    try {
-      obj = await getDocStore(c.env).get(doc.r2_key);
-    } catch (e) {
-      console.error("failed to read document from store", e);
-      return c.json({ error: "failed to load the document; check the server logs" }, 500);
+  // The whole text: the sidecar the upload kept for a PDF, or the original
+  // re-read. This used to fall back to `documents.content` for every PDF —
+  // the first 8,000 characters — and so a reindex cut a long PDF down to its
+  // first few pages and called it repaired. A PDF uploaded before sidecars
+  // existed has nothing fuller than that excerpt, and is refused rather than
+  // shortened: uploading it again is the only way to get its text back.
+  let fullText: string;
+  try {
+    const found = await fullTextOf(getDocStore(c.env), doc);
+    if (!found.complete) {
+      return c.json(
+        {
+          error:
+            "only the first part of this document's text was kept, so reindexing it would " +
+            "shorten it — upload the file again instead",
+          code: "excerpt_only",
+        },
+        409,
+      );
     }
-    if (obj) {
-      const extracted = extractDocumentText(doc.name, await obj.arrayBuffer());
-      if (extracted) fullText = extracted;
-    }
+    fullText = found.text;
+  } catch (e) {
+    console.error("failed to read document from store", e);
+    return c.json({ error: "failed to load the document; check the server logs" }, 500);
   }
 
   const chunks = chunkText(fullText);
@@ -363,9 +372,6 @@ documents.post("/documents/:id/reindex", async (c) => {
     return c.json({ error: "failed to embed document" }, 502);
   }
 
-  const { error: delErr } = await db.from("document_chunks").delete().eq("document_id", id);
-  if (delErr) return c.json({ error: "failed to clear old chunks" }, 500);
-
   const rows = chunks.map((ch, i) => ({
     document_id: id,
     bundle_id: doc.bundle_id,
@@ -375,7 +381,9 @@ documents.post("/documents/:id/reindex", async (c) => {
     context: doc.name,
     embedding: vectors[i],
   }));
-  const { error: insErr } = await insertChunkRows(db, rows);
+  // Replaced, not cleared and refilled: a failure here leaves the passages the
+  // document had rather than none (`replaceChunks`).
+  const { error: insErr } = await replaceChunks(db, id, rows);
   if (insErr) return c.json({ error: "failed to save chunks" }, 500);
 
   return c.json(mapDocument({ ...doc, document_chunks: [{ count: chunks.length }] }));

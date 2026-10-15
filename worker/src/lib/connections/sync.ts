@@ -2,12 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SyncEnv } from "../../types";
 import { embeddingSpend, spends, type Entitlements } from "../entitlements";
 import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../embeddings";
-import { insertChunkRows } from "../chunk-store";
+import { replaceChunks } from "../chunk-store";
 import { getDocStore } from "../docstore";
 import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
 import { decryptSecret, encryptSecret } from "../secret-box";
 import { providerFor } from "./registry";
 import {
+  FileSkip,
   ProviderError,
   type ConnectionProvider,
   type ProviderContext,
@@ -202,7 +203,43 @@ type ExistingDocument = {
   bundle_id: string | null;
   /** Set once 0040 has hidden it. Soft-deleted rows are still ours to reconcile. */
   deleted_at: string | null;
+  /** Who hid it — null when this sync did. See `deletedByPerson`. */
+  deleted_by: string | null;
+  /** The bundle it went with, when it went with one. */
+  deleted_via: string | null;
 };
+
+/**
+ * Whether a hidden document was hidden by somebody, rather than by this sync.
+ *
+ * Only the second kind comes back when its file reappears. A person who deleted
+ * a synced document meant it, and the sync used to read every hidden row as
+ * "the file left the source" — so the next run found the file still there,
+ * imported it again, cleared the deletion and charged for the embedding. The
+ * delete lasted until the next tick. `removeVanished` is the only writer that
+ * leaves both columns null, which is what tells the two apart.
+ */
+function deletedByPerson(doc: ExistingDocument): boolean {
+  return Boolean(doc.deleted_at && (doc.deleted_by || doc.deleted_via));
+}
+
+/** How much of the skipped-files list a run row keeps. */
+const MAX_SKIPS_REPORTED = 5;
+
+/** One sentence naming what this run could not import, or undefined. */
+function skippedSentence(skips: { name: string; reason: string }[]): string | undefined {
+  if (skips.length === 0) return undefined;
+  const named = skips
+    .slice(0, MAX_SKIPS_REPORTED)
+    .map((s) => `${s.name} (${s.reason})`)
+    .join("; ");
+  const rest = skips.length - MAX_SKIPS_REPORTED;
+  return (
+    `${skips.length === 1 ? "1 file was" : `${skips.length} files were`} not imported: ${named}` +
+    (rest > 0 ? `; and ${rest} more` : "") +
+    "."
+  );
+}
 
 /**
  * Run one connection.
@@ -272,6 +309,27 @@ export async function runConnection(
       error: holder.reason,
       pause: holder.reason,
       pauseCode: holder.code,
+    });
+  }
+
+  // The bundle it feeds is in Recently Deleted. Syncing into it would bring its
+  // documents back to life one by one — `importOne` clears a hidden row — and
+  // charge for each. Skipped, not paused: restoring the bundle is the whole of
+  // what resumes it, and a pause would be one more thing to undo. 0103 keeps
+  // `claim_due_connections` from handing these out; this covers "Sync now".
+  const { data: bundleRow } = await deps.db
+    .from("knowledge_bundles")
+    .select("deleted_at")
+    .eq("id", connection.bundle_id)
+    .maybeSingle();
+  if ((bundleRow as { deleted_at?: string | null } | null)?.deleted_at) {
+    return finish(connection, deps, startedAt, {
+      status: "skipped",
+      added: 0,
+      updated: 0,
+      removed: 0,
+      more: false,
+      error: "skipped: the bundle this connection feeds is in Recently Deleted",
     });
   }
 
@@ -352,7 +410,7 @@ export async function runConnection(
     const { data: existingRows, error: existingError } = await deps.db
       .from("documents")
       .select(
-        "id,external_id,external_version,r2_key,bundle_id,deleted_at,knowledge_bundles!inner(workspace_id)",
+        "id,external_id,external_version,r2_key,bundle_id,deleted_at,deleted_by,deleted_via,knowledge_bundles!inner(workspace_id)",
       )
       .eq("connection_id", connection.id)
       .eq("knowledge_bundles.workspace_id", connection.workspace_id);
@@ -404,6 +462,9 @@ export async function runConnection(
     const changed = remote.filter((file) => {
       const current = byId.get(file.externalId);
       if (!current) return true;
+      // Somebody deleted it here. That is theirs to undo, from Recently
+      // Deleted, and not the source's — see `deletedByPerson`.
+      if (deletedByPerson(current)) return false;
       // A row this sync hid because the file had gone, and the file is back.
       // Re-importing is what brings it back, and it has to happen whether or not
       // the version moved while it was away.
@@ -413,19 +474,54 @@ export async function runConnection(
 
     let added = 0;
     let updated = 0;
+    /**
+     * Files this run could not import, and why.
+     *
+     * One file's failure is that file's: it is named on the run row and the
+     * rest of the folder carries on. It used to end the run, and when the
+     * failure was a 403 — Drive's answer to an oversized export — pause the
+     * connection as a revoked grant, with the same file first in line on every
+     * run after. Only when nothing at all could be imported is it the
+     * connection's failure, which is what a revoked grant actually looks like.
+     */
+    const skips: { name: string; reason: string }[] = [];
+    let firstFailure: unknown = null;
+    let attempted = 0;
     for (const file of changed.slice(0, MAX_DOCUMENTS_PER_RUN)) {
-      const result = await importOne(
-        connection,
-        deps,
-        runEnv,
-        provider,
-        ctx,
-        file,
-        byId.get(file.externalId),
-      );
-      tokens += result.tokens;
-      if (result.imported === "added") added++;
-      if (result.imported === "updated") updated++;
+      if (file.skipReason) {
+        skips.push({ name: file.name, reason: file.skipReason });
+        continue;
+      }
+      attempted++;
+      try {
+        const result = await importOne(
+          connection,
+          deps,
+          runEnv,
+          provider,
+          ctx,
+          file,
+          byId.get(file.externalId),
+        );
+        tokens += result.tokens;
+        if (result.imported === "added") added++;
+        if (result.imported === "updated") updated++;
+      } catch (err) {
+        tokens += tokensSpentBefore(err);
+        if (!(err instanceof FileSkip)) firstFailure ??= err;
+        skips.push({
+          name: file.name,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (firstFailure && added + updated === 0 && attempted > 0) {
+      // Everything tried failed, and not for reasons of its own. What was
+      // embedded on the way is charged here, so the catch below starts at zero.
+      // `tokensSpentBefore(firstFailure)` is left out because the catch adds it.
+      await charge(tokens - tokensSpentBefore(firstFailure));
+      tokens = 0;
+      throw firstFailure;
     }
 
     // Removals are capped too, and a capped removal is work left over in
@@ -445,6 +541,7 @@ export async function runConnection(
       removed,
       more,
       tokens,
+      error: skippedSentence(skips),
       // One narrowing, not a standing exemption — but the whole of that one
       // narrowing. A 280-document removal is capped at twenty per run, and
       // clearing the approval after the first twenty would pause the
@@ -590,7 +687,10 @@ async function importOne(
     size: bytes.byteLength,
     r2_key: key,
     content: text.slice(0, EXCERPT_LIMIT),
-    external_version: file.version,
+    // Not the version yet. It is what tells the next run this file is done,
+    // and it used to be written here, before the embedding — so a file whose
+    // embedding failed was recorded as current and never tried again, keeping
+    // its old passages (or none) for good. Written below, once they are in.
     external_url: file.url,
     synced_at: deps.now().toISOString(),
     // Clears the mark a previous run left when this file had gone from the
@@ -602,7 +702,6 @@ async function importOne(
   };
 
   let documentId: string;
-  let staleKey: string | null = null;
 
   if (existing) {
     const { data, error } = await deps.db
@@ -616,7 +715,10 @@ async function importOne(
       throw new Error(`could not update ${file.name}: ${error?.message ?? "no row"}`);
     }
     documentId = data.id;
-    staleKey = existing.r2_key;
+    const staleKey = existing.r2_key;
+    // The row points at the new object now, whatever happens next, so the old
+    // one is nobody's. Deleting it only on success left it behind on failure.
+    if (staleKey && staleKey !== key) await safeDelete(store, staleKey);
   } else {
     const { data, error } = await deps.db
       .from("documents")
@@ -657,14 +759,11 @@ async function importOne(
   // Raw embedding tokens: what the ledger is charged and what the run row keeps.
   const tokens = embedded.tokens;
 
-  const { error: clearError } = await deps.db
-    .from("document_chunks")
-    .delete()
-    .eq("document_id", documentId);
-  if (clearError) throw new Error(`could not clear old passages: ${clearError.message}`);
-
-  const { error: chunkError } = await insertChunkRows(
+  // Replaced rather than cleared and refilled: a failure keeps the passages
+  // the document already had (`replaceChunks`).
+  const { error: chunkError } = await replaceChunks(
     deps.db,
+    documentId,
     chunks.map((content, index) => ({
       document_id: documentId,
       bundle_id: passageBundleId,
@@ -679,7 +778,13 @@ async function importOne(
     throw new Error(`could not save passages for ${file.name}`);
   }
 
-  if (staleKey && staleKey !== key) await safeDelete(store, staleKey);
+  const { error: versionError } = await deps.db
+    .from("documents")
+    .update({ external_version: file.version })
+    .eq("id", documentId);
+  // Not fatal: the passages are in, and an unrecorded version costs one more
+  // import of the same text next run rather than anything a reader would see.
+  if (versionError) console.error("could not record the synced version", documentId, versionError);
 
   return { imported: existing ? "updated" : "added", tokens };
 }

@@ -61,7 +61,7 @@ const MB = 1024 * 1024;
 describe("a body streamed past its route's limit", () => {
   it.each([
     ["/slack/events", "POST", 2 * MB],
-    ["/bundles/b1/documents/upload", "POST", 21 * MB],
+    ["/bundles/b1/documents/upload", "POST", 31 * MB],
     ["/me/avatar", "PUT", 3 * MB],
     ["/transcribe", "POST", 3 * MB],
   ])("is refused at %s without being read whole", async (path, method, bytes) => {

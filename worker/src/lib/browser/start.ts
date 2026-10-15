@@ -81,8 +81,16 @@ export async function beginConversationRun(
     /** Where the person is, for a jar made now. See `lib/browser/egress.ts`. */
     egressCountry?: string | null;
     signal?: AbortSignal;
+    /**
+     * Carry no cookie jar at all, and make none: a routine whose owner allowed
+     * one site's saved login and nothing else (0100's `'site'`). The run says
+     * so explicitly, as a shared login's does (R38, R40), so a browser that was
+     * somehow opened with the jar is declined rather than reused.
+     */
+    withoutJar?: boolean;
   },
 ): Promise<BrowserResult<BegunRun>> {
+  if (input.withoutJar) return beginJarlessRun(env, input);
   const known = input.profile === undefined ? await profileFor(env, input.userId) : input.profile;
   const jar = known ?? (await runProfile(env, input.userId, {}, input.egressCountry ?? null));
 
@@ -131,6 +139,54 @@ export async function beginConversationRun(
  * and a profiled browser the run declined is stopped (R41). Logged rather
  * than failed throughout: the run is real and its answer will still arrive.
  */
+/**
+ * `beginConversationRun` for a run that may not carry the owner's jar.
+ *
+ * Its own function rather than a branch through the one above, because the one
+ * above provisions a jar for anybody without one (R19) — which is right for a
+ * person about to sign in somewhere in the panel, and exactly what a jarless
+ * run must not do. What it shares is everything after the jar: the login,
+ * looked up only now, and the request `conversationRun` builds.
+ */
+async function beginJarlessRun(
+  env: RoutineEnv,
+  input: {
+    userId: string;
+    agentId: string;
+    task: string;
+    site: string | null;
+    browser: RunBrowser;
+    signal?: AbortSignal;
+  },
+): Promise<BrowserResult<BegunRun>> {
+  const continuing = input.browser.providerSessionId;
+  const opening = continuing === null;
+  const login = input.site ? await loginFor(env, input, input.site) : null;
+  const created = await createRun(
+    env,
+    conversationRun(env, {
+      task: input.task,
+      sessionId: continuing,
+      profile: null,
+      withoutProfile: true,
+      login,
+    }),
+    { signal: input.signal },
+  );
+  if (created.kind === "error") return created;
+  return {
+    kind: "ok",
+    value: {
+      run: created.value,
+      credentialId: login?.bindings.length ? login.id : null,
+      opening,
+      detach: !opening && input.browser.profileId !== null,
+      withoutProfile: true,
+      sentProfileId: null,
+    },
+  };
+}
+
 export async function finishRunStart(
   env: RoutineEnv,
   browser: RunBrowser,

@@ -1786,6 +1786,111 @@ describe("a run that can use tools", () => {
   });
 });
 
+/**
+ * A routine allowed the browser (0100): the report waits for the browser's
+ * answer, so a run that started browser work writes a draft and sends nothing.
+ */
+describe("a run that waits on its browser", () => {
+  const held = () =>
+    vi.fn(async () => ({
+      text: "Draft: the browser is reading the prices.",
+      tokens: 400,
+      spend: [S(50)],
+      declined: false,
+      heldFor: ["bt-1"],
+    }));
+
+  it("gives the tool path what the routine allows, and the run's own id", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    let seen: Record<string, unknown> | null = null;
+    const runWithTools = vi.fn(async (input: Record<string, unknown>) => {
+      seen = input;
+      return { text: "done", tokens: 1, declined: false };
+    });
+
+    await runRoutine(
+      routine({
+        cursor: { seen: ["a"] } as never,
+        browser_access: "site",
+        browser_site: "linkedin.com",
+      }),
+      { ...(makeDeps(db) as Record<string, unknown>), runWithTools } as never,
+    );
+
+    expect(seen).toMatchObject({
+      routineRunId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      browser: { access: "site", site: "linkedin.com", conversation: expect.any(Function) },
+    });
+  });
+
+  it("offers no browser to a routine that did not allow it", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    let seen: Record<string, unknown> | null = null;
+    const runWithTools = vi.fn(async (input: Record<string, unknown>) => {
+      seen = input;
+      return { text: "done", tokens: 1, declined: false };
+    });
+
+    await runRoutine(routine({ cursor: { seen: ["a"] } as never }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools,
+    } as never);
+
+    expect(seen).not.toHaveProperty("browser");
+  });
+
+  it("writes the draft as a waiting run, sends nothing, and charges the turn", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db, inserts, updates } = makeDb();
+    const completeHeld = vi.fn(async () => false);
+
+    const out = await runRoutine(
+      routine({ cursor: { seen: ["a"] } as never, browser_access: "all" }),
+      {
+        ...(makeDeps(db) as Record<string, unknown>),
+        runWithTools: held(),
+        completeHeld,
+      } as never,
+    );
+
+    expect(out.status).toBe("waiting");
+    expect(deliverCalls).toHaveLength(0);
+    const run = inserts.find((i) => i.table === "routine_runs")?.values;
+    expect(run).toMatchObject({
+      status: "waiting",
+      summary: "Draft: the browser is reading the prices.",
+      tokens: 400,
+    });
+    // The row is written with the id the browser task was given.
+    expect(completeHeld).toHaveBeenCalledWith(run.id);
+    expect(recorded[0]).toEqual({ workspaceId: "w1", spend: [S(50)] });
+    // The schedule moves on as for any finished run.
+    expect(updates.find((u) => u.table === "routines")?.values).toMatchObject({
+      claimed_at: null,
+      consecutive_failures: 0,
+    });
+  });
+
+  it("does not count a waiting run towards a series", async () => {
+    const { db, updates } = makeDb();
+
+    await runRoutine(
+      routine({
+        source_kind: "none",
+        source_config: {},
+        browser_access: "all",
+        ends_after_runs: 7,
+        runs_done: 2,
+      }),
+      { ...(makeDeps(db) as Record<string, unknown>), runWithTools: held() } as never,
+    );
+
+    expect(updates.find((u) => u.table === "routines")?.values).not.toHaveProperty("runs_done");
+  });
+});
+
 describe("a routine that ends", () => {
   // `source_kind: "none"` throughout: these tests are about what `finish` does
   // with an outcome, not about how a source produced one, and "none" reaches

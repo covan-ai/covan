@@ -46,6 +46,15 @@ export type Routine = {
   endsAfterRuns: number | null;
   /** How many it has delivered. */
   runsDone: number;
+  /**
+   * Whether a scheduled run may use the browser, and what it carries: `off`;
+   * `all`, as in a conversation; or `site`, none of the owner's sign-ins and
+   * only `browserSite`'s saved login.
+   */
+  browserAccess: "off" | "all" | "site";
+  browserSite: string | null;
+  /** The conversation this routine's browser works beside, once a run opened one. */
+  browserConversationId: string | null;
   status: "active" | "paused" | "completed";
   /** Set when the engine paused this itself after repeated failures. */
   pausedReason: string | null;
@@ -56,8 +65,11 @@ export type Routine = {
 
 export type RoutineRun = {
   id: string;
-  /** `skipped` means "looked, nothing new" — it is not a failure. */
-  status: "ok" | "skipped" | "failed";
+  /**
+   * `skipped` means "looked, nothing new" — it is not a failure. `waiting`
+   * means the report is written and held until a browser task answers.
+   */
+  status: "ok" | "skipped" | "failed" | "waiting";
   itemsNew: number;
   /**
    * New entries this run saw and did not deliver, dropped by the per-run cap of
@@ -216,4 +228,7 @@ export type UpdateRoutineInput = Partial<{
    */
   outputBundleId: string | null;
   outputRetention: number;
+  browserAccess: "off" | "all" | "site";
+  /** Null clears it; `site` access needs one, here or already saved. */
+  browserSite: string | null;
 }>;

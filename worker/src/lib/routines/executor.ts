@@ -24,6 +24,8 @@ import {
   readyForDelivery,
   type ConfirmableChannel,
 } from "./address-confirmation";
+import type { RoutineBrowser } from "../harness/registry";
+import { openRoutineConversation } from "./held";
 
 export const MAX_FAILURES = 5;
 
@@ -98,6 +100,15 @@ export type RoutineRow = {
   ends_after_runs: number | null;
   /** Delivered runs so far — incremented only where `finish` records `"ok"`. */
   runs_done: number;
+  /**
+   * Whether a run may use the browser, and what it carries (0100). Optional
+   * for `output_bundle_id`'s reason; absent reads as `'off'`.
+   */
+  browser_access?: "off" | "all" | "site" | null;
+  /** With `'site'`, the one host whose saved login a run may carry. */
+  browser_site?: string | null;
+  /** The owner's conversation this routine's browser runs beside, once one is open. */
+  browser_conversation_id?: string | null;
 };
 
 export type SummariseInput = {
@@ -183,6 +194,11 @@ export type AgentRunInput = SummariseInput & {
   workspaceId: string;
   userId: string;
   routineRunId?: string;
+  /**
+   * What `browse` may do on this run, when the routine's owner allowed the
+   * browser (0100); absent otherwise, and then the tool is not offered.
+   */
+  browser?: Omit<RoutineBrowser, "started">;
 };
 
 export type AgentRunResult = {
@@ -192,6 +208,12 @@ export type AgentRunResult = {
   /** What was consumed, for the ledger. */
   spend: Spend[];
   declined: boolean;
+  /**
+   * The browser tasks the turn started or put in line. When there are any the
+   * report is a draft: it is written as a `waiting` run and sent by
+   * `lib/routines/held.ts` once they have answered.
+   */
+  heldFor?: string[];
 } & ModelCall;
 
 /**
@@ -256,6 +278,12 @@ export type ExecutorDeps = {
    * the difference nobody could debug.
    */
   runWithTools?: (input: AgentRunInput, env: RoutineEnv) => Promise<AgentRunResult | null>;
+  /**
+   * Send a `waiting` run's report if its browser has already answered —
+   * `completeHeldRun`, bound by the dispatcher. Optional for `runWithTools`'s
+   * reason: without it a held report is sent by the next settle or the sweep.
+   */
+  completeHeld?: (runId: string) => Promise<unknown>;
   /**
    * What the agent knows, for one run.
    *
@@ -401,10 +429,14 @@ export async function runRoutine(
   routine: RoutineRow,
   deps: ExecutorDeps,
   trigger?: IngestTrigger,
-): Promise<{ status: "ok" | "skipped" | "failed"; itemsNew: number }> {
+): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> {
   const startedAt = deps.now();
   let claimedKeys: string[] = [];
   let delivered = false;
+  // Chosen before the turn rather than by the insert in `finish`, because a
+  // browser task the turn starts has to name the run it answers before that
+  // row exists (0100). Every branch writes its row with it.
+  const runId = crypto.randomUUID();
 
   try {
     // Membership is checked before anything else. Removing someone from a
@@ -877,6 +909,7 @@ export async function runRoutine(
     // to point at runs the agent loop; everything else runs the single call
     // it always ran. `runWithTools` answers `null` for the second case, so
     // the question is asked once rather than twice.
+    const browser = browserFor(routine, deps);
     const summary =
       (await deps.runWithTools?.(
         {
@@ -884,6 +917,8 @@ export async function runRoutine(
           agentId: routine.agent_id,
           workspaceId: routine.workspace_id,
           userId: routine.user_id,
+          routineRunId: runId,
+          ...(browser ? { browser } : {}),
         },
         runEnv,
       )) ?? (await deps.summarise(summariseInput, runEnv));
@@ -932,6 +967,48 @@ export async function runRoutine(
     // sentence saying so would be the more complete-looking of the two.
     const body = withOverflowNote(summary.text, overflow);
 
+    /**
+     * The turn started browser work that has not answered yet (0100). The
+     * report is written down as a draft, nothing is sent, and
+     * `lib/routines/held.ts` sends it once — with the answers in it — when
+     * the last task settles, or after `HELD_MAX_MS` with what it has.
+     *
+     * Everything else is this run finishing as usual: the cursor advances,
+     * the claims stay claimed (the report is coming; releasing them would
+     * have the next run report the same entries again), the turn's spend is
+     * charged, and the schedule moves on. Only a delivered run counts towards
+     * a series, so `runs_done` waits for the send.
+     */
+    const heldFor = "heldFor" in summary ? (summary.heldFor as string[] | undefined) : undefined;
+    if (heldFor && heldFor.length > 0) {
+      await finish(routine, deps, startedAt, {
+        runId,
+        status: "waiting",
+        itemsNew: items.length,
+        itemsOverflow: overflow,
+        modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
+        tokens: summary.tokens,
+        spend: [
+          ...summary.spend,
+          ...spends(
+            embeddingSpend(
+              embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
+              embeddingTokens,
+              "retrieval",
+            ),
+          ),
+        ],
+        cursor: nextCursor,
+        summary: body,
+      });
+      // Only once the row exists: a report nothing records can never be sent,
+      // so a failure above hands the claims back for the next run instead.
+      delivered = true;
+      // In case every task answered before the row above existed.
+      await deps.completeHeld?.(runId);
+      return { status: "waiting", itemsNew: items.length };
+    }
+
     await deliver(channel, { subject: routine.name, body }, deps.deliveryDeps, {
       event: EVENT_DELIVERED,
       routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
@@ -962,6 +1039,7 @@ export async function runRoutine(
     });
 
     await finish(routine, deps, startedAt, {
+      runId,
       status: "ok",
       itemsNew: items.length,
       itemsOverflow: overflow,
@@ -1041,6 +1119,26 @@ export async function runRoutine(
 
     return { status: "failed", itemsNew: 0 };
   }
+}
+
+/**
+ * What `browse` may do on this run, or nothing — the routine's `browser_access`
+ * (0100), read off the row and never from the model. The conversation is
+ * opened only when a task first needs it, so a run that allows the browser and
+ * does not use it opens nothing.
+ */
+function browserFor(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+): Omit<RoutineBrowser, "started"> | undefined {
+  const access = routine.browser_access ?? "off";
+  if (access === "off" || access === null) return undefined;
+  if (access === "site" && !routine.browser_site) return undefined;
+  return {
+    access,
+    site: access === "site" ? (routine.browser_site ?? null) : null,
+    conversation: () => openRoutineConversation(deps.db, routine),
+  };
 }
 
 /**
@@ -1159,6 +1257,12 @@ async function fileOutput(
  * become one of the spending branches first.
  */
 type RunOutcome = {
+  /**
+   * The id the run's row is written with, when the run chose one first —
+   * the agent path does, so a browser task can name the run it answers.
+   * Absent lets Postgres choose, which every other branch does.
+   */
+  runId?: string;
   itemsNew: number;
   /** New entries the per-run cap declined. Only a run that delivered has any. */
   itemsOverflow?: number;
@@ -1207,6 +1311,15 @@ type RunOutcome = {
       tokens: number;
       spend: Spend[];
     }
+  | {
+      /**
+       * A run whose report waits on its browser (0100). It spent what the
+       * turn spent, and says so, for the reason `"ok"` does.
+       */
+      status: "waiting";
+      tokens: number;
+      spend: Spend[];
+    }
   | { status: "skipped" | "failed"; tokens: 0; spend?: undefined }
 );
 
@@ -1226,6 +1339,7 @@ async function finish(
   const { data: runRows, error: runError } = await deps.db
     .from("routine_runs")
     .insert({
+      ...(outcome.runId ? { id: outcome.runId } : {}),
       routine_id: routine.id,
       started_at: startedAt.toISOString(),
       finished_at: finishedAt.toISOString(),

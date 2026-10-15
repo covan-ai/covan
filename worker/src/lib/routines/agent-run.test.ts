@@ -308,3 +308,62 @@ describe("runRoutineWithTools", () => {
     });
   });
 });
+
+/**
+ * A routine allowed the browser (0100). The approval rides in the tool
+ * context, and a report that started browser work is a draft — not something
+ * to decide against sending.
+ */
+describe("a run allowed the browser", () => {
+  const BROWSE = { name: "browse" } as never;
+  const browser = {
+    access: "all" as const,
+    site: null,
+    conversation: async () => "conv-1",
+  };
+
+  it("asks for the tools with the browser, even with nothing connected", async () => {
+    capabilitiesFor.mockResolvedValue({ tools: [BROWSE], manifest: "" });
+    const out = await runRoutineWithTools(env, db, () => false)({ ...input, browser }, env);
+
+    expect(out).not.toBeNull();
+    expect(capabilitiesFor.mock.calls[0][0]).toMatchObject({ surface: "schedule", browser: true });
+  });
+
+  it("does not ask for the browser for a routine that did not allow it", async () => {
+    await runRoutineWithTools(env, db)(input, env);
+    expect(capabilitiesFor.mock.calls[0][0]).toMatchObject({ browser: false });
+    expect(runAgentTurn.mock.calls[0][0].ctx.routineBrowser).toBeUndefined();
+  });
+
+  it("hands browse the approval and the run's id, and holds the report for what it started", async () => {
+    capabilitiesFor.mockResolvedValue({ tools: [BROWSE], manifest: "" });
+    runAgentTurn.mockImplementation(
+      async (opts: { ctx: { routineBrowser: { started: string[] } } }) => {
+        opts.ctx.routineBrowser.started.push("bt-1");
+        return {
+          text: "Draft.",
+          usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 0 },
+          steps: [],
+          finishReason: "stop",
+        };
+      },
+    );
+
+    const out = await runRoutineWithTools(env, db)(
+      { ...input, mayDecline: true, routineRunId: "run-1", browser },
+      env,
+    );
+
+    const ctx = runAgentTurn.mock.calls[0][0].ctx;
+    expect(ctx.routineRunId).toBe("run-1");
+    expect(ctx.routineBrowser).toMatchObject({ access: "all", site: null });
+    expect(out?.heldFor).toEqual(["bt-1"]);
+    // A draft with a gap in it is not judged worth sending or not.
+    expect(complete).not.toHaveBeenCalled();
+    expect(out?.declined).toBe(false);
+    expect(runAgentTurn.mock.calls[0][0].request.messages[0].content).toMatch(
+      /allows it to use the browser/,
+    );
+  });
+});

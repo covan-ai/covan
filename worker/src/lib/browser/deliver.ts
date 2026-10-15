@@ -12,6 +12,7 @@ import {
   type ConfirmableChannel,
 } from "../routines/address-confirmation";
 import { completionSpend, entitlementsFor, spends } from "../entitlements";
+import { completeHeldRun } from "../routines/held";
 
 /**
  * The answer, arriving in the conversation minutes after the turn that asked
@@ -182,6 +183,54 @@ export async function deliverBrowserTask(
   env: RoutineEnv,
   db: SupabaseClient,
 ): Promise<void> {
+  const routineRunId = await routineRunOf(row, db);
+  await writeAnswer(row, outcome, env, db, routineRunId);
+  // A routine's task answers a report that is waiting for it (0100). Asked
+  // whether the conversation write above worked or not: the answer is on the
+  // task row either way, and a report must not wait two hours for a message
+  // that failed to insert.
+  if (routineRunId) await completeHeldRun(env, routineRunId, { db });
+}
+
+/**
+ * The waiting routine run this task answers, or null for a conversation's own.
+ *
+ * Off the row when its reader selected the column — the cron's claims return
+ * whole rows — and read otherwise. A read that fails is null: the answer still
+ * reaches the conversation, and the report is sent by the sweep.
+ */
+async function routineRunOf(row: BrowserTaskRow, db: SupabaseClient): Promise<string | null> {
+  if (row.routine_run_id !== undefined) return row.routine_run_id ?? null;
+  try {
+    const { data, error } = await db
+      .from("browser_tasks")
+      .select("routine_run_id")
+      .eq("id", row.id)
+      .maybeSingle();
+    if (error) return null;
+    return typeof data?.routine_run_id === "string" ? data.routine_run_id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The answer, as a message in the conversation the task was asked from.
+ *
+ * For a routine's task (`routineRunId`) the message is the browser's own report
+ * rather than a phrased one, and nobody is notified: the routine's report is
+ * what gets phrased and sent, once, by `lib/routines/held.ts`, so a second
+ * model call and a "your browser task is done" mail here would be the same
+ * news twice. The message stays, because the routine's conversation is where
+ * its owner reads what the browser said word for word.
+ */
+async function writeAnswer(
+  row: BrowserTaskRow,
+  outcome: FinishedTask,
+  env: RoutineEnv,
+  db: SupabaseClient,
+  routineRunId: string | null,
+): Promise<void> {
   try {
     /**
      * The conversation may be gone. `browser_tasks.session_id` cascades, so
@@ -208,17 +257,19 @@ export async function deliverBrowserTask(
 
     const model = resolveModel((agent?.model as string | null) ?? null, env);
     const saved = await savedLoginState(row, outcome, env, db);
-    const words = needsModel(outcome) ? await theirWords(row, db) : null;
+    const words = !routineRunId && needsModel(outcome) ? await theirWords(row, db) : null;
     const told = words ? await languageOf(env, model, words, row.id) : null;
-    const phrased = await phrase(
-      row,
-      outcome,
-      env,
-      model,
-      agent?.temperature as number | null,
-      saved,
-      told?.language ?? null,
-    );
+    const phrased = routineRunId
+      ? { content: fallback(row, outcome, saved), usage: null }
+      : await phrase(
+          row,
+          outcome,
+          env,
+          model,
+          agent?.temperature as number | null,
+          saved,
+          told?.language ?? null,
+        );
     const content = phrased.content;
     const usage = plus(told?.usage ?? null, phrased.usage);
 
@@ -280,7 +331,7 @@ export async function deliverBrowserTask(
       .update({ updated_at: new Date().toISOString() })
       .eq("id", row.session_id);
 
-    await notify(row, env, db, content);
+    if (!routineRunId) await notify(row, env, db, content);
   } catch (err) {
     // Called after the row reached a terminal status, so there is nothing to
     // retry and nothing to be gained by failing the tick.

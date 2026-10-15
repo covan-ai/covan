@@ -415,12 +415,12 @@ harness knows which provider answered.
 **One layout decision does most of the work here, and it is about what does
 not change when a service is added.**
 
-| Layer                 | What is in it                                                                                             | What a new service costs                  |
-| --------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Core                  | `completion.ts` types, `harness/loop.ts`, the registry, the budget, `message_steps`, the SSE frames       | nothing                                   |
+| Layer                 | What is in it                                                                                                       | What a new service costs                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Core                  | `completion.ts` types, `harness/loop.ts`, the registry, the budget, `message_steps`, the SSE frames                 | nothing                                   |
 | Tools                 | `search_documents`, `describe_connection`, `query_database`, `http_request`, `browse`, `send_email`, `schedule_job` | nothing                                   |
-| Credential            | a `tool_connections` row: transport, base URL, auth, allowed methods                                      | **one row**                               |
-| Transport / auth kind | `http`, `sql`, `composio`; `static_header`, `composio`                                                    | code, once, only for a genuinely new kind |
+| Credential            | a `tool_connections` row: transport, base URL, auth, allowed methods                                                | **one row**                               |
+| Transport / auth kind | `http`, `sql`, `composio`; `static_header`, `composio`                                                              | code, once, only for a genuinely new kind |
 
 `browse` is the one tool in that row that does not fit the shape, and it is
 worth naming rather than discovering: it has no `tool_connections` row at all,
@@ -430,6 +430,19 @@ browser-use, the turn ends, and the result is written back into the conversation
 as a new assistant message once the run has ended. Everything about that lives
 in `lib/browser/`; nothing in the loop or the registry had to learn about
 waiting.
+
+A routine borrows all of it rather than adding a second path (0100). An owner
+who allows the browser on a routine gives the approval once, on the routine
+(`browser_access`), and the run's `ToolContext.routineBrowser` stands in for
+the card. The routine gets a conversation of its own, opened on the first run
+that browses, so `browser_sessions`, the line, the panel and the take-over work
+unchanged. Its tasks carry the run they answer (`browser_tasks.routine_run_id`),
+the run is written as `waiting` with its draft, and `lib/routines/held.ts`
+sends the report once, with the answers written in, when the last task settles —
+claimed with a conditional update so the open tab and the cron cannot both send
+it — or after two hours with what it has. With `browser_access = 'site'` a run
+carries no cookie jar (`browser_tasks.jarless`, read again when a waiting task
+starts) and only that site's saved login.
 
 **Two clocks bring the answer back, and one step delivers it.** Each
 conversation has one `browser_sessions` row per person — which provider session

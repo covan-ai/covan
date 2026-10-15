@@ -406,6 +406,43 @@ describe("mapRoutine", () => {
     expect(dto.outputBundleId).toBe("b1");
     expect(dto.outputRetention).toBe(12);
   });
+
+  it("reads a row from before 0100 as a routine with no browser", () => {
+    const dto = mapRoutine(row);
+    expect(dto.browserAccess).toBe("off");
+    expect(dto.browserSite).toBeNull();
+    expect(dto.browserConversationId).toBeNull();
+  });
+
+  it("carries the browser setting and its conversation", () => {
+    const dto = mapRoutine({
+      ...row,
+      browser_access: "site",
+      browser_site: "linkedin.com",
+      browser_conversation_id: "conv-1",
+    });
+    expect(dto).toMatchObject({
+      browserAccess: "site",
+      browserSite: "linkedin.com",
+      browserConversationId: "conv-1",
+    });
+  });
+});
+
+describe("mapRoutineRun, waiting on its browser", () => {
+  it("says it is waiting, and that nothing has been delivered yet", () => {
+    const dto = mapRoutineRun({
+      id: "run1",
+      status: "waiting",
+      items_new: 0,
+      duration_ms: 900,
+      error: null,
+      summary: "Draft: the browser is checking.",
+      started_at: "2026-10-15T06:00:00Z",
+    });
+    expect(dto.status).toBe("waiting");
+    expect(dto.summary).toBeNull();
+  });
 });
 
 describe("mapRoutineRun filing", () => {

@@ -78,6 +78,13 @@ export async function recordBrowserTask(
      * null already says.
      */
     credentialId?: string | null;
+    /**
+     * The waiting routine run this task answers (0100), and whether the run
+     * must not carry the owner's cookie jar. Absent for a conversation's own
+     * task, which is every task a person asked for.
+     */
+    routineRunId?: string;
+    jarless?: boolean;
   } & RecordedRun,
 ): Promise<string | null> {
   const provider =
@@ -101,6 +108,8 @@ export async function recordBrowserTask(
       status: "queued",
       retry_of: input.retryOf ?? null,
       ...(input.credentialId ? { credential_id: input.credentialId } : {}),
+      ...(input.routineRunId ? { routine_run_id: input.routineRunId } : {}),
+      ...(input.jarless ? { jarless: true } : {}),
     })
     .select("id")
     .single();

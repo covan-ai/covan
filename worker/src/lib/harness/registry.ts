@@ -60,6 +60,28 @@ export type ToolEnv = RoutineEnv & RetrievalConfig;
  * A tool that took a workspace id as an argument would be one hallucinated
  * uuid away from a cross-tenant read.
  */
+/** What a routine run lets `browse` do, and where its answers go. See `ToolContext.routineBrowser`. */
+export type RoutineBrowser = {
+  /**
+   * `'all'` carries what a conversation's browser would — the owner's jar and
+   * the saved login for a site the task names. `'site'` carries no jar and
+   * only `site`'s saved login.
+   */
+  access: "all" | "site";
+  /** With `'site'`, the one host whose saved login a run may carry. */
+  site: string | null;
+  /**
+   * The routine's conversation, opened the first time it is asked for. Null
+   * when it could not be opened, and then nothing is started.
+   */
+  conversation: () => Promise<string | null>;
+  /**
+   * The browser tasks this run started or put in line, appended by `browse`.
+   * The engine holds the report while any of them is unanswered.
+   */
+  started: string[];
+};
+
 export type ToolContext = {
   /**
    * The caller's own client, carrying their JWT — so every read and write a
@@ -82,12 +104,22 @@ export type ToolContext = {
   /** The routine run this turn belongs to, when nobody is. */
   routineRunId?: string;
   /**
+   * A routine run whose owner allowed it the browser (0100), or absent —
+   * which is every chat turn and every routine that did not.
+   *
+   * Its presence is the approval: the owner turned it on once, on the routine,
+   * for every run, because a tick has nobody to show a card to. So `browse`
+   * reads it in place of `confirmed`, and only `lib/routines/agent-run.ts`
+   * sets it, from the routine row — never from anything the model wrote.
+   */
+  routineBrowser?: RoutineBrowser;
+  /**
    * The country the person's request came from (`CF-IPCountry`, normalised by
    * `lib/browser/egress.ts`), or null when it could not say. Read for one
    * thing: the proxy a browser jar made by `browse` is pinned to, so a site
    * they sign in to sees them arrive from where they are. Set by the route
    * from the request, never from anything the model wrote; a scheduled run
-   * has none, and cannot browse anyway.
+   * has none, so a routine's browser jar is pinned nowhere in particular.
    */
   egressCountry?: string | null;
   /**

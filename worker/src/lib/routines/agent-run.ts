@@ -8,7 +8,7 @@ import { temperatureFor, reasoningEffortFor, maxTokensFor, whenAndWhere } from "
 import { capabilitiesFor } from "../harness/available";
 import { runAgentTurn, type PassUsage } from "../harness/loop";
 import { SCHEDULED_MAX_STEPS } from "../harness/budget";
-import type { ToolEnv } from "../harness/registry";
+import type { RoutineBrowser, ToolEnv } from "../harness/registry";
 import { DECISION_INSTRUCTION, readDecision } from "./summarise";
 import { replyOutcome, sumOverPasses } from "../harness/usage";
 import type { AgentRunInput, AgentRunResult } from "./executor";
@@ -62,7 +62,8 @@ export function runRoutineWithTools(
 ) {
   return async (input: AgentRunInput, runEnv: RoutineEnv): Promise<AgentRunResult | null> => {
     // The free half of the question, when somebody has already answered it.
-    if (hasConnections && !hasConnections(input.workspaceId)) return null;
+    // A routine allowed the browser has a tool whatever it has connected.
+    if (hasConnections && !hasConnections(input.workspaceId) && !input.browser) return null;
 
     const toolEnv = runEnv as ToolEnv;
     const { tools, manifest } = await capabilitiesFor({
@@ -71,8 +72,16 @@ export function runRoutineWithTools(
       workspaceId: input.workspaceId,
       userId: input.userId,
       surface: "schedule",
+      browser: Boolean(input.browser),
     });
     if (tools.length === 0) return null;
+
+    // What `browse` reads in place of an approval card, and where it writes
+    // down the tasks the report has to wait for. See `lib/routines/held.ts`.
+    const routineBrowser: RoutineBrowser | undefined =
+      input.browser && tools.some((t) => t.name === "browse")
+        ? { ...input.browser, started: [] }
+        : undefined;
 
     const model = resolveModel(input.model, runEnv);
     const body = routineMaterial(input);
@@ -92,6 +101,11 @@ export function runRoutineWithTools(
           // `routines.timezone` is the schedule's own zone, so "every Monday at
           // 22:00" means the same thing to the cron and to the model.
           whenAndWhere(new Date(), input.timezone),
+          routineBrowser
+            ? "This routine's owner allows it to use the browser. A browser task's answer is " +
+              "written into this report when it arrives, so start the tasks the instruction " +
+              "needs and write the rest of the report around them."
+            : null,
           manifest,
         ]
           .filter(Boolean)
@@ -177,6 +191,7 @@ export function runRoutineWithTools(
         agentId: input.agentId,
         userId: input.userId,
         routineRunId: input.routineRunId,
+        ...(routineBrowser ? { routineBrowser } : {}),
         // A scheduled run loops the same way a conversation does, so it can
         // repeat a search the same way. On the cron Worker the saving is a
         // subrequest, which is the budget that actually binds there.
@@ -220,7 +235,12 @@ export function runRoutineWithTools(
     // anything up. So the work happens first, in prose, and the question of
     // whether it is worth sending is asked afterwards about the answer — one
     // extra short call on runs that are allowed to stay quiet.
-    if (input.mayDecline && text.trim()) {
+    //
+    // Not asked of a report that is waiting on its browser: the draft has a
+    // gap where the answer goes, and "nothing worth sending" cannot be judged
+    // of a report that is not finished yet.
+    const heldFor = routineBrowser?.started ?? [];
+    if (input.mayDecline && text.trim() && heldFor.length === 0) {
       const decision = await complete(runEnv, {
         model,
         json: true,
@@ -254,6 +274,7 @@ export function runRoutineWithTools(
       tokens,
       spend,
       declined,
+      ...(heldFor.length > 0 ? { heldFor } : {}),
       // What the row will say about the call, through the same `replyOutcome`
       // the chat path uses rather than a second mapping. `parked: false` is a
       // constant here and the reason is the whole character of this surface: a

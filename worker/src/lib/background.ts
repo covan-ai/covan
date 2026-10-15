@@ -3,6 +3,7 @@ import { canSyncConnections } from "./../types";
 import { runDueRoutines } from "./routines/dispatcher";
 import { runDueConnections } from "./connections/dispatcher";
 import { pollDueBrowserTasks } from "./browser/poller";
+import { sweepHeldRuns } from "./routines/held";
 import { startQueuedBrowserTasks } from "./browser/queue";
 import { sweepAbandonedTakeovers, sweepConversationBrowsers } from "./browser/sweep";
 import { PROVIDERS } from "./connections/registry";
@@ -90,6 +91,12 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
 
   const browser = await pollDueBrowserTasks(env);
   if (browser.claimed > 0) return;
+
+  // A routine's report that waited on its browser longer than it should
+  // (0100) — sent with what it has. Last of the browser stages, because every
+  // stage above is one that might still answer it.
+  const held = await sweepHeldRuns(env);
+  if (held.finished > 0) return;
 
   if (!canSyncConnections(env)) {
     // Not an error, and not silent either. This is the cron-only Worker

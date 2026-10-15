@@ -3,7 +3,7 @@ import type { AppEnv } from "../types";
 import { authClient, userClient } from "../lib/supabase";
 import { looksLikeApiKey, mintUserToken, resolveApiKey, touchApiKey } from "../lib/api-keys";
 import { deferred } from "../lib/defer";
-import { base64url, verifyAccessToken, type TokenUser } from "../lib/jwt";
+import { base64url, claimedAal, verifyAccessToken, type TokenUser } from "../lib/jwt";
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter, withMeter } from "../lib/subrequests";
 
@@ -41,6 +41,16 @@ import { subrequestMeter, withMeter } from "../lib/subrequests";
  * `kid` from a rotation this isolate has not seen. Those ask GoTrue, and the
  * answer is cached briefly so a burst of requests behind one page load pays for
  * at most one.
+ *
+ * ## The second step
+ *
+ * An account with an authenticator owes a code after its password, and a
+ * session that has not given it is `aal1`. Postgres refuses such a session on
+ * every PostgREST request (0108), which covers every route that reads through
+ * `c.get("db")` before doing anything. Not every route does: some reach for the
+ * service client first, or for a model or a third party, and those would serve
+ * a stolen password as readily as a whole sign-in. So the question is asked
+ * here, once, in front of all of them — see `secondFactorSatisfied`.
  */
 export const authMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
   const header = c.req.header("Authorization");
@@ -74,8 +84,16 @@ export const authMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
     return c.json({ error: "unauthorized" }, 401);
   }
 
+  const db = userClient(withMeter(c.env, c.get("subrequests")), token);
+
+  if (claimedAal(token) !== "aal2") {
+    const satisfied = await secondFactorSatisfied(db, token);
+    if (satisfied === null) return c.json({ error: "could not check your sign-in" }, 503);
+    if (!satisfied) return c.json({ error: "second factor required" }, 403);
+  }
+
   c.set("user", user);
-  c.set("db", userClient(withMeter(c.env, c.get("subrequests")), token));
+  c.set("db", db);
 
   await next();
 };
@@ -105,6 +123,7 @@ const recentlyVerified = new Map<string, { user: TokenUser; at: number }>();
 /** Test escape hatch, as `resetRateLimiters` is for the limiter's map. */
 export function resetAuthCache(): void {
   recentlyVerified.clear();
+  secondFactorChecked.clear();
 }
 
 async function fingerprint(token: string): Promise<string> {
@@ -131,6 +150,51 @@ async function askGoTrue(c: Context<AppEnv>, token: string): Promise<TokenUser |
   recentlyVerified.set(key, { user, at: Date.now() });
 
   return user;
+}
+
+/**
+ * Whether an `aal1` session may be served: it may, unless its account has a
+ * verified authenticator. `null` when the database could not be asked.
+ *
+ * The token alone cannot say — an `aal1` token is what every account without
+ * an authenticator carries too — so this is one PostgREST call, answered by
+ * `second_factor_satisfied()` (0108). An account that owes a code does not even
+ * get that far: the pre-request hook answers its call with 403 / `PT403`,
+ * which is the "no" this reads.
+ *
+ * Remembered for a minute per token, by digest, for `recentlyVerified`'s
+ * reasons. A token's own claim cannot change; what can is the account adding
+ * its first authenticator while an older `aal1` token is still live somewhere
+ * else, and for that token this answer may be a minute late. Failures to ask
+ * are not remembered.
+ */
+const secondFactorChecked = new Map<string, { satisfied: boolean; at: number }>();
+
+async function secondFactorSatisfied(
+  db: ReturnType<typeof userClient>,
+  token: string,
+): Promise<boolean | null> {
+  const key = await fingerprint(token);
+  const hit = secondFactorChecked.get(key);
+  if (hit && Date.now() - hit.at < GOTRUE_CACHE_TTL_MS) return hit.satisfied;
+
+  const { data, error } = await db.rpc("second_factor_satisfied");
+  let satisfied: boolean;
+  if (!error) satisfied = data === true;
+  else if (error.code === "PT403") satisfied = false;
+  // No such function: a database from before 0108, where nothing requires a
+  // second step either. Answering 503 here would turn deploying the API ahead
+  // of the migration into an outage for everybody.
+  else if (error.code === "PGRST202") satisfied = true;
+  else return null;
+
+  if (secondFactorChecked.size >= GOTRUE_CACHE_LIMIT) {
+    const oldest = secondFactorChecked.keys().next().value;
+    if (oldest !== undefined) secondFactorChecked.delete(oldest);
+  }
+  secondFactorChecked.set(key, { satisfied, at: Date.now() });
+
+  return satisfied;
 }
 
 /**

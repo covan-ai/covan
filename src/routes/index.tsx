@@ -40,7 +40,13 @@ function Index() {
         setUnreachable(true);
         return;
       }
-      navigate({ to: answer.kind === "session" ? "/app" : "/sign-in", replace: true });
+      const to =
+        answer.kind === "session"
+          ? "/app"
+          : answer.kind === "second-factor"
+            ? "/two-factor"
+            : "/sign-in";
+      navigate({ to, replace: true });
     });
 
     return () => {

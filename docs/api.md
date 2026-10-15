@@ -40,6 +40,11 @@ makes the request as them. Postgres cannot tell your script from your browser,
 and every policy that would have applied to you still applies. A viewer's key can
 read and not write, because a viewer can read and not write.
 
+That includes two-step sign-in. A key keeps working for an account that turns
+it on, because only a session that has already given its code can make a key
+for such an account — so a key is never a way around the code, and turning the
+code on is never a reason to remake your keys.
+
 Scopes would be a second permission system standing next to that one, and two
 systems that disagree about the same question are worse than one. What a key
 gives up in granularity it gains in there being nothing to get wrong.

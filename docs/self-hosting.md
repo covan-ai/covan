@@ -388,6 +388,40 @@ Closing an account deletes that person's feedback with it (`on delete cascade`),
 which is the same treatment their conversations get. If a report matters beyond
 the account that filed it, copy it somewhere before that happens.
 
+## Two-step sign-in
+
+People can add an authenticator app under Settings → Account; see
+[Security](security.md#two-step-sign-in) for what it protects and how. The
+Docker stack turns GoTrue's authenticator support on
+(`GOTRUE_MFA_TOTP_ENROLL_ENABLED`, `GOTRUE_MFA_TOTP_VERIFY_ENABLED`), and on a
+hosted Supabase project it is on by default, under Authentication →
+Multi-Factor.
+
+The enforcement is migration `0108`, and one line of it is not a table or a
+function but a setting on a role: `pgrst.db_pre_request` on `authenticator`.
+If you apply migrations by hand, check it took:
+
+```sql
+select rolconfig from pg_roles where rolname = 'authenticator';
+-- must include pgrst.db_pre_request=public.require_second_factor
+```
+
+Without it the code is asked for and then not required. The same is true of a
+PostgREST started with `PGRST_DB_CONFIG=false`, which ignores settings stored
+on the role.
+
+**Somebody who lost their phone** has no backup codes to fall back on —
+Supabase Auth does not issue any. Removing their authenticators lets them sign
+in with the password alone, after which they can add a new one:
+
+```sql
+delete from auth.mfa_factors
+where user_id = (select id from auth.users where email = 'person@example.com');
+```
+
+Make sure it is them asking before you run it: this is exactly the step an
+attacker holding their password would want you to take.
+
 ## Uploaded documents
 
 `covan-api` has no Cloudflare R2 binding, so `getDocStore()` falls back to the

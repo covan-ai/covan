@@ -144,6 +144,12 @@ services:
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_SMS_AUTOCONFIRM: "false"
 
+      # Two-step sign-in with an authenticator app. GoTrue keeps the factors;
+      # what makes a code actually required is 0108, which has PostgREST and
+      # the API refuse a session that has not given it. SMS codes stay off.
+      GOTRUE_MFA_TOTP_ENROLL_ENABLED: "true"
+      GOTRUE_MFA_TOTP_VERIFY_ENABLED: "true"
+
   rest:
     container_name: covan-rest
     image: postgrest/postgrest:v14.12

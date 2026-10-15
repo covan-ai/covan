@@ -17,7 +17,18 @@ import type { AppEnv } from "../types";
 
 const authGetUser = vi.fn();
 const authClient = vi.fn((_env: unknown) => ({ auth: { getUser: authGetUser } }));
-const userClient = vi.fn((_env: unknown, token: string) => ({ marker: "user-client", token }));
+/** What the caller's own client answers when asked about its second step (0108). */
+const rpc = vi.fn(
+  async (..._args: unknown[]): Promise<{ data: unknown; error: { code: string } | null }> => ({
+    data: true,
+    error: null,
+  }),
+);
+const userClient = vi.fn((_env: unknown, token: string) => ({
+  marker: "user-client",
+  token,
+  rpc,
+}));
 
 vi.mock("../lib/supabase", () => ({
   authClient: (env: unknown) => authClient(env),
@@ -104,6 +115,7 @@ const get = (server: Hono<AppEnv>, headers: Record<string, string> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   resetAuthCache();
+  rpc.mockResolvedValue({ data: true, error: null });
 });
 
 /**
@@ -207,7 +219,7 @@ describe("authMiddleware", () => {
     await get(server, { Authorization: `Bearer ${token}` });
 
     expect(userClient).toHaveBeenCalledWith(metered(ENV), token);
-    expect(seen.db).toEqual({ marker: "user-client", token });
+    expect(seen.db).toEqual(expect.objectContaining({ marker: "user-client", token }));
   });
 
   it("trims padding around the token rather than passing it on", async () => {
@@ -278,7 +290,7 @@ describe("authMiddleware, verifying the token itself", () => {
     await verify(server, token);
 
     expect(userClient).toHaveBeenCalledWith(metered(KEYED_ENV), token);
-    expect(seen.db).toEqual({ marker: "user-client", token });
+    expect(seen.db).toEqual(expect.objectContaining({ marker: "user-client", token }));
   });
 
   it("refuses a token signed with something else", async () => {
@@ -352,7 +364,9 @@ describe("authMiddleware, with an API key", () => {
       expect.objectContaining({ keyId: "key-1", workspaceId: "ws-1" }),
     );
     expect(userClient).toHaveBeenCalledWith(metered(KEYED_ENV), "minted-jwt");
-    expect(seen.db).toEqual({ marker: "user-client", token: "minted-jwt" });
+    expect(seen.db).toEqual(
+      expect.objectContaining({ marker: "user-client", token: "minted-jwt" }),
+    );
     // The key is a credential, not a token any database would accept.
     expect(userClient).not.toHaveBeenCalledWith(expect.anything(), KEY);
   });
@@ -434,5 +448,113 @@ describe("authMiddleware, with an API key", () => {
     await withKey(server);
 
     expect(touchApiKey).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The second step (0108). Postgres refuses an `aal1` session from an account
+ * with an authenticator on every PostgREST call, but some routes act before
+ * making one — through the service client, a model, a third party — so the
+ * middleware asks first, for every token that does not already claim `aal2`.
+ */
+describe("authMiddleware and the second step", () => {
+  const KEYED = (server: Hono<AppEnv>, token: string) =>
+    server.request("/probe", { headers: { Authorization: `Bearer ${token}` } }, KEYED_ENV);
+
+  it("lets an aal1 session through when its account has no authenticator", async () => {
+    const token = await session({ aal: "aal1" });
+    const { server, seen } = app();
+
+    const res = await KEYED(server, token);
+
+    expect(res.status).toBe(200);
+    expect(seen.reached).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("second_factor_satisfied");
+  });
+
+  it("refuses an aal1 session whose account owes a code", async () => {
+    // The pre-request hook answers this call with PT403 before the function
+    // runs, which is the shape a real refusal takes.
+    rpc.mockResolvedValue({ data: null, error: { code: "PT403" } });
+    const token = await session({ aal: "aal1" });
+    const { server, seen } = app();
+
+    const res = await KEYED(server, token);
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "second factor required" });
+    expect(seen.reached).toBe(false);
+  });
+
+  it("refuses rather than guesses when the database cannot be asked", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST000" } });
+    const token = await session({ aal: "aal1" });
+    const { server, seen } = app();
+
+    const res = await KEYED(server, token);
+
+    expect(res.status).toBe(503);
+    expect(seen.reached).toBe(false);
+  });
+
+  it("lets a session through against a database from before the rule existed", async () => {
+    // PGRST202: PostgREST has no such function. The API deployed ahead of
+    // 0108 must not take everybody down.
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST202" } });
+    const token = await session({ aal: "aal1" });
+    const { server, seen } = app();
+
+    const res = await KEYED(server, token);
+
+    expect(res.status).toBe(200);
+    expect(seen.reached).toBe(true);
+  });
+
+  it("does not ask about a session that already gave its code", async () => {
+    const token = await session({ aal: "aal2" });
+    const { server, seen } = app();
+
+    const res = await KEYED(server, token);
+
+    expect(res.status).toBe(200);
+    expect(seen.reached).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("asks once for a burst of requests carrying the same token", async () => {
+    const token = await session({ aal: "aal1" });
+    const { server } = app();
+
+    await KEYED(server, token);
+    await KEYED(server, token);
+    await KEYED(server, token);
+
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not remember a failure to ask", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { code: "PGRST000" } });
+    const token = await session({ aal: "aal1" });
+    const { server } = app();
+
+    expect((await KEYED(server, token)).status).toBe(503);
+    expect((await KEYED(server, token)).status).toBe(200);
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask about an API key, whose minted token claims aal2", async () => {
+    resolveApiKey.mockResolvedValue({
+      keyId: "key-1",
+      workspaceId: "ws-1",
+      user: { id: "user-1", email: "a@example.com" },
+      lastUsedAt: null,
+    });
+    const { server, seen } = app();
+
+    const res = await KEYED(server, `${API_KEY_PREFIX}${"a".repeat(40)}`);
+
+    expect(res.status).toBe(200);
+    expect(seen.reached).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

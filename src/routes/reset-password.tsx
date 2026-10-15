@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
@@ -25,6 +25,7 @@ function readUrlError(): string | null {
 const RETRY_AFTER_MS = 3000;
 
 function ResetPassword() {
+  const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Supabase puts a rejected link's reason in the URL fragment before this
@@ -77,6 +78,14 @@ function ResetPassword() {
         setStatus("ready");
         return;
       }
+      // A reset link proves the mailbox, not the authenticator, and GoTrue
+      // will not change the password of an account with one until the code has
+      // been given. The recovery session is kept; the code is asked for, and
+      // this page picks up where it left off.
+      if (answer.kind === "second-factor") {
+        void navigate({ to: "/two-factor", search: { next: "/reset-password" }, replace: true });
+        return;
+      }
       // "Could not tell" is not "expired". Sending somebody to request a second
       // link because the check could not reach the server wastes the perfectly
       // good link in their hand — and reset links only last fifteen minutes.
@@ -91,7 +100,7 @@ function ResetPassword() {
     return () => {
       active = false;
     };
-  }, [urlError, attempt]);
+  }, [urlError, attempt, navigate]);
 
   useEffect(() => {
     if (!unreachable) return;

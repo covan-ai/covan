@@ -34,11 +34,14 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",
+    "@cloudflare/puppeteer": "^1.4.0",
     "@hono/node-server": "^2.1.1",
     "@supabase/supabase-js": "^2.116.0",
     "cron-parser": "^5.10.0",
+    "docx": "^9.8.1",
     "fast-xml-parser": "^5.11.0",
     "hono": "^4.13.5",
+    "marked": "^18.0.14",
     "openai": "^7.5.0",
     "zod": "^4.6.2"
   },

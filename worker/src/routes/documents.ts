@@ -8,6 +8,8 @@ import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { embeddingSpend } from "../lib/entitlements";
 import { insertChunkRows } from "../lib/chunk-store";
 import { callDeletionFn } from "../lib/deletion";
+import { markdownToDocx } from "../lib/formats/docx";
+import { pdfRenderer } from "../lib/formats/pdf";
 
 const documents = new Hono<AppEnv>();
 
@@ -219,6 +221,81 @@ documents.get("/documents/:id/download", async (c) => {
       // same hole one layer down.
       "X-Content-Type-Options": "nosniff",
       "Content-Disposition": `attachment; filename*=UTF-8''${encodedName}`,
+    },
+  });
+});
+
+/** What an export answers with, per format. */
+const EXPORTS = {
+  docx: {
+    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    extension: ".docx",
+  },
+  pdf: { type: "application/pdf", extension: ".pdf" },
+} as const;
+
+/** `Q3 review.md` → `Q3 review.docx`. */
+function exportName(name: string, extension: string): string {
+  return `${name.replace(/\.(md|markdown)$/i, "")}${extension}`;
+}
+
+// GET /documents/:id/export/:format — a Markdown document as Word or PDF.
+//
+// Read through the caller's own client like the download above, so RLS decides
+// whether the document exists for them. Only Markdown converts — every
+// document the product writes itself is Markdown, and an uploaded PDF or Word
+// file already is what somebody would export it to.
+//
+// PDF needs a browser to print with (`lib/formats/pdf.ts`). Without one this
+// answers 501 with `fallback: "print"`, and the page prints the document in
+// the person's own browser instead.
+documents.get("/documents/:id/export/:format", async (c) => {
+  const format = c.req.param("format");
+  if (format !== "docx" && format !== "pdf") {
+    return c.json({ error: "format must be docx or pdf" }, 400);
+  }
+
+  const { data: row, error } = await c
+    .get("db")
+    .from("documents")
+    .select("name,r2_key")
+    .eq("id", c.req.param("id"))
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to load document" }, 500);
+  if (!row || !row.r2_key) return c.json({ error: "not found" }, 404);
+  if (!/\.(md|markdown)$/i.test(row.name)) {
+    return c.json({ error: "only Markdown documents can be exported" }, 415);
+  }
+
+  const renderer = format === "pdf" ? pdfRenderer(c.env) : null;
+  if (format === "pdf" && !renderer) {
+    return c.json({ error: "this deployment cannot print PDFs", fallback: "print" }, 501);
+  }
+
+  let markdown: string;
+  try {
+    const obj = await getDocStore(c.env).get(row.r2_key);
+    if (!obj) return c.json({ error: "not found" }, 404);
+    markdown = new TextDecoder().decode(await obj.arrayBuffer());
+  } catch (e) {
+    console.error("failed to read document from store", e);
+    return c.json({ error: "failed to load the document; check the server logs" }, 500);
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = renderer ? await renderer.render(markdown) : await markdownToDocx(markdown);
+  } catch (e) {
+    console.error(`failed to export a document as ${format}`, e);
+    return c.json({ error: `failed to make the ${format.toUpperCase()}` }, 502);
+  }
+
+  const { type, extension } = EXPORTS[format];
+  return new Response(bytes, {
+    headers: {
+      "Content-Type": type,
+      "X-Content-Type-Options": "nosniff",
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(exportName(row.name, extension))}`,
     },
   });
 });

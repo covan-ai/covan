@@ -210,6 +210,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/documents.ts PATCH /documents/:id",
   "routes/documents.ts GET /documents/:id/preview",
   "routes/documents.ts GET /documents/:id/download",
+  "routes/documents.ts GET /documents/:id/export/:format",
   "routes/documents.ts POST /documents/:id/reindex",
   "routes/events.ts GET /events",
   "routes/export.ts GET /workspaces/:id/export",

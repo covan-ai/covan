@@ -52,7 +52,7 @@ RUN bun scripts/web-runtime-config.mjs --prepare .output
 # available in Node 22. src/lib/supabase/client.ts is imported during SSR, so on
 # Node 20 every single page renders the 500 error shell instead of the app. The
 # build is perfectly green either way; the failure is entirely at runtime.
-FROM node:22.23.2-alpine
+FROM node:26.11.1-alpine
 WORKDIR /app
 COPY --from=build --chown=node:node /app/.output ./.output
 COPY --from=build --chown=node:node /app/scripts/web-runtime-config.mjs ./scripts/

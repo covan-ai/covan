@@ -101,6 +101,10 @@ RESEND_FROM=
 # Optional. The model a browser run asks for. Unset means gpt-5.6-luna, the
 # default in src/lib/browser/v4.ts.
 # BROWSER_USE_MODEL=
+# Optional. How hard that model reasons: none, low, medium, high, xhigh, max,
+# or `provider` for browser-use's own default (xhigh on gpt-5.6-luna). Unset
+# means medium, DEFAULT_REASONING in src/lib/browser/v4.ts.
+# BROWSER_USE_REASONING=
 # Optional. A proxy in front of api.browser-use.com/api/v4, where runs, browsers
 # and profiles go. Unset means browser-use.
 # BROWSER_USE_V4_BASE_URL=

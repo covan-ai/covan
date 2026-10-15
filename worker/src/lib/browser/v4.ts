@@ -37,6 +37,64 @@ export const V4_BASE = "https://api.browser-use.com/api/v4";
  */
 export const DEFAULT_MODEL = "gpt-5.6-luna";
 
+/** The reasoning levels a run may ask for; each model family spells them its own way. */
+export const REASONING_EFFORTS = ["none", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+/**
+ * The reasoning a run asks for when the operator names none.
+ *
+ * **Sent, because leaving it out is not neutral.** A request that names a
+ * model and no `modelParams` gets the provider's reasoning default for that
+ * model, and for `gpt-5.6-luna` that is `xhigh` — the most expensive level
+ * short of `max`, on every step of a run that takes dozens, billed at the
+ * output rate. Medium rather than low because a run that reasons too little
+ * fails, and a failed run is paid for and then retried.
+ */
+export const DEFAULT_REASONING: ReasoningEffort = "medium";
+
+/**
+ * `modelParams` for one model at one effort, in that model's family's shape —
+ * or undefined, and the provider's default stands.
+ *
+ * The provider validates `modelParams` per model, so a shape sent to the wrong
+ * family is a 422 on every run. Undefined, therefore, for a family this does
+ * not know (`grok-*`, `glm-*`, `kimi-*`, `minimax-*` take none at all) and
+ * for a level the family has no word for: Claude has no `none`, Gemini no
+ * `xhigh` or `max`.
+ */
+export function modelParamsFor(
+  model: string,
+  effort: ReasoningEffort,
+): Record<string, unknown> | undefined {
+  if (model.startsWith("gpt-")) {
+    // The two GPTs whose list is shorter: astra has no `none`, 5.5 no `max`.
+    if (effort === "none" && model.startsWith("gpt-6-astra")) return undefined;
+    if (effort === "max" && model === "gpt-5.5") return undefined;
+    return { reasoning: { effort } };
+  }
+  if (model.startsWith("claude-") && effort !== "none") return { output_config: { effort } };
+  if (model.startsWith("gemini-")) {
+    const level = effort === "none" ? "minimal" : effort;
+    return level === "xhigh" || level === "max"
+      ? undefined
+      : { thinkingConfig: { thinkingLevel: level } };
+  }
+  return undefined;
+}
+
+/**
+ * `BROWSER_USE_REASONING` as an effort. Empty or unset is `DEFAULT_REASONING`;
+ * `provider` is null, and no `modelParams` is sent. A word outside the list is
+ * the default too, rather than a 422 on every run.
+ */
+export function reasoningOf(raw: string | undefined): ReasoningEffort | null {
+  const word = raw?.trim().toLowerCase();
+  if (word === "provider") return null;
+  return REASONING_EFFORTS.find((effort) => effort === word) ?? DEFAULT_REASONING;
+}
+
 /**
  * The most one run may spend, in dollars, sent as `maxCostUsd` on every run.
  *
@@ -44,6 +102,18 @@ export const DEFAULT_MODEL = "gpt-5.6-luna";
  * step count was a proxy for.
  */
 export const RUN_COST_CAP_USD = 0.25;
+
+/**
+ * The ceiling on the one free retry after a person hands the browser back
+ * (`handBackBrowser`), which nobody is charged for.
+ *
+ * Lower than `RUN_COST_CAP_USD` because the free retry was where the money
+ * went: of the first four, three ran to the full $0.25 and ended with no
+ * answer, at the operator's expense, against a typical task's two to six
+ * cents. The retry starts in a browser that is already signed in and on the
+ * page, so it has less to do than the run it continues.
+ */
+export const RETRY_COST_CAP_USD = 0.1;
 
 /**
  * Their six words. `dispatching` is the one v2 never had: accepted, not yet on
@@ -145,6 +215,8 @@ export type CreateRunInput = {
   /** Sent when given. What an answer shaped like it means is the caller's to decide. */
   outputSchema?: Record<string, unknown>;
   model?: string;
+  /** Sent when given, in the shape `modelParamsFor` builds for `model`. */
+  modelParams?: Record<string, unknown>;
   maxCostUsd: number;
 };
 
@@ -256,6 +328,7 @@ export function createRun(
       body: {
         task: input.task,
         model: input.model ?? DEFAULT_MODEL,
+        ...(input.modelParams ? { modelParams: input.modelParams } : {}),
         maxCostUsd: input.maxCostUsd,
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(Object.keys(browserSettings).length > 0 ? { browserSettings } : {}),

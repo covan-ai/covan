@@ -3,8 +3,11 @@ import type { BrowserEnv } from "./client";
 import {
   V4_BASE,
   DEFAULT_MODEL,
+  DEFAULT_REASONING,
   RUN_COST_CAP_USD,
   createRun,
+  modelParamsFor,
+  reasoningOf,
   runStatus,
   runSummary,
   runEvents,
@@ -172,6 +175,17 @@ describe("createRun", () => {
     expect(sentBody().model).toBe("gpt-5.6");
   });
 
+  it("sends modelParams when given, and omits it otherwise", async () => {
+    fetchMock.mockResolvedValue(json(created, 202));
+    await createRun(ENV, { task: "t", maxCostUsd: 0.25 });
+    expect("modelParams" in sentBody()).toBe(false);
+
+    fetchMock.mockClear();
+    const modelParams = { reasoning: { effort: "low" } };
+    await createRun(ENV, { task: "t", modelParams, maxCostUsd: 0.25 });
+    expect(sentBody().modelParams).toEqual(modelParams);
+  });
+
   /**
    * The request names a profile and the provider's 422 echoes the offending
    * input. That string reaches `message_steps.result_excerpt`, which every
@@ -189,6 +203,47 @@ describe("createRun", () => {
     expect(result.kind).toBe("error");
     expect((result as { status: number }).status).toBe(422);
     expect((result as { message: string }).message).not.toContain(PROFILE_ID);
+  });
+});
+
+describe("modelParamsFor", () => {
+  it("spells the effort the way each family takes it", () => {
+    expect(modelParamsFor("gpt-5.6-luna", "medium")).toEqual({ reasoning: { effort: "medium" } });
+    expect(modelParamsFor("claude-sonnet-5", "low")).toEqual({ output_config: { effort: "low" } });
+    expect(modelParamsFor("gemini-3.6-flash", "high")).toEqual({
+      thinkingConfig: { thinkingLevel: "high" },
+    });
+    expect(modelParamsFor("gemini-3.6-flash", "none")).toEqual({
+      thinkingConfig: { thinkingLevel: "minimal" },
+    });
+  });
+
+  /** Each of these would be a 422 on every run. */
+  it("sends nothing for a level the family has no word for, or a family it does not know", () => {
+    expect(modelParamsFor("claude-opus-5", "none")).toBeUndefined();
+    expect(modelParamsFor("gpt-6-astra", "none")).toBeUndefined();
+    expect(modelParamsFor("gpt-5.5", "max")).toBeUndefined();
+    expect(modelParamsFor("gemini-3.6-flash", "xhigh")).toBeUndefined();
+    expect(modelParamsFor("gemini-3.6-flash", "max")).toBeUndefined();
+    expect(modelParamsFor("minimax-m3", "medium")).toBeUndefined();
+    expect(modelParamsFor("grok-4.5", "low")).toBeUndefined();
+  });
+});
+
+describe("reasoningOf", () => {
+  it("is the default when unset, empty or a word it does not know", () => {
+    expect(reasoningOf(undefined)).toBe(DEFAULT_REASONING);
+    expect(reasoningOf("")).toBe(DEFAULT_REASONING);
+    expect(reasoningOf("extreme")).toBe(DEFAULT_REASONING);
+  });
+
+  it("reads a level, case and whitespace aside", () => {
+    expect(reasoningOf("low")).toBe("low");
+    expect(reasoningOf(" XHigh ")).toBe("xhigh");
+  });
+
+  it("is null for `provider`, which sends no modelParams", () => {
+    expect(reasoningOf("provider")).toBeNull();
   });
 });
 

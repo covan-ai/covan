@@ -15,7 +15,7 @@ import { OUTCOME_SCHEMA, runTask } from "./outcome";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 import { finishedRun, settleBrowserTask } from "./settle";
 import type { RetryableTask } from "./takeover";
-import { RUN_COST_CAP_USD, V4_BASE } from "./v4";
+import { RETRY_COST_CAP_USD, V4_BASE } from "./v4";
 
 /**
  * Who has the controls of the browser beside a conversation, and the four
@@ -478,7 +478,8 @@ describe("handBackBrowser", () => {
       task: runTask(`${HAND_BACK_TASK}read the pricing table`),
       sessionId: "bu-session-1",
       outputSchema: OUTCOME_SCHEMA,
-      maxCostUsd: RUN_COST_CAP_USD,
+      // Nobody pays for this run, so it has a lower ceiling than one they do.
+      maxCostUsd: RETRY_COST_CAP_USD,
       browserSettings: { profileId: "bu-profile-1", proxyCountryCode: "de" },
     });
     expect(String(body.task)).toContain(

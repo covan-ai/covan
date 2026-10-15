@@ -443,8 +443,8 @@ async function giveBack(db: SupabaseClient, input: Owned, now: Date): Promise<vo
  * `affordable` or `lib/entitlements`. What bounds the operator's money is
  * `retry_of`: the route refuses an original that already has a successor, this
  * refuses one that is itself a retry, and `browser_tasks_retry_of_idx` is
- * unique underneath both. The run still carries `maxCostUsd` (through
- * `conversationRun`), so the free retry has the same ceiling the meter priced.
+ * unique underneath both. The run carries `maxCostUsd` (through
+ * `conversationRun`), and a lower one than a paid run's: `RETRY_COST_CAP_USD`.
  *
  * **The switch to `agent` is the claim, and it is also the run-start
  * bookkeeping.** `recordRunStart` skips its whole update while the person
@@ -571,6 +571,7 @@ export async function handBackBrowser(
       profile,
       withoutProfile,
       login: input.login,
+      freeRetry: true,
     }),
   );
   if (created.kind === "error") {

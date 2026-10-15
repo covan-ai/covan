@@ -77,6 +77,8 @@ function makeDb(
           },
           is: () => chain,
           order: () => chain,
+          // `replaceChunks` asking for the newest generation: there is none.
+          limit: async () => ({ data: [], error: null }),
           range: async (from: number, to: number) => {
             rec.ranges.push({ from, to });
             if (over.pruneError) return { data: null, error: over.pruneError };
@@ -97,6 +99,10 @@ function makeDb(
                 : { data: { id: "d-new" }, error: null },
           }),
         };
+      },
+      delete: () => {
+        const chain: any = { eq: () => chain, lt: async () => ({ error: null }) };
+        return chain;
       },
       update: (values: any) => ({
         in: async (_col: string, ids: string[]) => {

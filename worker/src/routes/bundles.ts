@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapBundle, mapDocument } from "../lib/dto";
@@ -11,13 +10,16 @@ import {
   EXCERPT_LIMIT,
   extractDocumentText,
   hasIndexableText,
+  MAX_EXTRACTED_TEXT_BYTES,
   MAX_UPLOAD_BYTES,
   safeName,
 } from "../lib/extract";
 import { getDocStore } from "../lib/docstore";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { embeddingSpend } from "../lib/entitlements";
-import { insertChunkRows } from "../lib/chunk-store";
+import { replaceChunks } from "../lib/chunk-store";
+import { uploadLimit } from "../lib/body-limit";
+import { fullTextOf, sidecarKey } from "../lib/document-text";
 import { callDeletionFn } from "../lib/deletion";
 
 const bundles = new Hono<AppEnv>();
@@ -256,12 +258,12 @@ bundles.delete("/agents/:id/bundles/:bundleId", async (c) => {
 // — and that text, not the file, is what gets chunked and embedded. `bodyLimit`
 // counts the stream as it arrives, so a body with no header is cut off at the
 // limit rather than believed.
+//
+// The file and its text are allowed for separately. One limit over both refused
+// a PDF the form had just accepted whenever its text pushed the body over.
 bundles.use(
   "/bundles/:id/documents/upload",
-  bodyLimit({
-    maxSize: MAX_UPLOAD_BYTES,
-    onError: (c) => c.json({ error: "file too large (max 10 MB)" }, 413),
-  }),
+  uploadLimit(MAX_UPLOAD_BYTES, "file too large (max 10 MB)", MAX_EXTRACTED_TEXT_BYTES),
 );
 bundles.post("/bundles/:id/documents/upload", async (c) => {
   const db = c.get("db");
@@ -279,6 +281,9 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   // Optional client-extracted text (PDFs are parsed in the browser and sent
   // here, since pdf.js can't run reliably on the Workers runtime).
   const providedText = typeof body["text"] === "string" ? (body["text"] as string) : "";
+  if (providedText.length > MAX_EXTRACTED_TEXT_BYTES) {
+    return c.json({ error: "the extracted text is too large to index" }, 413);
+  }
 
   // Read the text before anything is stored, and refuse a file there is no text
   // in. A scan and a renamed binary both used to upload successfully and land
@@ -323,10 +328,21 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
   // No document row exists yet at this point, so a failed put needs no
   // rollback — unlike the insert failure below, which cleans up a store
   // write that already landed.
+  const store = getDocStore(c.env);
   try {
-    await getDocStore(c.env).put(r2Key, bytes, { contentType });
+    await store.put(r2Key, bytes, { contentType });
+    // The text the server could not have read for itself, kept whole. Without
+    // it the only full copy was in this request, and a later reindex had the
+    // 8,000-character excerpt to work from. See `lib/document-text.ts`.
+    if (providedText) {
+      const encoded = new TextEncoder().encode(providedText);
+      await store.put(sidecarKey(r2Key), encoded.buffer as ArrayBuffer, {
+        contentType: "text/plain; charset=utf-8",
+      });
+    }
   } catch (e) {
     console.error("failed to store document", e);
+    for (const key of [r2Key, sidecarKey(r2Key)]) await store.delete(key).catch(() => {});
     return c.json({ error: "failed to store the document; check the server logs" }, 500);
   }
 
@@ -338,10 +354,12 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
     .select("id,name,size,created_at,bundle_id")
     .single();
   if (error || !doc) {
-    try {
-      await getDocStore(c.env).delete(r2Key);
-    } catch (e) {
-      console.error("r2 rollback failed", e);
+    for (const key of [r2Key, sidecarKey(r2Key)]) {
+      try {
+        await store.delete(key);
+      } catch (e) {
+        console.error("r2 rollback failed", e);
+      }
     }
     console.error("failed to insert document row", error);
     return c.json({ error: "failed to save document" }, 500);
@@ -371,9 +389,11 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
         context: doc.name,
         embedding: vectors[i],
       }));
-      const { error: chunkErr } = await insertChunkRows(db, rows);
+      // All or nothing: a partial set used to stay behind and make the
+      // document read as indexed while a third of it was searchable.
+      const { error: chunkErr, count } = await replaceChunks(db, doc.id, rows);
       if (chunkErr) console.error("failed to insert chunks", chunkErr);
-      else chunkCount = rows.length;
+      chunkCount = count;
     }
   } catch (e) {
     console.error("embedding failed (document saved without chunks)", e);
@@ -386,7 +406,10 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
 
 // POST /admin/backfill-embeddings — embeds documents that have content but no
 // chunks yet (e.g. rows created before RAG, or where upload-time embedding failed).
-// Idempotent: a document with existing chunks is skipped.
+// Idempotent: a document with existing chunks is skipped, unless `?force=1`,
+// which re-embeds everything — what an embedding-width change needs, and what
+// the error that tells an operator to come here (`lib/embeddings.ts`) means.
+// Reads through the caller's own client, so it covers the workspaces they can see.
 bundles.post("/admin/backfill-embeddings", async (c) => {
   // Operator-only maintenance endpoint. Requires the ADMIN_API_KEY shared secret
   // (set via `wrangler secret put ADMIN_API_KEY`) in the `x-admin-key` header.
@@ -398,10 +421,11 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
   }
 
   const db = c.get("db");
+  const force = c.req.query("force") === "1";
 
   const { data: docs, error } = await db
     .from("documents")
-    .select("id,bundle_id,name,content,knowledge_bundles(workspace_id)")
+    .select("id,bundle_id,name,r2_key,content,knowledge_bundles(workspace_id)")
     .not("content", "is", null);
   if (error) return c.json({ error: "failed to load documents" }, 500);
 
@@ -411,23 +435,37 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
     id: string;
     bundle_id: string;
     name: string;
+    r2_key: string | null;
     content: string | null;
     knowledge_bundles: { workspace_id: string } | null;
   }>) {
-    const { count } = await db
-      .from("document_chunks")
-      .select("id", { count: "exact", head: true })
-      .eq("document_id", d.id);
-    if ((count ?? 0) > 0) {
-      skipped++;
-      continue;
+    if (!force) {
+      const { count } = await db
+        .from("document_chunks")
+        .select("id", { count: "exact", head: true })
+        .eq("document_id", d.id);
+      if ((count ?? 0) > 0) {
+        skipped++;
+        continue;
+      }
     }
     const workspaceId = d.knowledge_bundles?.workspace_id;
     if (!workspaceId || !d.content) {
       skipped++;
       continue;
     }
-    const chunks = chunkText(d.content);
+    // The whole text, not the excerpt on the row — which is all this used to
+    // embed, so a backfilled document was searchable for its first 8,000
+    // characters and silent about the rest.
+    let text: string;
+    try {
+      text = (await fullTextOf(d.r2_key ? getDocStore(c.env) : null, d)).text;
+    } catch (e) {
+      console.error("backfill read failed", d.id, e);
+      skipped++;
+      continue;
+    }
+    const chunks = chunkText(text);
     if (chunks.length === 0) {
       skipped++;
       continue;
@@ -445,7 +483,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
         context: d.name,
         embedding: vectors[i],
       }));
-      const { error: insErr } = await insertChunkRows(db, rows);
+      const { error: insErr } = await replaceChunks(db, d.id, rows);
       if (insErr) {
         console.error("backfill insert failed", d.id, insErr);
         skipped++;

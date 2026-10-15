@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
-import type { RetrievalConfig } from "../retrieval";
+import type { RetrievalConfig, RetrievedSource } from "../retrieval";
 import type { ToolSpec } from "../completion";
 import type { RuntimeLimitFlag } from "../runtime-limit";
 import type { ComposioTool } from "../composio/client";
@@ -123,6 +123,16 @@ export type ToolContext = {
    * has none, so a routine's browser jar is pinned nowhere in particular.
    */
   egressCountry?: string | null;
+  /**
+   * The reply's citations, which `search_documents` adds to.
+   *
+   * The same array the route persists as `messages.sources`, handed in rather
+   * than copied, so a passage the agent found by searching mid-turn is cited
+   * beside the ones the turn's own retrieval found. Before this, an answer
+   * grounded entirely on a search showed no source chips at all. Absent where
+   * nothing persists citations — a routine run.
+   */
+  foundSources?: RetrievedSource[];
   /**
    * Whether a person has already said yes to this exact call.
    *

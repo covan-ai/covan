@@ -4,6 +4,7 @@ import { serviceClient } from "./supabase";
 import { getDocStore, type DocStore } from "./docstore";
 import { RETENTION_DAYS } from "./deletion";
 import { chunked, readAllPages } from "./batch";
+import { sidecarKey } from "./document-text";
 
 /**
  * The other half of recoverable deletion: after thirty days, the rows go for
@@ -142,6 +143,9 @@ export async function purgeExpired(deps: PurgeDeps): Promise<PurgeResult> {
       try {
         await store.delete(key);
         result.objects += 1;
+        // The full text kept beside a PDF, when there is one. Not counted: it
+        // is part of the same document, and a missing one is not a failure.
+        await store.delete(sidecarKey(key)).catch(() => {});
       } catch (e) {
         result.objectFailures += 1;
         console.error("purge: failed to delete stored object", key, e);

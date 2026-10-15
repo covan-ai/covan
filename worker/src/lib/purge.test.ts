@@ -114,7 +114,10 @@ describe("the thirty-day sweeper", () => {
     expect(firstObjectDelete).toBeGreaterThan(lastRowDelete);
     expect(log.filter((l) => l.startsWith("store delete ")).sort()).toEqual([
       "store delete keys/one.pdf",
+      // The full text kept beside each one goes with it.
+      "store delete keys/one.pdf.txt",
       "store delete keys/two.pdf",
+      "store delete keys/two.pdf.txt",
     ]);
   });
 

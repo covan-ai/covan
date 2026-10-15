@@ -48,6 +48,17 @@ export const ALLOWED_EXT: Set<string> = new Set(Object.keys(TYPE_BY_EXT));
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 /**
+ * How much browser-extracted text may come with an upload.
+ *
+ * A PDF's text can outgrow the file it came from — its streams are compressed
+ * and the text is not — so the old single limit on the whole body refused a
+ * 7 MB PDF that the form had just accepted, because its text pushed the body
+ * past 10 MB. Twice the file is generous for any real document and keeps the
+ * upload under `MAX_REQUEST_BYTES`.
+ */
+export const MAX_EXTRACTED_TEXT_BYTES = 2 * MAX_UPLOAD_BYTES;
+
+/**
  * The content type a document of this name is stored and served as.
  *
  * Never the client's `file.type`, and never the type recorded in the store

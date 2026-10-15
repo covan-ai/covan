@@ -140,7 +140,10 @@ export type PromptMode = "normal" | "brainstorm" | "report" | "document";
  */
 const CAPABILITIES = [
   "You can search the web when needed — use it for real-time information, current events, external data, or anything beyond the team's documents.",
-  "You can read and analyze all file types the team uploads: PDFs, Word docs, spreadsheets, images, code files, and more.",
+  // What the knowledge base actually reads (`lib/extract.ts`). This used to
+  // promise Word, spreadsheets and images, none of which an upload accepted,
+  // and an agent told it could read them told people the same.
+  "You can read the documents the team adds to your knowledge — text, Markdown, CSV, JSON, and PDFs that have a text layer — and analyze what is in them.",
   "When working with code, you can explain, debug, refactor, or write new code across any language or framework.",
   "You have access to the team's full conversation history in this workspace.",
 ].join(" ");

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { googleDriveProvider, importableName, listFolders, folderIdOf } from "./google-drive";
-import type { ProviderContext } from "./types";
+import { FileSkip, type ProviderContext } from "./types";
 
 const env = { GOOGLE_CLIENT_ID: "client", GOOGLE_CLIENT_SECRET: "secret" };
 
@@ -318,7 +318,9 @@ describe("google drive provider", () => {
     expect(await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }))).toEqual([]);
   });
 
-  it("skips a file bigger than the upload form would have taken", async () => {
+  // Listed with the reason rather than left out: left out, nobody was told, and
+  // a document that grew past the limit looked deleted at the source.
+  it("lists a file bigger than the upload form would have taken, marked as skipped", async () => {
     const fetchImpl = vi.fn(async () =>
       json({
         files: [
@@ -332,7 +334,35 @@ describe("google drive provider", () => {
       }),
     ) as unknown as typeof fetch;
 
-    expect(await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "f" }))).toEqual([]);
+    const listed = await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "f" }));
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ externalId: "huge", skipReason: "larger than 10 MB" });
+  });
+
+  it("skips one file Drive will not export, rather than reading it as a revoked grant", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("export")) {
+        return new Response(
+          JSON.stringify({ error: { errors: [{ reason: "exportSizeLimitExceeded" }] } }),
+          { status: 403 },
+        );
+      }
+      return json({
+        id: "s1",
+        name: "Ledger",
+        mimeType: "application/vnd.google-apps.spreadsheet",
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      googleDriveProvider.readFile(ctx(fetchImpl, { folderId: "f" }), {
+        externalId: "s1",
+        name: "Ledger.csv",
+        version: "v1",
+        url: null,
+      }),
+    ).rejects.toBeInstanceOf(FileSkip);
   });
 
   // Markdown export is comparatively new. A Doc that cannot produce it should

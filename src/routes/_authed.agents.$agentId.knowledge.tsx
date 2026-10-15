@@ -48,13 +48,14 @@ function KnowledgeTab() {
           document somebody is looking for. */}
       <RevisitPanel documents={agent.documents} className="mt-8" />
 
-      {bundles.length === 0 && canWrite ? (
-        <FirstUploads className="mt-6" />
-      ) : (
-        <div className="mt-6">
-          <KnowledgeExplorer agent={agent} />
-        </div>
-      )}
+      {/* Above the explorer, not instead of it. Instead of it, this card was
+          the whole tab for a workspace with no bundles — advice on what to
+          upload, and nowhere to upload it: the form that makes a first bundle
+          lives in the explorer's rail. */}
+      {bundles.length === 0 && canWrite ? <FirstUploads className="mt-6" /> : null}
+      <div className="mt-6">
+        <KnowledgeExplorer agent={agent} />
+      </div>
 
       {/* For the account with nothing to upload yet. Only where uploading is
           possible: offering a viewer a form to fill in and then refusing the

@@ -770,6 +770,9 @@ chat.post("/chat/stream", async (c) => {
             sessionId,
             runtimeLimit,
             egressCountry: egressCountry(c.req.header("CF-IPCountry")),
+            // The array the reply below is inserted with, so what a search
+            // finds mid-turn is cited beside what retrieval found up front.
+            foundSources: sources,
           }),
           // What the first half spent, so the second half's steps and passes are
           // numbered after it — each marked `uncharged` because the budget does
@@ -1125,6 +1128,13 @@ chat.post("/chat/confirm/:id", async (c) => {
    * into the same ceiling. See `lib/runtime-limit.ts`.
    */
   const runtimeLimit = c.get("runtimeLimit");
+  /**
+   * What the reply will cite: what the half that asked was grounded on, plus
+   * whatever `search_documents` finds from here on. A copy, so the parked
+   * value is never written through.
+   */
+  const resumedSources = [...(pause.sources ?? [])];
+  const citedSources = () => (resumedSources.length > 0 ? resumedSources : null);
   // `confirmed` for the one call a person has just approved, and only for it —
   // the loop below is handed the same context with it off again, because one
   // yes is one call rather than a standing permission.
@@ -1143,6 +1153,7 @@ chat.post("/chat/confirm/:id", async (c) => {
     // thing that crosses the pause: `run_tool` writes the catalogue row into
     // the proposal and this is where it is read back.
     approvedProposal: pause.proposal,
+    foundSources: resumedSources,
   });
 
   const stream = new ReadableStream({
@@ -1252,7 +1263,7 @@ chat.post("/chat/confirm/:id", async (c) => {
                 // What the half that asked was grounded on, parked with it
                 // because this request never ran the retrieval (0083). Null on
                 // a turn parked before then, which is what it always was.
-                sources: pause.sources,
+                sources: citedSources(),
                 grounding: pause.grounding,
                 ...usageColumns(addUsage(pause.usage ?? emptyUsage(), delta)),
                 model,
@@ -1498,7 +1509,7 @@ chat.post("/chat/confirm/:id", async (c) => {
             // and what grounded it, for the same reason.
             usage: pause.messageId ? null : pause.usage,
             grounding: pause.messageId ? null : pause.grounding,
-            sources: pause.messageId ? null : pause.sources,
+            sources: pause.messageId ? null : citedSources(),
           });
           persisted = true;
           await recordSpend();

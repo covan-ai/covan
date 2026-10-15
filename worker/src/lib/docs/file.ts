@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DocumentEnv } from "../../types";
 import { getDocStore } from "../docstore";
 import { chunkText, embedTexts, tokensSpentBefore } from "../embeddings";
-import { insertChunkRows } from "../chunk-store";
+import { replaceChunks } from "../chunk-store";
 import { EXCERPT_LIMIT, safeName } from "../extract";
 
 /**
@@ -98,8 +98,9 @@ export async function fileGeneratedDocument(
     if (chunks.length > 0) {
       const embedded = await embedTexts(env, chunks);
       indexTokens = embedded.tokens;
-      const { error: chunkError } = await insertChunkRows(
+      const { error: chunkError } = await replaceChunks(
         db,
+        row.id,
         chunks.map((content, index) => ({
           document_id: row.id,
           bundle_id: doc.bundleId,

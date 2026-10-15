@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { bundles } from "./bundles";
-import { MAX_UPLOAD_BYTES } from "../lib/extract";
+import { MAX_EXTRACTED_TEXT_BYTES, MAX_UPLOAD_BYTES } from "../lib/extract";
 
 // Real chunking, fake vectors: these tests are about what the route does with
 // the chunks, and nothing here should reach OpenAI.
@@ -19,6 +19,21 @@ vi.mock("../lib/embeddings", async (importOriginal) => {
     }),
   };
 });
+
+/** What `replaceChunks` asks of `document_chunks` besides the insert. */
+function generations() {
+  return {
+    select: () => ({
+      eq: () => ({ order: () => ({ limit: async () => ({ data: [], error: null }) }) }),
+    }),
+    delete: () => ({
+      eq: () => ({
+        lt: async () => ({ error: null }),
+        eq: async () => ({ error: null }),
+      }),
+    }),
+  };
+}
 
 // Minimal stand-in for the Supabase client the route pulls off `c.get("db")`.
 // Only the `knowledge_bundles` lookup is exercised before the storage write —
@@ -148,6 +163,8 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
         }
         if (table === "document_chunks") {
           return {
+            // `replaceChunks`: the newest generation, then the clean-up.
+            ...generations(),
             insert: async (rows: unknown[]) => {
               chunkRows.length = (rows as unknown[]).length;
               chunkRows.rows = rows;
@@ -379,7 +396,7 @@ describe("POST /bundles/:id/documents/upload — the size of the whole body", ()
     return { res, wasDocumentsTouched };
   }
 
-  const oversizedText = "a".repeat(MAX_UPLOAD_BYTES + 1);
+  const oversizedText = "a".repeat(MAX_EXTRACTED_TEXT_BYTES + 1);
 
   it("refuses a small file carrying more extracted text than the limit", async () => {
     const form = new FormData();
@@ -390,6 +407,23 @@ describe("POST /bundles/:id/documents/upload — the size of the whole body", ()
 
     expect(res.status).toBe(413);
     expect(wasDocumentsTouched()).toBe(false);
+  });
+
+  // The other half of the same bug: one limit over file and text together
+  // refused a PDF the form had just accepted, whenever its text was large.
+  it("takes a PDF near the file limit whose text is as large again", async () => {
+    const form = new FormData();
+    form.append(
+      "file",
+      new File(["%PDF-1.7 " + "x".repeat(MAX_UPLOAD_BYTES - 64)], "report.pdf", {
+        type: "application/pdf",
+      }),
+    );
+    form.append("text", "Holiday policy. ".repeat(Math.floor(MAX_UPLOAD_BYTES / 16)));
+
+    const { res } = await send(form, { withLength: true });
+
+    expect(res.status).not.toBe(413);
   });
 
   it("refuses the same body when it arrives without a Content-Length", async () => {
@@ -447,8 +481,13 @@ describe("POST /admin/backfill-embeddings", () => {
         }
         if (table === "document_chunks") {
           return {
+            ...generations(),
             select: () => ({
-              eq: async () => ({ count: 0, error: null }),
+              // The skip check's count, and `replaceChunks`' newest generation.
+              eq: () =>
+                Object.assign(Promise.resolve({ count: 0, error: null }), {
+                  order: () => ({ limit: async () => ({ data: [], error: null }) }),
+                }),
             }),
             insert: async (rows: unknown[]) => {
               inserted.rows = rows;

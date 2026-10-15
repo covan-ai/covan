@@ -52,8 +52,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "connections UPDATE": "status,sync_interval_minutes",
   "coverage_opt_outs INSERT": "created_at,user_id,workspace_id",
   "delivery_channels UPDATE": "label",
+  // 0103: the generation a replacement writes its passages under.
   "document_chunks INSERT":
-    "bundle_id,chunk_index,content,context,document_id,embedding,workspace_id",
+    "bundle_id,chunk_index,content,context,document_id,embedding,generation,workspace_id",
   "document_chunks UPDATE": "bundle_id",
   "documents INSERT": "bundle_id,content,created_by,name,r2_key,size",
   "documents UPDATE": "bundle_id",

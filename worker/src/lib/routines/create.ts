@@ -33,7 +33,7 @@ export type CreateRoutineInput = {
   deliveryChannelId: string;
   scheduleCron: string;
   timezone: string;
-  triggerKind?: "schedule" | "webhook" | "both";
+  triggerKind?: "schedule" | "webhook" | "both" | "event";
   outputBundleId?: string | null;
   outputRetention?: number;
   /** After how many delivered runs this routine ends itself, or null for never. */

@@ -4,6 +4,7 @@ import type {
   CreateRoutineInput,
   UpdateRoutineInput,
   DeliveryChannelKind,
+  EventChoice,
 } from "@/lib/routines-api";
 
 // Routines are needed on three screens, so they are fetched here rather than
@@ -145,6 +146,60 @@ export function useDeleteChannel() {
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: channelsKey }),
+        qc.invalidateQueries({ queryKey: routinesKey }),
+      ]),
+  });
+}
+
+// ---- event triggers ----------------------------------------------------------
+
+export const eventCatalogKey = ["routine-event-catalog"] as const;
+
+/**
+ * What this deployment can listen for, for the create dialog and the event
+ * card. `enabled` because most people opening the dialog never pick "when
+ * something happens", and the catalogue asks which apps are connected.
+ */
+export function useEventCatalog(enabled = true) {
+  return useQuery({
+    queryKey: eventCatalogKey,
+    queryFn: () => api.routines.eventCatalog(),
+    enabled,
+    // Which apps are connected changes when somebody connects one, usually in
+    // another tab; a minute is fresh enough for a picker.
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Choose what an event routine waits for. The answer is the routine, with the
+ * subscription as the app left it, so the list is refreshed from it.
+ */
+export function useSetRoutineEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, choice }: { id: string; choice: EventChoice }) =>
+      api.routines.setEvent(id, choice),
+    onSuccess: () => qc.invalidateQueries({ queryKey: routinesKey }),
+  });
+}
+
+export function useRemoveRoutineEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.routines.removeEvent(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: routinesKey }),
+  });
+}
+
+/** A test event writes a run like any other, so the history is stale after it. */
+export function useTestRoutineEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.routines.testEvent(id),
+    onSuccess: (_result, id) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: runsKey(id) }),
         qc.invalidateQueries({ queryKey: routinesKey }),
       ]),
   });

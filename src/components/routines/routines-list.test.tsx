@@ -31,6 +31,7 @@ const routine = (over: Partial<Routine>): Routine => ({
   browserSite: null,
   browserConversationId: null,
   triggerKind: "schedule" as const,
+  event: null,
   status: "active",
   pausedReason: null,
   nextRunAt: null,

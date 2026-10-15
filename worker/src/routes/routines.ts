@@ -1,11 +1,11 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
 import { callerWorkspaceId } from "../lib/workspace";
 import { mapRoutine, mapRoutineRun, mapDeliveryChannel } from "../lib/dto";
 import { parseDraft } from "../lib/routines/draft";
-import { runOneRoutine } from "../lib/routines/dispatcher";
+import { runOneRoutine, runPokedRoutine } from "../lib/routines/dispatcher";
 import type { RoutineRow } from "../lib/routines/executor";
 import { isValidCron, nextRunAt } from "../lib/routines/schedule";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
@@ -40,6 +40,14 @@ import { complete } from "../lib/completion";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { completionSpend, spends, type Spend } from "../lib/entitlements";
 import { apiKeyIdOf, refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { parseEventChoice, triggerLabel, type EventChoice } from "../lib/routines/events/catalog";
+import { EVENT_REGISTRY, canListenFor } from "../lib/routines/events/adapter";
+import {
+  releaseSubscription,
+  replaceSubscription,
+  syncSubscription,
+} from "../lib/routines/events/lifecycle";
+import { checkRequirement, connectedInWorkspace } from "../lib/routines/events/requirements";
 
 const routines = new Hono<AppEnv>();
 
@@ -409,6 +417,22 @@ routines.delete("/delivery-channels/:id", async (c) => {
 
 // ---- routines --------------------------------------------------------------
 
+/** What a person picked from the catalogue. The config is the entry's to check. */
+const eventChoiceSchema = z.object({
+  type: z.string().min(1).max(80),
+  config: z.record(z.string(), z.unknown()).default({}),
+});
+
+/**
+ * Every read of a routine that answers a client embeds its subscription, so
+ * the routine's page and list know what an event routine waits for without a
+ * second request. The embed names only the columns 0108 grants, and
+ * `routine_event_subscriptions_select_own` answers it for the owner alone —
+ * a colleague reading a shared routine gets `event: null`.
+ */
+const ROUTINE_SELECT =
+  "*, event:routine_event_subscriptions(provider, event_type, config, status, status_detail, last_event_at, expires_at)";
+
 const createSchema = z
   .object({
     agentId: z.string().uuid(),
@@ -439,7 +463,14 @@ const createSchema = z
      * own; the database says so with a CHECK, and 0027's trigger means it can
      * never be granted to an existing RSS routine afterwards.
      */
-    triggerKind: z.enum(["schedule", "webhook", "both"]).default("schedule"),
+    triggerKind: z.enum(["schedule", "webhook", "both", "event"]).default("schedule"),
+    /**
+     * What an `event` routine waits for (0108), chosen in the same dialog so a
+     * routine is never created waiting for nothing. Required with `event` and
+     * refused without it; checked against the catalogue and the connections
+     * before the routine is inserted, so a bad choice leaves nothing behind.
+     */
+    event: eventChoiceSchema.optional(),
     /**
      * Where a delivered summary is kept, or null to keep nothing — which is the
      * default and what every routine did before 0056.
@@ -465,6 +496,9 @@ const createSchema = z
   // the database would refuse anyway — `delivery_channel_id` is `not null`.
   .refine((v) => (v.deliveryChannelId === undefined) !== (v.deliveryEmail === undefined), {
     message: "send either deliveryChannelId or deliveryEmail, not both",
+  })
+  .refine((v) => (v.triggerKind === "event") === (v.event !== undefined), {
+    message: "an event routine needs an event, and only an event routine takes one",
   });
 
 // agentId and workspaceId are deliberately absent from updateSchema. The
@@ -480,7 +514,7 @@ const updateSchema = z
     status: z.enum(["active", "paused"]).optional(),
     visibility: z.enum(["private", "shared"]).optional(),
     deliveryChannelId: z.string().uuid().optional(),
-    triggerKind: z.enum(["schedule", "webhook", "both"]).optional(),
+    triggerKind: z.enum(["schedule", "webhook", "both", "event"]).optional(),
     // Nullable as well as optional, and the difference is the feature: absent
     // means "leave filing as it is", null means "stop filing". A field that
     // could only be absent or a uuid would let somebody turn filing on and
@@ -509,7 +543,7 @@ routines.get("/routines", async (c) => {
   const { data, error } = await c
     .get("db")
     .from("routines")
-    .select("*")
+    .select(ROUTINE_SELECT)
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load routines" }, 500);
@@ -538,6 +572,23 @@ routines.post("/routines", async (c) => {
   // reads back; for a channel minted inside a routine, the agent's workspace
   // is simply the more useful thing to have recorded, not a requirement.
   const workspaceId = agent.workspace_id as string;
+
+  // Checked before anything is written — the channel minted below included —
+  // so an event this deployment cannot listen for, or an app that is not
+  // connected, refuses the whole request instead of leaving a routine that
+  // waits for nothing.
+  //
+  // Open to an API key, unlike `PUT /routines/:id/event` below. A routine a
+  // key creates carries the key (0088), and revoking the key pauses it — at
+  // which point the sweeper tells the provider to stop. What a key starts ends
+  // with it, which is not true of a listener a key attaches to somebody's
+  // session-made routine.
+  let eventChoice: EventChoice | undefined;
+  if (body.event) {
+    const chosen = await chosenEvent(c, workspaceId, body.event);
+    if ("refused" in chosen) return chosen.refused;
+    eventChoice = chosen.choice;
+  }
 
   // A workspace that has never set a channel up cannot otherwise finish this
   // dialog, and a new workspace is exactly that workspace. The address is the
@@ -624,13 +675,38 @@ routines.post("/routines", async (c) => {
     }
     return c.json({ error: created.message }, created.status);
   }
+  // The subscription, once there is a routine to hang it on. A failure to
+  // REACH the provider is not a failure here — the row is written `failed`
+  // with a sentence and the sweeper keeps trying — but a failure to write the
+  // row at all is, and the routine goes with it: a routine waiting for an
+  // event nobody recorded would wait forever and say it was fine.
+  let row = created.row;
+  if (eventChoice) {
+    try {
+      await replaceSubscription(c.env, row.id, eventChoice);
+    } catch (err) {
+      console.error("could not record a new routine's event", err);
+      await db.from("routines").delete().eq("id", row.id);
+      if (createdChannelId) {
+        await serviceClient(c.env).from("delivery_channels").delete().eq("id", createdChannelId);
+      }
+      return c.json({ error: "could not set up that event" }, 500);
+    }
+    const { data: reread } = await db
+      .from("routines")
+      .select(ROUTINE_SELECT)
+      .eq("id", row.id)
+      .maybeSingle();
+    if (reread) row = reread as typeof row;
+  }
+
   // Asked only once the routine exists, so a request that failed above has
   // mailed nobody.
   const confirmation =
     createdChannelId && unconfirmedAddress
       ? await askNewAddress(c.env, { id: createdChannelId, user_id: user.id }, unconfirmedAddress)
       : undefined;
-  return c.json({ ...mapRoutine(created.row), ...(confirmation ? { confirmation } : {}) }, 201);
+  return c.json({ ...mapRoutine(row), ...(confirmation ? { confirmation } : {}) }, 201);
 });
 
 routines.patch("/routines/:id", async (c) => {
@@ -723,7 +799,7 @@ routines.patch("/routines/:id", async (c) => {
     .from("routines")
     .update(patch)
     .eq("id", c.req.param("id"))
-    .select("*")
+    .select(ROUTINE_SELECT)
     .maybeSingle();
 
   if (error) {
@@ -746,6 +822,32 @@ routines.patch("/routines/:id", async (c) => {
     return c.json({ error: "failed to update routine" }, 500);
   }
   if (!data) return c.json({ error: "routine not found" }, 404);
+
+  // Pausing, resuming and changing how it starts all move what the provider
+  // should be doing (0108). Told now, so a paused routine stops being sent
+  // events before the next tick rather than after; awaited, so the answer
+  // carries the subscription as it now stands. Best-effort: the PATCH is
+  // committed, and a provider that cannot be reached is the sweeper's to
+  // catch — `claim_event_subscriptions` sees exactly this drift.
+  // Only for a routine that is, or just stopped being, an event one: a pause
+  // on an ordinary schedule has no provider to tell.
+  if (
+    (body.status !== undefined && data.trigger_kind === "event") ||
+    body.triggerKind !== undefined
+  ) {
+    try {
+      const synced = await syncSubscription(c.env, data.id as string);
+      if (synced.status === null) return c.json(mapRoutine({ ...data, event: null }));
+      const { data: reread } = await db
+        .from("routines")
+        .select(ROUTINE_SELECT)
+        .eq("id", data.id)
+        .maybeSingle();
+      if (reread) return c.json(mapRoutine(reread));
+    } catch (err) {
+      console.error("could not bring a routine's event subscription in step", err);
+    }
+  }
   return c.json(mapRoutine(data));
 });
 
@@ -803,7 +905,29 @@ routines.post("/routines/:id/run", async (c) => {
 });
 
 routines.delete("/routines/:id", async (c) => {
-  const { error } = await c.get("db").from("routines").delete().eq("id", c.req.param("id"));
+  const db = c.get("db");
+  // An event routine is unsubscribed at its provider first, because the
+  // delete cascades its subscription row and with it the only record of what
+  // to unsubscribe (0108). Only once the caller's own client has shown the
+  // routine is theirs — the same rule `routines_delete_own` is about to apply
+  // — so nobody can unsubscribe a routine they could not delete.
+  const { data: own } = await db
+    .from("routines")
+    .select("id, trigger_kind")
+    .eq("id", c.req.param("id"))
+    .eq("user_id", c.get("user").id)
+    .maybeSingle();
+  if (own?.trigger_kind === "event") {
+    try {
+      await releaseSubscription(c.env, own.id as string);
+    } catch (err) {
+      // Not a reason to keep a routine somebody deleted. What is left at the
+      // provider is 0108's orphan, which its adapter cancels on its next
+      // delivery.
+      console.error("could not release a deleted routine's event subscription", err);
+    }
+  }
+  const { error } = await db.from("routines").delete().eq("id", c.req.param("id"));
   if (error) return c.json({ error: "failed to delete routine" }, 500);
   return c.body(null, 204);
 });
@@ -894,7 +1018,10 @@ routines.post("/routines/:id/trigger", async (c) => {
   // is started is a decision about a thing that runs unattended, and quietly
   // making one because somebody pressed a button next to it is the kind of
   // helpfulness nobody remembers having agreed to.
-  if (routine.trigger_kind === "schedule") {
+  // By what may be poked, so an `event` routine (0108) is refused too: its
+  // way in is the provider, and a URL beside it would be a second door the
+  // owner did not ask for.
+  if (routine.trigger_kind !== "webhook" && routine.trigger_kind !== "both") {
     return c.json({ error: "this routine is not set to accept webhook triggers" }, 400);
   }
 
@@ -938,4 +1065,205 @@ routines.delete("/routines/:id/trigger", async (c) => {
     return c.json({ error: "failed to remove the trigger" }, 500);
   }
   return c.body(null, 204);
+});
+
+// ---- event triggers (0108) --------------------------------------------------
+//
+// What an `event` routine waits for. The row lives in
+// `routine_event_subscriptions`, which no client role may write and whose
+// provider id and secret no client may read, so every write here goes
+// through `lib/routines/events/lifecycle.ts` with the service role — after
+// the caller's own client has shown the routine is theirs. Reading what a
+// routine waits for needs none of this: `ROUTINE_SELECT` embeds it, and the
+// policy hands it to the owner alone.
+
+/**
+ * A person's pick, checked: a catalogue entry this deployment can listen for,
+ * a config its schema accepts, and the connection it needs, found through the
+ * caller's own client and recorded as `config.connectionId`.
+ */
+async function chosenEvent(
+  c: Context<AppEnv>,
+  workspaceId: string,
+  input: { type: string; config: Record<string, unknown> },
+): Promise<{ choice: EventChoice } | { refused: Response }> {
+  const parsed = parseEventChoice(EVENT_REGISTRY, input.type, input.config);
+  if (!parsed.ok) return { refused: c.json({ error: parsed.error }, 400) };
+  const { def, config } = parsed.choice;
+  if (!canListenFor(EVENT_REGISTRY, c.env, def)) {
+    return { refused: c.json({ error: "this deployment cannot listen for that event" }, 400) };
+  }
+  const requirement = await checkRequirement(c.get("db"), workspaceId, def.requires, def.app);
+  if (!requirement.ok) return { refused: c.json({ error: requirement.error }, 409) };
+  return {
+    choice: {
+      def,
+      config: requirement.connectionId
+        ? { ...config, connectionId: requirement.connectionId }
+        : config,
+    },
+  };
+}
+
+/**
+ * The routine, if the caller owns it — through their own client, so RLS
+ * decides whose it is and a routine they cannot see is a 404, as everywhere.
+ */
+async function ownRoutine(
+  c: Context<AppEnv>,
+): Promise<
+  { routine: { id: string; workspace_id: string; trigger_kind: string } } | { refused: Response }
+> {
+  const { data, error } = await c
+    .get("db")
+    .from("routines")
+    .select("id, workspace_id, trigger_kind")
+    .eq("id", c.req.param("id") as string)
+    .eq("user_id", c.get("user").id)
+    .maybeSingle();
+  if (error) {
+    if (error.code === "22P02") return { refused: c.json({ error: "invalid routine id" }, 400) };
+    return { refused: c.json({ error: "failed to load routine" }, 500) };
+  }
+  if (!data) return { refused: c.json({ error: "routine not found" }, 404) };
+  return { routine: data as { id: string; workspace_id: string; trigger_kind: string } };
+}
+
+/**
+ * What can be listened for, for the create dialog and the routine's page.
+ *
+ * Only what this deployment can actually do — an entry whose adapter is
+ * missing or unconfigured is not offered, so the dialog never shows a choice
+ * the engine would refuse. Each entry says whether what it needs is connected
+ * in the caller's workspace, so the dialog can offer "Connect Gmail" beside an
+ * entry rather than hiding it from somebody who has not connected it yet.
+ */
+routines.get("/routines/events/catalog", async (c) => {
+  const offered = EVENT_REGISTRY.all().filter((def) => canListenFor(EVENT_REGISTRY, c.env, def));
+  if (offered.length === 0) return c.json([]);
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json([]);
+  const connected = await connectedInWorkspace(c.get("db"), workspaceId);
+  return c.json(
+    offered.map((def) => ({
+      type: def.id,
+      provider: def.provider,
+      app: def.app,
+      label: def.label,
+      description: def.description,
+      fields: def.fields,
+      requires: def.requires,
+      connected: connected(def.requires),
+    })),
+  );
+});
+
+/**
+ * Choose what an event routine waits for, or choose again.
+ *
+ * Replacing is the only way to change it: the old arrangement is ended at its
+ * provider and a new one made, so nothing of a Gmail subscription can leak
+ * into a Slack one (`replaceSubscription`). The answer is the routine, with
+ * the subscription as the provider left it — `active`, or `failed` with a
+ * sentence the page can show.
+ *
+ * Refused to an API key, and that is the difference from `POST /routines`. A
+ * key that creates a routine is written onto it (0088) and revoking the key
+ * pauses it; a key that attaches a listener to a routine somebody made in a
+ * session leaves something listening after the key is gone.
+ */
+routines.put("/routines/:id/event", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "choose what a routine listens for");
+  if (refusal) return c.json(refusal, 403);
+
+  const parsed = eventChoiceSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const own = await ownRoutine(c);
+  if ("refused" in own) return own.refused;
+  // Refused rather than switched for them, for the webhook route's reason:
+  // how a routine starts is a decision about something that runs unattended.
+  if (own.routine.trigger_kind !== "event") {
+    return c.json({ error: "this routine is not set to start on an event" }, 400);
+  }
+
+  const chosen = await chosenEvent(c, own.routine.workspace_id, parsed.data);
+  if ("refused" in chosen) return chosen.refused;
+
+  try {
+    await replaceSubscription(c.env, own.routine.id, chosen.choice);
+  } catch (err) {
+    console.error("could not record a routine's event", err);
+    return c.json({ error: "could not set up that event" }, 500);
+  }
+
+  const { data } = await c
+    .get("db")
+    .from("routines")
+    .select(ROUTINE_SELECT)
+    .eq("id", own.routine.id)
+    .maybeSingle();
+  if (!data) return c.json({ error: "routine not found" }, 404);
+  return c.json(mapRoutine(data));
+});
+
+/**
+ * Stop listening. The routine stays, waiting for nothing until an event is
+ * chosen again — the same state as one whose event was never picked, which
+ * its page says plainly.
+ */
+routines.delete("/routines/:id/event", async (c) => {
+  const own = await ownRoutine(c);
+  if ("refused" in own) return own.refused;
+  try {
+    await releaseSubscription(c.env, own.routine.id);
+  } catch (err) {
+    console.error("could not release a routine's event", err);
+    return c.json({ error: "failed to stop listening" }, 500);
+  }
+  return c.body(null, 204);
+});
+
+/**
+ * Run the routine on a made-up event of the kind it waits for — the catalogue
+ * entry's `sample` — so its owner can see what it does without waiting for a
+ * real mail to arrive.
+ *
+ * The same road a real event takes (`runPokedRoutine`, `source: "event"`) and
+ * the same bill, behind the expensive tier and the same credit check as
+ * `POST /routines/:id/run`. Not through `receive.ts`: a test is not counted
+ * against the flood guard, and does not need the subscription to be `active`
+ * — testing is most useful exactly while the provider is still being set up.
+ * Its own delivery key each time, so pressing it twice runs twice.
+ */
+routines.post("/routines/:id/event/test", async (c) => {
+  const { data: routine, error } = await c
+    .get("db")
+    .from("routines")
+    .select(ROUTINE_SELECT)
+    .eq("id", c.req.param("id"))
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to load routine" }, 500);
+  if (!routine) return c.json({ error: "routine not found" }, 404);
+  if (routine.user_id !== c.get("user").id) {
+    return c.json({ error: "only the owner can test this routine" }, 403);
+  }
+  if (routine.trigger_kind !== "event") {
+    return c.json({ error: "this routine is not set to start on an event" }, 400);
+  }
+  const embedded = (Array.isArray(routine.event) ? routine.event[0] : routine.event) as
+    { event_type: string } | null | undefined;
+  const def = embedded ? EVENT_REGISTRY.eventType(embedded.event_type) : undefined;
+  if (!def) return c.json({ error: "choose an event for this routine first" }, 400);
+
+  const denied = await guardCredits(c, routine.workspace_id as string);
+  if (denied) return denied;
+
+  const result = await runPokedRoutine(c.env, routine as unknown as RoutineRow, {
+    eventId: `test:${crypto.randomUUID()}`,
+    payload: def.sample.text,
+    source: "event",
+    label: `${triggerLabel(def)} (test)`,
+  });
+  return c.json(result);
 });

@@ -254,6 +254,8 @@ export const EXCLUDED: Record<string, string> = {
     "not readable by a client at all, by design since 0012: it is the engine's own log of what it sent where. Nothing in it is workspace content.",
   routine_triggers:
     "a credential, like api_keys, and the same answer. The row is a SHA-256 of a token somebody pasted into GitHub or a CI job: the export could not read it if it wanted to (0055 grants that column to nobody), and a hash restored into a new install would name a token nobody holds while looking like a working webhook. The routine it belongs to comes back in full, paused like every other, and minting a new token there is one press — which is also the honest state of things, because the sender has to be re-pointed at the new install's URL regardless.",
+  routine_event_subscriptions:
+    "an arrangement with a third party, not workspace content. The row names a subscription at Composio, Slack or a WebSub hub that this install made with its own provider keys and its own receiving URL, and half of it — the provider's id and the secret — the export could not read if it wanted to (0108 grants those columns to nobody). Restored into a new install it would claim to be listening while nothing at the provider pointed there. The routine itself comes back in full, paused like every other; choosing its event again on the new install makes a working arrangement in one step.",
   invitations:
     "in flight rather than held. An invitation is an offer to somebody who has not accepted, and it is scoped to an install's email and token; replaying one into a new install would either do nothing or invite a stranger.",
   notification_preferences:

@@ -46,8 +46,12 @@ import type { RoutineRow } from "./executor";
  */
 export const INGEST_TOKEN_PREFIX = "covan_whk_";
 
-/** The columns `runRoutine` reads. Listed rather than `*` so a widening is deliberate. */
-const ROUTINE_COLUMNS =
+/**
+ * The columns `runRoutine` reads. Listed rather than `*` so a widening is
+ * deliberate. Exported for `events/receive.ts`, which resolves a routine the
+ * same way from the other kind of poke.
+ */
+export const ROUTINE_COLUMNS =
   "id, agent_id, user_id, visibility, workspace_id, name, source_kind, source_config, instruction, " +
   "delivery_channel_id, schedule_cron, timezone, next_run_at, cursor, consecutive_failures, " +
   "status, trigger_kind, output_bundle_id, output_retention, ends_after_runs, runs_done, " +
@@ -130,7 +134,11 @@ export async function resolveIngestToken(
   if (routine.status !== "active") {
     return { ok: false, status: 409, error: `this routine is ${routine.status}` };
   }
-  if (routine.trigger_kind === "schedule") {
+  // Named by what may be poked rather than by what may not, so a fourth kind —
+  // `event`, 0108 — is refused here without anybody remembering to add it. A
+  // token left over from when the routine was a webhook one must not start a
+  // routine that now waits for Gmail.
+  if (routine.trigger_kind !== "webhook" && routine.trigger_kind !== "both") {
     return { ok: false, status: 409, error: "this routine no longer accepts webhook triggers" };
   }
 

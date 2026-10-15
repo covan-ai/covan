@@ -35,6 +35,13 @@ export type Routine = {
   timezone: string;
   triggerKind: RoutineTriggerKind;
   /**
+   * What an `event` routine waits for, and whether the app agreed to tell us.
+   * Null for every other kind, for an event routine whose event was never
+   * chosen, and for anybody but the owner — the database shows it to the
+   * owner alone.
+   */
+  event: RoutineEvent | null;
+  /**
    * The bundle each delivered summary is filed into as a document, or null to
    * keep nothing — which is the default, and what every routine did before
    * filing existed.
@@ -113,8 +120,71 @@ export type RoutineRun = {
   outcome: RunOutcome | null;
   /** The model that answered. Null on the same runs as `outcome`. */
   model: string | null;
+  /** What started this run. Null for runs recorded before it was written down. */
+  triggeredBy: RunTrigger | null;
+  /** "Gmail · New mail", for a run an event started. Null otherwise. */
+  triggerLabel: string | null;
   startedAt: number;
 };
+
+export type RunTrigger = "schedule" | "manual" | "webhook" | "event" | "reply";
+
+/**
+ * Where the arrangement with the app stands. `failed` is retried on its own;
+ * `expired` needs the person to reconnect the app; `disabled` is a paused
+ * routine, not a fault.
+ */
+export type RoutineEventStatus = "pending" | "active" | "failed" | "expired" | "disabled";
+
+export type RoutineEvent = {
+  /** The catalogue id: `gmail.new_message`. */
+  type: string;
+  provider: string;
+  app: string;
+  label: string;
+  /** Filters and choices. Never a secret. */
+  config: Record<string, unknown>;
+  status: RoutineEventStatus;
+  /** Why it is `failed` or `expired`, written for a person. */
+  statusDetail: string | null;
+  lastEventAt: number | null;
+  expiresAt: number | null;
+};
+
+/** One field of an event's config, as the dialog draws it. */
+export type EventField = {
+  key: string;
+  label: string;
+  kind: "text" | "number" | "select" | "boolean";
+  optional?: boolean;
+  placeholder?: string;
+  help?: string;
+  options?: Array<{ value: string; label: string }>;
+  advanced?: boolean;
+};
+
+/** What has to be connected before an event can be listened for. */
+export type EventRequirement =
+  | { kind: "composio"; toolkit: string }
+  | { kind: "connection"; provider: "notion" | "google_drive" }
+  | { kind: "slack" }
+  | { kind: "none" };
+
+/** One entry of GET /routines/events/catalog. */
+export type EventCatalogEntry = {
+  type: string;
+  provider: string;
+  app: string;
+  label: string;
+  description: string;
+  fields: EventField[];
+  requires: EventRequirement;
+  /** Whether what it needs is connected in this workspace. */
+  connected: boolean;
+};
+
+/** What a person picked: an entry, and its config. */
+export type EventChoice = { type: string; config: Record<string, unknown> };
 
 /** How a scheduled run's turn ended; the worker's `MESSAGE_OUTCOMES`. */
 export type RunOutcome =
@@ -181,7 +251,7 @@ export type RoutineDraft = {
  * is a bad one. And because a routine's source can never change after it is
  * created, this is a decision made once, at creation.
  */
-export type RoutineTriggerKind = "schedule" | "webhook" | "both";
+export type RoutineTriggerKind = "schedule" | "webhook" | "both" | "event";
 
 /** What the routine detail screen knows about a webhook trigger. Never the token. */
 export type RoutineTrigger =
@@ -207,6 +277,8 @@ export type CreateRoutineInput = {
   timezone: string;
   /** Omitted means `schedule`, which is what every routine was before this. */
   triggerKind?: RoutineTriggerKind;
+  /** Required with `triggerKind: "event"`, refused otherwise. */
+  event?: EventChoice;
   /** Null or omitted means the routine keeps nothing, which is the default. */
   outputBundleId?: string | null;
   outputRetention?: number;

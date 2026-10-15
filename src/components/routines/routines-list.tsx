@@ -106,14 +106,24 @@ function Group({
                   {/* The "·" separators are their own aria-hidden nodes so each
                         fact stays a readable unit rather than one run-on string. */}
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                    <span className="tabular-nums">{cronToProse(r.scheduleCron)}</span>
+                    {/* An event routine is never due, so it is named by what
+                        starts it rather than by a cron it does not run on. A
+                        teammate cannot see the subscription (0108), and gets
+                        the generic phrase. */}
+                    {r.triggerKind === "event" ? (
+                      <span>
+                        {r.event ? `When ${r.event.app} · ${r.event.label}` : "On an app event"}
+                      </span>
+                    ) : (
+                      <span className="tabular-nums">{cronToProse(r.scheduleCron)}</span>
+                    )}
                     {r.userId !== currentUserId && (
                       <>
                         <span aria-hidden>·</span>
                         <span>by {memberNames[r.userId] ?? "a teammate"}</span>
                       </>
                     )}
-                    {r.status === "active" && r.nextRunAt !== null && (
+                    {r.status === "active" && r.triggerKind !== "event" && r.nextRunAt !== null && (
                       <>
                         <span aria-hidden>·</span>
                         <span className="tabular-nums">next {formatRelative(r.nextRunAt)}</span>

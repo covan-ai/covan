@@ -36,6 +36,7 @@ const routine: Routine = {
   scheduleCron: "0 * * * *",
   timezone: "Europe/Istanbul",
   triggerKind: "schedule" as const,
+  event: null,
   outputBundleId: null,
   outputRetention: 52,
   endsAfterRuns: null,
@@ -64,6 +65,8 @@ const runs: RoutineRun[] = [
     filingNote: null,
     outcome: null,
     model: null,
+    triggeredBy: null,
+    triggerLabel: null,
     startedAt: 0,
   },
   {
@@ -79,6 +82,8 @@ const runs: RoutineRun[] = [
     filingNote: null,
     outcome: null,
     model: null,
+    triggeredBy: null,
+    triggerLabel: null,
     startedAt: 0,
   },
   {
@@ -94,6 +99,8 @@ const runs: RoutineRun[] = [
     filingNote: null,
     outcome: null,
     model: null,
+    triggeredBy: null,
+    triggerLabel: null,
     startedAt: 0,
   },
 ];
@@ -112,6 +119,53 @@ const props = {
 };
 
 describe("RoutineDetail", () => {
+  // 0108: "why did this run at 03:12?" is answered on the row, beside when.
+  it("says what started a run that something other than the schedule started", () => {
+    const started = [
+      { ...runs[0], id: "e", triggeredBy: "event" as const, triggerLabel: "Gmail · New mail" },
+      { ...runs[1], id: "w", triggeredBy: "webhook" as const },
+      { ...runs[2], id: "m", triggeredBy: "manual" as const },
+    ];
+    render(<RoutineDetail {...props} runs={started} />);
+    expect(screen.getByText(/Gmail · New mail ·/)).toBeInTheDocument();
+    expect(screen.getByText(/^Webhook ·/)).toBeInTheDocument();
+    expect(screen.getByText(/^Run now ·/)).toBeInTheDocument();
+  });
+
+  it("says nothing extra for a scheduled run, which is the ordinary case", () => {
+    render(<RoutineDetail {...props} runs={[{ ...runs[0], triggeredBy: "schedule" as const }]} />);
+    // The header has a "Run now" button; the row is what must stay quiet.
+    expect(screen.queryByText(/^(Webhook|Run now) ·/)).not.toBeInTheDocument();
+  });
+
+  // An event routine is never due, so a cron in front of it would promise a
+  // run that never happens.
+  it("names what starts an event routine instead of a schedule", () => {
+    const waiting = {
+      ...routine,
+      sourceKind: "none" as const,
+      sourceUrl: null,
+      triggerKind: "event" as const,
+      event: {
+        type: "gmail.new_message",
+        provider: "composio",
+        app: "Gmail",
+        label: "New mail",
+        config: {},
+        status: "active" as const,
+        statusDetail: null,
+        lastEventAt: null,
+        expiresAt: null,
+      },
+    };
+    // Not the owner, so the event card — which reaches the API — is not drawn.
+    render(<RoutineDetail {...props} routine={waiting} runs={[]} isOwner={false} />);
+    expect(screen.getByText("When Gmail · New mail")).toBeInTheDocument();
+    expect(screen.getByText("When the event arrives")).toBeInTheDocument();
+    expect(screen.queryByText("Schedule")).not.toBeInTheDocument();
+    expect(screen.getByText(/the first one starts when the event arrives/)).toBeInTheDocument();
+  });
+
   it("renders skipped neutrally, not as an error", () => {
     render(<RoutineDetail {...props} />);
     const row = screen.getByText("No action needed");

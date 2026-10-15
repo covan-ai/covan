@@ -1006,6 +1006,8 @@ describe("favourites", () => {
   });
 });
 
+const SHARING_CAPABILITY = "notion.sharing_test_read_comment";
+
 describe("what an agent knows and may do is an edit", () => {
   let bundleId: string;
   let connectionId: string;
@@ -1058,6 +1060,24 @@ describe("what an agent knows and may do is an edit", () => {
       .single();
     if (toolError) throw new Error(`could not seed a tool connection: ${toolError.message}`);
     toolConnectionId = tool.id as string;
+
+    // The catalogue ships empty and a grant's capability is a foreign key into
+    // it, so the one row the grant below needs is seeded here, under a name no
+    // other file uses (capability-grants.test.ts seeds and removes its own).
+    const { error: catalogueError } = await service.from("connection_capabilities").insert({
+      provider: "notion",
+      capability: SHARING_CAPABILITY,
+      label: "Read comments (sharing test)",
+      description: "Read the comments on a page.",
+      is_destructive: false,
+    });
+    if (catalogueError) throw new Error(`could not seed the catalogue: ${catalogueError.message}`);
+  });
+
+  afterAll(async () => {
+    const service = serviceClient();
+    await service.from("connection_grants").delete().eq("capability", SHARING_CAPABILITY);
+    await service.from("connection_capabilities").delete().eq("capability", SHARING_CAPABILITY);
   });
 
   async function attached(): Promise<boolean> {
@@ -1103,7 +1123,7 @@ describe("what an agent knows and may do is an edit", () => {
       connection_id: connectionId,
       workspace_id: host.workspaceId,
       provider: "notion",
-      capability: "notion.read_comment",
+      capability: SHARING_CAPABILITY,
       mode: "ask",
     };
     const refused = await useM.db.from("connection_grants").insert(grant);

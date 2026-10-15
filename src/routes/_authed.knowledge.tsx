@@ -59,7 +59,12 @@ function KnowledgePage() {
  * workspace settings, which nobody looking at their files would think to open.
  */
 function KnowledgeUsage() {
-  const usage = useQuery({ queryKey: ["knowledge-usage"], queryFn: () => api.knowledge.usage() });
+  const usage = useQuery({
+    // Under "bundles", so every change that refreshes the bundle list — an
+    // upload, a new bundle, a delete — refreshes these counts with it.
+    queryKey: ["bundles", "usage"],
+    queryFn: () => api.knowledge.usage(),
+  });
   const u = usage.data;
   return (
     <p className="mt-4 text-meta text-muted-foreground">

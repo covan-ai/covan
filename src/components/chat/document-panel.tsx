@@ -39,7 +39,13 @@ export function DocumentPanel({
 
   return (
     <div
-      className={cn("relative flex h-full flex-col border-l border-border", live && "browser-live")}
+      className={cn(
+        // `min-h-0` and `overflow-hidden` hold the panel to the height it was
+        // given, so the document scrolls inside it rather than growing past
+        // the screen and taking the page with it.
+        "relative flex h-full min-h-0 flex-col overflow-hidden border-l border-border",
+        live && "browser-live",
+      )}
     >
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
@@ -76,7 +82,12 @@ export function DocumentPanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      {/* The one scroller. `overscroll-contain` keeps a scroll that reaches
+          the end of the document from carrying on into the page behind it. */}
+      <div
+        data-testid="document-scroll"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6"
+      >
         <article className="doc-reading mx-auto max-w-2xl">
           <h1 className="text-title-lg font-semibold [overflow-wrap:anywhere]">{job.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-3">

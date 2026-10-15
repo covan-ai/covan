@@ -77,6 +77,9 @@ export async function capabilitiesFor(input: {
 
   const tools = configuredTools(input.env).filter((tool) => {
     if (tool.name === "browse" && scheduled && !input.browser) return false;
+    // A document is written for somebody in a conversation, who watches it
+    // fill in; a scheduled run files its own output (`routines/filing.ts`).
+    if (tool.name === "write_document" && scheduled) return false;
     if (tool.needs === "channel") return channels.length > 0;
     if (tool.needs) {
       const usable = tool.needs.connection;

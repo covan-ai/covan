@@ -212,6 +212,9 @@ client for all of it.
 | `POST /chat/confirm/:id`                       | Answer what an agent asked      |
 | `POST /transcribe`                             | Audio to text                   |
 | `POST /sessions/:id/report`                    | Write it up as a document       |
+| `GET /sessions/:id/document-jobs`              | Documents being written in it   |
+| `GET /document-jobs/:id`                       | One of them, with its sections  |
+| `POST /document-jobs/:id/stop` · `/retry`      | Stop one, or pick it up again   |
 
 `POST /chat/stream` takes `{ "sessionId" }` and three optional flags.
 `continue: true` finishes a reply that stopped at its length limit, writing the
@@ -267,25 +270,31 @@ A session is private to you unless its `visibility` is `shared`, in which case
 the workspace can read it. Assistant replies cannot be written by any client,
 including this one — see [Your team](team.md).
 
-`POST /sessions/:id/report` takes `{ "instruction", "bundleId" }` and answers
-with the document it wrote, the same shape an upload returns — chunked, embedded
-and retrievable from then on. It is one call and a slow one, up to a minute, so
-it does not stream. `chunkCount` comes back `0` only when the embedding failed,
-which leaves the report saved and unretrievable until `POST
-/documents/:id/reindex`. See [Knowledge bundles](knowledge.md).
+`POST /sessions/:id/report` takes `{ "instruction" }`, and optionally a
+`bundleId` to file it in instead of the agent's reports bundle, and answers
+`202` at once with the job that will write it: `status` (`queued`, `writing`,
+`filing`, then `ready`, `failed` or `stopped`), `written` of `total` sections,
+and `documentId` once it is filed. The document is written in the background,
+section by section — poll `GET /document-jobs/:id` every few seconds to follow
+it, or `GET /sessions/:id/document-jobs` for every document in the
+conversation. On a deployment with no document host, polling is also what moves
+it along, so a client that never asks waits for the scheduled tick. A job is
+visible only to the person who asked for it. See [Knowledge
+bundles](knowledge.md#documents-the-agent-writes).
 
 ### Knowledge
 
-|                                                  |                           |
-| ------------------------------------------------ | ------------------------- |
-| `GET /bundles` · `POST /bundles`                 | Subjects                  |
-| `PATCH /bundles/:id` · `DELETE /bundles/:id`     | Rename, delete            |
-| `GET /bundles/:id/documents`                     | What is in one bundle     |
-| `POST /bundles/:id/documents/upload`             | Upload a document         |
-| `PATCH /documents/:id` · `DELETE /documents/:id` | Rename, move, delete      |
-| `GET /documents/:id/preview`                     | The text that was indexed |
-| `GET /documents/:id/download`                    | The original file         |
-| `POST /documents/:id/reindex`                    | Re-chunk and re-embed     |
+|                                                  |                                 |
+| ------------------------------------------------ | ------------------------------- |
+| `GET /bundles` · `POST /bundles`                 | Subjects                        |
+| `PATCH /bundles/:id` · `DELETE /bundles/:id`     | Rename, delete                  |
+| `GET /bundles/:id/documents`                     | What is in one bundle           |
+| `POST /bundles/:id/documents/upload`             | Upload a document               |
+| `PATCH /documents/:id` · `DELETE /documents/:id` | Rename, move, delete            |
+| `GET /documents/:id/preview`                     | The text that was indexed       |
+| `GET /documents/:id/download`                    | The original file               |
+| `GET /documents/:id/export/docx` · `/pdf`        | A Markdown file, as Word or PDF |
+| `POST /documents/:id/reindex`                    | Re-chunk and re-embed           |
 
 `GET /bundles/:id/documents` answers for any bundle in the workspace, attached to
 an agent or not — `GET /agents` only carries the documents of the bundles an
@@ -299,6 +308,11 @@ where the excerpt ends rather than how much is missing. The passages are cut fro
 the whole document either way, which is why a long file is searchable to its end
 and only its opening can answer "summarise this". The bytes are
 `GET /documents/:id/download`; this reads one row and never the document store.
+
+`GET /documents/:id/export/docx` and `/pdf` convert a Markdown document — `415`
+for anything else. A PDF needs a browser on the server to print it; a
+deployment without one answers `501` with `"fallback": "print"`, and the client
+prints the document itself.
 
 Deleting a bundle or a document marks it rather than destroying it: it stops
 being visible and stops grounding answers immediately, and `GET /trash` can

@@ -58,6 +58,26 @@ export const REPORT_INSTRUCTIONS = [
 ].join("\n");
 
 /**
+ * What one call of the document engine (`lib/docs/engine.ts`) is, said to the
+ * model writing it.
+ *
+ * REPORT_INSTRUCTIONS' rules about sources, at the scale of a section. The
+ * difference is the frame: a report call wrote the whole document and opened
+ * it with its title, while a section call writes one part of a plan made
+ * before it, and must not restate the title, the plan, or what the sections
+ * either side of it say. The engine adds the headings itself when it joins the
+ * sections, so a heading written here would appear twice.
+ */
+export const DOCUMENT_INSTRUCTIONS = [
+  "You are writing one part of a longer document, not a chat reply. The reader will open the finished document on its own, without the conversation around it.",
+  "Write only what this call asks for. Do not repeat the document's title or the heading you were given; start with the content.",
+  "Use `### ` for sub-headings inside the part, never `#` or `##`. Use prose; reach for a list or a table only where one genuinely reads better.",
+  "Ground every claim in the documents and the conversation you were given. Attribute anything specific to the document it came from.",
+  "Where the sources do not answer something the part needs, say so and name what is missing. Never fill the gap with a plausible number or date.",
+  "Write in the language the request was made in.",
+].join("\n");
+
+/**
  * How many filenames the manifest names before it starts counting instead.
  *
  * The manifest rides in the cacheable prefix, so its cost is amortised rather
@@ -105,10 +125,11 @@ function manifestNames(names: string[]): string {
 
 /**
  * What shape of output a turn is asking for. "normal" and "brainstorm" are
- * session modes a conversation sits in (`lib/session-mode.ts`); "report" is not
- * — it is the shape of one call, and a session never enters it.
+ * session modes a conversation sits in (`lib/session-mode.ts`); "report" and
+ * "document" are not — each is the shape of one call, and a session never
+ * enters either.
  */
-export type PromptMode = "normal" | "brainstorm" | "report";
+export type PromptMode = "normal" | "brainstorm" | "report" | "document";
 
 /**
  * Core capabilities that apply regardless of mode or documents.
@@ -205,6 +226,8 @@ export function buildSystemPrefix(input: {
     prefix += `\n\n${BRAINSTORM_INSTRUCTIONS}`;
   } else if (input.mode === "report") {
     prefix += `\n\n${REPORT_INSTRUCTIONS}`;
+  } else if (input.mode === "document") {
+    prefix += `\n\n${DOCUMENT_INSTRUCTIONS}`;
   } else {
     prefix += `\n\n${CONCISION_INSTRUCTIONS}`;
   }

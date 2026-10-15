@@ -235,48 +235,85 @@ longer than 8000 characters therefore comes back from a reindex with a narrower
 index than it had after upload. Reindex a PDF when it retrieves nothing at all;
 re-uploading it is the way to rebuild a full index.
 
-## Reports the agent writes
+## Documents the agent writes
 
-The report control in the chat composer turns a conversation into a document.
-You say what the report should cover, the agent writes it against the
-conversation and the bundles attached to it, and what comes back is an ordinary
-markdown document — it downloads, moves, deletes and goes into the workspace
-export like any file you uploaded.
+Ask the agent for a report, a write-up, a proposal or anything longer than a
+chat answer should be, and it writes it as a document rather than as a reply.
+It says in a sentence that the document is being written, and a card appears
+under that reply with a square for each section. Open it and the document sits
+beside the conversation, filling in as each section is written. You can close
+the tab: it carries on, and is there when you come back.
 
-Typing `/report ` in the message box, followed by the same sentence, does the
-same thing without the dialog — `/report write up the quarter for the board`.
-The command is `/report` whatever language you write the instruction in. On its
+The report control in the chat composer does the same thing without asking the
+agent. You say what the report should cover and it starts at once. Typing
+`/report ` in the message box, followed by the same sentence, does the same
+thing without the dialog — `/report write up the quarter for the board`. The
+command is `/report` whatever language you write the instruction in. On its
 own, with nothing after it, it opens the dialog to ask what the report should
 cover. It is not a command for a viewer, who cannot write a document to the
-workspace: there the line is sent as the message it looks like.
+workspace: there the line is sent as the message it looks like, and the agent
+will say it cannot file one either.
+
+### How a document is written
+
+A document is planned first — a title and up to twelve sections, each with a
+line on what it must cover — and then written one section at a time, each by
+its own model call, from the conversation and the passages retrieved for the
+request when it was made. Every section is saved the moment it is written, so a
+document is never lost to a dropped connection: the worst case is the one
+section that was being written, and it is written again. That is the difference
+from how reports used to work, as one call that either produced the whole
+document or nothing.
+
+The writing happens on the server. On Cloudflare each section is its own
+Durable Object alarm (`DOC_ROOMS`); on Node it is the API process; and on a
+deployment with neither, the open conversation moves it along each time it
+checks, and the scheduled tick finishes anything nobody is watching. See
+[Self-hosting](self-hosting.md).
+
+**Stop** keeps what is written and writes no more. **Continue** — or **Try
+again**, after a failure — picks it up at the section it ended on; the sections
+already written are not written or paid for twice.
+
+### Where it lands
 
 It lands in a bundle of its own, named after the agent and created the first
-time you ask for one. That separation is deliberate: a bundle you uploaded holds
-sources the agent was given, and this one holds what the agent produced. Keeping
-them apart means you can detach the reports — so the agent stops reading its own
-output back as if it were evidence — without also detaching your files.
+time a document is written. That separation is deliberate: a bundle you
+uploaded holds sources the agent was given, and this one holds what the agent
+produced. Keeping them apart means you can detach the reports — so the agent
+stops reading its own output back as if it were evidence — without also
+detaching your files.
 
-A report is chunked and embedded when it is written, so it is searchable in chat
-from then on like any file you uploaded. It is cut into larger passages than an
-upload is — most of what a passage costs to store is its vector and its index,
-both fixed however much text the passage holds, so fewer and larger passages is
-what keeps a report from costing what a whole upload does. That is safe for a
-report and would not be for an upload: a report is one coherent document written
-in one pass, where the finer cut exists for a pile of unrelated pages.
+It is an ordinary Markdown document: it downloads, moves, deletes and goes into
+the workspace export like any file you uploaded. It is chunked and embedded when
+it is filed, so it is searchable in chat from then on. It is cut into larger
+passages than an upload is — most of what a passage costs to store is its vector
+and its index, both fixed however much text the passage holds — which is safe
+for a document written in one piece and would not be for a pile of unrelated
+pages. If it ever shows "Not indexed", its embedding failed rather than being
+skipped, and the **Reindex** in its row menu is the way back.
 
-It was not always so. Reports were stored without embeddings at first, to save
-that storage, on the argument that the stored-text path described below would
-carry them. It did not: that path runs only when retrieval matched nothing at
-all, and an agent that has a report also has the documents the report was
-written from — one of which always matches. The report became the one file the
-agent could see in its list and never read a word of. If a report ever does show
-"Not indexed" now, its embedding failed rather than being skipped, and the
-**Reindex** in its row menu is the way back.
+### Word and PDF
 
-A report is one model call, capped at roughly eight pages, and it takes up to a
-minute. It is charged to the workspace's credits like a reply, and costs about
-what two to seven replies do — more than a chat turn, because the length is the
-point.
+A finished document can be saved as Markdown, Word or PDF from beside the
+conversation, and any Markdown document — a report, a routine's filed summary,
+one you uploaded — can be saved as Word or PDF from its preview. The Word file
+uses Word's own heading styles, so its navigation pane and a table of contents
+work.
+
+A PDF is printed by a real browser on the server where the deployment has one
+(Cloudflare Browser Rendering, `BROWSER`). Where it does not, the PDF button
+opens the document in your browser's print dialog instead, where **Save as
+PDF** gives you the same file.
+
+### What it costs
+
+Each section is a model call, charged to the workspace's credits like a reply,
+and the plan is one more. A document therefore costs roughly what as many
+replies as it has sections do — more than a chat turn, because the length is
+the point. The allowance is checked before every section, so a workspace that
+runs out partway through stops with what it has written, and **Continue** picks
+it up once credits are added.
 
 ## What a routine files
 
@@ -491,7 +528,7 @@ counted apart rather than added together.
 functions behind the screen do not select a user, and they return counts rather
 than content, so there is no per-person view and nothing to read. That bound is
 deliberate and it is also a limitation: knowing that a third of the month's
-questions landed on nothing does not tell you *which* questions. Listing those
+questions landed on nothing does not tell you _which_ questions. Listing those
 means showing an admin what colleagues typed in private rooms, so it needs the
 consent of whoever asked, and it is a separate feature rather than a column
 added to this one.

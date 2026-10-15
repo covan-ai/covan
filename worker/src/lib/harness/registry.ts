@@ -14,6 +14,7 @@ import { sendEmailTool } from "./tools/send-email";
 import { scheduleJobTool } from "./tools/schedule-job";
 import { findToolTool } from "./tools/find-tool";
 import { runToolTool } from "./tools/run-tool";
+import { writeDocumentTool } from "./tools/write-document";
 
 /**
  * Every tool an agent can be given, in one list.
@@ -409,6 +410,7 @@ export const TOOLS: AgentTool[] = [
   runToolTool,
   sendEmailTool,
   scheduleJobTool,
+  writeDocumentTool,
 ];
 
 export function toolByName(name: string): AgentTool | null {

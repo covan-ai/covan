@@ -1,17 +1,12 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { api, getAccessToken } from "@/lib/api-client";
-import { useAgentsStore } from "@/lib/agents-store";
-
-export type ReportReceipt = {
-  documentId: string;
-  name: string;
-  indexed: boolean;
-};
+import { useQueryClient } from "@tanstack/react-query";
+import { api, type DocumentJob } from "@/lib/api-client";
+import { documentJobsKey } from "@/components/chat/use-document-jobs";
 
 export type ReportWriter = {
+  /** Between pressing the button and the server saying the document has started. */
   pending: boolean;
-  receipt: ReportReceipt | null;
   /**
    * Lives here rather than inside the dialog because two things open it: the
    * composer button, and a bare `/report` typed into the message box.
@@ -19,104 +14,53 @@ export type ReportWriter = {
   dialogOpen: boolean;
   setDialogOpen: (open: boolean) => void;
   write: (instruction: string) => Promise<void>;
-  dismiss: () => void;
-  download: () => void;
-  /**
-   * Report content for live preview. Loaded after the report is written.
-   */
-  content: string | null;
-  loadingContent: boolean;
 };
 
 /**
- * Writing the conversation up as a document.
+ * Asking for this conversation to be written up as a document.
  *
- * Shaped like `useChatUploads` next door, and for the same reason: what the
- * request produced is a fact that outlives a toast. A report is born with no
- * embeddings, and whether that matters is a decision its reader makes after
- * reading it — so the receipt says "Not indexed" and stays on screen rather
- * than sliding away in three seconds.
+ * The request only starts it. The document engine writes it section by
+ * section in the background (`worker/src/lib/docs/engine.ts`), and the
+ * conversation follows it through the same poll that follows a document the
+ * agent started itself (`useDocumentJobs`). So `pending` is a second, not a
+ * minute — and nothing is lost if the tab closes while it is written.
  *
- * One request, and a slow one. The model is writing a document rather than a
- * reply, which is tens of seconds; `pending` is what the composer uses to say
- * so, because a button that looks idle for a minute reads as a button that did
- * nothing.
+ * The new job is put into that poll's cache at once, so its card appears and
+ * the poll starts without waiting for the next ask; `onStarted` opens it.
  */
 export function useReportWriter(
   sessionId: string | null,
-  agent: { id: string; name: string },
+  onStarted: (jobId: string) => void,
 ): ReportWriter {
-  const { writeReport } = useAgentsStore();
+  const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
-  const [receipt, setReceipt] = useState<ReportReceipt | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [content, setContent] = useState<string | null>(null);
-  const [loadingContent, setLoadingContent] = useState(false);
 
   const write = useCallback(
     async (instruction: string) => {
       if (!sessionId || pending) return;
-
       setPending(true);
-      setContent(null);
       try {
-        const doc = await writeReport(sessionId, agent, instruction);
-        const rec = { documentId: doc.id, name: doc.name, indexed: doc.indexed };
-        setReceipt(rec);
-
-        // Load content for preview
-        setLoadingContent(true);
-        try {
-          const token = await getAccessToken();
-          const response = await fetch(
-            `${import.meta.env.VITE_API_URL}/documents/${doc.id}/download`,
-            {
-              headers: token ? { Authorization: `Bearer ${token}` } : {},
-            },
-          );
-          if (response.ok) {
-            const blob = await response.blob();
-            const text = await blob.text();
-            setContent(text);
-          }
-        } catch (err) {
-          console.error("Failed to load report content:", err);
-        } finally {
-          setLoadingContent(false);
-        }
+        const job = await api.reports.create(sessionId, { instruction });
+        queryClient.setQueryData<DocumentJob[]>(documentJobsKey(sessionId), (prior) => [
+          job,
+          ...(prior ?? []).filter((j) => j.id !== job.id),
+        ]);
+        // The reports bundle may have just been made, and attached.
+        void queryClient.invalidateQueries({ queryKey: ["bundles"] });
+        void queryClient.invalidateQueries({ queryKey: ["agents"] });
+        onStarted(job.id);
       } catch (err) {
         const message = err instanceof Error ? err.message : "";
         toast.error(
-          message ? `Couldn't write the report: ${message}` : "Couldn't write the report",
+          message ? `Couldn't start the report: ${message}` : "Couldn't start the report",
         );
       } finally {
         setPending(false);
       }
     },
-    [sessionId, pending, writeReport, agent],
+    [sessionId, pending, queryClient, onStarted],
   );
 
-  const download = useCallback(() => {
-    if (!receipt) return;
-    void api.documents
-      .download(receipt.documentId, receipt.name)
-      .catch(() => toast.error("Couldn't download the report"));
-  }, [receipt]);
-
-  const dismiss = useCallback(() => {
-    setReceipt(null);
-    setContent(null);
-  }, []);
-
-  return {
-    pending,
-    receipt,
-    dialogOpen,
-    setDialogOpen,
-    write,
-    dismiss,
-    download,
-    content,
-    loadingContent,
-  };
+  return { pending, dialogOpen, setDialogOpen, write };
 }

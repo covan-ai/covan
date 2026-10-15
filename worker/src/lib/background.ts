@@ -7,6 +7,7 @@ import { sweepHeldRuns } from "./routines/held";
 import { startQueuedBrowserTasks } from "./browser/queue";
 import { sweepAbandonedTakeovers, sweepConversationBrowsers } from "./browser/sweep";
 import { PROVIDERS } from "./connections/registry";
+import { advanceDueDocumentJobs } from "./docs/host";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -97,6 +98,14 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   // stage above is one that might still answer it.
   const held = await sweepHeldRuns(env);
   if (held.finished > 0) return;
+
+  // Documents whose clock stopped: no Durable Object bound, nobody watching
+  // the tab, a worker that died holding the lease. One unit per job, two jobs
+  // at most — a unit is one model call and a few writes, so this stays inside
+  // a Free tick. An idle tick costs one subrequest, the claim. On the cron
+  // Worker (no document store) a job that is ready to be filed is put back for
+  // the API Worker; see `advanceDocumentJob`.
+  if (await advanceDueDocumentJobs(env)) return;
 
   if (!canSyncConnections(env)) {
     // Not an error, and not silent either. This is the cron-only Worker

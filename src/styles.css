@@ -519,3 +519,43 @@
     animation: none;
   }
 }
+
+/*
+ * A document read on its own — the document panel beside a conversation and
+ * the print page — rather than a reply in it. The Markdown renderer sizes its
+ * text for chat; a document is the reading role on the ladder (`text-base`,
+ * 1.6 leading), so this lifts the renderer's blocks to it without a second
+ * renderer.
+ */
+.doc-reading p,
+.doc-reading li,
+.doc-reading td,
+.doc-reading th {
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+}
+
+/*
+ * The print page: only the document goes to paper. Everything else on the
+ * screen — the shell, the navigation — is still in the page, and hiding it by
+ * visibility rather than display keeps the document's own layout untouched.
+ */
+@media print {
+  @page {
+    size: A4;
+    margin: 20mm;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .print-root,
+  .print-root * {
+    visibility: visible;
+  }
+  .print-root {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    color: #251f19;
+  }
+}

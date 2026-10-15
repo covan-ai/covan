@@ -73,6 +73,8 @@ const takeoverOpen = vi.fn();
 const tuneSession = vi.fn();
 const turnStatus = vi.fn();
 const stopTurn = vi.fn();
+const documentJobs = vi.fn();
+const stopDocument = vi.fn();
 /**
  * What `/me` answers. A variable rather than a literal so the dial's tests can
  * add `modelSpecs` — without it every model reads as one that does not
@@ -99,7 +101,9 @@ vi.mock("@/lib/api-client", () => ({
       tune: tuneSession,
       turn: turnStatus,
       stopTurn,
+      documentJobs,
     },
+    documentJobs: { get: vi.fn(), stop: stopDocument, retry: vi.fn() },
     browser: { live: browserLive, takeOver: vi.fn(), handBack: vi.fn(), stop: vi.fn() },
     takeovers: { takeOver: vi.fn(), open: takeoverOpen, current: takeoverCurrent, close: vi.fn() },
     messages: {
@@ -135,20 +139,14 @@ vi.mock("@/lib/use-dictation", () => ({
 vi.mock("@/lib/use-report", () => ({
   useReportWriter: () => ({
     pending: false,
-    receipt: null,
     dialogOpen: false,
     setDialogOpen: vi.fn(),
     write: vi.fn(),
-    dismiss: vi.fn(),
-    download: vi.fn(),
   }),
 }));
 
 vi.mock("@/components/chat-attach", () => ({ ChatAttach: () => null, ChatReceipts: () => null }));
-vi.mock("@/components/chat-report", () => ({
-  ChatReport: () => null,
-  ChatReportReceipt: () => null,
-}));
+vi.mock("@/components/chat-report", () => ({ ChatReport: () => null }));
 vi.mock("@/components/chat-mic", () => ({ ChatMic: () => null }));
 vi.mock("@/components/feedback-dialog", () => ({ FeedbackDialog: () => null }));
 vi.mock("@/components/idea-board", () => ({ IdeaBoard: () => null }));
@@ -321,6 +319,9 @@ beforeEach(() => {
   browserTasks.mockResolvedValue({ tasks: [], session: null, events: [], delivered: false });
   browserLive.mockResolvedValue({ liveUrl: "https://live.example/view", liveState: "agent" });
   takeoverCurrent.mockResolvedValue({ takeover: null });
+  // No documents in it either.
+  documentJobs.mockResolvedValue([]);
+  stopDocument.mockResolvedValue(undefined);
   // jsdom implements no scrolling at all, so the component's own call is the
   // only evidence of what it asked for.
   scrollTo = vi.fn();
@@ -1715,6 +1716,79 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
       expect(tuneSession).not.toHaveBeenCalled();
     } finally {
       session.ownerId = "user-1";
+    }
+  });
+});
+
+describe("a document written from the conversation", () => {
+  /** A job created a second before `answer`, so its card sits under that reply. */
+  const job = (over: Record<string, unknown> = {}) => ({
+    id: "job-1",
+    agentId: agent.id,
+    sessionId: session.id,
+    bundleId: "bundle-1",
+    origin: "tool",
+    instruction: "Write up the pricing.",
+    title: "Pricing review",
+    status: "writing",
+    written: 1,
+    total: 2,
+    documentId: null,
+    error: null,
+    createdAt: "2026-09-17T10:00:04Z",
+    updatedAt: "2026-09-17T10:00:04Z",
+    finishedAt: null,
+    sections: [
+      { index: 0, heading: "Where we are", body: "Forty dollars a seat.", done: true },
+      { index: 1, heading: "What to change", body: "", done: false },
+    ],
+    ...over,
+  });
+
+  it("puts the document's card under the reply that started it", async () => {
+    listMessages.mockResolvedValue([question, answer]);
+    documentJobs.mockResolvedValue([job()]);
+
+    await renderChat();
+
+    const card = await screen.findByRole("button", { name: "Open Pricing review" });
+    expect(card).toHaveTextContent("Writing — 1 of 2 sections");
+  });
+
+  it("opens it beside the conversation, filling in section by section", async () => {
+    listMessages.mockResolvedValue([question, answer]);
+    documentJobs.mockResolvedValue([job()]);
+
+    await renderChat();
+    await userEvent.click(await screen.findByRole("button", { name: "Open Pricing review" }));
+
+    expect(await screen.findByRole("heading", { name: "Pricing review" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Where we are" })).toBeInTheDocument();
+    expect(screen.getByText("Being written…")).toBeInTheDocument();
+  });
+
+  it("can be stopped from the panel while it is being written", async () => {
+    listMessages.mockResolvedValue([question, answer]);
+    documentJobs.mockResolvedValue([job()]);
+
+    await renderChat();
+    await userEvent.click(await screen.findByRole("button", { name: "Open Pricing review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Stop" }));
+
+    expect(stopDocument).toHaveBeenCalledWith("job-1");
+  });
+
+  it("offers the finished document as Markdown, Word and PDF", async () => {
+    listMessages.mockResolvedValue([question, answer]);
+    documentJobs.mockResolvedValue([
+      job({ status: "ready", written: 2, documentId: "doc-9", sections: [] }),
+    ]);
+
+    await renderChat();
+    await userEvent.click(await screen.findByRole("button", { name: "Open Pricing review" }));
+
+    for (const name of ["Markdown", "Word", "PDF"]) {
+      expect(await screen.findByRole("button", { name })).toBeInTheDocument();
     }
   });
 });

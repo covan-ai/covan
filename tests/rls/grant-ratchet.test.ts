@@ -56,7 +56,8 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "document_chunks INSERT":
     "bundle_id,chunk_index,content,context,document_id,embedding,generation,workspace_id",
   "document_chunks UPDATE": "bundle_id",
-  "documents INSERT": "bundle_id,content,created_by,name,r2_key,size",
+  // 0105: a new upload arrives queued for indexing.
+  "documents INSERT": "bundle_id,content,created_by,index_status,name,r2_key,size",
   "documents UPDATE": "bundle_id",
   "favorites INSERT": "agent_id,user_id",
   "feedback INSERT": "kind,message,message_id,path,user_id,workspace_id",

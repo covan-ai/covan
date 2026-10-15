@@ -82,5 +82,39 @@ export function describeDocStoreContract(name: string, make: () => Promise<DocSt
       const a = await store.get("bundle-a/doc.txt");
       expect(new TextDecoder().decode(await a!.arrayBuffer())).toBe("one");
     });
+
+    it("reads a range of an object, and says how big the whole is", async () => {
+      const store = await make();
+      await store.put("a/range.txt", bytes("0123456789"), { contentType: "text/plain" });
+
+      const got = await store.getRange("a/range.txt", 3, 4);
+      expect(new TextDecoder().decode(got!.bytes)).toBe("3456");
+      expect(got!.size).toBe(10);
+
+      const pastEnd = await store.getRange("a/range.txt", 8, 100);
+      expect(new TextDecoder().decode(pastEnd!.bytes)).toBe("89");
+      expect(await store.getRange("a/missing.txt", 0, 4)).toBeNull();
+    });
+
+    it("assembles an object from parts, in part order", async () => {
+      const store = await make();
+      const id = await store.createMultipart("b/joined.txt", { contentType: "text/plain" });
+      const second = await store.uploadPart("b/joined.txt", id, 2, bytes(" world"));
+      const first = await store.uploadPart("b/joined.txt", id, 1, bytes("hello"));
+      await store.completeMultipart("b/joined.txt", id, [second, first]);
+
+      const got = await store.get("b/joined.txt");
+      expect(new TextDecoder().decode(await got!.arrayBuffer())).toBe("hello world");
+      expect(got!.contentType).toBe("text/plain");
+    });
+
+    it("forgets an aborted upload, and aborting twice is fine", async () => {
+      const store = await make();
+      const id = await store.createMultipart("b/gone.txt", { contentType: "text/plain" });
+      await store.uploadPart("b/gone.txt", id, 1, bytes("never"));
+      await store.abortMultipart("b/gone.txt", id);
+      await expect(store.abortMultipart("b/gone.txt", id)).resolves.toBeUndefined();
+      expect(await store.get("b/gone.txt")).toBeNull();
+    });
   });
 }

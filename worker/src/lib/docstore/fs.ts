@@ -1,8 +1,11 @@
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
-import type { DocStore, StoredObject } from "./types";
+import type { DocStore, StoredObject, UploadedPart } from "./types";
+
+/** A multipart upload's id is ours, so it is always a UUID — checked, because it names a directory. */
+const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * The self-hosted store: one file per object under `root`, plus a
@@ -22,6 +25,15 @@ export function fsDocStore(root: string): DocStore {
   };
 
   const metaFor = (key: string): string => pathFor(key) + ".meta.json";
+
+  /**
+   * Where an unfinished upload's parts wait: beside the store's objects, under
+   * a name no generated key can have (keys start with a bundle id).
+   */
+  const partsDir = (uploadId: string): string => {
+    if (!UPLOAD_ID.test(uploadId)) throw new Error(`not an upload id: ${uploadId}`);
+    return resolve(base, ".multipart", uploadId);
+  };
 
   return {
     async get(key: string): Promise<StoredObject | null> {
@@ -86,6 +98,75 @@ export function fsDocStore(root: string): DocStore {
     async delete(key: string): Promise<void> {
       await rm(pathFor(key), { force: true });
       await rm(metaFor(key), { force: true });
+    },
+
+    async getRange(key, offset, length) {
+      let handle;
+      try {
+        handle = await open(pathFor(key), "r");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw err;
+      }
+      try {
+        const { size } = await handle.stat();
+        const start = Math.max(0, Math.min(offset, size));
+        const want = Math.max(0, Math.min(length, size - start));
+        const bytes = new Uint8Array(want);
+        let read = 0;
+        while (read < want) {
+          const { bytesRead } = await handle.read(bytes, read, want - read, start + read);
+          if (bytesRead === 0) break;
+          read += bytesRead;
+        }
+        return { bytes: read === want ? bytes : bytes.subarray(0, read), size };
+      } finally {
+        await handle.close();
+      }
+    },
+
+    async createMultipart(key, opts) {
+      pathFor(key); // refuse a key outside the root before anything is written
+      const uploadId = crypto.randomUUID();
+      const dir = partsDir(uploadId);
+      await mkdir(dir, { recursive: true });
+      await writeFile(resolve(dir, "upload.json"), JSON.stringify({ key, ...opts }));
+      return uploadId;
+    },
+
+    async uploadPart(key, uploadId, partNumber, body): Promise<UploadedPart> {
+      if (!Number.isInteger(partNumber) || partNumber < 1) {
+        throw new Error(`not a part number: ${partNumber}`);
+      }
+      const dir = partsDir(uploadId);
+      const meta = JSON.parse(await readFile(resolve(dir, "upload.json"), "utf8")) as {
+        key: string;
+      };
+      if (meta.key !== key) throw new Error("this upload is for another key");
+      await writeFile(resolve(dir, `${partNumber}.part`), Buffer.from(body));
+      return { partNumber, etag: String(partNumber) };
+    },
+
+    async completeMultipart(key, uploadId, parts) {
+      const dir = partsDir(uploadId);
+      const meta = JSON.parse(await readFile(resolve(dir, "upload.json"), "utf8")) as {
+        key: string;
+        contentType: string;
+      };
+      if (meta.key !== key) throw new Error("this upload is for another key");
+      const file = pathFor(key);
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, Buffer.alloc(0));
+      // One part at a time, so a 100 MB file is never in memory at once.
+      for (const part of [...parts].sort((a, b) => a.partNumber - b.partNumber)) {
+        await appendFile(file, await readFile(resolve(dir, `${part.partNumber}.part`)));
+      }
+      await writeFile(metaFor(key), JSON.stringify({ contentType: meta.contentType }));
+      await rm(dir, { recursive: true, force: true });
+    },
+
+    async abortMultipart(_key, uploadId) {
+      await rm(partsDir(uploadId), { recursive: true, force: true });
     },
   };
 }

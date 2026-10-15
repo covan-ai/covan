@@ -2394,7 +2394,12 @@ function ChatTab() {
         <>
           <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
           <ResizablePanel id="side" defaultSize="45" minSize="25">
-            {side}
+            {/* Held to the screen's height, the way `chatPane` holds itself.
+                The panel group's own `height: 100%` resolves against a parent
+                with no height, so without this a side panel is as tall as
+                its content — and a long document scrolled the page instead
+                of itself. */}
+            <div className="h-[calc(100dvh-3.5rem)] min-h-0 lg:h-screen">{side}</div>
           </ResizablePanel>
         </>
       )}

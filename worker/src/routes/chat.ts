@@ -65,6 +65,7 @@ import {
   creditHold,
 } from "./chat-turn";
 import type { RunApproval } from "../lib/harness/registry";
+import { stoppedByPerson, turnSignal, visitorTimezone } from "../lib/turns";
 
 const chat = new Hono<AppEnv>();
 
@@ -266,7 +267,7 @@ chat.post("/chat/stream", async (c) => {
    * a bigger change. This is the version that stops the agent guessing from the
    * language of the question, which is what it was doing. See #196.
    */
-  const visitorZone = (c.req.raw as { cf?: { timezone?: string } }).cf?.timezone;
+  const visitorZone = visitorTimezone(c);
 
   const systemPrefix =
     buildSystemPrefix({
@@ -362,7 +363,7 @@ chat.post("/chat/stream", async (c) => {
     requested && (availableModels(env) as string[]).includes(requested) ? requested : tuning.model;
   const model = resolveModel(picked, env);
 
-  const signal = c.req.raw.signal;
+  const signal = turnSignal(c);
   // On the metered overlay, so the reply's own writes are counted too.
   const service = serviceClient(env);
 
@@ -806,8 +807,11 @@ chat.post("/chat/stream", async (c) => {
                   // `parked: false` — this branch returns before
                   // `announcePause`, so a turn that asked and was abandoned in
                   // the same moment has nothing to come back to and must not
-                  // say it is waiting.
-                  outcome: replyOutcome({ paused, finishReason, parked: false }),
+                  // say it is waiting. And `stopped` over all of it when a
+                  // person pressed stop: the words end where they asked.
+                  outcome: stoppedByPerson(c)
+                    ? "stopped"
+                    : replyOutcome({ paused, finishReason, parked: false }),
                 });
                 // The steps belong to an abandoned turn as much as to a
                 // finished one, and this branch used to drop them: the row was
@@ -960,6 +964,7 @@ chat.post("/chat/stream", async (c) => {
                 service,
                 spend,
                 persisted,
+                stopped: stoppedByPerson(c),
                 persist: persistAssistant,
               });
               await recordSpend();
@@ -1099,7 +1104,7 @@ chat.post("/chat/confirm/:id", async (c) => {
   const claimed = await resolvePausedTurn(service, pause.id, approve ? "approved" : "declined");
   if (!claimed) return c.json({ error: "this was already answered" }, 409);
 
-  const signal = c.req.raw.signal;
+  const signal = turnSignal(c);
   /**
    * Raised if anything in this request discovers the invocation is out of
    * platform budget, so the catch can say so instead of "an error".
@@ -1627,6 +1632,7 @@ chat.post("/chat/confirm/:id", async (c) => {
                 spend,
                 carried,
                 persisted,
+                stopped: stoppedByPerson(c),
                 persist: persistAssistant,
               });
               await recordSpend();

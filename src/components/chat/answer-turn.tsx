@@ -215,6 +215,14 @@ export const AnswerTurn = memo(function AnswerTurn({
           </div>
         )}
 
+        {/* The third way a reply ends early, and the only one somebody chose.
+            Said for the same reason as the two rows above: a reply cut off
+            mid-sentence otherwise reads, after a reload, as one that
+            finished. No button — the person who stopped it can ask again. */}
+        {message.outcome === "stopped" && !truncated && !stoppedShort && (
+          <p className="mt-3 text-xs text-muted-foreground">You stopped this answer.</p>
+        )}
+
         {message.promptTokens != null && message.completionTokens != null && (
           <div
             data-part="cost"

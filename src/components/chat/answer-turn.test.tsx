@@ -243,6 +243,16 @@ describe("AnswerTurn", () => {
     expect(screen.getByText(/every tool call it is allowed/)).toBeInTheDocument();
   });
 
+  it("says a reply was stopped by the person, after a reload as well", () => {
+    const { rerender } = render(
+      <AnswerTurn {...base} message={message({ outcome: "stopped", content: "Half of a" })} />,
+    );
+    expect(screen.getByText("You stopped this answer.")).toBeInTheDocument();
+
+    rerender(<AnswerTurn {...base} message={message({ outcome: "answered" })} />);
+    expect(screen.queryByText("You stopped this answer.")).not.toBeInTheDocument();
+  });
+
   it("can say both at once", () => {
     render(<AnswerTurn {...base} truncated stoppedShort="tokens" />);
     expect(screen.getByText(/hit its length limit/)).toBeInTheDocument();

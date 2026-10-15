@@ -48,6 +48,10 @@ export const MESSAGE_OUTCOMES = [
   "cut_short",
   "empty",
   "truncated",
+  // A person pressed stop, and the words are the ones written before they did
+  // (0101). Its own word because the alternative was `answered`, which made a
+  // reply somebody cut off read as one that finished.
+  "stopped",
 ] as const;
 
 export type MessageOutcome = (typeof MESSAGE_OUTCOMES)[number];

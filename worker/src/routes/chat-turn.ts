@@ -353,7 +353,11 @@ export function creditHold(
   };
 }
 
-/** Whether this is the person closing the tab rather than the turn failing. */
+/**
+ * Whether the turn was aborted rather than failing: a person pressing stop on
+ * a deployment with a turn host (`lib/turns`), or the tab closing on one
+ * without.
+ */
 export function isAbort(err: unknown, signal: AbortSignal): boolean {
   return (err as { name?: string } | null)?.name === "AbortError" || signal.aborted;
 }
@@ -412,6 +416,12 @@ export async function salvagePartial(input: {
   carried?: AgentStep[];
   /** True when the route already wrote its row. Nothing left to salvage into. */
   persisted: boolean;
+  /**
+   * True when a person pressed stop, as opposed to the turn failing. The words
+   * kept are then a reply somebody chose to end there, and the row says so
+   * (`stopped`, 0101) instead of reading as an answer that finished.
+   */
+  stopped?: boolean;
   /** Write the row and answer with it, or with null if there was nowhere to write. */
   persist: (
     text: string,
@@ -435,8 +445,8 @@ export async function salvagePartial(input: {
       passUsage: input.spend.passes,
       // `cut_short` is the placeholder row, written so the steps have
       // something to hang off; a salvage that kept real words is a reply the
-      // person can read, however it ended.
-      outcome: said ? "answered" : "cut_short",
+      // person can read, however it ended — `stopped` when they ended it.
+      outcome: said ? (input.stopped ? "stopped" : "answered") : "cut_short",
     });
     if (row) await writeSteps(input.service, row.id, steps);
   } catch (err) {

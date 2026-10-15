@@ -548,6 +548,24 @@ export const api = {
     tune: (id: string, patch: SessionTuning): Promise<ChatSession> =>
       request("PATCH", `/sessions/${id}`, patch),
     /**
+     * Whether the conversation has a turn running on the server — usually the
+     * one this browser asked for before it opened another conversation or
+     * closed the tab. `mine` is whether this caller may stop it. Null when
+     * there is none, and always null on a deployment whose turns end with
+     * their request.
+     */
+    turn: (
+      id: string,
+    ): Promise<{ turn: { running: boolean; mine: boolean; startedAt: number } | null }> =>
+      request("GET", `/sessions/${id}/turn`),
+    /**
+     * Stop the conversation's turn, answering once it has written down what it
+     * had. `message` is the reply it kept, when it kept one; `stopped` is false
+     * when nothing was running on the server to stop.
+     */
+    stopTurn: (id: string): Promise<{ stopped: boolean; message: Message | null }> =>
+      request("POST", `/sessions/${id}/turn/stop`),
+    /**
      * The browser beside one conversation: its tasks newest first, the
      * browser's own state, what the agent did since the last ask, and whether
      * this ask is the one that delivered an answer.

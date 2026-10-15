@@ -1975,7 +1975,11 @@ function UploadWell({
           accept={ACCEPT}
           disabled={!bundle}
           onChange={(e) => {
-            const files = e.target.files;
+            // Copied before the reset, not after. Clearing `value` empties the
+            // very FileList `e.target.files` returned, in Chromium at least,
+            // so the picker handed over nothing and the upload never started
+            // — only dropping files worked.
+            const files = Array.from(e.target.files ?? []);
             e.target.value = "";
             onFiles(files);
           }}
@@ -1995,9 +1999,10 @@ function UploadWell({
             aria-label="Upload a folder"
             {...({ webkitdirectory: "" } as Record<string, string>)}
             onChange={(e) => {
-              const files = e.target.files;
+              // Copied before the reset, for the reason the file picker gives.
+              const files = Array.from(e.target.files ?? []).filter((f) => !f.name.startsWith("."));
               e.target.value = "";
-              onFiles(files ? Array.from(files).filter((f) => !f.name.startsWith(".")) : null);
+              onFiles(files);
             }}
           />
         </label>

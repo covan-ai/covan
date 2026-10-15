@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../types";
 import type { RateTier } from "../lib/ratelimit";
 import { getRateLimiter, RATE_PERIOD_SECONDS } from "../lib/ratelimit";
+import { isReplayedTurn } from "../lib/turns";
 
 /**
  * The address of whoever is on the other end, as far as this runtime can know
@@ -71,6 +72,10 @@ export function rateLimitKey(c: Context<AppEnv>): string {
  */
 export function rateLimit(tier: RateTier): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
+    // A turn its host is replaying was counted when the browser sent it
+    // (`middleware/detach.ts`). Counting the replay too would charge every
+    // question twice against a limit sized for one.
+    if (isReplayedTurn(c)) return next();
     const limiter = getRateLimiter(c.env, tier);
     const verdict = await limiter.check(`${tier}:${rateLimitKey(c)}`);
 

@@ -45,6 +45,10 @@ import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
 import { addressConfirmationsPublic } from "./routes/address-confirmations";
+import { turns } from "./routes/turns";
+import { detachTurn } from "./middleware/detach";
+import { turnRoom } from "./lib/turns/room";
+import type { AppFetch } from "./lib/turns";
 
 const app = new Hono<AppEnv>();
 
@@ -187,6 +191,14 @@ api.use("/sessions/:id/report", rateLimit("expensive"));
 // bounds the shared concurrency pool, not the money.
 api.use("/browser/takeovers", rateLimit("expensive"));
 
+// A turn is handed to its host here, after it has been authenticated and
+// counted, so it runs to the end whether or not the tab that asked stays open.
+// The host replays the request against this same app, which is what `replay`
+// is — see `lib/turns`.
+const replay: AppFetch = async (request, env, ctx) => app.fetch(request, env, ctx);
+api.use("/chat/stream", detachTurn(replay));
+api.use("/chat/confirm/:id", detachTurn(replay));
+
 api.route("/", agents);
 api.route("/", browser);
 api.route("/", favorites);
@@ -196,6 +208,7 @@ api.route("/", brainstorm);
 api.route("/", persona);
 api.route("/", messages);
 api.route("/", chat);
+api.route("/", turns);
 api.route("/", transcribe);
 api.route("/", documents);
 api.route("/", bundles);
@@ -248,6 +261,12 @@ app.route("/", api);
 // The Node entry (src/node.ts) serves this same app. Everything below the
 // default export stays Cloudflare-only.
 export { app };
+
+// The Durable Object a conversation's turn runs in on Cloudflare, bound as
+// `TURN_ROOMS`. Exported from here because Cloudflare looks for it on the
+// Worker's main module, and built from `app` because a turn is this API
+// answering the request that asked for it. Node never constructs it.
+export const TurnRoom = turnRoom(replay);
 
 // The Worker now has two entry points. `fetch` is the API, unchanged.
 // `scheduled` is the routine engine: it wakes on the cron trigger, asks which

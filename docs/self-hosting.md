@@ -683,6 +683,12 @@ set `ALLOWED_ORIGIN` to the exact origin your frontend will be served from. The
 real `wrangler.toml` is gitignored precisely because it carries an account id —
 commit the `.example`, never the file.
 
+Keep the `[[durable_objects.bindings]]` and `[[migrations]]` blocks from the
+example. They give each conversation a `TurnRoom` Durable Object, which is what
+lets an answer finish after its tab is closed. Without them a turn ends with
+the request that asked for it. They need nothing created up front: the first
+deploy creates the class.
+
 Create the bucket named in the config, then set the seven secrets:
 
 ```bash

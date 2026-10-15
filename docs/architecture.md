@@ -444,6 +444,25 @@ it — or after two hours with what it has. With `browser_access = 'site'` a run
 carries no cookie jar (`browser_tasks.jarless`, read again when a waiting task
 starts) and only that site's saved login.
 
+**A turn is not its request.** `POST /chat/stream` and `POST /chat/confirm/:id`
+are handed to a turn host before the route runs (`middleware/detach.ts`), and
+the host replays the request against the same app, holding its abort signal and
+every byte of its SSE body (`lib/turns/`). The browser that asked reads a
+subscription. Closing the tab, or opening another conversation, closes that
+subscription and nothing else: the turn finishes, its reply is written as it
+always was, and a browser that comes back is shown the turn from its first event
+(`GET /sessions/:id/turn/stream`). Stop is a request of its own
+(`POST /sessions/:id/turn/stop`). It aborts the turn's signal, waits for the
+route to save the words already written, and answers with that row, which
+records `outcome = 'stopped'` (0101). The host is this process on Node, and on
+Cloudflare a Durable Object per conversation (`TURN_ROOMS`). There the turn runs
+inside an alarm, the one invocation nobody is connected to. A Cloudflare deploy
+without the binding keeps the old behaviour: the turn ends with its request.
+
+After a turn, the host also follows any browser run the conversation has open,
+every five seconds until it ends. With the tab closed, that makes it a third
+clock beside the two below.
+
 **Two clocks bring the answer back, and one step delivers it.** Each
 conversation has one `browser_sessions` row per person — which provider session
 it is, and who has the controls — and each `browse` is a run inside that session

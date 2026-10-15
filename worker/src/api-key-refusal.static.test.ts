@@ -261,6 +261,11 @@ const OPEN_TO_A_KEY = new Set([
   "routes/transcribe.ts POST /transcribe",
   "routes/trash.ts GET /trash",
   "routes/trash.ts POST /trash/:kind/:id/restore",
+  // Reading and stopping a turn the same caller could start. Nothing here
+  // outlives the request — a stop ends work, it never starts any.
+  "routes/turns.ts GET /sessions/:id/turn",
+  "routes/turns.ts GET /sessions/:id/turn/stream",
+  "routes/turns.ts POST /sessions/:id/turn/stop",
   "routes/usage.ts GET /usage",
   "routes/usage.ts GET /usage/credits/ledger",
   "routes/usage.ts GET /usage/workspace",

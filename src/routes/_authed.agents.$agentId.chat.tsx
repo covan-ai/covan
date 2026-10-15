@@ -478,13 +478,23 @@ function ChatTab() {
    * visible from a prop.
    */
   const [thinkingMs, setThinkingMs] = useState<number | null>(null);
-  // The session whose revealed text is waiting for the server's copy to arrive.
-  // Separate from `replyingIn` because the two end at different moments: the
-  // composer is handed back the instant a stream stops, while the text that was
-  // already on screen has to stay there until the refetch replaces it. Both
-  // used to be the same flag, so the "keep it visible" delay below was keeping
-  // nothing visible — the answer blinked out and blinked back 700ms later.
-  const [settlingIn, setSettlingIn] = useState<string | null>(null);
+  /**
+   * The words a person stopped, held on screen until the server's row of them
+   * is in the transcript.
+   *
+   * This is what stopping used to lose. The streamed text was wiped 700ms
+   * after stop and the transcript refetched, and the reply was only there if
+   * the server had already saved it — a race it often lost, with nothing to
+   * refetch afterwards. Now the words stay until a reply this screen had not
+   * seen before (`before`) arrives, whenever that is: in the stop's own
+   * answer, or on any later refetch.
+   */
+  const [kept, setKept] = useState<{
+    sessionId: string;
+    text: string;
+    steps: AgentStepView[];
+    before: Set<string>;
+  } | null>(null);
   /**
    * The reply that stopped at its length limit, and is offering to go on.
    *
@@ -564,7 +574,7 @@ function ChatTab() {
   // The same fact, for the one thing that does render from it: the jump button.
   //
   // Holds the conversation somebody has scrolled up inside, rather than a bare
-  // boolean — the shape `replyingIn` and `settlingIn` above already use, and
+  // boolean — the shape `replyingIn` above already uses, and
   // for the same reason. A boolean would need clearing when the reader opens
   // another conversation, which is an effect writing state for no reason other
   // than that another piece of state moved; scoped to a session it is simply
@@ -630,6 +640,14 @@ function ChatTab() {
     followEnd(el);
   };
 
+  // Shown until the transcript holds a reply it did not hold when the words
+  // were kept — the server's row of them.
+  const keptShown =
+    kept !== null &&
+    kept.sessionId === active?.id &&
+    replyingIn !== active?.id &&
+    !allMessages.some((m) => m.role === "assistant" && !kept.before.has(m.id));
+
   const invalidateMessages = (sessionId: string) => {
     void queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
     void queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -655,6 +673,14 @@ function ChatTab() {
        * the `messages` table, which is the whole difference.
        */
       confirm?: { id: string; approve: boolean };
+      /**
+       * Pick up a turn the server is already running, rather than starting
+       * one: this browser asked, then left the conversation or closed the
+       * tab, and has come back while the answer is still being written. The
+       * server replays the turn from its first event, so everything below
+       * draws it exactly as it would have been drawn live.
+       */
+      resume?: boolean;
     } = {},
   ) => {
     if (streamAbort.current) return;
@@ -663,7 +689,7 @@ function ChatTab() {
       reconcileTimer.current = null;
     }
     setReplyingIn(sessionId);
-    setSettlingIn(null);
+    setKept(null);
     // Whatever was cut off is being dealt with now, one way or the other.
     setTruncated(null);
     setStoppedShort(null);
@@ -705,32 +731,62 @@ function ChatTab() {
      */
     let reasoningStart: number | null = null;
     let reasoningDone = false;
+    // Set when the server says this conversation is already answering — from
+    // another tab, or a send that raced a reconnect. Acted on in `finally`,
+    // once this stream has let go of `streamAbort`.
+    let joinRunning = false;
+    // This stream's steps by index, beside `liveSteps`, so a stream that ends
+    // without a final event can keep them on screen with its words — state
+    // read from here would be the render before last.
+    const seenSteps = new Map<number, AgentStepView>();
+    // Set when the body ended without `done` or `error`. Acted on in `finally`.
+    let dropped = false;
 
     try {
       const token = await getAccessToken();
-      const res = await fetch(
-        opts.confirm
-          ? `${import.meta.env.VITE_API_URL}/chat/confirm/${opts.confirm.id}`
-          : `${import.meta.env.VITE_API_URL}/chat/stream`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify(
+      const auth: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = opts.resume
+        ? await fetch(`${import.meta.env.VITE_API_URL}/sessions/${sessionId}/turn/stream`, {
+            headers: auth,
+            signal: controller.signal,
+          })
+        : await fetch(
             opts.confirm
-              ? { approve: opts.confirm.approve }
-              : {
-                  sessionId,
-                  ...(opts.continuing ? { continue: true } : {}),
-                  ...(opts.regenerate ? { regenerate: true } : {}),
-                  ...(opts.model ? { model: opts.model } : {}),
-                },
-          ),
-          signal: controller.signal,
-        },
-      );
+              ? `${import.meta.env.VITE_API_URL}/chat/confirm/${opts.confirm.id}`
+              : `${import.meta.env.VITE_API_URL}/chat/stream`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...auth },
+              body: JSON.stringify(
+                opts.confirm
+                  ? { approve: opts.confirm.approve }
+                  : {
+                      sessionId,
+                      ...(opts.continuing ? { continue: true } : {}),
+                      ...(opts.regenerate ? { regenerate: true } : {}),
+                      ...(opts.model ? { model: opts.model } : {}),
+                    },
+              ),
+              signal: controller.signal,
+            },
+          );
+
+      // Nothing to pick up: the turn finished between asking whether it was
+      // running and asking for it. Its row is in the transcript by now.
+      if (opts.resume && res.status === 204) {
+        setThinking(false);
+        setReplyingIn(null);
+        invalidateMessages(sessionId);
+        return;
+      }
+
+      if (res.status === 409 && !opts.resume) {
+        toast.message("This conversation is still answering. Showing that answer instead.");
+        setThinking(false);
+        setReplyingIn(null);
+        joinRunning = true;
+        return;
+      }
 
       if (res.status === 402) {
         // Out of credits. The user's message is already saved, so the
@@ -873,6 +929,7 @@ function ChatTab() {
             // Upsert by index: every step arrives twice, once running and
             // once settled, and the second is the same row changing rather
             // than a new one.
+            seenSteps.set(step.index, step);
             setLiveSteps((current) => {
               const at = current.findIndex((s) => s.index === step.index);
               if (at === -1) return [...current, step];
@@ -931,7 +988,7 @@ function ChatTab() {
             // drawn in, and the answer did not exist anywhere else until the
             // refetch landed a round trip later — so it blinked out and back,
             // every turn, on the product's main screen. It is the same defect
-            // `settlingIn` was added for on the dropped-connection path; the
+            // `kept` now covers on the stopped and dropped paths; the
             // path that works had it too.
             //
             // `mergeRealtimeMessage` rather than a bare append: it is already
@@ -983,22 +1040,17 @@ function ChatTab() {
       }
 
       if (!terminalSeen && !controller.signal.aborted) {
+        // The body ended with no final event. Where turns run on the server
+        // that is usually only this connection going — the turn is still
+        // being written, and `finally` picks it back up. Until it knows, the
+        // words already here stay here, as a stopped reply's do.
+        dropped = true;
         setThinking(false);
         setReplyingIn(null);
+        if (!opts.continuing) keepWords(sessionId, partial, [...seenSteps.values()]);
         setContinuingId(null);
-        // The server persists the partial (service-role) when the connection
-        // drops before a terminal event; keep the revealed text visible until
-        // the refetch reconciles so it doesn't flash out.
-        const hadPartial = partial.trim().length > 0;
-        setSettlingIn(hadPartial ? sessionId : null);
-        if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);
-        reconcileTimer.current = window.setTimeout(() => {
-          setSettlingIn(null);
-          setStreamText("");
-          setThinkingText("");
-          invalidateMessages(sessionId);
-        }, 700);
-        if (hadPartial) toast.error("The connection dropped before the reply finished.");
+        setStreamText("");
+        setThinkingText("");
       }
     } catch (err) {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
@@ -1011,17 +1063,59 @@ function ChatTab() {
       setThinkingText("");
       setThinking(false);
       setReplyingIn(null);
-      setSettlingIn(null);
       setContinuingId(null);
     } finally {
       streamAbort.current = null;
+      if (joinRunning) void streamReply(sessionId, { resume: true });
+      if (dropped) void recoverFromDrop(sessionId, partial);
     }
   };
 
-  // Stop streaming and keep whatever has been revealed so far. The server
-  // persists the partial (service-role) on abort, so the client only needs
-  // to reconcile from it — keep the revealed text visible until the refetch
-  // lands so it doesn't flash out.
+  /**
+   * Hold the words of a reply that stopped short on screen until the server's
+   * row of them arrives. See `kept`.
+   */
+  const keepWords = (sessionId: string, text: string, steps: AgentStepView[]) => {
+    if (text.trim().length === 0 && steps.length === 0) return;
+    const before = new Set(
+      (queryClient.getQueryData<Message[]>(["messages", sessionId]) ?? [])
+        .filter((m) => m.role === "assistant")
+        .map((m) => m.id),
+    );
+    setKept({ sessionId, text, steps, before });
+  };
+
+  /**
+   * After a stream ended with no final event: rejoin the turn if the server is
+   * still writing it, and otherwise say the connection dropped and reload the
+   * transcript, where whatever the server saved of it now is.
+   */
+  const recoverFromDrop = async (sessionId: string, partialText: string) => {
+    const running = await api.sessions
+      .turn(sessionId)
+      .then(({ turn }) => Boolean(turn?.running && turn.mine))
+      .catch(() => false);
+    if (running) {
+      void streamReply(sessionId, { resume: true });
+      return;
+    }
+    invalidateMessages(sessionId);
+    if (partialText.trim().length > 0) {
+      toast.error("The connection dropped before the reply finished.");
+    }
+  };
+
+  /**
+   * Stop the answer where it is, and keep what it had written.
+   *
+   * Two things, because a turn now runs on the server rather than in this
+   * request: closing this connection only stops this screen reading it, and
+   * `stopTurn` is what stops the turn. It answers once the server has saved
+   * the words, with the row it saved, which takes the place of the words on
+   * screen without a gap. Until then — and on a deployment whose turns still
+   * end with their request, where closing the connection is the stop — the
+   * words are held on screen by `kept`, never wiped on a timer.
+   */
   const stop = () => {
     if (!replyingIn) return;
     const sessionId = replyingIn;
@@ -1030,17 +1124,37 @@ function ChatTab() {
     // microtask later, and a resend started in between would find a stale
     // handle and return without doing anything.
     streamAbort.current = null;
+    // A continuation draws its words onto the reply above rather than below
+    // it; the refetch after the stop is what brings them back.
+    if (continuingId === null) keepWords(sessionId, streamText, liveSteps);
     setThinking(false);
     setReplyingIn(null);
     setContinuingId(null);
-    setSettlingIn(sessionId);
+    setStreamText("");
+    setThinkingText("");
+    setLiveSteps([]);
     if (reconcileTimer.current) window.clearTimeout(reconcileTimer.current);
-    reconcileTimer.current = window.setTimeout(() => {
-      setSettlingIn(null);
-      setStreamText("");
-      setThinkingText("");
-      invalidateMessages(sessionId);
-    }, 700);
+    reconcileTimer.current = null;
+
+    void api.sessions
+      .stopTurn(sessionId)
+      .then(({ stopped, message }) => {
+        if (message) {
+          queryClient.setQueryData<Message[]>(["messages", sessionId], (old) =>
+            settleMessage(old ?? [], message),
+          );
+        }
+        invalidateMessages(sessionId);
+        // Nothing was running on the server, so the closed connection was the
+        // stop, and the server is saving the words on its own time. One more
+        // look a moment later; `kept` covers the screen until then.
+        if (!stopped) {
+          reconcileTimer.current = window.setTimeout(() => invalidateMessages(sessionId), 2500);
+        }
+      })
+      .catch(() => {
+        reconcileTimer.current = window.setTimeout(() => invalidateMessages(sessionId), 2500);
+      });
   };
 
   const submit = async (raw: string) => {
@@ -1340,6 +1454,37 @@ function ChatTab() {
    * about whether anything is being read.
    */
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+
+  /**
+   * Pick a turn back up when its conversation is opened again.
+   *
+   * The turn runs on the server now, so the person who asked, opened another
+   * conversation and came back — or closed the tab and reopened it — finds the
+   * answer still being written, and is shown it from the start rather than an
+   * empty space under their question until it lands. Only their own turn: in
+   * a shared conversation the others see the reply arrive when it is saved,
+   * as they always have, and have no stop button to press on a turn that runs
+   * with somebody else's standing.
+   */
+  const resumeIfRunning = useStableCallback((sessionId: string) => {
+    if (streamAbort.current) return;
+    api.sessions
+      .turn(sessionId)
+      .then(({ turn }) => {
+        if (!turn?.running || !turn.mine || streamAbort.current) return;
+        // Somebody may have moved on again while the answer was on its way.
+        if (active?.id !== sessionId) return;
+        void streamReply(sessionId, { resume: true });
+      })
+      .catch(() => {
+        // Not knowing is the old behaviour: the reply appears when it lands.
+      });
+  });
+  const resumeSessionId = active?.id;
+  useEffect(() => {
+    if (resumeSessionId) resumeIfRunning(resumeSessionId);
+  }, [resumeSessionId, resumeIfRunning]);
+
   const onSpeak = useStableCallback((id: string, text: string) => {
     setSpeakingId(id);
     tts.speak(text);
@@ -1739,18 +1884,34 @@ function ChatTab() {
 
               {/* Not while a continuation is running: those words are being
                   drawn on the end of the reply above instead. */}
-              {continuingId === null &&
-                (replyingIn === active?.id || settlingIn === active?.id) && (
+              {continuingId === null && replyingIn === active?.id && (
+                <LiveAnswer
+                  className="mt-5"
+                  streamText={streamText}
+                  thinkingText={thinkingText}
+                  thinkingMs={thinkingMs}
+                  thinking={thinking}
+                  steps={liveSteps}
+                  streaming={replyingIn === active?.id}
+                />
+              )}
+
+              {/* A stopped reply's words, until its row is in the transcript
+                  above — see `kept`. Not while another answer is streaming
+                  here: starting one clears this anyway. */}
+              {keptShown && kept && (
+                <div className="mt-5">
                   <LiveAnswer
-                    className="mt-5"
-                    streamText={streamText}
-                    thinkingText={thinkingText}
-                    thinkingMs={thinkingMs}
-                    thinking={thinking}
-                    steps={liveSteps}
-                    streaming={replyingIn === active?.id}
+                    streamText={kept.text}
+                    thinkingText=""
+                    thinkingMs={null}
+                    thinking={false}
+                    steps={kept.steps}
+                    streaming={false}
                   />
-                )}
+                  <p className="mt-3 text-xs text-muted-foreground">You stopped this answer.</p>
+                </div>
+              )}
             </div>
           )}
 

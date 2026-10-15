@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildToolContext, creditHold, turnSpend } from "./chat-turn";
+import { buildToolContext, creditHold, salvagePartial, turnSpend } from "./chat-turn";
 import type { Entitlements } from "../lib/entitlements";
 import type { ToolEnv } from "../lib/harness/registry";
 
@@ -203,5 +203,47 @@ describe("creditHold", () => {
       turnSpend(),
     );
     expect(credit.mayContinue).toBeUndefined();
+  });
+});
+
+/**
+ * What a reply keeps when it ends early, and what it says about how it ended.
+ *
+ * `stopped` exists because the only other word for a reply with words in it
+ * was `answered`, and a reply somebody cut off mid-sentence then read, after a
+ * reload, as one that had finished.
+ */
+describe("salvagePartial", () => {
+  const service = {
+    from: () => ({ upsert: async () => ({ error: null }) }),
+  } as unknown as SupabaseClient;
+
+  const salvage = async (text: string, stopped?: boolean) => {
+    const spend = turnSpend();
+    spend.text = text;
+    const persist = vi.fn(async () => ({ id: "m1" }));
+    await salvagePartial({ service, spend, persisted: false, persist, stopped });
+    return persist;
+  };
+
+  it("says a reply a person stopped was stopped", async () => {
+    const persist = await salvage("Half of an answ", true);
+    expect(persist).toHaveBeenCalledWith(
+      "Half of an answ",
+      expect.objectContaining({ outcome: "stopped" }),
+    );
+  });
+
+  it("still calls a reply cut short by anything else answered", async () => {
+    const persist = await salvage("Half of an answ");
+    expect(persist).toHaveBeenCalledWith(
+      "Half of an answ",
+      expect.objectContaining({ outcome: "answered" }),
+    );
+  });
+
+  it("keeps nothing when nothing was said or done, stopped or not", async () => {
+    const persist = await salvage("   ", true);
+    expect(persist).not.toHaveBeenCalled();
   });
 });

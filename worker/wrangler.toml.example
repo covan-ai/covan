@@ -96,6 +96,28 @@ name = "RATE_LIMIT_EXPENSIVE"
 namespace_id = "1002"
 simple = { limit = 20, period = 60 }
 
+# Where a chat turn runs, so it finishes after the tab that asked is closed —
+# or after its person opens another conversation, which ends the request just
+# the same. A Worker invocation ends with its connection; an alarm on a Durable
+# Object is the one Cloudflare invocation nobody is connected to, and it may
+# run for fifteen minutes. One object per conversation (`src/lib/turns`).
+#
+# Leave both blocks out and turns behave as they always did: they end with the
+# request. SQLite-backed, so it works on Workers Free as well as Paid.
+[[durable_objects.bindings]]
+name = "TURN_ROOMS"
+class_name = "TurnRoom"
+
+[[migrations]]
+tag = "v1-turn-rooms"
+new_sqlite_classes = ["TurnRoom"]
+
+# A turn's CPU is mostly waiting on the model, but a long one with many tool
+# results parses a lot of JSON. Workers Paid allows up to five minutes; the
+# default is thirty seconds, per invocation, and the alarm is one invocation.
+# [limits]
+# cpu_ms = 300000
+
 [[r2_buckets]]
 binding = "DOCS"
 bucket_name = "covan-docs"

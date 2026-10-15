@@ -535,3 +535,60 @@ export async function pollConversationBrowser(
     delivered,
   };
 }
+
+/**
+ * The server's own clock for a conversation's browser run, for when no tab is
+ * open to be one.
+ *
+ * The open tab settles a finished run within three seconds; with the tab
+ * closed the cron did, every five minutes, behind a four-minute poll interval
+ * — so an answer that took the browser two minutes arrived after seven, and
+ * looked to the person who came back like a run that had stopped. The turn's
+ * host (`lib/turns`) calls this every few seconds after a turn that started a
+ * browser, until the run has ended.
+ *
+ * Narrower than `pollConversationBrowser` on purpose. No heartbeat: R21 makes
+ * human mode last while a *tab* is open, and the server calling is not
+ * somebody being there. No events: the cursor is the panel's, and draining it
+ * here would take lines from the tab that is about to show them. Only the
+ * settle, which `settleBrowserTask`'s conditional claim makes safe to race
+ * against the tab and the cron.
+ *
+ * @returns whether there is still a run to follow.
+ */
+export async function settleConversationBrowser(
+  env: RoutineEnv,
+  input: { chatSessionId: string; userId: string },
+  overrides: Partial<LiveDeps> = {},
+): Promise<{ running: boolean }> {
+  if (!hasBrowserKey(env)) return { running: false };
+  const db = overrides.db ?? serviceClient(env);
+  const deps: SettleDeps = {
+    db,
+    now: overrides.now ?? (() => new Date()),
+    deliver: overrides.deliver ?? deliverBrowserTask,
+  };
+
+  const task = await readRunningTask(db, input);
+  if (!task) return { running: false };
+  // Queued behind another run: nothing to ask the provider about yet, and the
+  // cron is what starts it.
+  if (task.status === "queued") return { running: true };
+  const runId = task.provider_run_id || task.provider_task_id;
+  if (!runId) return { running: true };
+
+  const status = await runStatus(env, runId, { signal: AbortSignal.timeout(10_000) });
+  if (status.kind === "error") {
+    console.warn("could not read a browser run's status", status.status);
+    return { running: true };
+  }
+  if (!isTerminalRun(status.value.status)) return { running: true };
+
+  const summary = await runSummary(env, runId, { signal: AbortSignal.timeout(10_000) });
+  if (summary.kind === "error") {
+    console.warn("could not read a finished browser run", summary.status);
+    return { running: true };
+  }
+  await settleBrowserTask(env, task, finishedRun(summary.value), deps);
+  return { running: false };
+}

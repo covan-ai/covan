@@ -71,6 +71,8 @@ const browserLive = vi.fn();
 const takeoverCurrent = vi.fn();
 const takeoverOpen = vi.fn();
 const tuneSession = vi.fn();
+const turnStatus = vi.fn();
+const stopTurn = vi.fn();
 /**
  * What `/me` answers. A variable rather than a literal so the dial's tests can
  * add `modelSpecs` — without it every model reads as one that does not
@@ -90,7 +92,14 @@ vi.mock("@/lib/api-client", () => ({
   assetSrc: (path: string) => (path ? `https://api.test${path}` : ""),
   api: {
     me: () => Promise.resolve(meReply),
-    sessions: { messages: listMessages, setVisibility: vi.fn(), browserTasks, tune: tuneSession },
+    sessions: {
+      messages: listMessages,
+      setVisibility: vi.fn(),
+      browserTasks,
+      tune: tuneSession,
+      turn: turnStatus,
+      stopTurn,
+    },
     browser: { live: browserLive, takeOver: vi.fn(), handBack: vi.fn(), stop: vi.fn() },
     takeovers: { takeOver: vi.fn(), open: takeoverOpen, current: takeoverCurrent, close: vi.fn() },
     messages: {
@@ -305,6 +314,9 @@ beforeEach(() => {
   stubMatchMedia();
   listMessages.mockResolvedValue([question]);
   createMessage.mockResolvedValue(question);
+  // No turn running on the server, and a stop that finds one and keeps nothing.
+  turnStatus.mockResolvedValue({ turn: null });
+  stopTurn.mockResolvedValue({ stopped: true, message: null });
   // No browser beside the conversation, which is almost every conversation.
   browserTasks.mockResolvedValue({ tasks: [], session: null, events: [], delivered: false });
   browserLive.mockResolvedValue({ liveUrl: "https://live.example/view", liveState: "agent" });
@@ -589,6 +601,89 @@ describe("what a reply looks like on its way in", () => {
     // Stopped: the text stays until the server's copy replaces it, but it is
     // no longer arriving, so it no longer claims to be.
     await waitFor(() => expect(container.querySelector(".stream-live")).not.toBeInTheDocument());
+  });
+});
+
+/**
+ * A turn runs on the server now, whoever is watching it.
+ *
+ * Two things that used to be lost: the words a person stopped, which were
+ * wiped from the screen on a 700ms timer and came back only if the server had
+ * already saved them; and the answer being written while the person was in
+ * another conversation, which was simply never finished.
+ */
+describe("a turn that outlives the screen", () => {
+  const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
+
+  it("keeps the words a person stopped, and asks the server to stop the turn", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(openStream())),
+    );
+    // The server is still saving when it answers: nothing kept yet.
+    stopTurn.mockResolvedValue({ stopped: true, message: null });
+    await renderChat();
+
+    await userEvent.type(composer(), "how much?{Enter}");
+    await screen.findByText("Forty");
+    fireEvent.keyDown(composer(), { key: "Escape" });
+
+    await waitFor(() => expect(stopTurn).toHaveBeenCalledWith("session-1"));
+    expect(await screen.findByText("You stopped this answer.")).toBeInTheDocument();
+    // Long past the 700ms the words used to last.
+    await act(() => new Promise((r) => setTimeout(r, 900)));
+    expect(screen.getByText("Forty")).toBeInTheDocument();
+  });
+
+  it("puts the row the server kept where the stopped words were", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(openStream())),
+    );
+    const kept = {
+      id: "msg-kept",
+      role: "assistant" as const,
+      content: "Forty",
+      createdAt: Date.parse("2026-09-17T10:00:05Z"),
+      outcome: "stopped",
+    };
+    stopTurn.mockResolvedValue({ stopped: true, message: kept });
+    await renderChat();
+
+    await userEvent.type(composer(), "how much?{Enter}");
+    await screen.findByText("Forty");
+    listMessages.mockResolvedValue([question, kept]);
+    fireEvent.keyDown(composer(), { key: "Escape" });
+
+    // Once, as the stored reply's own line rather than beside a second copy.
+    await waitFor(() => expect(screen.getAllByText("Forty")).toHaveLength(1));
+    expect(screen.getAllByText("You stopped this answer.")).toHaveLength(1);
+  });
+
+  it("picks up the answer still being written when the conversation is opened again", async () => {
+    turnStatus.mockResolvedValue({ turn: { running: true, mine: true, startedAt: 0 } });
+    const fetchMock = vi.fn(() => Promise.resolve(openStream()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+
+    expect(await screen.findByText("Forty")).toBeInTheDocument();
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toMatch(
+      /\/sessions\/session-1\/turn\/stream$/,
+    );
+    expect(screen.getByLabelText("Stop generating")).toBeInTheDocument();
+  });
+
+  it("leaves somebody else's turn alone in a shared conversation", async () => {
+    turnStatus.mockResolvedValue({ turn: { running: true, mine: false, startedAt: 0 } });
+    const fetchMock = vi.fn(() => Promise.resolve(openStream()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+    await waitFor(() => expect(turnStatus).toHaveBeenCalledWith("session-1"));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Stop generating")).not.toBeInTheDocument();
   });
 });
 

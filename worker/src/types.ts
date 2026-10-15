@@ -326,6 +326,14 @@ export type Bindings = SyncEnv & {
   RATE_LIMIT_STANDARD_PER_MINUTE?: string;
   RATE_LIMIT_EXPENSIVE_PER_MINUTE?: string;
   /**
+   * Where a chat turn runs on Cloudflare, so it outlives the tab that asked —
+   * `[[durable_objects.bindings]]` in wrangler.toml, the `TurnRoom` class.
+   * Absent on Node, which runs turns in-process, and on a Cloudflare deploy
+   * that has not added it, where a turn still ends with its request. See
+   * `lib/turns`.
+   */
+  TURN_ROOMS?: DurableObjectNamespace;
+  /**
    * The address of the socket this request arrived on. Node only: `node.ts`
    * sets it on every request, and its presence is how `clientAddress` knows it
    * is not on Cloudflare — where `CF-Connecting-IP` is the address and this is

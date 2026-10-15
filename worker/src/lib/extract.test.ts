@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractDocumentText, hasIndexableText } from "./extract";
+import { ALLOWED_EXT, contentTypeFor, decodeFileText, hasIndexableText } from "./extract";
 
 const bytesOf = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
 
@@ -9,13 +9,24 @@ const bytesOf = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer
 const NUL = String.fromCharCode(0);
 const REPLACEMENT = String.fromCharCode(0xfffd);
 
-describe("extractDocumentText", () => {
+describe("decodeFileText", () => {
   it("decodes a text format", () => {
-    expect(extractDocumentText("notes.md", bytesOf("# Title"))).toBe("# Title");
+    expect(decodeFileText(bytesOf("# Title"))).toBe("# Title");
+  });
+});
+
+describe("what an upload may be", () => {
+  it("takes Office, OpenDocument, RTF and HTML files", () => {
+    for (const ext of ["docx", "pptx", "xlsx", "odt", "rtf", "html", "tsv", "pdf", "md"]) {
+      expect(ALLOWED_EXT.has(ext)).toBe(true);
+    }
   });
 
-  it("returns nothing for a PDF, whose text comes from the browser instead", () => {
-    expect(extractDocumentText("report.pdf", bytesOf("%PDF-1.7 ..."))).toBe("");
+  // Served as itself, an HTML or XML upload would be a page on this origin the
+  // moment the preview framed it.
+  it("serves markup as plain text", () => {
+    expect(contentTypeFor("page.html")).toBe("text/plain; charset=utf-8");
+    expect(contentTypeFor("feed.xml")).toBe("text/plain; charset=utf-8");
   });
 });
 

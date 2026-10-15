@@ -140,6 +140,55 @@ describe("the Knowledge explorer, on the workspace page", () => {
     expect(within(not).getByText("Not indexed")).toBeInTheDocument();
   });
 
+  // An upload returns before its passages are in, so "Not indexed" would be the
+  // wrong thing to say about a file that is being indexed right now.
+  it("says where each document's indexing has got", async () => {
+    listDocuments.mockResolvedValue([
+      {
+        ...documents[0],
+        id: "q",
+        name: "queued.docx",
+        chunkCount: 0,
+        indexed: false,
+        indexStatus: "queued",
+      },
+      {
+        ...documents[0],
+        id: "i",
+        name: "running.pptx",
+        chunkCount: 0,
+        indexed: false,
+        indexStatus: "indexing",
+        indexProgress: { done: 128, total: 512 },
+      },
+      {
+        ...documents[0],
+        id: "f",
+        name: "broken.xlsx",
+        chunkCount: 0,
+        indexed: false,
+        indexStatus: "failed",
+        indexError: "this does not read as a .xlsx file",
+      },
+      { ...documents[0], id: "p", name: "book.txt", indexStatus: "partial" },
+    ]);
+    renderExplorer();
+    await screen.findByText("queued.docx");
+
+    const row = (name: string) =>
+      screen
+        .getByLabelText(new RegExp(`open ${name.replace(".", "\\.")}`, "i"))
+        .closest("div") as HTMLElement;
+    expect(within(row("queued.docx")).getByText("Queued")).toBeInTheDocument();
+    expect(within(row("running.pptx")).getByText("Indexing 25%")).toBeInTheDocument();
+    const failed = within(row("broken.xlsx")).getByText("Failed");
+    expect(failed.closest("[title]")).toHaveAttribute(
+      "title",
+      "this does not read as a .xlsx file",
+    );
+    expect(within(row("book.txt")).getByText("Partly indexed")).toBeInTheDocument();
+  });
+
   it("filters by name, and says so rather than looking empty", async () => {
     renderExplorer();
     await screen.findByText("annual-report.pdf");

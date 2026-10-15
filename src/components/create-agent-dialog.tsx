@@ -26,7 +26,7 @@ import {
 } from "@/lib/agent-meta";
 import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { cn } from "@/lib/utils";
-import { validateUpload } from "@/lib/uploads";
+import { ACCEPT, validateUpload } from "@/lib/uploads";
 import { toast } from "sonner";
 
 /**
@@ -294,7 +294,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
               type="file"
               multiple
               className="hidden"
-              accept=".md,.markdown,.txt,.csv,.json,.pdf"
+              accept={ACCEPT}
               onChange={(e) => handleFiles(e.target.files)}
             />
           </label>

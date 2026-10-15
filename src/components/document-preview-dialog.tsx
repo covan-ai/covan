@@ -22,7 +22,7 @@ function extensionOf(name: string): string {
 /**
  * How much of a file this will draw.
  *
- * Uploads cap at 10 MB, which is about two million characters of prose and a
+ * Uploads cap at 100 MB, which is far more prose than a tab can draw, and a
  * hundred thousand rows of CSV — either would lock the tab for seconds and
  * neither would be read. The cap is announced rather than silent, because a
  * preview that quietly stops is a preview that lies about the file.
@@ -31,6 +31,31 @@ const MAX_TEXT_CHARS = 200_000;
 const MAX_CSV_ROWS = 300;
 
 type Tab = "file" | "indexed";
+
+/**
+ * The formats the File tab can draw: a PDF in the browser's viewer, the rest
+ * as text. Word, PowerPoint, Excel and the like are zip archives that would
+ * render as noise, so for those the dialog opens on what the agent reads.
+ */
+const DRAWABLE = new Set([
+  "pdf",
+  "md",
+  "markdown",
+  "txt",
+  "csv",
+  "tsv",
+  "json",
+  "xml",
+  "log",
+  "html",
+  "htm",
+]);
+
+/**
+ * Past this the File tab does not fetch the file. Uploads may be 100 MB now, and
+ * downloading that into a tab to show its first page is not a preview.
+ */
+const MAX_DRAWN_BYTES = 25 * 1024 * 1024;
 
 /**
  * One document, both ways.
@@ -59,8 +84,9 @@ export function DocumentPreviewDialog({
   name: string;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("file");
   const ext = extensionOf(name);
+  const drawable = DRAWABLE.has(ext);
+  const [tab, setTab] = useState<Tab>(drawable ? "file" : "indexed");
 
   const preview = useQuery({
     queryKey: ["document-preview", documentId],
@@ -71,7 +97,7 @@ export function DocumentPreviewDialog({
   const bytes = useQuery({
     queryKey: ["document-bytes", documentId],
     queryFn: () => api.documents.bytes(documentId),
-    enabled: tab === "file",
+    enabled: tab === "file" && drawable && !!preview.data && preview.data.size <= MAX_DRAWN_BYTES,
     // A document never changes in place — a re-upload is a new row — so what
     // came back is good for as long as the dialog is open, and for the next
     // opening too.
@@ -157,12 +183,24 @@ export function DocumentPreviewDialog({
 
         <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
           {tab === "file" ? (
-            <FileTab
-              ext={ext}
-              blob={bytes.data?.blob}
-              loading={bytes.isPending}
-              failed={bytes.isError}
-            />
+            !drawable ? (
+              <Note>
+                A .{ext} file can't be shown here. Download it to open it, or see what the agent
+                reads of it in the next tab.
+              </Note>
+            ) : preview.data && preview.data.size > MAX_DRAWN_BYTES ? (
+              <Note>
+                This file is too large to show here. Download it to open it, or see what the agent
+                reads of it in the next tab.
+              </Note>
+            ) : (
+              <FileTab
+                ext={ext}
+                blob={bytes.data?.blob}
+                loading={bytes.isPending}
+                failed={bytes.isError}
+              />
+            )
           ) : (
             <IndexedTab preview={preview.data} loading={preview.isPending} />
           )}

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { bundles } from "./bundles";
-import { MAX_EXTRACTED_TEXT_BYTES, MAX_UPLOAD_BYTES } from "../lib/extract";
+import { MAX_DIRECT_UPLOAD_BYTES, MAX_EXTRACTED_TEXT_BYTES } from "../lib/extract";
 
 // Real chunking, fake vectors: these tests are about what the route does with
 // the chunks, and nothing here should reach OpenAI.
@@ -151,10 +151,16 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
         }
         if (table === "documents") {
           return {
-            insert: () => ({
+            insert: (values: { index_status?: string }) => ({
               select: () => ({
                 single: async () => ({
-                  data: { id: "doc-1", name: "notes.md", size: 11 },
+                  data: {
+                    id: "doc-1",
+                    name: "notes.md",
+                    size: 11,
+                    created_at: "2026-10-15T00:00:00.000Z",
+                    index_status: values.index_status ?? null,
+                  },
                   error: null,
                 }),
               }),
@@ -178,7 +184,9 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
     return db;
   }
 
-  it("reports the chunks it just embedded, not zero", async () => {
+  // Indexing is the job's now (0105). The upload stores the file, keeps its
+  // text beside it for the job to read, and says the document is queued.
+  it("queues the document and keeps its text beside the file", async () => {
     const root = await mkdtemp(join(tmpdir(), "covan-upload-indexed-"));
     roots.push(root);
     const inserted: { length: number; rows?: unknown[] } = { length: 0 };
@@ -197,18 +205,18 @@ describe("POST /bundles/:id/documents/upload — what the response says about in
     );
 
     expect(res.status).toBe(201);
-    expect(inserted.length).toBeGreaterThan(0);
-    const body = (await res.json()) as { chunkCount: number; indexed: boolean };
-    expect(body.chunkCount).toBe(inserted.length);
-    expect(body.indexed).toBe(true);
+    const body = (await res.json()) as { chunkCount: number; indexStatus?: string };
+    expect(body.indexStatus).toBe("queued");
+    expect(body.chunkCount).toBe(0);
+    // Nothing was embedded in the request.
+    expect(inserted.length).toBe(0);
 
-    // Every row carries the document's name as `context`, so a lexical search
-    // for the document by name/title matches even when the passage text
-    // itself never says it.
-    expect(inserted.rows?.length).toBeGreaterThan(0);
-    for (const row of inserted.rows ?? []) {
-      expect((row as { context?: string }).context).toBe("notes.md");
-    }
+    const stored = await readdir(join(root, "bundle-1"));
+    const sidecar = stored.find((f) => f.endsWith("-notes.md.txt"));
+    expect(sidecar).toBeTruthy();
+    expect(await readFile(join(root, "bundle-1", sidecar!), "utf8")).toBe(
+      "a passage worth embedding",
+    );
   });
 });
 
@@ -415,11 +423,11 @@ describe("POST /bundles/:id/documents/upload — the size of the whole body", ()
     const form = new FormData();
     form.append(
       "file",
-      new File(["%PDF-1.7 " + "x".repeat(MAX_UPLOAD_BYTES - 64)], "report.pdf", {
+      new File(["%PDF-1.7 " + "x".repeat(MAX_DIRECT_UPLOAD_BYTES - 64)], "report.pdf", {
         type: "application/pdf",
       }),
     );
-    form.append("text", "Holiday policy. ".repeat(Math.floor(MAX_UPLOAD_BYTES / 16)));
+    form.append("text", "Holiday policy. ".repeat(Math.floor(MAX_DIRECT_UPLOAD_BYTES / 16)));
 
     const { res } = await send(form, { withLength: true });
 

@@ -1,6 +1,7 @@
 import type { Bindings, RoutineEnv } from "../../types";
 import { serviceClient } from "../supabase";
 import { advanceDocumentJob, type Advance } from "./engine";
+import { advanceIndexJob } from "../indexing/job";
 
 /**
  * What keeps a document job moving after the request that created it is gone.
@@ -103,6 +104,13 @@ export function resetLocalDocumentJobs(): void {
 
 /** The storage key holding which job this object drives. */
 const JOB = "job";
+/**
+ * The storage key holding which document's indexing this object drives, when
+ * it drives that instead (`lib/indexing/host.ts`). One class for both, because
+ * a new Durable Object class is a new binding and a migration tag in every
+ * deployment, and the two need exactly the same thing: an alarm per unit.
+ */
+const INDEX = "index";
 
 /**
  * The Durable Object that drives one document job on Cloudflare.
@@ -132,10 +140,35 @@ export class DocumentRoom implements DurableObject {
       if (current === null) await this.state.storage.setAlarm(Date.now());
       return Response.json({ ok: true });
     }
+    if (url.pathname === "/kick-index" && request.method === "POST") {
+      const documentId = url.searchParams.get("document");
+      if (!documentId) return Response.json({ error: "document is required" }, { status: 400 });
+      await this.state.storage.put(INDEX, documentId);
+      const current = await this.state.storage.getAlarm();
+      if (current === null) await this.state.storage.setAlarm(Date.now());
+      return Response.json({ ok: true });
+    }
     return new Response("not found", { status: 404 });
   }
 
   async alarm(): Promise<void> {
+    const documentId = await this.state.storage.get<string>(INDEX);
+    if (documentId) {
+      let next: Advance;
+      try {
+        next = await advanceIndexJob(serviceClient(this.env), this.env, documentId);
+      } catch (err) {
+        console.error(`index ${documentId}: alarm failed`, err);
+        next = { next: "at", at: Date.now() + 30_000 };
+      }
+      if (next.next === "none") {
+        await this.state.storage.deleteAll();
+        return;
+      }
+      await this.state.storage.setAlarm(next.next === "now" ? Date.now() : next.at);
+      return;
+    }
+
     const jobId = await this.state.storage.get<string>(JOB);
     if (!jobId) return;
 

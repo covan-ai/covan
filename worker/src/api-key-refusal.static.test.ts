@@ -192,6 +192,12 @@ const OPEN_TO_A_KEY = new Set([
   "routes/bundles.ts POST /agents/:id/bundles/:bundleId",
   "routes/bundles.ts DELETE /agents/:id/bundles/:bundleId",
   "routes/bundles.ts POST /bundles/:id/documents/upload",
+  // The same upload in parts. Revoking the key stops every later part, and an
+  // unfinished upload is nothing but bytes the store discards.
+  "routes/uploads.ts POST /bundles/:id/uploads",
+  "routes/uploads.ts PUT /uploads/parts",
+  "routes/uploads.ts POST /uploads/complete",
+  "routes/uploads.ts POST /uploads/abort",
   "routes/bundles.ts POST /admin/backfill-embeddings",
   "routes/chat.ts POST /chat/stream",
   "routes/chat.ts POST /chat/confirm/:id",

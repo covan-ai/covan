@@ -35,7 +35,10 @@ export function decodeText(bytes: Uint8Array): string {
   try {
     // `stream: true` keeps a sequence cut off at the end of a range read from
     // counting as invalid: it is held back rather than thrown on.
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: true });
+    return new TextDecoder("utf-8", { fatal: true } as TextDecoderConstructorOptions).decode(
+      bytes,
+      { stream: true },
+    );
   } catch {
     return decodeWindows1254(bytes);
   }
@@ -81,11 +84,36 @@ function decodeUtf16(bytes: Uint8Array, littleEndian: boolean): string {
  * (Windows punctuation) and the six Turkish letters at D0, DD, DE, F0, FD, FE.
  */
 const CP1254_HIGH: Record<number, number> = {
-  0x80: 0x20ac, 0x82: 0x201a, 0x83: 0x0192, 0x84: 0x201e, 0x85: 0x2026, 0x86: 0x2020,
-  0x87: 0x2021, 0x88: 0x02c6, 0x89: 0x2030, 0x8a: 0x0160, 0x8b: 0x2039, 0x8c: 0x0152,
-  0x91: 0x2018, 0x92: 0x2019, 0x93: 0x201c, 0x94: 0x201d, 0x95: 0x2022, 0x96: 0x2013,
-  0x97: 0x2014, 0x98: 0x02dc, 0x99: 0x2122, 0x9a: 0x0161, 0x9b: 0x203a, 0x9c: 0x0153,
-  0x9f: 0x0178, 0xd0: 0x011e, 0xdd: 0x0130, 0xde: 0x015e, 0xf0: 0x011f, 0xfd: 0x0131,
+  0x80: 0x20ac,
+  0x82: 0x201a,
+  0x83: 0x0192,
+  0x84: 0x201e,
+  0x85: 0x2026,
+  0x86: 0x2020,
+  0x87: 0x2021,
+  0x88: 0x02c6,
+  0x89: 0x2030,
+  0x8a: 0x0160,
+  0x8b: 0x2039,
+  0x8c: 0x0152,
+  0x91: 0x2018,
+  0x92: 0x2019,
+  0x93: 0x201c,
+  0x94: 0x201d,
+  0x95: 0x2022,
+  0x96: 0x2013,
+  0x97: 0x2014,
+  0x98: 0x02dc,
+  0x99: 0x2122,
+  0x9a: 0x0161,
+  0x9b: 0x203a,
+  0x9c: 0x0153,
+  0x9f: 0x0178,
+  0xd0: 0x011e,
+  0xdd: 0x0130,
+  0xde: 0x015e,
+  0xf0: 0x011f,
+  0xfd: 0x0131,
   0xfe: 0x015f,
 };
 
@@ -105,20 +133,62 @@ export function decodeWindows1254(bytes: Uint8Array): string {
 }
 
 const NAMED: Record<string, string> = {
-  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "–", mdash: "—",
-  hellip: "…", lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", laquo: "«", raquo: "»",
-  bull: "•", middot: "·", copy: "©", reg: "®", trade: "™", euro: "€", pound: "£",
-  deg: "°", times: "×", divide: "÷", ccedil: "ç", Ccedil: "Ç", ouml: "ö", Ouml: "Ö",
-  uuml: "ü", Uuml: "Ü", auml: "ä", Auml: "Ä", eacute: "é", Eacute: "É", egrave: "è",
-  agrave: "à", aacute: "á", iacute: "í", oacute: "ó", uacute: "ú", ntilde: "ñ", szlig: "ß",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ndash: "–",
+  mdash: "—",
+  hellip: "…",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  laquo: "«",
+  raquo: "»",
+  bull: "•",
+  middot: "·",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  euro: "€",
+  pound: "£",
+  deg: "°",
+  times: "×",
+  divide: "÷",
+  ccedil: "ç",
+  Ccedil: "Ç",
+  ouml: "ö",
+  Ouml: "Ö",
+  uuml: "ü",
+  Uuml: "Ü",
+  auml: "ä",
+  Auml: "Ä",
+  eacute: "é",
+  Eacute: "É",
+  egrave: "è",
+  agrave: "à",
+  aacute: "á",
+  iacute: "í",
+  oacute: "ó",
+  uacute: "ú",
+  ntilde: "ñ",
+  szlig: "ß",
 };
 
 /** `&amp;`, `&#305;`, `&#x131;` and the common named entities, decoded. */
 export function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[A-Za-z]+);/g, (whole, body: string) => {
     if (body[0] === "#") {
-      const code = body[1] === "x" || body[1] === "X" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+      const code =
+        body[1] === "x" || body[1] === "X"
+          ? parseInt(body.slice(2), 16)
+          : parseInt(body.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : whole;
     }
     return NAMED[body] ?? whole;
   });
@@ -127,7 +197,7 @@ export function decodeEntities(s: string): string {
 /** Runs of blank lines and trailing spaces, tidied. */
 export function tidy(s: string): string {
   return s
-    .replace(/[ \t ]+\n/g, "\n")
+    .replace(/[ \t\u00a0]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -153,7 +223,10 @@ export function htmlToText(html: string): string {
   s = s
     .replace(/<li[\s>]/gi, "\n- $&")
     .replace(/<(br|hr)\b[^>]*>/gi, "\n")
-    .replace(/<\/(p|div|section|article|li|tr|table|ul|ol|blockquote|pre|header|footer|main|nav)>/gi, "\n")
+    .replace(
+      /<\/(p|div|section|article|li|tr|table|ul|ol|blockquote|pre|header|footer|main|nav)>/gi,
+      "\n",
+    )
     .replace(/<\/t[dh]>/gi, " | ")
     .replace(/<[^>]+>/g, "");
   return tidy(decodeEntities(s).replace(/\n- +\n/g, "\n- "));
@@ -183,15 +256,15 @@ export function rtfToText(rtf: string): string {
     )
     .replace(/\\(par|line|sect|page)\b ?/g, "\n")
     .replace(/\\tab\b ?/g, "\t")
-    // Escaped braces and backslashes are text. Parked as control characters
+    // Escaped braces and backslashes are text. Parked as private-use characters
     // while the real braces and control words are swept, then put back.
-    .replace(/\\\{/g, "\u0001")
-    .replace(/\\\}/g, "\u0002")
-    .replace(/\\\\/g, "\u0003")
+    .replace(/\\\{/g, "")
+    .replace(/\\\}/g, "")
+    .replace(/\\\\/g, "")
     .replace(/\\[a-zA-Z]+-?\d* ?/g, "")
     .replace(/[{}]/g, "")
-    .replace(/\u0001/g, "{")
-    .replace(/\u0002/g, "}")
-    .replace(/\u0003/g, "\\");
+    .replace(//g, "{")
+    .replace(//g, "}")
+    .replace(//g, "\\");
   return tidy(s);
 }

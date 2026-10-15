@@ -32,7 +32,10 @@ alter table public.documents
   add column if not exists index_generation int,
   add column if not exists index_attempts int not null default 0,
   add column if not exists index_lease_until timestamptz,
-  add column if not exists index_next_run_at timestamptz;
+  add column if not exists index_next_run_at timestamptz,
+  -- The text was cut at the indexing limit (`MAX_INDEX_CHARS`). Known at the
+  -- first unit, which is when the text is read; said at the last, as `partial`.
+  add column if not exists index_truncated boolean not null default false;
 
 alter table public.documents drop constraint if exists documents_index_status_known;
 alter table public.documents add constraint documents_index_status_known
@@ -156,3 +159,47 @@ $$;
 
 revoke all on function public.claim_due_index_jobs(int, interval) from public, anon, authenticated;
 grant execute on function public.claim_due_index_jobs(int, interval) to service_role;
+
+-- ---- queue_document_index ------------------------------------------------------
+-- Reindex: put a document back in the queue from the start. A client cannot
+-- write the index columns, so this is the one door, and it checks what the
+-- documents policies would: the document is live and the caller can write in
+-- its workspace. A unit running right now (its lease held) is left alone —
+-- the document is already being indexed, and resetting the cursor under it
+-- would have the unit write its progress over the reset. Between units it is
+-- reset, and the next claim starts again at a higher generation.
+create or replace function public.queue_document_index(p_document_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_workspace_id uuid;
+begin
+  select b.workspace_id into v_workspace_id
+  from public.documents d
+  join public.knowledge_bundles b on b.id = d.bundle_id
+  where d.id = p_document_id and d.deleted_at is null;
+
+  if v_workspace_id is null then
+    raise exception 'no such document' using errcode = 'P0002';
+  end if;
+  if not public.can_write_in_workspace(v_workspace_id) then
+    raise exception 'you cannot reindex documents in this workspace' using errcode = '42501';
+  end if;
+
+  update public.documents
+     set index_status = 'queued',
+         index_cursor = 0,
+         index_total = null,
+         index_attempts = 0,
+         index_error = null,
+         index_truncated = false,
+         index_next_run_at = now()
+   where id = p_document_id
+     and (index_lease_until is null or index_lease_until < now());
+end $$;
+
+revoke all on function public.queue_document_index(uuid) from public, anon;
+grant execute on function public.queue_document_index(uuid) to authenticated, service_role;

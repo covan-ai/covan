@@ -4,7 +4,7 @@
  * The interface said `${(size / 1024).toFixed(0)} KB` everywhere it said
  * anything, which is fine for the notes file and wrong for the one the limit is
  * written for: a 4 MB PDF read "4096 KB", and a column of those is a column
- * nobody compares. Uploads cap at 10 MB, so MB is the top of the ladder and
+ * nobody compares. Uploads cap at 100 MB, so MB is the top of the ladder and
  * there is no GB case to get right.
  *
  * Rounded to one decimal above a kilobyte and to none below it, because "0.4 KB"

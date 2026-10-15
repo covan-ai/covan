@@ -76,10 +76,10 @@ describe("useChatUploads", () => {
     const { result } = renderHook(() => useChatUploads(agent));
 
     await act(async () => {
-      await result.current.addFiles([fileNamed("deck.pptx")]);
+      await result.current.addFiles([fileNamed("setup.exe")]);
     });
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("deck.pptx"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("setup.exe"));
     expect(ensureChatBundle).not.toHaveBeenCalled();
     expect(uploadToBundle).not.toHaveBeenCalled();
   });

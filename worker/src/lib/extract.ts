@@ -1,13 +1,12 @@
-// Text extraction for uploaded documents. Plain-text formats (md/txt/csv/json)
-// are decoded directly. PDFs are NOT parsed here — pdf.js does not bundle
-// reliably for the Workers runtime, so the browser extracts PDF text at upload
-// time and sends it alongside the file (see the client uploader). This function
-// therefore returns "" for PDFs; the caller uses the client-provided text.
+// What an upload may be, how big, and how it is served back. Reading a
+// document's text lives in `lib/formats/read`; PDFs are the exception, read in
+// the browser at upload time because pdf.js does not bundle reliably for the
+// Workers runtime, and their text is stored beside the file.
 
-function extOf(name: string): string {
-  const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
-  return m ? m[1] : "";
-}
+import { decodeText } from "./formats/read/text";
+import { extOf } from "./formats/read";
+
+export { extOf };
 
 /**
  * The extensions an upload may carry, and the type each one is served as.
@@ -23,32 +22,55 @@ function extOf(name: string): string {
  * disagree, so `ALLOWED_EXT` is now the keys of this map rather than a second
  * list beside it.
  */
+//
+// HTML and XML are served as plain text, never as themselves: either would be
+// a document on this origin the moment the preview framed it, which is the
+// exact hole the comment above describes.
 const TYPE_BY_EXT: Record<string, string> = {
   md: "text/markdown",
   markdown: "text/markdown",
   txt: "text/plain",
   csv: "text/csv",
+  tsv: "text/tab-separated-values",
   json: "application/json",
   pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  odt: "application/vnd.oasis.opendocument.text",
+  rtf: "application/rtf",
+  html: "text/plain; charset=utf-8",
+  htm: "text/plain; charset=utf-8",
+  xml: "text/plain; charset=utf-8",
 };
 
 /** The extensions an upload may carry. Moved from `routes/bundles.ts`. */
 export const ALLOWED_EXT: Set<string> = new Set(Object.keys(TYPE_BY_EXT));
 
 /**
- * The most an upload request may carry, file and browser-extracted text
- * together. `src/lib/uploads.ts` declares the same number as `MAX_SIZE` and
- * `src/lib/uploads.test.ts` reads both files to keep them equal: this one is
- * the authority, that one only saves a person a round trip.
+ * The largest file an upload may be. `src/lib/uploads.ts` declares the same
+ * number as `MAX_SIZE` and `src/lib/uploads.test.ts` reads both files to keep
+ * them equal: this one is the authority, that one only saves a person a round
+ * trip.
  *
- * The bytes are not what it protects. Every 850 characters of text becomes a
- * chunk row of about 7 KB (`vector(1536)` plus the passage), so the database
- * holds roughly 8.5x what was uploaded, and the database is the ceiling.
+ * It was 10 MB while a document was indexed inside its own upload request.
+ * Now the file arrives in parts (`routes/uploads.ts`) and is indexed by a job
+ * a few hundred passages at a time (`lib/indexing`), so no request and no unit
+ * of work holds the file. What bounds the database is `MAX_INDEX_CHARS`.
  */
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 /**
- * How much browser-extracted text may come with an upload.
+ * The most a single request may upload directly, file and browser-extracted
+ * text together, through `POST /bundles/:id/documents/upload`.
+ *
+ * The one-request route stays for small files and for API callers; the app
+ * sends anything larger in parts. Kept under `MAX_REQUEST_BYTES`.
+ */
+export const MAX_DIRECT_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+/**
+ * How much browser-extracted text may come with a direct upload.
  *
  * A PDF's text can outgrow the file it came from — its streams are compressed
  * and the text is not — so the old single limit on the whole body refused a
@@ -56,7 +78,18 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
  * past 10 MB. Twice the file is generous for any real document and keeps the
  * upload under `MAX_REQUEST_BYTES`.
  */
-export const MAX_EXTRACTED_TEXT_BYTES = 2 * MAX_UPLOAD_BYTES;
+export const MAX_EXTRACTED_TEXT_BYTES = 2 * MAX_DIRECT_UPLOAD_BYTES;
+
+/**
+ * How much of one document's text is indexed.
+ *
+ * This, not the file size, is what the database pays for: every 850 characters
+ * becomes a passage row of about 7 KB (`vector(1536)` and the text), so two
+ * million characters — a 700-page book — is some 16 MB of rows. A document
+ * longer than this is indexed up to it and marked `partial`, which the
+ * Knowledge tab says out loud; nothing past the cut is searchable.
+ */
+export const MAX_INDEX_CHARS = 2_000_000;
 
 /**
  * The content type a document of this name is stored and served as.
@@ -76,17 +109,17 @@ export function contentTypeFor(name: string): string {
 }
 
 /**
- * Decode indexable UTF-8 text from an uploaded file's bytes. Returns "" for
- * PDFs (their text is supplied by the client) and for anything undecodable.
+ * Text from a synced file's bytes, in whatever encoding it was saved.
+ * See `decodeText` for why that is not simply UTF-8.
  */
-export function extractDocumentText(fileName: string, bytes: ArrayBuffer): string {
-  if (extOf(fileName) === "pdf") return "";
-  return new TextDecoder().decode(bytes);
+export function decodeFileText(bytes: ArrayBuffer): string {
+  return decodeText(new Uint8Array(bytes));
 }
 
 // Above this share of replacement characters the "text" is a binary file being
-// read as prose, not prose with a few accents lost. A Windows-1254 Turkish
-// document decoded as UTF-8 lands around 15%; a zip container lands far higher.
+// read as prose, not prose with a few accents lost. A zip container read as
+// text lands far higher. (A Windows-1254 file used to land around 15% when it
+// was decoded as UTF-8; `decodeText` now reads it as what it is.)
 const MAX_REPLACEMENT_RATIO = 0.3;
 
 // Spelled as codepoints because both are invisible in a source file: NUL renders
@@ -114,6 +147,13 @@ export function hasIndexableText(text: string): boolean {
   if (text.includes(NUL)) return false;
   const replacements = text.split(REPLACEMENT).length - 1;
   return replacements / text.length <= MAX_REPLACEMENT_RATIO;
+}
+
+/** What a person is told about a file with no text worth indexing. */
+export function noTextMessage(name: string): string {
+  return extOf(name) === "pdf"
+    ? "no readable text in this PDF — it looks like a scan, so run it through OCR and upload the text"
+    : "no readable text in this file — check it is really the format its name claims";
 }
 
 /**

@@ -27,7 +27,7 @@ const agents = new Hono<AppEnv>();
 // from the literal, and `"a," + "b"` widens the argument to `string`, which
 // turns every field on the result into `GenericStringError`.
 const AGENT_SELECT =
-  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count))))";
+  "*, agent_bundles(bundle_id, knowledge_bundles(documents(id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count),index_status,index_cursor,index_total,index_error)))";
 
 /**
  * The two tuning settings, on both schemas.

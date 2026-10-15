@@ -109,19 +109,23 @@ which you fill in and upload back. [What a document should look
 like](knowledge.md#what-a-document-should-look-like) is the reasoning behind
 their shape, and applies just as well to a file you write yourself.
 
-Accepted file types are exactly these, up to 10 MB each:
+Accepted file types are exactly these, up to 100 MB each:
 
-| Extension               | Read by                                   |
-| ----------------------- | ----------------------------------------- |
-| `.md`, `.markdown`      | The server, decoded as UTF-8 text         |
-| `.txt`, `.csv`, `.json` | The server, decoded as UTF-8 text         |
-| `.pdf`                  | Your browser, before the upload leaves it |
+| Extension                                                   | Read by                                                                         |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `.docx`, `.pptx`, `.xlsx`, `.odt`                           | The server: headings, lists, tables, slides and their notes, every sheet as CSV |
+| `.md`, `.markdown`, `.txt`, `.csv`, `.tsv`, `.json`, `.xml` | The server, as text — UTF-8, UTF-16 or Windows-1254                             |
+| `.html`, `.htm`, `.rtf`                                     | The server, with the markup taken out                                           |
+| `.pdf`                                                      | Your browser, before the upload leaves it                                       |
 
-There is no DOCX on that list, which is the assumption most people arrive with.
 An extension that is not on it is refused with `unsupported file type` before
-anything is stored. The list is short because there is no format-specific parser
-on the server at all: everything other than a PDF is decoded as UTF-8 text and
-indexed as it comes out.
+anything is stored. Images inside a document are not read, and neither is a
+scanned PDF with no text layer.
+
+A file is indexed after it uploads, not during: the Knowledge tab shows it as
+**Queued**, then **Indexing** with a percentage, then **Indexed**. A document
+longer than about two million characters is indexed up to that point and shown
+as **Partly indexed**.
 
 The PDF row is the one worth understanding, because it is not what the shape of
 the system suggests. The server does not parse PDFs at all: its text extractor

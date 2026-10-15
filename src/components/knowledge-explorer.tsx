@@ -32,6 +32,8 @@ import {
 
 import { api } from "@/lib/api-client";
 import { bundleDocumentsKey, useAgentsStore, type Agent } from "@/lib/agents-store";
+import { indexingNow } from "@/lib/index-status";
+import type { UploadPhase } from "@/lib/api-client";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
 import { Button } from "@/components/ui/button";
@@ -48,7 +50,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ALLOWED_EXT, validateUpload } from "@/lib/uploads";
+import { ACCEPT, validateUpload } from "@/lib/uploads";
 import { formatFileSize } from "@/lib/file-size";
 import { dropPayload, rangeSelect } from "@/lib/knowledge-selection";
 import { documentAge } from "@/lib/relative-time";
@@ -92,9 +94,20 @@ const FILTER_PHRASE: Record<Exclude<FilterKey, "all">, string> = {
   stale: "older than ninety days",
 };
 
-const ACCEPT = ALLOWED_EXT.map((e) => `.${e}`).join(",");
+type Uploading = {
+  id: string;
+  name: string;
+  progress: number;
+  /** Waiting for a free slot, reading a PDF's text, or sending bytes. */
+  phase: "waiting" | UploadPhase;
+};
 
-type Uploading = { id: string; name: string; progress: number };
+/**
+ * How many files upload at once. Picking forty files used to start forty
+ * requests together, which on an ordinary connection made every one of them
+ * slow and the first finished no sooner than the last.
+ */
+const UPLOADS_AT_ONCE = 3;
 
 /**
  * The Knowledge explorer: bundles down the side, documents in the middle.
@@ -175,6 +188,9 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
     queryKey: bundleDocumentsKey(openBundle?.id ?? ""),
     queryFn: () => api.bundles.documents(openBundle!.id),
     enabled: !!openBundle,
+    // Indexing happens after the upload returns (`worker/src/lib/indexing`), so
+    // a bundle with a document still in the queue asks again until none is.
+    refetchInterval: (query) => ((query.state.data ?? []).some(indexingNow) ? 3_000 : false),
   });
 
   const citations = useQuery({
@@ -294,31 +310,57 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
       return;
     }
     const bundleId = openBundle.id;
+    const accepted: Array<{ id: string; file: File }> = [];
     for (const file of list) {
       const check = validateUpload(file);
       if (!check.ok) {
         toast.error(check.reason);
         continue;
       }
-      const id = `u_${crypto.randomUUID()}`;
-      setUploading((prev) => [...prev, { id, name: file.name, progress: 0 }]);
-      store
-        .uploadToBundle(bundleId, file, (pct) =>
-          setUploading((prev) => prev.map((u) => (u.id === id ? { ...u, progress: pct } : u))),
-        )
-        .then((doc) => {
-          setUploading((prev) => prev.filter((u) => u.id !== id));
-          if (doc.indexed) toast.success(`Added ${file.name}`);
-          else
-            toast.warning(
-              `${file.name} went in but could not be indexed, so answers won't be grounded in it.`,
-            );
-        })
-        .catch((err) => {
-          setUploading((prev) => prev.filter((u) => u.id !== id));
-          toast.error(err?.message ? `Upload failed: ${err.message}` : "Upload failed");
-        });
+      accepted.push({ id: `u_${crypto.randomUUID()}`, file });
     }
+    if (accepted.length === 0) return;
+    setUploading((prev) => [
+      ...prev,
+      ...accepted.map(({ id, file }) => ({
+        id,
+        name: file.name,
+        progress: 0,
+        phase: "waiting" as const,
+      })),
+    ]);
+    const patch = (id: string, change: Partial<Uploading>) =>
+      setUploading((prev) => prev.map((u) => (u.id === id ? { ...u, ...change } : u)));
+
+    const uploadOne = async ({ id, file }: { id: string; file: File }) => {
+      try {
+        const doc = await store.uploadToBundle(
+          bundleId,
+          file,
+          (pct) => patch(id, { progress: pct }),
+          (phase) => patch(id, { phase }),
+        );
+        if (doc.indexStatus === "queued" || doc.indexStatus === "indexing") {
+          toast.success(`Added ${file.name} — indexing it now`);
+        } else if (doc.indexed) {
+          toast.success(`Added ${file.name}`);
+        } else {
+          toast.warning(
+            `${file.name} went in but could not be indexed, so answers won't be grounded in it.`,
+          );
+        }
+      } catch (err) {
+        const message = (err as Error | undefined)?.message;
+        toast.error(message ? `Upload failed: ${message}` : "Upload failed");
+      } finally {
+        setUploading((prev) => prev.filter((u) => u.id !== id));
+      }
+    };
+    let next = 0;
+    const lane = async () => {
+      while (next < accepted.length) await uploadOne(accepted[next++]);
+    };
+    void Promise.all(Array.from({ length: Math.min(UPLOADS_AT_ONCE, accepted.length) }, lane));
   };
 
   const moveMany = async (docs: ExplorerDocument[], bundleId: string) => {
@@ -361,9 +403,11 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
     store
       .reindexDocument(doc.id)
       .then((d) =>
-        toast.success(
-          `Reindexed ${doc.name} — ${d.chunkCount} ${d.chunkCount === 1 ? "passage" : "passages"}`,
-        ),
+        indexingNow(d)
+          ? toast.success(`Reindexing ${doc.name} — its old passages answer until it finishes`)
+          : toast.success(
+              `Reindexed ${doc.name} — ${d.chunkCount} ${d.chunkCount === 1 ? "passage" : "passages"}`,
+            ),
       )
       .catch((err) =>
         toast.error(err?.message ? `Reindex failed: ${err.message}` : "Reindex failed"),
@@ -1505,15 +1549,7 @@ function DocumentRow({
         {age.label}
       </span>
       <span className="hidden w-24 shrink-0 md:block">
-        {doc.indexed ? (
-          <span title={`${doc.chunkCount} ${doc.chunkCount === 1 ? "passage" : "passages"}`}>
-            <Chip tone="on">Indexed</Chip>
-          </span>
-        ) : (
-          <span title="No embeddings yet — no passage in it can be matched in chat.">
-            <Chip tone="neutral">Not indexed</Chip>
-          </span>
-        )}
+        <IndexChip doc={doc} />
       </span>
       <span
         className="hidden w-20 shrink-0 text-xs tabular-nums text-muted-foreground xl:block"
@@ -1628,7 +1664,7 @@ function DocumentTile({
       ) : null}
       <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>{formatFileSize(doc.size)}</span>
-        {doc.indexed ? <Chip tone="on">Indexed</Chip> : <Chip tone="neutral">Not indexed</Chip>}
+        <IndexChip doc={doc} />
       </div>
     </div>
   );
@@ -1807,7 +1843,13 @@ function UploadWell({
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="flex-1 truncate">{u.name}</span>
-                <span className="text-xs tabular-nums text-muted-foreground">{u.progress}%</span>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {u.phase === "waiting"
+                    ? "Waiting…"
+                    : u.phase === "reading"
+                      ? "Reading the PDF…"
+                      : `${u.progress}%`}
+                </span>
               </div>
               <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
                 <div
@@ -1821,4 +1863,61 @@ function UploadWell({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Where a document's indexing has got, in one chip.
+ *
+ * Queued and indexing are new: an upload now returns before its passages are
+ * embedded (`worker/src/lib/indexing`), so "Not indexed" would be the wrong
+ * thing to say about a file that will be searchable in a minute. Failed says
+ * why on hover and is fixed the way it always was, with Reindex. Partly
+ * indexed is a document longer than the indexing limit: everything up to the
+ * cut is searchable and nothing after it is.
+ */
+function IndexChip({ doc }: { doc: ExplorerDocument }) {
+  const passages = `${doc.chunkCount} ${doc.chunkCount === 1 ? "passage" : "passages"}`;
+  switch (doc.indexStatus) {
+    case "queued":
+      return (
+        <span title="Waiting to be read and indexed.">
+          <Chip tone="neutral">Queued</Chip>
+        </span>
+      );
+    case "indexing": {
+      const p = doc.indexProgress;
+      const pct = p && p.total > 0 ? Math.min(99, Math.round((p.done / p.total) * 100)) : null;
+      return (
+        <span title="Being indexed. Until it finishes, any passages it had before still answer.">
+          <Chip tone="neutral">{pct === null ? "Indexing…" : `Indexing ${pct}%`}</Chip>
+        </span>
+      );
+    }
+    case "failed":
+      return (
+        <span title={doc.indexError ?? "Indexing failed. Reindex to try again."}>
+          <Chip tone="neutral" className="text-destructive">
+            Failed
+          </Chip>
+        </span>
+      );
+    case "partial":
+      return (
+        <span
+          title={`${passages}. The document is longer than the indexing limit, so only its first part is searchable.`}
+        >
+          <Chip tone="on">Partly indexed</Chip>
+        </span>
+      );
+    default:
+      return doc.indexed ? (
+        <span title={passages}>
+          <Chip tone="on">Indexed</Chip>
+        </span>
+      ) : (
+        <span title="No embeddings yet — no passage in it can be matched in chat.">
+          <Chip tone="neutral">Not indexed</Chip>
+        </span>
+      );
+  }
 }

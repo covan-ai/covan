@@ -34,6 +34,9 @@
 #                           Worker makes and renews the trigger instances the
 #                           API Worker receives, and offers the events only
 #                           when both the key and this secret are set.
+#   NOTION_WEBHOOK_VERIFICATION_TOKEN <- REQUIRED here if the API Worker has
+#                           it, for the same reason: this Worker keeps the
+#                           Notion subscriptions, and both must agree they exist.
 #   BROWSER_USE_API_KEY  <- REQUIRED here if the API Worker has it. This Worker
 #                           is the FALLBACK now, not the only clock: while a
 #                           conversation is open in a tab, the tab polls its

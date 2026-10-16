@@ -231,6 +231,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     COMPOSIO_API_KEY: source.COMPOSIO_API_KEY,
     COMPOSIO_BASE_URL: source.COMPOSIO_BASE_URL,
     COMPOSIO_WEBHOOK_SECRET: source.COMPOSIO_WEBHOOK_SECRET,
+    NOTION_WEBHOOK_VERIFICATION_TOKEN: source.NOTION_WEBHOOK_VERIFICATION_TOKEN,
     // The browser tool, and the takeover that recovers a login wall. Omitted
     // here until 2026-10-09, which is the failure the comment above describes
     // happening to the very next variable somebody added: `browse` reported

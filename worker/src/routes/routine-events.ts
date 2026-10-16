@@ -7,16 +7,19 @@ import { countMiss, hasSpentMisses, refuseSpent } from "../middleware/ratelimit"
 import { receiveEvent } from "../lib/routines/events/receive";
 import { GITHUB_HOOK_ID, type GitHubDelivery } from "../lib/routines/events/github";
 import { WEBSUB_HOOK_ID, isOurIntent, type WebSubDelivery } from "../lib/routines/events/websub";
+import { DRIVE_CHANNEL_ID, type DriveNotification } from "../lib/routines/events/drive";
 import type { EventProvider } from "../lib/routines/events/catalog";
 import { startPokedRun } from "../lib/routines/poke-room";
 
 /**
  * The doors for providers that sign each subscription's deliveries with that
- * subscription's own secret: a GitHub repository's webhook and a WebSub hub.
+ * subscription's own secret: a GitHub repository's webhook, a WebSub hub, and a
+ * Google Drive channel.
  *
  *   POST /routine-events/github/:id    a push, a pull request, an issue
  *   GET  /routine-events/websub/:id    a hub checking we asked (the challenge)
  *   POST /routine-events/websub/:id    a hub pushing a feed that changed
+ *   POST /routine-events/drive/:id     a Drive channel saying something changed
  *
  * Unlike `/composio/events`, which checks one deployment-wide signature
  * before reading anything, these cannot know the secret until they know the
@@ -66,7 +69,8 @@ async function deliver(
   c: Context<AppEnv>,
   provider: EventProvider,
   id: string,
-  raw: GitHubDelivery | WebSubDelivery,
+  raw: GitHubDelivery | WebSubDelivery | DriveNotification,
+  options: { unknownIsAMiss?: boolean } = {},
 ): Promise<Response> {
   const verdict = await getRateLimiter(c.env, "expensive").check(`${provider}-hook:${id}`);
   if (!verdict.allowed) {
@@ -81,7 +85,13 @@ async function deliver(
 
   // A 404 for a URL nothing holds: GitHub shows it against the webhook, which
   // is the person's cue to remove a webhook whose routine is gone, and a hub
-  // treats it as "stop pushing". Counted either way.
+  // treats it as "stop pushing". Counted either way — except where the sender
+  // is Google, whose few addresses deliver every Drive channel there is: a
+  // channel that could not be stopped keeps calling for up to a week, and
+  // counting that against the address would refuse everybody's Drive.
+  if (outcome.status === "unknown" && options.unknownIsAMiss === false) {
+    return c.json({ ok: true, status: outcome.status });
+  }
   if (outcome.status === "unknown") {
     await countMiss(c);
     return c.json({ error: "not found" }, 404);
@@ -153,4 +163,29 @@ routineEvents.post("/routine-events/websub/:id", async (c) => {
     signature: c.req.header("X-Hub-Signature") ?? "",
     body,
   });
+});
+
+/**
+ * A Drive channel saying "look again" (`events/drive.ts`). The body is empty;
+ * the channel's token comes back in a header and is the subscription's secret.
+ * The channel's first message, `sync`, asks nothing and can arrive before the
+ * subscribe that made the channel has written its id, so it is acknowledged
+ * without a lookup.
+ */
+routineEvents.post("/routine-events/drive/:id", async (c) => {
+  if (hasSpentMisses(c)) return refuseSpent(c);
+  const id = c.req.param("id");
+  if (!DRIVE_CHANNEL_ID.test(id)) {
+    await countMiss(c);
+    return c.json({ error: "not found" }, 404);
+  }
+  const state = c.req.header("X-Goog-Resource-State") ?? "";
+  if (state === "sync") return c.json({ ok: true });
+  return deliver(
+    c,
+    "google_drive",
+    id,
+    { token: c.req.header("X-Goog-Channel-Token") ?? "", state },
+    { unknownIsAMiss: false },
+  );
 });

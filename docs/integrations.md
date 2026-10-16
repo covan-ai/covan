@@ -778,16 +778,17 @@ A routine can start on an event in a connected app rather than on a clock
 or a webhook: **a new email in Gmail or Outlook, a new Outlook calendar event,
 a Google Calendar event that is new, changed, cancelled, or about to
 start, a message or a reaction in a Slack channel, a GitHub push, pull
-request or issue, a new YouTube video, or a new post in a feed that supports
-instant updates.** In the routine dialog, under _Starts_, pick _When something happens
+request or issue, a new YouTube video, a new post in a feed that supports
+instant updates, a Notion page created, edited or commented on, or a file
+added or changed in Google Drive.** In the routine dialog, under _Starts_, pick _When something happens
 in an app_, then the app, then the event and any filter (a Gmail search, an
 Outlook sender, how many minutes before a meeting). If the app is not
 connected yet, the dialog says so and links to the Integrations page.
 
 The mail and calendar events come through Composio, the same way connected
-apps do; GitHub, YouTube and feeds are described under their own headings,
-and Slack under [its own section](#routines-that-start-on-slack-activity)
-below. Composio
+apps do; GitHub, YouTube, feeds, Notion and Google Drive are described under
+their own headings, and Slack under
+[its own section](#routines-that-start-on-slack-activity) below. Composio
 watches the account and calls Covan when something happens. Each routine gets
 a short, readable summary of the event (sender, subject and text; or title,
 time and attendees), not the raw payload. The filters you pick are sent to
@@ -924,6 +925,84 @@ and each set of videos runs at most once.
 These events need a public address for the hub to call back to: set
 `WORKER_HOST` to the API's own domain on both Workers. Without it, they are not
 offered.
+
+#### Notion: a new page, an edit, a property, a comment
+
+With Notion connected (the same connection that syncs a knowledge folder), a
+routine can start when:
+
+- **a page is created**, or, with a database's link, when an item is added to
+  that database;
+- **a page is edited**, about a minute after the typing stops, since Notion
+  batches edits;
+- **a page's properties change**, such as a database item's status, owner or
+  date;
+- **a comment is added**, within seconds.
+
+The last three can be narrowed to one page, or to the items of one database.
+The routine reads the page's title, link and content, fetched with the
+connection's own access. It only hears about pages that connection can see.
+A change made only by integrations (a bot, an agent, another routine) starts
+nothing, so a routine that writes into Notion cannot set itself off.
+
+**Setting it up** (once per deployment, by the operator):
+
+1. In the public Notion integration's settings, open **Webhooks** and create a
+   subscription to `https://<your API host>/notion/events`. Tick the events
+   `page.created`, `page.content_updated`, `page.properties_updated` and
+   `comment.created`. Comments also need the integration's "Read comments"
+   capability.
+2. Notion sends a one-time verification token to that URL. The API writes it
+   to the Worker's log ("Notion webhook verification token: secret_…") while
+   `NOTION_WEBHOOK_VERIFICATION_TOKEN` is unset. Copy it from the log, for
+   example with `wrangler tail`.
+3. Paste it into Notion's **Verify** form. Only the token Notion itself issued
+   verifies there.
+4. Set the same token on **both** Workers:
+
+   ```sh
+   wrangler secret put NOTION_WEBHOOK_VERIFICATION_TOKEN
+   wrangler secret put NOTION_WEBHOOK_VERIFICATION_TOKEN -c wrangler.cron.toml
+   ```
+
+From then on every delivery must carry Notion's `X-Notion-Signature`, an HMAC
+of the body keyed with that token. Anything else is refused, and an address
+that keeps failing is turned away. Until the token is set, the endpoint accepts
+only the handshake, and the Notion events are not offered.
+
+#### Google Drive: a new file, a changed file
+
+With Google Drive connected, a routine can start when **a file is added** to a
+folder, or **a file in it changes**. By default the folder is the one the
+connection syncs; a routine can name another folder instead. Only files
+directly in the folder count. Folders, trashed files and removed files never
+start a run. For a single Doc, Sheet, Office or text file, the routine reads
+its text as well.
+
+How it works: each routine opens a Drive watch channel on the connection's own
+grant. Drive calls `/routine-events/drive/<channel id>` with an empty body
+whenever the account changes. That call carries the channel's own token, which
+is checked before anything else. Covan then lists what changed from a page
+token the subscription keeps. A channel lasts a week at most and cannot be
+extended, so the cron Worker opens a new one a day before the old one ends and
+stops the old one. Pausing a routine stops its channel. Resuming opens a new one
+from the current moment, so changes made while it was paused are not delivered
+all at once.
+
+A Google Doc saves itself every few minutes while somebody types, and each save
+is a change. Pick a quiet folder for **File changed**, and leave the flood fuse
+to stop a runaway routine.
+
+These events need what the Drive connection already needs (`GOOGLE_CLIENT_ID`
+and `GOOGLE_CLIENT_SECRET`), plus `WORKER_HOST`, because Drive must reach the
+API over https with a valid certificate. Google's current push-notification
+guide does not ask for domain verification. If your Google Cloud project still
+lists one under its domain settings, complete it there.
+
+Removing a Notion or Drive connection stops every routine listening through it,
+and each owner gets one email. A Drive channel cannot be stopped without the
+grant that was just removed, so it lapses within the week. Anything it sends
+until then reaches a routine that is no longer listening.
 
 ### A real browser
 

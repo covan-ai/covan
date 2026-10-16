@@ -99,6 +99,18 @@ export type RoutineEnv = {
    */
   COMPOSIO_WEBHOOK_SECRET?: string;
   /**
+   * The `verification_token` Notion sent to `POST /notion/events` when the
+   * public integration's webhook subscription was created, and the key every
+   * later delivery's `X-Notion-Signature` is checked with. Notion sends it
+   * exactly once (or again on "Resend token"); the route logs it while this is
+   * unset, so the operator can read it, paste it into Notion's Verify form,
+   * and set it here. Unset, the Notion events are not offered and the route
+   * accepts nothing but that one handshake. On both Workers, for
+   * `COMPOSIO_WEBHOOK_SECRET`'s reason. On Cloudflare:
+   * `wrangler secret put NOTION_WEBHOOK_VERIFICATION_TOKEN`.
+   */
+  NOTION_WEBHOOK_VERIFICATION_TOKEN?: string;
+  /**
    * browser-use's API key, and the switch that makes the `browse` tool exist.
    *
    * On `RoutineEnv` rather than `Bindings` for `COMPOSIO_API_KEY`'s reason,

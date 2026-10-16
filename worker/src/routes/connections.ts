@@ -19,6 +19,8 @@ import { ProviderError, type TokenEnvelope } from "../lib/connections/types";
 import type { ConnectionRow } from "../lib/connections/sync";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { holderPresent } from "../lib/connections/holder";
+import { lapseSubscriptions } from "../lib/routines/events/lifecycle";
+import { announceLapsedSubscription } from "../lib/routines/dispatcher";
 
 /**
  * Connections: the two halves of a connector that a person actually touches.
@@ -625,7 +627,7 @@ connections.delete("/connections/:id", async (c) => {
 
   const { data: existing, error: readError } = await db
     .from("connections")
-    .select("id,bundle_id")
+    .select("id,bundle_id,account_label")
     .eq("id", id)
     .maybeSingle();
   if (readError) return c.json({ error: "failed to load connection" }, 500);
@@ -682,6 +684,16 @@ connections.delete("/connections/:id", async (c) => {
   if (!deleted || deleted.length === 0) {
     return c.json({ error: "you do not have permission to remove this connection" }, 403);
   }
+
+  // Routines that start on this connection's events (a Notion page, a Drive
+  // file) stop hearing anything now: each is marked, its owner told once, and
+  // its arrangement ended where that can still be done. A Drive channel needs
+  // the grant just deleted to be stopped, so it is left to lapse within the
+  // week; whatever it delivers meanwhile reaches a row that is `expired`.
+  const label = (existing as { account_label?: string | null }).account_label || "A connection";
+  await lapseSubscriptions(c.env, { config: { connectionId: id } }, `${label} was disconnected.`, {
+    announce: announceLapsedSubscription,
+  }).catch((err: unknown) => console.error("could not lapse a removed connection's events", err));
 
   return c.json({ ok: true, documentsRemoved: removed });
 });

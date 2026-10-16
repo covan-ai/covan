@@ -31,6 +31,8 @@ import { COMPOSIO_ADAPTER } from "./composio";
 import { GITHUB_ADAPTER } from "./github";
 import { WEBSUB_ADAPTER } from "./websub";
 import { SLACK_ADAPTER } from "./slack";
+import { NOTION_ADAPTER } from "./notion";
+import { DRIVE_ADAPTER } from "./drive";
 
 /** The row as the engine reads it, secret still sealed. */
 export type SubscriptionRow = {
@@ -74,6 +76,18 @@ export type SubscribeResult = {
   expiresAt?: Date | null;
 };
 
+/**
+ * What an `advance` found. `cursor` names the one key in `state` that moved,
+ * and from what: the write is conditional on it still holding `from`, so two
+ * notifications that arrive together cannot both list the same changes and
+ * both start a run for them.
+ */
+export type Advanced = {
+  raw: unknown;
+  state: Record<string, unknown>;
+  cursor: { key: string; from: string };
+};
+
 // In a file of its own so an adapter can import it without importing the
 // registry that imports the adapter.
 export { EventSourceError } from "./errors";
@@ -114,6 +128,18 @@ export interface EventAdapter {
    */
   authenticate?(raw: unknown, ctx: AdapterContext): Promise<boolean>;
   /**
+   * Catch up with the provider, for one whose delivery only says "something
+   * changed" — a Google Drive channel's notification has no body at all — so
+   * what changed has to be listed from a cursor the subscription keeps. Hands
+   * back what was listed, as the `raw` that `normalize` will read, and the
+   * cursor moved past it, which `receive.ts` writes to `state` only if nobody
+   * moved it first (see `Advanced`). Null when there was nothing to list.
+   *
+   * Here and not inside `normalize` because the cursor has to move whether or
+   * not anything listed is for this routine, and adapters do not write.
+   */
+  advance?(raw: unknown, ctx: AdapterContext): Promise<Advanced | null>;
+  /**
    * The raw delivery, as the provider sent it, made into something a model can
    * read in a paragraph. `null` means "not an event for this routine after
    * all" — the bot's own message echoing back, an edit of a message already
@@ -137,6 +163,8 @@ const ADAPTERS: Partial<Record<EventProvider, EventAdapter>> = {
   github: GITHUB_ADAPTER,
   websub: WEBSUB_ADAPTER,
   slack: SLACK_ADAPTER,
+  notion: NOTION_ADAPTER,
+  google_drive: DRIVE_ADAPTER,
 };
 
 export const ADAPTER_REGISTRY: AdapterRegistry = {

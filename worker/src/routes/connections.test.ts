@@ -44,6 +44,13 @@ vi.mock("../lib/connections/registry", () => ({
 const { listFolders } = vi.hoisted(() => ({ listFolders: vi.fn() }));
 vi.mock("../lib/connections/google-drive", () => ({ listFolders }));
 
+/** The routines listening through a connection, which removing it lapses. */
+const { lapseSubscriptions } = vi.hoisted(() => ({
+  lapseSubscriptions: vi.fn(async (..._args: unknown[]) => [] as string[]),
+}));
+vi.mock("../lib/routines/events/lifecycle", () => ({ lapseSubscriptions }));
+vi.mock("../lib/routines/dispatcher", () => ({ announceLapsedSubscription: vi.fn() }));
+
 const { connections, connectionsPublic } = await import("./connections");
 const { signState, sealGrant, readState, nonceHashOf } =
   await import("../lib/connections/oauth-state");
@@ -558,5 +565,40 @@ describe("choosing a Drive folder", () => {
 
     expect(res.status).toBe(403);
     expect(calls.some((c) => c.table === "connections" && c.op === "update")).toBe(false);
+  });
+});
+
+describe("DELETE /connections/:id", () => {
+  const tables = (deleted: unknown[]) => ({
+    connections: {
+      select: () => ({
+        data: { id: "conn-1", bundle_id: "bundle-1", account_label: "alice@example.com" },
+        error: null,
+      }),
+      delete: () => ({ data: deleted, error: null }),
+    },
+  });
+
+  // A Notion page or a Drive file can start a routine through this connection;
+  // once it is gone, those routines hear nothing and their owners are told.
+  it("lapses the routines listening through it, once the row is gone", async () => {
+    const { request } = appWith({ tables: tables([{ id: "conn-1" }]) });
+
+    const res = await request("DELETE", "/connections/conn-1");
+
+    expect(res.status).toBe(200);
+    expect(lapseSubscriptions).toHaveBeenCalledWith(
+      expect.anything(),
+      { config: { connectionId: "conn-1" } },
+      "alice@example.com was disconnected.",
+      expect.objectContaining({ announce: expect.any(Function) }),
+    );
+  });
+
+  it("lapses nothing when the caller may not remove it", async () => {
+    const { request } = appWith({ tables: tables([]) });
+
+    expect((await request("DELETE", "/connections/conn-1")).status).toBe(403);
+    expect(lapseSubscriptions).not.toHaveBeenCalled();
   });
 });

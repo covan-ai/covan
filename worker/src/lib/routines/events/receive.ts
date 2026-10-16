@@ -15,6 +15,9 @@
  *      the subscription, so the adapter's `authenticate` checks it here, first.
  *   2. Anything not running is refused: a paused or binned routine, one that
  *      stopped waiting for events, a subscription that is not `active`.
+ *  2b. Where a delivery only says "something changed" (a Drive channel), the
+ *      adapter's `advance` lists what did from the subscription's cursor, and
+ *      the cursor is moved here — the one write this file makes to the row.
  *   3. The adapter turns the raw delivery into a paragraph the model can read,
  *      or into nothing (the bot's own message coming back round).
  *   4. The entry's filter is applied. An event that does not match opens no
@@ -43,6 +46,7 @@ import { pauseForEventFlood, runPokedRoutine } from "../dispatcher";
 import {
   EVENT_REGISTRY,
   type AdapterContext,
+  type EventAdapter,
   type EventRegistry,
   type SubscriptionRow,
 } from "./adapter";
@@ -165,6 +169,61 @@ const RANK: Record<ReceiveOutcome["status"], number> = {
   forged: 6,
 };
 
+/** How many times a cursor someone else just moved is read again and listed from. */
+const MAX_CATCH_UP = 3;
+
+/** A `state` key an adapter may name as its cursor: it goes into a filter. */
+const CURSOR_KEY = /^[A-Za-z_]{1,64}$/;
+
+/**
+ * List what changed since the subscription's cursor and move the cursor past
+ * it, or hand back null when there is nothing to run on.
+ *
+ * The write is conditional on the cursor still being where this listing
+ * started. Drive sends a notification per change, so two can arrive at once;
+ * without the condition both would list the same changes and each would start
+ * a run. With it the second finds the cursor moved, reads where it is now,
+ * and lists only what came after — so a change made between the two listings
+ * is still somebody's to report, never nobody's.
+ */
+async function catchUp(
+  db: SupabaseClient,
+  adapter: EventAdapter,
+  raw: unknown,
+  ctx: AdapterContext,
+): Promise<unknown | null> {
+  let current = ctx;
+  for (let attempt = 0; attempt < MAX_CATCH_UP; attempt++) {
+    const advanced = await adapter.advance!(raw, current);
+    if (!advanced) return null;
+    if (!CURSOR_KEY.test(advanced.cursor.key)) {
+      throw new Error(`an adapter named an unusable cursor key: ${advanced.cursor.key}`);
+    }
+    const { data, error } = await db
+      .from("routine_event_subscriptions")
+      .update({ state: advanced.state })
+      .eq("routine_id", current.subscription.routine_id)
+      .eq(`state->>${advanced.cursor.key}`, advanced.cursor.from)
+      .select("routine_id");
+    if (error) throw new Error(`could not move the event cursor: ${error.message}`);
+    if ((data ?? []).length > 0) return advanced.raw;
+
+    const { data: fresh, error: freshError } = await db
+      .from("routine_event_subscriptions")
+      .select("state")
+      .eq("routine_id", current.subscription.routine_id)
+      .maybeSingle();
+    if (freshError) throw new Error(`could not read the event cursor: ${freshError.message}`);
+    if (!fresh) return null;
+    const state = ((fresh as { state?: Record<string, unknown> | null }).state ?? {}) as Record<
+      string,
+      unknown
+    >;
+    current = { ...current, subscription: { ...current.subscription, state } };
+  }
+  return null;
+}
+
 /** Steps 2–6, for one subscription. */
 async function receiveFor(
   env: RoutineEnv,
@@ -218,8 +277,18 @@ async function receiveFor(
   }
   if (!ctx || !adapter || !def) return { status: "inactive" };
 
+  // 2b. Catch up, for a provider whose delivery only says "something changed"
+  // (a Drive channel). The cursor moves here, before the filter, because it
+  // has to move whether or not what changed is anything this routine wants.
+  let delivered: unknown = raw;
+  if (adapter.advance) {
+    const caught = await catchUp(db, adapter, raw, ctx);
+    if (caught === null) return { status: "ignored" };
+    delivered = caught;
+  }
+
   // 3. What happened, in a paragraph.
-  const event = await adapter.normalize(raw, ctx);
+  const event = await adapter.normalize(delivered, ctx);
   if (!event) return { status: "ignored" };
 
   // 4. The routine's own filter, before anything is counted or spent.

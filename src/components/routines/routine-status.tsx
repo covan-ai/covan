@@ -21,11 +21,7 @@ import type { Routine } from "@/lib/routines-api";
 export function RoutineStatus({ routine, className }: { routine: Routine; className?: string }) {
   const failed = routine.status === "paused" && routine.pausedReason !== null;
   const mark =
-    routine.status === "active"
-      ? "bg-brand"
-      : failed
-        ? "bg-destructive"
-        : "bg-muted-foreground/40";
+    routine.status === "active" ? "bg-brand" : failed ? "bg-destructive" : "bg-muted-foreground/40";
 
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-2 text-meta", className)}>

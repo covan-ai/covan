@@ -46,22 +46,22 @@ All values live in `src/styles.css` and reach components only through the
 semantic tokens (`bg-card`, `text-muted-foreground`, `border-hairline`,
 `bg-brand`, …). Never write a hex at a call site.
 
-| Role                             | Light     | Dark      | Token                |
-| -------------------------------- | --------- | --------- | -------------------- |
-| Canvas                           | `#f6f6f8` | `#0f1012` | `background`         |
-| Card, popover (raised)           | `#ffffff` | `#151619` / `#1a1b1f` | `card`, `popover` |
-| Inset well, code chip            | `#eeeef1` | `#17181c` | `surface`            |
-| Hover of a well                  | `#e8e8ec` | `#1e1f24` | `surface-hover`      |
-| Question bubble                  | `#eeeef1` | `#1c1d22` | `bubble`             |
-| Sidebar                          | `#f0f0f3` | `#121316` | `sidebar`            |
-| Ink                              | `#15171c` | `#ececef` | `foreground`, `primary` |
-| Secondary text                   | `#626671` | `#9a9ca5` | `muted-foreground`   |
-| Micro labels, eyebrows           | `#8a8e99` | `#6e717b` | `micro-foreground`   |
-| Card border                      | `#e2e3e7` | `#26272d` | `border`             |
-| Row hairline                     | `#ebecef` | `#1f2025` | `hairline`           |
-| Input border                     | `#d7d9df` | `#2d2e35` | `input`              |
-| The pointer colour               | `#f48d16` | `#f59e2b` | `brand`, `ring`      |
-| Destructive                      | `#b42318` | `#f0695a` | `destructive`        |
+| Role                   | Light     | Dark                  | Token                   |
+| ---------------------- | --------- | --------------------- | ----------------------- |
+| Canvas                 | `#f6f6f8` | `#0f1012`             | `background`            |
+| Card, popover (raised) | `#ffffff` | `#151619` / `#1a1b1f` | `card`, `popover`       |
+| Inset well, code chip  | `#eeeef1` | `#17181c`             | `surface`               |
+| Hover of a well        | `#e8e8ec` | `#1e1f24`             | `surface-hover`         |
+| Question bubble        | `#eeeef1` | `#1c1d22`             | `bubble`                |
+| Sidebar                | `#f0f0f3` | `#121316`             | `sidebar`               |
+| Ink                    | `#15171c` | `#ececef`             | `foreground`, `primary` |
+| Secondary text         | `#626671` | `#9a9ca5`             | `muted-foreground`      |
+| Micro labels, eyebrows | `#8a8e99` | `#6e717b`             | `micro-foreground`      |
+| Card border            | `#e2e3e7` | `#26272d`             | `border`                |
+| Row hairline           | `#ebecef` | `#1f2025`             | `hairline`              |
+| Input border           | `#d7d9df` | `#2d2e35`             | `input`                 |
+| The pointer colour     | `#f48d16` | `#f59e2b`             | `brand`, `ring`         |
+| Destructive            | `#b42318` | `#f0695a`             | `destructive`           |
 
 Dark mode is the same ladder in reverse, with the ink inverted and the amber
 one step lighter. The primary button inverts with the ink; the amber keeps its
@@ -73,16 +73,16 @@ Eight steps, and a role for each. **Pick by role, never by how big the box
 happens to be**, and never write a size as a literal at the call site — the
 tokens live in `src/styles.css` and the `text-*` utilities come from them.
 
-| Step | Utility         | Weight   | Role                                                    |
-| ---- | --------------- | -------- | ------------------------------------------------------- |
-| 13   | `text-xs`       | 500–600  | eyebrows (uppercase, `0.06em`), timestamps, chips, keycaps |
-| 14   | `text-meta`     | 400      | supporting text: descriptions, subtitles, row meta      |
-| 15   | `text-sm`       | 400–500  | interface: nav, buttons, inputs, list rows              |
-| 16   | `text-title`    | 600      | card and row titles                                     |
-| 16   | `text-base`     | 400      | reading: chat replies, ledes, legal prose — 1.6 leading |
-| 18   | `text-title-lg` | 600      | dialog titles, auth and error card titles               |
-| 20   | `text-xl`       | 600      | section headlines (`Headline`)                          |
-| 24   | `text-2xl`      | 600      | page titles (`Headline as="h1"`)                        |
+| Step | Utility         | Weight  | Role                                                       |
+| ---- | --------------- | ------- | ---------------------------------------------------------- |
+| 13   | `text-xs`       | 500–600 | eyebrows (uppercase, `0.06em`), timestamps, chips, keycaps |
+| 14   | `text-meta`     | 400     | supporting text: descriptions, subtitles, row meta         |
+| 15   | `text-sm`       | 400–500 | interface: nav, buttons, inputs, list rows                 |
+| 16   | `text-title`    | 600     | card and row titles                                        |
+| 16   | `text-base`     | 400     | reading: chat replies, ledes, legal prose — 1.6 leading    |
+| 18   | `text-title-lg` | 600     | dialog titles, auth and error card titles                  |
+| 20   | `text-xl`       | 600     | section headlines (`Headline`)                             |
+| 24   | `text-2xl`      | 600     | page titles (`Headline as="h1"`)                           |
 
 A headline may carry a second clause (`turn`) in the muted display grey. It is
 the same face and weight on the same line, so the two halves read as one
@@ -121,18 +121,18 @@ the 64px one the empty chat opens with). Neither is a type role.
 
 ## 5. Page grammar
 
-| Primitive                               | File                            | Use for                                                                                   |
-| --------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `PageContainer` / `PageHeader`          | `components/page-container.tsx` | page frame (40px vertical padding) and the eyebrow + headline + lede header               |
-| `Badge` / `Headline` / `SectionHeading` | `components/page-container.tsx` | the section grammar: muted uppercase eyebrow, 20/24px headline, muted second clause       |
-| `PanelEyebrow`                          | `components/page-container.tsx` | the 12px uppercase label inside a panel                                                   |
-| `SectionCard`                           | `components/section-card.tsx`   | a card on the canvas — white, 1px line, 10px radius, hairline shadow                      |
-| `Panel`                                 | `components/section-card.tsx`   | a panel that genuinely floats: white, 14px radius, a line, the floating shadow, a plain title bar |
-| `DataRow` / `Chip`                      | `components/section-card.tsx`   | the list workhorses; chip tone carries meaning                                            |
-| `EmptyState`                            | `components/section-card.tsx`   | "nothing here yet", everywhere it happens: a dashed well                                  |
-| `Disclosure`                            | `components/section-card.tsx`   | the sentence somebody needs once: a native `<details>`, closed, inside a card             |
-| `UserAvatar` / `AgentAvatar`            | `components/avatars.tsx`        | people and agents on 6px tiles — neutral in lists, ink for the one you are in             |
-| `AppLogo`                               | `components/integrations/app-logo.tsx` | a third party's own mark in the neutral tile, with a monogram when it does not load |
+| Primitive                               | File                                   | Use for                                                                                           |
+| --------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `PageContainer` / `PageHeader`          | `components/page-container.tsx`        | page frame (40px vertical padding) and the eyebrow + headline + lede header                       |
+| `Badge` / `Headline` / `SectionHeading` | `components/page-container.tsx`        | the section grammar: muted uppercase eyebrow, 20/24px headline, muted second clause               |
+| `PanelEyebrow`                          | `components/page-container.tsx`        | the 12px uppercase label inside a panel                                                           |
+| `SectionCard`                           | `components/section-card.tsx`          | a card on the canvas — white, 1px line, 10px radius, hairline shadow                              |
+| `Panel`                                 | `components/section-card.tsx`          | a panel that genuinely floats: white, 14px radius, a line, the floating shadow, a plain title bar |
+| `DataRow` / `Chip`                      | `components/section-card.tsx`          | the list workhorses; chip tone carries meaning                                                    |
+| `EmptyState`                            | `components/section-card.tsx`          | "nothing here yet", everywhere it happens: a dashed well                                          |
+| `Disclosure`                            | `components/section-card.tsx`          | the sentence somebody needs once: a native `<details>`, closed, inside a card                     |
+| `UserAvatar` / `AgentAvatar`            | `components/avatars.tsx`               | people and agents on 6px tiles — neutral in lists, ink for the one you are in                     |
+| `AppLogo`                               | `components/integrations/app-logo.tsx` | a third party's own mark in the neutral tile, with a monogram when it does not load               |
 
 The **eyebrow** (`Badge`) is a label, not a pointer: 12px, uppercase, muted.
 The **shell** (`components/app-shell.tsx`) is two columns on the sidebar grey

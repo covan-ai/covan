@@ -240,9 +240,7 @@ function IntegrationsPage() {
             <SectionCard className="flex flex-col gap-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-col gap-[3px]">
-                  <span className="text-title font-semibold leading-tight">
-                    Databases and APIs
-                  </span>
+                  <span className="text-title font-semibold leading-tight">Databases and APIs</span>
                   <span className="text-meta leading-tight text-muted-foreground">
                     Anything with a base address and a token. No per-service code — a row.
                   </span>

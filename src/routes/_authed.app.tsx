@@ -148,7 +148,9 @@ function Home() {
             replies have already stopped. Renders nothing when self-hosted. */}
         {credits && (
           <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-            {credits.level !== "fine" && <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />}
+            {credits.level !== "fine" && (
+              <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />
+            )}
             {creditsSentence(credits)}
           </p>
         )}
@@ -733,7 +735,10 @@ function SharedWith({
     <span className="inline-flex items-center gap-2">
       <span
         aria-hidden
-        className={cn("h-2 w-2 shrink-0 rounded-full", mode === "workspace" ? "bg-brand" : "bg-border")}
+        className={cn(
+          "h-2 w-2 shrink-0 rounded-full",
+          mode === "workspace" ? "bg-brand" : "bg-border",
+        )}
       />
       {mode === "workspace" ? "Everyone" : label}
     </span>

@@ -35,9 +35,7 @@ export function WelcomeLayout({
             The shadow is allowed here because this panel genuinely floats. */}
         <div className="rounded-2xl border border-border bg-card p-7 shadow-card">
           <div className="text-center">
-            <h1 className="text-2xl font-semibold leading-tight tracking-tight">
-              {title}
-            </h1>
+            <h1 className="text-2xl font-semibold leading-tight tracking-tight">{title}</h1>
             {subtitle && <p className="mt-2 text-base text-muted-foreground">{subtitle}</p>}
           </div>
           <div className="mt-7">{children}</div>

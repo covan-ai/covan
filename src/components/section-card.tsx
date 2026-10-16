@@ -19,7 +19,11 @@ export function SectionCard({
 }) {
   return (
     <div
-      className={cn("rounded-xl border border-border bg-card shadow-xs", padded && "p-6", className)}
+      className={cn(
+        "rounded-xl border border-border bg-card shadow-xs",
+        padded && "p-6",
+        className,
+      )}
     >
       {children}
     </div>

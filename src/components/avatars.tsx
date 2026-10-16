@@ -42,7 +42,11 @@ export function UserAvatar({
   }
   return (
     <div
-      className={cn(TILE, "bg-surface text-muted-foreground ring-1 ring-inset ring-hairline", className)}
+      className={cn(
+        TILE,
+        "bg-surface text-muted-foreground ring-1 ring-inset ring-hairline",
+        className,
+      )}
       aria-hidden
     >
       {getInitials(name, "…")}

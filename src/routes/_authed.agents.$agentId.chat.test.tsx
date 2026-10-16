@@ -922,6 +922,34 @@ describe("an answer that stopped at its length limit", () => {
   });
 });
 
+describe("a reply refused for credits", () => {
+  const refused = () =>
+    new Response(JSON.stringify({ error: "credits_exhausted", balance: 0 }), { status: 402 });
+
+  it("says so under the message, with the next step, and stops the next send", async () => {
+    // This was a four-second toast; the question then sat with nothing under
+    // it, and the composer invited a second one into the same refusal.
+    const fetchMock = vi.fn(() => Promise.resolve(refused()));
+    vi.stubGlobal("fetch", fetchMock);
+    await renderChat();
+    listMessages.mockResolvedValue([question]);
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
+
+    expect(
+      await screen.findByText(/out of credits, so this message has no reply yet/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByPlaceholderText(composerPlaceholder(agent.name)), "and now?");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await userEvent.keyboard("{Enter}");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("an answer that stopped at a ceiling", () => {
   const partial = { ...answer, content: "I checked three of the repositories." };
 

@@ -132,9 +132,26 @@ export function creditsSentence(c: CreditsView): string {
  * Shares the `["usage"]` query with every other screen, so the figure cannot
  * disagree with itself across the app and a reply refreshes all of them at once.
  */
-export function useCredits(): CreditsView | null {
-  const { data } = useQuery({ queryKey: ["usage"], queryFn: api.usage });
+export function useCredits(opts: { watch?: boolean } = {}): CreditsView | null {
+  const { data } = useQuery({
+    queryKey: ["usage"],
+    queryFn: api.usage,
+    // A spent balance is the one figure somebody is waiting on: credits are
+    // added by hand, elsewhere, and nothing in this tab would otherwise learn
+    // they had arrived until a reload. So while it reads spent — or while the
+    // caller has just been refused for credits it still shows (`watch`) — it
+    // is asked again every half minute, and on focus as every query is.
+    refetchInterval: (query) =>
+      opts.watch || isSpent(query.state.data) ? CREDITS_RECHECK_MS : false,
+  });
   return useMemo(() => creditsFrom(data), [data]);
+}
+
+/** How often a spent balance is asked again. */
+export const CREDITS_RECHECK_MS = 30_000;
+
+function isSpent(usage: UsageResponse | undefined): boolean {
+  return creditsFrom(usage)?.level === "spent";
 }
 
 /**

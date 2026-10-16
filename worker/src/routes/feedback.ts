@@ -127,7 +127,7 @@ async function tellTheOperator(
     message: string;
   },
 ): Promise<void> {
-  const to = c.env?.FEEDBACK_EMAIL?.trim();
+  const to = c.env ? c.env.FEEDBACK_EMAIL?.trim() : undefined;
   if (!to || !canSendEmail(c.env)) return;
 
   const user = c.get("user");

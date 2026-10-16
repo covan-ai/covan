@@ -3,7 +3,7 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import type { BrowserResult } from "../../browser/client";
 import type { BrowserSessionRef } from "../../browser/sessions";
 import type { CreditSnapshot } from "../../entitlements";
-import { DEFAULT_MODEL, RUN_COST_CAP_USD, V4_BASE } from "../../browser/v4";
+import { DEFAULT_MODEL, DEFAULT_REASONING, RUN_COST_CAP_USD, V4_BASE } from "../../browser/v4";
 import { OUTCOME_SCHEMA } from "../../browser/outcome";
 
 /**
@@ -531,6 +531,28 @@ describe("once approved", () => {
     const env = { BROWSER_USE_API_KEY: "bu_test", BROWSER_USE_MODEL: "" } as ToolEnv;
     await browseTool.run({ task: TASK }, ctxWith({ confirmed: true, env }));
     expect(sentRun().model).toBe(DEFAULT_MODEL);
+  });
+
+  /** Left out, the provider reasons at `xhigh` on every step of `gpt-5.6-luna`. */
+  it("names the reasoning level rather than taking the provider's", async () => {
+    await browseTool.run({ task: TASK }, ctx());
+    expect(sentRun().modelParams).toEqual({ reasoning: { effort: DEFAULT_REASONING } });
+  });
+
+  it("lets BROWSER_USE_REASONING choose the level, in the model family's shape", async () => {
+    const env = {
+      BROWSER_USE_API_KEY: "bu_test",
+      BROWSER_USE_MODEL: "claude-sonnet-5",
+      BROWSER_USE_REASONING: "low",
+    } as ToolEnv;
+    await browseTool.run({ task: TASK }, ctxWith({ confirmed: true, env }));
+    expect(sentRun().modelParams).toEqual({ output_config: { effort: "low" } });
+  });
+
+  it("sends no modelParams when BROWSER_USE_REASONING is `provider`", async () => {
+    const env = { BROWSER_USE_API_KEY: "bu_test", BROWSER_USE_REASONING: "provider" } as ToolEnv;
+    await browseTool.run({ task: TASK }, ctxWith({ confirmed: true, env }));
+    expect("modelParams" in sentRun()).toBe(false);
   });
 
   it("records the handoff as a v4 run, with the session the answer has to go back to", async () => {

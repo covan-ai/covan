@@ -152,6 +152,12 @@ export async function resolveApiKey(env: Bindings, token: string): Promise<Resol
  * workspace on the routes that take an id rather than asking
  * `callerWorkspaceId` — a document, a session, an export. `covan_key` is for
  * the rows a key starts, which carry it (0088).
+ *
+ * `aal2`, because 0108 refuses anything less from an account with a second
+ * factor, and a key is not a way around that: it can only be created through
+ * PostgREST, so for such an account it was created by a session that had
+ * already passed the second step. Without the claim, turning two-step on would
+ * quietly break every key its owner had.
  */
 export async function mintUserToken(
   secret: string,
@@ -164,6 +170,7 @@ export async function mintUserToken(
     email: user.email ?? "",
     role: "authenticated",
     aud: "authenticated",
+    aal: "aal2",
     iat: now,
     exp: now + MINTED_TOKEN_TTL_SECONDS,
     covan_key: key.keyId,

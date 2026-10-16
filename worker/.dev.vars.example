@@ -60,6 +60,12 @@ ROUTINE_SECRET_KEY=
 RESEND_API_KEY=
 RESEND_FROM=
 
+# Optional. How many third-party events (a new mail, a Slack message) may start
+# one routine in an hour and in a day before it is paused and its owner told.
+# A fuse against a filter that is too wide, not a budget. Defaults: 60 and 500.
+# ROUTINE_EVENT_RUNS_PER_HOUR=60
+# ROUTINE_EVENT_RUNS_PER_DAY=500
+
 # Optional. This Worker's own domain, for the routine engine's SSRF guard. Leave
 # unset on workers.dev — that whole domain class is already blocked.
 # WORKER_HOST=api.example.com
@@ -75,6 +81,13 @@ RESEND_FROM=
 # subprocessor, it bills per call, and the page that collects a user's key
 # carries Composio's branding until you set your own.
 # COMPOSIO_API_KEY=
+# Optional, with the key above. Lets a routine start on an event in a connected
+# app — a new Gmail or Outlook mail, a calendar event about to start. It is the
+# signing secret of the project's webhook subscription, which
+# `bun run scripts/composio-webhook-subscribe.ts https://<api host>` makes and
+# prints. Set it on the cron Worker too: that one makes the triggers, and both
+# must agree that events exist. See docs/integrations.md.
+# COMPOSIO_WEBHOOK_SECRET=
 
 # Optional. Lets an agent drive a real browser — read a page that needs
 # JavaScript, pull a number out of a site with no API — through browser-use,
@@ -101,6 +114,10 @@ RESEND_FROM=
 # Optional. The model a browser run asks for. Unset means gpt-5.6-luna, the
 # default in src/lib/browser/v4.ts.
 # BROWSER_USE_MODEL=
+# Optional. How hard that model reasons: none, low, medium, high, xhigh, max,
+# or `provider` for browser-use's own default (xhigh on gpt-5.6-luna). Unset
+# means medium, DEFAULT_REASONING in src/lib/browser/v4.ts.
+# BROWSER_USE_REASONING=
 # Optional. A proxy in front of api.browser-use.com/api/v4, where runs, browsers
 # and profiles go. Unset means browser-use.
 # BROWSER_USE_V4_BASE_URL=

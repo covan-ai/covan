@@ -30,6 +30,10 @@
 #                           agent that works when you ask it and not overnight.
 #                           That is the one difference nobody can debug, and it
 #                           is why the two lists have to match.
+#   COMPOSIO_WEBHOOK_SECRET <- REQUIRED here if the API Worker has it. This
+#                           Worker makes and renews the trigger instances the
+#                           API Worker receives, and offers the events only
+#                           when both the key and this secret are set.
 #   BROWSER_USE_API_KEY  <- REQUIRED here if the API Worker has it. This Worker
 #                           is the FALLBACK now, not the only clock: while a
 #                           conversation is open in a tab, the tab polls its

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type React from "react";
 
 const { onAuthStateChange, readSession } = vi.hoisted(() => ({
@@ -7,8 +7,10 @@ const { onAuthStateChange, readSession } = vi.hoisted(() => ({
   readSession: vi.fn(),
 }));
 
+const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: { component: () => React.ReactElement }) => options,
+  useNavigate: () => navigate,
   Link: ({ children, ...props }: { children: React.ReactNode; to: string }) => (
     <a href={props.to}>{children}</a>
   ),
@@ -35,6 +37,21 @@ describe("the reset-password link check", () => {
     await renderReset();
 
     expect(await screen.findByText("Set a new password")).toBeInTheDocument();
+  });
+
+  // A reset link proves the mailbox, not the authenticator: GoTrue will not
+  // change the password of an account with one until its code is given.
+  it("asks for the code first when the account has an authenticator", async () => {
+    readSession.mockResolvedValue({ kind: "second-factor", session: {} });
+    await renderReset();
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/two-factor",
+        search: { next: "/reset-password" },
+        replace: true,
+      }),
+    );
   });
 
   it("says the link expired when there is genuinely no session", async () => {

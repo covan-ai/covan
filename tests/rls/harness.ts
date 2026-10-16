@@ -16,6 +16,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import postgres from "postgres";
 
 export type StackConfig = {
@@ -125,6 +126,8 @@ export type TestUser = {
   db: SupabaseClient;
   /** The workspace the signup trigger created, where this user is 'admin'. */
   workspaceId: string;
+  /** For a test that has to sign in again — a second session, a second step. */
+  password: string;
 };
 
 const created: string[] = [];
@@ -173,7 +176,7 @@ export async function createTestUser(label: string): Promise<TestUser> {
     );
   }
 
-  return { id: createdUser.user.id, email, db, workspaceId: membership.workspace_id };
+  return { id: createdUser.user.id, email, db, workspaceId: membership.workspace_id, password };
 }
 
 /**
@@ -208,4 +211,65 @@ export async function destroyTestUsers() {
     await tx`delete from public.workspaces where created_by = any(${users}::uuid[])`;
     await tx`delete from auth.users where id = any(${users}::uuid[])`;
   });
+}
+
+/**
+ * The code an authenticator app would show for `secret` now (RFC 6238: SHA-1,
+ * thirty-second steps, six digits — what GoTrue issues).
+ *
+ * Written out rather than imported: it is fifteen lines, and the one thing the
+ * second-step tests need that the stack does not already provide.
+ */
+export function totpCode(secret: string, at = Date.now()): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const ch of secret.replace(/=+$/, "").toUpperCase()) {
+    bits += alphabet.indexOf(ch).toString(2).padStart(5, "0");
+  }
+  const key = Buffer.alloc(Math.floor(bits.length / 8));
+  for (let i = 0; i < key.length; i++) key[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
+
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 1000 / 30)));
+  const mac = createHmac("sha1", key).update(counter).digest();
+  const offset = mac[mac.length - 1] & 0xf;
+  const value =
+    (((mac[offset] & 0x7f) << 24) |
+      (mac[offset + 1] << 16) |
+      (mac[offset + 2] << 8) |
+      mac[offset + 3]) %
+    1_000_000;
+  return value.toString().padStart(6, "0");
+}
+
+/**
+ * Gives `user` an authenticator and finishes its own session's second step, so
+ * `user.db` is `aal2` afterwards. Returns the secret, for codes later.
+ */
+export async function enrollTotp(user: TestUser): Promise<string> {
+  const { data, error } = await user.db.auth.mfa.enroll({
+    factorType: "totp",
+    friendlyName: `rls-${crypto.randomUUID()}`,
+  });
+  if (error || !data) throw new Error(`could not enroll an authenticator: ${error?.message}`);
+
+  const { error: verifyError } = await user.db.auth.mfa.challengeAndVerify({
+    factorId: data.id,
+    code: totpCode(data.totp.secret),
+  });
+  if (verifyError) throw new Error(`could not verify the authenticator: ${verifyError.message}`);
+
+  return data.totp.secret;
+}
+
+/** A fresh password-only session for `user`: `aal1`, whatever the account has. */
+export async function passwordOnlyClient(user: TestUser): Promise<SupabaseClient> {
+  const { url, anonKey } = stackConfig();
+  const db = createClient(url, anonKey, CLIENT_OPTIONS);
+  const { error } = await db.auth.signInWithPassword({
+    email: user.email,
+    password: user.password,
+  });
+  if (error) throw new Error(`could not sign in again: ${error.message}`);
+  return db;
 }

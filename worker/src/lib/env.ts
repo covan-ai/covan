@@ -230,6 +230,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // anywhere, while the Cloudflare build works fine.
     COMPOSIO_API_KEY: source.COMPOSIO_API_KEY,
     COMPOSIO_BASE_URL: source.COMPOSIO_BASE_URL,
+    COMPOSIO_WEBHOOK_SECRET: source.COMPOSIO_WEBHOOK_SECRET,
     // The browser tool, and the takeover that recovers a login wall. Omitted
     // here until 2026-10-09, which is the failure the comment above describes
     // happening to the very next variable somebody added: `browse` reported
@@ -241,6 +242,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     BROWSER_USE_BASE_URL: source.BROWSER_USE_BASE_URL,
     BROWSER_USE_V4_BASE_URL: source.BROWSER_USE_V4_BASE_URL,
     BROWSER_USE_MODEL: source.BROWSER_USE_MODEL,
+    BROWSER_USE_REASONING: source.BROWSER_USE_REASONING,
     // Where a message from the quota wall goes, defaulting in `routes/support.ts`
     // to efe@covan.app. Forwarded for a sharper reason than the one above: that
     // route is mounted unconditionally, so without this an operator's own users

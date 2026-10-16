@@ -25,13 +25,32 @@ import { readStoredText, sidecarKey, type StoredText } from "../document-text";
  * Nothing about a unit depends on the size of the file. That is the point: the
  * upload request used to do all of this at once, and the file size was
  * whatever survived it.
+ *
+ * Nor on how many files were uploaded together: a workspace indexes one
+ * document at a time (0111), and the claim is where that is decided. A
+ * document whose turn has not come is not claimed, and its clock is told to
+ * look again in `WAIT_FOR_TURN_MS`.
  */
 
-/** Passages per unit: two embedding calls and two inserts. */
+/**
+ * Passages per unit: two embedding calls, and as many inserts as
+ * `CHUNK_INSERT_BATCH` makes of them.
+ */
 export const UNIT = 256;
 
 /** Units that fail in a row before the document is marked failed. */
 export const MAX_ATTEMPTS = 4;
+
+/**
+ * How long a document waiting for its turn (0111) waits before it looks again.
+ *
+ * A workspace indexes one document at a time, so the rest of an upload of
+ * several sit `queued` while the first is indexed. Nothing tells them when it
+ * is done; they ask. Thirty seconds is a short gap beside the minutes a long
+ * document takes, and one claim every thirty seconds per waiting document is
+ * nothing beside the inserts it is waiting for.
+ */
+export const WAIT_FOR_TURN_MS = 30_000;
 
 export type Advance = { next: "none" } | { next: "now" } | { next: "at"; at: number };
 
@@ -65,7 +84,7 @@ export async function advanceIndexJob(
   });
   if (claimError) throw new Error(`claim_index_job failed: ${claimError.message}`);
   const doc = ((claimed ?? []) as DocumentRow[])[0];
-  if (!doc) return heldOrDone(db, documentId);
+  if (!doc) return heldOrDone(db, documentId, now);
 
   const store = env.DOCS || env.DOCS_DIR ? getDocStore(env) : null;
   if (!store) {
@@ -330,19 +349,39 @@ async function fail(db: SupabaseClient, doc: DocumentRow, reason: string): Promi
   return { next: "none" };
 }
 
-/** Nothing claimed: either somebody holds the lease, or there is nothing to do. */
-async function heldOrDone(db: SupabaseClient, documentId: string): Promise<Advance> {
+/**
+ * Nothing claimed. Either a unit of this document is running (its lease is
+ * held), or it is waiting for another document in its workspace to finish
+ * (0111), or there is nothing left to do.
+ */
+async function heldOrDone(
+  db: SupabaseClient,
+  documentId: string,
+  now: () => Date,
+): Promise<Advance> {
   const { data } = await db
     .from("documents")
-    .select("index_status,index_lease_until")
+    .select("index_status,index_lease_until,deleted_at")
     .eq("id", documentId)
     .maybeSingle();
-  const row = data as { index_status?: string | null; index_lease_until?: string | null } | null;
-  if (!row || (row.index_status !== "queued" && row.index_status !== "indexing")) {
+  const row = data as {
+    index_status?: string | null;
+    index_lease_until?: string | null;
+    deleted_at?: string | null;
+  } | null;
+  if (
+    !row ||
+    row.deleted_at ||
+    (row.index_status !== "queued" && row.index_status !== "indexing")
+  ) {
     return { next: "none" };
   }
-  const until = row.index_lease_until ? Date.parse(row.index_lease_until) : Date.now();
-  return { next: "at", at: until + 1_000 };
+  const until = row.index_lease_until ? Date.parse(row.index_lease_until) : NaN;
+  if (until > now().getTime()) return { next: "at", at: until + 1_000 };
+  // Its turn has not come. Look again later rather than at once: a clock that
+  // asked every second would be five waiting documents asking five times a
+  // second for as long as a long one takes.
+  return { next: "at", at: now().getTime() + WAIT_FOR_TURN_MS };
 }
 
 /**

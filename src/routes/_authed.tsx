@@ -38,6 +38,13 @@ function AuthedLayout() {
         setUnreachable(false);
         return;
       }
+      // Signed in with a password but not yet with the code. Not signed out —
+      // the session is kept for the step that finishes it — and not let in,
+      // because every request it makes is refused (0108).
+      if (answer.kind === "second-factor") {
+        navigate({ to: "/two-factor", replace: true });
+        return;
+      }
       // Only a definite "nobody is signed in" may take somebody's page away.
       // The third answer means the stored session is probably still good and
       // the network is not — see readSession for what that costs when ignored.

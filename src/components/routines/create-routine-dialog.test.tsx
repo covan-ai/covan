@@ -5,8 +5,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api-client";
 import { CreateRoutineDialog } from "./create-routine-dialog";
 
-const { draft, channelsList, me, createRoutine, toast } = vi.hoisted(() => ({
+const { draft, channelsList, me, createRoutine, eventCatalog, toast } = vi.hoisted(() => ({
   draft: vi.fn(),
+  eventCatalog: vi.fn(),
   channelsList: vi.fn(),
   me: vi.fn(),
   createRoutine: vi.fn(),
@@ -15,10 +16,18 @@ const { draft, channelsList, me, createRoutine, toast } = vi.hoisted(() => ({
 
 vi.mock("sonner", () => ({ toast }));
 
+// The event picker links to Integrations for an app that is not connected —
+// a router <Link>, which needs a context this test has no reason to build.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
+}));
+
 vi.mock("@/lib/api-client", () => ({
   api: {
     me,
-    routines: { draft, create: createRoutine },
+    routines: { draft, create: createRoutine, eventCatalog },
     deliveryChannels: { list: channelsList, create: vi.fn(), remove: vi.fn() },
   },
   ApiError: class ApiError extends Error {
@@ -54,6 +63,8 @@ describe("CreateRoutineDialog", () => {
     me.mockReset();
     createRoutine.mockReset();
     createRoutine.mockResolvedValue({});
+    eventCatalog.mockReset();
+    eventCatalog.mockResolvedValue([]);
     toast.success.mockReset();
     toast.error.mockReset();
     toast.message.mockReset();
@@ -403,5 +414,92 @@ describe("opened from a link", () => {
     });
 
     await waitFor(() => expect(field).toHaveValue("me@example.com"));
+  });
+});
+
+describe("CreateRoutineDialog, starting on an app event", () => {
+  const CATALOG = [
+    {
+      type: "gmail.new_message",
+      provider: "composio",
+      app: "Gmail",
+      label: "New mail",
+      description: "A message arrives in the inbox.",
+      fields: [{ key: "query", label: "Only mail matching", kind: "text", optional: true }],
+      requires: { kind: "composio", toolkit: "gmail" },
+      connected: true,
+    },
+    {
+      type: "hubspot.contact_created",
+      provider: "composio",
+      app: "HubSpot",
+      label: "New contact",
+      description: "A contact is created.",
+      fields: [],
+      requires: { kind: "composio", toolkit: "hubspot" },
+      connected: false,
+    },
+  ];
+
+  beforeEach(() => {
+    createRoutine.mockReset();
+    createRoutine.mockResolvedValue({});
+    me.mockResolvedValue({ user: { id: "u1" }, workspace: {}, members: [] });
+    channelsList.mockResolvedValue([
+      { id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0, confirmed: true },
+    ]);
+    eventCatalog.mockReset();
+    eventCatalog.mockResolvedValue(CATALOG);
+  });
+
+  async function openOnEvent() {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "Inbox");
+    await user.type(screen.getByLabelText(/instruction/i), "tell me what matters");
+    await user.click(screen.getByLabelText(/^starts$/i));
+    await user.click(
+      await screen.findByRole("option", { name: /when something happens in an app/i }),
+    );
+    return user;
+  }
+
+  it("asks which app and what happens in it, and not for a schedule", async () => {
+    const user = await openOnEvent();
+
+    await user.click(await screen.findByLabelText(/^app$/i));
+    await user.click(await screen.findByRole("option", { name: "Gmail" }));
+
+    expect(await screen.findByText("A message arrives in the inbox.")).toBeInTheDocument();
+    expect(screen.getByLabelText(/only mail matching/i)).toBeInTheDocument();
+    // An event routine is never due; offering a schedule would promise a run.
+    expect(screen.queryByText(/^Repeats$/i)).not.toBeInTheDocument();
+  });
+
+  it("sends the event it waits for with the routine", async () => {
+    const user = await openOnEvent();
+    expect(screen.getByRole("button", { name: /^Create routine$/i })).toBeDisabled();
+
+    await user.click(await screen.findByLabelText(/^app$/i));
+    await user.click(await screen.findByRole("option", { name: "Gmail" }));
+    await user.type(screen.getByLabelText(/only mail matching/i), "from:boss");
+    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
+
+    const payload = createRoutine.mock.calls[0][0];
+    expect(payload.triggerKind).toBe("event");
+    expect(payload.event).toEqual({ type: "gmail.new_message", config: { query: "from:boss" } });
+  });
+
+  it("offers to connect an app that is not connected, and will not create until it is", async () => {
+    const user = await openOnEvent();
+
+    await user.click(await screen.findByLabelText(/^app$/i));
+    await user.click(await screen.findByRole("option", { name: "HubSpot" }));
+
+    expect(await screen.findByText(/HubSpot is not connected yet/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /connect hubspot/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Create routine$/i })).toBeDisabled();
   });
 });

@@ -26,17 +26,31 @@ import {
 
 export type Row = Record<string, unknown>;
 
+/**
+ * A column's value, including PostgREST's `col->>key` — a key of a jsonb
+ * column, as text, or null when the key is absent, which is what Postgres
+ * answers.
+ */
+function cellOf(row: Row, column: string): unknown {
+  const arrow = column.indexOf("->>");
+  if (arrow < 0) return row[column];
+  const outer = row[column.slice(0, arrow)];
+  if (!outer || typeof outer !== "object") return null;
+  const inner = (outer as Row)[column.slice(arrow + 3)];
+  return inner === undefined || inner === null ? null : String(inner);
+}
+
 export function matchesFilters(row: Row, filters: Filter[]): boolean {
   return filters.every((f) => {
     switch (f.kind) {
       case "eq":
-        return row[f.column] === f.value;
+        return cellOf(row, f.column) === f.value;
       case "neq":
-        return row[f.column] !== f.value;
+        return cellOf(row, f.column) !== f.value;
       case "is":
-        return (row[f.column] ?? null) === f.value;
+        return (cellOf(row, f.column) ?? null) === f.value;
       case "in":
-        return (f.value as unknown[]).includes(row[f.column]);
+        return (f.value as unknown[]).includes(cellOf(row, f.column));
       case "or":
         return matchesOr(row, String(f.value));
       default:
@@ -75,7 +89,7 @@ export function matchesOr(row: Row, expr: string): boolean {
     const negated = rest[0] === "not";
     const [op, ...valueParts] = negated ? rest.slice(1) : rest;
     const value = valueParts.join(".");
-    const cell = row[column] ?? null;
+    const cell = cellOf(row, column) ?? null;
     let hit: boolean;
     switch (op) {
       case "is":

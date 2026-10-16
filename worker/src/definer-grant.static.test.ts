@@ -73,6 +73,8 @@ const CALLABLE: Record<string, string> = {
     "named by the policies on `messages`, so they do not re-enter `chat_sessions`' own policies for every row.",
   shares_workspace:
     "named by the profile policies; answers whether two accounts have a workspace in common.",
+  second_factor_satisfied:
+    "named by the restrictive policies on the Realtime tables and asked by the PostgREST pre-request hook (0108); answers whether the caller's own session has passed the second step it owes. Revoked from anon all the same.",
   // `routine_source_is_visible` is NOT here, and 0047 says why in the function
   // itself: it has to run as the caller so its subquery is filtered by the
   // caller's own policies. As definer it would see every connection in the

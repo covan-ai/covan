@@ -143,6 +143,19 @@ services:
       GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_SMS_AUTOCONFIRM: "false"
+      # Eight, as every form in the app asks. `secure_password_change` (an
+      # emailed code for a password change from a session over a day old) is
+      # on for covan.app but not here: this stack ships no mail server, and a
+      # code nobody can receive would leave those sessions unable to change the
+      # password at all. Set GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION
+      # once GOTRUE_SMTP_* is configured.
+      GOTRUE_PASSWORD_MIN_LENGTH: "8"
+
+      # Two-step sign-in with an authenticator app. GoTrue keeps the factors;
+      # what makes a code actually required is 0108, which has PostgREST and
+      # the API refuse a session that has not given it. SMS codes stay off.
+      GOTRUE_MFA_TOTP_ENROLL_ENABLED: "true"
+      GOTRUE_MFA_TOTP_VERIFY_ENABLED: "true"
 
   rest:
     container_name: covan-rest
@@ -206,7 +219,7 @@ services:
       DB_USER: supabase_admin
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_NAME: postgres
-      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
       DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:-supabaserealtime}
       API_JWT_SECRET: ${JWT_SECRET}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
@@ -395,6 +408,8 @@ services:
       # not reach either provider however the operator configured it.
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
       COMPOSIO_BASE_URL: ${COMPOSIO_BASE_URL:-}
+      # Routines that start on a connected app's event. Empty means none can.
+      COMPOSIO_WEBHOOK_SECRET: ${COMPOSIO_WEBHOOK_SECRET:-}
       # The browser tool, and the takeover that recovers a login wall. Empty
       # means `browse` is not offered at all; no password is ever handed to it
       # either way, because the provider's `secrets` field is never populated.
@@ -402,6 +417,7 @@ services:
       BROWSER_USE_BASE_URL: ${BROWSER_USE_BASE_URL:-}
       BROWSER_USE_V4_BASE_URL: ${BROWSER_USE_V4_BASE_URL:-}
       BROWSER_USE_MODEL: ${BROWSER_USE_MODEL:-}
+      BROWSER_USE_REASONING: ${BROWSER_USE_REASONING:-}
       PORT: 8787
       ROUTINE_TICK_MS: ${ROUTINE_TICK_MS:-60000}
     volumes:

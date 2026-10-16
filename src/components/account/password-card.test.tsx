@@ -2,8 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { updateUser, signOut } = vi.hoisted(() => ({ updateUser: vi.fn(), signOut: vi.fn() }));
-vi.mock("@/lib/supabase/client", () => ({ supabase: { auth: { updateUser, signOut } } }));
+const { updateUser, signOut, reauthenticate } = vi.hoisted(() => ({
+  updateUser: vi.fn(),
+  signOut: vi.fn(),
+  reauthenticate: vi.fn(),
+}));
+vi.mock("@/lib/supabase/client", () => ({
+  supabase: { auth: { updateUser, signOut, reauthenticate } },
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const { PasswordCard } = await import("./password-card");
@@ -11,6 +17,7 @@ const { PasswordCard } = await import("./password-card");
 beforeEach(() => {
   vi.clearAllMocks();
   updateUser.mockResolvedValue({ error: null });
+  reauthenticate.mockResolvedValue({ error: null });
 });
 
 async function fill(password: string, confirm: string) {
@@ -19,10 +26,11 @@ async function fill(password: string, confirm: string) {
 }
 
 describe("PasswordCard", () => {
-  it("refuses a password under six characters", async () => {
+  // Eight, as sign-up and the reset page ask, and as GoTrue enforces.
+  it("refuses a password under eight characters", async () => {
     render(<PasswordCard />);
-    await fill("abcde", "abcde");
-    expect(screen.getByText("At least 6 characters.")).toBeInTheDocument();
+    await fill("abcdefg", "abcdefg");
+    expect(screen.getByText("At least 8 characters.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update password" })).toBeDisabled();
   });
 
@@ -52,5 +60,30 @@ describe("PasswordCard", () => {
     await fill("same-as-before", "same-as-before");
     await userEvent.click(screen.getByRole("button", { name: "Update password" }));
     expect(await screen.findByText("New password should be different")).toBeInTheDocument();
+  });
+
+  // `secure_password_change`: a session that has not signed in within the
+  // last day is asked for a code GoTrue emails, so a laptop left open cannot
+  // lock its owner out.
+  it("asks for the emailed code when GoTrue wants proof, then sends it", async () => {
+    updateUser.mockResolvedValueOnce({
+      error: {
+        code: "reauthentication_needed",
+        message: "Password update requires reauthentication",
+      },
+    });
+    render(<PasswordCard />);
+    await fill("correct horse", "correct horse");
+    await userEvent.click(screen.getByRole("button", { name: "Update password" }));
+
+    expect(reauthenticate).toHaveBeenCalled();
+    const codeField = await screen.findByLabelText("Code from your email");
+    expect(screen.getByRole("button", { name: "Update password" })).toBeDisabled();
+
+    await userEvent.type(codeField, "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Update password" }));
+
+    expect(updateUser).toHaveBeenLastCalledWith({ password: "correct horse", nonce: "123456" });
+    await waitFor(() => expect(screen.queryByLabelText("Code from your email")).toBeNull());
   });
 });

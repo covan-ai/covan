@@ -57,6 +57,19 @@ describe("the gate in front of every signed-in page", () => {
     expect(await screen.findByText("the app")).toBeInTheDocument();
   });
 
+  // Not signed out — the session is what the code will finish — and not let
+  // in, because the API and the database refuse it everything (0108).
+  it("sends a session still owing its code to the second step", async () => {
+    readSession.mockResolvedValue({ kind: "second-factor", session: { access_token: "a" } });
+
+    await renderAuthed();
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ to: "/two-factor", replace: true }),
+    );
+    expect(screen.queryByText("the app")).not.toBeInTheDocument();
+  });
+
   it("sends you to sign in when there is genuinely nobody signed in", async () => {
     readSession.mockResolvedValue({ kind: "none" });
 

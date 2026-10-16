@@ -43,6 +43,7 @@ import { unfitToServe } from "./lib/env";
 import { connections, connectionsPublic } from "./routes/connections";
 import { toolConnections } from "./routes/tool-connections";
 import { composio, composioPublic } from "./routes/composio";
+import { composioEvents } from "./routes/composio-events";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
@@ -115,6 +116,9 @@ app.route("/", composioPublic);
 // opens the state, seals the grant and redirects.
 app.route("/", slackPublic);
 app.route("/", routineHooks);
+// Composio's deliveries, by the same argument: one signature, one trigger
+// instance to count against, and the address only for signatures that fail.
+app.route("/", composioEvents);
 
 // After cors, so a preflight is answered rather than counted: an OPTIONS that
 // gets a 429 makes the browser report the real request as a CORS failure, which
@@ -186,6 +190,8 @@ api.use("/brainstorm/ideas/suggest", rateLimit("expensive"));
 api.use("/persona/suggest", rateLimit("expensive"));
 api.use("/routines/draft", rateLimit("expensive"));
 api.use("/routines/:id/run", rateLimit("expensive"));
+// A test event runs the routine on a sample, which is a model call like Run now.
+api.use("/routines/:id/event/test", rateLimit("expensive"));
 // The most expensive of the lot per call: a report is a document written
 // section by section, a model call per section, and output is the dear side.
 api.use("/sessions/:id/report", rateLimit("expensive"));
@@ -279,6 +285,10 @@ export const TurnRoom = turnRoom(replay);
 // The document engine's Durable Object (`lib/docs/host.ts`). Exported here for
 // Cloudflare to find under `DOC_ROOMS`; Node never constructs it.
 export { DocumentRoom } from "./lib/docs/host";
+
+// Where a webhook's or an app event's run happens (`lib/routines/poke-room.ts`),
+// bound as `ROUTINE_ROOMS`; Node never constructs it.
+export { RoutineRoom } from "./lib/routines/poke-room";
 
 // The Worker now has two entry points. `fetch` is the API, unchanged.
 // `scheduled` is the routine engine: it wakes on the cron trigger, asks which

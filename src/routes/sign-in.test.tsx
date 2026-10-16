@@ -56,6 +56,21 @@ describe("the sign-in page when somebody is already signed in", () => {
     expect(signInWithPassword).not.toHaveBeenCalled();
   });
 
+  // Half signed in: the password was given and the code was not. The other
+  // half is /two-factor, not a second password prompt.
+  it("sends a session still owing its code to the second step", async () => {
+    readSession.mockResolvedValue({
+      kind: "second-factor",
+      session: { access_token: "t" } as never,
+    });
+
+    await renderSignIn();
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ to: "/two-factor", replace: true }),
+    );
+  });
+
   it("asks for a password when nobody is signed in", async () => {
     await renderSignIn();
 
@@ -116,5 +131,35 @@ describe("the sign-in page's Remember me box", () => {
       email: "you@company.com",
       password: "hunter2hunter2",
     });
+  });
+});
+
+describe("where the password leads", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    readSession.mockResolvedValue({ kind: "none" });
+  });
+
+  it("goes to the app for an account without an authenticator", async () => {
+    const user = userEvent.setup();
+    await renderSignIn();
+    readSession.mockResolvedValue({ kind: "session", session: { access_token: "t" } as never });
+
+    await fillAndSubmit(user);
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/app" }));
+  });
+
+  it("goes to the second step for an account with one", async () => {
+    const user = userEvent.setup();
+    await renderSignIn();
+    readSession.mockResolvedValue({
+      kind: "second-factor",
+      session: { access_token: "t" } as never,
+    });
+
+    await fillAndSubmit(user);
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/two-factor" }));
   });
 });

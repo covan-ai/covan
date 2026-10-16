@@ -21,6 +21,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as TermsRouteImport } from './routes/terms'
+import { Route as TwoFactorRouteImport } from './routes/two-factor'
 import { Route as AuthedAppRouteImport } from './routes/_authed.app'
 import { Route as AuthedIntegrationsRouteImport } from './routes/_authed.integrations'
 import { Route as AuthedKnowledgeRouteImport } from './routes/_authed.knowledge'
@@ -99,6 +100,11 @@ const SignUpRoute = SignUpRouteImport.update({
 const TermsRoute = TermsRouteImport.update({
   id: '/terms',
   path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TwoFactorRoute = TwoFactorRouteImport.update({
+  id: '/two-factor',
+  path: '/two-factor',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthedAppRoute = AuthedAppRouteImport.update({
@@ -221,6 +227,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/terms': typeof TermsRoute
+  '/two-factor': typeof TwoFactorRoute
   '/app': typeof AuthedAppRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
@@ -254,6 +261,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/terms': typeof TermsRoute
+  '/two-factor': typeof TwoFactorRoute
   '/app': typeof AuthedAppRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
@@ -287,6 +295,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
   '/terms': typeof TermsRoute
+  '/two-factor': typeof TwoFactorRoute
   '/_authed/app': typeof AuthedAppRoute
   '/_authed/integrations': typeof AuthedIntegrationsRoute
   '/_authed/knowledge': typeof AuthedKnowledgeRoute
@@ -322,6 +331,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/terms'
+    | '/two-factor'
     | '/app'
     | '/integrations'
     | '/knowledge'
@@ -355,6 +365,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/terms'
+    | '/two-factor'
     | '/app'
     | '/integrations'
     | '/knowledge'
@@ -387,6 +398,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/terms'
+    | '/two-factor'
     | '/_authed/app'
     | '/_authed/integrations'
     | '/_authed/knowledge'
@@ -422,6 +434,7 @@ export interface RootRouteChildren {
   SignInRoute: typeof SignInRoute
   SignUpRoute: typeof SignUpRoute
   TermsRoute: typeof TermsRoute
+  TwoFactorRoute: typeof TwoFactorRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -508,6 +521,13 @@ declare module '@tanstack/react-router' {
       path: '/terms'
       fullPath: '/terms'
       preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/two-factor': {
+      id: '/two-factor'
+      path: '/two-factor'
+      fullPath: '/two-factor'
+      preLoaderRoute: typeof TwoFactorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authed/app': {
@@ -735,6 +755,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInRoute: SignInRoute,
   SignUpRoute: SignUpRoute,
   TermsRoute: TermsRoute,
+  TwoFactorRoute: TwoFactorRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

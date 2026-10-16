@@ -38,6 +38,66 @@ vi.mock("../lib/routines/address-confirmation", async (importOriginal) => ({
   ...confirmation,
 }));
 
+/**
+ * The event catalogue ships empty until the adapters that serve it do (0109),
+ * so these tests hand the routes a registry of their own: one event that
+ * needs nothing, and one that needs a connected app. What the lifecycle and a
+ * run do with the choice is held by their own tests; here they are spies, so
+ * what the routes decide — and in which order — is visible.
+ */
+const events = vi.hoisted(() => {
+  const sample = { eventId: "sample", text: "From: someone\nSubject: hello" };
+  const anything = {
+    id: "test.anything",
+    provider: "composio",
+    app: "Tester",
+    label: "Anything",
+    description: "Something happened.",
+    requires: { kind: "none" },
+    fields: [],
+    sample,
+  };
+  const mail = {
+    ...anything,
+    id: "test.mail",
+    app: "Mail",
+    label: "New mail",
+    requires: { kind: "composio", toolkit: "gmail" },
+  };
+  return {
+    defs: [anything, mail] as Array<Record<string, unknown>>,
+    replaceSubscription: vi.fn(async (..._args: unknown[]) => ({ status: "active", detail: null })),
+    releaseSubscription: vi.fn(async (..._args: unknown[]) => {}),
+    syncSubscription: vi.fn(async (..._args: unknown[]) => ({ status: null, detail: null })),
+    runPokedRoutine: vi.fn(async (..._args: unknown[]) => ({ status: "ok", itemsNew: 1 })),
+  };
+});
+vi.mock("../lib/routines/events/adapter", async () => {
+  const { z } = await import("zod");
+  const defs: Array<Record<string, unknown>> = events.defs.map((d) => ({
+    ...d,
+    config: z.object({ query: z.string().optional() }),
+  }));
+  const byId = new Map(defs.map((d) => [d.id as string, d]));
+  return {
+    EVENT_REGISTRY: {
+      eventType: (id: string) => byId.get(id),
+      all: () => defs,
+      adapterFor: () => ({ isConfigured: () => true }),
+    },
+    canListenFor: () => true,
+  };
+});
+vi.mock("../lib/routines/events/lifecycle", () => ({
+  replaceSubscription: events.replaceSubscription,
+  releaseSubscription: events.releaseSubscription,
+  syncSubscription: events.syncSubscription,
+}));
+vi.mock("../lib/routines/dispatcher", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/routines/dispatcher")>()),
+  runPokedRoutine: events.runPokedRoutine,
+}));
+
 const { routines } = await import("./routines");
 
 const USER = { id: "user-1", email: "a@example.com" };
@@ -1007,5 +1067,332 @@ describe("PATCH /routines/:id, the browser", () => {
 
     expect(status).toBe(400);
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe("event triggers (0109)", () => {
+  const AGENT_ID = "11111111-1111-4111-8111-111111111111";
+  const CHANNEL_ID = "22222222-2222-4222-8222-222222222222";
+
+  const EVENT_ROUTINE = {
+    id: "r1",
+    agent_id: AGENT_ID,
+    user_id: USER.id,
+    workspace_id: WORKSPACE_ID,
+    name: "Inbox",
+    visibility: "private",
+    source_kind: "none",
+    source_config: {},
+    instruction: "tell me what matters",
+    delivery_channel_id: CHANNEL_ID,
+    schedule_cron: "0 9 * * *",
+    timezone: "UTC",
+    trigger_kind: "event",
+    status: "active",
+    paused_reason: null,
+    next_run_at: null,
+    last_run_at: null,
+    created_at: "2026-10-16T00:00:00.000Z",
+    event: {
+      provider: "composio",
+      event_type: "test.anything",
+      config: {},
+      status: "active",
+      status_detail: null,
+      last_event_at: null,
+      expires_at: null,
+    },
+  };
+
+  beforeEach(() => {
+    events.replaceSubscription.mockClear();
+    events.releaseSubscription.mockClear();
+    events.syncSubscription.mockClear();
+    events.runPokedRoutine.mockClear();
+  });
+
+  /** A caller's client that sees one routine, and records what it deleted. */
+  function withRoutine(
+    routine: Record<string, unknown> | null,
+    key?: { id: string; workspaceId: string },
+    extra: FakeDbSpec["tables"] = {},
+  ) {
+    const deleted: string[] = [];
+    const request = appWith(
+      {
+        tables: {
+          routines: {
+            select: async () => ({ data: routine, error: null }),
+            delete: async (ctx) => {
+              deleted.push(String(ctx.filters.find((f) => f.column === "id")?.value));
+              return { data: null, error: null };
+            },
+          },
+          ...extra,
+        },
+      },
+      {},
+      key,
+    );
+    return { request, deleted };
+  }
+
+  const noApps = {
+    tool_connections: { select: async () => ({ data: [], error: null }) },
+    connections: { select: async () => ({ data: [], error: null }) },
+    slack_installations: { select: async () => ({ data: [], error: null }) },
+  };
+
+  describe("GET /routines/events/catalog", () => {
+    it("lists what this deployment can listen for, and says what is connected", async () => {
+      const { request } = withRoutine(null, undefined, noApps);
+
+      const { status, body } = await request("GET", "/routines/events/catalog");
+
+      expect(status).toBe(200);
+      expect(body.map((e: { type: string; connected: boolean }) => [e.type, e.connected])).toEqual([
+        ["test.anything", true],
+        ["test.mail", false],
+      ]);
+      // The schema is the server's to apply; the dialog gets the fields.
+      expect(body[0]).not.toHaveProperty("config");
+    });
+  });
+
+  describe("POST /routines with an event", () => {
+    function createWith(extra: FakeDbSpec["tables"] = {}) {
+      const inserted: Array<Record<string, unknown>> = [];
+      const request = appWith({
+        tables: {
+          agents: { select: async () => ({ data: { workspace_id: WORKSPACE_ID }, error: null }) },
+          routines: {
+            insert: async (ctx) => {
+              const row = { ...EVENT_ROUTINE, event: undefined, ...ctx.values };
+              inserted.push(row);
+              return { data: row, error: null };
+            },
+            select: async () => ({ data: EVENT_ROUTINE, error: null }),
+          },
+          ...noApps,
+          ...extra,
+        },
+      });
+      return { request, inserted };
+    }
+
+    const BODY = {
+      agentId: AGENT_ID,
+      name: "Inbox",
+      sourceKind: "none",
+      instruction: "tell me what matters",
+      scheduleCron: "0 9 * * *",
+      timezone: "UTC",
+      deliveryChannelId: CHANNEL_ID,
+      triggerKind: "event",
+    };
+
+    it("creates the routine and then records what it waits for", async () => {
+      const { request, inserted } = createWith();
+
+      const { status, body } = await request("POST", "/routines", {
+        ...BODY,
+        event: { type: "test.anything", config: { query: "is:unread" } },
+      });
+
+      expect(status).toBe(201);
+      expect(inserted[0].trigger_kind).toBe("event");
+      const [, routineId, choice] = events.replaceSubscription.mock.calls[0] as [
+        unknown,
+        string,
+        { def: { id: string }; config: unknown },
+      ];
+      expect(routineId).toBe("r1");
+      expect(choice.def.id).toBe("test.anything");
+      expect(choice.config).toEqual({ query: "is:unread" });
+      expect(body.event).toMatchObject({ type: "test.anything", status: "active" });
+    });
+
+    it("refuses an event routine that names no event", async () => {
+      const { request, inserted } = createWith();
+
+      expect((await request("POST", "/routines", BODY)).status).toBe(400);
+      expect(inserted).toEqual([]);
+    });
+
+    it("refuses an event on a routine that does not start on one", async () => {
+      const { request } = createWith();
+
+      const { status } = await request("POST", "/routines", {
+        ...BODY,
+        triggerKind: "schedule",
+        event: { type: "test.anything" },
+      });
+
+      expect(status).toBe(400);
+    });
+
+    // Checked before anything is written, so a refusal leaves no routine
+    // waiting for nothing.
+    it("refuses an app that is not connected, before the routine exists", async () => {
+      const { request, inserted } = createWith();
+
+      const { status, body } = await request("POST", "/routines", {
+        ...BODY,
+        event: { type: "test.mail" },
+      });
+
+      expect(status).toBe(409);
+      expect(body.error).toBe("Connect Mail first.");
+      expect(inserted).toEqual([]);
+      expect(events.replaceSubscription).not.toHaveBeenCalled();
+    });
+
+    it("records the connection it found, so the subscription uses that grant", async () => {
+      const { request } = createWith({
+        tool_connections: { select: async () => ({ data: [{ id: "tc-gmail" }], error: null }) },
+      });
+
+      await request("POST", "/routines", { ...BODY, event: { type: "test.mail" } });
+
+      const choice = events.replaceSubscription.mock.calls[0][2] as { config: unknown };
+      expect(choice.config).toEqual({ connectionId: "tc-gmail" });
+    });
+
+    it("refuses an event nobody catalogued", async () => {
+      const { request } = createWith();
+
+      const { status, body } = await request("POST", "/routines", {
+        ...BODY,
+        event: { type: "fax.received" },
+      });
+
+      expect(status).toBe(400);
+      expect(body.error).toBe("unknown event type");
+    });
+  });
+
+  describe("PUT /routines/:id/event", () => {
+    it("replaces what the routine waits for and answers with the routine", async () => {
+      const { request } = withRoutine(EVENT_ROUTINE, undefined, noApps);
+
+      const { status, body } = await request("PUT", "/routines/r1/event", {
+        type: "test.anything",
+        config: {},
+      });
+
+      expect(status).toBe(200);
+      expect(events.replaceSubscription).toHaveBeenCalledOnce();
+      expect(body.event.type).toBe("test.anything");
+    });
+
+    it("is refused to an API key", async () => {
+      const { request } = withRoutine(EVENT_ROUTINE, { id: "key-1", workspaceId: WORKSPACE_ID });
+
+      const { status, body } = await request("PUT", "/routines/r1/event", {
+        type: "test.anything",
+      });
+
+      expect(status).toBe(403);
+      expect(body.error).toMatch(/^api keys cannot choose what a routine listens for/);
+      expect(events.replaceSubscription).not.toHaveBeenCalled();
+    });
+
+    it("refuses a routine that does not start on an event", async () => {
+      const { request } = withRoutine({ ...EVENT_ROUTINE, trigger_kind: "schedule" });
+
+      const { status } = await request("PUT", "/routines/r1/event", { type: "test.anything" });
+
+      expect(status).toBe(400);
+      expect(events.replaceSubscription).not.toHaveBeenCalled();
+    });
+
+    it("is a 404 for a routine the caller does not own", async () => {
+      const { request } = withRoutine(null);
+
+      expect((await request("PUT", "/routines/r1/event", { type: "test.anything" })).status).toBe(
+        404,
+      );
+    });
+  });
+
+  describe("DELETE /routines/:id/event", () => {
+    it("stops listening at the provider", async () => {
+      const { request } = withRoutine(EVENT_ROUTINE);
+
+      expect((await request("DELETE", "/routines/r1/event")).status).toBe(204);
+      expect(events.releaseSubscription.mock.calls[0][1]).toBe("r1");
+    });
+  });
+
+  describe("DELETE /routines/:id", () => {
+    // The cascade takes the row, and with it the only record of what to
+    // unsubscribe — so the provider is told first.
+    it("unsubscribes an event routine before deleting it", async () => {
+      const order: string[] = [];
+      events.releaseSubscription.mockImplementationOnce(async () => {
+        order.push("release");
+      });
+      const { request, deleted } = withRoutine(EVENT_ROUTINE);
+
+      const { status } = await request("DELETE", "/routines/r1");
+      order.push(...deleted.map(() => "delete"));
+
+      expect(status).toBe(204);
+      expect(order).toEqual(["release", "delete"]);
+    });
+
+    it("has nothing to release for any other routine", async () => {
+      const { request } = withRoutine({ ...EVENT_ROUTINE, trigger_kind: "schedule" });
+
+      await request("DELETE", "/routines/r1");
+
+      expect(events.releaseSubscription).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /routines/:id/event/test", () => {
+    it("runs the routine on the event's sample, as an event", async () => {
+      const { request } = withRoutine(EVENT_ROUTINE);
+
+      const { status, body } = await request("POST", "/routines/r1/event/test");
+
+      expect(status).toBe(200);
+      expect(body).toEqual({ status: "ok", itemsNew: 1 });
+      const trigger = events.runPokedRoutine.mock.calls[0][2] as Record<string, string>;
+      expect(trigger).toMatchObject({
+        payload: "From: someone\nSubject: hello",
+        source: "event",
+        label: "Tester · Anything (test)",
+      });
+      expect(trigger.eventId).toMatch(/^test:/);
+    });
+
+    it("asks for an event first when none was chosen", async () => {
+      const { request } = withRoutine({ ...EVENT_ROUTINE, event: null });
+
+      const { status, body } = await request("POST", "/routines/r1/event/test");
+
+      expect(status).toBe(400);
+      expect(body.error).toBe("choose an event for this routine first");
+      expect(events.runPokedRoutine).not.toHaveBeenCalled();
+    });
+
+    it("is the owner's alone", async () => {
+      const { request } = withRoutine({ ...EVENT_ROUTINE, user_id: "someone-else" });
+
+      expect((await request("POST", "/routines/r1/event/test")).status).toBe(403);
+    });
+  });
+
+  describe("POST /routines/:id/trigger", () => {
+    // Its way in is the provider; a URL beside it would be a door nobody
+    // asked for.
+    it("will not mint a webhook URL for an event routine", async () => {
+      const { request } = withRoutine({ id: "r1", trigger_kind: "event" });
+
+      const { status } = await request("POST", "/routines/r1/trigger");
+
+      expect(status).toBe(400);
+    });
   });
 });

@@ -5,7 +5,7 @@ import { getRateLimiter } from "../lib/ratelimit";
 import { readCapped } from "../lib/routines/source";
 import { hashIngestToken, resolveIngestToken, touchTrigger } from "../lib/routines/ingest";
 import { countMiss, hasSpentMisses, refuseSpent } from "../middleware/ratelimit";
-import { runPokedRoutine } from "../lib/routines/dispatcher";
+import { startPokedRun } from "../lib/routines/poke-room";
 
 /**
  * `POST /routine-hooks/:token` — somebody else's system, starting a routine.
@@ -109,11 +109,17 @@ routineHooks.post("/routine-hooks/:token", async (c) => {
   // times out long before that and retries, and a retry of something already
   // running is how one poke becomes four. The run is idempotent on `eventId`
   // regardless — this just means the sender is not the one discovering it.
+  // `startPokedRun` is what lets "afterwards" last longer than `waitUntil`'s
+  // thirty seconds on Cloudflare (`lib/routines/poke-room.ts`).
   deferred(
     c,
     (async () => {
       try {
-        await runPokedRoutine(c.env, routine, { eventId: eventId.trim(), payload });
+        await startPokedRun(c.env, routine, {
+          eventId: eventId.trim(),
+          payload,
+          source: "webhook",
+        });
       } catch (err) {
         // The run records its own failure on `routine_runs`, which is where
         // the owner looks. This catch exists so an unhandled rejection cannot

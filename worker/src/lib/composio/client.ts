@@ -6,7 +6,9 @@ import { httpsUrl } from "../https-url";
  *
  * Seven entry points: search the catalogue, read one operation's schema, run
  * one, list the applications, start a consent flow, ask how one ended, and
- * revoke it. Everything else Composio sells — their toolset, their agent
+ * revoke it — and, for routines that start on an event (0109), a trigger
+ * instance's lifecycle and the project's one webhook subscription, at the
+ * bottom of the file. Everything else Composio sells — their toolset, their agent
  * framework adapters, their execution middleware — is deliberately not here.
  *
  * WHAT IS BOUGHT AND WHAT IS NOT. Bought: a registered OAuth application per
@@ -1546,4 +1548,188 @@ export async function deleteConnectedAccount(
     { method: "DELETE" },
     opts,
   );
+}
+
+// ---- triggers (0109) ---------------------------------------------------------
+//
+// A trigger instance is Composio watching one connected account for one kind
+// of event — a new Gmail message, a calendar event about to start — and
+// delivering each one to the project's webhook subscription. Covan makes one
+// per event routine (`lib/routines/events/composio.ts`), keeps its id in
+// `routine_event_subscriptions.external_id`, and ends it when the routine
+// stops waiting. The identifiers are the caller's to supply and never a
+// model's, for `executeTool`'s reason: a trigger on the wrong account is
+// somebody else's mail arriving in your routine.
+
+/**
+ * Create the instance, or bring back the one that already exists with the same
+ * settings — Composio's upsert re-enables a disabled match instead of making a
+ * second. Answers its id (`ti_…`), which Composio calls `trigger_id`.
+ *
+ * `connected_account_id` is always sent, never left to Composio's fallback of
+ * "the first active connection for this user and toolkit": a person with two
+ * Gmail accounts connected chose one, and the fallback would choose for them.
+ */
+export async function upsertTriggerInstance(
+  env: ComposioEnv,
+  call: {
+    slug: string;
+    connectedAccountId: string;
+    userId: string;
+    triggerConfig: Record<string, unknown>;
+  },
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ triggerId: string }>> {
+  const res = await request(
+    env,
+    `${CORE_API}/trigger_instances/${encodeURIComponent(call.slug)}/upsert`,
+    {
+      method: "POST",
+      body: {
+        connected_account_id: call.connectedAccountId,
+        user_id: call.userId,
+        trigger_config: call.triggerConfig,
+      },
+    },
+    opts,
+  );
+  if (res.kind === "error") return res;
+  const body = parsed(res.body);
+  const triggerId = isRecord(body) ? text(body.trigger_id) || text(body.id) : "";
+  if (!triggerId) {
+    return { kind: "error", status: 502, message: "Composio made the trigger but named no id" };
+  }
+  return { kind: "ok", triggerId };
+}
+
+/**
+ * Pause or resume an instance without forgetting it.
+ *
+ * Composio answers 409 to "enable" on an enabled instance and to "disable" on a
+ * disabled one. That is the state asked for, already true, so it is an ok here:
+ * a sync that is repeated — the sweeper and a route both noticing the same
+ * pause — must not turn into a failure on the routine's page.
+ */
+export async function setTriggerStatus(
+  env: ComposioEnv,
+  triggerId: string,
+  enabled: boolean,
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ body: string }>> {
+  const res = await request(
+    env,
+    `${CORE_API}/trigger_instances/manage/${encodeURIComponent(triggerId)}`,
+    { method: "PATCH", body: { status: enabled ? "enable" : "disable" } },
+    opts,
+  );
+  if (res.kind === "error" && res.status === 409) return { kind: "ok", body: "" };
+  return res;
+}
+
+/**
+ * End an instance. Already gone — 404, or 409/410 for one deleted before —
+ * is the outcome asked for, so it is an ok.
+ */
+export async function deleteTriggerInstance(
+  env: ComposioEnv,
+  triggerId: string,
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ body: string }>> {
+  const res = await request(
+    env,
+    `${CORE_API}/trigger_instances/manage/${encodeURIComponent(triggerId)}`,
+    { method: "DELETE" },
+    opts,
+  );
+  if (res.kind === "error" && [404, 409, 410].includes(res.status)) {
+    return { kind: "ok", body: "" };
+  }
+  return res;
+}
+
+/**
+ * What a trigger type takes and sends — `config` and `payload`, both JSON
+ * Schema — or why not. Used by the subscription script to check that every
+ * slug the catalogue names still exists before anybody is offered it; an
+ * unknown slug is a 400 from Composio, not a 404.
+ */
+export async function getTriggerType(
+  env: ComposioEnv,
+  slug: string,
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ slug: string; config: Record<string, unknown> | null; type: string }>> {
+  const res = await request(
+    env,
+    `${CORE_API}/triggers_types/${encodeURIComponent(slug)}`,
+    { method: "GET", maxBytes: MAX_CATALOGUE_BYTES },
+    opts,
+  );
+  if (res.kind === "error") return res;
+  const body = parsed(res.body);
+  if (!isRecord(body)) return { kind: "error", status: 502, message: "unreadable trigger type" };
+  return {
+    kind: "ok",
+    slug: text(body.slug, slug),
+    config: isRecord(body.config) ? body.config : null,
+    type: text(body.type),
+  };
+}
+
+/** The project's webhook subscription as Composio describes it. */
+export type WebhookSubscription = {
+  id: string;
+  webhookUrl: string;
+  enabledEvents: string[];
+  version: string;
+  secret: string;
+};
+
+function toSubscription(row: Record<string, unknown>): WebhookSubscription {
+  return {
+    id: text(row.id),
+    webhookUrl: text(row.webhook_url),
+    enabledEvents: Array.isArray(row.enabled_events)
+      ? row.enabled_events.filter((e): e is string => typeof e === "string")
+      : [],
+    version: text(row.version),
+    secret: text(row.secret),
+  };
+}
+
+/**
+ * Point the project's one webhook subscription at this deployment, making it
+ * if there is none — Composio allows one per project and answers 409 to a
+ * second, so this reads first and updates what it finds. For the subscription
+ * script only; nothing at request time changes where Composio delivers.
+ */
+export async function ensureWebhookSubscription(
+  env: ComposioEnv,
+  want: { webhookUrl: string; enabledEvents: string[] },
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ subscription: WebhookSubscription; created: boolean }>> {
+  const list = await request(
+    env,
+    `${CORE_API}/webhook_subscriptions?limit=1`,
+    { method: "GET" },
+    opts,
+  );
+  if (list.kind === "error") return list;
+  const existing = rows(parsed(list.body))[0];
+  const body = { webhook_url: want.webhookUrl, enabled_events: want.enabledEvents, version: "V3" };
+
+  const res = existing
+    ? await request(
+        env,
+        `${CORE_API}/webhook_subscriptions/${encodeURIComponent(text(existing.id))}`,
+        { method: "PATCH", body },
+        opts,
+      )
+    : await request(env, `${CORE_API}/webhook_subscriptions`, { method: "POST", body }, opts);
+  if (res.kind === "error") return res;
+  const row = parsed(res.body);
+  if (!isRecord(row)) return { kind: "error", status: 502, message: "unreadable subscription" };
+  const subscription = toSubscription(row);
+  // A PATCH may not echo the secret; the listing carried it.
+  if (!subscription.secret && existing) subscription.secret = text(existing.secret);
+  return { kind: "ok", subscription, created: !existing };
 }

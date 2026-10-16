@@ -30,6 +30,8 @@ import type {
   ConfirmationOutcome,
   RoutineDraft,
   RoutineTrigger,
+  EventCatalogEntry,
+  EventChoice,
   CreateRoutineInput,
   UpdateRoutineInput,
 } from "./routines-api";
@@ -1106,6 +1108,17 @@ export const api = {
     createTrigger: (id: string): Promise<{ token: string; path: string }> =>
       request("POST", `/routines/${id}/trigger`),
     removeTrigger: (id: string): Promise<void> => request("DELETE", `/routines/${id}/trigger`),
+    /** What this deployment can listen for, and whether each app is connected. */
+    eventCatalog: (): Promise<EventCatalogEntry[]> => request("GET", "/routines/events/catalog"),
+    /** Choose what an event routine waits for, or choose again. */
+    setEvent: (id: string, choice: EventChoice): Promise<Routine> =>
+      request("PUT", `/routines/${id}/event`, choice),
+    removeEvent: (id: string): Promise<void> => request("DELETE", `/routines/${id}/event`),
+    /** Runs the routine on a sample of its event. Resolves when the run ends. */
+    testEvent: (
+      id: string,
+    ): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> =>
+      request("POST", `/routines/${id}/event/test`),
   },
   deliveryChannels: {
     list: (): Promise<DeliveryChannel[]> => request("GET", "/delivery-channels"),

@@ -90,6 +90,14 @@ describe("the token minted for a key's owner", () => {
     expect(claims(token).covan_key).toBe("key-1");
   });
 
+  it("counts as a session that passed the second step", async () => {
+    // 0108 answers 403 to anything below aal2 from an account with a second
+    // factor. A key's owner turning two-step on must not break their keys.
+    const token = await mintUserToken(SECRET, user, KEY);
+
+    expect(claims(token).aal).toBe("aal2");
+  });
+
   it("expires in a minute, so a captured one is worth nothing by the time it is read", async () => {
     const token = await mintUserToken(SECRET, user, KEY);
     const { iat, exp } = claims(token) as { iat: number; exp: number };

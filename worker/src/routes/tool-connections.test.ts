@@ -18,6 +18,12 @@ import { decryptSecret } from "../lib/secret-box";
 const serviceFrom = vi.fn();
 vi.mock("../lib/supabase", () => ({ serviceClient: () => ({ from: serviceFrom }) }));
 
+// Routines listening through a removed connection (0109). Its own behaviour is
+// `lifecycle.test.ts`'s; here, only when it is asked and in what order.
+const lapseSubscriptions = vi.fn(async (..._args: unknown[]) => [] as string[]);
+vi.mock("../lib/routines/events/lifecycle", () => ({ lapseSubscriptions }));
+vi.mock("../lib/routines/dispatcher", () => ({ announceLapsedSubscription: vi.fn() }));
+
 const { toolConnections } = await import("./tool-connections");
 
 const USER = { id: "user-1", email: "a@example.com" };
@@ -406,6 +412,35 @@ describe("DELETE /tool-connections/:id", () => {
     // the account id, because the delete takes that id with it; the test below
     // on a refused caller is what proves no revocation rides along with it.
     expect(order).toEqual(["deleted", "revoked"]);
+  });
+
+  it("tells the routines listening through it before the grant is given back", async () => {
+    const order: string[] = [];
+    lapseSubscriptions.mockImplementationOnce(async () => {
+      order.push("lapsed");
+      return [];
+    });
+    fetchMock.mockImplementation(async () => {
+      order.push("revoked");
+      return new Response(null, { status: 204 });
+    });
+    const app = appWith({
+      connection: { id: "conn-1", workspace_id: "ws-1", transport: "composio", label: "gmail" },
+      onDelete: () => order.push("deleted"),
+    });
+    const res = await app.request(
+      "/tool-connections/conn-1",
+      { method: "DELETE" },
+      COMPOSIO_ENV as never,
+    );
+
+    expect(res.status).toBe(204);
+    // Ending a trigger at Composio needs the account it was made on, so the
+    // lapse comes before the revocation — and after the delete, which is the
+    // permission question.
+    expect(order).toEqual(["deleted", "lapsed", "revoked"]);
+    expect(lapseSubscriptions.mock.calls[0][1]).toEqual({ config: { connectionId: "conn-1" } });
+    expect(lapseSubscriptions.mock.calls[0][2]).toBe("gmail was disconnected.");
   });
 
   it("revokes nothing when the delete policy refuses the caller", async () => {

@@ -84,6 +84,21 @@ export type RoutineEnv = {
    */
   COMPOSIO_BASE_URL?: string;
   /**
+   * The signing secret of this deployment's Composio webhook subscription —
+   * what `POST /composio/events` verifies every delivery with
+   * (`lib/composio/webhook.ts`). `worker/scripts/composio-webhook-subscribe.ts`
+   * makes the subscription and prints it.
+   *
+   * On `RoutineEnv`, and set on BOTH Workers, because it is also the switch
+   * that says this deployment can hear Composio's triggers at all: without it
+   * nothing would ever be delivered, so the Composio events are not offered,
+   * and the cron Worker — which makes the trigger instances — must agree
+   * with the API Worker about that, or it would subscribe to events nobody
+   * can receive. Optional; unset, routines simply cannot start on a Composio
+   * trigger. On Cloudflare: `wrangler secret put COMPOSIO_WEBHOOK_SECRET`.
+   */
+  COMPOSIO_WEBHOOK_SECRET?: string;
+  /**
    * browser-use's API key, and the switch that makes the `browse` tool exist.
    *
    * On `RoutineEnv` rather than `Bindings` for `COMPOSIO_API_KEY`'s reason,
@@ -108,8 +123,22 @@ export type RoutineEnv = {
    * outside the provider's list is a 422 on every run.
    */
   BROWSER_USE_MODEL?: string;
+  /**
+   * How hard a `browse` run's model reasons: `none` … `max`, or `provider` to
+   * send nothing and take browser-use's default (`xhigh` for `gpt-5.6-luna`).
+   * Empty means `DEFAULT_REASONING` in `lib/browser/v4.ts`.
+   */
+  BROWSER_USE_REASONING?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
+  /**
+   * How many events may start one routine in an hour, and in a day, before it
+   * is paused and its owner told (0109). Whole numbers; unset or nonsense
+   * means 60 and 500 — see `lib/routines/events/receive.ts` for why these are
+   * a fuse rather than a budget.
+   */
+  ROUTINE_EVENT_RUNS_PER_HOUR?: string;
+  ROUTINE_EVENT_RUNS_PER_DAY?: string;
   RESEND_API_KEY: string;
   /** Verified sender, e.g. "Routines <routines@yourdomain.com>". */
   RESEND_FROM: string;
@@ -346,6 +375,14 @@ export type Bindings = SyncEnv & {
    * `lib/turns`.
    */
   TURN_ROOMS?: DurableObjectNamespace;
+  /**
+   * Where a routine started by a webhook or an app event runs on Cloudflare,
+   * so it finishes after the sender has been answered: the `RoutineRoom`
+   * class (`lib/routines/poke-room.ts`). Absent on Node, where the process
+   * outlives the request, and on a Cloudflare deploy that has not added it,
+   * where the run gets `waitUntil`'s thirty seconds.
+   */
+  ROUTINE_ROOMS?: DurableObjectNamespace;
   /**
    * The address of the socket this request arrived on. Node only: `node.ts`
    * sets it on every request, and its presence is how `clientAddress` knows it

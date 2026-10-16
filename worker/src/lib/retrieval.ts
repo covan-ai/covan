@@ -1,7 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EmbeddingConfig } from "./embeddings";
 import { embedTexts } from "./embeddings";
-import { buildContextBlock, RAG_BLOCK_CHARS, ragMinSimilarity, retrievalQuery } from "./rag";
+import {
+  buildContextBlock,
+  citable,
+  DEFAULT_RAG_MIN_SIMILARITY,
+  RAG_BLOCK_CHARS,
+  ragMinSimilarity,
+  retrievalQuery,
+} from "./rag";
 import type { RetrievedChunk } from "./rag";
 import { refersToDocuments, namesDocument } from "./doc-question";
 import { lexicalSearchEnabled, searchTerms } from "./search-terms";
@@ -270,6 +277,7 @@ export async function retrieveForAgent(
             document_id: string;
             document_name: string;
             content: string;
+            similarity: number | null;
           }>;
           // Held rather than built into a block here. A document the question
           // named by name may still have to be merged in below, and one block
@@ -279,6 +287,8 @@ export async function retrieveForAgent(
             documentId: m.document_id,
             documentName: m.document_name,
             content: m.content,
+            // `null` from the lexical arm alone; see `citable`.
+            similarity: typeof m.similarity === "number" ? m.similarity : null,
           }));
         }
       }
@@ -416,7 +426,12 @@ export async function retrieveForAgent(
       const matchedSet = new Set(matched);
       grounding = block.used.some((u) => matchedSet.has(u)) ? "chunks" : "documents";
     }
-    for (const u of block.used) addSource(u.documentId ?? null, u.documentName);
+    // What the model read and what the answer is shown as coming from are two
+    // lists. The block holds everything above the floor that fit; the chips
+    // hold only what clearly bears on the question (`citable`).
+    for (const u of citable(block.used, citationFloor(env))) {
+      addSource(u.documentId ?? null, u.documentName);
+    }
   }
 
   return {
@@ -483,4 +498,17 @@ async function orderedText(db: SupabaseClient, documentId: string, limit: number
     text += (text ? "\n\n" : "") + row.content;
   }
   return text;
+}
+
+/**
+ * The retrieval floor, for deciding what to cite. A misconfigured
+ * `RAG_MIN_SIMILARITY` already fell back to an ungrounded answer above; here it
+ * falls back to the default rather than throwing after the block is built.
+ */
+function citationFloor(env: RetrievalConfig): number {
+  try {
+    return ragMinSimilarity(env);
+  } catch {
+    return DEFAULT_RAG_MIN_SIMILARITY;
+  }
 }

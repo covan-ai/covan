@@ -33,7 +33,12 @@ describe("retrieveForAgent with no history", () => {
           rpcArgs = args;
           return {
             data: [
-              { document_id: "d1", document_name: "pricing.md", content: "Pro is $20 a seat." },
+              {
+                document_id: "d1",
+                document_name: "pricing.md",
+                content: "Pro is $20 a seat.",
+                similarity: 0.6,
+              },
             ],
             error: null,
           };
@@ -55,6 +60,59 @@ describe("retrieveForAgent with no history", () => {
       (rpcArgs as unknown as { p_query_terms: string[] }).p_query_terms.length,
     ).toBeGreaterThan(0);
     expect(result.sources).toEqual([{ id: "d1", name: "pricing.md" }]);
+  });
+});
+
+/**
+ * What the model reads and what the answer is shown as coming from. Both
+ * passages below are put in front of the model; only the one that clearly
+ * bears on the question is a source chip.
+ */
+describe("retrieveForAgent's sources", () => {
+  it("reads a weak or keyword-only passage but does not cite it", async () => {
+    const fake = fakeDb({
+      tables: {
+        agent_bundles: { select: () => ({ data: [{ bundle_id: "b1" }], error: null }) },
+        documents: {
+          select: () => ({
+            data: [{ name: "remote-policy.pdf" }, { name: "Fjord - Wikipedia.html" }],
+            error: null,
+          }),
+        },
+      },
+      rpc: {
+        match_chunks: () => ({
+          data: [
+            {
+              document_id: "d1",
+              document_name: "remote-policy.pdf",
+              content: "Remote work is allowed three days a week. ".repeat(6),
+              similarity: 0.61,
+            },
+            {
+              document_id: "d2",
+              document_name: "Fjord - Wikipedia.html",
+              content: "A fjord is a long, narrow inlet. Work on the survey began in 1890. ".repeat(
+                4,
+              ),
+              similarity: null,
+            },
+          ],
+          error: null,
+        }),
+      },
+    });
+
+    const result = await retrieveForAgent(
+      fake.db as never,
+      {} as never,
+      "agent-1",
+      "Summarize the remote work policy",
+      [],
+    );
+
+    expect(result.ragBlock).toContain("Fjord - Wikipedia.html");
+    expect(result.sources).toEqual([{ id: "d1", name: "remote-policy.pdf" }]);
   });
 });
 

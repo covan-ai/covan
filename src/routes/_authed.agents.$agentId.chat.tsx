@@ -71,6 +71,7 @@ import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
 import { useStableCallback } from "@/lib/use-stable-callback";
 import { FeedbackDialog } from "@/components/feedback-dialog";
+import { OutOfCreditsNote } from "@/components/chat/out-of-credits";
 import {
   ConfirmCard,
   type AgentStepView,
@@ -180,7 +181,17 @@ function ChatTab() {
   // quiet line in the composer footer while there is room, and as a banner once
   // it is nearly gone. `useCredits` returns null on a self-hosted install, where
   // there are no credits and none of this renders.
-  const credits = useCredits();
+  //
+  // `refusedAtBalance` is the balance the server named when it last refused a
+  // reply for credits (402). It can be above zero — the hosted check asks for
+  // a little headroom before it starts a turn — so "spent" alone would leave a
+  // composer that looks ready and a button the server will refuse. Until the
+  // balance climbs past it, the conversation is out of credits.
+  const [refusedAtBalance, setRefusedAtBalance] = useState<number | null>(null);
+  const credits = useCredits({ watch: refusedAtBalance !== null });
+  const outOfCredits =
+    credits?.level === "spent" ||
+    (refusedAtBalance !== null && (credits === null || credits.balance <= refusedAtBalance));
 
   const agentSessions = useMemo(
     () => sessions.filter((s) => s.agentId === agentId).sort((a, b) => b.updatedAt - a.updatedAt),
@@ -493,7 +504,12 @@ function ChatTab() {
    * in four seconds; a question with nothing under it is not, and it used to
    * look exactly like one still being answered. Cleared when a reply starts.
    */
-  const [failed, setFailed] = useState<{ sessionId: string; message: string } | null>(null);
+  const [failed, setFailed] = useState<{
+    sessionId: string;
+    message: string;
+    /** Refused for credits rather than broken: a different row, a different next step. */
+    credits?: boolean;
+  } | null>(null);
   const [streamText, setStreamText] = useState("");
   /**
    * The model's account of how it got to the answer, while it is getting
@@ -732,6 +748,7 @@ function ChatTab() {
     }
     setReplyingIn(sessionId);
     setFailed(null);
+    setRefusedAtBalance(null);
     setKept(null);
     // Whatever was cut off is being dealt with now, one way or the other.
     setTruncated(null);
@@ -833,13 +850,13 @@ function ChatTab() {
 
       if (res.status === 402) {
         // Out of credits. The user's message is already saved, so the
-        // conversation isn't lost — only the reply is refused.
-        toast.error(
-          "This workspace is out of credits.",
-          // The usage page is where the wall itself lives — a message to us,
-          // and self-hosting. See `credits-wall.tsx`.
-          { action: { label: "Options", onClick: () => navigate({ to: "/settings/usage" }) } },
-        );
+        // conversation isn't lost — only the reply is refused. Said under the
+        // message, where it stays, with the next step (`OutOfCreditsNote`),
+        // rather than in a toast that is gone before it is read.
+        const refusal = (await res.json().catch(() => null)) as { balance?: unknown } | null;
+        const balance = typeof refusal?.balance === "number" ? refusal.balance : 0;
+        setRefusedAtBalance(Math.max(0, balance));
+        setFailed({ sessionId, message: "This workspace is out of credits.", credits: true });
         setThinking(false);
         setStreamText("");
         setThinkingText("");
@@ -1263,6 +1280,9 @@ function ChatTab() {
   // not a command, it is text, and it is sent as typed — the same way the
   // button beside the composer is simply absent rather than disabled.
   const send = () => {
+    // The composer says why; the server would refuse the reply anyway, and a
+    // message sent into a refusal is one more question with nothing under it.
+    if (outOfCredits) return;
     if (canWrite) {
       const command = parseReportCommand(input);
       if (command) {
@@ -1969,24 +1989,43 @@ function ChatTab() {
 
               {/* The reply that failed, where the reply would have been. Try
                   again asks the server to answer the last question once more. */}
-              {failed && failed.sessionId === active?.id && replyingIn !== active?.id && (
-                <div
-                  role="alert"
-                  className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
-                >
-                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-                  <span className="min-w-0 flex-1">{failed.message}</span>
-                  {isOwner && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void streamReply(failed.sessionId)}
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" /> Try again
-                    </Button>
-                  )}
-                </div>
-              )}
+              {/* Out of credits: refused, not broken, so not the red row below.
+                  Also shown after a reload, when the last word is still the
+                  person's own and the balance is still spent. */}
+              {replyingIn !== active?.id &&
+                (failed?.credits
+                  ? failed.sessionId === active?.id
+                  : !failed &&
+                    outOfCredits &&
+                    !searchQuery &&
+                    allMessages[allMessages.length - 1]?.role === "user") && (
+                  <OutOfCreditsNote
+                    canRetry={!outOfCredits}
+                    onRetry={isOwner && active ? () => void streamReply(active.id) : undefined}
+                  />
+                )}
+
+              {failed &&
+                !failed.credits &&
+                failed.sessionId === active?.id &&
+                replyingIn !== active?.id && (
+                  <div
+                    role="alert"
+                    className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
+                  >
+                    <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                    <span className="min-w-0 flex-1">{failed.message}</span>
+                    {isOwner && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void streamReply(failed.sessionId)}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" /> Try again
+                      </Button>
+                    )}
+                  </div>
+                )}
 
               {/* A stopped reply's words, until its row is in the transcript
                   above — see `kept`. Not while another answer is streaming
@@ -2085,10 +2124,14 @@ function ChatTab() {
           </Button>
         )}
         <div className="mx-auto max-w-3xl">
-          {credits && credits.level !== "fine" && (
+          {credits && (credits.level !== "fine" || outOfCredits) && (
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
               <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />
-              <span>{creditsSentence(credits)}</span>
+              <span>
+                {outOfCredits
+                  ? "This workspace is out of credits. Replies start again as soon as an admin adds more."
+                  : creditsSentence(credits)}
+              </span>
             </div>
           )}
           {followUps.length > 0 && !busy && (
@@ -2238,12 +2281,18 @@ function ChatTab() {
                    until you know that). The three to the left of it are their
                    own components and keep their own `aria-label`s. */
                   <PromptInputAction
-                    tooltip={busy ? "Waiting for the current reply to finish" : "Send message"}
+                    tooltip={
+                      busy
+                        ? "Waiting for the current reply to finish"
+                        : outOfCredits
+                          ? "Out of credits"
+                          : "Send message"
+                    }
                   >
                     <Button
                       size="icon"
                       onClick={send}
-                      disabled={!input.trim() || busy}
+                      disabled={!input.trim() || busy || outOfCredits}
                       aria-label="Send message"
                       className="shrink-0 rounded-full"
                     >

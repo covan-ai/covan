@@ -327,7 +327,12 @@ function answersWith(reply: ReturnType<typeof streamOf>, title = "Vacation days"
 }
 
 type Doc = { id: string; name: string; content: string | null };
-type Match = { document_id: string; document_name: string; content: string };
+type Match = {
+  document_id: string;
+  document_name: string;
+  content: string;
+  similarity?: number | null;
+};
 
 function appWith(spec: {
   question: string;
@@ -567,7 +572,12 @@ describe("citations", () => {
       question: "How many vacation days do I get?",
       documents: [HANDBOOK, PAYROLL],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     const res = await ask(app);
@@ -580,8 +590,18 @@ describe("citations", () => {
       question: "How many vacation days do I get?",
       documents: [HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
-        { document_id: "d1", document_name: "handbook.md", content: "Accrued monthly." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Accrued monthly.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -597,8 +617,8 @@ describe("citations", () => {
       question: "How many vacation days do I get?",
       documents: [HANDBOOK, PAYROLL],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: big },
-        { document_id: "d2", document_name: "payroll.md", content: big },
+        { document_id: "d1", document_name: "handbook.md", content: big, similarity: 0.6 },
+        { document_id: "d2", document_name: "payroll.md", content: big, similarity: 0.6 },
       ],
     });
     await ask(app);
@@ -646,7 +666,12 @@ describe("retrieved material in the prompt", () => {
       question: "How many vacation days do I get?",
       documents: [HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -724,7 +749,12 @@ describe("the no-match fallback", () => {
       question: "Yönetim Özeti raporunda ne yazıyor?",
       documents: [REPORT, HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -741,7 +771,12 @@ describe("the no-match fallback", () => {
       question: "Yönetim Özeti raporunda ne yazıyor?",
       documents: [REPORT, HANDBOOK, PAYROLL],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -758,7 +793,12 @@ describe("the no-match fallback", () => {
       question: "Yönetim Özeti raporunda ne yazıyor?",
       documents: [LONG, HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -827,7 +867,12 @@ describe("what the prompt was made of (0069)", () => {
       question: "How many vacation days do I get?",
       documents: [HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -871,7 +916,12 @@ describe("what grounded the reply (0039)", () => {
       question: "How many vacation days do I get?",
       documents: [HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -897,7 +947,12 @@ describe("what grounded the reply (0039)", () => {
       question: "Yönetim Özeti raporunda ne yazıyor?",
       documents: [REPORT, HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -949,7 +1004,12 @@ describe("the assembled prompt", () => {
       question: "How many vacation days do I get?",
       documents: [HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     await ask(app);
@@ -1369,7 +1429,12 @@ describe("a turn that stops to ask", () => {
       question: "book a room",
       documents: [HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     completionCreate.mockImplementation(asksFor("book_the_room"));
@@ -1401,7 +1466,12 @@ describe("a turn that stops to ask", () => {
       question: "book a room",
       documents: [HANDBOOK],
       matches: [
-        { document_id: "d1", document_name: "handbook.md", content: "Vacation is 20 days." },
+        {
+          document_id: "d1",
+          document_name: "handbook.md",
+          content: "Vacation is 20 days.",
+          similarity: 0.6,
+        },
       ],
     });
     completionCreate.mockImplementation(asksFor("book_the_room", "Let me book that."));

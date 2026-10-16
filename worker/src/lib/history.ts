@@ -5,6 +5,25 @@ export const HISTORY_CHAR_BUDGET = 32000;
 export const PER_MESSAGE_CHAR_CAP = 6000;
 
 /**
+ * The cap on the newest message, which is the one being answered.
+ *
+ * `PER_MESSAGE_CHAR_CAP` exists so one giant paste is not re-sent in full on
+ * every later turn. It was also applied to the turn that pasted it, so the model
+ * saw the first 6,000 characters of a 62,000-character message and never the
+ * question typed underneath — it answered an older one instead. The newest
+ * message is sent once at this size; on the next turn it is history and takes
+ * the ordinary cap.
+ *
+ * 60,000 characters is ~31,600 tokens at `HISTORY_CHARS_PER_TOKEN`, the dense
+ * end. Its budget share is counted as if it were capped normally (see
+ * `selectHistory`), so the worst prompt is the ~28,000-token envelope
+ * `limits.ts` describes, plus `MAX_HISTORY_TOKENS`, plus the ~28,400 tokens
+ * this allows past the ordinary cap: about 73,000, inside the 80,000 at which
+ * a turn starts trimming and well inside every model's window.
+ */
+export const NEWEST_MESSAGE_CHAR_CAP = 60_000;
+
+/**
  * Characters per token in conversation prose, measured rather than assumed.
  *
  * WHY THIS IS HERE AND NOT A RATIO IN A COMMENT. The budget above is in
@@ -45,19 +64,35 @@ export const HISTORY_CHARS_PER_TOKEN = 1.9;
  */
 export const MAX_HISTORY_TOKENS = Math.ceil(HISTORY_CHAR_BUDGET / HISTORY_CHARS_PER_TOKEN);
 
-// Marker appended when a single message is truncated to the per-message cap, so
-// the model can tell the content was cut rather than genuinely ending there.
-const TRUNCATION_MARK = "\n…[truncated]";
+/**
+ * Share of a capped message kept from its head; the rest is kept from its tail.
+ *
+ * Head only used to be the rule, on the theory that the opening carries the
+ * intent. For a paste it is the other way round as often as not: the document
+ * comes first and the question about it comes last. Keeping both ends means
+ * the model sees what was pasted and what was asked about it.
+ */
+const HEAD_SHARE = 0.6;
+
+/** What stands where the middle was, so the model knows it was cut, and by how much. */
+function omissionMark(omitted: number): string {
+  return `\n\n[… ${omitted.toLocaleString("en-US")} characters omitted …]\n\n`;
+}
 
 /**
- * Trim one message's content to at most `cap` chars, keeping the head (the
- * opening usually carries the intent; a huge paste's tail is rarely needed).
- * Returns the original string when it already fits.
+ * Trim one message's content to at most `cap` chars, keeping its head and its
+ * tail with a marker between them that says how much was left out. Returns the
+ * original string when it already fits.
  */
-function capContent(content: string, cap: number): string {
+export function capContent(content: string, cap: number): string {
   if (content.length <= cap) return content;
-  const keep = Math.max(0, cap - TRUNCATION_MARK.length);
-  return content.slice(0, keep) + TRUNCATION_MARK;
+  // The marker's own length depends on the number in it; size it for the
+  // largest possible omission, which is never smaller than the real one.
+  const room = Math.max(0, cap - omissionMark(content.length).length);
+  const head = Math.ceil(room * HEAD_SHARE);
+  const tail = room - head;
+  const omitted = content.length - head - tail;
+  return content.slice(0, head) + omissionMark(omitted) + (tail > 0 ? content.slice(-tail) : "");
 }
 
 /**
@@ -85,7 +120,11 @@ export const HISTORY_LOW_WATER_SHARE = 0.75;
  *
  * - `rows` arrive oldest-first and are returned oldest-first.
  * - Each message is first capped to `perMessageCap` chars so one giant paste
- *   can't dominate (or get re-sent in full on every subsequent turn).
+ *   can't dominate (or get re-sent in full on every subsequent turn) — except
+ *   the newest, which is the one being answered and is capped at `newestCap`.
+ *   Its share of the budget is still counted at `perMessageCap`, so a long
+ *   paste does not push the conversation before it out of the window, and the
+ *   front does not move when that paste becomes history on the next turn.
  * - Under `maxChars` in total, everything is sent.
  * - Over it, the front is cut — but to `lowWater`, not to `maxChars`, and in
  *   bands. The newest message is always kept even if it alone exceeds the
@@ -122,13 +161,22 @@ export function selectHistory(
     maxChars = HISTORY_CHAR_BUDGET,
     perMessageCap = PER_MESSAGE_CHAR_CAP,
     lowWater = Math.round(maxChars * HISTORY_LOW_WATER_SHARE),
-  }: { maxChars?: number; perMessageCap?: number; lowWater?: number } = {},
+    newestCap = Math.max(perMessageCap, NEWEST_MESSAGE_CHAR_CAP),
+  }: { maxChars?: number; perMessageCap?: number; lowWater?: number; newestCap?: number } = {},
 ): HistoryTurn[] {
   if (rows.length === 0) return [];
 
-  const capped = rows.map((r) => ({ role: r.role, content: capContent(r.content, perMessageCap) }));
+  const last = rows.length - 1;
+  const capped = rows.map((r, i) => ({
+    role: r.role,
+    content: capContent(r.content, i === last ? newestCap : perMessageCap),
+  }));
+  // What each message weighs against the budget: its ordinary capped length,
+  // the newest included. The newest's extra is carried on top of the budget
+  // for this one turn rather than paid for with the conversation before it.
+  const weight = capped.map((m) => Math.min(m.content.length, perMessageCap));
 
-  const total = capped.reduce((n, m) => n + m.content.length, 0);
+  const total = weight.reduce((n, w) => n + w, 0);
   if (total <= maxChars) return capped;
 
   const excess = total - maxChars;
@@ -143,7 +191,7 @@ export function selectHistory(
       front = i;
       break;
     }
-    start += capped[i].content.length;
+    start += weight[i];
   }
   return capped.slice(front);
 }

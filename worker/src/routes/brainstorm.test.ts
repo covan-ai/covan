@@ -244,9 +244,9 @@ describe("what a long brainstorm sends", () => {
     expect(markersSent()).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     // And the model is told the paste was cut rather than left to believe it
     // ended where the cap fell.
-    expect(transcriptSent()).toContain("…[truncated]");
-    const paste = transcriptSent().split("\n")[4];
-    expect(paste.length).toBeLessThanOrEqual(PER_MESSAGE_CHAR_CAP + "User: ".length);
+    expect(transcriptSent()).toMatch(/\[… [\d,]+ characters omitted …\]/);
+    // Seven 60-char turns with their labels and newlines, and the paste at its cap.
+    expect(transcriptSent().length).toBeLessThanOrEqual(PER_MESSAGE_CHAR_CAP + 8 * 80);
   });
 });
 

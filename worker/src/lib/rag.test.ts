@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   buildContextBlock,
+  citable,
+  CITATION_BAND,
+  CITATION_MARGIN,
   ragMinSimilarity,
   retrievalQuery,
   DEFAULT_RAG_MIN_SIMILARITY,
@@ -222,6 +225,29 @@ describe("retrievalQuery", () => {
     expect(out).not.toContain("buddy programme");
   });
 
+  // The case that found it: a Wikipedia page imported and asked about, then
+  // "Summarize the remote work policy" — whose embedding was the Wikipedia
+  // question with this one appended, and whose chips named the Wikipedia page.
+  it("leaves a short question that names its own subject alone", () => {
+    const out = retrievalQuery([
+      { role: "user", content: "What does the fjord article say about glaciers?" },
+      { role: "assistant", content: "Fjords are carved by glaciers during ice ages." },
+      { role: "user", content: "Summarize the remote work policy" },
+    ]);
+    expect(out).toBe("Summarize the remote work policy");
+  });
+
+  it("still treats a short pointer with a word or two as a follow-up", () => {
+    for (const followUp of ["tell me more about that", "peki ya ikincisi?", "and point 2?"]) {
+      const out = retrievalQuery([
+        { role: "user", content: "What does the onboarding checklist cover?" },
+        { role: "assistant", content: "Laptops, badges and payroll forms." },
+        { role: "user", content: followUp },
+      ]);
+      expect(out, followUp).toContain("onboarding checklist");
+    }
+  });
+
   it("leaves a short first question alone when there is nothing before it", () => {
     expect(retrievalQuery([{ role: "user", content: "hi" }])).toBe("hi");
   });
@@ -322,5 +348,43 @@ describe("the similarity floor", () => {
     // percentage sets 25, and every chunk falls below a floor no chunk can
     // reach. Retrieval then returns nothing, forever, without erroring once.
     expect(() => ragMinSimilarity({ RAG_MIN_SIMILARITY: value })).toThrow(/RAG_MIN_SIMILARITY/);
+  });
+});
+
+describe("citable", () => {
+  const floor = 0.25;
+  const chunk = (documentName: string, similarity?: number | null) => ({
+    documentName,
+    content: "x",
+    ...(similarity === undefined ? {} : { similarity }),
+  });
+
+  it("cites a document the question named, whatever its score", () => {
+    expect(citable([chunk("handbook.md")], floor)).toHaveLength(1);
+  });
+
+  it("does not cite a passage that only cleared the reading floor", () => {
+    const weak = chunk("printing-press-report", floor + CITATION_MARGIN - 0.01);
+    expect(citable([weak], floor)).toEqual([]);
+  });
+
+  it("does not cite the weak tail of a turn that found something strong", () => {
+    const strong = chunk("remote-policy.pdf", 0.62);
+    const tail = chunk("Fjord - Wikipedia.html", 0.62 - CITATION_BAND - 0.01);
+    expect(citable([strong, tail], floor).map((c) => c.documentName)).toEqual([
+      "remote-policy.pdf",
+    ]);
+  });
+
+  it("does not cite a passage only the keyword arm found", () => {
+    // "code:*" finds "codex"; a shared word is not where an answer came from.
+    expect(citable([chunk("history.md", null), chunk("doors.md", 0.5)], floor)).toEqual([
+      chunk("doors.md", 0.5),
+    ]);
+  });
+
+  it("cites every passage near the best one", () => {
+    const out = citable([chunk("a", 0.55), chunk("b", 0.5), chunk("c", 0.45)], floor);
+    expect(out).toHaveLength(3);
   });
 });

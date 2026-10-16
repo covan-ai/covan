@@ -1,3 +1,5 @@
+import { fold, searchTerms } from "./search-terms";
+
 export type RetrievedChunk = {
   /**
    * The document this passage came from. Optional only because one caller
@@ -8,6 +10,14 @@ export type RetrievedChunk = {
   documentId?: string | null;
   documentName: string;
   content: string;
+  /**
+   * How close the vector arm found this passage to the question. `null` when
+   * only the lexical arm found it; absent for whole-document text admitted
+   * because the question named the document. Read by `citable`, never by the
+   * block: what grounds the answer and what is shown as its source are
+   * different bars.
+   */
+  similarity?: number | null;
 };
 
 /**
@@ -52,11 +62,163 @@ export function ragMinSimilarity(env: { RAG_MIN_SIMILARITY?: string }): number {
 }
 
 /**
+ * How far above the retrieval floor a passage has to score to be shown as a
+ * source, and how close to the best passage of the turn.
+ *
+ * The floor (`ragMinSimilarity`) decides what the model may read, and it is
+ * low on purpose: a passage that is only loosely about the question is cheap
+ * to include and sometimes the one that helps. A source chip is a different
+ * claim — "this answer came from here" — and holding it to the reading bar
+ * hung chips for a Wikipedia page under a question about a policy PDF, and for
+ * an essay about the printing press under an answer about ocean facts. Both
+ * cleared 0.25; neither was what the answer was about.
+ *
+ * So a passage is cited when it clears the floor by `CITATION_MARGIN` and sits
+ * within `CITATION_BAND` of the turn's best passage. The first keeps a weak
+ * turn from citing anything; the second keeps a strong turn from also citing
+ * its weak tail.
+ */
+export const CITATION_MARGIN = 0.1;
+export const CITATION_BAND = 0.15;
+
+/**
+ * The passages of `used` that may be shown as the answer's sources.
+ *
+ * - Whole-document text (no `similarity`) is cited: it is there because the
+ *   question named that document, which is the strongest signal there is.
+ * - A vector match is cited when it clears `floor + CITATION_MARGIN` and is
+ *   within `CITATION_BAND` of the best vector match in `used`.
+ * - A lexical-only match (`similarity: null`) is not cited. It matched a word
+ *   — under prefix matching, "code" finds "codex" — and stays in the block for
+ *   the model to read, but a shared word is not evidence that the answer came
+ *   from that document.
+ */
+export function citable(used: RetrievedChunk[], floor: number): RetrievedChunk[] {
+  const scores = used.map((u) => u.similarity).filter((s): s is number => typeof s === "number");
+  const best = scores.length > 0 ? Math.max(...scores) : 0;
+  const bar = Math.max(floor + CITATION_MARGIN, best - CITATION_BAND);
+  return used.filter((u) => {
+    if (u.similarity === undefined) return true;
+    if (u.similarity === null) return false;
+    return u.similarity >= bar;
+  });
+}
+
+/**
  * Below this length a question is treated as a follow-up rather than a question
  * that stands on its own. "peki ikinci maddesi?" is 20 characters and means
  * nothing to an embedding model; the turn before it is where its subject is.
  */
 const FOLLOW_UP_CHARS = 80;
+
+/**
+ * How many words of its own a short question needs to stand alone.
+ *
+ * Counted after `searchTerms`' stopwords and the words below, which carry no
+ * subject however many of them there are: "and the third one?", "peki ya
+ * ikincisi?", "tell me more about that".
+ */
+const STANDALONE_TERMS = 2;
+
+const FOLLOW_UP_WORDS = new Set(
+  [
+    // English
+    "and",
+    "but",
+    "then",
+    "also",
+    "one",
+    "ones",
+    "that",
+    "this",
+    "those",
+    "these",
+    "it",
+    "its",
+    "about",
+    "more",
+    "tell",
+    "explain",
+    "why",
+    "which",
+    "who",
+    "when",
+    "where",
+    "again",
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "last",
+    "next",
+    "other",
+    "another",
+    "point",
+    "item",
+    "part",
+    "section",
+    "step",
+    "same",
+    "else",
+    "please",
+    "can",
+    "could",
+    "you",
+    "say",
+    "mean",
+    "detail",
+    "details",
+    "example",
+    "examples",
+    // Turkish
+    "peki",
+    "ama",
+    "sonra",
+    "bunu",
+    "bunun",
+    "şunu",
+    "sunu",
+    "onu",
+    "onun",
+    "daha",
+    "fazla",
+    "neden",
+    "niye",
+    "hangi",
+    "hangisi",
+    "ilk",
+    "ikinci",
+    "ikincisi",
+    "üçüncü",
+    "ucuncu",
+    "son",
+    "sonraki",
+    "diğer",
+    "diger",
+    "madde",
+    "maddesi",
+    "kısım",
+    "kisim",
+    "adım",
+    "adim",
+    "aynı",
+    "ayni",
+    "lütfen",
+    "lutfen",
+    "anlat",
+    "açıkla",
+    "acikla",
+    "örnek",
+    "ornek",
+    "detay",
+  ].map(fold),
+);
+
+/** Words of a question that could name a subject. */
+function subjectTerms(question: string): number {
+  return searchTerms(question).filter((t) => !FOLLOW_UP_WORDS.has(t) && !/^\d+$/.test(t)).length;
+}
 
 /** How much of the preceding question to carry, when one is carried. */
 const ANTECEDENT_CHARS = 400;
@@ -89,6 +251,15 @@ export function retrievalQuery(turns: { role: "user" | "assistant"; content: str
   if (!latest) return "";
   const question = latest.content.trim();
   if (question.length >= FOLLOW_UP_CHARS) return question.slice(0, QUERY_CHARS);
+  // Short is not the same as subjectless. "Summarize the remote work policy"
+  // is 32 characters and names everything it is about; prepending the
+  // previous question pointed its embedding at whatever came before — a
+  // Wikipedia import, in the case that found this — and the chips followed.
+  // Only the person's own words: a continuation ends on the half-written
+  // answer, which is full of subject and is not what the turn is grounded in.
+  if (latest.role === "user" && subjectTerms(question) >= STANDALONE_TERMS) {
+    return question.slice(0, QUERY_CHARS);
+  }
 
   const antecedent = turns
     .slice(0, -1)

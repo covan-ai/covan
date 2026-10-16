@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { selectHistory } from "./history";
+import { capContent, selectHistory } from "./history";
 
 const size = (turns: { content: string }[]) => turns.reduce((n, t) => n + t.content.length, 0);
 
@@ -33,12 +33,48 @@ describe("selectHistory", () => {
     expect(out[0].content).toBe("z".repeat(100));
   });
 
-  it("caps an oversized single message and marks it truncated", () => {
-    const rows = [turn("user", "p".repeat(10000))];
-    const out = selectHistory(rows, { perMessageCap: 100 });
-    expect(out[0].content.length).toBe(100);
-    expect(out[0].content.endsWith("[truncated]")).toBe(true);
-    expect(out[0].content.startsWith("p")).toBe(true);
+  it("caps an oversized older message, keeping its head and tail and saying what was cut", () => {
+    const rows = [turn("user", "h".repeat(5000) + "t".repeat(5000)), turn("user", "next")];
+    const out = selectHistory(rows, { perMessageCap: 200 });
+    expect(out[0].content.length).toBeLessThanOrEqual(200);
+    expect(out[0].content.startsWith("h")).toBe(true);
+    expect(out[0].content.endsWith("t")).toBe(true);
+    expect(out[0].content).toMatch(/\[… [\d,]+ characters omitted …\]/);
+  });
+
+  // A paste followed by the question about it. Capping the turn being answered
+  // at the ordinary 6,000 sent the paste's head and dropped the question.
+  it("sends the newest message whole up to its own, larger cap", () => {
+    const paste = "x".repeat(20_000) + "\nReply with only: LONG-OK";
+    const out = selectHistory([turn("user", "older"), turn("user", paste)], {
+      perMessageCap: 100,
+      newestCap: 50_000,
+    });
+    expect(out[out.length - 1].content).toBe(paste);
+  });
+
+  it("keeps the question at the end of a newest message past even its own cap", () => {
+    const paste = "x".repeat(80_000) + "\nReply with only: LONG-OK";
+    const out = selectHistory([turn("user", paste)], { perMessageCap: 100, newestCap: 1_000 });
+    expect(out[0].content.length).toBeLessThanOrEqual(1_000);
+    expect(out[0].content.endsWith("Reply with only: LONG-OK")).toBe(true);
+  });
+
+  it("does not let a long newest message push the conversation before it out", () => {
+    const rows = [
+      turn("user", "a".repeat(90)),
+      turn("assistant", "b".repeat(90)),
+      turn("user", "c".repeat(5000)),
+    ];
+    const out = selectHistory(rows, { maxChars: 300, perMessageCap: 100, newestCap: 10_000 });
+    expect(out).toHaveLength(3);
+    expect(out[2].content).toBe("c".repeat(5000));
+  });
+
+  it("caps the newest message at the ordinary cap once it is no longer newest", () => {
+    const rows = [turn("user", "c".repeat(5000)), turn("assistant", "ok")];
+    const out = selectHistory(rows, { perMessageCap: 100, newestCap: 10_000 });
+    expect(out[0].content.length).toBeLessThanOrEqual(100);
   });
 
   it("counts capped (not original) length against the budget", () => {
@@ -47,11 +83,28 @@ describe("selectHistory", () => {
       turn("assistant", "b".repeat(5000)),
       turn("user", "c".repeat(5000)),
     ];
-    // Each caps to 100; budget 250 admits all three (300 capped total > 250 would
-    // drop one — check the cap is what's measured, not the 5000 originals).
-    const out = selectHistory(rows, { maxChars: 250, perMessageCap: 100 });
+    // Each weighs 100 against a 250 budget, so the oldest goes — the cap is what
+    // is measured, not the 5000 originals.
+    const out = selectHistory(rows, { maxChars: 250, perMessageCap: 100, newestCap: 100 });
     expect(out).toHaveLength(2);
-    expect(out.every((m) => m.content.length === 100)).toBe(true);
+    expect(out.every((m) => m.content.length <= 100)).toBe(true);
+  });
+});
+
+describe("capContent", () => {
+  it("returns what already fits untouched", () => {
+    expect(capContent("short", 100)).toBe("short");
+  });
+
+  it("never exceeds the cap, and reports the omitted count truthfully", () => {
+    for (const len of [101, 500, 12_345, 1_000_000]) {
+      const text = "z".repeat(len);
+      const out = capContent(text, 100);
+      expect(out.length).toBeLessThanOrEqual(100);
+      const omitted = Number(/\[… ([\d,]+) characters/.exec(out)![1].replace(/,/g, ""));
+      const kept = out.replace(/\n\n\[…[^\]]*\]\n\n/, "").length;
+      expect(omitted + kept).toBe(len);
+    }
   });
 
   it("keeps the same oldest message across turns until the slack is spent", () => {

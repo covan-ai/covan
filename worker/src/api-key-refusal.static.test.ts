@@ -250,6 +250,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/messages.ts POST /messages/:id/show",
   "routes/notifications.ts GET /notification-preferences",
   "routes/notifications.ts PATCH /notification-preferences",
+  "routes/onboarding.ts GET /onboarding",
   "routes/onboarding.ts PATCH /onboarding",
   "routes/onboarding.ts POST /onboarding/complete",
   "routes/persona.ts POST /persona/suggest",

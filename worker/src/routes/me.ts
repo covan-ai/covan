@@ -59,7 +59,11 @@ me.get("/me", async (c) => {
 
   const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
-    return c.json({ error: "no workspace found for user" }, 404);
+    // Not an error state any more: somebody who signed up with an invitation
+    // waiting has no workspace until they accept it (0115), and somebody who
+    // left their last one has none either. The app reads this 404 as "send
+    // them to /welcome", where they join or start one.
+    return c.json({ error: "no workspace found for user", code: "no_workspace" }, 404);
   }
 
   const { data: workspace, error: workspaceError } = await db

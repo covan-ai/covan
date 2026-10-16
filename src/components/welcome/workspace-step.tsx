@@ -10,16 +10,21 @@ import { toast } from "sonner";
  * The signup trigger named this workspace "<Name>'s Workspace" without asking.
  * This is the asking. Pre-filled, so continuing without touching it is a valid
  * answer and costs one click.
+ *
+ * `currentName` null means there is no workspace to rename: the account
+ * signed up with an invitation waiting (0115) and did not take it, or the
+ * invitation lapsed. Then this starts one, which is also where a hosted
+ * account's free credits land.
  */
 export function WorkspaceStep({
   currentName,
   onDone,
 }: {
-  currentName: string;
+  currentName: string | null;
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState(currentName);
+  const [name, setName] = useState(currentName ?? "");
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -35,6 +40,18 @@ export function WorkspaceStep({
     }
 
     setSaving(true);
+    if (currentName === null) {
+      try {
+        await api.workspaces.create(trimmed);
+        // Everything read so far was read with no workspace behind it.
+        await queryClient.invalidateQueries();
+        onDone();
+      } catch {
+        toast.error("Couldn't create the workspace.");
+        setSaving(false);
+      }
+      return;
+    }
     try {
       await api.workspace.update({ name: trimmed });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -54,6 +71,7 @@ export function WorkspaceStep({
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={100}
+          placeholder={currentName === null ? "Acme" : undefined}
           required
           autoFocus
         />

@@ -9,7 +9,16 @@ import { OPEN_THE_EMAIL, useAcceptInvitation } from "@/lib/accept-invitation";
  * instead — the invitation itself, at the moment it is relevant, rather than a
  * banner on a screen they have not learned to read yet.
  */
-export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
+export function InviteAcceptStep({
+  onJoined,
+  onSkip,
+  skipLabel = "Not now",
+}: {
+  onJoined: () => void;
+  onSkip: () => void;
+  /** An account with no workspace of its own is offered to start one instead. */
+  skipLabel?: string;
+}) {
   const { data: incoming = [] } = useQuery({
     queryKey: ["invitations", "incoming"],
     queryFn: () => api.invitations.incoming(),
@@ -21,7 +30,7 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
   if (incoming.length === 0) {
     // The invitation was accepted or revoked in another tab. Nothing to do here.
     return (
-      <Button className="w-full" onClick={onDone}>
+      <Button className="w-full" onClick={onSkip}>
         Continue
       </Button>
     );
@@ -45,7 +54,7 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
             <Button
               size="sm"
               disabled={busy}
-              onClick={() => void accept(invite.id).then((joined) => joined && onDone())}
+              onClick={() => void accept(invite.id).then((joined) => joined && onJoined())}
             >
               Join
             </Button>
@@ -56,10 +65,10 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
       ))}
       <button
         type="button"
-        onClick={onDone}
+        onClick={onSkip}
         className="w-full text-center text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
       >
-        Not now
+        {skipLabel}
       </button>
     </div>
   );

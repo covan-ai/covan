@@ -53,6 +53,16 @@ export type FlowContext = {
    * rather than held in component state, so a reload mid-flow resumes correctly.
    */
   hasAgent: boolean;
+  /**
+   * Whether the account has a workspace yet. Absent means yes, which is every
+   * account the signup trigger made one for.
+   *
+   * An account that signed up with an invitation waiting has none (0115): the
+   * invitation is its way in. If it declines, or the invitation lapsed before
+   * it arrived, the setup steps follow and `workspace` starts one rather than
+   * renaming one.
+   */
+  hasWorkspace?: boolean;
 };
 
 /**
@@ -71,12 +81,19 @@ export function stepsFor(ctx: FlowContext): OnboardingStep[] {
   const survey: OnboardingStep[] = ["role", "use", "team"];
   if (ctx.hosted) survey.push("source");
 
-  if (ctx.hasIncomingInvite) return [...survey, "invite-accept"];
-
   const setup: OnboardingStep[] = ["workspace", "agent"];
   // Only once there is somewhere to put a document.
   if (ctx.hasAgent) setup.push("knowledge");
   if (ctx.answers.teamSize !== "solo") setup.push("invite");
+
+  if (ctx.hasIncomingInvite) {
+    // Accepting ends the run either way. Somebody with no workspace who says
+    // "not now" still needs one, so setup follows for them; somebody who has
+    // one already is done.
+    return ctx.hasWorkspace === false
+      ? [...survey, "invite-accept", ...setup]
+      : [...survey, "invite-accept"];
+  }
   return [...survey, ...setup];
 }
 
@@ -103,7 +120,10 @@ export function stepsFor(ctx: FlowContext): OnboardingStep[] {
  * finished one is not.
  */
 export function plannedStepsFor(ctx: FlowContext): OnboardingStep[] {
-  return stepsFor({ ...ctx, hasAgent: true });
+  // An invitation is counted as accepted, for the same reason the agent is
+  // counted as created: it is the ordinary outcome, and a count that assumed
+  // the detour would promise an invitee five steps they will never see.
+  return stepsFor({ ...ctx, hasAgent: true, hasWorkspace: true });
 }
 
 /**
@@ -123,7 +143,7 @@ export function plannedStepsFor(ctx: FlowContext): OnboardingStep[] {
  */
 function resumeStep(ctx: FlowContext): OnboardingStep {
   if (ctx.hasIncomingInvite) return "invite-accept";
-  if (!ctx.hasAgent) return "workspace";
+  if (ctx.hasWorkspace === false || !ctx.hasAgent) return "workspace";
 
   // `knowledge` exists exactly when an agent does — see `stepsFor` — so this
   // is never the fallback in practice. It is written as one anyway because the

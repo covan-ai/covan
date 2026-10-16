@@ -1357,6 +1357,9 @@ export const api = {
       request("PATCH", "/notification-preferences", patch),
   },
   onboarding: {
+    /** The same answers /me carries, for an account /me cannot answer yet. */
+    get: (): Promise<{ completed: boolean; answers: OnboardingAnswers }> =>
+      request("GET", "/onboarding"),
     update: (patch: AnswerPatch): Promise<OnboardingAnswers> =>
       request("PATCH", "/onboarding", patch),
     complete: (): Promise<{ completed: true }> => request("POST", "/onboarding/complete"),

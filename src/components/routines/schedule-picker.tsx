@@ -34,11 +34,11 @@ export function scheduleError(expr: string): string | null {
 }
 
 /**
- * Cron expressions never reach the screen. This offers the three shapes that
+ * Cron expressions never reach the screen. This offers the four shapes that
  * cover what routines are actually for, and hands the parent a cron string.
  *
- * An expression it cannot represent — the draft parser can emit `0 9 * * 1-5`,
- * and routines predating this picker carry whatever they were created with —
+ * An expression it cannot represent — routines predating this picker carry
+ * whatever they were created with, `0 9 * * 1` for one —
  * is shown as prose rather than silently rounded to the nearest shape it does
  * understand. Changing it is one click away; losing the user's actual schedule
  * to a redesign is not recoverable.
@@ -61,7 +61,9 @@ export function SchedulePicker({
   const [minutes, setMinutes] = useState(seed?.mode === "minutes" ? String(seed.every) : "15");
   const [hours, setHours] = useState(seed?.mode === "hours" ? String(seed.every) : "1");
   const [time, setTime] = useState(
-    seed?.mode === "daily" ? `${pad(seed.hour)}:${pad(seed.minute)}` : "09:00",
+    seed?.mode === "daily" || seed?.mode === "weekdays"
+      ? `${pad(seed.hour)}:${pad(seed.minute)}`
+      : "09:00",
   );
 
   const build = (next: {
@@ -98,7 +100,7 @@ export function SchedulePicker({
       const minute = Number(mm);
       form =
         Number.isInteger(hour) && Number.isInteger(minute) && hour <= 23 && minute <= 59
-          ? { mode: "daily", hour, minute }
+          ? { mode: m, hour, minute }
           : null;
     }
     // "" rather than a stale expression: an unfinished field must block the
@@ -112,7 +114,17 @@ export function SchedulePicker({
         <Label>Schedule</Label>
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
           <span className="text-sm tabular-nums">{cronToProse(value)}</span>
-          <Button variant="ghost" size="sm" onClick={() => setOverriding(true)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              // What the fields now show becomes the schedule. Leaving the old
+              // expression under them would save something the person can no
+              // longer see.
+              setOverriding(true);
+              onChange(build({}));
+            }}
+          >
             Change
           </Button>
         </div>
@@ -141,6 +153,7 @@ export function SchedulePicker({
             <SelectItem value="minutes">Every N minutes</SelectItem>
             <SelectItem value="hours">Every N hours</SelectItem>
             <SelectItem value="daily">Every day at</SelectItem>
+            <SelectItem value="weekdays">Weekdays at</SelectItem>
           </SelectContent>
         </Select>
 
@@ -174,7 +187,7 @@ export function SchedulePicker({
           />
         )}
 
-        {mode === "daily" && (
+        {(mode === "daily" || mode === "weekdays") && (
           <Input
             aria-label="Time of day"
             className="w-32 tabular-nums"

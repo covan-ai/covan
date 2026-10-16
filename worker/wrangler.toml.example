@@ -31,6 +31,10 @@ workers_dev = true
 #   NOTION_WEBHOOK_VERIFICATION_TOKEN — routines that start on a Notion page
 #     event. The token Notion sends to /notion/events when its webhook is made
 #     (logged while this is unset). Set it on the CRON WORKER TOO.
+#   RESEND_INBOUND_WEBHOOK_SECRET — inbound mail (replies to a report, a
+#     routine's own address), with INBOUND_EMAIL_DOMAIN below. The signing
+#     secret of the Resend webhook for `email.received`. Set both on the CRON
+#     WORKER TOO: it sends most reports and keeps the subscriptions in step.
 #   BROWSER_USE_API_KEY — the `browse` tool, which drives a real browser for
 #     the pages http_request cannot reach, on browser-use's V4 API (the same
 #     key as v2; a project with Zero Data Retention cannot use V4). SET IT ON
@@ -79,6 +83,10 @@ ALLOWED_ORIGIN = "https://your-app.example.com"
 # WORKER_HOST — this worker's own domain, for the routine engine's self-fetch
 # guard. Leave unset on workers.dev (that whole domain class is already
 # blocked); set it once a custom domain fronts this worker.
+
+# INBOUND_EMAIL_DOMAIN — the domain Resend receives on for inbound mail, with
+# RESEND_INBOUND_WEBHOOK_SECRET above. Keep in sync with wrangler.cron.toml.
+# INBOUND_EMAIL_DOMAIN = "reply.example.com"
 
 # Create the bucket before your first deploy: wrangler r2 bucket create covan-docs
 # How often one caller may ask, backing `lib/ratelimit` on Cloudflare. Without

@@ -49,6 +49,7 @@ import {
   syncSubscription,
 } from "../lib/routines/events/lifecycle";
 import { checkRequirement, connectedInWorkspace } from "../lib/routines/events/requirements";
+import { agentAddress, inboundDomain } from "../lib/inbound-email/address";
 
 const routines = new Hono<AppEnv>();
 
@@ -1113,12 +1114,13 @@ async function chosenEvent(
 async function ownRoutine(
   c: Context<AppEnv>,
 ): Promise<
-  { routine: { id: string; workspace_id: string; trigger_kind: string } } | { refused: Response }
+  | { routine: { id: string; workspace_id: string; trigger_kind: string; name: string } }
+  | { refused: Response }
 > {
   const { data, error } = await c
     .get("db")
     .from("routines")
-    .select("id, workspace_id, trigger_kind")
+    .select("id, workspace_id, trigger_kind, name")
     .eq("id", c.req.param("id") as string)
     .eq("user_id", c.get("user").id)
     .maybeSingle();
@@ -1127,7 +1129,9 @@ async function ownRoutine(
     return { refused: c.json({ error: "failed to load routine" }, 500) };
   }
   if (!data) return { refused: c.json({ error: "routine not found" }, 404) };
-  return { routine: data as { id: string; workspace_id: string; trigger_kind: string } };
+  return {
+    routine: data as { id: string; workspace_id: string; trigger_kind: string; name: string },
+  };
 }
 
 /**
@@ -1228,8 +1232,9 @@ routines.delete("/routines/:id/event", async (c) => {
 /**
  * What the owner has to paste into the app for the event to arrive, where
  * that is their job rather than ours: a GitHub webhook's URL and secret, for
- * the repository's Settings → Webhooks. `{ kind: "none" }` for every event
- * this code sets up by itself.
+ * the repository's Settings → Webhooks, or the address a routine is mailed at
+ * (`email.received`). `{ kind: "none" }` for every event this code sets up
+ * by itself.
  *
  * The secret leaves the database here and nowhere else
  * (`subscriptionSetup`), so this is the owner's alone, through their own
@@ -1248,6 +1253,15 @@ routines.get("/routines/:id/event/setup", async (c) => {
   } catch (err) {
     console.error("could not read a routine's event setup", err);
     return c.json({ error: "failed to load the setup" }, 500);
+  }
+  // A routine's own address: no secret, only the address to hand out. The
+  // domain is this deployment's; the token is the subscription's.
+  const domain = inboundDomain(c.env);
+  if (setup?.provider === "email" && setup.externalId && domain) {
+    return c.json({
+      kind: "email",
+      address: agentAddress(domain, own.routine.name, setup.externalId),
+    });
   }
   if (setup?.provider !== "github" || !setup.externalId || !setup.secret) {
     return c.json({ kind: "none" });

@@ -1004,6 +1004,74 @@ and each owner gets one email. A Drive channel cannot be stopped without the
 grant that was just removed, so it lapses within the week. Anything it sends
 until then reaches a routine that is no longer listening.
 
+### Inbound mail: replies, and a routine's own address
+
+Two things become possible once Covan can receive mail. Both are off unless
+`INBOUND_EMAIL_DOMAIN`, `RESEND_INBOUND_WEBHOOK_SECRET` and `RESEND_API_KEY`
+are set.
+
+**Reply to a report.** Every emailed report carries a Reply-To on the inbound
+domain. Answer it ("dig into the second item", "what changed since last
+week?") and the routine runs again. It reads the report you answered and
+your reply, and its answer arrives in the same thread. The quoted copy of the
+report under your reply is cut off before the routine reads it. This works for
+any routine that delivers by email, whatever starts it.
+
+- **Only the address the report went to counts.** The answer must come from
+  the confirmed email channel the routine delivers to. Anybody the report was
+  forwarded to can answer, but nothing runs.
+- **The Reply-To names one report.** It is the run's id with a MAC under
+  `ROUTINE_SECRET_KEY`, so nobody can write one for a report they never
+  received.
+- **Replies are capped.** At most ten an hour start a routine.
+- **A paused routine ignores replies.**
+
+**Mail a routine.** _When something happens in an app_ → **Email** → **Mail
+to this routine** gives the routine an address of its own, shown on its page:
+`<name>-<token>@<inbound domain>`. Mail to it starts the routine, which reads
+the sender, the subject and the text. Forward a message to it, or set up a
+rule that does.
+
+- **Approved senders.** By default only the workspace's members may mail it.
+  _Who may mail it_ takes addresses or `@domains` instead.
+- **Strangers are ignored.** Mail from anyone else runs nothing, and nobody
+  is told.
+- **Covan's own mail is ignored.** A report forwarded from one routine to
+  another does not start it.
+
+**What protects both.**
+
+- **Resend's signature.** Svix's scheme, with the `whsec_` secret, checked
+  before the delivery is parsed.
+- **The sender's domain must vouch for the message.** SPF, DKIM or DMARC must
+  pass, as the receiving server judged them, and DMARC must not fail.
+- **Machines are ignored.** Auto-replies, bounces and list mail start
+  nothing. Reports carry `Auto-Submitted: auto-generated` so well-behaved
+  out-of-office replies stay quiet in the first place.
+- **The usual limits apply.** A per-address rate limit, the flood fuse for a
+  routine's own address, and the workspace's credits.
+
+#### Setting it up
+
+1. **Choose a receiving domain** that does not already receive mail, such as
+   `reply.example.com`. In Resend, add it under _Domains_, enable receiving,
+   and add the MX record Resend shows to your DNS.
+2. **Create a webhook** in Resend for the event `email.received`, pointing at
+   `https://<your API host>/email/inbound`, and copy its signing secret.
+3. **Set both values on both Workers.** The cron Worker sends most reports and
+   keeps routines' addresses in step; the API Worker receives the mail.
+
+   ```sh
+   wrangler secret put RESEND_INBOUND_WEBHOOK_SECRET
+   wrangler secret put RESEND_INBOUND_WEBHOOK_SECRET -c wrangler.cron.toml
+   ```
+
+   Add `INBOUND_EMAIL_DOMAIN = "reply.example.com"` to `[vars]` in both
+   `wrangler.toml` and `wrangler.cron.toml`. Under Docker, set both in `.env`.
+
+Reports sent before this was set up have no Reply-To. Answering them reaches
+your sending address as it always did.
+
 ### A real browser
 
 The three roads above all end at an API. A great deal of what a team actually

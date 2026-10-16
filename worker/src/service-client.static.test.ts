@@ -87,6 +87,14 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the Durable Object alarm a webhook's or an app event's run is moved into so it outlives the response has no caller, so there is no JWT for RLS to resolve. It reads one routines row, by the id the receiving route parked after ingest.ts or events/receive.ts had already resolved it with the service role, with ingest.ts's column list, skips it if it is deleted or no longer active, and hands it to runPokedRoutine, which re-checks membership and credits off the row as every run does. It writes nothing itself",
   ],
   [
+    "lib/routines/replies.ts",
+    "an answer to a routine's emailed report arrives from Resend with no Covan caller, so there is no JWT for RLS to resolve. What stands in for one is the route's checks — Resend's signature, the sender's domain authentication, and a Reply-To carrying a MAC under ROUTINE_SECRET_KEY that names one run. It reads that one routine_runs row, the routine it names with ingest.ts's column list, that routine's own delivery channel (by its delivery_channel_id and user_id) to compare the sender with the confirmed address, and that routine's reply runs in the last hour; it writes nothing, and hands the routine to runPokedRoutine, which re-checks membership and credits off the row as every run does",
+  ],
+  [
+    "lib/routines/events/email.ts",
+    "mail to a routine's own address arrives with no Covan caller. When the routine's approved senders list is empty it answers to the members of its workspace, which only the service role can ask about another person: it reads workspace_members for the routine's own workspace_id (off the routine row receive.ts read) and those members' profiles.email, and nothing else. It writes nothing",
+  ],
+  [
     "lib/routines/held.ts",
     "a routine's report held for its browser (0100) is finished by whatever settled the browser's last task — a cron tick or an open tab answering for another person's run — so there is no caller whose JWT could resolve the routine, its channel or its run. routine_runs has no client write grant at all (0094), and routines.browser_conversation_id is the engine's column. Every read is keyed to the run id a browser task row carried and the routine row that run names: the channel is held to the routine's own user_id, the agent to the routine's workspace, and the conversation it opens is the routine owner's own, private, under the routine's agent",
   ],

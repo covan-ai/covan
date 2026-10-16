@@ -14,6 +14,7 @@ import {
   releaseItemKeys,
   type DeliveryChannel,
   type DeliveryDeps,
+  type EmailThread,
 } from "./delivery";
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
@@ -466,6 +467,11 @@ export type IngestTrigger = {
    * body is whatever the sender chose and has no better name than that.
    */
   label?: string;
+  /**
+   * A reply's thread (`lib/routines/replies.ts`): the answer this run sends
+   * goes into the same conversation, under "Re:". Absent for every other poke.
+   */
+  thread?: EmailThread;
 };
 
 /**
@@ -748,6 +754,11 @@ export async function runRoutine(
           itemsOverflow: 0,
           triggeredBy: origin.triggeredBy,
         },
+        // The id its row is written with below, so an emailed report can be
+        // answered (`lib/inbound-email/`); and, for a run answering a reply,
+        // the thread that answer belongs in.
+        runId,
+        thread: trigger?.thread,
       });
       delivered = true;
 
@@ -758,6 +769,7 @@ export async function runRoutine(
         modelCall: { model: result.model, modelOutcome: "answered" },
         tokens: result.tokens,
         spend: result.spend,
+        runId,
       });
       return { status: "ok", itemsNew: 1 };
     }
@@ -1119,6 +1131,8 @@ export async function runRoutine(
         // A poke names itself, whatever the dispatcher was built as.
         triggeredBy: origin.triggeredBy,
       },
+      runId,
+      thread: trigger?.thread,
     });
     // Past this point the message is out. Releasing the claims would let the
     // next tick re-win them and send it again — the duplicate this whole

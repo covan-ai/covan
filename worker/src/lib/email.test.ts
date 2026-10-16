@@ -51,4 +51,28 @@ describe("sendEmail", () => {
 
     expect(calls[0].body).not.toHaveProperty("html");
   });
+
+  // A routine's report sets both, so an answer comes back to the routine and
+  // lands in the same thread; every other mail sets neither and sends the
+  // request it always did.
+  it("sends a Reply-To and extra headers only when given them", async () => {
+    const { calls, fetchImpl } = captureRequest();
+
+    await sendEmail(
+      {
+        to: "someone@example.com",
+        subject: "Subject",
+        text: "Text.",
+        replyTo: "r-abc@reply.example.com",
+        headers: { "Message-ID": "<run-1@reply.example.com>" },
+      },
+      { ...DEPS, fetchImpl },
+    );
+    await sendEmail({ to: "a@example.com", subject: "S", text: "T" }, { ...DEPS, fetchImpl });
+
+    expect(calls[0].body.reply_to).toBe("r-abc@reply.example.com");
+    expect(calls[0].body.headers).toEqual({ "Message-ID": "<run-1@reply.example.com>" });
+    expect(calls[1].body).not.toHaveProperty("reply_to");
+    expect(calls[1].body).not.toHaveProperty("headers");
+  });
 });

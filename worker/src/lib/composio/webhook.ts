@@ -16,6 +16,11 @@
  * turns one captured delivery into a replay that starts the same routine
  * forever. The event id below is a delivery claim too (`evt:composio:<id>`),
  * so a replay inside the window runs nothing either.
+ *
+ * Resend signs inbound mail the same way, with Svix's own key handling — a
+ * `whsec_` secret, base64-decoded — so the check itself takes key bytes
+ * (`verifySvixSignature`) and each sender's file says how its secret becomes
+ * them (`lib/inbound-email/resend.ts` for Resend's).
  */
 
 import { timingSafeEqual } from "../hmac";
@@ -32,36 +37,35 @@ export type WebhookHeaders = {
 export type WebhookCheck = { ok: true } | { ok: false; reason: string };
 
 /**
- * The secret is the key as it is, byte for byte — not base64-decoded, and no
- * prefix stripped. That is what both of Composio's SDKs do (`crypto.ts` in the
- * TypeScript one, `triggers.py` in the Python one), and a Svix habit of
- * decoding a `whsec_` secret would compute a MAC nobody sent.
+ * The MAC over `message`, keyed with `key` as given, as base64. The two callers
+ * below differ only in how a configured secret becomes these bytes.
  */
-async function macBase64(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
+async function macBase64(key: Uint8Array, message: string): Promise<string> {
+  const imported = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(secret),
+    key,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
   );
   const mac = new Uint8Array(
-    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)),
+    await crypto.subtle.sign("HMAC", imported, new TextEncoder().encode(message)),
   );
   return btoa(String.fromCharCode(...mac));
 }
 
 /**
- * Verify one delivery. `body` has to be the raw text, byte for byte —
- * re-serialised JSON is a different string, and the MAC is over what was sent.
+ * Verify one Svix-style delivery against a key. `body` has to be the raw text,
+ * byte for byte — re-serialised JSON is a different string, and the MAC is over
+ * what was sent.
  */
-export async function verifyComposioWebhook(
-  secret: string,
+export async function verifySvixSignature(
+  key: Uint8Array,
   headers: WebhookHeaders,
   body: string,
   now = Date.now(),
 ): Promise<WebhookCheck> {
-  if (!secret) return { ok: false, reason: "no webhook secret configured" };
+  if (key.length === 0) return { ok: false, reason: "no webhook secret configured" };
   if (!headers.id || !headers.timestamp || !headers.signature) {
     return { ok: false, reason: "unsigned" };
   }
@@ -70,7 +74,7 @@ export async function verifyComposioWebhook(
   if (!Number.isFinite(timestamp)) return { ok: false, reason: "bad timestamp" };
   if (Math.abs(now / 1000 - timestamp) > MAX_SKEW_SECONDS) return { ok: false, reason: "stale" };
 
-  const expected = await macBase64(secret, `${headers.id}.${headers.timestamp}.${body}`);
+  const expected = await macBase64(key, `${headers.id}.${headers.timestamp}.${body}`);
   // Every `v1,` entry is a candidate; the rest (a future version) is skipped.
   const candidates = headers.signature
     .split(" ")
@@ -84,4 +88,20 @@ export async function verifyComposioWebhook(
     if (timingSafeEqual(expected, candidate)) matched = true;
   }
   return matched ? { ok: true } : { ok: false, reason: "signature mismatch" };
+}
+
+/**
+ * Composio's: the secret is the key as it is, byte for byte — not
+ * base64-decoded, and no prefix stripped. That is what both of Composio's SDKs
+ * do (`crypto.ts` in the TypeScript one, `triggers.py` in the Python one), and
+ * a Svix habit of decoding a `whsec_` secret would compute a MAC nobody sent.
+ */
+export async function verifyComposioWebhook(
+  secret: string,
+  headers: WebhookHeaders,
+  body: string,
+  now = Date.now(),
+): Promise<WebhookCheck> {
+  if (!secret) return { ok: false, reason: "no webhook secret configured" };
+  return verifySvixSignature(new TextEncoder().encode(secret), headers, body, now);
 }

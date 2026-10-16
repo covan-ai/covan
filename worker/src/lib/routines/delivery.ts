@@ -14,6 +14,7 @@ import {
   EVENT_DELIVERED,
 } from "./webhook";
 import { escapeMrkdwn } from "../slack/mrkdwn";
+import { inboundDomain, replyLocalPart } from "../inbound-email/address";
 
 export type DeliveryKind = "slack_webhook" | "email" | "webhook";
 
@@ -43,6 +44,11 @@ export type DeliveryDeps = {
   ownHosts: string[];
   /** Overridden in tests so a signature is reproducible. */
   now?: () => Date;
+  /**
+   * `INBOUND_EMAIL_DOMAIN` where inbound mail is on (`inboundDomain`), else
+   * absent: an emailed report then carries a Reply-To naming its run.
+   */
+  inboundDomain?: string | null;
 };
 
 /**
@@ -55,7 +61,21 @@ export type DeliveryContext = {
   event: string;
   routine?: { id: string; name: string; agentId: string };
   run?: { itemsNew: number; itemsOverflow: number; triggeredBy: string };
+  /**
+   * The id the run's `routine_runs` row is written with. An emailed report
+   * puts it in its Reply-To when inbound mail is on, so an answer finds the
+   * report it answers. Kept out of `run`, which a webhook receiver is sent.
+   */
+  runId?: string;
+  /** Set when this report answers a reply: the thread it belongs in. */
+  thread?: EmailThread;
 };
+
+/**
+ * The thread an answer to a reply belongs in: the reply's own Message-ID, the
+ * chain before it, and the subject it was sent under.
+ */
+export type EmailThread = { inReplyTo: string; references: string; subject: string };
 
 /** How much of a failing upstream's body reaches routine_runs.error. */
 const MAX_ERROR_BODY = 200;
@@ -109,6 +129,8 @@ export type DeliveryEnv = {
   RESEND_FROM: string;
   ALLOWED_ORIGIN: string;
   WORKER_HOST?: string;
+  INBOUND_EMAIL_DOMAIN?: string;
+  RESEND_INBOUND_WEBHOOK_SECRET?: string;
 };
 
 /**
@@ -131,6 +153,7 @@ export function deliveryDepsFrom(env: DeliveryEnv): DeliveryDeps {
     resendApiKey: env.RESEND_API_KEY,
     resendFrom: env.RESEND_FROM,
     ownHosts: ownHostsFrom(env),
+    inboundDomain: inboundDomain(env),
   };
 }
 
@@ -253,6 +276,7 @@ export async function deliver(
   if (channel.kind === "email" && !channel.confirmed_at) throw new Error(UNCONFIRMED_ADDRESS);
 
   const secret = await decryptSecret(channel.secret_ciphertext, deps.secretKey);
+  const threading = channel.kind === "email" ? await emailThreading(context, deps) : {};
 
   const res =
     channel.kind === "webhook"
@@ -280,7 +304,7 @@ export async function deliver(
         : await sendEmail(
             {
               to: secret,
-              subject: message.subject,
+              subject: context.thread?.subject ?? message.subject,
               text: message.body,
               // The summary is model output and arrives as Markdown, because
               // nothing in `summarise.ts` asks it not to. Rendering it here rather
@@ -293,8 +317,12 @@ export async function deliver(
                 // Not "Sent by a Covan routine": the shell's own footer already
                 // opens with "Sent by Covan", and the two stack into one column
                 // that says it twice.
-                footnote: "This digest was produced by a routine running on its schedule.",
+                footnote: threading.replyTo
+                  ? "This digest was produced by a routine. Reply to it and the routine reads your answer and writes back."
+                  : "This digest was produced by a routine running on its schedule.",
               }),
+              replyTo: threading.replyTo,
+              headers: threading.headers,
             },
             { fetchImpl: deps.fetchImpl, apiKey: deps.resendApiKey, from: deps.resendFrom },
           );
@@ -341,4 +369,41 @@ export async function releaseItemKeys(
     .eq("routine_id", routineId)
     .in("item_key", keys);
   if (error) throw new Error(`release failed: ${error.message}`);
+}
+
+/**
+ * What makes an emailed report answerable (`lib/inbound-email/`), when inbound
+ * mail is on and the report came from a run.
+ *
+ * - **Reply-To** names the run, signed, so the answer comes back to this
+ *   routine and to this report — and to nobody else's.
+ * - **Message-ID** is the run's own, on the same domain, so an answer's
+ *   `In-Reply-To` points at something we made.
+ * - **In-Reply-To / References**, on an answer to a reply, keep it in the
+ *   thread the person is already reading.
+ * - **Auto-Submitted: auto-generated** asks out-of-office responders not to
+ *   answer, which is the start of a loop (RFC 3834). The receiving side drops
+ *   the ones that answer anyway.
+ *
+ * Notices (paused, out of credits) have no run, and get none of this: an
+ * answer to "your routine was paused" has nothing to start.
+ */
+async function emailThreading(
+  context: DeliveryContext,
+  deps: DeliveryDeps,
+): Promise<{ replyTo?: string; headers?: Record<string, string> }> {
+  const domain = deps.inboundDomain;
+  if (!domain || !context.runId) return {};
+  const headers: Record<string, string> = {
+    "Message-ID": `<run-${context.runId}@${domain}>`,
+    "Auto-Submitted": "auto-generated",
+  };
+  if (context.thread) {
+    headers["In-Reply-To"] = context.thread.inReplyTo;
+    headers.References = context.thread.references;
+  }
+  return {
+    replyTo: `${await replyLocalPart(deps.secretKey, context.runId)}@${domain}`,
+    headers,
+  };
 }

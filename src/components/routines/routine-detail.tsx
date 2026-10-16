@@ -45,7 +45,7 @@ function sourceLabel(routine: Routine, connections: Connection[]): string {
 }
 
 /**
- * What started a run, in the words its row says it (0108) — or nothing, for
+ * What started a run, in the words its row says it (0109) — or nothing, for
  * the schedule, which is what a routine does unless something else is said.
  * A run from before the column existed says nothing either, which is true:
  * nothing recorded it.
@@ -427,7 +427,7 @@ export function RoutineDetail({
       )}
 
       {/* Owner only, for the webhook card's reason: the subscription row is
-          shown to the routine's owner alone (0108). */}
+          shown to the routine's owner alone (0109). */}
       {isOwner && routine.triggerKind === "event" && <RoutineEventCard routine={routine} />}
 
       {/* Owner only, for the same reason the pause and delete controls are:

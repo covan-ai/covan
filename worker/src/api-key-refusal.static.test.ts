@@ -270,7 +270,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/routines.ts GET /routines/:id/trigger",
   "routes/routines.ts POST /routines/:id/trigger",
   "routes/routines.ts DELETE /routines/:id/trigger",
-  // 0108. Reading what can be listened for, stopping a listener and running a
+  // 0109. Reading what can be listened for, stopping a listener and running a
   // test are open: none of them leaves anything running after the key is gone.
   "routes/routines.ts GET /routines/events/catalog",
   "routes/routines.ts DELETE /routines/:id/event",

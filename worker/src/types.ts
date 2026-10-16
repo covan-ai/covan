@@ -112,7 +112,7 @@ export type RoutineEnv = {
   ROUTINE_SECRET_KEY: string;
   /**
    * How many events may start one routine in an hour, and in a day, before it
-   * is paused and its owner told (0108). Whole numbers; unset or nonsense
+   * is paused and its owner told (0109). Whole numbers; unset or nonsense
    * means 60 and 500 — see `lib/routines/events/receive.ts` for why these are
    * a fuse rather than a budget.
    */

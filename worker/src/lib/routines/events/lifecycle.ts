@@ -15,11 +15,11 @@
  * do not pass through a route — an agent binned or restored (0040's
  * functions move `deleted_at` in SQL), a pause written by the flood guard, a
  * subscribe that failed and is due another try, an arrangement about to
- * lapse. The sweeper's claim (0108's `claim_event_subscriptions`) is the same
+ * lapse. The sweeper's claim (0109's `claim_event_subscriptions`) is the same
  * comparison in SQL, so the two cannot disagree about what "out of step"
  * means.
  *
- * WHY THE SERVICE ROLE. 0108 gives no client role a write on
+ * WHY THE SERVICE ROLE. 0109 gives no client role a write on
  * `routine_event_subscriptions` and no sight of `external_id` or
  * `secret_ciphertext`, for the reasons it gives at length — and unsubscribing
  * needs both. Every function here takes a routine id that a route has already
@@ -184,7 +184,7 @@ export async function syncSubscription(
  *
  * The unsubscribe is best-effort and the delete is not. A provider that cannot
  * be reached right now must not keep a routine alive that somebody deleted;
- * the arrangement it leaves behind is the case 0108's header describes, which
+ * the arrangement it leaves behind is the case 0109's header describes, which
  * each adapter answers by cancelling at the source the next time it delivers.
  */
 export async function releaseSubscription(

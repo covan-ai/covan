@@ -135,7 +135,7 @@ export async function resolveIngestToken(
     return { ok: false, status: 409, error: `this routine is ${routine.status}` };
   }
   // Named by what may be poked rather than by what may not, so a fourth kind —
-  // `event`, 0108 — is refused here without anybody remembering to add it. A
+  // `event`, 0109 — is refused here without anybody remembering to add it. A
   // token left over from when the routine was a webhook one must not start a
   // routine that now waits for Gmail.
   if (routine.trigger_kind !== "webhook" && routine.trigger_kind !== "both") {

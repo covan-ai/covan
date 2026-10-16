@@ -423,7 +423,7 @@ alter table public.routine_runs add constraint routine_runs_trigger_label_short
   check (trigger_label is null or length(trigger_label) <= 120);
 
 comment on column public.routine_runs.triggered_by is
-  'What started this run: schedule, manual (Run now), webhook, event (routine_event_subscriptions), or reply. Null for runs before 0108.';
+  'What started this run: schedule, manual (Run now), webhook, event (routine_event_subscriptions), or reply. Null for runs before 0109.';
 comment on column public.routine_runs.trigger_label is
   'The same, for a person: the event''s catalogue label, such as "Gmail · New mail". Null for scheduled and manual runs.';
 

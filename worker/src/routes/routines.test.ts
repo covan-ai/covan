@@ -39,7 +39,7 @@ vi.mock("../lib/routines/address-confirmation", async (importOriginal) => ({
 }));
 
 /**
- * The event catalogue ships empty until the adapters that serve it do (0108),
+ * The event catalogue ships empty until the adapters that serve it do (0109),
  * so these tests hand the routes a registry of their own: one event that
  * needs nothing, and one that needs a connected app. What the lifecycle and a
  * run do with the choice is held by their own tests; here they are spies, so
@@ -1070,7 +1070,7 @@ describe("PATCH /routines/:id, the browser", () => {
   });
 });
 
-describe("event triggers (0108)", () => {
+describe("event triggers (0109)", () => {
   const AGENT_ID = "11111111-1111-4111-8111-111111111111";
   const CHANNEL_ID = "22222222-2222-4222-8222-222222222222";
 

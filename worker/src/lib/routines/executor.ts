@@ -155,7 +155,7 @@ export type SummariseInput = {
   payloadText?: string;
   /**
    * What the payload is, when something better than "a webhook payload" is
-   * known — "Gmail · New mail" for an event (0108). The heading above
+   * known — "Gmail · New mail" for an event (0109). The heading above
    * `payloadText` in the prompt; see `routineMaterial`.
    */
   payloadLabel?: string;
@@ -453,7 +453,7 @@ export type IngestTrigger = {
   /** The raw body, as text. Given to the model and stored nowhere. */
   payload: string;
   /**
-   * What kind of poke this is (0108). A webhook is somebody's POST; an event
+   * What kind of poke this is (0109). A webhook is somebody's POST; an event
    * is a third party telling us something happened (`lib/routines/events/`);
    * a reply is somebody answering a routine's own mail. The run is the same
    * for all three — this decides the delivery key's prefix, the heading the
@@ -483,7 +483,7 @@ export function pokeKey(trigger: IngestTrigger): string {
 }
 
 /**
- * What started a run, as `routine_runs` records it (0108) and as a webhook
+ * What started a run, as `routine_runs` records it (0109) and as a webhook
  * receiver is told it in `run.triggeredBy`.
  */
 export type RunOrigin = {
@@ -1459,7 +1459,7 @@ async function finish(
       summary: outcome.summary ?? null,
       document_id: outcome.documentId ?? null,
       filing_note: outcome.filingNote ?? null,
-      // Why this run happened at all (0108). A required argument rather than
+      // Why this run happened at all (0109). A required argument rather than
       // something read off `deps`, so a new branch that forgets it does not
       // compile instead of quietly recording an event run as scheduled.
       triggered_by: origin.triggeredBy,
@@ -1629,7 +1629,7 @@ async function announceCoveragePause(
 
 /**
  * Tell the owner a routine was paused because events arrived faster than its
- * limit (0108) — `lib/routines/events/receive.ts` decides that, and pauses.
+ * limit (0109) — `lib/routines/events/receive.ts` decides that, and pauses.
  *
  * Its own sentence, for `announceCoveragePause`'s reason: "paused after
  * repeated failures" would be false, since nothing failed. Something upstream

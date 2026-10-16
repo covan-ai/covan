@@ -8,7 +8,7 @@
  * is an adapter's business (`adapter.ts`). What a person picks — "Gmail · New
  * mail", with a search query — is this file's.
  *
- * So `routine_event_subscriptions` (0108) stores two strings out of here: the
+ * So `routine_event_subscriptions` (0109) stores two strings out of here: the
  * provider, which picks the adapter, and the event type's id, which picks the
  * entry below. Moving an event from one adapter to another — Composio's Gmail
  * trigger to a native Gmail watch, the day the native one is worth its review
@@ -130,7 +130,7 @@ export type EventTypeDef = {
  */
 export const EVENT_TYPES: readonly EventTypeDef[] = [];
 
-/** `routine_runs.trigger_label` is at most this long (0108). */
+/** `routine_runs.trigger_label` is at most this long (0109). */
 export const MAX_TRIGGER_LABEL = 120;
 
 /** "Gmail · New mail" — what a run's history says started it. */

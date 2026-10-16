@@ -42,7 +42,7 @@ const STATUS_WORD: Record<RoutineEventStatus, string> = {
 };
 
 /**
- * What an event routine waits for, on the routine's own page (0108).
+ * What an event routine waits for, on the routine's own page (0109).
  *
  * Owner only, and that is the database's rule: the subscription row is shown
  * to the routine's owner and nobody else, so a colleague reading a shared

@@ -101,7 +101,7 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   const held = await sweepHeldRuns(env);
   if (held.finished > 0) return;
 
-  // Event subscriptions out of step with their routines (0108): a subscribe
+  // Event subscriptions out of step with their routines (0109): a subscribe
   // that failed and is due another try, an arrangement about to lapse, a
   // routine paused or binned whose provider is still sending, one restored
   // whose provider has stopped. Up to three, a handful of subrequests each;

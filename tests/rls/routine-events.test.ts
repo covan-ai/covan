@@ -1,5 +1,5 @@
 /**
- * What the database says about a routine that waits for an event (0108).
+ * What the database says about a routine that waits for an event (0109).
  *
  * The table exists for `routine_triggers`' reason, with more at stake: the row
  * holds a third party's id for an arrangement this deployment made with its
@@ -32,7 +32,7 @@ let colleague: TestUser;
 let shared: Seeded;
 let waiting: string;
 
-/** An event routine has no source of its own (0108 widens 0055's rule). */
+/** An event routine has no source of its own (0109 widens 0055's rule). */
 async function seedEventRoutine(name: string, visibility = "private"): Promise<string> {
   const { data, error } = await owner.db
     .from("routines")

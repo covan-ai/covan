@@ -426,7 +426,7 @@ const eventChoiceSchema = z.object({
 /**
  * Every read of a routine that answers a client embeds its subscription, so
  * the routine's page and list know what an event routine waits for without a
- * second request. The embed names only the columns 0108 grants, and
+ * second request. The embed names only the columns 0109 grants, and
  * `routine_event_subscriptions_select_own` answers it for the owner alone —
  * a colleague reading a shared routine gets `event: null`.
  */
@@ -465,7 +465,7 @@ const createSchema = z
      */
     triggerKind: z.enum(["schedule", "webhook", "both", "event"]).default("schedule"),
     /**
-     * What an `event` routine waits for (0108), chosen in the same dialog so a
+     * What an `event` routine waits for (0109), chosen in the same dialog so a
      * routine is never created waiting for nothing. Required with `event` and
      * refused without it; checked against the catalogue and the connections
      * before the routine is inserted, so a bad choice leaves nothing behind.
@@ -824,7 +824,7 @@ routines.patch("/routines/:id", async (c) => {
   if (!data) return c.json({ error: "routine not found" }, 404);
 
   // Pausing, resuming and changing how it starts all move what the provider
-  // should be doing (0108). Told now, so a paused routine stops being sent
+  // should be doing (0109). Told now, so a paused routine stops being sent
   // events before the next tick rather than after; awaited, so the answer
   // carries the subscription as it now stands. Best-effort: the PATCH is
   // committed, and a provider that cannot be reached is the sweeper's to
@@ -908,7 +908,7 @@ routines.delete("/routines/:id", async (c) => {
   const db = c.get("db");
   // An event routine is unsubscribed at its provider first, because the
   // delete cascades its subscription row and with it the only record of what
-  // to unsubscribe (0108). Only once the caller's own client has shown the
+  // to unsubscribe (0109). Only once the caller's own client has shown the
   // routine is theirs — the same rule `routines_delete_own` is about to apply
   // — so nobody can unsubscribe a routine they could not delete.
   const { data: own } = await db
@@ -922,7 +922,7 @@ routines.delete("/routines/:id", async (c) => {
       await releaseSubscription(c.env, own.id as string);
     } catch (err) {
       // Not a reason to keep a routine somebody deleted. What is left at the
-      // provider is 0108's orphan, which its adapter cancels on its next
+      // provider is 0109's orphan, which its adapter cancels on its next
       // delivery.
       console.error("could not release a deleted routine's event subscription", err);
     }
@@ -1018,7 +1018,7 @@ routines.post("/routines/:id/trigger", async (c) => {
   // is started is a decision about a thing that runs unattended, and quietly
   // making one because somebody pressed a button next to it is the kind of
   // helpfulness nobody remembers having agreed to.
-  // By what may be poked, so an `event` routine (0108) is refused too: its
+  // By what may be poked, so an `event` routine (0109) is refused too: its
   // way in is the provider, and a URL beside it would be a second door the
   // owner did not ask for.
   if (routine.trigger_kind !== "webhook" && routine.trigger_kind !== "both") {
@@ -1067,7 +1067,7 @@ routines.delete("/routines/:id/trigger", async (c) => {
   return c.body(null, 204);
 });
 
-// ---- event triggers (0108) --------------------------------------------------
+// ---- event triggers (0109) --------------------------------------------------
 //
 // What an `event` routine waits for. The row lives in
 // `routine_event_subscriptions`, which no client role may write and whose

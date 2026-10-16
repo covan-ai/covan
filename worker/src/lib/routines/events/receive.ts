@@ -17,7 +17,7 @@
  *   4. The entry's filter is applied. An event that does not match opens no
  *      run, writes no row and costs nothing — which is why the filter is here,
  *      ahead of everything that does.
- *   5. The flood guard counts it (0108's `count_routine_event`), and a routine
+ *   5. The flood guard counts it (0109's `count_routine_event`), and a routine
  *      over its hourly or daily limit is paused and its owner told.
  *   6. The run is deferred through `runPokedRoutine`, exactly as a webhook's
  *      is: the membership check, the credit check, claim-before-send and

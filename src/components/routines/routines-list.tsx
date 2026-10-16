@@ -108,7 +108,7 @@ function Group({
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                     {/* An event routine is never due, so it is named by what
                         starts it rather than by a cron it does not run on. A
-                        teammate cannot see the subscription (0108), and gets
+                        teammate cannot see the subscription (0109), and gets
                         the generic phrase. */}
                     {r.triggerKind === "event" ? (
                       <span>

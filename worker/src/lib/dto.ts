@@ -923,9 +923,9 @@ export function mapIdea(row: {
 }
 
 /**
- * What an event routine is waiting for (0108), as its owner sees it.
+ * What an event routine is waiting for (0109), as its owner sees it.
  *
- * Never the provider's id for the arrangement and never its secret — 0108
+ * Never the provider's id for the arrangement and never its secret — 0109
  * grants neither column to any client role, and this is built from the
  * columns it does grant.
  */
@@ -949,7 +949,7 @@ export type RoutineEventDTO = {
   expiresAt: number | null;
 };
 
-/** The columns 0108 grants a client, as `ROUTINE_SELECT` embeds them. */
+/** The columns 0109 grants a client, as `ROUTINE_SELECT` embeds them. */
 export type RoutineEventRow = {
   provider: string;
   event_type: string;
@@ -1006,7 +1006,7 @@ export type RoutineDTO = {
   triggerKind: "schedule" | "webhook" | "both" | "event";
   /**
    * What an `event` routine is waiting for, and whether the provider agreed
-   * to tell us (0108). Null for every other kind — and for an event routine
+   * to tell us (0109). Null for every other kind — and for an event routine
    * whose owner has not picked an event yet, and for anybody but the owner,
    * because `routine_event_subscriptions_select_own` returns the row to the
    * owner alone.
@@ -1171,7 +1171,7 @@ export type RoutineRunDTO = {
   /** The model that answered, when one did. Null on the same runs as `outcome`. */
   model: string | null;
   /**
-   * What started this run (0108): the cron, Run now, a webhook, an event, a
+   * What started this run (0109): the cron, Run now, a webhook, an event, a
    * reply. Null for runs recorded before the column existed.
    */
   triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply" | null;

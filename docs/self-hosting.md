@@ -803,6 +803,7 @@ shell as every other Covan email:
 | `confirm-signup.html`   | Authentication → Emails → **Confirm signup**                                                 |
 | `reset-password.html`   | Authentication → Emails → **Reset password**                                                 |
 | `change-email.html`     | Authentication → Emails → **Change email address**                                           |
+| `reauthentication.html` | Authentication → Emails → **Reauthentication**                                               |
 | `password-changed.html` | Authentication → Emails → **Password changed** — and enable it; Supabase ships it turned off |
 
 `change-email.html` is what the account page's address change sends. With
@@ -821,6 +822,13 @@ message exists to help someone notice. The account page's password form sends
 it now, as well as a reset does; on a local CLI stack, the commented-out
 `[auth.email.notification.password_changed]` block in `supabase/config.toml` is
 what turns it on.
+
+`reauthentication.html` carries a code rather than a link. It is sent when
+"Secure password change" is on (Authentication → Providers → Email, and
+`secure_password_change` in `supabase/config.toml`) and somebody whose session
+is more than a day old changes their password from the account page: the page
+asks for the code, and GoTrue changes nothing without it. Leave the setting off
+on a stack that cannot send mail.
 
 The subject lines that go with them are in
 `worker/src/lib/emails/auth.ts`. Every file with a button keeps Supabase's

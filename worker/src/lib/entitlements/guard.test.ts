@@ -50,6 +50,21 @@ describe("guardCredits", () => {
     expect(c.values.workspaceId).toBe("w-active");
   });
 
+  // The three routes with no row of their own ask for the caller's workspace.
+  // "Nobody" used to let the work through uncharged, with no ceiling but the
+  // rate limit.
+  it("refuses when there is no workspace to charge", async () => {
+    vi.mocked(callerWorkspaceId).mockResolvedValue(null);
+    const check = vi.fn().mockResolvedValue({ allowed: true });
+    const c = ctx({ check });
+
+    const res = await guardCredits(c);
+
+    expect(res?.status).toBe(403);
+    expect(check).not.toHaveBeenCalled();
+    expect(c.values.workspaceId).toBeUndefined();
+  });
+
   it("answers 402 with the balance when the workspace is out of credits", async () => {
     const c = ctx({ check: vi.fn().mockResolvedValue({ allowed: false, balance: -0.4 }) });
 

@@ -18,8 +18,18 @@ describe("authEmailTemplates", () => {
       "confirm-signup.html",
       "reset-password.html",
       "change-email.html",
+      "reauthentication.html",
       "password-changed.html",
     ]);
+  });
+
+  // A code, not a link: the person is already in account settings with a
+  // field waiting for it. GoTrue substitutes `{{ .Token }}`; a misspelt name
+  // sends a mail with nothing to type.
+  it("reauthentication.html carries the code and no link", () => {
+    const template = authEmailTemplates.find((t) => t.filename === "reauthentication.html");
+    expect(template?.html).toContain("{{ .Token }}");
+    expect(template?.html).not.toContain("{{ .ConfirmationURL }}");
   });
 
   // Supabase substitutes this server-side. Get the name wrong and the button

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseReportCommand } from "./reports";
+import { folderDescription, parseReportCommand } from "./reports";
 
 describe("parseReportCommand", () => {
   it("takes everything after the command as the instruction", () => {
@@ -45,5 +45,20 @@ describe("parseReportCommand", () => {
   it("leaves an ordinary message alone", () => {
     expect(parseReportCommand("how did Q3 go?")).toBeNull();
     expect(parseReportCommand("")).toBeNull();
+  });
+});
+
+describe("folderDescription", () => {
+  it("reads the reports folder's marker as no description", () => {
+    expect(folderDescription("covan:reports:3f2504e0-4f89-11d3-9a0c-0305e82c3301")).toBeNull();
+  });
+
+  it("keeps a description somebody wrote", () => {
+    expect(folderDescription("Contracts we signed in 2026")).toBe("Contracts we signed in 2026");
+  });
+
+  it("has nothing to say about nothing", () => {
+    expect(folderDescription(null)).toBeNull();
+    expect(folderDescription("")).toBeNull();
   });
 });

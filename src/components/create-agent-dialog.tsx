@@ -28,7 +28,7 @@ import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { NewAgentSharingSelect } from "@/components/new-agent-sharing-select";
 import { newAgentSharing, type NewAgentSharing } from "@/lib/agent-access";
 import { cn } from "@/lib/utils";
-import { ACCEPT, validateUpload } from "@/lib/uploads";
+import { ACCEPT, validateUpload, ACCEPTED_SUMMARY } from "@/lib/uploads";
 import { toast } from "sonner";
 
 /**
@@ -297,7 +297,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
           >
             <Upload className="h-6 w-6 text-muted-foreground" />
             <div className="text-sm font-medium">Drop files or click to upload</div>
-            <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
+            <div className="text-xs text-muted-foreground">{ACCEPTED_SUMMARY}</div>
             <input
               type="file"
               multiple

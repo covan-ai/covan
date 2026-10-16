@@ -65,7 +65,8 @@ const session = {
 
 const store = {
   agents: [agent],
-  sessions: [session],
+  sessions: [session] as (typeof session)[],
+  sessionsLoaded: true,
   startSession: vi.fn(),
   canWrite: true,
 };
@@ -1888,5 +1889,56 @@ describe("a document written from the conversation", () => {
     for (const name of ["Markdown", "Word", "PDF"]) {
       expect(await screen.findByRole("button", { name })).toBeInTheDocument();
     }
+  });
+});
+
+/**
+ * A cold load of a thread's own link. The sessions query answers `[]` until
+ * its first response, which the page used to read as "this agent has no
+ * conversations": it started a new one and replaced the URL, so the person
+ * who opened the link met an empty "New thread" and the sidebar kept it.
+ */
+describe("opening a thread's link before the sessions have loaded", () => {
+  afterEach(() => {
+    store.sessions = [session];
+    store.sessionsLoaded = true;
+  });
+
+  it("waits for the sessions rather than starting a new conversation", async () => {
+    store.sessions = [];
+    store.sessionsLoaded = false;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <ChatTab />
+      </QueryClientProvider>,
+    );
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    expect(store.startSession).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("starts one once the sessions have answered that there are none", async () => {
+    store.sessions = [];
+    store.sessionsLoaded = true;
+    store.startSession.mockResolvedValue({ id: "session-new" });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <ChatTab />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(store.startSession).toHaveBeenCalledWith("agent-1"));
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith(
+        expect.objectContaining({ search: { s: "session-new" }, replace: true }),
+      ),
+    );
   });
 });

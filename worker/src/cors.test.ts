@@ -41,4 +41,15 @@ describe("CORS", () => {
       "http://localhost:3000",
     );
   });
+
+  // The export names its file in Content-Disposition, which a browser hides
+  // from a cross-origin page unless the API says it may read it.
+  it("lets the page read the file name a download carries", async () => {
+    const res = await app.request(
+      "/health",
+      { headers: { Origin: "https://covan.app", "CF-Connecting-IP": crypto.randomUUID() } },
+      { ALLOWED_ORIGIN: "https://covan.app" } as Bindings,
+    );
+    expect(res.headers.get("Access-Control-Expose-Headers")).toContain("Content-Disposition");
+  });
 });

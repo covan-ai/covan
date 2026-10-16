@@ -32,3 +32,16 @@ export function parseReportCommand(text: string): { instruction: string } | null
   if (!match) return null;
   return { instruction: (match[1] ?? "").trim() };
 }
+
+/**
+ * A folder's description as a person should read it.
+ *
+ * An agent's reports folder carries `covan:reports:<agentId>` in its
+ * description — the server finds the folder by it (`worker/src/lib/docs/
+ * bundle.ts`) — and the explorer printed that key beside the folder's name.
+ * It is a marker, not a description, so it reads as none.
+ */
+export function folderDescription(description: string | null | undefined): string | null {
+  if (!description || description.startsWith("covan:reports:")) return null;
+  return description;
+}

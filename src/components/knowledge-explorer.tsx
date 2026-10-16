@@ -48,6 +48,7 @@ import type { UploadPhase } from "@/lib/api-client";
 import { canEditAgent } from "@/lib/agent-access";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
+import { TextPromptDialog } from "@/components/text-prompt-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -67,6 +68,7 @@ import { formatFileSize } from "@/lib/file-size";
 import { dropPayload, rangeSelect } from "@/lib/knowledge-selection";
 import { documentAge } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
+import { folderDescription } from "@/lib/reports";
 import { filesFromDrop } from "@/lib/dropped-files";
 
 type ExplorerDocument = Agent["documents"][number];
@@ -1225,7 +1227,7 @@ function FolderRow({
           [
             bundle.shared === false ? "Only you can see this folder." : null,
             unread ? "No agent reads this folder." : null,
-            bundle.description,
+            folderDescription(bundle.description),
           ]
             .filter(Boolean)
             .join(" ") || undefined
@@ -1661,7 +1663,7 @@ function FolderTile({
       type="button"
       onClick={onOpen}
       aria-label={`Open ${bundle.name}`}
-      title={bundle.description ?? undefined}
+      title={folderDescription(bundle.description) ?? undefined}
       className="flex flex-col items-center gap-1 rounded-lg px-2 py-3 text-center transition-colors hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:outline-none"
     >
       <span className="relative">
@@ -1722,9 +1724,9 @@ function FolderList({
                     <span className="sr-only">Only you</span>
                   </>
                 ) : null}
-                {b.description ? (
+                {folderDescription(b.description) ? (
                   <span className="hidden truncate text-xs text-muted-foreground md:inline">
-                    · {b.description}
+                    · {folderDescription(b.description)}
                   </span>
                 ) : null}
               </span>
@@ -2249,9 +2251,9 @@ function DocumentActions({
     }
   };
 
-  const rename = async () => {
-    const next = window.prompt(`Rename ${doc.name}`, doc.name)?.trim();
-    if (!next || next === doc.name) return;
+  const [renaming, setRenaming] = useState(false);
+  const rename = async (next: string): Promise<boolean> => {
+    if (next === doc.name) return true;
     try {
       await api.documents.rename(doc.id, next);
       await Promise.all([
@@ -2259,86 +2261,100 @@ function DocumentActions({
         queryClient.invalidateQueries({ queryKey: ["agents"] }),
       ]);
       toast.success(`Renamed to ${next}`);
+      return true;
     } catch (err) {
       toast.error((err as Error)?.message ?? "Rename failed");
+      return false;
     }
   };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-        aria-label={`Actions for ${doc.name}`}
-        disabled={busy}
-      >
-        {busy ? (
-          <RefreshCw className="h-4 w-4 animate-spin" />
-        ) : (
-          <MoreVertical className="h-4 w-4" />
-        )}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuItem onSelect={() => onOpen(doc)}>
-          <FileText className="mr-2 h-4 w-4" />
-          Open
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void api.documents.download(doc.id, doc.name)}>
-          <Download className="mr-2 h-4 w-4" />
-          Download
-        </DropdownMenuItem>
-        {doc.externalUrl ? (
-          <DropdownMenuItem asChild>
-            <a href={doc.externalUrl} target="_blank" rel="noreferrer noopener">
-              <ExternalLink className="mr-2 h-4 w-4" />
-              Open at the source
-            </a>
+    <>
+      <TextPromptDialog
+        open={renaming}
+        onOpenChange={setRenaming}
+        title={`Rename ${doc.name}`}
+        label="Name"
+        initialValue={doc.name}
+        submitLabel="Rename"
+        busyLabel="Renaming…"
+        onSubmit={rename}
+      />
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          aria-label={`Actions for ${doc.name}`}
+          disabled={busy}
+        >
+          {busy ? (
+            <RefreshCw className="h-4 w-4 animate-spin" />
+          ) : (
+            <MoreVertical className="h-4 w-4" />
+          )}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem onSelect={() => onOpen(doc)}>
+            <FileText className="mr-2 h-4 w-4" />
+            Open
           </DropdownMenuItem>
-        ) : null}
+          <DropdownMenuItem onSelect={() => void api.documents.download(doc.id, doc.name)}>
+            <Download className="mr-2 h-4 w-4" />
+            Download
+          </DropdownMenuItem>
+          {doc.externalUrl ? (
+            <DropdownMenuItem asChild>
+              <a href={doc.externalUrl} target="_blank" rel="noreferrer noopener">
+                <ExternalLink className="mr-2 h-4 w-4" />
+                Open at the source
+              </a>
+            </DropdownMenuItem>
+          ) : null}
 
-        {canWrite ? (
-          <>
-            <DropdownMenuSeparator />
-            {elsewhere.length > 0 ? (
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <FolderOpen className="mr-2 h-4 w-4" />
-                  Move to
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
-                  {elsewhere.map((b) => (
-                    <DropdownMenuItem key={b.id} onSelect={() => onMove(doc, b.id)}>
-                      <span className="truncate">{b.name}</span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            ) : null}
-            {/* A synced file's name is its source's; the next sync would undo it. */}
-            {!doc.connectionId ? (
-              <DropdownMenuItem onSelect={() => void rename()}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Rename
-              </DropdownMenuItem>
-            ) : null}
-            {doc.connectionId ? (
-              <DropdownMenuItem onSelect={() => void resync()}>
+          {canWrite ? (
+            <>
+              <DropdownMenuSeparator />
+              {elsewhere.length > 0 ? (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                    Move to
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
+                    {elsewhere.map((b) => (
+                      <DropdownMenuItem key={b.id} onSelect={() => onMove(doc, b.id)}>
+                        <span className="truncate">{b.name}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              ) : null}
+              {/* A synced file's name is its source's; the next sync would undo it. */}
+              {!doc.connectionId ? (
+                <DropdownMenuItem onSelect={() => setRenaming(true)}>
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Rename
+                </DropdownMenuItem>
+              ) : null}
+              {doc.connectionId ? (
+                <DropdownMenuItem onSelect={() => void resync()}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Sync now
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem onSelect={() => onReindex(doc)}>
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Sync now
+                Reindex
               </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem onSelect={() => onReindex(doc)}>
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Reindex
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onRemove(doc)}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete
-            </DropdownMenuItem>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => onRemove(doc)}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
 
@@ -2349,11 +2365,10 @@ function DocumentActions({
  */
 function AddWebPage({ bundleId }: { bundleId: string }) {
   const queryClient = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  const add = async () => {
-    const url = window.prompt("The address of the page to add")?.trim();
-    if (!url) return;
-    setBusy(true);
+  const [open, setOpen] = useState(false);
+  const add = async (typed: string): Promise<boolean> => {
+    // People type "example.com/page"; the API wants a whole URL.
+    const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(typed) ? typed : `https://${typed}`;
     try {
       const doc = await api.bundles.addUrl(bundleId, url);
       await Promise.all([
@@ -2362,22 +2377,34 @@ function AddWebPage({ bundleId }: { bundleId: string }) {
         queryClient.invalidateQueries({ queryKey: ["agents"] }),
       ]);
       toast.success(`Added ${doc.name} — indexing it now`);
+      return true;
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not add that page");
-    } finally {
-      setBusy(false);
+      return false;
     }
   };
   return (
-    <button
-      type="button"
-      onClick={() => void add()}
-      disabled={busy}
-      className="inline-flex items-center gap-1.5 hover:text-foreground disabled:opacity-50"
-    >
-      <ExternalLink className="h-3.5 w-3.5" />
-      {busy ? "Fetching the page…" : "Add a web page"}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5 hover:text-foreground"
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        Add a web page
+      </button>
+      <TextPromptDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Add a web page"
+        label="Address"
+        type="url"
+        placeholder="https://example.com/page"
+        submitLabel="Add page"
+        busyLabel="Fetching the page…"
+        onSubmit={add}
+      />
+    </>
   );
 }
 

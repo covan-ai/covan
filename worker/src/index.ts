@@ -95,6 +95,11 @@ app.use(
     // `X-Upload-Token` carries a part's signed upload (`routes/uploads.ts`) —
     // a header rather than the URL, so it stays out of access logs.
     allowHeaders: ["Authorization", "Content-Type", "X-Upload-Token"],
+    // A cross-origin page reads only the safelisted response headers unless
+    // told otherwise, and Content-Disposition is not one. The download and the
+    // DOCX/PDF export name their file there, so without this every export was
+    // saved as "document.docx" whatever the document was called.
+    exposeHeaders: ["Content-Disposition"],
     credentials: true,
   }),
 );

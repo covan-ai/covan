@@ -19,7 +19,8 @@ vi.mock("@/lib/supabase/client", () => ({
 
 // Nothing on this page may accept. Mocked so a call would be visible.
 const accept = vi.fn();
-vi.mock("@/lib/api-client", () => ({ api: { invitations: { accept } } }));
+const preview = vi.fn();
+vi.mock("@/lib/api-client", () => ({ api: { invitations: { accept, preview } } }));
 
 /**
  * Where an invitation email's button lands (migration 0090). The token in the
@@ -37,6 +38,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   getSession.mockResolvedValue({ data: { session: null } });
+  preview.mockRejectedValue(new Error("not found"));
 });
 
 afterEach(() => {
@@ -77,5 +79,47 @@ describe("the invitation landing page", () => {
 
     expect(await screen.findByText(/that link is incomplete/i)).toBeInTheDocument();
     expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("names the workspace, who sent it and the address to use", async () => {
+    preview.mockResolvedValue({
+      workspaceName: "Acme",
+      inviterName: "Ada",
+      email: "bob@acme.com",
+      role: "member",
+      open: true,
+    });
+
+    await renderInvite("/invite#id=inv-1&token=tok-abc");
+
+    expect(await screen.findByText("Join Acme")).toBeInTheDocument();
+    expect(screen.getByText("Ada invited you as member.")).toBeInTheDocument();
+    expect(screen.getByText("bob@acme.com")).toBeInTheDocument();
+    expect(preview).toHaveBeenCalledWith("inv-1", "tok-abc");
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("says so when the invitation has expired", async () => {
+    preview.mockResolvedValue({
+      workspaceName: "Acme",
+      inviterName: "Ada",
+      email: "bob@acme.com",
+      role: "member",
+      open: false,
+    });
+
+    await renderInvite("/invite#id=inv-1&token=tok-abc");
+
+    expect(await screen.findByText(/this invitation has expired/i)).toBeInTheDocument();
+    expect(screen.getByText(/ask ada to send a new one/i)).toBeInTheDocument();
+  });
+
+  it("asks nothing for somebody already signed in", async () => {
+    getSession.mockResolvedValue({ data: { session: { user: { id: "u1" } } } });
+
+    await renderInvite("/invite#id=inv-1&token=tok-abc");
+
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect(preview).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase/client";
 import { inviteFromFragment, stashInvite } from "@/lib/invite-stash";
+import { api, type InvitationPreview } from "@/lib/api-client";
 
 /**
  * Where an invitation email's button lands: `/invite#id=…&token=…`.
@@ -23,6 +24,11 @@ import { inviteFromFragment, stashInvite } from "@/lib/invite-stash";
  *    waiting with its Accept button.
  * 3. Offers anybody else sign-up or sign-in, with the address it has to be.
  *
+ * Before sign-in it also asks what the link is an invitation to
+ * (`POST /invitations/preview`, 0114), so the page can name the workspace, who
+ * sent it and the address to use. That read is all it is; if it fails the
+ * page says what it said before.
+ *
  * It never accepts. Mail scanners open links, and a link that joined
  * workspaces on opening would join them to whoever's session is in the
  * browser that opened it. Accepting is a button, pressed.
@@ -38,6 +44,7 @@ export const Route = createFileRoute("/invite")({
 function Invite() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<"checking" | "signed-out" | "no-link">("checking");
+  const [preview, setPreview] = useState<InvitationPreview | null>(null);
 
   useEffect(() => {
     const invite = inviteFromFragment(window.location.hash);
@@ -53,6 +60,17 @@ function Invite() {
         void navigate({ to: "/app", replace: true });
       } else {
         setStatus(invite ? "signed-out" : "no-link");
+        if (invite) {
+          api.invitations.preview(invite.id, invite.token).then(
+            (found) => {
+              if (active) setPreview(found);
+            },
+            () => {
+              // A wrong, used or missing link and a network failure all leave
+              // the page as it was: generic, and still a way in.
+            },
+          );
+        }
       }
     });
     return () => {
@@ -89,19 +107,50 @@ function Invite() {
     );
   }
 
+  if (preview && !preview.open) {
+    return (
+      <AuthLayout
+        title="This invitation has expired"
+        subtitle={`It was for ${preview.workspaceName}.`}
+        footer={
+          <Link to="/sign-in" className="font-medium text-foreground hover:underline">
+            Sign in
+          </Link>
+        }
+      >
+        <p className="py-2 text-center text-sm text-muted-foreground">
+          Ask {preview.inviterName ?? "whoever invited you"} to send a new one. Invitations last
+          seven days.
+        </p>
+      </AuthLayout>
+    );
+  }
+
   return (
     <AuthLayout
-      title="You've been invited"
-      subtitle="Sign up or sign in with the address the invitation was sent to."
+      title={preview ? `Join ${preview.workspaceName}` : "You've been invited"}
+      subtitle={
+        preview
+          ? `${preview.inviterName ?? "Someone"} invited you as ${preview.role}.`
+          : "Sign up or sign in with the address the invitation was sent to."
+      }
     >
       <div className="flex flex-col items-center gap-3 py-2 text-center">
         <span className="grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
           <Mail className="h-5 w-5" />
         </span>
-        <p className="text-sm text-muted-foreground">
-          The invitation will be waiting inside, with a button to accept it. Nothing happens until
-          you press it.
-        </p>
+        {preview ? (
+          <p className="text-sm text-muted-foreground">
+            Sign up or sign in as{" "}
+            <strong className="font-medium text-foreground">{preview.email}</strong>. The invitation
+            will be waiting inside, with a button to accept it.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            The invitation will be waiting inside, with a button to accept it. Nothing happens until
+            you press it.
+          </p>
+        )}
         <div className="mt-1 flex flex-wrap justify-center gap-2">
           <Button asChild size="sm">
             <Link to="/sign-up">Create an account</Link>

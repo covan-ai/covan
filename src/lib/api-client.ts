@@ -148,10 +148,21 @@ export type PendingInvitation = {
   needsResend: boolean;
 };
 
+export type InvitationPreview = {
+  workspaceName: string;
+  inviterName: string | null;
+  /** The address the account has to be. */
+  email: string;
+  role: string;
+  /** False once it has expired or been revoked. */
+  open: boolean;
+};
+
 export type IncomingInvitation = {
   id: string;
   workspaceId: string;
   workspaceName: string;
+  inviterName: string | null;
   role: string;
   createdAt: number;
 };
@@ -918,6 +929,12 @@ export const api = {
     resend: (id: string): Promise<PendingInvitation> =>
       request("POST", `/invitations/${id}/resend`),
     incoming: (): Promise<IncomingInvitation[]> => request("GET", "/invitations/incoming"),
+    /**
+     * What an invitation email's link is an invitation to, asked before
+     * sign-in. Needs no session: the id and token are the proof.
+     */
+    preview: (id: string, token: string): Promise<InvitationPreview> =>
+      request("POST", "/invitations/preview", { id, token }),
     /** `token` is the one the invitation email's link carried. See `invite-stash.ts`. */
     accept: (id: string, token: string): Promise<{ workspaceId: string }> =>
       request("POST", `/invitations/${id}/accept`, { token }),

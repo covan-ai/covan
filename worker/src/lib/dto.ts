@@ -450,6 +450,8 @@ export type IncomingInvitationDTO = {
   id: string;
   workspaceId: string;
   workspaceName: string;
+  /** The inviter's display name, or null when their profile has none. */
+  inviterName: string | null;
   role: string;
   createdAt: number;
 };

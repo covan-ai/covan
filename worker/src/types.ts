@@ -432,6 +432,11 @@ export type Bindings = SyncEnv & {
    * reach that form and should set this.
    */
   SUPPORT_EMAIL?: string;
+  /**
+   * Where a note from the feedback dialog is mailed. Unset means nowhere: the
+   * note is still recorded in `feedback`, it just reaches nobody's inbox.
+   */
+  FEEDBACK_EMAIL?: string;
 };
 
 /**

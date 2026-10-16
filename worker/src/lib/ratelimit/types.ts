@@ -58,13 +58,16 @@ export const RATE_PERIOD_SECONDS = 60;
  * `standard` is keyed by IP and has to survive a shared office behind one
  * address, so it is generous: it exists to protect the token check in front of
  * it, which costs a round trip to Supabase on every request, not to ration
- * ordinary use.
+ * ordinary use. It was 120 until a pilot test put three people on one address:
+ * opening the app is about ten calls and an agent page more, so eight page
+ * loads between them met a 429 that the UI showed nobody. 600 is a small
+ * team's morning, and still a ceiling on how often the token check is asked.
  *
  * `expensive` is keyed by the user and covers only the two routes that spend at
  * OpenAI. Twenty a minute is more than a person can type and far less than a
  * loop can.
  */
 export const DEFAULT_LIMITS: Record<RateTier, number> = {
-  standard: 120,
+  standard: 600,
   expensive: 20,
 };

@@ -52,7 +52,7 @@ support.post("/support/quota", async (c) => {
   // button that gets pressed eleven times — this has to stop that before a
   // single query runs, not after building the mail it would have sent.
   //
-  // `expensive`, not `standard`: `standard` is 120/min and deliberately
+  // `expensive`, not `standard`: `standard` is 600/min and deliberately
   // generous, because its job is to protect the token check in front of it,
   // "not to ration ordinary use" (`ratelimit/types.ts`). That would let one
   // account send 7,200 messages an hour to a human inbox. `expensive` is

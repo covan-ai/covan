@@ -141,7 +141,7 @@ invitations.post("/invitations", async (c) => {
       .maybeSingle();
 
     if (existingMembership) {
-      return c.json({ error: "they're already in this workspace" }, 409);
+      return c.json({ error: "They're already in this workspace." }, 409);
     }
   }
 
@@ -167,7 +167,10 @@ invitations.post("/invitations", async (c) => {
   if (error) {
     // Unique-pending index violation → already invited.
     if (error.code === "23505") {
-      return c.json({ error: "that email already has a pending invitation" }, 409);
+      return c.json(
+        { error: "That address already has a pending invitation. Resend it from the list below." },
+        409,
+      );
     }
     // RLS insert check failure surfaces as an error → treat as forbidden.
     return c.json({ error: "only workspace admins can invite members" }, 403);
@@ -332,57 +335,44 @@ invitations.delete("/invitations/:id", async (c) => {
 });
 
 // GET /invitations/incoming — pending invites addressed to the caller's email.
+//
+// Through `incoming_invitations()` (0114) rather than a select on
+// `invitations`. Two reasons, one old and one new.
+//
+// The old one: `invitations_select_admin_or_invitee` (0003) admits a row when
+// the caller is an admin of the workspace OR the row is addressed to them, so
+// a plain select answered "invitations you can see" when this route asks
+// "invitations addressed to you", and an admin met their own outgoing
+// invitations in the incoming banner. The function matches on the address on
+// the caller's own account, lowercased as `invitations.email` always is, and
+// on nothing else.
+//
+// The new one: the invitee is not a member yet, so the `workspaces(name)` the
+// select used to embed was hidden by `workspaces`' own policy and the banner
+// read "You've been invited to  as member". The function returns the
+// workspace's name and the inviter's, and nothing else about either.
 invitations.get("/invitations/incoming", async (c) => {
   const db = c.get("db");
-  const user = c.get("user");
 
-  // The address filter is this query's job, not the policy's.
-  //
-  // `invitations_select_admin_or_invitee` (0003) admits a row when the caller
-  // is an admin of the workspace OR the row is addressed to them. That is the
-  // right policy — an admin has to be able to read the pending invitations the
-  // Team page lists. It is the wrong scope for this route, which used to lean
-  // on it entirely and so answered "invitations you can see" when it was asked
-  // "invitations addressed to you". An admin therefore met their own outgoing
-  // invitations in the incoming banner: "You've been invited to <your own
-  // workspace> as <the role you just granted somebody else>". Accepting one
-  // could never work either, because `accept_invitation()` compares the
-  // address against the caller's own — so the banner offered an action that
-  // was guaranteed to be refused.
-  //
-  // Exactly the mistake 0022 spent a header on: a policy answers "may this
-  // person see this row", which stopped being the same question as "is this
-  // row theirs" the moment admins were added to the `or`. The policy is left
-  // alone; the query says which rows it means.
-  //
-  // `.eq` rather than the `ilike` the create path needs: `invitations.email`
-  // is lowercased on insert, while `profiles.email` is copied verbatim from
-  // auth and is not. Lowercasing the caller's own address matches what the
-  // policy already does with `lower(auth.jwt() ->> 'email')`, and an absent
-  // one narrows to nothing rather than widening to everything.
-  const callerEmail = (user.email ?? "").toLowerCase();
-
-  const { data, error } = await db
-    .from("invitations")
-    .select("id, workspace_id, role, created_at, workspaces(name)")
-    .eq("status", "pending")
-    .eq("email", callerEmail)
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: false });
-
+  const { data, error } = await db.rpc("incoming_invitations");
   if (error) return c.json({ error: "failed to load invitations" }, 500);
 
-  const result: IncomingInvitationDTO[] = (data ?? []).map((r) => {
-    const ws = r.workspaces as { name: string } | { name: string }[] | null;
-    const name = Array.isArray(ws) ? (ws[0]?.name ?? "") : (ws?.name ?? "");
-    return {
-      id: r.id as string,
-      workspaceId: r.workspace_id as string,
-      workspaceName: name,
-      role: r.role as string,
-      createdAt: toEpochMs(r.created_at as string),
-    };
-  });
+  const rows = (data ?? []) as {
+    id: string;
+    workspace_id: string;
+    workspace_name: string | null;
+    inviter_name: string | null;
+    role: string;
+    created_at: string;
+  }[];
+  const result: IncomingInvitationDTO[] = rows.map((r) => ({
+    id: r.id,
+    workspaceId: r.workspace_id,
+    workspaceName: r.workspace_name ?? "",
+    inviterName: r.inviter_name ?? null,
+    role: r.role,
+    createdAt: toEpochMs(r.created_at),
+  }));
   return c.json(result);
 });
 

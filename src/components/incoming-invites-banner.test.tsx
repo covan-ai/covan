@@ -91,3 +91,34 @@ describe.each([
     expect(accept).not.toHaveBeenCalled();
   });
 });
+
+// The invitee is not in the workspace yet, so the name and the sender are the
+// only things that tell them what they are being asked to join (0114).
+describe("an invitation that says who it is from", () => {
+  beforeEach(() => {
+    incoming.mockResolvedValueOnce([
+      { id: "inv-1", workspaceName: "Acme", inviterName: "Ada", role: "member" } as never,
+    ]);
+  });
+
+  it("names the sender in the banner", async () => {
+    render(
+      <QueryClientProvider client={seededClient()}>
+        <IncomingInvitesBanner />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/ada invited you to/i)).toBeInTheDocument();
+    expect(screen.getByText("Acme")).toBeInTheDocument();
+  });
+
+  it("names the sender in the welcome step", async () => {
+    render(
+      <QueryClientProvider client={seededClient()}>
+        <InviteAcceptStep onDone={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/from ada/i)).toBeInTheDocument();
+  });
+});

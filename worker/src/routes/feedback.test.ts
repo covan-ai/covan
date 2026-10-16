@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { feedback } from "./feedback";
 
@@ -69,6 +69,13 @@ function fakeDb(options: { activeWorkspaceId?: string | null; insertError?: stri
           update: () => ({ eq: async () => ({ error: null }) }),
         };
       }
+      if (table === "workspaces") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { name: "Acme" }, error: null }) }),
+          }),
+        };
+      }
       throw new Error(`fakeDb: unexpected table "${table}"`);
     },
   };
@@ -87,12 +94,16 @@ function appWithDb(db: unknown) {
   return app;
 }
 
-async function post(db: unknown, body: unknown) {
-  return appWithDb(db).request("/feedback", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+async function post(db: unknown, body: unknown, env?: Record<string, unknown>) {
+  return appWithDb(db).request(
+    "/feedback",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    env,
+  );
 }
 
 describe("POST /feedback", () => {
@@ -231,5 +242,74 @@ describe("POST /feedback", () => {
     const res = await post(db, { message: "hello" });
 
     expect(res.status).toBe(500);
+  });
+});
+
+describe("POST /feedback — telling whoever runs this install", () => {
+  const MAIL = { RESEND_API_KEY: "re_test", RESEND_FROM: "Covan <hi@covan.app>" };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubResend() {
+    const sent: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)));
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    return sent;
+  }
+
+  it("mails the note to FEEDBACK_EMAIL, answerable to whoever wrote it", async () => {
+    const sent = stubResend();
+    const { db } = fakeDb();
+
+    const res = await post(
+      db,
+      { message: "the report button did nothing", kind: "problem", path: "/agents/x/chat" },
+      { ...MAIL, FEEDBACK_EMAIL: "ops@example.com" },
+    );
+
+    expect(res.status).toBe(201);
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toMatchObject({ to: ["ops@example.com"], reply_to: "a@b.c" });
+    expect(sent[0].subject).toBe("Covan feedback — Problem: the report button did nothing");
+    expect(sent[0].text).toContain("Workspace:  Acme (workspace-1)");
+    expect(sent[0].text).toContain("Page:       /agents/x/chat");
+  });
+
+  // A self-hosted install with Resend configured must not start mailing its
+  // users' notes anywhere it did not choose.
+  it("mails nobody when FEEDBACK_EMAIL is not set", async () => {
+    const sent = stubResend();
+    const { db, inserted } = fakeDb();
+
+    const res = await post(db, { message: "hello" }, MAIL);
+
+    expect(res.status).toBe(201);
+    expect(inserted).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sent).toHaveLength(0);
+  });
+
+  it("still records the note when the mail is refused", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("no", { status: 403 })),
+    );
+    const { db, inserted } = fakeDb();
+
+    const res = await post(
+      db,
+      { message: "hello" },
+      { ...MAIL, FEEDBACK_EMAIL: "ops@example.com" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(inserted).toHaveLength(1);
   });
 });

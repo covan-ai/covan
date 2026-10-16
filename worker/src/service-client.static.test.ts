@@ -21,6 +21,10 @@ import { dirname, join, normalize } from "node:path";
 
 /** Files permitted to touch `serviceClient`. */
 const SERVICE_CLIENT_ALLOWLIST = new Map([
+  [
+    "routes/invitation-preview.ts",
+    "the /invite page asks before anybody has signed in, so there is no auth.uid() for RLS to resolve, and invitation_preview (0114) is granted to service_role only because no definer function answers the anon key (0084). The route makes that one call and nothing else; the function answers only when the invitation's id and the hash of the mailed token match together, and returns two names, a role, the invited address and whether it is open",
+  ],
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
   [
     "lib/docs/enqueue.ts",

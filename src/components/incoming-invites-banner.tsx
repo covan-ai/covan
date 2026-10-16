@@ -19,7 +19,8 @@ export function IncomingInvitesBanner() {
         <div key={inv.id} className="flex flex-wrap items-center gap-3 px-4 py-3 lg:px-8">
           <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="text-sm">
-            You've been invited to <strong>{inv.workspaceName}</strong> as {inv.role}.
+            {inv.inviterName ? `${inv.inviterName} invited you` : "You've been invited"} to{" "}
+            <strong>{inv.workspaceName}</strong> as {inv.role}.
           </span>
           {/* Accepting takes the token from the invitation's email. Without it
               in this browser a button would only ever be refused, so the

@@ -252,6 +252,8 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     // would be mailing us through the operator's Resend account with no way to
     // redirect it.
     SUPPORT_EMAIL: source.SUPPORT_EMAIL,
+    // Where a feedback note is mailed; unset sends none (`routes/feedback.ts`).
+    FEEDBACK_EMAIL: source.FEEDBACK_EMAIL,
     RESEND_API_KEY: source.RESEND_API_KEY ?? "",
     RESEND_FROM: source.RESEND_FROM ?? "",
     ALLOWED_ORIGIN: source.ALLOWED_ORIGIN!,

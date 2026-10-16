@@ -20,5 +20,5 @@ export function useWorkspaceRole(): {
 } {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const role = me?.members.find((m) => m.id === me.user.id)?.role;
-  return { me, role, isAdmin: isAdminRole(role), canWrite: canWriteAsRole(role) };
+  return { me: me ?? undefined, role, isAdmin: isAdminRole(role), canWrite: canWriteAsRole(role) };
 }

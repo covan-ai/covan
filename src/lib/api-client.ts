@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { ApiError, errorMessage } from "./api-error";
+import { ApiError, errorMessage, isNoWorkspace } from "./api-error";
 import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-store";
@@ -827,7 +827,26 @@ export const api = {
     suggest: (name: string, model?: string): Promise<{ persona: string }> =>
       request("POST", "/persona/suggest", { name, model }),
   },
-  me: (): Promise<Me> => request("GET", "/me"),
+  /**
+   * The caller, their workspace and its members — or null when the account has
+   * no workspace yet (0115: signed up with an invitation waiting, or left its
+   * last one).
+   *
+   * Null rather than a thrown 404 on purpose. A query that has only ever
+   * failed holds no data, and TanStack Query resets such a query to `pending`
+   * whenever another observer mounts and refetches it. The authed gate showed
+   * "Loading…" while pending, which unmounted /welcome, which remounted on the
+   * next 404 and refetched it again: an endless loop on the one screen that
+   * account could use. A successful null has nothing to reset.
+   */
+  me: async (): Promise<Me | null> => {
+    try {
+      return await request<Me>("GET", "/me");
+    } catch (error) {
+      if (isNoWorkspace(error)) return null;
+      throw error;
+    }
+  },
   search: {
     /**
      * Full-text search across messages.

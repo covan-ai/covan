@@ -68,7 +68,11 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ],
   [
     "lib/routines/events/receive.ts",
-    "a provider's delivery has no Covan caller, so there is no JWT for RLS to resolve — the same exemption lib/routines/ingest.ts holds for a webhook, one provider further away. What stands in for a caller is the receiving route's own verification of the provider's signature, which names one subscription. It reads that one row (by routine id or by the provider's own id for it), reads the routine it names with ingest.ts's column list, counts the event on that row through count_routine_event (0109, service role only), and hands the routine to runPokedRoutine, which re-checks membership and credits off the row as every run does",
+    "a provider's delivery has no Covan caller, so there is no JWT for RLS to resolve — the same exemption lib/routines/ingest.ts holds for a webhook, one provider further away. What stands in for a caller is the receiving route's own verification of the provider's signature, which names one subscription. It reads that one row (by routine id or by the provider's own id for it), reads the routine it names with ingest.ts's column list, counts the event on that row through count_routine_event (0109, service role only), and hands the routine to runPokedRoutine, which re-checks membership and credits off the row as every run does. For a provider that only says something changed (a Drive channel) it also moves that row's state cursor, conditional on the cursor still being where the listing began, which is the only write it makes to the row",
+  ],
+  [
+    "lib/routines/events/connection-grant.ts",
+    "a Notion or Google Drive event's adapter runs with no caller — a provider's delivery, a cron sweep — and connections.secret_ciphertext is granted to no client role (0043). It reads exactly one connections row, the one named by the subscription's config.connectionId, which the route found through the caller's own client (requirements.ts), and refuses it unless it is still in the routine's own workspace, the provider the event needs, active and held by somebody. It writes nothing: a Google token refreshed for an event is not stored back",
   ],
   [
     "lib/routines/events/composio.ts",

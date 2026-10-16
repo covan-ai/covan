@@ -45,6 +45,7 @@ import { toolConnections } from "./routes/tool-connections";
 import { composio, composioPublic } from "./routes/composio";
 import { composioEvents } from "./routes/composio-events";
 import { routineEvents } from "./routes/routine-events";
+import { notionEvents } from "./routes/notion-events";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
@@ -123,6 +124,9 @@ app.route("/", composioEvents);
 // GitHub webhooks and WebSub hubs: a proof per subscription (its secret), one
 // subscription to count against, the address only for proofs that fail.
 app.route("/", routineEvents);
+// Notion's deliveries: one signature for the integration (once its token is
+// set), the Notion workspace to count against, the address for failures.
+app.route("/", notionEvents);
 
 // After cors, so a preflight is answered rather than counted: an OPTIONS that
 // gets a 429 makes the browser report the real request as a CORS failure, which

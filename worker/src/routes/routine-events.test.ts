@@ -161,3 +161,51 @@ describe("POST /routine-events/websub/:id", () => {
     expect(raw).toEqual({ signature: "sha1=abc", body: "<feed/>" });
   });
 });
+
+describe("POST /routine-events/drive/:id", () => {
+  const DR = "dr_" + "c".repeat(32);
+  // A tight miss allowance and a loose per-channel one, so a counted miss
+  // would show as a refusal long before the channel's own limit does.
+  const notify = (state: string, id = DR) => {
+    const app = new Hono<AppEnv>();
+    app.route("/", routineEvents);
+    return app.request(
+      `/routine-events/drive/${id}`,
+      {
+        method: "POST",
+        headers: { "X-Goog-Resource-State": state, "X-Goog-Channel-Token": "tok" },
+      },
+      {
+        ...ENV,
+        RATE_LIMIT_STANDARD_PER_MINUTE: "3",
+        RATE_LIMIT_EXPENSIVE_PER_MINUTE: "100",
+      } as never,
+    );
+  };
+
+  it("hands the channel's token and state to receiveEvent", async () => {
+    const res = await notify("change");
+    expect(res.status).toBe(200);
+    const [, target, raw] = receiveEvent.mock.calls[0];
+    expect(target).toEqual({ provider: "google_drive", externalId: DR });
+    expect(raw).toEqual({ token: "tok", state: "change" });
+  });
+
+  it("acknowledges the channel's first message without a lookup", async () => {
+    expect((await notify("sync")).status).toBe(200);
+    expect(receiveEvent).not.toHaveBeenCalled();
+  });
+
+  it("answers a channel nobody holds with a 200, and does not count it against Google", async () => {
+    receiveEvent.mockResolvedValue({ status: "unknown" });
+    let last = 0;
+    for (let i = 0; i < 10; i++) last = (await notify("change")).status;
+    expect(last).toBe(200);
+  });
+
+  it("refuses a wrong token, and an id that is not one of ours", async () => {
+    receiveEvent.mockResolvedValueOnce({ status: "forged" });
+    expect((await notify("change")).status).toBe(401);
+    expect((await notify("change", "dr_short")).status).toBe(404);
+  });
+});

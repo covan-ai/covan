@@ -137,6 +137,9 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   // GitHub webhooks and WebSub hubs, the same road: `receiveEvent`, and the
   // signature checked inside it by the adapter. Pinned below as well.
   "routine-events.ts": "receiveEvent",
+  // Notion's deliveries: the integration's signature checked in the route,
+  // then `receiveEvent` per connection that can see the page. Pinned below.
+  "notion-events.ts": "receiveEvent",
   // The document poll, `GET /sessions/:id/document-jobs`. On a deployment
   // with no document host it advances the caller's own job one unit per poll,
   // which is a model call — and it is a GET the tab makes every few seconds,
@@ -238,6 +241,13 @@ describe("the expensive rate limit", () => {
     expect(routineEvents).toContain("hasSpentMisses(c)");
     expect(routineEvents).toContain("countMiss(c)");
     expect(routineEvents).toContain('outcome.status === "forged"');
+    // Notion: the signature before anything is read, the expensive tier per
+    // Notion workspace, the address charged for failed signatures.
+    const notionEvents = readFileSync(join(ROUTES, "notion-events.ts"), "utf8");
+    expect(notionEvents).toContain("X-Notion-Signature");
+    expect(notionEvents).toContain('getRateLimiter(c.env, "expensive")');
+    expect(notionEvents).toContain("hasSpentMisses(c)");
+    expect(notionEvents).toContain("countMiss(c)");
     expect(readFileSync(join(SRC, "lib", "routines", "events", "receive.ts"), "utf8")).toContain(
       "count_routine_event",
     );

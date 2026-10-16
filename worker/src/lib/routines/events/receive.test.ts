@@ -346,3 +346,84 @@ describe("receiveEvent, for an adapter that checks each delivery's signature", (
     );
   });
 });
+
+describe("receiveEvent, for an adapter that lists what changed from a cursor", () => {
+  function listingRegistry(advance: EventAdapter["advance"]): EventRegistry {
+    const adapter: EventAdapter = {
+      provider: "google_drive",
+      isConfigured: () => true,
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      setEnabled: vi.fn(),
+      advance,
+      normalize: normalize as unknown as EventAdapter["normalize"],
+    };
+    return {
+      ...catalogueOf([{ ...MAIL, provider: "google_drive" }]),
+      adapterFor: (p) => (p === "google_drive" ? adapter : undefined),
+    };
+  }
+
+  function receiveListing(advance: EventAdapter["advance"], state: Row = { pageToken: "1" }) {
+    const m = memoryDb({
+      routines: [routine()],
+      routine_event_subscriptions: [
+        subscription({ provider: "google_drive", external_id: "dr_1", state }),
+      ],
+    });
+    (m.db as unknown as { rpc: unknown }).rpc = rpc;
+    const out = receiveEvent(
+      ENV,
+      { provider: "google_drive", externalId: "dr_1" },
+      { ping: 1 },
+      {
+        db: m.db as unknown as SupabaseClient,
+        registry: listingRegistry(advance),
+        defer: (p) => deferred.push(p),
+        run: run as never,
+        pause: pause as never,
+        sync: sync as never,
+      },
+    );
+    return { out, m };
+  }
+
+  it("moves the cursor and runs on what was listed", async () => {
+    const advance = vi.fn(async () => ({
+      raw: { changes: ["a"] },
+      state: { pageToken: "2" },
+      cursor: { key: "pageToken", from: "1" },
+    }));
+    const { out, m } = receiveListing(advance);
+    expect(await out).toMatchObject({ status: "accepted" });
+    expect(normalize.mock.calls[0][0]).toEqual({ changes: ["a"] });
+    expect(m.tables.routine_event_subscriptions[0].state).toEqual({ pageToken: "2" });
+  });
+
+  it("reads the cursor again and lists from there when another delivery moved it first", async () => {
+    let call = 0;
+    const advance = vi.fn(
+      async (_raw: unknown, ctx: { subscription: { state: Record<string, unknown> } }) => {
+        call++;
+        // The first listing started from a cursor somebody has since moved.
+        const from = call === 1 ? "0" : String(ctx.subscription.state.pageToken);
+        return {
+          raw: { changes: [from] },
+          state: { pageToken: "9" },
+          cursor: { key: "pageToken", from },
+        };
+      },
+    );
+    const { out, m } = receiveListing(advance as never);
+    expect(await out).toMatchObject({ status: "accepted" });
+    expect(advance).toHaveBeenCalledTimes(2);
+    expect(normalize.mock.calls[0][0]).toEqual({ changes: ["1"] });
+    expect(m.tables.routine_event_subscriptions[0].state).toEqual({ pageToken: "9" });
+  });
+
+  it("runs nothing when there was nothing to list", async () => {
+    const { out } = receiveListing(vi.fn(async () => null));
+    expect(await out).toEqual({ status: "ignored" });
+    expect(normalize).not.toHaveBeenCalled();
+  });
+});

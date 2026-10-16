@@ -28,6 +28,9 @@ workers_dev = true
 #     Made and printed by `bun run scripts/composio-webhook-subscribe.ts`. Set
 #     it on the CRON WORKER TOO: that Worker makes the triggers this one
 #     receives.
+#   NOTION_WEBHOOK_VERIFICATION_TOKEN — routines that start on a Notion page
+#     event. The token Notion sends to /notion/events when its webhook is made
+#     (logged while this is unset). Set it on the CRON WORKER TOO.
 #   BROWSER_USE_API_KEY — the `browse` tool, which drives a real browser for
 #     the pages http_request cannot reach, on browser-use's V4 API (the same
 #     key as v2; a project with Zero Data Retention cannot use V4). SET IT ON

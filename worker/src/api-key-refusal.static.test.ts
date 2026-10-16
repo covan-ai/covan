@@ -314,6 +314,8 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
   composioPublic: "a logo proxy for <img> tags, serving nothing about anybody",
   routineHooks: "a third-party sender holding an ingest token, which is the credential",
   composioEvents: "Composio's trigger deliveries, verified by the webhook signature",
+  notionEvents:
+    "Notion's webhook deliveries, verified by the integration's signature once its token is set",
   routineEvents:
     "GitHub webhooks and WebSub hubs, each delivery verified by its own subscription's secret",
   addressConfirmationsPublic:

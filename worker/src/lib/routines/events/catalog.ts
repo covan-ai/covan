@@ -25,7 +25,8 @@
  * (`lifecycle.ts`). Composio's — Gmail, Outlook, Google Calendar — are the
  * first, in `composio-catalog.ts` beside what Composio needs to serve them;
  * GitHub's (`github.ts`), WebSub's — YouTube and instant RSS (`websub.ts`) —
- * and Slack's (`slack.ts`) sit beside their adapters the same way.
+ * Slack's (`slack.ts`), and Notion's and Google Drive's (`notion.ts`, `drive.ts`)
+ * sit beside their adapters the same way.
  */
 
 import type { z } from "zod";
@@ -33,6 +34,8 @@ import { COMPOSIO_EVENTS } from "./composio-catalog";
 import { GITHUB_EVENTS } from "./github";
 import { WEBSUB_EVENTS } from "./websub";
 import { SLACK_EVENTS } from "./slack";
+import { NOTION_EVENTS } from "./notion";
+import { DRIVE_EVENTS } from "./drive";
 
 /**
  * Who sends the event. The adapter registry is keyed on this, and so is the
@@ -136,7 +139,13 @@ export type EventTypeDef = {
  * beside the adapter half that serves them; see the module comment.
  */
 export const EVENT_TYPES: readonly EventTypeDef[] = [
-  ...[...COMPOSIO_EVENTS, ...GITHUB_EVENTS, ...WEBSUB_EVENTS].map((spec) => spec.def),
+  ...[
+    ...COMPOSIO_EVENTS,
+    ...GITHUB_EVENTS,
+    ...WEBSUB_EVENTS,
+    ...NOTION_EVENTS,
+    ...DRIVE_EVENTS,
+  ].map((spec) => spec.def),
   // Slack's entries are plain definitions: there is nothing per entry for the
   // adapter to keep beside them (`slack.ts`).
   ...SLACK_EVENTS,

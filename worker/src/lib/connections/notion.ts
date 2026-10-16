@@ -28,9 +28,9 @@ import {
  * the cost of following along is a block shape changing under a sync nobody is
  * watching.
  */
-const NOTION_VERSION = "2022-06-28";
+export const NOTION_VERSION = "2022-06-28";
 
-const API = "https://api.notion.com/v1";
+export const NOTION_API = "https://api.notion.com/v1";
 
 /**
  * How many pages of blocks one document may cost.
@@ -97,7 +97,7 @@ type NotionProperty = {
   type?: string;
   [key: string]: unknown;
 };
-type NotionPage = {
+export type NotionPage = {
   id: string;
   object: string;
   url?: string;
@@ -121,7 +121,7 @@ async function notionFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<unknown> {
-  const res = await ctx.fetchImpl(`${API}${path}`, {
+  const res = await ctx.fetchImpl(`${NOTION_API}${path}`, {
     ...init,
     headers: { ...authHeaders(ctx.token.accessToken), ...(init.headers ?? {}) },
   });
@@ -142,7 +142,7 @@ function runsOf(value: unknown): NotionRichText[] {
  * `inline` because a document called `**Q3** plan.md` is a document whose name
  * is now punctuation.
  */
-function plainText(value: unknown): string {
+export function plainText(value: unknown): string {
   return runsOf(value)
     .map((r) => r.plain_text ?? "")
     .join("");
@@ -203,7 +203,7 @@ function inline(value: unknown): string {
  * the one thing Notion guarantees. An untitled page is a real thing in Notion
  * and gets the name Notion itself shows for it.
  */
-function titleOf(page: NotionPage): string {
+export function titleOf(page: NotionPage): string {
   for (const prop of Object.values(page.properties ?? {})) {
     if (prop?.type === "title") {
       const text = plainText(prop.title).trim();
@@ -597,7 +597,7 @@ export const notionProvider: ConnectionProvider = {
   },
 
   authorizeUrl(env: ProviderEnv, state: string, redirectUri: string): string {
-    const url = new URL(`${API}/oauth/authorize`);
+    const url = new URL(`${NOTION_API}/oauth/authorize`);
     url.searchParams.set("client_id", env.NOTION_CLIENT_ID ?? "");
     url.searchParams.set("response_type", "code");
     // "user" is the only value Notion accepts, and it means the grant belongs
@@ -613,7 +613,7 @@ export const notionProvider: ConnectionProvider = {
     // HTTP Basic with the client id and secret, which is the only form Notion's
     // token endpoint accepts — credentials in the body are rejected.
     const basic = btoa(`${env.NOTION_CLIENT_ID}:${env.NOTION_CLIENT_SECRET}`);
-    const res = await fetchImpl(`${API}/oauth/token`, {
+    const res = await fetchImpl(`${NOTION_API}/oauth/token`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${basic}`,

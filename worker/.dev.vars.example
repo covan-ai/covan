@@ -88,6 +88,10 @@ RESEND_FROM=
 # prints. Set it on the cron Worker too: that one makes the triggers, and both
 # must agree that events exist. See docs/integrations.md.
 # COMPOSIO_WEBHOOK_SECRET=
+# Routines that start on a Notion page event: the verification_token Notion
+# sent to /notion/events (logged while this is unset). Set it on the cron Worker
+# too. See docs/integrations.md.
+# NOTION_WEBHOOK_VERIFICATION_TOKEN=
 
 # Optional. Lets an agent drive a real browser — read a page that needs
 # JavaScript, pull a number out of a site with no API — through browser-use,

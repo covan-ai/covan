@@ -63,7 +63,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ACCEPT, validateUpload } from "@/lib/uploads";
+import { ACCEPT, validateUpload, ACCEPTED_SUMMARY } from "@/lib/uploads";
 import { formatFileSize } from "@/lib/file-size";
 import { dropPayload, rangeSelect } from "@/lib/knowledge-selection";
 import { documentAge } from "@/lib/relative-time";
@@ -2486,9 +2486,7 @@ function UploadStrip({
               />
             </label>
             <AddWebPage bundleId={bundle.id} />
-            <span className="hidden xl:inline">
-              PDF, Word, PowerPoint, Excel, Markdown, text and more · up to 100 MB each
-            </span>
+            <span className="hidden xl:inline">{ACCEPTED_SUMMARY}</span>
           </>
         ) : null}
       </div>

@@ -9,6 +9,7 @@ import {
   type SessionTuning,
 } from "@/lib/agents-store";
 import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
+import { ACCEPTED_SUMMARY } from "@/lib/uploads";
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
@@ -1617,7 +1618,7 @@ function ChatTab() {
           <div className="flex flex-col items-center gap-2">
             <Upload className="h-6 w-6 text-brand" />
             <div className="text-title font-semibold">Drop to add to {agent.name}</div>
-            <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
+            <div className="text-xs text-muted-foreground">{ACCEPTED_SUMMARY}</div>
           </div>
         </div>
       )}

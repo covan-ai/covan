@@ -34,6 +34,13 @@ export const ACCEPT = ALLOWED_EXT.map((e) => `.${e}`).join(",");
 // worker's tree.
 export const MAX_SIZE = 100 * 1024 * 1024;
 
+/**
+ * The one line every drop zone shows under "Drop files". The create-agent
+ * dialog and the chat said "TXT, Markdown, CSV, JSON, PDF" long after Word,
+ * PowerPoint and Excel were accepted, so people never tried them.
+ */
+export const ACCEPTED_SUMMARY = `PDF, Word, PowerPoint, Excel, Markdown, text and more · up to ${MAX_SIZE / 1024 / 1024} MB each`;
+
 // What the extension list is called when a person has to read it. `markdown` is
 // left out on purpose: it is the same format as `md` and naming both explains
 // nothing.

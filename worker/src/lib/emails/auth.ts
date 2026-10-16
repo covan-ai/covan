@@ -90,6 +90,26 @@ export const authEmailTemplates = [
     // No button, and deliberately: it announces something already done. A link
     // in a mail about credentials is also exactly the shape of the phishing this
     // message would otherwise help somebody fall for.
+    // The code a password change asks for when the session is more than a day
+    // old (`secure_password_change`, components/account/password-card.tsx).
+    // GoTrue calls it Reauthentication and fills in `{{ .Token }}`. A code and
+    // not a link: the person is standing in account settings with a field
+    // waiting for it, and a link would open a second tab that knows nothing of
+    // the password they just typed.
+    filename: "reauthentication.html",
+    subject: "Your Covan confirmation code",
+    html: emailShell({
+      preheader: "The code to confirm a change to your Covan account.",
+      heading: "Confirm it is you",
+      bodyHtml: [
+        `<p style="${P}">You are changing the password on your Covan account. Enter this code where Covan asked for it:</p>`,
+        `<p style="margin:0 0 16px;font-size:28px;line-height:1.2;letter-spacing:6px;font-weight:600;color:#251f19">{{ .Token }}</p>`,
+      ].join(""),
+      footnote:
+        "If you are not changing your password, somebody else may be signed in to your account. Do not share this code; change your password from the sign-in page instead.",
+    }),
+  },
+  {
     filename: "password-changed.html",
     subject: "Your Covan password was changed",
     html: emailShell({

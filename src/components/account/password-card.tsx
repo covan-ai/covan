@@ -7,8 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase/client";
 
-/** `minimum_password_length` in `supabase/config.toml`. GoTrue enforces it too. */
-export const PASSWORD_MIN = 6;
+/**
+ * Eight, as sign-up and the reset page already ask. `minimum_password_length`
+ * in `supabase/config.toml` says the same, so GoTrue enforces it too.
+ */
+export const PASSWORD_MIN = 8;
 
 /**
  * Changing your password, or setting one for an account that never had one.
@@ -16,6 +19,13 @@ export const PASSWORD_MIN = 6;
  * Unlike `reset-password.tsx`, this does not sign you out afterwards: that page
  * runs on a recovery session somebody may have opened from a forwarded email,
  * and this one runs on the session you are already using.
+ *
+ * Which is exactly why GoTrue may ask for more. With `secure_password_change`
+ * on, a session that did not sign in within the last day cannot change the
+ * password on its own say-so — otherwise a laptop left open, or a stolen
+ * session, could lock the owner out. GoTrue answers `reauthentication_needed`;
+ * this card asks GoTrue to email a code, and sends the change again with it.
+ * Nobody who signed in recently ever sees that step.
  */
 export function PasswordCard() {
   const [password, setPassword] = useState("");
@@ -23,16 +33,34 @@ export function PasswordCard() {
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** True once GoTrue has asked for a code and one has been sent. */
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState("");
 
   const tooShort = password.length > 0 && password.length < PASSWORD_MIN;
   const mismatch = confirm.length > 0 && password !== confirm;
-  const ready = password.length >= PASSWORD_MIN && password === confirm;
+  const ready =
+    password.length >= PASSWORD_MIN && password === confirm && (!needsCode || code.trim() !== "");
 
   const save = async () => {
     if (!ready) return;
     setSaving(true);
     setError(null);
-    const { error: authError } = await supabase.auth.updateUser({ password });
+    const { error: authError } = await supabase.auth.updateUser(
+      needsCode ? { password, nonce: code.trim() } : { password },
+    );
+
+    if (authError?.code === "reauthentication_needed") {
+      const { error: sendError } = await supabase.auth.reauthenticate();
+      setSaving(false);
+      if (sendError) {
+        setError(sendError.message);
+        return;
+      }
+      setNeedsCode(true);
+      return;
+    }
+
     setSaving(false);
     if (authError) {
       setError(authError.message);
@@ -40,6 +68,8 @@ export function PasswordCard() {
     }
     setPassword("");
     setConfirm("");
+    setCode("");
+    setNeedsCode(false);
     toast.success("Password updated");
   };
 
@@ -93,8 +123,29 @@ export function PasswordCard() {
           }}
         />
         {mismatch ? <p className="text-xs text-destructive">The two do not match.</p> : null}
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
       </div>
+
+      {needsCode ? (
+        <div className="space-y-2">
+          <Label htmlFor="reauth-code">Code from your email</Label>
+          <Input
+            id="reauth-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            value={code}
+            onChange={(e) => {
+              setCode(e.target.value);
+              setError(null);
+            }}
+            className="tracking-widest"
+          />
+          <p className="text-xs text-muted-foreground">
+            You last signed in a while ago, so we emailed you a code to make sure it is you.
+          </p>
+        </div>
+      ) : null}
+
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
       <div className="flex justify-end border-t border-hairline pt-4">
         <Button onClick={save} disabled={saving || !ready}>

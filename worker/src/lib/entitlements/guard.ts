@@ -23,6 +23,12 @@ import type { Spend, SpendRef } from "./index";
  * the same database as everything else, so a read failure means the app is
  * already in trouble; refusing every reply on top of that turns a billing
  * inconvenience into an outage. The error is logged so it cannot pass unnoticed.
+ *
+ * Not knowing *whom* to charge is different, and is refused. It only arises for
+ * the three routes with no row, and an answer there of "nobody" used to mean
+ * the work was done and charged to no one — with no ceiling but the rate
+ * limit. Replies are never in that position: they always pass their row's
+ * workspace.
  */
 export async function guardCredits(
   c: Context<AppEnv>,
@@ -37,10 +43,10 @@ export async function guardCredits(
       return null;
     }
   }
-  // Nobody without a workspace can reach a route that spends — every account
-  // gets one at sign-up — so this is a broken account, not a free one, and it
-  // is let through for the read-failure reason above.
-  if (!id) return null;
+  // Every account gets a workspace at sign-up, so this is an account that has
+  // since left all of them, or a lookup that could not finish. Either way
+  // there is nobody to charge, and work nobody pays for is not offered.
+  if (!id) return c.json({ error: "no workspace to charge for this" }, 403);
   c.set("workspaceId", id);
 
   let verdict;

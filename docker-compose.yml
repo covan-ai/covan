@@ -143,6 +143,13 @@ services:
       GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
       GOTRUE_SMS_AUTOCONFIRM: "false"
+      # Eight, as every form in the app asks. `secure_password_change` (an
+      # emailed code for a password change from a session over a day old) is
+      # on for covan.app but not here: this stack ships no mail server, and a
+      # code nobody can receive would leave those sessions unable to change the
+      # password at all. Set GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION
+      # once GOTRUE_SMTP_* is configured.
+      GOTRUE_PASSWORD_MIN_LENGTH: "8"
 
       # Two-step sign-in with an authenticator app. GoTrue keeps the factors;
       # what makes a code actually required is 0108, which has PostgREST and

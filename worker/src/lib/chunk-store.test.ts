@@ -31,7 +31,7 @@ describe("insertChunkRows", () => {
 
     const res = await insertChunkRows(fakeDb(insert), rows);
 
-    expect(insert).toHaveBeenCalledTimes(3); // 200 + 200 + 50
+    expect(insert).toHaveBeenCalledTimes(Math.ceil(450 / CHUNK_INSERT_BATCH));
     for (const call of insert.mock.calls) {
       expect(call[0].length).toBeLessThanOrEqual(CHUNK_INSERT_BATCH);
     }
@@ -50,7 +50,7 @@ describe("insertChunkRows", () => {
 
     const res = await insertChunkRows(fakeDb(insert), rows);
 
-    expect(insert).toHaveBeenCalledTimes(2); // third batch never attempted
+    expect(insert).toHaveBeenCalledTimes(2); // no batch after the failing one is attempted
     expect(res.error).toEqual({ message: "boom" });
   });
 

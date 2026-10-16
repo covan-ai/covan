@@ -4,11 +4,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * How many chunk rows go in one insert.
  *
  * Each row carries a 1,536-float embedding, which serialises to roughly 12 KB
- * of JSON. 200 rows is about 2.4 MB — comfortable for a Worker, where the
- * 1,454 rows a 1 MB document produces would be ~18 MB in one body and would
- * not survive the memory limit.
+ * of JSON, so the 1,454 rows a 1 MB document produces would be ~18 MB in one
+ * body and would not survive a Worker's memory limit. That was the first
+ * ceiling, and 200 rows was well under it.
+ *
+ * The second is the database's statement timeout. Every row is also a write
+ * into the table's vector index, which costs far more than the row does, and
+ * more again when the database is busy. 200 of them in one statement was fine
+ * on a quiet database and ran past the timeout on a busy one — and an insert
+ * that times out is redone whole, which is the same load put straight back.
+ * 64 rows is a statement that stays far inside the timeout even then, and it
+ * divides an indexing unit (`UNIT` in `lib/indexing/job.ts`, 256) into four
+ * equal inserts.
  */
-export const CHUNK_INSERT_BATCH = 200;
+export const CHUNK_INSERT_BATCH = 64;
 
 export type ChunkRow = {
   document_id: string;

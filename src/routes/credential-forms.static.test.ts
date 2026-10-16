@@ -32,7 +32,7 @@ const ROUTES = join(import.meta.dirname ?? "src/routes", ".");
  * pattern looking for the literal attribute skips the one route where every
  * field is a password — the exact shape most worth catching.
  */
-const SENSITIVE = /id="(password|confirmPassword|email)"|name="(password|email)"/;
+const SENSITIVE = /id="(password|confirmPassword|email|code)"|name="(password|email|code)"/;
 
 function routeFiles(): string[] {
   return readdirSync(ROUTES)
@@ -73,6 +73,7 @@ describe("credential forms", () => {
         "reset-password.tsx",
         "sign-in.tsx",
         "sign-up.tsx",
+        "two-factor.tsx",
       ]),
     );
   });

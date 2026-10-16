@@ -220,3 +220,42 @@ describe("security definer functions", () => {
     expect(rows.map((r) => r.name)).toEqual([]);
   });
 });
+
+/**
+ * Two-step sign-in (0108) rests on two pieces of configuration that nothing in
+ * a migration's own success proves are still in place: the PostgREST hook, and
+ * the policies standing in for it where PostgREST is not in the path. Either
+ * missing leaves an account's authenticator decorative, and every other test
+ * in this suite green.
+ */
+describe("the second step", () => {
+  it("is asked of every PostgREST request", async () => {
+    const [row] = await sql()<{ config: string[] | null }[]>`
+      select rolconfig as config from pg_roles where rolname = 'authenticator'
+    `;
+
+    expect(row.config ?? []).toContain("pgrst.db_pre_request=public.require_second_factor");
+  });
+
+  // Realtime decides what to deliver from table policies alone. A table added
+  // to the publication without one would stream rows to a session that has
+  // not given its code.
+  it("is asked by a restrictive policy on every table Realtime publishes", async () => {
+    const rows = await sql()<{ name: string }[]>`
+      select pt.tablename as name
+      from pg_publication_tables pt
+      where pt.pubname = 'supabase_realtime'
+        and pt.schemaname = 'public'
+        and not exists (
+          select 1 from pg_policies p
+          where p.schemaname = 'public'
+            and p.tablename = pt.tablename
+            and p.permissive = 'RESTRICTIVE'
+            and p.qual like '%second_factor_satisfied%'
+        )
+      order by pt.tablename
+    `;
+
+    expect(rows.map((r) => r.name)).toEqual([]);
+  });
+});

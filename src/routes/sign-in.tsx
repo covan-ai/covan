@@ -40,10 +40,13 @@ function SignIn() {
     let active = true;
 
     void readSession().then((answer) => {
-      if (!active || answer.kind !== "session") return;
+      if (!active) return;
       // `replace`, so the back button goes wherever they came from rather than
-      // to a sign-in page that will only bounce them here again.
-      navigate({ to: "/app", replace: true });
+      // to a sign-in page that will only bounce them here again. A session
+      // still owing its code is half signed in, and the other half is
+      // /two-factor, not a second password prompt.
+      if (answer.kind === "session") navigate({ to: "/app", replace: true });
+      else if (answer.kind === "second-factor") navigate({ to: "/two-factor", replace: true });
     });
 
     return () => {
@@ -70,7 +73,10 @@ function SignIn() {
       return;
     }
 
-    navigate({ to: "/app" });
+    // The password is only the whole of it for an account without an
+    // authenticator; the rest are asked for a code next.
+    const answer = await readSession();
+    navigate({ to: answer.kind === "second-factor" ? "/two-factor" : "/app" });
   }
 
   return (

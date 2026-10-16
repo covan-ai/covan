@@ -557,6 +557,39 @@ account and the evidence in one call.
 A key belongs to a person, not to a workspace. When their access ends, their
 keys stop working at the same moment. [The API](api.md) has the rest.
 
+## Two-step sign-in
+
+Anybody can add an authenticator app — 1Password, Google Authenticator, Authy —
+under Settings → Account, and from then on signing in asks for its six-digit
+code after the password. Supabase Auth keeps the factors and checks the codes.
+
+What makes the code required is not the page that asks for it. A password alone
+still gets a session out of GoTrue, at assurance level `aal1`, and PostgREST is
+on the internet; a rule that lived in the sign-in form would be a rule anybody
+holding a stolen password could walk around. So it lives in Postgres, with the
+rest:
+
+- **Every PostgREST request** passes through `require_second_factor()` first —
+  PostgREST's pre-request hook, set on the `authenticator` role by 0108. A
+  signed-in caller whose account has a verified authenticator and whose token
+  is not `aal2` is answered `403 second factor required`, for every table and
+  every RPC, including the `security definer` ones that read past policies.
+- **Realtime**, which evaluates policies rather than going through PostgREST,
+  meets the same rule as a restrictive policy on each table it publishes.
+- **The API** asks before it does anything on a caller's behalf
+  (`middleware/auth.ts`), because some routes reach for the service role, a
+  model or a third party before their first PostgREST call.
+
+Accounts without an authenticator are not affected. GoTrue itself refuses to
+change the password, or remove an authenticator, from a session that owes its
+code. API keys keep working for an account that turns two-step on: a key can
+only be created through PostgREST, so for such an account it was created by a
+session that had already given its code, and the token minted for it says so.
+
+There are no backup codes, which Supabase Auth does not provide. A second
+device is the way back in; failing that, the operator removes the factor (see
+[Self-hosting](self-hosting.md#two-step-sign-in)).
+
 ## Secrets, and what happens when they are wrong
 
 An operator holds four things that matter: the Supabase service-role key, the
@@ -618,7 +651,9 @@ these is the end of the evaluation.
 - **No certification.** covan.app has no SOC 2 and no ISO 27001, and no external
   party has audited any of the above. What is offered instead is that the code
   is published and the claims on this page can be checked rather than believed.
-- **No two-factor authentication** on Covan accounts today.
+- **Two-step sign-in is authenticator apps only.** No security keys or
+  passkeys, no backup codes, and no way for a workspace admin to require it of
+  everyone — each person turns it on for themselves.
 
 ## Reporting a vulnerability
 

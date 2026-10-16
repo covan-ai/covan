@@ -101,6 +101,18 @@ function userFromClaims(payload: Record<string, unknown>): TokenUser | null {
   return { id: sub, email: typeof payload.email === "string" ? payload.email : "" };
 }
 
+/**
+ * The assurance level a token claims, read without checking its signature.
+ *
+ * Only for a token something has already verified — `verifyAccessToken` or
+ * GoTrue. `aal2` means the session gave a second factor on top of its
+ * password; anything else, including no claim at all, means it did not.
+ */
+export function claimedAal(token: string): string | undefined {
+  const payload = decodeJson(token.split(".")[1] ?? "");
+  return typeof payload?.aal === "string" ? payload.aal : undefined;
+}
+
 type Jwks = { keys?: Record<string, unknown>[] };
 
 /**

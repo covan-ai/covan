@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const getSession = vi.fn();
-vi.mock("./client", () => ({ supabase: { auth: { getSession } } }));
+const getAuthenticatorAssuranceLevel = vi.fn();
+vi.mock("./client", () => ({
+  supabase: { auth: { getSession, mfa: { getAuthenticatorAssuranceLevel } } },
+}));
 
 const { readSession } = await import("./session");
 
 /**
- * The three answers exist because supabase-js has three outcomes and the app
+ * The answers exist because supabase-js has three outcomes and the app
  * used to see two. Measured in Chrome against a token endpoint that dropped the
  * connection: `getSession()` spent 21s retrying and then returned
  * `{ session: null, error: AuthRetryableFetchError }` — with the session still
@@ -16,11 +19,39 @@ const { readSession } = await import("./session");
 describe("reading the stored session", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getAuthenticatorAssuranceLevel.mockResolvedValue({
+      data: { currentLevel: "aal1", nextLevel: "aal1" },
+      error: null,
+    });
   });
 
   it("reports the session when there is one", async () => {
     const session = { access_token: "a", refresh_token: "b" };
     getSession.mockResolvedValue({ data: { session }, error: null });
+
+    await expect(readSession()).resolves.toEqual({ kind: "session", session });
+  });
+
+  // A password without the code an authenticator would give. The session is
+  // kept — the next step needs it — but it is not one the app may be shown to.
+  it("reports a second factor owed when the account has one and the session has not used it", async () => {
+    const session = { access_token: "a", refresh_token: "b" };
+    getSession.mockResolvedValue({ data: { session }, error: null });
+    getAuthenticatorAssuranceLevel.mockResolvedValue({
+      data: { currentLevel: "aal1", nextLevel: "aal2" },
+      error: null,
+    });
+
+    await expect(readSession()).resolves.toEqual({ kind: "second-factor", session });
+  });
+
+  it("reports the session once the second factor has been given", async () => {
+    const session = { access_token: "a", refresh_token: "b" };
+    getSession.mockResolvedValue({ data: { session }, error: null });
+    getAuthenticatorAssuranceLevel.mockResolvedValue({
+      data: { currentLevel: "aal2", nextLevel: "aal2" },
+      error: null,
+    });
 
     await expect(readSession()).resolves.toEqual({ kind: "session", session });
   });

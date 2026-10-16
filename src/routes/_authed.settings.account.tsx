@@ -5,6 +5,7 @@ import { SettingsPage } from "@/components/settings/settings-page";
 import { ProfileForm } from "@/components/account/profile-form";
 import { EmailCard } from "@/components/account/email-card";
 import { PasswordCard } from "@/components/account/password-card";
+import { TwoFactorCard } from "@/components/account/two-factor-card";
 import { PersonalPreferencesSection } from "@/components/preferences-section";
 import { DeliveryChannelsCard } from "@/components/routines/delivery-channels-card";
 import { ApiKeysSection } from "@/components/api-keys-section";
@@ -46,6 +47,7 @@ function AccountSettingsPage() {
             clears the "we sent a link" note along with the input. */}
         <EmailCard key={me?.user.email ?? "pending"} email={me?.user.email} />
         <PasswordCard />
+        <TwoFactorCard />
       </section>
 
       <PersonalPreferencesSection me={me} />

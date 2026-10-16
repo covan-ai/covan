@@ -25,6 +25,21 @@ export const DECISION_INSTRUCTION =
   "that says nothing happened is the thing this field exists to avoid: it is delivered " +
   "to a channel people read, and enough of them make them stop reading it.";
 
+/**
+ * What a run's reply is for, said once in both run prompts.
+ *
+ * An instruction drafted from "every weekday at 9, email me a note" used to
+ * keep the schedule and the delivery in it, and the run answered the request
+ * rather than doing the task: "I can't set up scheduled sending or email…",
+ * followed by a sample. The schedule is the engine's and the delivery is the
+ * channel's; the model's whole job is the content, and it has to be told so.
+ */
+export const REPLY_IS_THE_REPORT =
+  "Your reply is this run's report. It is delivered as written to the routine's channel " +
+  "when the run ends, and the schedule is already set, so neither is your job. Do the task " +
+  "now and reply with the result itself — never say that you cannot schedule, send or " +
+  "email it.";
+
 /** The decision, as the model returns it. Neither field is trusted to be there. */
 type Decision = { relevant?: unknown; summary?: unknown };
 
@@ -80,6 +95,7 @@ export function summariseWithModel(env: RoutineEnv) {
           content: [
             input.persona,
             "You are running a scheduled routine for this team.",
+            REPLY_IS_THE_REPORT,
             whenAndWhere(new Date(), input.timezone),
             ...(input.runPosition
               ? [`This is run ${input.runPosition.done + 1} of ${input.runPosition.total}.`]

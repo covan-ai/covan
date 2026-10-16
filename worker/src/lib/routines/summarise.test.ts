@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DEFAULT_MODEL } from "../models";
 import { whenAndWhere } from "../prompt";
 import type { FeedItem } from "./feed";
-import { summariseWithModel } from "./summarise";
+import { REPLY_IS_THE_REPORT, summariseWithModel } from "./summarise";
 
 const createMock = vi.fn();
 
@@ -206,6 +206,7 @@ describe("summariseWithModel", () => {
       [
         "You are Ada.",
         "You are running a scheduled routine for this team.",
+        REPLY_IS_THE_REPORT,
         whenAndWhere(new Date(), undefined),
       ].join("\n\n"),
     );

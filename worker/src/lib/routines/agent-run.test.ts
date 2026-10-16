@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import type { AgentRunInput } from "./executor";
 import { MAX_STEPS, SCHEDULED_MAX_STEPS } from "../harness/budget";
+import { REPLY_IS_THE_REPORT } from "./summarise";
 
 /**
  * A scheduled run with tools, and the three things about it that are not the
@@ -129,6 +130,12 @@ describe("runRoutineWithTools", () => {
     expect(system).toContain("You are our PM.");
     expect(system).toContain("Nobody is watching");
     expect(system).toContain("Connected services");
+  });
+
+  it("tells it the reply is the report, so it does the task instead of declining to schedule it", async () => {
+    await runRoutineWithTools(env, db)(input, env);
+    const system = runAgentTurn.mock.calls[0][0].request.messages[0].content as string;
+    expect(system).toContain(REPLY_IS_THE_REPORT);
   });
 
   it("tells it what day it is, and which zone the schedule means", async () => {

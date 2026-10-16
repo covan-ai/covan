@@ -82,6 +82,27 @@ describe("parseDraft", () => {
     await expect(parseDraft("x", { complete, timezone: "UTC" })).rejects.toThrow(/cron/i);
   });
 
+  it("asks for the request's own language, and keeps schedule and delivery out of the instruction", async () => {
+    // An English request once came back with a Japanese instruction, because
+    // the rule said "the user's language" and left the model to guess whose.
+    const complete = llm({
+      name: "x",
+      sourceKind: "none",
+      sourceUrl: null,
+      cron: "0 9 * * 1-5",
+      instruction: "x",
+      channelKind: "email",
+    });
+
+    await parseDraft("every weekday at 9 email me a short note", { complete, timezone: "UTC" });
+
+    const prompt = (complete.mock.calls[0] as unknown as [string])[0];
+    expect(prompt).not.toMatch(/the user's language/);
+    expect(prompt).toMatch(/same language as the text after "Request:"/);
+    expect(prompt).toMatch(/leave out when it runs/);
+    expect(prompt.endsWith("Request: every weekday at 9 email me a short note")).toBe(true);
+  });
+
   it("rejects an LLM response that is not valid draft JSON", async () => {
     await expect(
       parseDraft("x", { complete: vi.fn(async () => "sorry!"), timezone: "UTC" }),

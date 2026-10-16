@@ -11,7 +11,14 @@ export function onboardingRedirect(input: {
   pathname: string;
   /** `undefined` while /me is loading, or if it failed. */
   completed: boolean | undefined;
+  /**
+   * /me said this account has no workspace (0115). Finished or not, the only
+   * place that can do anything for it is /welcome, where it joins the
+   * workspace that invited it or starts one.
+   */
+  noWorkspace?: boolean;
 }): "/welcome" | null {
+  if (input.noWorkspace) return input.pathname === "/welcome" ? null : "/welcome";
   if (input.completed === undefined) return null;
   if (input.completed) return null;
   if (input.pathname === "/welcome") return null;

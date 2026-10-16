@@ -239,3 +239,44 @@ describe("newestAgent", () => {
     expect(newestAgent(agents)?.id).toBe("a");
   });
 });
+
+// 0115: an account that signed up with an invitation waiting has no workspace
+// until it accepts. Declining, or arriving after the invitation lapsed, has to
+// lead somewhere a workspace can be started — never to "done" with nothing.
+describe("an account with no workspace", () => {
+  const none = (over: Partial<FlowContext> = {}) => ctx({ hasWorkspace: false, ...over });
+
+  it("offers the invitation, then setup if it is declined", () => {
+    const steps = stepsFor(none({ hasIncomingInvite: true }));
+    expect(steps.slice(steps.indexOf("invite-accept"))).toEqual([
+      "invite-accept",
+      "workspace",
+      "agent",
+      "invite",
+    ]);
+    expect(nextStep("invite-accept", none({ hasIncomingInvite: true }))).toBe("workspace");
+  });
+
+  it("still ends at the invitation for somebody who already has a workspace", () => {
+    expect(nextStep("invite-accept", ctx({ hasIncomingInvite: true }))).toBe("done");
+  });
+
+  it("counts the invitation as accepted, which is the ordinary outcome", () => {
+    const planned = plannedStepsFor(none({ hasIncomingInvite: true }));
+    expect(planned[planned.length - 1]).toBe("invite-accept");
+  });
+
+  it("resumes at the invitation while one is waiting", () => {
+    expect(resolveStep(undefined, none({ hasIncomingInvite: true }))).toBe("invite-accept");
+  });
+
+  it("resumes at starting a workspace once no invitation is waiting", () => {
+    expect(resolveStep(undefined, none())).toBe("workspace");
+    // Even with an agent counted somewhere: there is nowhere to put one yet.
+    expect(resolveStep(undefined, none({ hasAgent: true }))).toBe("workspace");
+  });
+
+  it("can be asked for the workspace step after declining", () => {
+    expect(resolveStep("workspace", none({ hasIncomingInvite: true }))).toBe("workspace");
+  });
+});

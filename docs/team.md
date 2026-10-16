@@ -116,9 +116,16 @@ that cannot accept it.
 On success it inserts the membership with the role the invitation carried,
 stamps the invitation `accepted` with the time and the person, forgets the
 token's hash so the link is spent, and switches their
-active workspace to the one they just joined. They keep the personal workspace
-their signup created; a person can be in as many workspaces as they are invited
-to, and `profiles.active_workspace_id` records which one they are looking at.
+active workspace to the one they just joined. A person can be in as many
+workspaces as they are invited to, and `profiles.active_workspace_id` records
+which one they are looking at.
+
+Somebody who signs up while an invitation to their address is waiting gets no
+workspace of their own (0115): the invitation is their way in, so there is no
+empty personal workspace beside the team's to wander back into. If they decline
+it, or it lapsed before they arrived, the welcome flow has them start one
+instead. Anybody who signed up before that, or with no invitation waiting, has
+the workspace the signup trigger made.
 
 ### Pending, revoked, re-invited
 
@@ -140,7 +147,8 @@ have no token, so they cannot be accepted until they are resent.
 
 The role column takes three values. The first admin is made by the signup
 trigger, which gives every new account a workspace and an admin membership in
-it; `create_workspace()` does the same for any workspace somebody makes later.
+it — unless an invitation is waiting for it, above; `create_workspace()` does the
+same for any workspace somebody makes later.
 
 | Role     | Runs the workspace | Changes shared things | Uses the agents |
 | -------- | ------------------ | --------------------- | --------------- |

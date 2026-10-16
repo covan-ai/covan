@@ -39,3 +39,14 @@ export function errorMessage(status: number, body: unknown, fallback: string): s
 
   return stated ?? fallback;
 }
+
+/**
+ * Whether a failed /me means "this account has no workspace yet".
+ *
+ * Somebody who signed up with an invitation waiting has none until they
+ * accept it (0115), and somebody who left their last one has none either.
+ * /me answers both with a 404; anything else is an outage, not a state.
+ */
+export function isNoWorkspace(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}

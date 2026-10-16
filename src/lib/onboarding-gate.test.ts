@@ -22,4 +22,19 @@ describe("onboardingRedirect", () => {
     // would put it in a room with no exit.
     expect(onboardingRedirect({ pathname: "/app", completed: undefined })).toBeNull();
   });
+
+  // 0115: an account that signed up with an invitation waiting has no
+  // workspace, and neither does one that left its last. /welcome is where
+  // either gets one, finished or not.
+  it("sends an account with no workspace to /welcome, finished or not", () => {
+    expect(onboardingRedirect({ pathname: "/app", completed: undefined, noWorkspace: true })).toBe(
+      "/welcome",
+    );
+    expect(onboardingRedirect({ pathname: "/app", completed: true, noWorkspace: true })).toBe(
+      "/welcome",
+    );
+    expect(
+      onboardingRedirect({ pathname: "/welcome", completed: true, noWorkspace: true }),
+    ).toBeNull();
+  });
 });

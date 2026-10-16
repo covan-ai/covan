@@ -46,6 +46,31 @@ const ANSWER_COLUMNS = "role, use_case, team_size, referral_source";
 // Written through the caller's own client, so the insert and update policies
 // are what enforce "your own" — `user_id` comes from the verified token and
 // never from the body, so there is nothing here to forge.
+// GET /onboarding — the caller's own answers and whether they finished.
+//
+// /me carries the same thing, and is what the app reads. This exists for the
+// one caller /me cannot answer: an account with no workspace yet (0115), whose
+// /me is a 404 but whose survey answers are theirs regardless of any workspace.
+onboarding.get("/onboarding", async (c) => {
+  const db = c.get("db");
+  const user = c.get("user");
+
+  const { data, error } = await db
+    .from("user_onboarding")
+    .select(`completed_at, ${ANSWER_COLUMNS}`)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to load onboarding" }, 500);
+
+  const row = (data ?? null) as (AnswersRow & { completed_at: string | null }) | null;
+  return c.json({
+    completed: Boolean(row?.completed_at),
+    answers: toAnswers(
+      row ?? { role: null, use_case: null, team_size: null, referral_source: null },
+    ),
+  });
+});
+
 onboarding.patch("/onboarding", async (c) => {
   const db = c.get("db");
   const user = c.get("user");

@@ -62,7 +62,7 @@ beforeEach(() => {
 // agents (which were on the list) arrived without them.
 describe.each([
   ["the banner", () => <IncomingInvitesBanner />, /accept/i],
-  ["the welcome step", () => <InviteAcceptStep onDone={vi.fn()} />, /join/i],
+  ["the welcome step", () => <InviteAcceptStep onJoined={vi.fn()} onSkip={vi.fn()} />, /join/i],
 ])("accepting an invitation from %s", (_name, renderComponent, buttonName) => {
   it("refetches everything that belongs to a workspace", async () => {
     const queryClient = seededClient();
@@ -115,10 +115,35 @@ describe("an invitation that says who it is from", () => {
   it("names the sender in the welcome step", async () => {
     render(
       <QueryClientProvider client={seededClient()}>
-        <InviteAcceptStep onDone={vi.fn()} />
+        <InviteAcceptStep onJoined={vi.fn()} onSkip={vi.fn()} />
       </QueryClientProvider>,
     );
 
     expect(await screen.findByText(/from ada/i)).toBeInTheDocument();
+  });
+});
+
+describe("declining an invitation in the welcome step", () => {
+  it("offers what the flow asked for, and does not count as joining", async () => {
+    incoming.mockResolvedValueOnce([
+      { id: "inv-1", workspaceName: "Acme", inviterName: "Ada", role: "member" } as never,
+    ]);
+    const onJoined = vi.fn();
+    const onSkip = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={seededClient()}>
+        <InviteAcceptStep
+          onJoined={onJoined}
+          onSkip={onSkip}
+          skipLabel="Start my own workspace instead"
+        />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /start my own workspace/i }));
+
+    expect(onSkip).toHaveBeenCalledTimes(1);
+    expect(onJoined).not.toHaveBeenCalled();
   });
 });

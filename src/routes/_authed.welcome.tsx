@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Me } from "@/lib/api-client";
+import { isNoWorkspace } from "@/lib/api-error";
 import { useIsHosted } from "@/lib/credits";
 import {
   resolveStep,
@@ -77,9 +78,21 @@ function Welcome() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const { data: me, isError: meFailed } = useQuery({
+  const {
+    data: me,
+    error: meError,
+    isError: meFailed,
+  } = useQuery({
     queryKey: ["me"],
     queryFn: () => api.me(),
+  });
+  // An account with no workspace yet (0115) has no /me, but its survey answers
+  // are its own regardless — so they are read on their own, and only then.
+  const noWorkspace = isNoWorkspace(meError);
+  const { data: ownOnboarding, isPending: ownOnboardingPending } = useQuery({
+    queryKey: ["onboarding"],
+    queryFn: () => api.onboarding.get(),
+    enabled: noWorkspace,
   });
   const { data: incoming = [] } = useQuery({
     queryKey: ["invitations", "incoming"],
@@ -108,24 +121,29 @@ function Welcome() {
 
   // Someone who has already finished has no business here — this is the other
   // half of the gate in _authed.tsx.
-  const completed = me?.onboarding.completed;
+  //
+  // Only with a workspace, though. Somebody who finished once and has none now
+  // — they left their last one, or an invitation lapsed — is exactly who this
+  // page is for, and sending them to /app would send them straight back.
+  const completed = noWorkspace ? ownOnboarding?.completed : me?.onboarding.completed;
   useEffect(() => {
-    if (completed) {
+    if (completed && !noWorkspace) {
       void navigate({ to: "/app", replace: true });
     }
-  }, [completed, navigate]);
+  }, [completed, noWorkspace, navigate]);
 
   // The answers come from /me, so someone who closed the browser at question
   // two resumes at question two rather than at question one.
-  const answers = me?.onboarding.answers;
+  const answers = noWorkspace ? ownOnboarding?.answers : me?.onboarding.answers;
   const ctx = useMemo(
     () => ({
       answers: answers ?? EMPTY_ANSWERS,
       hosted: hosted === true,
       hasIncomingInvite: incoming.length > 0,
       hasAgent: agents.length > 0 || createdAgent,
+      hasWorkspace: !noWorkspace,
     }),
-    [answers, hosted, incoming.length, agents.length, createdAgent],
+    [answers, hosted, incoming.length, agents.length, createdAgent, noWorkspace],
   );
 
   // The agent the document step attaches to. Null until one exists, which is
@@ -138,9 +156,13 @@ function Welcome() {
   // _authed.tsx applies. `answers` falls back to EMPTY_ANSWERS below, so the
   // flow starts at question one instead of resuming; that is a worse first
   // step than resuming, and a much better one than a spinner with no exit.
-  const ready = (me !== undefined || meFailed) && hosted !== undefined && !agentsPending;
+  const ready =
+    (me !== undefined || meFailed) &&
+    (!noWorkspace || !ownOnboardingPending) &&
+    hosted !== undefined &&
+    !agentsPending;
 
-  if (!ready || completed) {
+  if (!ready || (completed && !noWorkspace)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-sm text-muted-foreground">Loading…</div>
@@ -181,6 +203,13 @@ function Welcome() {
     queryClient.setQueryData(["me"], (prev: Me | undefined) =>
       prev ? { ...prev, onboarding: { ...prev.onboarding, answers: merged } } : prev,
     );
+    // And into the copy an account with no workspace reads instead, or its
+    // answer would be saved and the screen would ask the same question again.
+    queryClient.setQueryData(
+      ["onboarding"],
+      (prev: { completed: boolean; answers: OnboardingAnswers } | undefined) =>
+        prev ? { ...prev, answers: merged } : prev,
+    );
     void api.onboarding.update(patch).catch(() => {
       // The answer is a nicety, not a gate. Losing one to a flaky network must
       // not strand someone on a question they have already answered.
@@ -190,7 +219,11 @@ function Welcome() {
     goTo(nextStep(step, { ...ctx, answers: merged }));
   };
 
-  const copy = COPY[step];
+  // There was no guess to correct when there is no workspace yet.
+  const copy =
+    step === "workspace" && noWorkspace
+      ? { title: "Start your workspace", subtitle: "Name it after your team or company." }
+      : COPY[step];
 
   return (
     <WelcomeLayout
@@ -237,8 +270,13 @@ function Welcome() {
           never reaches "workspace" while `me` is undefined, because a failed
           /me falls back to EMPTY_ANSWERS, and an unanswered `role` always
           wins over any later step. */}
-      {step === "workspace" && me && (
-        <WorkspaceStep currentName={me.workspace.name} onDone={advance} />
+      {step === "workspace" && (me || noWorkspace) && (
+        <WorkspaceStep
+          currentName={me ? me.workspace.name : null}
+          // Somebody who already finished once is only here for the
+          // workspace; the rest of the run was theirs before.
+          onDone={completed ? () => goTo("done") : advance}
+        />
       )}
       {step === "agent" && me && (
         <AgentStep
@@ -261,7 +299,14 @@ function Welcome() {
           <p className="text-center text-sm text-muted-foreground">Loading…</p>
         ))}
       {step === "invite" && <InviteStep onDone={advance} />}
-      {step === "invite-accept" && <InviteAcceptStep onDone={advance} />}
+      {step === "invite-accept" && (
+        <InviteAcceptStep
+          // Joining is the end of the run, whatever else this flow had planned.
+          onJoined={() => goTo("done")}
+          onSkip={advance}
+          skipLabel={noWorkspace ? "Start my own workspace instead" : "Not now"}
+        />
+      )}
     </WelcomeLayout>
   );
 }

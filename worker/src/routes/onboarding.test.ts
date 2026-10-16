@@ -84,6 +84,49 @@ function patch(app: Hono<AppEnv>, body: unknown) {
   });
 }
 
+describe("GET /onboarding", () => {
+  // The one reader /me cannot serve: an account with no workspace yet (0115).
+  it("answers the caller's own answers and whether they finished", async () => {
+    const { db } = fakeDb({
+      row: {
+        completed_at: null,
+        role: "engineering",
+        use_case: "code",
+        team_size: "2-10",
+        referral_source: null,
+      },
+      error: null,
+    });
+
+    const res = await appWithDb(db).request("/onboarding");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      completed: false,
+      answers: { role: "engineering", useCase: "code", teamSize: "2-10", referralSource: null },
+    });
+  });
+
+  it("answers an empty survey for somebody who has not started it", async () => {
+    const { db } = fakeDb({ row: null, error: null });
+
+    const res = await appWithDb(db).request("/onboarding");
+
+    await expect(res.json()).resolves.toEqual({
+      completed: false,
+      answers: { role: null, useCase: null, teamSize: null, referralSource: null },
+    });
+  });
+
+  it("reports a read that failed", async () => {
+    const { db } = fakeDb({ row: null, error: { message: "boom" } });
+
+    const res = await appWithDb(db).request("/onboarding");
+
+    expect(res.status).toBe(500);
+  });
+});
+
 describe("PATCH /onboarding", () => {
   it("stores a recognised answer", async () => {
     const { db, upserts } = fakeDb({

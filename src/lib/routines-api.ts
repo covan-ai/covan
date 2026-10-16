@@ -186,6 +186,14 @@ export type EventCatalogEntry = {
 /** What a person picked: an entry, and its config. */
 export type EventChoice = { type: string; config: Record<string, unknown> };
 
+/**
+ * What the owner has to paste into the app for events to arrive, from
+ * GET /routines/:id/event/setup. Only a GitHub webhook needs anything; every
+ * other event is set up by Covan itself.
+ */
+export type EventSetup =
+  { kind: "none" } | { kind: "github"; url: string; secret: string; contentType: string };
+
 /** How a scheduled run's turn ended; the worker's `MESSAGE_OUTCOMES`. */
 export type RunOutcome =
   "answered" | "paused" | "budget" | "tokens" | "runtime" | "cut_short" | "empty" | "truncated";

@@ -1,0 +1,156 @@
+import { Hono, type Context } from "hono";
+import type { AppEnv } from "../types";
+import { deferred } from "../lib/defer";
+import { getRateLimiter } from "../lib/ratelimit";
+import { readCapped } from "../lib/routines/source";
+import { countMiss, hasSpentMisses, refuseSpent } from "../middleware/ratelimit";
+import { receiveEvent } from "../lib/routines/events/receive";
+import { GITHUB_HOOK_ID, type GitHubDelivery } from "../lib/routines/events/github";
+import { WEBSUB_HOOK_ID, isOurIntent, type WebSubDelivery } from "../lib/routines/events/websub";
+import type { EventProvider } from "../lib/routines/events/catalog";
+import { startPokedRun } from "../lib/routines/poke-room";
+
+/**
+ * The doors for providers that sign each subscription's deliveries with that
+ * subscription's own secret: a GitHub repository's webhook and a WebSub hub.
+ *
+ *   POST /routine-events/github/:id    a push, a pull request, an issue
+ *   GET  /routine-events/websub/:id    a hub checking we asked (the challenge)
+ *   POST /routine-events/websub/:id    a hub pushing a feed that changed
+ *
+ * Unlike `/composio/events`, which checks one deployment-wide signature
+ * before reading anything, these cannot know the secret until they know the
+ * subscription — so the id in the path finds the row, and the adapter's
+ * `authenticate` checks the signature in `receive.ts` before anything about
+ * the routine is consulted. A delivery for no row, or one that fails the
+ * signature, is counted against the address (`countMiss`), so guessing ids is
+ * as expensive as guessing a webhook token (`routine-hooks.ts`).
+ *
+ * Unauthenticated in the Covan sense, like the other doors: no session and no
+ * `auth.uid()`. The id and the signature are what stand in for a caller.
+ */
+export const routineEvents = new Hono<AppEnv>();
+
+/**
+ * How much body is read. A GitHub push with many commits is the largest
+ * thing that arrives here — GitHub caps a payload at 25 MB, and a push that
+ * size is not something a routine should read anyway — and a fat WebSub ping
+ * is a feed. 1 MB is room for an ordinary push of a few hundred commits, and
+ * the ceiling on what a forged request costs to read.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Read the body under the cap, or answer for it. Content-Length first, so a
+ * sender announcing too much is turned away without a byte read.
+ */
+async function cappedBody(c: Context<AppEnv>): Promise<string | Response> {
+  const announced = Number(c.req.header("Content-Length") ?? "");
+  if (Number.isFinite(announced) && announced > MAX_BODY_BYTES) {
+    return c.json({ error: "payload too large" }, 413);
+  }
+  try {
+    return await readCapped(c.req.raw, MAX_BODY_BYTES);
+  } catch {
+    return c.json({ error: "payload too large" }, 413);
+  }
+}
+
+/**
+ * The rest of a delivery's road, the same for both providers: the per-
+ * subscription expensive tier (one subscription is one routine's spend, the
+ * reasoning `routine-hooks.ts` gives for a token), then `receiveEvent`, then an
+ * answer the provider can act on.
+ */
+async function deliver(
+  c: Context<AppEnv>,
+  provider: EventProvider,
+  id: string,
+  raw: GitHubDelivery | WebSubDelivery,
+): Promise<Response> {
+  const verdict = await getRateLimiter(c.env, "expensive").check(`${provider}-hook:${id}`);
+  if (!verdict.allowed) {
+    c.header("Retry-After", String(verdict.retryAfterSeconds));
+    return c.json({ error: "rate_limited" }, 429);
+  }
+
+  const outcome = await receiveEvent(c.env, { provider, externalId: id }, raw, {
+    defer: (work) => deferred(c, work),
+    run: (_env, routine, trigger) => startPokedRun(c.env, routine, trigger),
+  });
+
+  // A 404 for a URL nothing holds: GitHub shows it against the webhook, which
+  // is the person's cue to remove a webhook whose routine is gone, and a hub
+  // treats it as "stop pushing". Counted either way.
+  if (outcome.status === "unknown") {
+    await countMiss(c);
+    return c.json({ error: "not found" }, 404);
+  }
+  if (outcome.status === "forged") {
+    await countMiss(c);
+    return c.json({ error: "invalid signature" }, 401);
+  }
+  // Every other outcome is handled, and a provider told otherwise retries.
+  return c.json({ ok: true, status: outcome.status });
+}
+
+routineEvents.post("/routine-events/github/:id", async (c) => {
+  if (hasSpentMisses(c)) return refuseSpent(c);
+  const id = c.req.param("id");
+  if (!GITHUB_HOOK_ID.test(id)) {
+    await countMiss(c);
+    return c.json({ error: "not found" }, 404);
+  }
+  const body = await cappedBody(c);
+  if (typeof body !== "string") return body;
+  return deliver(c, "github", id, {
+    event: c.req.header("X-GitHub-Event") ?? "",
+    delivery: c.req.header("X-GitHub-Delivery") ?? "",
+    signature: c.req.header("X-Hub-Signature-256") ?? "",
+    body,
+  });
+});
+
+/**
+ * A hub asking whether we really want this topic — after a subscribe, an
+ * unsubscribe, and on its own schedule before a lease is renewed. Answered
+ * from the URL alone (`isOurIntent`), because the first of these can arrive
+ * before the subscribe that caused it has written anything; see
+ * `events/websub.ts`. The challenge is echoed as plain text, which is the
+ * whole protocol; anything else is a 404, which a hub reads as "no".
+ */
+routineEvents.get("/routine-events/websub/:id", async (c) => {
+  if (hasSpentMisses(c)) return refuseSpent(c);
+  const id = c.req.param("id");
+  const mode = c.req.query("hub.mode") ?? "";
+  const topic = c.req.query("hub.topic") ?? "";
+  const challenge = c.req.query("hub.challenge") ?? "";
+  const token = c.req.query("t") ?? "";
+  if (
+    !WEBSUB_HOOK_ID.test(id) ||
+    (mode !== "subscribe" && mode !== "unsubscribe") ||
+    !topic ||
+    !challenge ||
+    challenge.length > 512 ||
+    !(await isOurIntent(c.env, id, topic, token))
+  ) {
+    await countMiss(c);
+    return c.json({ error: "not found" }, 404);
+  }
+  return c.text(challenge, 200);
+});
+
+routineEvents.post("/routine-events/websub/:id", async (c) => {
+  if (hasSpentMisses(c)) return refuseSpent(c);
+  const id = c.req.param("id");
+  if (!WEBSUB_HOOK_ID.test(id)) {
+    await countMiss(c);
+    return c.json({ error: "not found" }, 404);
+  }
+  const body = await cappedBody(c);
+  if (typeof body !== "string") return body;
+  return deliver(c, "websub", id, {
+    signature: c.req.header("X-Hub-Signature") ?? "",
+    body,
+  });
+});

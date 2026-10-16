@@ -45,6 +45,7 @@ import { EVENT_REGISTRY, canListenFor } from "../lib/routines/events/adapter";
 import {
   releaseSubscription,
   replaceSubscription,
+  subscriptionSetup,
   syncSubscription,
 } from "../lib/routines/events/lifecycle";
 import { checkRequirement, connectedInWorkspace } from "../lib/routines/events/requirements";
@@ -1222,6 +1223,46 @@ routines.delete("/routines/:id/event", async (c) => {
     return c.json({ error: "failed to stop listening" }, 500);
   }
   return c.body(null, 204);
+});
+
+/**
+ * What the owner has to paste into the app for the event to arrive, where
+ * that is their job rather than ours: a GitHub webhook's URL and secret, for
+ * the repository's Settings → Webhooks. `{ kind: "none" }` for every event
+ * this code sets up by itself.
+ *
+ * The secret leaves the database here and nowhere else
+ * (`subscriptionSetup`), so this is the owner's alone, through their own
+ * client, and refused to an API key for the reason `PUT /routines/:id/event`
+ * gives: a key should not be the way a listener's credentials are carried off.
+ */
+routines.get("/routines/:id/event/setup", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "read a routine's webhook secret");
+  if (refusal) return c.json(refusal, 403);
+  const own = await ownRoutine(c);
+  if ("refused" in own) return own.refused;
+
+  let setup: Awaited<ReturnType<typeof subscriptionSetup>>;
+  try {
+    setup = await subscriptionSetup(c.env, own.routine.id);
+  } catch (err) {
+    console.error("could not read a routine's event setup", err);
+    return c.json({ error: "failed to load the setup" }, 500);
+  }
+  if (setup?.provider !== "github" || !setup.externalId || !setup.secret) {
+    return c.json({ kind: "none" });
+  }
+  // This API's own address, as GitHub must call it: the custom domain where
+  // there is one, or whatever this request reached.
+  const origin = c.env.WORKER_HOST
+    ? `https://${c.env.WORKER_HOST.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`
+    : new URL(c.req.url).origin;
+  return c.json({
+    kind: "github",
+    url: `${origin}/routine-events/github/${setup.externalId}`,
+    secret: setup.secret,
+    contentType: "application/json",
+  });
 });
 
 /**

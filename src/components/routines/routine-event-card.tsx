@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { EventPicker } from "@/components/routines/event-picker";
+import { GitHubWebhookSetup } from "@/components/routines/github-webhook-setup";
 import { eventChoiceReady } from "@/lib/event-choice";
 import { ApiError } from "@/lib/api-client";
 import { formatRelative } from "@/lib/relative-time";
@@ -146,6 +147,9 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
                   : `Last event ${formatRelative(event.lastEventAt)}.`}
               </p>
             </div>
+            {event.provider === "github" && (
+              <GitHubWebhookSetup routineId={routine.id} eventType={event.type} />
+            )}
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"

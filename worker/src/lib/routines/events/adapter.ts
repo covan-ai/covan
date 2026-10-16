@@ -28,6 +28,8 @@ import {
   type NormalizedEvent,
 } from "./catalog";
 import { COMPOSIO_ADAPTER } from "./composio";
+import { GITHUB_ADAPTER } from "./github";
+import { WEBSUB_ADAPTER } from "./websub";
 
 /** The row as the engine reads it, secret still sealed. */
 export type SubscriptionRow = {
@@ -98,6 +100,19 @@ export interface EventAdapter {
   /** Extend an arrangement that lapses. Absent for the ones that never do. */
   renew?(ctx: AdapterContext): Promise<SubscribeResult>;
   /**
+   * Whether a delivery is really from the provider, for a provider that signs
+   * each subscription's deliveries with that subscription's own secret — a
+   * GitHub webhook, a WebSub hub. Checked in `receive.ts` before anything else
+   * is read, because only there are the row and its opened secret at hand; a
+   * delivery that fails it is `forged` and the route refuses it.
+   *
+   * Absent for a provider whose route checks one deployment-wide signature
+   * before it ever looks a subscription up (Composio, Slack). That is the
+   * better arrangement where the provider offers it, and those adapters have
+   * nothing left to check.
+   */
+  authenticate?(raw: unknown, ctx: AdapterContext): Promise<boolean>;
+  /**
    * The raw delivery, as the provider sent it, made into something a model can
    * read in a paragraph. `null` means "not an event for this routine after
    * all" — the bot's own message echoing back, an edit of a message already
@@ -118,6 +133,8 @@ export type AdapterRegistry = { adapterFor: (provider: string) => EventAdapter |
  */
 const ADAPTERS: Partial<Record<EventProvider, EventAdapter>> = {
   composio: COMPOSIO_ADAPTER,
+  github: GITHUB_ADAPTER,
+  websub: WEBSUB_ADAPTER,
 };
 
 export const ADAPTER_REGISTRY: AdapterRegistry = {

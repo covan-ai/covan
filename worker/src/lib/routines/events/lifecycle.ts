@@ -239,6 +239,36 @@ export async function replaceSubscription(
 }
 
 /**
+ * The provider's id for the arrangement and its secret, opened — for the one
+ * kind of provider where the routine's owner, not this code, makes the
+ * arrangement: a GitHub webhook, whose URL and secret they paste into the
+ * repository's settings (`GET /routines/:id/event/setup`).
+ *
+ * These are the two columns 0109 withholds from every client, and this is the
+ * one road by which they leave the database. The route calls it only after
+ * the caller's own client has shown the routine is theirs, and only for a
+ * session, never an API key; showing the owner the secret of a webhook they
+ * are meant to set up is the point, and a person who can read it can already
+ * stop the routine or point it elsewhere.
+ */
+export async function subscriptionSetup(
+  env: RoutineEnv,
+  routineId: string,
+  deps: LifecycleDeps = {},
+): Promise<{ provider: string; externalId: string | null; secret: string | null } | null> {
+  const db = deps.db ?? serviceClient(env);
+  const sub = await readSubscription(db, routineId);
+  if (!sub) return null;
+  return {
+    provider: sub.provider,
+    externalId: sub.external_id,
+    secret: sub.secret_ciphertext
+      ? await decryptSecret(sub.secret_ciphertext, env.ROUTINE_SECRET_KEY)
+      : null,
+  };
+}
+
+/**
  * The cron's share: up to three subscriptions out of step, each brought back
  * into it. Three because a sync is a handful of subrequests — two reads, a
  * provider call, a write — and the tick it shares has fifty (`background.ts`).

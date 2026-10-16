@@ -44,6 +44,7 @@ import { connections, connectionsPublic } from "./routes/connections";
 import { toolConnections } from "./routes/tool-connections";
 import { composio, composioPublic } from "./routes/composio";
 import { composioEvents } from "./routes/composio-events";
+import { routineEvents } from "./routes/routine-events";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
@@ -119,6 +120,9 @@ app.route("/", routineHooks);
 // Composio's deliveries, by the same argument: one signature, one trigger
 // instance to count against, and the address only for signatures that fail.
 app.route("/", composioEvents);
+// GitHub webhooks and WebSub hubs: a proof per subscription (its secret), one
+// subscription to count against, the address only for proofs that fail.
+app.route("/", routineEvents);
 
 // After cors, so a preflight is answered rather than counted: an OPTIONS that
 // gets a 429 makes the browser report the real request as a CORS failure, which

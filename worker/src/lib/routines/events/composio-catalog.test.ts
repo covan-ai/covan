@@ -15,8 +15,10 @@ const config = (id: string, input: unknown) => {
 const noFetch = vi.fn(async () => null);
 
 describe("the Composio entries", () => {
-  it("are the catalogue, each once, each served by Composio", () => {
-    const ids = CATALOGUE.all().map((d) => d.id);
+  it("are the catalogue's Composio entries, each once, each served by Composio", () => {
+    const ids = CATALOGUE.all()
+      .filter((d) => d.provider === "composio")
+      .map((d) => d.id);
     expect(ids).toEqual(COMPOSIO_EVENTS.map((s) => s.def.id));
     expect(new Set(ids).size).toBe(ids.length);
     for (const s of COMPOSIO_EVENTS) {

@@ -15,12 +15,7 @@ import { cn } from "@/lib/utils";
  */
 export function BrandMark({ className }: { className?: string }) {
   return (
-    <div
-      className={cn(
-        "grid h-8 w-8 place-items-center text-foreground",
-        className,
-      )}
-    >
+    <div className={cn("grid h-8 w-8 place-items-center text-foreground", className)}>
       <svg
         role="img"
         aria-label="Covan logo"

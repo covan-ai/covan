@@ -33,9 +33,7 @@ export function LegalLayout({
         <div className={`mx-auto flex h-16 items-center justify-between px-5 lg:px-8 ${header}`}>
           <Link to="/" className="flex items-center gap-2.5">
             <BrandMark />
-            <span className="text-lg font-semibold leading-none tracking-[-0.02em]">
-              Covan
-            </span>
+            <span className="text-lg font-semibold leading-none tracking-[-0.02em]">Covan</span>
           </Link>
           <Link
             to="/sign-in"
@@ -59,9 +57,7 @@ export function LegalLayout({
 export function LegalSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-title-lg font-semibold leading-tight">
-        {title}
-      </h2>
+      <h2 className="text-title-lg font-semibold leading-tight">{title}</h2>
       <div className="space-y-3 text-base text-muted-foreground">{children}</div>
     </section>
   );

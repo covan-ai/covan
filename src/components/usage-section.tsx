@@ -74,9 +74,7 @@ export function UsageSection() {
               the system's marks (DESIGN.md §3). Amber once it is worth a look. */}
           <div className="mt-3 h-1.5 w-full bg-muted" aria-hidden>
             <div
-              className={
-                credits.level === "fine" ? "h-full bg-foreground" : "h-full bg-brand"
-              }
+              className={credits.level === "fine" ? "h-full bg-foreground" : "h-full bg-brand"}
               style={{ width: `${Math.max(2, Math.round(credits.ratio * 100))}%` }}
             />
           </div>

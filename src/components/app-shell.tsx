@@ -267,8 +267,7 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
             <DialogHeader>
               <DialogTitle>Create workspace</DialogTitle>
               <DialogDescription>
-                Give your new workspace a name. You'll be its admin and switched into it right
-                away.
+                Give your new workspace a name. You'll be its admin and switched into it right away.
               </DialogDescription>
             </DialogHeader>
             <Input

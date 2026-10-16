@@ -12,6 +12,12 @@ vi.mock("@tanstack/react-router", () => ({
     <a href={to}>{children}</a>
   ),
 }));
+// The frame asks for the workspace name, which pulls in the API client and,
+// under it, the Supabase client — which refuses to be built without a URL,
+// and CI has none. Mocked at the API, which is the boundary the frame uses.
+vi.mock("@/lib/api-client", () => ({
+  api: { me: vi.fn().mockResolvedValue({ workspace: { name: "Acme" } }) },
+}));
 vi.mock("@/components/app-shell", () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));

@@ -213,7 +213,9 @@ function CoverageSummary({ totals, days }: { totals: CoverageTotals; days: numbe
   return (
     <SectionCard className="mt-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <span className="text-3xl font-semibold leading-none tracking-tight tabular-nums">{coveredPct}%</span>
+        <span className="text-3xl font-semibold leading-none tracking-tight tabular-nums">
+          {coveredPct}%
+        </span>
         <span className="text-sm text-muted-foreground">
           of {totals.answers} {totals.answers === 1 ? "reply" : "replies"} in the last {days} days
           stood on something you wrote

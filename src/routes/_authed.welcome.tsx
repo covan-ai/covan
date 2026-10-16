@@ -112,6 +112,13 @@ function Welcome() {
   // such step in this flow and bounce the user back to naming their workspace.
   const [createdAgent, setCreatedAgent] = useState(false);
 
+  // Somebody with no workspace who turned the invitation down to start their
+  // own. Once that workspace exists the invitation is still pending — the
+  // banner in the app keeps offering it — but this run is past it, and asking
+  // again would put "Join" where the agent step should be. Kept for the tab, so
+  // a reload mid-setup does not ask either.
+  const [declinedInvite, setDeclinedInvite] = useState(readDeclined);
+
   const { step: requested } = Route.useSearch();
 
   // Someone who has already finished has no business here — this is the other
@@ -134,11 +141,11 @@ function Welcome() {
     () => ({
       answers: answers ?? EMPTY_ANSWERS,
       hosted: hosted === true,
-      hasIncomingInvite: incoming.length > 0,
+      hasIncomingInvite: incoming.length > 0 && !declinedInvite,
       hasAgent: agents.length > 0 || createdAgent,
       hasWorkspace: !noWorkspace,
     }),
-    [answers, hosted, incoming.length, agents.length, createdAgent, noWorkspace],
+    [answers, hosted, incoming.length, declinedInvite, agents.length, createdAgent, noWorkspace],
   );
 
   // The agent the document step attaches to. Null until one exists, which is
@@ -298,10 +305,34 @@ function Welcome() {
         <InviteAcceptStep
           // Joining is the end of the run, whatever else this flow had planned.
           onJoined={() => goTo("done")}
-          onSkip={advance}
+          onSkip={() => {
+            if (noWorkspace) {
+              rememberDeclined();
+              setDeclinedInvite(true);
+            }
+            advance();
+          }}
           skipLabel={noWorkspace ? "Start my own workspace instead" : "Not now"}
         />
       )}
     </WelcomeLayout>
   );
+}
+
+const DECLINED_KEY = "covan:welcome:declined-invite";
+
+function readDeclined(): boolean {
+  try {
+    return sessionStorage.getItem(DECLINED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberDeclined(): void {
+  try {
+    sessionStorage.setItem(DECLINED_KEY, "1");
+  } catch {
+    // Private mode or blocked storage: the state above still covers this run.
+  }
 }

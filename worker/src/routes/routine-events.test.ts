@@ -108,10 +108,34 @@ describe("POST /routine-events/github/:id", () => {
     expect(receiveEvent).not.toHaveBeenCalled();
   });
 
-  it("stops listening to an address that keeps sending bad signatures", async () => {
-    receiveEvent.mockResolvedValue({ status: "forged" });
+  // GitHub delivers for everybody from a few addresses: a webhook with a
+  // mistyped secret, or one left behind by a deleted routine, must not get
+  // those addresses refused for every other customer.
+  it("never holds a failing delivery against GitHub's shared addresses", async () => {
+    // Three misses a minute would spend the address; ten failures do not.
+    const strict = { ...ENV, RATE_LIMIT_STANDARD_PER_MINUTE: "3" };
+    const send = (id: string) =>
+      call(
+        `/routine-events/github/${id}`,
+        { method: "POST", headers: { "X-GitHub-Event": "push" }, body: "{}" },
+        strict,
+      );
     let last = 0;
-    for (let i = 0; i < 30; i++) last = (await postGitHub()).status;
+    receiveEvent.mockResolvedValue({ status: "forged" });
+    for (let i = 0; i < 5; i++) last = (await send("gh_" + String(i).padStart(32, "a"))).status;
+    expect(last).toBe(401);
+    receiveEvent.mockResolvedValue({ status: "unknown" });
+    for (let i = 0; i < 5; i++) last = (await send("gh_" + String(i).padStart(32, "b"))).status;
+    expect(last).toBe(404);
+  });
+
+  it("still counts an id that is not even the right shape", async () => {
+    // A tight miss allowance, so the counting shows within a few requests.
+    const strict = { ...ENV, RATE_LIMIT_STANDARD_PER_MINUTE: "3" };
+    let last = 0;
+    for (let i = 0; i < 5; i++) {
+      last = (await call("/routine-events/github/not-an-id", { method: "POST" }, strict)).status;
+    }
     expect(last).toBe(429);
   });
 });

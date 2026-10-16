@@ -897,8 +897,9 @@ later gives the routine a new URL and secret, so update the webhook too.
 - **The URL is random.** It contains an id that is not the routine's.
 - **Every delivery is signed.** It must carry GitHub's `X-Hub-Signature-256`
   made with that routine's own secret. Anything else is refused with a 401
-  before the routine is looked at, and an address that keeps failing is
-  turned away.
+  before the routine is looked at. A failing delivery is not held against the
+  address it came from, because GitHub sends every customer's webhooks from a
+  few shared addresses; each webhook has its own rate limit instead.
 - **Filters are applied here.** GitHub sends every push to the webhook,
   whatever the branch, so the branch and the pull request or issue action are
   checked when a delivery arrives. A delivery that does not match starts

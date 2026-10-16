@@ -79,19 +79,35 @@ describe("SchedulePicker", () => {
     expect(onChange).toHaveBeenLastCalledWith("*/59 * * * *");
   });
 
-  // The draft parser can emit `0 9 * * 1-5`, and routines created before this
-  // picker existed carry whatever they were made with. Rounding those to the
-  // nearest shape the picker knows would change a schedule without being asked.
-  it("describes a schedule it cannot express rather than rewriting it", async () => {
+  // The draft parser emits `0 9 * * 1-5` for "every weekday", and editing one
+  // used to open on "every 1 hours".
+  it("opens a weekday schedule on its own time, and keeps it weekdays", async () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
     render(<SchedulePicker value="0 9 * * 1-5" onChange={onChange} />);
 
-    expect(screen.getByText("Weekdays at 09:00")).toBeInTheDocument();
+    expect(screen.getByLabelText(/time of day/i)).toHaveValue("09:00");
+    await user.clear(screen.getByLabelText(/time of day/i));
+    await user.type(screen.getByLabelText(/time of day/i), "08:30");
+    expect(onChange).toHaveBeenLastCalledWith("30 8 * * 1-5");
+  });
+
+  // Routines created before this picker existed carry whatever they were made
+  // with. Rounding those to the nearest shape the picker knows would change a
+  // schedule without being asked.
+  it("describes a schedule it cannot express rather than rewriting it", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<SchedulePicker value="0 9 * * 1" onChange={onChange} />);
+
+    expect(screen.getByRole("button", { name: /change/i })).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
 
+    // Pressing Change makes what the fields show the schedule, so the old
+    // expression is not saved underneath a picker that no longer shows it.
     await user.click(screen.getByRole("button", { name: /change/i }));
     expect(screen.getByLabelText(/hours between runs/i)).toBeInTheDocument();
+    expect(onChange).toHaveBeenLastCalledWith("0 */1 * * *");
   });
 });
 
@@ -105,7 +121,7 @@ describe("scheduleError", () => {
   it("stays quiet about expressions the picker never produced", () => {
     // Not the picker's schedule to judge — the user is looking at prose and a
     // Change button, not an editable field.
-    expect(scheduleError("0 9 * * 1-5")).toBeNull();
+    expect(scheduleError("0 9 * * 1")).toBeNull();
   });
 
   it("rejects an interval finer than the engine's heartbeat", () => {

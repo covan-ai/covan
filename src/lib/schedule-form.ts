@@ -1,10 +1,10 @@
 // The interface never asks anyone to write a cron expression. This is the
-// translation layer between the three shapes the picker offers and the cron
+// translation layer between the four shapes the picker offers and the cron
 // string the engine actually schedules on.
 //
 // `fromCron` is deliberately narrow: it returns null for anything it cannot
 // represent exactly, and the caller falls back to showing `cronToProse`. A
-// picker that silently rounds `0 9 * * 1-5` to "every day at 09:00" would
+// picker that silently rounds `0 9 * * 1` to "every day at 09:00" would
 // change a routine's schedule behind the user's back.
 
 // The engine's own heartbeat is a five-minute cron trigger, so nothing finer
@@ -14,7 +14,12 @@ export const MIN_MINUTES = 5;
 export type ScheduleForm =
   | { mode: "minutes"; every: number }
   | { mode: "hours"; every: number }
-  | { mode: "daily"; hour: number; minute: number };
+  | { mode: "daily"; hour: number; minute: number }
+  // Monday to Friday. The routine drafter writes `0 9 * * 1-5` whenever
+  // somebody says "every weekday", which is much of what people ask a routine
+  // for, and the picker used to answer that with a Change button that opened
+  // on "every 1 hours".
+  | { mode: "weekdays"; hour: number; minute: number };
 
 export type ScheduleMode = ScheduleForm["mode"];
 
@@ -26,6 +31,8 @@ export function toCron(form: ScheduleForm): string {
       return `0 */${form.every} * * *`;
     case "daily":
       return `${form.minute} ${form.hour} * * *`;
+    case "weekdays":
+      return `${form.minute} ${form.hour} * * 1-5`;
   }
 }
 
@@ -47,9 +54,16 @@ export function fromCron(expr: string): ScheduleForm | null {
   if (parts.length !== 5) return null;
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
 
-  // Every shape below repeats through the whole week and year. Anything that
-  // narrows the day or month is outside what the picker can express.
-  if (dayOfMonth !== "*" || month !== "*" || dayOfWeek !== "*") return null;
+  // Every shape below repeats through the whole year, and all but weekdays
+  // through the whole week. Anything else that narrows the day or month is
+  // outside what the picker can express.
+  if (dayOfMonth !== "*" || month !== "*") return null;
+  if (dayOfWeek === "1-5") {
+    const h = intInRange(hour, 0, 23);
+    const m = intInRange(minute, 0, 59);
+    return h === null || m === null ? null : { mode: "weekdays", hour: h, minute: m };
+  }
+  if (dayOfWeek !== "*") return null;
 
   if (hour === "*") {
     const every = step(minute, 59);

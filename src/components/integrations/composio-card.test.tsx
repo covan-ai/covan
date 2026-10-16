@@ -135,8 +135,41 @@ describe("ComposioCard", () => {
   });
 
   it("says a half-finished connection is not finished", async () => {
-    render(<ComposioCard connections={[app({ status: "pending" })]} agents={AGENTS} />);
+    render(
+      <ComposioCard
+        connections={[app({ status: "pending", createdAt: Date.now() })]}
+        agents={AGENTS}
+      />,
+    );
     expect(screen.getByText("Finishing…")).toBeInTheDocument();
+  });
+
+  // A sign-in window closed halfway leaves the row pending for good, and the
+  // card used to call that "1 connected" and "Finishing…" indefinitely.
+  it("does not count an unfinished sign-in as connected", async () => {
+    render(
+      <ComposioCard
+        connections={[
+          app({ id: "a", status: "active" }),
+          app({ id: "b", toolkitSlug: "slack", status: "pending", createdAt: Date.now() }),
+        ]}
+        agents={AGENTS}
+      />,
+    );
+    expect(screen.getByText("1 connected")).toBeInTheDocument();
+  });
+
+  it("stops saying Finishing about a sign-in abandoned long ago, and says what to do", async () => {
+    render(
+      <ComposioCard
+        connections={[app({ status: "pending", createdAt: Date.now() - 60 * 60_000 })]}
+        agents={AGENTS}
+      />,
+    );
+    expect(screen.queryByText("Finishing…")).not.toBeInTheDocument();
+    expect(screen.getByText("Not finished")).toBeInTheDocument();
+    expect(screen.getByText(/was not finished, so agents cannot use it/)).toBeInTheDocument();
+    expect(screen.queryByText(/connected$/)).not.toBeInTheDocument();
   });
 
   /**

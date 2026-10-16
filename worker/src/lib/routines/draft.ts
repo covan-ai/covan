@@ -26,7 +26,19 @@ export type DraftDeps = {
   timezone: string;
 };
 
-const SYSTEM = `Convert the user's request into a routine definition.
+/**
+ * "In the user's language" used to be the language rule, and the model had to
+ * guess who the user was: these rules are English, the request may not be,
+ * and gpt-4.1 once answered an English request with a Japanese instruction —
+ * which every run then followed, so the reports came in Japanese too. The rule
+ * now names the text it means.
+ *
+ * The instruction also used to keep the request's "every weekday at 9" and
+ * "email it to me". The schedule is `cron` and the delivery is `channelKind`;
+ * left in the instruction they read to the run as a task of their own, and the
+ * run answered that it could not schedule or send email.
+ */
+const SYSTEM = `Convert the request below into a routine definition.
 Reply with JSON only, matching exactly:
 {"name": string, "sourceKind": "none", "sourceUrl": null,
  "cron": string (5-field cron), "instruction": string, "channelKind": "slack"|"email"}
@@ -34,7 +46,8 @@ Reply with JSON only, matching exactly:
 Rules:
 - Routines are standing orders for the agent to run tasks on a schedule using its tools and knowledge. sourceKind is always "none" and sourceUrl is null.
 - "every 15 minutes" is "*/15 * * * *"; "every morning at 9" is "0 9 * * *".
-- instruction is what the agent should do when the routine runs, in the user's language.`;
+- instruction is what the agent should do each time the routine runs, written as a direct task. It describes the work only: leave out when it runs (that is cron) and how the result is sent (that is channelKind), so no "every weekday at 9", "email it to me" or "post it to Slack".
+- Write name and instruction in the same language as the text after "Request:". Not the language of these rules, and never a third language.`;
 
 /**
  * The LLM reasons exactly once, here at setup time. Everything the engine does

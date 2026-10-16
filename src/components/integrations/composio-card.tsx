@@ -78,9 +78,8 @@ export function ComposioCard({
   // catalogue entirely, so the one thing they would try next — search for it
   // again — answered that Covan had never heard of it. Those rows are still
   // listed above the grid, which is where they get finished or removed.
-  const already = new Set(
-    mine.filter((c) => c.status === "active").map((c) => c.toolkitSlug ?? ""),
-  );
+  const active = mine.filter((c) => c.status === "active");
+  const already = new Set(active.map((c) => c.toolkitSlug ?? ""));
 
   // Every standing permission in the workspace, grouped by the connection it
   // is on. Unconditional rather than per-card, because it is one small read
@@ -131,7 +130,10 @@ export function ComposioCard({
             </span>
           </span>
         </div>
-        {mine.length > 0 ? <Chip tone="neutral">{mine.length} connected</Chip> : null}
+        {/* Counted from the active rows only. A sign-in somebody closed halfway
+            leaves a `pending` row, and counting it said "1 connected" about a
+            workspace that had connected nothing. */}
+        {active.length > 0 ? <Chip tone="neutral">{active.length} connected</Chip> : null}
       </div>
 
       {mine.length > 0 ? (
@@ -186,7 +188,8 @@ function ConnectedApp({
 }) {
   const remove = useRemoveToolConnection();
   const [confirming, setConfirming] = useState(false);
-  useComposioStatus(connection.id, connection.status === "pending");
+  const abandoned = isAbandoned(connection);
+  useComposioStatus(connection.id, connection.status === "pending" && !abandoned);
 
   return (
     // The standing permissions live INSIDE the row's box, not under it. Put
@@ -203,7 +206,9 @@ function ConnectedApp({
               {connection.toolkitSlug}
             </span>
           </span>
-          {connection.status === "pending" ? (
+          {abandoned ? (
+            <Chip tone="neutral">Not finished</Chip>
+          ) : connection.status === "pending" ? (
             <Chip tone="neutral">Finishing…</Chip>
           ) : connection.status === "failed" ? (
             <Chip tone="neutral">Not connected</Chip>
@@ -250,6 +255,13 @@ function ConnectedApp({
         </span>
       </div>
 
+      {abandoned ? (
+        <p className="text-meta text-muted-foreground">
+          The sign-in for {connection.label} was not finished, so agents cannot use it. Remove this
+          and connect it again from the list below.
+        </p>
+      ) : null}
+
       {/* What the worker already knows and the card used to keep to itself:
           the service answered "no such operation" for these, so the agent is
           not offered them, and the thirty days `unavailable_tools` trusts
@@ -287,6 +299,21 @@ function ConnectedApp({
       ) : null}
     </li>
   );
+}
+
+/**
+ * How long a sign-in may stay unfinished before the row stops saying
+ * "Finishing…".
+ *
+ * Closing Composio's window halfway leaves the row `pending` for good: nothing
+ * comes back to settle it. Ten minutes is long enough to go and find an API
+ * key, and the row still turns active if the sign-in does finish later — this
+ * only changes what an unfinished one is called, and stops asking about it.
+ */
+const PENDING_GIVES_UP_MS = 10 * 60_000;
+
+function isAbandoned(connection: ToolConnection): boolean {
+  return connection.status === "pending" && Date.now() - connection.createdAt > PENDING_GIVES_UP_MS;
 }
 
 /** The day a hidden operation is offered again, in the interface's language. */

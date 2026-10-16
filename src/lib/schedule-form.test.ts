@@ -25,6 +25,7 @@ describe("fromCron", () => {
       { mode: "hours", every: 12 },
       { mode: "daily", hour: 9, minute: 0 },
       { mode: "daily", hour: 23, minute: 59 },
+      { mode: "weekdays", hour: 9, minute: 0 },
     ];
     for (const form of forms) {
       expect(fromCron(toCron(form))).toEqual(form);
@@ -35,6 +36,11 @@ describe("fromCron", () => {
     // `0 * * * *` is the create dialog's historical default, so routines
     // already carry it. It means exactly what `0 */1 * * *` means.
     expect(fromCron("0 * * * *")).toEqual({ mode: "hours", every: 1 });
+  });
+
+  it("reads and writes Monday to Friday, which the routine drafter emits", () => {
+    expect(fromCron("0 9 * * 1-5")).toEqual({ mode: "weekdays", hour: 9, minute: 0 });
+    expect(toCron({ mode: "weekdays", hour: 8, minute: 30 })).toBe("30 8 * * 1-5");
   });
 
   it("tolerates surrounding whitespace", () => {
@@ -49,8 +55,9 @@ describe("fromCron", () => {
   });
 
   it("returns null for shapes the picker cannot express", () => {
-    expect(fromCron("0 9 * * 1-5")).toBeNull(); // weekdays
     expect(fromCron("0 9 * * 1")).toBeNull(); // a single weekday
+    expect(fromCron("0 9 * * 1-6")).toBeNull(); // not Monday to Friday
+    expect(fromCron("0 */2 * * 1-5")).toBeNull(); // a stepped hour on weekdays
     expect(fromCron("0 9 1 * *")).toBeNull(); // monthly
     expect(fromCron("0 9 * 3 *")).toBeNull(); // a specific month
     expect(fromCron("*/15 9 * * *")).toBeNull(); // stepped minutes within an hour

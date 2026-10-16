@@ -86,12 +86,12 @@ const WORDS: Record<AgentStepView["status"], string> = {
  */
 function Mark({ status }: { status: AgentStepView["status"] }) {
   if (status === "running") {
-    return <span className="step-running h-2 w-2 shrink-0 rounded-[2px]" />;
+    return <span className="step-running h-2 w-2 shrink-0 rounded-full" />;
   }
   if (status === "ok") return <Check className="h-3 w-3 shrink-0 text-muted-foreground" />;
   if (status === "failed") return <X className="h-3 w-3 shrink-0 text-destructive" />;
   if (status === "refused") return <Minus className="h-3 w-3 shrink-0 text-muted-foreground" />;
-  return <span className="h-2 w-2 shrink-0 rounded-[2px] bg-accent-orange" />;
+  return <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />;
 }
 
 /** The row itself: a mark, what it was pointed at, and how it ended. */
@@ -384,9 +384,9 @@ export function ConfirmCard({
   return (
     <div className="mt-3 flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
       <div className="flex items-start gap-2.5">
-        <span className="mt-[5px] h-2 w-2 shrink-0 rounded-[2px] bg-accent-orange" />
+        <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full bg-brand" />
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="font-dm text-title font-medium leading-tight">
+          <span className="text-title font-semibold leading-tight">
             {pending.summary || "The agent wants to do something."}
           </span>
           <span className="text-xs text-muted-foreground">

@@ -22,14 +22,14 @@ export function RoutineStatus({ routine, className }: { routine: Routine; classN
   const failed = routine.status === "paused" && routine.pausedReason !== null;
   const mark =
     routine.status === "active"
-      ? "bg-accent-orange"
+      ? "bg-brand"
       : failed
         ? "bg-destructive"
         : "bg-muted-foreground/40";
 
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-2 text-meta", className)}>
-      <span className={cn("h-2 w-2 shrink-0", mark)} aria-hidden />
+      <span className={cn("h-2 w-2 shrink-0 rounded-full", mark)} aria-hidden />
       {routine.status === "active" ? (
         <span className="text-muted-foreground">Active</span>
       ) : routine.status === "completed" ? (

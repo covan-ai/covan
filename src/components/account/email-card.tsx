@@ -49,7 +49,7 @@ export function EmailCard({ email }: { email: string | null | undefined }) {
   return (
     <SectionCard className="mt-6 space-y-5">
       <div className="space-y-1">
-        <div className="font-dm text-title font-medium">Email address</div>
+        <div className="text-title font-semibold">Email address</div>
         <p className="text-meta text-muted-foreground">
           You sign in with <span className="text-foreground">{email ?? "…"}</span>.
         </p>

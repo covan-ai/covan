@@ -104,7 +104,7 @@ describe("WorkspaceCoverageSection", () => {
     // The design contract, not a detail: amber is a pointer in this system,
     // and a pointer aimed at several rows at once is a highlight. One chip
     // carries it, and it is the worst row.
-    const amber = container.querySelectorAll(".bg-accent-orange");
+    const amber = container.querySelectorAll(".bg-brand");
     expect(amber).toHaveLength(1);
     expect(amber[0]).toHaveTextContent("67% not covered");
   });
@@ -146,7 +146,7 @@ describe("WorkspaceCoverageSection", () => {
       }),
     );
 
-    expect(container.querySelectorAll(".bg-accent-orange")).toHaveLength(1);
+    expect(container.querySelectorAll(".bg-brand")).toHaveLength(1);
   });
 
   // 0053 returns every agent, including the ones nobody asked anything. They

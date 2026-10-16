@@ -442,16 +442,16 @@ export function BrowserPanel({
         <span
           aria-hidden="true"
           className={cn(
-            "h-2 w-2 shrink-0 rounded-[2px]",
+            "h-2 w-2 shrink-0 rounded-full",
             mode === "agent" || mode === "cancelling"
               ? "step-running"
               : mode === "human"
-                ? "bg-accent-orange"
+                ? "bg-brand"
                 : "bg-muted-foreground/40",
           )}
         />
         <span className="sr-only">{status}</span>
-        <h2 className="min-w-0 flex-1 truncate font-dm text-title font-medium">Browser</h2>
+        <h2 className="min-w-0 flex-1 truncate text-title font-semibold">Browser</h2>
         <div className="flex shrink-0 items-center gap-0.5">
           {session && (
             <HeaderAction label="Open in new window" onClick={() => openWindow(false)}>
@@ -620,7 +620,7 @@ export function BrowserPanel({
               <li key={eventId(e)} className="flex items-start gap-2">
                 <span
                   aria-hidden="true"
-                  className="mt-[0.5em] h-1.5 w-1.5 shrink-0 rounded-[1px] bg-muted-foreground/50"
+                  className="mt-[0.5em] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/50"
                 />
                 {/* The provider publishes no event catalogue, so a line with
                     nothing to say shows its type rather than vanishing. */}
@@ -816,12 +816,12 @@ function OwnBrowserView({
         <span
           aria-hidden="true"
           className={cn(
-            "h-2 w-2 shrink-0 rounded-[2px]",
-            own ? "bg-accent-orange" : "bg-muted-foreground/40",
+            "h-2 w-2 shrink-0 rounded-full",
+            own ? "bg-brand" : "bg-muted-foreground/40",
           )}
         />
         <span className="sr-only">{own ? "You are driving" : "Nobody is driving"}</span>
-        <h2 className="min-w-0 flex-1 truncate font-dm text-title font-medium">Browser</h2>
+        <h2 className="min-w-0 flex-1 truncate text-title font-semibold">Browser</h2>
         <div className="flex shrink-0 items-center gap-0.5">
           {own && (
             <HeaderAction label="Open in new window" onClick={openWindow}>
@@ -1014,7 +1014,7 @@ function Pill({
   // Nobody driving. `agent` with no run lands here too: saying the agent is
   // using the browser would be false, and take-over is idempotent. At a
   // sign-in wall, taking over is the whole of what to do next, so it is the
-  // primary button — ink, per DESIGN.md, not amber.
+  // primary button — the amber fill, per DESIGN.md.
   return (
     <>
       <span className="text-muted-foreground">

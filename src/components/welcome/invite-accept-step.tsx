@@ -34,7 +34,7 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
           key={invite.id}
           className="flex flex-wrap items-center gap-3 rounded-xl border border-hairline bg-card px-4 py-3.5"
         >
-          <span aria-hidden className="h-2 w-2 shrink-0 bg-accent-orange" />
+          <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-brand" />
           <span className="min-w-0 flex-1 text-base">
             <strong className="font-medium">{invite.workspaceName}</strong>
             <span className="text-muted-foreground"> · as {invite.role}</span>

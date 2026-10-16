@@ -12,11 +12,13 @@ import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-clie
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
+  AlertCircle,
   AppWindow,
   ArrowDown,
   ArrowUp,
   FileText,
   Lock,
+  RefreshCw,
   Search,
   Sparkles,
   Square,
@@ -25,7 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { AgentAvatar } from "@/components/avatars";
+import { dayPart } from "@/lib/day-part";
 import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
 import { ChatReport } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
@@ -486,6 +488,12 @@ function ChatTab() {
   // character before it's committed to the store.
   const [replyingIn, setReplyingIn] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
+  /**
+   * The reply that failed, for the row under the transcript. A toast is gone
+   * in four seconds; a question with nothing under it is not, and it used to
+   * look exactly like one still being answered. Cleared when a reply starts.
+   */
+  const [failed, setFailed] = useState<{ sessionId: string; message: string } | null>(null);
   const [streamText, setStreamText] = useState("");
   /**
    * The model's account of how it got to the answer, while it is getting
@@ -723,6 +731,7 @@ function ChatTab() {
       reconcileTimer.current = null;
     }
     setReplyingIn(sessionId);
+    setFailed(null);
     setKept(null);
     // Whatever was cut off is being dealt with now, one way or the other.
     setTruncated(null);
@@ -840,7 +849,7 @@ function ChatTab() {
       }
 
       if (!res.ok || !res.body) {
-        toast.error("Couldn't reach the assistant. Please try again.");
+        setFailed({ sessionId, message: "Couldn't reach the assistant. Please try again." });
         setThinking(false);
         setStreamText("");
         setThinkingText("");
@@ -1061,7 +1070,7 @@ function ChatTab() {
             }
           } else if (event.type === "error") {
             terminalSeen = true;
-            toast.error(event.error ?? "The assistant hit an error.");
+            setFailed({ sessionId, message: event.error ?? "The assistant hit an error." });
             setStreamText("");
             setThinkingText("");
             setThinking(false);
@@ -1097,7 +1106,7 @@ function ChatTab() {
         // Handled by `stop()`, which owns reconciling from the server.
         return;
       }
-      toast.error("The assistant hit an error.");
+      setFailed({ sessionId, message: "Couldn't reach the assistant." });
       setStreamText("");
       setThinkingText("");
       setThinking(false);
@@ -1597,10 +1606,10 @@ function ChatTab() {
       }}
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-xl border border-dashed border-accent-orange bg-background/80">
+        <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-xl border border-dashed border-brand bg-background/80">
           <div className="flex flex-col items-center gap-2">
-            <Upload className="h-6 w-6 text-accent-orange" />
-            <div className="font-dm text-title font-medium">Drop to add to {agent.name}</div>
+            <Upload className="h-6 w-6 text-brand" />
+            <div className="text-title font-semibold">Drop to add to {agent.name}</div>
             <div className="text-xs text-muted-foreground">TXT, Markdown, CSV, JSON, PDF</div>
           </div>
         </div>
@@ -1640,8 +1649,8 @@ function ChatTab() {
             />
           </div>
         ) : (
-          <h1 className="min-w-0 flex-1 truncate font-dm text-base font-medium">
-            {active?.title?.trim() || (isBrainstorm ? "New brainstorm" : "New chat")}
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
+            {active?.title?.trim() || (isBrainstorm ? "New brainstorm" : "New thread")}
           </h1>
         )}
 
@@ -1694,8 +1703,8 @@ function ChatTab() {
                   <span
                     aria-hidden="true"
                     className={cn(
-                      "absolute -right-1 -top-1 h-1.5 w-1.5 rounded-[1px]",
-                      browserPanel.signIn ? "bg-accent-orange" : "step-running",
+                      "absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full",
+                      browserPanel.signIn ? "bg-brand" : "step-running",
                     )}
                   />
                 )}
@@ -1737,18 +1746,20 @@ function ChatTab() {
           )}
         >
           {isEmpty ? (
-            <div className="w-full max-w-md text-center">
-              <AgentAvatar
-                emoji={agent.emoji}
-                tone="accent"
-                className="mx-auto h-16 w-16 rounded-xl text-3xl"
-              />
-              <h3 className="mt-5 font-dm text-[28px] font-medium leading-[1.05] tracking-[-0.01em]">
-                {agent.name}
+            <div className="w-full max-w-xl text-center">
+              {/* The same two lines the home page opens with, so a new thread
+                  and the front door are one screen, not two. */}
+              <h3 className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[2.125rem]">
+                Hi, I'm <span className="text-brand">{agent.name}</span>.
               </h3>
-              <p className="mx-auto mt-2 max-w-sm text-base text-muted-foreground">
-                Ask anything — this chat is private to you, grounded in your team's shared
-                knowledge.
+              <p className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[2.125rem]">
+                What can I do for you {dayPart()}?
+              </p>
+              <p className="mx-auto mt-3 max-w-sm text-sm text-muted-foreground">
+                {isShared
+                  ? "This thread is shared with your workspace"
+                  : "This thread is private to you"}
+                , grounded in your team's shared knowledge.
               </p>
               {/* Two groups, because they answer two questions: what this
                   agent has READ, and what it can REACH. The second draws
@@ -1956,6 +1967,27 @@ function ChatTab() {
                 />
               )}
 
+              {/* The reply that failed, where the reply would have been. Try
+                  again asks the server to answer the last question once more. */}
+              {failed && failed.sessionId === active?.id && replyingIn !== active?.id && (
+                <div
+                  role="alert"
+                  className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
+                >
+                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                  <span className="min-w-0 flex-1">{failed.message}</span>
+                  {isOwner && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void streamReply(failed.sessionId)}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Try again
+                    </Button>
+                  )}
+                </div>
+              )}
+
               {/* A stopped reply's words, until its row is in the transcript
                   above — see `kept`. Not while another answer is streaming
                   here: starting one clears this anyway. */}
@@ -2055,7 +2087,7 @@ function ChatTab() {
         <div className="mx-auto max-w-3xl">
           {credits && credits.level !== "fine" && (
             <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-              <span className="h-2 w-2 shrink-0 bg-accent-orange" />
+              <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />
               <span>{creditsSentence(credits)}</span>
             </div>
           )}
@@ -2154,14 +2186,21 @@ function ChatTab() {
                   }
                 }
               }}
-              placeholder={`Message ${agent.name}`}
-              className="min-h-[48px] overflow-y-auto px-4 pt-3.5 text-base"
+              // "Reply" once there is something to reply to. The first
+              // message in a thread is not a reply to anything.
+              placeholder={messages.length > 0 ? `Reply to ${agent.name}` : `Message ${agent.name}`}
+              className="min-h-[52px] overflow-y-auto px-5 pb-1 pt-4 text-base"
             />
-            <PromptInputActions className="justify-between px-3 pb-2.5">
+            <PromptInputActions className="justify-between px-3 pb-3">
               <div className="flex min-w-0 items-center gap-1">
                 <ChatAttach uploads={uploads} canWrite={canUpload} />
                 <ChatReport reports={reports} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
+              </div>
+              {/* The dial sits with Send rather than with the attachments:
+                  what the reply will be made of is a fact about the send, and
+                  the left of the row is for what goes INTO the message. */}
+              <div className="flex min-w-0 items-center gap-1.5">
                 {active && (
                   <TurnDial
                     session={active}
@@ -2175,44 +2214,44 @@ function ChatTab() {
                     onChange={onTune}
                   />
                 )}
-              </div>
-              {/* Stop belongs to the conversation that is actually streaming.
+                {/* Stop belongs to the conversation that is actually streaming.
                   There is one stream at a time, so opening a second
                   conversation while a reply runs used to show a Stop button
                   over a composer with nothing to stop — and pressing it cut
                   off the answer in the tab you had just left. */}
-              {replyingIn === active?.id ? (
-                <PromptInputAction tooltip="Stop generating">
-                  <Button
-                    size="icon"
-                    onClick={stop}
-                    aria-label="Stop generating"
-                    className="shrink-0"
-                  >
-                    <Square className="h-3.5 w-3.5 fill-current" />
-                  </Button>
-                </PromptInputAction>
-              ) : (
-                /* A real tooltip rather than `title`, which never appears on a
+                {replyingIn === active?.id ? (
+                  <PromptInputAction tooltip="Stop generating">
+                    <Button
+                      size="icon"
+                      onClick={stop}
+                      aria-label="Stop generating"
+                      className="shrink-0"
+                    >
+                      <Square className="h-3.5 w-3.5 fill-current" />
+                    </Button>
+                  </PromptInputAction>
+                ) : (
+                  /* A real tooltip rather than `title`, which never appears on a
                    touch screen — and this is the one control on the row whose
                    `title` was carrying something a reader needs ("waiting for
                    the current reply to finish", on a button that looks broken
                    until you know that). The three to the left of it are their
                    own components and keep their own `aria-label`s. */
-                <PromptInputAction
-                  tooltip={busy ? "Waiting for the current reply to finish" : "Send message"}
-                >
-                  <Button
-                    size="icon"
-                    onClick={send}
-                    disabled={!input.trim() || busy}
-                    aria-label="Send message"
-                    className="shrink-0"
+                  <PromptInputAction
+                    tooltip={busy ? "Waiting for the current reply to finish" : "Send message"}
                   >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                </PromptInputAction>
-              )}
+                    <Button
+                      size="icon"
+                      onClick={send}
+                      disabled={!input.trim() || busy}
+                      aria-label="Send message"
+                      className="shrink-0 rounded-full"
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </Button>
+                  </PromptInputAction>
+                )}
+              </div>
             </PromptInputActions>
           </PromptInput>
           {/* What the header used to say twice over, said once, here, where

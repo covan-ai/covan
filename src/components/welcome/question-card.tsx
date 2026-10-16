@@ -39,7 +39,7 @@ export function QuestionCard({
               onClick={() => onSelect(option.id)}
               className={cn(
                 "flex items-center gap-3 rounded-xl border px-4 py-3.5 text-left text-base transition-colors duration-200",
-                "focus-visible:shadow-glow focus-visible:outline-none",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 selected
                   ? "border-border bg-surface"
                   : "border-hairline bg-card hover:bg-surface-hover",
@@ -47,7 +47,7 @@ export function QuestionCard({
             >
               <span
                 aria-hidden
-                className={cn("h-2 w-2 shrink-0", selected ? "bg-accent-orange" : "bg-border")}
+                className={cn("h-2 w-2 shrink-0 rounded-full", selected ? "bg-brand" : "bg-border")}
               />
               <span className="min-w-0 flex-1">{option.label}</span>
             </button>

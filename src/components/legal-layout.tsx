@@ -33,7 +33,7 @@ export function LegalLayout({
         <div className={`mx-auto flex h-16 items-center justify-between px-5 lg:px-8 ${header}`}>
           <Link to="/" className="flex items-center gap-2.5">
             <BrandMark />
-            <span className="font-dm text-xl font-semibold leading-none tracking-[-0.02em]">
+            <span className="text-lg font-semibold leading-none tracking-[-0.02em]">
               Covan
             </span>
           </Link>
@@ -59,7 +59,7 @@ export function LegalLayout({
 export function LegalSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
-      <h2 className="font-dm text-title-lg font-medium leading-tight tracking-[-0.01em]">
+      <h2 className="text-title-lg font-semibold leading-tight">
         {title}
       </h2>
       <div className="space-y-3 text-base text-muted-foreground">{children}</div>
@@ -78,7 +78,7 @@ export function LegalItem({ children }: { children: ReactNode }) {
       {/* Squares, like every other bullet in this system (DESIGN.md §3), and
           ink rather than amber: a list of eight would blow the accent budget
           on decoration, which is the one thing amber is not for. */}
-      <span aria-hidden className="mt-[0.55em] h-1 w-1 shrink-0 bg-foreground" />
+      <span aria-hidden className="mt-[0.6em] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground" />
       <span className="min-w-0 flex-1">{children}</span>
     </li>
   );

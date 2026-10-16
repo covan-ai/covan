@@ -342,7 +342,7 @@ export function ConnectSourceCard({
             <Mark className="h-[22px] w-[22px]" />
           </span>
           <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="font-dm text-title font-medium leading-tight">{provider.label}</span>
+            <span className="text-title font-semibold leading-tight">{provider.label}</span>
             <span className="text-meta leading-tight text-muted-foreground">
               {PROVIDER_BLURB[provider.id]}
             </span>

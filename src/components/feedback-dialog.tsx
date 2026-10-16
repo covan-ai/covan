@@ -116,7 +116,7 @@ export function FeedbackDialog({
               className={cn(
                 "shrink-0 whitespace-nowrap rounded-sm px-2 py-1 text-xs font-medium leading-[1.4] transition-colors duration-200",
                 kind === option.key
-                  ? "bg-accent-orange text-accent-orange-foreground"
+                  ? "bg-brand text-brand-foreground"
                   : "bg-muted text-muted-foreground hover:text-foreground",
               )}
             >

@@ -36,7 +36,7 @@ export function DocumentCard({
         <FileText className="h-4 w-4 text-muted-foreground" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <span className="font-dm text-base font-medium leading-tight [overflow-wrap:anywhere]">
+        <span className="text-base font-semibold leading-tight [overflow-wrap:anywhere]">
           {job.title}
         </span>
         <span

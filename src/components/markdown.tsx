@@ -37,8 +37,15 @@ import { peekMath, renderMath } from "@/lib/katex";
  * for what is not, so that the answer settles into its final shape instead of
  * snapping into it at the end.
  */
+/**
+ * Sizes are INHERITED, not set here. A reply is 16px in the transcript, 13px
+ * inside a folded reasoning block and 16px again on a printed document, and
+ * the one renderer serves all three by taking its size from whatever wraps
+ * it. Only the things that are boxes rather than prose — code, tables — keep
+ * a size of their own.
+ */
 export function Markdown({ content, className }: { content: string; className?: string }) {
-  return <div className={cn("space-y-3", className)}>{parseBlocks(content)}</div>;
+  return <div className={cn("space-y-4", className)}>{parseBlocks(content)}</div>;
 }
 
 /** An opening fence, and the info string after it (` ```ts title="x" `). */
@@ -129,7 +136,7 @@ function parseBlocks(src: string): ReactNode[] {
         i++;
       }
       out.push(
-        <blockquote key={key++} className="border-l-2 border-border pl-3 text-muted-foreground">
+        <blockquote key={key++} className="border-l-2 border-border pl-4 text-muted-foreground">
           {parseInline(body.join(" "))}
         </blockquote>,
       );
@@ -174,7 +181,7 @@ function parseBlocks(src: string): ReactNode[] {
       i++;
     }
     out.push(
-      <p key={key++} className="text-sm leading-relaxed">
+      <p key={key++} className="leading-[1.65]">
         {parseInline(para.join(" "))}
       </p>,
     );
@@ -214,15 +221,18 @@ function mathBlockEnd(lines: string[], at: number): number {
 }
 
 function headingClass(level: number): string {
-  // Two ranks above the paragraph, and nothing below it. These used to be 16
-  // and 14 against a 15px reply, which put every `##` in an answer at a
-  // smaller size than the sentences it was introducing.
-  if (level === 1) return "text-title font-semibold";
-  if (level === 2) return "text-base font-semibold";
+  // A heading in a reply is a section title in a short document, so it gets
+  // a document's air: a step up in size and more room above it than below.
+  // The extra top margin stacks on the wrapper's `space-y`, which is the
+  // point — the gap before a heading is wider than the gap after it, and
+  // that asymmetry is what makes a run of paragraphs read as sections.
+  // `first:mt-0` so a reply that opens on a heading starts at the margin.
+  if (level === 1) return "mt-3 text-xl font-semibold first:mt-0";
+  if (level === 2) return "mt-2 text-title-lg font-semibold first:mt-0";
   // h3 and below all read as the same rank in a chat reply, which is three
   // ranks more than anything a reply needs. Models write `####` freely; there
   // is no visual budget for four sizes inside a paragraph of chat.
-  return "text-base font-medium";
+  return "mt-1 text-title font-semibold first:mt-0";
 }
 
 /**
@@ -270,7 +280,7 @@ function parseList(lines: string[], start: number, key: number): [ReactNode, num
     <Tag
       key={key}
       className={cn(
-        "space-y-1 pl-5 text-sm leading-relaxed",
+        "space-y-1.5 pl-6 leading-[1.65] marker:text-muted-foreground",
         ordered ? "list-decimal" : "list-disc",
       )}
     >

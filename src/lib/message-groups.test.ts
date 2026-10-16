@@ -26,16 +26,16 @@ describe("dateDividers", () => {
     expect([...dateDividers([])]).toEqual([]);
   });
 
-  it("marks the first message of a one-day transcript and nothing after it", () => {
+  it("draws nothing over a one-day transcript, not even over its first message", () => {
     const out = dateDividers([
       msg("m1", at(2026, 3, 15, 9)),
       msg("m2", at(2026, 3, 15, 9, 1), "assistant"),
       msg("m3", at(2026, 3, 15, 14)),
     ]);
-    expect([...out]).toEqual([["m1", "Today"]]);
+    expect([...out]).toEqual([]);
   });
 
-  it("marks the first message of each day across three days", () => {
+  it("marks where the day turns, and not the day the thread started on", () => {
     const out = dateDividers([
       msg("m1", at(2026, 3, 13, 9)),
       msg("m2", at(2026, 3, 13, 9, 1), "assistant"),
@@ -44,7 +44,6 @@ describe("dateDividers", () => {
       msg("m5", at(2026, 3, 15, 8, 1), "assistant"),
     ]);
     expect([...out]).toEqual([
-      ["m1", "March 13"],
       ["m3", "Yesterday"],
       ["m4", "Today"],
     ]);
@@ -52,6 +51,7 @@ describe("dateDividers", () => {
 
   it("names today, yesterday, a day this year, and a day in another year", () => {
     const out = dateDividers([
+      msg("opener", at(2025, 12, 1)),
       msg("older", at(2025, 12, 20)),
       msg("this-year", at(2026, 3, 1)),
       msg("yesterday", at(2026, 3, 14)),
@@ -73,14 +73,11 @@ describe("dateDividers", () => {
       msg("q", at(2026, 3, 14, 23, 58)),
       msg("a", at(2026, 3, 15, 0, 2), "assistant"),
     ]);
-    expect([...out]).toEqual([
-      ["q", "Yesterday"],
-      ["a", "Today"],
-    ]);
+    expect([...out]).toEqual([["a", "Today"]]);
   });
 
   it("keys by message id, so a lookup is by identity rather than position", () => {
-    const out = dateDividers([msg("m1", at(2026, 3, 15))]);
+    const out = dateDividers([msg("m0", at(2026, 3, 14)), msg("m1", at(2026, 3, 15))]);
     expect(out.get("m1")).toBe("Today");
     expect(out.get("m2")).toBeUndefined();
   });

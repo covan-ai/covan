@@ -167,7 +167,7 @@ export function ToolList({ tools }: { tools: ToolAvailability[] }) {
         {tools.map((tool) => (
           <li key={tool.name} className="flex items-start gap-2.5">
             <span
-              className={`mt-[6px] h-2 w-2 shrink-0 rounded-[2px] ${
+              className={`mt-[6px] h-2 w-2 shrink-0 rounded-full ${
                 tool.configured ? "bg-foreground" : "bg-muted-foreground/40"
               }`}
             />

@@ -461,7 +461,7 @@ function TemperatureField({
             value={value}
             disabled={!accepted}
             onChange={(e) => onChange(Number(e.target.value))}
-            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-muted accent-primary outline-none disabled:cursor-not-allowed disabled:opacity-50 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-[4px] [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#f48d16] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-[4px] [&::-webkit-slider-thumb]:bg-[#f48d16]"
+            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-muted accent-primary outline-none disabled:cursor-not-allowed disabled:opacity-50 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-[4px] [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-primary [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-[4px] [&::-webkit-slider-thumb]:bg-primary"
           />
           <span className="w-8 shrink-0 text-right font-mono text-xs tabular-nums">
             {value.toFixed(1)}
@@ -572,14 +572,11 @@ function PersonaPreview({
       : `Hi! ${firstSentence} How can I help you today?`;
 
   return (
-    // A product panel (§7.7): white, the one panel shadow, a window-chrome bar,
-    // and an interior that sits one step below on the canvas colour.
-    <div className="overflow-hidden rounded-3xl bg-popover shadow-card lg:sticky lg:top-6">
-      <div className="flex items-center gap-[7px] border-b border-hairline bg-surface-muted px-[18px] py-3.5">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-        <span className="ml-2.5 text-meta font-medium text-muted-foreground">Preview</span>
+    // A floating panel: white, a line, the one panel shadow, and a plain
+    // title bar on the muted surface.
+    <div className="overflow-hidden rounded-3xl border border-border bg-popover shadow-card lg:sticky lg:top-6">
+      <div className="flex items-center border-b border-hairline bg-surface-muted px-5 py-3">
+        <span className="text-meta font-medium text-muted-foreground">Preview</span>
       </div>
       <div className="flex flex-col gap-3 px-5 py-5">
         <PanelEyebrow>{model}</PanelEyebrow>

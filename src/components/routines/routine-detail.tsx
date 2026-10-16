@@ -268,7 +268,7 @@ export function RoutineDetail({
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="truncate font-dm text-[32px] font-medium leading-[1.05] tracking-[-0.01em]">
+          <h1 className="truncate text-2xl font-semibold leading-tight tracking-tight">
             {routine.name}
           </h1>
           <RoutineStatus routine={routine} className="mt-1" />

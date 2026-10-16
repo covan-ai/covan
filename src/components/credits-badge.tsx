@@ -32,7 +32,7 @@ export function CreditsBadge() {
       aria-label={raw.unlimited ? "Unlimited credits" : `${label} left in this workspace`}
       title="Workspace credits"
     >
-      {warn && <span className="h-2 w-2 shrink-0 bg-accent-orange" aria-hidden />}
+      {warn && <span className="h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden />}
       <span className="tabular-nums">{label}</span>
     </Link>
   );

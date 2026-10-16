@@ -46,7 +46,7 @@ export function PasswordCard() {
   return (
     <SectionCard className="mt-6 space-y-5">
       <div className="space-y-1">
-        <div className="font-dm text-title font-medium">Password</div>
+        <div className="text-title font-semibold">Password</div>
         <p className="text-meta text-muted-foreground">
           Change it, or set one if you signed in another way.
         </p>

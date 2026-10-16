@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ChevronDown, FileText, Paperclip, X } from "lucide-react";
+import { ChevronDown, FileText, Plus, X } from "lucide-react";
 import { Chip } from "@/components/section-card";
 import { ACCEPT } from "@/lib/uploads";
 import type { ChatUploads } from "@/lib/use-chat-uploads";
@@ -27,10 +27,10 @@ export function ChatAttach({ uploads, canWrite }: { uploads: ChatUploads; canWri
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        className="grid h-7 w-7 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="Attach a document"
       >
-        <Paperclip className="h-4 w-4" />
+        <Plus className="h-[18px] w-[18px]" />
       </button>
       <input
         ref={inputRef}

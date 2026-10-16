@@ -11,12 +11,12 @@ export function getInitials(name: string | null | undefined, fallback = "–"): 
 }
 
 /*
- * Squares, not circles.
+ * Tiles, not circles.
  *
- * The design system puts circles in exactly two places, both window-chrome
- * imitations. Everything else — bullets, marks, avatars, tiles — is a square
- * with a radius from the ladder. A round avatar is the cheapest way to drift
- * off-system, so these are rounded squares at the 8px step (§7.8).
+ * Every mark in this system — a person, an agent, a third party's logo — is a
+ * rounded square at the 6px step, so a row of them lines up with the buttons
+ * and inputs beside it. A round avatar is the fastest way to make a list look
+ * like a consumer chat app, and this is not one.
  */
 const TILE = "grid shrink-0 place-items-center rounded-md font-semibold tracking-[0.03em]";
 
@@ -41,7 +41,10 @@ export function UserAvatar({
     );
   }
   return (
-    <div className={cn(TILE, "bg-surface text-muted-foreground", className)} aria-hidden>
+    <div
+      className={cn(TILE, "bg-surface text-muted-foreground ring-1 ring-inset ring-hairline", className)}
+      aria-hidden
+    >
       {getInitials(name, "…")}
     </div>
   );
@@ -51,10 +54,10 @@ export function UserAvatar({
  * An agent.
  *
  * `neutral` is the default and the one to reach for in any list: a surface
- * tile, so a grid of twelve agents does not put twelve amber squares on screen.
- * `accent` is the amber mark from §7.8, and it is for the *singular* context —
- * the agent you are currently in. Accent discipline caps a viewport at roughly
- * five orange elements; a gallery would blow through that on its own.
+ * tile with a hairline ring, so a grid of twelve agents is twelve quiet
+ * squares. `accent` is the ink tile, and it is for the *singular* context —
+ * the agent you are currently in. It is ink rather than amber because the amber
+ * is a pointer and an avatar is not pointing at anything.
  */
 export function AgentAvatar({
   emoji,
@@ -72,7 +75,7 @@ export function AgentAvatar({
       className={cn(
         TILE,
         tone === "accent"
-          ? "bg-accent-orange text-accent-orange-foreground"
+          ? "bg-brand text-brand-foreground"
           : "bg-surface text-muted-foreground ring-1 ring-inset ring-hairline",
         className,
       )}

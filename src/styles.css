@@ -10,8 +10,8 @@
  * The @theme inline block maps CSS custom properties to Tailwind utility
  * classes (e.g. --color-primary -> bg-primary, text-primary).
  *
- * The :root and .dark blocks define the actual color values using oklch.
- * All colors MUST use oklch format.
+ * The :root and .dark blocks define the actual values. Colours are plain hex
+ * so a value can be checked against DESIGN.md by eye.
  *
  * To add a new semantic color:
  * 1. Add the variable to :root (light value) and .dark (dark value)
@@ -19,49 +19,54 @@
  */
 
 @theme inline {
-  /* Radius encodes scale and is strictly monotonic — the bigger the box, the
-     rounder the corner, and a child inside a rounded parent takes one step
-     LARGER, never smaller. Ladder lifted from the design system §3.4. */
-  --radius-sm: 4px; /* chips, status pills, the button's accent chip */
-  --radius-md: 8px; /* buttons, pills, rows inside a visual */
-  --radius-lg: 10px; /* data rows inside a panel, terminals, icon tiles */
-  --radius-xl: 12px; /* cards, stages, media wells */
-  --radius-2xl: 14px; /* chat bubbles, accordion items */
-  --radius-3xl: 20px; /* opened cards, floating product panels */
-  --radius-4xl: 24px; /* full-bleed painted panels */
+  /* Radius is small and tight. A child inside a rounded parent takes one step
+     LARGER, never smaller, so corners stay concentric — but the whole ladder
+     sits low: the biggest floating surface in the app is 14px, not 24. */
+  --radius-sm: 4px; /* chips, keycaps, checkboxes */
+  --radius-md: 6px; /* buttons, inputs, menu items, avatar tiles */
+  --radius-lg: 8px; /* data rows, menus, icon tiles */
+  --radius-xl: 10px; /* cards */
+  --radius-2xl: 12px; /* dialogs */
+  --radius-3xl: 14px; /* floating panels */
+  --radius-4xl: 16px; /* full-bleed painted panels, the question bubble */
+  --radius-5xl: 20px; /* the composer, and nothing else: it is the one object
+                         on the chat screen that is held rather than read */
 
+  /* One family. Geist does every job — display, interface, body — and the
+     roles are told apart by weight and size, never by a second face. */
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-dm: "DM Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-dm: var(--font-sans);
 
-  /* The type ladder. Ten steps, and a role for each — pick by ROLE, never by
-     how big the box happens to be. The app used to write these as literals at
-     the call site, which is how it ended up with 17px and 18px card titles
-     side by side and a 15px that was a row title in one file and a paragraph
-     in the next.
+  /* The type ladder. Pick by ROLE, never by how big the box happens to be,
+     and never write a size as a literal at the call site.
 
-       12  text-xs     eyebrows, timestamps, chips, keycaps
-       13  text-meta   supporting text: descriptions, subtitles, row meta
-       14  text-sm     interface: nav, buttons, inputs, list rows
-       16  text-base   reading: chat replies, ledes, legal prose
-       18  text-title  DM Sans — card and row titles
-       22  text-title-lg   DM Sans — dialog titles
-       28/32           DM Sans — section headlines (DESIGN.md)
-       38/44           DM Sans — page titles (DESIGN.md)
+       13  text-xs       eyebrows, timestamps, chips, keycaps
+       14  text-meta     supporting text: descriptions, subtitles, row meta
+       15  text-sm       interface: nav, buttons, inputs, list rows
+       16  text-title    card and row titles — semibold
+       16  text-base     reading: chat replies, ledes, legal prose — 1.6 leading
+       18  text-title-lg dialog titles, auth and error card titles — semibold
+       20  text-xl       section headlines — semibold
+       24  text-2xl      page titles — semibold, tight tracking
 
      Reading text is 16/1.6 rather than the framework's 16/1.5: a chat reply is
      a paragraph somebody reads, not a label they scan. */
-  --text-meta: 13px;
+  --text-xs: 13px;
+  --text-xs--line-height: 1.4;
+  --text-sm: 15px;
+  --text-sm--line-height: 1.45;
+  --text-meta: 14px;
   --text-meta--line-height: 1.45;
   --text-base--line-height: 1.6;
-  --text-title: 18px;
-  --text-title--line-height: 1.15;
-  --text-title--letter-spacing: -0.01em;
-  --text-title-lg: 22px;
-  --text-title-lg--line-height: 1.15;
+  --text-title: 16px;
+  --text-title--line-height: 1.3;
+  --text-title--letter-spacing: -0.005em;
+  --text-title-lg: 18px;
+  --text-title-lg--line-height: 1.25;
   --text-title-lg--letter-spacing: -0.01em;
 
-  --color-accent-orange: var(--accent-orange);
-  --color-accent-orange-foreground: var(--accent-orange-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
 
   --ease-spring: var(--ease-spring);
   --ease-standard: var(--ease-standard);
@@ -108,6 +113,7 @@
   --color-micro-foreground: var(--micro-foreground);
   --color-display-muted: var(--display-muted);
 
+  --shadow-xs: var(--shadow-xs);
   --shadow-elegant: var(--shadow-elegant);
   --shadow-card: var(--shadow-card);
   --shadow-open: var(--shadow-open);
@@ -117,167 +123,158 @@
 }
 
 /*
- * The application palette.
+ * The application palette: graphite.
  *
- * Warm neutrals, one ink, exactly one saturated colour — an amber orange that
- * is a POINTER, never a surface. Values are lifted verbatim from the design
- * system's `:root` (§3.1 / §13); do not round them or introduce a second
- * accent. The semantic token names are kept so every existing Tailwind class
- * (`bg-card`, `text-muted-foreground`, …) keeps working.
+ * Cool, near-neutral greys; one graphite ink; exactly one saturated colour, a
+ * deep amber that is a POINTER — a focus ring, a selected mark, a live
+ * indicator — and never a surface. The semantic token names are kept so every
+ * existing Tailwind class (`bg-card`, `text-muted-foreground`, …) keeps
+ * working.
  *
- * Note `--primary` is the ink, not the orange: the primary button is a black
- * fill with a 36px orange chip inside it. Orange on a large fill reads as a
- * warning in this palette, not as a brand.
+ * `--primary` is the ink, not the amber: the primary button is a graphite fill
+ * with white text. Amber on a large fill reads as a warning, not as a brand.
  */
 :root {
-  --radius: 12px;
+  --radius: 10px;
 
-  /* Surfaces — a four-step ladder. Depth is a step, never a shadow. */
-  --background: #f7f7f4; /* canvas */
-  --surface: #eeede6; /* cards, list panels, the rail */
-  --surface-hover: #e8e6dd; /* the hover state of anything --surface */
-  --surface-muted: #f5f4f0; /* panel title bars, empty wells */
+  /* Surfaces. The canvas is a quiet grey and a card is WHITE on it — that
+     one step, plus a hairline, is how depth is drawn. */
+  --background: #f6f6f8; /* canvas */
+  --surface: #eeeef1; /* inset wells, code chips, the hover of a menu row */
+  --surface-hover: #e8e8ec; /* the hover state of anything --surface */
+  --surface-muted: #f3f3f5; /* panel title bars, empty wells */
   /*
-   * The fill of a question in a transcript. Its value matches --surface-hover
-   * in both themes and it is still its own token, because a coincidence of
-   * value is not a shared role: a bubble is not hovering, and retuning what
-   * hover feels like must not silently restyle every question anybody has
-   * asked. Two steps down from the canvas is the whole brief — enough to read
-   * as an opened area, not so much that the question outweighs the answer
-   * under it.
+   * The fill of a question in a transcript. Its value matches --surface in
+   * both themes and it is still its own token, because a coincidence of value
+   * is not a shared role: a bubble is not a well, and retuning what a well
+   * looks like must not silently restyle every question anybody has asked.
    */
-  --bubble: #e8e6dd;
-  --card: #eeede6;
-  --popover: #ffffff; /* white is a promotion: menus and dialogs float */
+  --bubble: #eeeef1;
+  --card: #ffffff;
+  --popover: #ffffff;
 
   /* Ink — four greys, not interchangeable. */
-  --foreground: #251f19;
-  --card-foreground: #251f19;
-  --popover-foreground: #251f19;
-  --card-body: #3d342c; /* body copy sitting on a painted surface */
-  --muted-foreground: #68615a; /* the default secondary */
-  --micro-foreground: #8e867d; /* micro-labels only, never body */
-  --display-muted: #948b81; /* the italic half of a two-tone headline */
+  --foreground: #15171c;
+  --card-foreground: #15171c;
+  --popover-foreground: #15171c;
+  --card-body: #2b2e36; /* body copy sitting on a painted surface */
+  --muted-foreground: #626671; /* the default secondary */
+  --micro-foreground: #8a8e99; /* micro-labels only, never body */
+  --display-muted: #8a8e99; /* the muted half of a two-part headline */
 
-  /* Primary = ink. The orange lives in the button's chip (§6). */
-  --primary: #251f19;
+  /* Primary = ink. */
+  --primary: #15171c;
   --primary-foreground: #ffffff;
   --secondary: #ffffff;
-  --secondary-foreground: #251f19;
-  --muted: #e4e0dd;
-  --accent: #e8e6dd;
-  --accent-foreground: #251f19;
+  --secondary-foreground: #15171c;
+  --muted: #ececef;
+  --accent: #eeeef1;
+  --accent-foreground: #15171c;
 
-  --accent-orange: #f48d16;
-  --accent-orange-foreground: #ffffff;
+  --brand: #f48d16;
+  --brand-foreground: #1a1510;
 
   /* Lines. Borders are how this system separates things. */
-  --border: #ddd8d3; /* a card sitting on the canvas */
-  --hairline: #ebe8e4; /* a row inside a panel */
-  --input: #ddd8d3;
-  --ring: #f48d16; /* focus is orange, on both surfaces */
+  --border: #e2e3e7; /* a card sitting on the canvas */
+  --hairline: #ebecef; /* a row inside a panel */
+  --input: #d7d9df;
+  --ring: #f48d16; /* focus is amber, on both surfaces */
 
-  /* Destructive is an extension: the marketing system has no destructive
-     action, but "delete agent" must not look like "save". Kept muted and
-     reserved for confirmation actions. */
-  --destructive: #a8341c;
+  /* Destructive: muted red, reserved for confirmation actions and failures. */
+  --destructive: #b42318;
   --destructive-foreground: #ffffff;
 
   --chart-1: #f48d16;
-  --chart-2: #251f19;
-  --chart-3: #68615a;
-  --chart-4: #948b81;
-  --chart-5: #d4cdc7;
+  --chart-2: #15171c;
+  --chart-3: #626671;
+  --chart-4: #8a8e99;
+  --chart-5: #d7d9df;
 
-  --sidebar: #eeede6;
-  --sidebar-foreground: #251f19;
-  --sidebar-primary: #251f19;
+  --sidebar: #f0f0f3;
+  --sidebar-foreground: #15171c;
+  --sidebar-primary: #15171c;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e8e6dd;
-  --sidebar-accent-foreground: #251f19;
-  --sidebar-border: #ddd8d3;
+  --sidebar-accent: #e4e5e9;
+  --sidebar-accent-foreground: #15171c;
+  --sidebar-border: #e2e3e7;
   --sidebar-ring: #f48d16;
 
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1); /* transform, height */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* opacity, colour */
 
-  /* Three shadows in the whole system. Cards get none of them. */
-  --shadow-card: 0 28px 70px -23px rgba(26, 23, 20, 0.18); /* a panel that floats */
-  --shadow-elegant: 0 28px 70px -23px rgba(26, 23, 20, 0.18);
-  --shadow-open: 0 12px 16px 0 #ebe8e4; /* an opened card lifting off its row */
-  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--accent-orange);
+  /* Shadows are quiet and few. A card gets the hairline one; a panel, a
+     menu or a dialog gets the floating one; nothing glows. */
+  --shadow-xs: 0 1px 2px rgba(21, 23, 28, 0.04);
+  --shadow-card: 0 1px 2px rgba(21, 23, 28, 0.06), 0 12px 32px -12px rgba(21, 23, 28, 0.18);
+  --shadow-elegant: 0 1px 2px rgba(21, 23, 28, 0.06), 0 12px 32px -12px rgba(21, 23, 28, 0.18);
+  --shadow-open: 0 4px 12px -4px rgba(21, 23, 28, 0.12);
+  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
 
   --gradient-hero: none;
 }
 
 /*
- * Dark mode is an EXTENSION, not part of the design system.
- *
- * The system defines no dark theme — it is a light, warm, printed surface, and
- * its only dark objects are the primary button and the terminal quotation. But
- * the product ships a theme toggle and removing it would be a regression, so
- * this block derives the same ladder in reverse from the same ink (#251f19):
- * warm near-blacks, the identical amber accent, the same four-step depth. The
- * button keeps its structure — the chip stays orange in both themes (§6.2) —
- * and only the fill and label swap. If the system ever specifies a dark theme,
- * this block is what it replaces.
+ * Dark mode derives the same ladder in reverse: near-black greys with the
+ * same slight cool cast, the ink inverted to off-white, the same amber one
+ * step lighter so it keeps its contrast on dark. The button fill inverts;
+ * the amber does not change role.
  */
 .dark {
-  --background: #17130f;
-  --surface: #1f1a15;
-  --surface-hover: #272119;
-  --surface-muted: #1b1611;
-  --bubble: #272119;
-  --card: #1f1a15;
-  --popover: #26201a;
+  --background: #0f1012;
+  --surface: #17181c;
+  --surface-hover: #1e1f24;
+  --surface-muted: #141518;
+  --bubble: #1c1d22;
+  --card: #151619;
+  --popover: #1a1b1f;
 
-  --foreground: #f4f1ec;
-  --card-foreground: #f4f1ec;
-  --popover-foreground: #f4f1ec;
-  --card-body: #ddd6cd;
-  --muted-foreground: #a9a099;
-  --micro-foreground: #8a8078;
-  --display-muted: #7d746c;
+  --foreground: #ececef;
+  --card-foreground: #ececef;
+  --popover-foreground: #ececef;
+  --card-body: #d2d3d8;
+  --muted-foreground: #9a9ca5;
+  --micro-foreground: #6e717b;
+  --display-muted: #6e717b;
 
-  /* Inverted button fill; the chip stays amber. */
-  --primary: #f4f1ec;
-  --primary-foreground: #251f19;
-  --secondary: #2b241d;
-  --secondary-foreground: #f4f1ec;
-  --muted: #2f2820;
-  --accent: #272119;
-  --accent-foreground: #f4f1ec;
+  --primary: #ececef;
+  --primary-foreground: #0f1012;
+  --secondary: #1c1d22;
+  --secondary-foreground: #ececef;
+  --muted: #222328;
+  --accent: #1f2025;
+  --accent-foreground: #ececef;
 
-  --accent-orange: #f48d16;
-  --accent-orange-foreground: #17130f;
+  --brand: #f59e2b;
+  --brand-foreground: #1a1510;
 
-  --border: #332b23;
-  --hairline: #2b241d;
-  --input: #3a3129;
-  --ring: #f48d16;
+  --border: #26272d;
+  --hairline: #1f2025;
+  --input: #2d2e35;
+  --ring: #f59e2b;
 
-  --destructive: #e0674a;
-  --destructive-foreground: #17130f;
+  --destructive: #f0695a;
+  --destructive-foreground: #0f1012;
 
-  --chart-1: #f48d16;
-  --chart-2: #f4f1ec;
-  --chart-3: #a9a099;
-  --chart-4: #7d746c;
-  --chart-5: #453b31;
+  --chart-1: #f59e2b;
+  --chart-2: #ececef;
+  --chart-3: #9a9ca5;
+  --chart-4: #6e717b;
+  --chart-5: #2d2e35;
 
-  --sidebar: #1b1611;
-  --sidebar-foreground: #f4f1ec;
-  --sidebar-primary: #f4f1ec;
-  --sidebar-primary-foreground: #251f19;
-  --sidebar-accent: #272119;
-  --sidebar-accent-foreground: #f4f1ec;
-  --sidebar-border: #332b23;
-  --sidebar-ring: #f48d16;
+  --sidebar: #121316;
+  --sidebar-foreground: #ececef;
+  --sidebar-primary: #ececef;
+  --sidebar-primary-foreground: #0f1012;
+  --sidebar-accent: #1f2025;
+  --sidebar-accent-foreground: #ececef;
+  --sidebar-border: #222328;
+  --sidebar-ring: #f59e2b;
 
-  --shadow-card: 0 28px 70px -23px rgba(0, 0, 0, 0.55);
-  --shadow-elegant: 0 28px 70px -23px rgba(0, 0, 0, 0.55);
-  --shadow-open: 0 12px 16px 0 rgba(0, 0, 0, 0.35);
-  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--accent-orange);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  --shadow-elegant: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  --shadow-open: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
 
   --gradient-hero: none;
 }
@@ -294,20 +291,17 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
-    /* Geist does every interface and body job. */
     font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  /* DM Sans does every display job — headlines, card titles, numbers, the
-     wordmark — at the pinned 14 optical size, which keeps letterforms open
-     enough to read as editorial rather than geometric (§3.2). The two
-     families never swap roles: pick by role, not by size. */
+  /* Headlines are the same face as everything else, one weight up and
+     tracked tight. That is the whole display treatment. */
   h1,
-  h2,
-  .font-dm {
-    font-family: var(--font-dm);
-    font-variation-settings: "opsz" 14;
-    letter-spacing: -0.01em;
+  h2 {
+    font-weight: 600;
+    letter-spacing: -0.02em;
   }
 
   /* Headlines never leave an orphan; paragraphs get pretty rag. */
@@ -320,25 +314,6 @@
   p {
     text-wrap: pretty;
   }
-}
-
-/* The two-tone headline: statement, then an italic turn in muted display grey.
-   The signature device of the system (§5.5) — the italic half is always the
-   second half, always muted, always weight 500. */
-.h2-turn em {
-  font-style: italic;
-  font-weight: 500;
-  color: var(--display-muted);
-}
-
-/* Square bullets. Circles appear in exactly two places in this system, both
-   window-chrome imitations; everything else that marks a list is a square. */
-.square-bullet::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  background: var(--accent-orange);
-  flex-shrink: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -373,7 +348,7 @@
  * general rather than "this row". The trail's marks are 8px squares and this
  * is one of them, in the state between arriving and being done.
  *
- * TWO AMBERS, AND THEY MUST STAY TELLABLE APART. A filled amber square means
+ * TWO AMBERS, AND THEY MUST STAY TELLABLE APART. A filled amber dot means
  * "this one is yours" — a confirmation waiting on a person. This one is an
  * amber OUTLINE with the fill sweeping through it: the machine is busy and
  * nothing is being asked. Outline against fill is the distinction, and it is
@@ -390,11 +365,11 @@
 }
 
 .step-running {
-  box-shadow: inset 0 0 0 1.5px var(--accent-orange);
+  box-shadow: inset 0 0 0 1.5px var(--brand);
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    var(--accent-orange) 50%,
+    var(--brand) 50%,
     transparent 100%
   );
   background-size: 250% 100%;
@@ -505,7 +480,7 @@
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  border: 1px solid var(--accent-orange);
+  border: 1px solid var(--brand);
   animation: browser-breathe 2.4s ease-in-out infinite;
 }
 
@@ -558,4 +533,20 @@
     background: #fff;
     color: #251f19;
   }
+}
+
+/*
+ * Two small things every polished product does and a default page does not.
+ * The selection is the amber at a tint rather than the browser's blue, so
+ * highlighting a reply does not introduce a second accent; the scrollbars are
+ * thin and in the hairline colour, so a long transcript does not carry a grey
+ * gutter down its right edge.
+ */
+::selection {
+  background: color-mix(in oklab, var(--brand) 28%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
 }

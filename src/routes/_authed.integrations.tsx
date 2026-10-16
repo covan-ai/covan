@@ -240,7 +240,7 @@ function IntegrationsPage() {
             <SectionCard className="flex flex-col gap-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-col gap-[3px]">
-                  <span className="font-dm text-title font-medium leading-tight">
+                  <span className="text-title font-semibold leading-tight">
                     Databases and APIs
                   </span>
                   <span className="text-meta leading-tight text-muted-foreground">
@@ -345,7 +345,7 @@ function SurfaceCard({
           {mark}
         </span>
         <span className="flex min-w-0 flex-col gap-[3px]">
-          <span className="font-dm text-title font-medium leading-tight">{title}</span>
+          <span className="text-title font-semibold leading-tight">{title}</span>
           <span className="text-meta leading-tight text-muted-foreground">{meta}</span>
         </span>
       </div>

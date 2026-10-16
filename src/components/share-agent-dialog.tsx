@@ -172,14 +172,14 @@ function ShareAgentForm({ agent, onDone }: { agent: Agent; onDone: () => void })
                 type="button"
                 aria-pressed={selected}
                 onClick={() => setMode(option.key)}
-                className="flex w-full items-start gap-3 rounded-lg px-4 py-3 text-left focus-visible:shadow-glow focus-visible:outline-none"
+                className="flex w-full items-start gap-3 rounded-lg px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
-                {/* The system's selection marker: a square, amber when on. */}
+                {/* The system's selection marker: a dot, amber when on. */}
                 <span
                   aria-hidden
                   className={cn(
-                    "mt-1.5 h-2 w-2 shrink-0",
-                    selected ? "bg-accent-orange" : "bg-border",
+                    "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                    selected ? "bg-brand" : "bg-border",
                   )}
                 />
                 <span className="min-w-0 flex-1">

@@ -129,16 +129,16 @@ describe("the Knowledge tab", () => {
 
     expect(screen.getByText("pitch-deck.pdf")).toBeInTheDocument();
     expect(screen.queryByText(/drop files into/i)).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("New bundle")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
   });
 
-  it("gives a member the upload well and a way to make another bundle", async () => {
+  it("gives a member the upload strip and a way to make another folder", async () => {
     renderTab(true);
 
-    expect(screen.getByPlaceholderText("New bundle")).toBeInTheDocument();
-    // Uploading needs a bundle, and "everything this agent reads" is a view
-    // rather than a place — so the well says which bundle is missing.
-    expect(screen.getByText("Pick a bundle to upload into")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New folder" })).toBeInTheDocument();
+    // Uploading needs a folder, and "everything this agent reads" is a view
+    // rather than a place — so the strip says which folder is missing.
+    expect(screen.getByText("Pick a folder to upload into")).toBeInTheDocument();
   });
 
   it("offers a member move, reindex and delete on a document, and a viewer none of them", async () => {
@@ -229,7 +229,7 @@ describe("a workspace with nothing in it", () => {
     expect(screen.getByText("Start with four files")).toBeInTheDocument();
     expect(screen.getByText("The handbook")).toBeInTheDocument();
     expect(screen.getByText("The answer you have typed twice")).toBeInTheDocument();
-    expect(screen.queryByText("No bundles yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("No folders yet")).not.toBeInTheDocument();
   });
 
   it("gives a viewer the explorer's own empty rail, because they cannot act on it", async () => {
@@ -237,9 +237,9 @@ describe("a workspace with nothing in it", () => {
     // reads as your job until you try, and the upload control is not there.
     renderTab(false);
 
-    expect(screen.getByText(/no bundles yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no folders yet/i)).toBeInTheDocument();
     expect(screen.queryByText("Start with four files")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("New bundle")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
   });
 });
 

@@ -316,7 +316,7 @@ function FileTab({
       {ext === "csv" ? (
         <CsvTable text={shown} />
       ) : ext === "md" || ext === "markdown" ? (
-        <Markdown content={shown} />
+        <Markdown content={shown} className="text-base" />
       ) : (
         <pre className="whitespace-pre-wrap break-words font-mono text-meta leading-relaxed">
           {ext === "json" ? prettyJson(shown) : shown}

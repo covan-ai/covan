@@ -125,7 +125,7 @@ export const AnswerTurn = memo(function AnswerTurn({
       <div className="min-w-0" data-turn="answer">
         <div data-part="byline" className="mb-2 flex items-center gap-2">
           <AgentAvatar emoji={agentEmoji} className="h-5 w-5 text-[11px]" />
-          <span className="font-dm text-sm font-medium leading-none">{agentName}</span>
+          <span className="text-sm font-semibold leading-none">{agentName}</span>
           <span className="text-xs tabular-nums text-muted-foreground">{time}</span>
         </div>
         <Markdown

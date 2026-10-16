@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -97,13 +97,24 @@ beforeEach(async () => {
   ({ KnowledgeExplorer } = await import("./knowledge-explorer"));
 });
 
-function renderExplorer() {
+/**
+ * The explorer, with the first folder open — which is where every test about
+ * files starts, and one click from where the page starts.
+ *
+ * The page opens on the root, the way a drive does: folders as folders. The
+ * root draws each folder twice, in the sidebar and in the pane, so the click
+ * goes to the first "Open …" on the screen rather than to the only one.
+ */
+function renderExplorer({ atRoot = false } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <KnowledgeExplorer />
     </QueryClientProvider>,
   );
+  if (!atRoot && store.bundles.length > 0) {
+    fireEvent.click(screen.getAllByLabelText(`Open ${store.bundles[0].name}`)[0]);
+  }
 }
 
 /**
@@ -119,10 +130,28 @@ function fileNames(): string[] {
 }
 
 describe("the Knowledge explorer, on the workspace page", () => {
-  // Without an agent there is no "everything this agent reads", so the first
-  // bundle is the folder it opens on — a page that opened on nothing would make
-  // picking a bundle a step before seeing any file at all.
-  it("opens the first bundle and lists what is in it", async () => {
+  // Without an agent there is no "everything this agent reads", so the page
+  // opens on the root: every folder, as a folder, the way a drive opens.
+  it("opens on the folders, and a folder opens on its files", async () => {
+    renderExplorer({ atRoot: true });
+
+    // The root names each folder twice — in the pane and in the sidebar — and
+    // lists no file.
+    expect(screen.getAllByLabelText("Open GTM knowledge").length).toBeGreaterThan(1);
+    expect(screen.queryByText("zebra-notes.md")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+
+    await userEvent.click(screen.getAllByLabelText("Open GTM knowledge")[0]);
+    await screen.findByText("zebra-notes.md");
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+
+    // Back is the root again.
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.queryByText("zebra-notes.md")).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText("Open Old pricing").length).toBeGreaterThan(1);
+  });
+
+  it("lists what is in a folder", async () => {
     renderExplorer();
 
     expect(listDocuments).toHaveBeenCalledWith("bundle-1");
@@ -523,7 +552,7 @@ describe("finding what is wrong in a folder full of files", () => {
 
     listDocuments.mockResolvedValue([]);
     await userEvent.click(rail);
-    expect(await screen.findByText(/no agent reads this bundle yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no agent reads this folder yet/i)).toBeInTheDocument();
   });
 
   it("gives the rail a search of its own once there are too many bundles", async () => {
@@ -536,7 +565,7 @@ describe("finding what is wrong in a folder full of files", () => {
     listDocuments.mockResolvedValue([]);
     renderExplorer();
 
-    const find = await screen.findByLabelText(/find a bundle by name/i);
+    const find = await screen.findByLabelText(/find a folder by name/i);
     await userEvent.type(find, "pricing");
 
     expect(screen.getByLabelText("Open Pricing")).toBeInTheDocument();
@@ -544,7 +573,7 @@ describe("finding what is wrong in a folder full of files", () => {
 
     await userEvent.clear(find);
     await userEvent.type(find, "nothing-like-this");
-    expect(screen.getByText(/no bundle is called "nothing-like-this"/i)).toBeInTheDocument();
+    expect(screen.getByText(/no folder is called "nothing-like-this"/i)).toBeInTheDocument();
   });
 });
 

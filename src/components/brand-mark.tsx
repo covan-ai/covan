@@ -1,13 +1,13 @@
 import { cn } from "@/lib/utils";
 
 /**
- * The Covan brand mark: the logo on an ink tile — the same lockup the OG image
- * and the favicons carry. Size via `className`.
+ * The Covan brand mark: the bare logo in the ink colour — black on the light
+ * theme, white on the dark one, no tile behind it. Size via `className`.
  *
- * The glyph is inlined rather than loaded as a file because `--primary` inverts
- * between themes: a fixed light logo would sit invisible on the near-white tile
- * dark mode gives it. `currentColor` on the tile's own foreground handles that
- * in one line, and an inline path stays sharp at every size — this renders at
+ * The glyph is inlined rather than loaded as a file because the ink inverts
+ * between themes: a fixed black logo would sit invisible on the dark canvas.
+ * `currentColor` on the foreground handles that in one line, and an inline
+ * path stays sharp at every size — this renders at
  * 32px in the sidebar and much larger on the auth screens.
  *
  * The shape is kept in step with `assets/logo.svg`, which is what the icons in
@@ -17,7 +17,7 @@ export function BrandMark({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground",
+        "grid h-8 w-8 place-items-center text-foreground",
         className,
       )}
     >
@@ -30,7 +30,7 @@ export function BrandMark({ className }: { className?: string }) {
         // 3/5; this one is four thin courses rather than a solid ring, and at
         // the 32px this renders at in the sidebar the bottom course closes up
         // and the tip disappears at that size. Bigger is legible, not louder.
-        className="h-2/3 w-2/3"
+        className="h-[82%] w-[82%]"
       >
         <polygon points="0,0 150,0 135.42,26.25 14.58,26.25" />
         <polygon points="20.14,36.25 129.86,36.25 115.28,62.5 34.72,62.5" />

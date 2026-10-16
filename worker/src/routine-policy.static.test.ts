@@ -67,6 +67,23 @@ const SUBSUMES: Record<string, string[]> = {
     "is_workspace_member",
     "can_write_in_workspace",
   ],
+  // 0113. The same two questions asked once per statement as sets rather than
+  // once per passage: `visible_bundles` is `bundle_is_visible`'s predicate
+  // verbatim, and `visible_documents` is `documents_select_member`'s — not
+  // deleted, in a visible bundle.
+  visible_bundles: [
+    "knowledge_bundles",
+    "workspace_members",
+    "is_workspace_member",
+    "bundle_is_visible",
+  ],
+  visible_documents: [
+    "documents",
+    "knowledge_bundles",
+    "workspace_members",
+    "is_workspace_member",
+    "bundle_is_visible",
+  ],
 };
 
 /**

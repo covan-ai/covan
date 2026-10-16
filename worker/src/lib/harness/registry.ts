@@ -12,6 +12,8 @@ import { httpRequestTool } from "./tools/http-request";
 import { browseTool } from "./tools/browse";
 import { sendEmailTool } from "./tools/send-email";
 import { scheduleJobTool } from "./tools/schedule-job";
+import { watchEventTool } from "./tools/watch-event";
+import { runRoutineTool } from "./tools/run-routine";
 import { findToolTool } from "./tools/find-tool";
 import { runToolTool } from "./tools/run-tool";
 import { writeDocumentTool } from "./tools/write-document";
@@ -314,6 +316,12 @@ export type ToolContext = {
    * answer has to be rebuilt rather than recovered.
    */
   priorSearches?: Map<string, string[]>;
+  /**
+   * How many routines started one another to reach the routine run this turn
+   * belongs to (`IngestTrigger.depth`). Read by `run_routine`, which starts
+   * the next one a step deeper and refuses past its limit. Absent in chat.
+   */
+  chainDepth?: number;
   /** Bounds a tool's own outbound work. See `lib/harness/budget.ts`. */
   signal?: AbortSignal;
 };
@@ -427,6 +435,8 @@ export const TOOLS: AgentTool[] = [
   runToolTool,
   sendEmailTool,
   scheduleJobTool,
+  watchEventTool,
+  runRoutineTool,
   writeDocumentTool,
 ];
 

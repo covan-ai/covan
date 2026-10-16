@@ -90,6 +90,13 @@ describe("RoutineWebhookCard", () => {
     expect(screen.getByRole("button", { name: /Replace the URL/i })).toBeInTheDocument();
   });
 
+  it("shows how to start it from Siri once there is a URL, and not before", async () => {
+    trigger.mockResolvedValue({ configured: true, createdAt: 0, lastUsedAt: null });
+    renderCard();
+    expect(await screen.findByText("Use it with Siri or Shortcuts")).toBeInTheDocument();
+    expect(screen.getByText("?wait=1")).toBeInTheDocument();
+  });
+
   it("says when it last fired", async () => {
     trigger.mockResolvedValue({
       configured: true,

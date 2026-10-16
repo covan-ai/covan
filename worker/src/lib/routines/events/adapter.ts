@@ -34,6 +34,7 @@ import { SLACK_ADAPTER } from "./slack";
 import { NOTION_ADAPTER } from "./notion";
 import { DRIVE_ADAPTER } from "./drive";
 import { EMAIL_ADAPTER } from "./email";
+import { TELEGRAM_ADAPTER } from "./telegram";
 
 /** The row as the engine reads it, secret still sealed. */
 export type SubscriptionRow = {
@@ -141,6 +142,15 @@ export interface EventAdapter {
    */
   advance?(raw: unknown, ctx: AdapterContext): Promise<Advanced | null>;
   /**
+   * A delivery that is about the arrangement rather than an event: a chat
+   * pairing itself with a Telegram routine by sending `/start <code>`. Asked
+   * in `receive.ts` before `normalize`, for a running routine only. An answer
+   * of `{ state }` is written to the row (`rememberState` — the adapter still
+   * writes nothing itself) and runs nothing; null means it is not one, and the
+   * delivery goes on to `normalize` as usual.
+   */
+  handshake?(raw: unknown, ctx: AdapterContext): Promise<{ state: Record<string, unknown> } | null>;
+  /**
    * The raw delivery, as the provider sent it, made into something a model can
    * read in a paragraph. `null` means "not an event for this routine after
    * all" — the bot's own message echoing back, an edit of a message already
@@ -167,6 +177,7 @@ const ADAPTERS: Partial<Record<EventProvider, EventAdapter>> = {
   notion: NOTION_ADAPTER,
   google_drive: DRIVE_ADAPTER,
   email: EMAIL_ADAPTER,
+  telegram: TELEGRAM_ADAPTER,
 };
 
 export const ADAPTER_REGISTRY: AdapterRegistry = {

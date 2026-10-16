@@ -10,6 +10,7 @@ import {
   type ExecutorDeps,
   type IngestTrigger,
   type RoutineRow,
+  type RunResult,
 } from "./executor";
 import { summariseWithModel } from "./summarise";
 import { runRoutineWithTools } from "./agent-run";
@@ -368,7 +369,7 @@ export async function runOneRoutine(
   env: RoutineEnv,
   routine: RoutineRow,
   overrides: Partial<DispatcherDeps> = {},
-): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> {
+): Promise<RunResult> {
   const db = overrides.db ?? serviceClient(env);
   const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
   // The one place a run has a person behind it. A webhook receiver is told, so
@@ -395,7 +396,7 @@ export async function runPokedRoutine(
   routine: RoutineRow,
   trigger: IngestTrigger,
   overrides: Partial<DispatcherDeps> = {},
-): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> {
+): Promise<RunResult> {
   const db = overrides.db ?? serviceClient(env);
   const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
   return runRoutine(routine, executorDeps(env, db), trigger);

@@ -10,6 +10,12 @@ import { WEBSUB_HOOK_ID, isOurIntent, type WebSubDelivery } from "../lib/routine
 import { DRIVE_CHANNEL_ID, type DriveNotification } from "../lib/routines/events/drive";
 import type { EventProvider } from "../lib/routines/events/catalog";
 import { startPokedRun } from "../lib/routines/poke-room";
+import {
+  TELEGRAM_HOOK_ID,
+  webhookToken,
+  type TelegramDelivery,
+} from "../lib/routines/events/telegram";
+import { timingSafeEqual } from "../lib/hmac";
 
 /**
  * The doors for providers that sign each subscription's deliveries with that
@@ -20,14 +26,30 @@ import { startPokedRun } from "../lib/routines/poke-room";
  *   GET  /routine-events/websub/:id    a hub checking we asked (the challenge)
  *   POST /routine-events/websub/:id    a hub pushing a feed that changed
  *   POST /routine-events/drive/:id     a Drive channel saying something changed
+ *   POST /routine-events/telegram/:id  a message to a person's own bot
+ *
+ * Telegram is the exception to what follows: its secret is derived from the
+ * id in the path (`webhookToken`), so that door checks it before any lookup,
+ * as `/composio/events` does. See `events/telegram.ts`.
  *
  * Unlike `/composio/events`, which checks one deployment-wide signature
  * before reading anything, these cannot know the secret until they know the
  * subscription — so the id in the path finds the row, and the adapter's
  * `authenticate` checks the signature in `receive.ts` before anything about
- * the routine is consulted. A delivery for no row, or one that fails the
- * signature, is counted against the address (`countMiss`), so guessing ids is
- * as expensive as guessing a webhook token (`routine-hooks.ts`).
+ * the routine is consulted.
+ *
+ * WHAT IS NOT COUNTED AGAINST THE ADDRESS. GitHub, Google and Telegram each
+ * deliver for every one of their customers from a few shared addresses, and
+ * `countMiss` charges an address, not a subscription. A webhook left in a
+ * repository after its routine was deleted, or one set up with a mistyped
+ * secret, sends a failing delivery on every push; counted against the address,
+ * a handful of those would refuse every other customer's GitHub deliveries,
+ * and Slack's and Composio's from the same refusal list. So a delivery that
+ * reaches `receiveEvent` is never counted, whatever it turns out to be. What
+ * bounds it instead: the id is 192 random bits, so there is nothing to guess;
+ * each id has its own expensive-tier allowance, taken before the lookup; and an
+ * id that is not even the right shape is still counted, because no provider of
+ * ours ever sends one.
  *
  * Unauthenticated in the Covan sense, like the other doors: no session and no
  * `auth.uid()`. The id and the signature are what stand in for a caller.
@@ -69,8 +91,8 @@ async function deliver(
   c: Context<AppEnv>,
   provider: EventProvider,
   id: string,
-  raw: GitHubDelivery | WebSubDelivery | DriveNotification,
-  options: { unknownIsAMiss?: boolean } = {},
+  raw: GitHubDelivery | WebSubDelivery | DriveNotification | TelegramDelivery,
+  options: { unknown?: "not found" | "ok" } = {},
 ): Promise<Response> {
   const verdict = await getRateLimiter(c.env, "expensive").check(`${provider}-hook:${id}`);
   if (!verdict.allowed) {
@@ -83,23 +105,17 @@ async function deliver(
     run: (_env, routine, trigger) => startPokedRun(c.env, routine, trigger),
   });
 
-  // A 404 for a URL nothing holds: GitHub shows it against the webhook, which
-  // is the person's cue to remove a webhook whose routine is gone, and a hub
-  // treats it as "stop pushing". Counted either way — except where the sender
-  // is Google, whose few addresses deliver every Drive channel there is: a
-  // channel that could not be stopped keeps calling for up to a week, and
-  // counting that against the address would refuse everybody's Drive.
-  if (outcome.status === "unknown" && options.unknownIsAMiss === false) {
-    return c.json({ ok: true, status: outcome.status });
-  }
+  // A URL nothing holds. GitHub shows a 404 against the webhook, which is the
+  // person's cue to remove a webhook whose routine is gone, and a hub reads it
+  // as "stop pushing". A Drive channel or a Telegram bot left behind is
+  // answered 200 instead: a Drive channel that could not be stopped keeps
+  // calling for up to a week whatever it is told, and Telegram retries
+  // anything else. Neither is counted; see the header.
   if (outcome.status === "unknown") {
-    await countMiss(c);
+    if (options.unknown === "ok") return c.json({ ok: true, status: "unknown" });
     return c.json({ error: "not found" }, 404);
   }
-  if (outcome.status === "forged") {
-    await countMiss(c);
-    return c.json({ error: "invalid signature" }, 401);
-  }
+  if (outcome.status === "forged") return c.json({ error: "invalid signature" }, 401);
   // Every other outcome is handled, and a provider told otherwise retries.
   return c.json({ ok: true, status: outcome.status });
 }
@@ -186,6 +202,26 @@ routineEvents.post("/routine-events/drive/:id", async (c) => {
     "google_drive",
     id,
     { token: c.req.header("X-Goog-Channel-Token") ?? "", state },
-    { unknownIsAMiss: false },
+    { unknown: "ok" },
   );
+});
+
+routineEvents.post("/routine-events/telegram/:id", async (c) => {
+  if (hasSpentMisses(c)) return refuseSpent(c);
+  const id = c.req.param("id");
+  const given = c.req.header("X-Telegram-Bot-Api-Secret-Token") ?? "";
+  // The token is checked before the body is read and before any lookup: it
+  // is an HMAC of the id, so nothing about a row is needed to know whether
+  // this came from a webhook this deployment set.
+  if (
+    !TELEGRAM_HOOK_ID.test(id) ||
+    !c.env.ROUTINE_SECRET_KEY ||
+    !timingSafeEqual(await webhookToken(c.env, id), given)
+  ) {
+    await countMiss(c);
+    return c.json({ error: "invalid signature" }, 401);
+  }
+  const body = await cappedBody(c);
+  if (typeof body !== "string") return body;
+  return deliver(c, "telegram", id, { body }, { unknown: "ok" });
 });

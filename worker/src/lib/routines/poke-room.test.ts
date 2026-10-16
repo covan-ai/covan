@@ -2,13 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryDb, type Row } from "../../test-support/memory-db";
 import type { IngestTrigger, RoutineRow } from "./executor";
 
-const runPokedRoutine = vi.fn(async (..._args: unknown[]) => ({ status: "ok", itemsNew: 1 }));
+const runPokedRoutine = vi.fn(
+  async (..._args: unknown[]): Promise<{ status: string; itemsNew: number; summary?: string }> => ({
+    status: "ok",
+    itemsNew: 1,
+  }),
+);
 let db: ReturnType<typeof memoryDb>["db"];
 
 vi.mock("./dispatcher", () => ({
   runPokedRoutine: (...args: unknown[]) => runPokedRoutine(...args),
 }));
 vi.mock("../supabase", () => ({ serviceClient: () => db }));
+const replyToTelegram = vi.fn(async (..._args: unknown[]) => {});
+vi.mock("./events/telegram", () => ({
+  replyToTelegram: (...args: unknown[]) => replyToTelegram(...args),
+}));
 
 const { RoutineRoom, startPokedRun } = await import("./poke-room");
 
@@ -82,7 +91,8 @@ function parkRequest(body: unknown, path = "/run") {
 }
 
 beforeEach(() => {
-  runPokedRoutine.mockClear();
+  runPokedRoutine.mockReset().mockResolvedValue({ status: "ok", itemsNew: 1 });
+  replyToTelegram.mockClear();
   db = memoryDb({ routines: [routineRow()] }).db;
 });
 
@@ -177,5 +187,89 @@ describe("RoutineRoom", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(room.alarm()).resolves.toBeUndefined();
     error.mockRestore();
+  });
+});
+
+describe("answering where the event came from", () => {
+  const FROM_CHAT: IngestTrigger = {
+    ...TRIGGER,
+    replyTo: { provider: "telegram", chatId: "42", messageId: 7 },
+  };
+
+  it("answers the Telegram chat after the run, in place", async () => {
+    runPokedRoutine.mockResolvedValueOnce({ status: "ok", itemsNew: 1, summary: "Sales up 4%." });
+    await startPokedRun({} as never, ROUTINE, FROM_CHAT);
+    expect(replyToTelegram.mock.calls[0].slice(1)).toEqual([
+      "r1",
+      FROM_CHAT.replyTo,
+      { status: "ok", itemsNew: 1, summary: "Sales up 4%." },
+    ]);
+  });
+
+  it("answers from the room's alarm too, and nothing for an event with nowhere to answer", async () => {
+    const s = fakeState();
+    const room = new RoutineRoom(s.state as never, {} as never);
+    await room.fetch(parkRequest({ routineId: "r1", trigger: FROM_CHAT }));
+    await room.alarm();
+    expect(replyToTelegram).toHaveBeenCalledOnce();
+
+    await startPokedRun({} as never, ROUTINE, TRIGGER);
+    expect(replyToTelegram).toHaveBeenCalledOnce();
+  });
+});
+
+describe("waiting for the result", () => {
+  it("hands back the result when the run finishes in time, in place", async () => {
+    runPokedRoutine.mockResolvedValueOnce({ status: "ok", itemsNew: 1, summary: "Done." });
+    const keepAlive = vi.fn();
+    const result = await startPokedRun({} as never, ROUTINE, TRIGGER, { waitMs: 1_000, keepAlive });
+    expect(result).toEqual({ status: "ok", itemsNew: 1, summary: "Done." });
+    expect(keepAlive).toHaveBeenCalledOnce();
+  });
+
+  it("answers null when it does not, and leaves the run going", async () => {
+    let finish!: (r: unknown) => void;
+    runPokedRoutine.mockImplementationOnce(() => new Promise((r) => (finish = r)) as never);
+    const keepAlive = vi.fn();
+    const result = await startPokedRun({} as never, ROUTINE, TRIGGER, { waitMs: 10, keepAlive });
+    expect(result).toBeNull();
+    const kept = keepAlive.mock.calls[0][0] as Promise<unknown>;
+    finish({ status: "ok", itemsNew: 1 });
+    await expect(kept).resolves.toMatchObject({ status: "ok" });
+  });
+
+  it("asks the room to wait, and reads its answer", async () => {
+    const room = namespace(async () =>
+      Response.json({ ok: true, result: { status: "ok", itemsNew: 1, summary: "From the room." } }),
+    );
+    const result = await startPokedRun({ ROUTINE_ROOMS: room.ns } as never, ROUTINE, TRIGGER, {
+      waitMs: 60_000,
+    });
+    expect(result).toMatchObject({ summary: "From the room." });
+    // Capped, whatever was asked for.
+    expect(room.calls[0].url).toBe("https://routine-room/run?wait=25000");
+    expect(runPokedRoutine).not.toHaveBeenCalled();
+  });
+
+  it("holds a waiting caller in the room until its alarm has run", async () => {
+    runPokedRoutine.mockResolvedValueOnce({
+      status: "ok",
+      itemsNew: 1,
+      summary: "Alarm's report.",
+    });
+    const s = fakeState();
+    const room = new RoutineRoom(s.state as never, {} as never);
+    const answer = room.fetch(parkRequest({ routineId: "r1", trigger: TRIGGER }, "/run?wait=5000"));
+    await new Promise((r) => setTimeout(r, 0));
+    await room.alarm();
+    const body = (await (await answer).json()) as { result: { summary: string } };
+    expect(body.result.summary).toBe("Alarm's report.");
+  });
+
+  it("lets a waiting caller go with null when the alarm takes too long", async () => {
+    const s = fakeState();
+    const room = new RoutineRoom(s.state as never, {} as never);
+    const res = await room.fetch(parkRequest({ routineId: "r1", trigger: TRIGGER }, "/run?wait=5"));
+    expect(await res.json()).toEqual({ ok: true, result: null });
   });
 });

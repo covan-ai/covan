@@ -427,3 +427,62 @@ describe("receiveEvent, for an adapter that lists what changed from a cursor", (
     expect(normalize).not.toHaveBeenCalled();
   });
 });
+
+describe("receiveEvent, for a delivery about the arrangement itself", () => {
+  function registryWith(handshake: EventAdapter["handshake"]): EventRegistry {
+    const adapter: EventAdapter = {
+      provider: "composio",
+      isConfigured: () => true,
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      setEnabled: vi.fn(),
+      handshake,
+      normalize: normalize as unknown as EventAdapter["normalize"],
+    };
+    return { ...catalogueOf([MAIL]), adapterFor: (p) => (p === "composio" ? adapter : undefined) };
+  }
+
+  function receiveWith(handshake: EventAdapter["handshake"]) {
+    const m = memoryDb({
+      routines: [routine()],
+      routine_event_subscriptions: [subscription()],
+    });
+    (m.db as unknown as { rpc: unknown }).rpc = rpc;
+    const out = receiveEvent(
+      ENV,
+      { provider: "composio", externalId: "ti_1" },
+      { raw: true },
+      {
+        db: m.db as unknown as SupabaseClient,
+        registry: registryWith(handshake),
+        defer: (p) => deferred.push(p),
+        run: run as never,
+        pause: pause as never,
+        sync: sync as never,
+      },
+    );
+    return { m, out };
+  }
+
+  it("keeps what the handshake learned and runs nothing", async () => {
+    const { m, out } = receiveWith(async () => ({ state: { chats: [{ id: "42" }] } }));
+    expect(await out).toEqual({ status: "ignored" });
+    expect(m.tables.routine_event_subscriptions[0].state).toEqual({ chats: [{ id: "42" }] });
+    expect(normalize).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("goes on to normalize when it is not a handshake, carrying where to answer", async () => {
+    normalize.mockResolvedValueOnce({
+      eventId: "u1",
+      text: "hi",
+      replyTo: { provider: "telegram", chatId: "42", messageId: 7 },
+    });
+    const { out } = receiveWith(async () => null);
+    expect(await out).toEqual({ status: "accepted", eventId: "composio:u1" });
+    expect(run.mock.calls[0][2]).toMatchObject({
+      replyTo: { provider: "telegram", chatId: "42", messageId: 7 },
+    });
+  });
+});

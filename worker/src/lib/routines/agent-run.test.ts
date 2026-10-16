@@ -115,6 +115,14 @@ describe("runRoutineWithTools", () => {
     });
   });
 
+  // `run_routine` reads it, to start the next routine one step deeper.
+  it("tells the tools how deep in a chain of routines this run is", async () => {
+    await runRoutineWithTools(env, db)({ ...input, chainDepth: 2 }, env);
+    expect(runAgentTurn.mock.calls[0][0].ctx.chainDepth).toBe(2);
+    await runRoutineWithTools(env, db)(input, env);
+    expect(runAgentTurn.mock.calls[1][0].ctx.chainDepth).toBeUndefined();
+  });
+
   it("tells the agent nobody is watching, and names what it can reach", async () => {
     await runRoutineWithTools(env, db)(input, env);
     const system = runAgentTurn.mock.calls[0][0].request.messages[0].content as string;

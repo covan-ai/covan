@@ -217,6 +217,8 @@ export type AgentRunInput = SummariseInput & {
   browser?: Omit<RoutineBrowser, "started">;
   /** Whose knowledge `search_documents` may read. See `knowledgeScopeOf`. */
   knowledgeScope?: KnowledgeScope;
+  /** How many routines started one another to reach this run. See `IngestTrigger.depth`. */
+  chainDepth?: number;
 };
 
 export type AgentRunResult = {
@@ -472,6 +474,36 @@ export type IngestTrigger = {
    * goes into the same conversation, under "Re:". Absent for every other poke.
    */
   thread?: EmailThread;
+  /**
+   * Where the event came from, when the run's report should also go back
+   * there — the Telegram chat a message was sent in. The routine's own
+   * delivery channel still gets it; this is the conversation answered as
+   * well. Read after the run by `poke-room.ts`, never by the executor, which
+   * delivers exactly as before.
+   */
+  replyTo?: EventReplyTo;
+  /**
+   * How many routines started one another, by `run_routine`, to get here:
+   * one for a routine an agent started from a conversation, two for one that
+   * routine then started. Absent is zero. The tool refuses past
+   * `MAX_CHAIN_DEPTH`, so two routines that start each other stop after a
+   * few rounds instead of spending a workspace's credits in a loop.
+   */
+  depth?: number;
+};
+
+/** A place a poked run's report is answered to, besides its delivery channel. */
+export type EventReplyTo = { provider: "telegram"; chatId: string; messageId?: number };
+
+/**
+ * What a run ended as. `summary` is the report it delivered, on an `ok` run
+ * only: what a Siri shortcut waiting on `?wait=1` reads out, and what a
+ * Telegram chat is answered with.
+ */
+export type RunResult = {
+  status: "ok" | "skipped" | "failed" | "waiting";
+  itemsNew: number;
+  summary?: string;
 };
 
 /**
@@ -507,7 +539,7 @@ export async function runRoutine(
   routine: RoutineRow,
   deps: ExecutorDeps,
   trigger?: IngestTrigger,
-): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> {
+): Promise<RunResult> {
   const startedAt = deps.now();
   // Decided once, here, and written on every row this run produces — including
   // the ones that never reach a model — because "why did this run?" is asked of
@@ -771,7 +803,7 @@ export async function runRoutine(
         spend: result.spend,
         runId,
       });
-      return { status: "ok", itemsNew: 1 };
+      return { status: "ok", itemsNew: 1, summary: result.summary };
     }
 
     // A connection routine reads rows the reconciler already imported rather
@@ -1029,6 +1061,7 @@ export async function runRoutine(
           routineRunId: runId,
           knowledgeScope: knowledgeScopeOf(routine),
           ...(browser ? { browser } : {}),
+          ...(trigger?.depth ? { chainDepth: trigger.depth } : {}),
         },
         runEnv,
       )) ?? (await deps.summarise(summariseInput, runEnv));
@@ -1182,7 +1215,7 @@ export async function runRoutine(
       cursor: nextCursor,
       summary: summary.text,
     });
-    return { status: "ok", itemsNew: items.length };
+    return { status: "ok", itemsNew: items.length, summary: body };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 

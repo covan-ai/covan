@@ -64,7 +64,7 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ],
   [
     "lib/routines/events/lifecycle.ts",
-    "subscribing, unsubscribing and renewing a routine's event at its provider (0109). routine_event_subscriptions has no client write grant at all, and external_id and secret_ciphertext are readable by no client role — with one deployment-wide provider key the first is the whole address of the arrangement, and unsubscribing needs both. Every function takes one routine id: one the route has already shown is the caller's own through c.get(\"db\") (create, PATCH, DELETE, the event routes), or one claim_event_subscriptions (0109, service role only) handed the cron. Every read and write is keyed to that id, the routine row it names supplies the user and workspace an adapter is handed, and the connection an adapter subscribes with is the config.connectionId the route found through the caller's own client. subscriptionSetup opens one row's external_id and secret for GET /routines/:id/event/setup, which calls it only for a routine the caller owns, shown through their own client, in a session and never for an API key — a GitHub webhook's URL and secret, which the owner has to paste into the repository's settings",
+    "subscribing, unsubscribing and renewing a routine's event at its provider (0109). routine_event_subscriptions has no client write grant at all, and external_id and secret_ciphertext are readable by no client role — with one deployment-wide provider key the first is the whole address of the arrangement, and unsubscribing needs both. Every function takes one routine id: one the route has already shown is the caller's own through c.get(\"db\") (create, PATCH, DELETE, the event routes), or one claim_event_subscriptions (0109, service role only) handed the cron. Every read and write is keyed to that id, the routine row it names supplies the user and workspace an adapter is handed, and the connection an adapter subscribes with is the config.connectionId the route found through the caller's own client. subscriptionSetup opens one row's external_id and secret for GET /routines/:id/event/setup, which calls it only for a routine the caller owns, shown through their own client, in a session and never for an API key — a GitHub webhook's URL and secret, which the owner has to paste into the repository's settings (for a Telegram routine the route uses only state, never the token). rememberState writes one row's state for receive.ts, for the row a verified delivery resolved to, with what the adapter's handshake returned — a Telegram chat that paired with the routine",
   ],
   [
     "lib/routines/events/receive.ts",
@@ -81,6 +81,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   [
     "lib/routines/events/slack.ts",
     "the Slack event adapter (0112) subscribes nothing at Slack, but has to check the install can hear what a routine asks for and find the channel it names, which takes the bot token — a column of slack_installations no client may read (0044). It reads only the one installation the route found through the caller's own client (config.connectionId), re-checked against the routine's own workspace, and writes nothing; every write stays in lifecycle.ts",
+  ],
+  [
+    "lib/routines/events/telegram.ts",
+    "the Telegram adapter and the reply after a Telegram-started run. A bot token is sealed in secret_ciphertext, which no client role can read, and sending as the bot needs it. It reads only: the other routine_event_subscriptions rows holding the same bot's webhook id, so the webhook is not deleted under them; and, to answer a chat, the one row of the routine whose run just finished (by the routine id the run carried), whose chat allowlist in state is checked before anything is sent. It writes nothing — a pairing goes back to receive.ts as state, and lifecycle.ts writes it",
   ],
   [
     "lib/routines/poke-room.ts",

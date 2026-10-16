@@ -18,6 +18,7 @@ import {
 import { EventPicker } from "@/components/routines/event-picker";
 import { GitHubWebhookSetup } from "@/components/routines/github-webhook-setup";
 import { EmailAddressSetup } from "@/components/routines/email-address-setup";
+import { TelegramBotSetup } from "@/components/routines/telegram-bot-setup";
 import { eventChoiceReady } from "@/lib/event-choice";
 import { ApiError } from "@/lib/api-client";
 import { formatRelative } from "@/lib/relative-time";
@@ -156,6 +157,9 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
                 routineId={routine.id}
                 senders={typeof event.config.senders === "string" ? event.config.senders : null}
               />
+            )}
+            {event.provider === "telegram" && event.status === "active" && (
+              <TelegramBotSetup routineId={routine.id} />
             )}
             <div className="flex flex-wrap gap-2">
               <Button

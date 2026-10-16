@@ -285,7 +285,7 @@ describe("runRoutine", () => {
 
     const out = await runRoutine(r, makeDeps(db) as any);
 
-    expect(out).toEqual({ status: "ok", itemsNew: 2 });
+    expect(out).toEqual({ status: "ok", itemsNew: 2, summary: expect.any(String) });
     expect(summarise).toHaveBeenCalledTimes(1);
     expect(summarise.mock.calls[0][0].persona).toBe("You are a growth specialist");
     expect(summarise.mock.calls[0][0].items).toHaveLength(2);
@@ -1006,6 +1006,25 @@ describe("runRoutine", () => {
       expect(claim.values).toMatchObject([{ item_key: "evt:composio:msg_1" }]);
     });
 
+    // `run_routine`'s loop guard: a run started by another routine tells its
+    // tools how deep it is, so the next start is refused past the limit.
+    it("tells its tools how deep in a chain of routines it is", async () => {
+      const { db } = makeDb();
+      let seen: Record<string, unknown> | null = null;
+      const runWithTools = vi.fn(async (input: Record<string, unknown>) => {
+        seen = input;
+        return { text: "done", tokens: 1, declined: false };
+      });
+
+      await runRoutine(
+        waiting(),
+        { ...(makeDeps(db) as Record<string, unknown>), runWithTools } as never,
+        { ...event, depth: 2 },
+      );
+
+      expect(seen).toMatchObject({ chainDepth: 2 });
+    });
+
     it("is a visible skipped run when the provider delivers it twice", async () => {
       const { db, inserts } = makeDb({ claimWins: () => [] });
 
@@ -1481,7 +1500,7 @@ describe("runRoutine", () => {
 
     const out = await runRoutine(r, makeDeps(db) as any);
 
-    expect(out).toEqual({ status: "ok", itemsNew: 1 });
+    expect(out).toEqual({ status: "ok", itemsNew: 1, summary: expect.any(String) });
     // The whole design: no provider call, no second token decrypt, nothing
     // added to the sync's subrequest budget.
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -1539,7 +1558,7 @@ describe("runRoutine", () => {
 
     const out = await runRoutine(r, makeDeps(db) as any);
 
-    expect(out).toEqual({ status: "ok", itemsNew: 10 });
+    expect(out).toEqual({ status: "ok", itemsNew: 10, summary: expect.any(String) });
     const run = inserts.find((i) => i.table === "routine_runs")!;
     expect(run.values.items_new).toBe(10);
     // The two the cap declined are marked seen and never delivered later, so a
@@ -2244,7 +2263,7 @@ describe("a routine that reads its own workspace", () => {
 
     const out = await runRoutine(workspaceRoutine(), deps);
 
-    expect(out).toEqual({ status: "ok", itemsNew: 1 });
+    expect(out).toEqual({ status: "ok", itemsNew: 1, summary: expect.any(String) });
     expect(summarise).not.toHaveBeenCalled();
     expect(deps.coverage).toHaveBeenCalledWith(
       { workspaceId: "w1", ownerId: "u1", days: 7 },

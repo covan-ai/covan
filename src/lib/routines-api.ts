@@ -155,7 +155,8 @@ export type RoutineEvent = {
 export type EventField = {
   key: string;
   label: string;
-  kind: "text" | "number" | "select" | "boolean";
+  /** `secret`: a password box whose value is never shown back (a bot token). */
+  kind: "text" | "number" | "select" | "boolean" | "secret";
   optional?: boolean;
   placeholder?: string;
   help?: string;
@@ -189,12 +190,15 @@ export type EventChoice = { type: string; config: Record<string, unknown> };
 /**
  * What the owner has to hand out or paste for events to arrive, from
  * GET /routines/:id/event/setup: a GitHub webhook's URL and secret, or the
- * address a routine is mailed at. Every other event is set up by Covan itself.
+ * address a routine is mailed at, or a Telegram bot's pairing link. Every
+ * other event is set up by Covan itself.
  */
 export type EventSetup =
   | { kind: "none" }
   | { kind: "github"; url: string; secret: string; contentType: string }
-  | { kind: "email"; address: string };
+  | { kind: "email"; address: string }
+  /** A Telegram bot: the link a chat opens to pair, and the chats that have. */
+  | { kind: "telegram"; botUsername: string; link: string; code: string; chats: string[] };
 
 /** How a scheduled run's turn ended; the worker's `MESSAGE_OUTCOMES`. */
 export type RunOutcome =

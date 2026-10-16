@@ -218,6 +218,7 @@ any writer can take back.
 | …or Slack activity | a message or a reaction in a Slack channel the app is in                                                         | the Slack app (`SLACK_*`)                               |
 | …or a page or file | a Notion page created, edited or commented on, or a file added or changed in Google Drive                        | `NOTION_WEBHOOK_VERIFICATION_TOKEN`                     |
 | …or an email       | a reply to a routine's emailed report, or mail to the routine's own address                                      | `INBOUND_EMAIL_DOMAIN`, `RESEND_INBOUND_WEBHOOK_SECRET` |
+| …or a message      | a message to your own Telegram bot, answered in the chat; or Siri, through the webhook with `?wait=1`            | `WORKER_HOST` for Telegram                              |
 | What it watches    | an RSS feed, a web page by content hash, a bundle a connection syncs, or nothing                                 | —                                                       |
 | Where it lands     | email, a Slack webhook, or a signed webhook of yours                                                             | `RESEND_API_KEY` for email                              |
 | What it keeps      | each result optionally filed into a bundle, with a retention you set                                             | —                                                       |

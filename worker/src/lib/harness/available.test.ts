@@ -236,3 +236,35 @@ describe("the browser on a schedule", () => {
     expect(await names({})).toContain("browse");
   });
 });
+
+/**
+ * Starting another routine: offered in chat beside the other sending tools,
+ * and on a schedule whatever the channels, because that is where routines
+ * hand work to one another.
+ */
+describe("run_routine", () => {
+  const names = async (
+    connections: unknown[],
+    channels: unknown[],
+    surface?: "chat" | "schedule",
+  ) =>
+    (
+      await capabilitiesFor({
+        db: dbWith(connections, channels),
+        env: FULL,
+        workspaceId: "ws-1",
+        userId: "user-1",
+        ...(surface ? { surface } : {}),
+      })
+    ).tools.map((t) => t.name);
+
+  it("is offered in chat to somebody with a channel", async () => {
+    expect(await names([], [CHANNEL])).toContain("run_routine");
+    expect(await names([], [])).not.toContain("run_routine");
+  });
+
+  it("is offered on a schedule, where there are never channels", async () => {
+    expect(await names([], [], "schedule")).toContain("run_routine");
+    expect(await names([], [], "schedule")).not.toContain("watch_event");
+  });
+});

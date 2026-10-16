@@ -30,6 +30,7 @@
  */
 
 import type { z } from "zod";
+import type { EventReplyTo } from "../executor";
 import { COMPOSIO_EVENTS } from "./composio-catalog";
 import { GITHUB_EVENTS } from "./github";
 import { WEBSUB_EVENTS } from "./websub";
@@ -37,6 +38,7 @@ import { SLACK_EVENTS } from "./slack";
 import { NOTION_EVENTS } from "./notion";
 import { DRIVE_EVENTS } from "./drive";
 import { EMAIL_RECEIVED } from "./email";
+import { TELEGRAM_EVENTS } from "./telegram";
 
 /**
  * Who sends the event. The adapter registry is keyed on this, and so is the
@@ -73,7 +75,11 @@ export type EventRequirement =
 export type EventField = {
   key: string;
   label: string;
-  kind: "text" | "number" | "select" | "boolean";
+  /**
+   * `secret` is drawn as a password box and never shown back: the entry's
+   * `secret` names it, and `parseEventChoice` keeps it out of `config`.
+   */
+  kind: "text" | "number" | "select" | "boolean" | "secret";
   /** Absent means required, which is the rarer case — most filters narrow. */
   optional?: boolean;
   placeholder?: string;
@@ -103,6 +109,12 @@ export type NormalizedEvent = {
   /** Overrides the entry's label for this one run: "GitHub · Push to main". */
   label?: string;
   fields?: Record<string, string>;
+  /**
+   * Where to answer once the run is done, for an event that is a message
+   * somebody is waiting on a reply to (Telegram). Carried onto the run's
+   * trigger by `receive.ts`; see `IngestTrigger.replyTo`.
+   */
+  replyTo?: EventReplyTo;
 };
 
 export type EventTypeDef = {
@@ -133,6 +145,13 @@ export type EventTypeDef = {
    * real thing.
    */
   sample: NormalizedEvent;
+  /**
+   * A credential the person pastes with the choice — a Telegram bot token —
+   * which must never be stored in `config`. `key` is the field the dialog
+   * sends it as (a `secret` field in `fields`); `schema` checks it. See
+   * `parseEventChoice` for where it goes instead.
+   */
+  secret?: { key: string; schema: z.ZodType<string> };
 };
 
 /**
@@ -146,6 +165,7 @@ export const EVENT_TYPES: readonly EventTypeDef[] = [
     ...WEBSUB_EVENTS,
     ...NOTION_EVENTS,
     ...DRIVE_EVENTS,
+    ...TELEGRAM_EVENTS,
     { def: EMAIL_RECEIVED },
   ].map((spec) => spec.def),
   // Slack's entries are plain definitions: there is nothing per entry for the
@@ -178,12 +198,27 @@ export function catalogueOf(types: readonly EventTypeDef[]): EventCatalogue {
 export const CATALOGUE: EventCatalogue = catalogueOf(EVENT_TYPES);
 
 /**
- * What a person chose, checked against the catalogue: the entry, and the config
- * as the entry's schema left it. The one place a choice becomes trusted, used
- * by both `POST /routines` and `PUT /routines/:id/event`, so the two cannot
+ * What a person chose, checked against the catalogue: the entry, the config
+ * as the entry's schema left it, and — for an entry with a `secret` — the
+ * credential, kept apart. The one place a choice becomes trusted, used by
+ * both `POST /routines` and `PUT /routines/:id/event`, so the two cannot
  * accept different things.
+ *
+ * WHY THE SECRET IS SPLIT OFF HERE. `config` is readable by the routine's
+ * owner through every routine read (0109 grants it) and is echoed back into
+ * the dialog when somebody edits the event. A Telegram bot token is a
+ * credential for the whole bot, and it must not sit in a column that is
+ * served to a browser. So the dialog sends it as one more field — it is the
+ * same form — and this function takes it out before the schema sees the rest:
+ * `config` never holds it, and `replaceSubscription` seals it straight into
+ * `secret_ciphertext`, which no client role can read.
  */
-export type EventChoice = { def: EventTypeDef; config: Record<string, unknown> };
+export type EventChoice = {
+  def: EventTypeDef;
+  config: Record<string, unknown>;
+  /** The entry's `secret` field, plaintext. Present only for an entry that has one. */
+  secret?: string;
+};
 
 export function parseEventChoice(
   catalogue: EventCatalogue,
@@ -192,12 +227,29 @@ export function parseEventChoice(
 ): { ok: true; choice: EventChoice } | { ok: false; error: string } {
   const def = catalogue.eventType(type);
   if (!def) return { ok: false, error: "unknown event type" };
-  const parsed = def.config.safeParse(config ?? {});
+  const rest: Record<string, unknown> = { ...((config ?? {}) as Record<string, unknown>) };
+  let secret: string | undefined;
+  if (def.secret) {
+    const given = def.secret.schema.safeParse(rest[def.secret.key]);
+    delete rest[def.secret.key];
+    if (!given.success) {
+      return {
+        ok: false,
+        error: `${def.secret.key}: ${given.error.issues[0]?.message ?? "invalid"}`,
+      };
+    }
+    secret = given.data;
+  }
+  const parsed = def.config.safeParse(rest);
   if (!parsed.success) {
     // The first problem, named by its field, because the dialog shows one line.
     const issue = parsed.error.issues[0];
     const where = issue?.path.join(".") || "config";
     return { ok: false, error: `${where}: ${issue?.message ?? "invalid"}` };
   }
-  return { ok: true, choice: { def, config: parsed.data } };
+  return {
+    ok: true,
+    choice:
+      secret === undefined ? { def, config: parsed.data } : { def, config: parsed.data, secret },
+  };
 }

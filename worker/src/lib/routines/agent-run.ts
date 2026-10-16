@@ -191,6 +191,7 @@ export function runRoutineWithTools(
         agentId: input.agentId,
         userId: input.userId,
         routineRunId: input.routineRunId,
+        ...(input.chainDepth ? { chainDepth: input.chainDepth } : {}),
         // Shared knowledge only unless the run says whose it is.
         knowledgeScope: input.knowledgeScope ?? { sharedOnly: true },
         ...(routineBrowser ? { routineBrowser } : {}),

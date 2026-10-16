@@ -779,8 +779,8 @@ or a webhook: **a new email in Gmail or Outlook, a new Outlook calendar event,
 a Google Calendar event that is new, changed, cancelled, or about to
 start, a message or a reaction in a Slack channel, a GitHub push, pull
 request or issue, a new YouTube video, a new post in a feed that supports
-instant updates, a Notion page created, edited or commented on, or a file
-added or changed in Google Drive.** In the routine dialog, under _Starts_, pick _When something happens
+instant updates, a Notion page created, edited or commented on, a file
+added or changed in Google Drive, or a message to your own Telegram bot.** In the routine dialog, under _Starts_, pick _When something happens
 in an app_, then the app, then the event and any filter (a Gmail search, an
 Outlook sender, how many minutes before a meeting). If the app is not
 connected yet, the dialog says so and links to the Integrations page.
@@ -826,6 +826,15 @@ page. Events that arrived while it was disconnected are not replayed.
 with the same settings, on the same account share one trigger at Composio.
 Each one still runs on every event. Deleting or pausing one leaves the
 trigger in place for the other.
+
+**An agent can set one up.** Ask in a conversation ("tell me whenever a
+customer emails about an invoice") and the agent proposes the routine with
+`watch_event`: the event, its filters, the instruction and where it delivers.
+Nothing is created until you approve the card. It goes through the same checks
+as the dialog, and what it creates is an ordinary routine you can change or
+stop on the Routines screen. An event that needs a credential pasted in, like a
+Telegram bot's token, is never proposed: the agent asks you to set that one up
+yourself.
 
 #### Setting it up
 
@@ -888,8 +897,9 @@ later gives the routine a new URL and secret, so update the webhook too.
 - **The URL is random.** It contains an id that is not the routine's.
 - **Every delivery is signed.** It must carry GitHub's `X-Hub-Signature-256`
   made with that routine's own secret. Anything else is refused with a 401
-  before the routine is looked at, and an address that keeps failing is
-  turned away.
+  before the routine is looked at. A failing delivery is not held against the
+  address it came from, because GitHub sends every customer's webhooks from a
+  few shared addresses; each webhook has its own rate limit instead.
 - **Filters are applied here.** GitHub sends every push to the webhook,
   whatever the branch, so the branch and the pull request or issue action are
   checked when a delivery arrives. A delivery that does not match starts
@@ -1003,6 +1013,45 @@ Removing a Notion or Drive connection stops every routine listening through it,
 and each owner gets one email. A Drive channel cannot be stopped without the
 grant that was just removed, so it lapses within the week. Anything it sends
 until then reaches a routine that is no longer listening.
+
+#### Telegram: a message to your own bot
+
+**Telegram · Message to your bot** starts a routine when somebody in a paired
+chat messages your bot. The routine's report goes to its delivery channel as
+usual, and is also sent back to that chat as a reply.
+
+1. On Telegram, message **@BotFather**, send `/newbot`, and copy the token it
+   gives you. Use a bot made for this. A bot sends its updates to one place
+   only, so pointing it at Covan takes it away from anything else using it.
+2. Make the routine with _When something happens in an app_ → **Telegram**,
+   and paste the token. Optionally, only messages containing a word start it.
+3. The routine's page shows a **pairing link**. Open it in Telegram and press
+   _Start_. For a group, add the bot to the group, then send it the
+   `/start <code>` shown on the page. Each routine has its own code, so one bot
+   can serve several routines, each answering only the chats paired with it.
+
+**How it is protected:**
+
+- **The token stays sealed.** It is encrypted with `ROUTINE_SECRET_KEY` as soon
+  as it arrives. It is never stored with the event's other settings and never
+  sent back to a browser, not even to the routine's owner. Choosing the event
+  again means pasting the token again.
+- **Every delivery is signed.** Covan sets the bot's webhook with a secret
+  token derived from the bot's id under `ROUTINE_SECRET_KEY`. A delivery
+  without it is refused before anything is read, and an address that keeps
+  failing is turned away.
+- **Only paired chats count.** Anybody can find a bot and message it. A
+  message from a chat that has not opened this routine's pairing link starts
+  nothing and costs nothing. So do the bot's own messages and anything without
+  text (a sticker, or a photo without a caption).
+- **Each message runs once.** A redelivery carries the same update id.
+
+Pausing the routine leaves the webhook in place, and messages are refused
+until it is resumed. Deleting the routine, or choosing a different event,
+removes the webhook unless another routine is using the same bot.
+
+These events need `WORKER_HOST`, for the same reason as WebSub: Telegram has to
+be given an address it can reach.
 
 ### Inbound mail: replies, and a routine's own address
 

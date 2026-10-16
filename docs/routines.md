@@ -267,6 +267,14 @@ What it changes for you:
   sending to a channel, creating another routine — is recorded as wanted and
   not done, and the delivered message says so at the bottom. A tick has nobody
   to ask and nowhere to wait.
+- **One routine can hand work to another.** `run_routine` starts one of the
+  owner's own routines that has no source, with text for it to work from,
+  and waits for its report. In a conversation the person approves it first.
+  In a scheduled run it happens without a card, because that is what it is
+  for, and it is bounded instead. Only the owner's own routines can be
+  started, only ones that are running, and only three deep: a routine
+  started by a routine started by a routine cannot start a fourth. So two
+  routines that start each other stop after a few rounds.
 - **The decision to stay quiet costs one extra call.** A run that may decline
   (see [Nothing relevant](#nothing-relevant)) asks the question as a separate
   short turn afterwards, because a request that demands JSON _and_ offers tools
@@ -795,6 +803,28 @@ is to make a new one.
 
 A routine can run on **both**: a digest every morning that can also be poked
 after a deploy.
+
+#### From Siri or the Shortcuts app
+
+Add `?wait=1` to the webhook URL and the response waits for the run, up to
+about 25 seconds, and carries its report:
+
+```json
+{ "accepted": true, "finished": true, "status": "ok", "summary": "You have two meetings today…" }
+```
+
+A shortcut of four actions makes that a voice command: _Dictate Text_; _Get
+Contents of URL_ (the webhook URL with `?wait=1`, method POST, a JSON body
+with a `text` field set to the dictated text); _Get Dictionary Value_ for
+`summary`; _Speak Text_. The routine's page shows the same steps under _Use it
+with Siri or Shortcuts_.
+
+A run that takes longer is answered `202` with `"finished": false` and a
+`summary` saying it is still working. The run carries on and its report goes
+to the routine's delivery channel, as it would without `?wait`. The wait only
+changes what the response says, never whether or how the routine runs. When
+there is no report (nothing to say, or the run failed), `summary` is a sentence
+saying so.
 
 ### The token
 

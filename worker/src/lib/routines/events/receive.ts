@@ -51,7 +51,7 @@ import {
   type SubscriptionRow,
 } from "./adapter";
 import { triggerLabel } from "./catalog";
-import { SUBSCRIPTION_COLUMNS, syncSubscription } from "./lifecycle";
+import { SUBSCRIPTION_COLUMNS, rememberState, syncSubscription } from "./lifecycle";
 
 /**
  * How many events may start a routine in an hour and in a day, unless the
@@ -277,7 +277,15 @@ async function receiveFor(
   }
   if (!ctx || !adapter || !def) return { status: "inactive" };
 
-  // 2b. Catch up, for a provider whose delivery only says "something changed"
+  // 2b. A delivery about the arrangement itself — a chat pairing with a
+  // Telegram routine. Kept on the row, and nothing runs.
+  const handshake = await adapter.handshake?.(raw, ctx);
+  if (handshake) {
+    await rememberState(db, sub.routine_id, handshake.state);
+    return { status: "ignored" };
+  }
+
+  // 2c. Catch up, for a provider whose delivery only says "something changed"
   // (a Drive channel). The cursor moves here, before the filter, because it
   // has to move whether or not what changed is anything this routine wants.
   let delivered: unknown = raw;
@@ -329,6 +337,7 @@ async function receiveFor(
       payload: event.text,
       source: "event",
       label: triggerLabel(def, event.label),
+      ...(event.replyTo ? { replyTo: event.replyTo } : {}),
     }),
   );
   return { status: "accepted", eventId };

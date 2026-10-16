@@ -423,12 +423,12 @@ harness knows which provider answered.
 **One layout decision does most of the work here, and it is about what does
 not change when a service is added.**
 
-| Layer                 | What is in it                                                                                                       | What a new service costs                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Core                  | `completion.ts` types, `harness/loop.ts`, the registry, the budget, `message_steps`, the SSE frames                 | nothing                                   |
-| Tools                 | `search_documents`, `describe_connection`, `query_database`, `http_request`, `browse`, `send_email`, `schedule_job` | nothing                                   |
-| Credential            | a `tool_connections` row: transport, base URL, auth, allowed methods                                                | **one row**                               |
-| Transport / auth kind | `http`, `sql`, `composio`; `static_header`, `composio`                                                              | code, once, only for a genuinely new kind |
+| Layer                 | What is in it                                                                                                                                     | What a new service costs                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Core                  | `completion.ts` types, `harness/loop.ts`, the registry, the budget, `message_steps`, the SSE frames                                               | nothing                                   |
+| Tools                 | `search_documents`, `describe_connection`, `query_database`, `http_request`, `browse`, `send_email`, `schedule_job`, `watch_event`, `run_routine` | nothing                                   |
+| Credential            | a `tool_connections` row: transport, base URL, auth, allowed methods                                                                              | **one row**                               |
+| Transport / auth kind | `http`, `sql`, `composio`; `static_header`, `composio`                                                                                            | code, once, only for a genuinely new kind |
 
 `browse` is the one tool in that row that does not fit the shape, and it is
 worth naming rather than discovering: it has no `tool_connections` row at all,

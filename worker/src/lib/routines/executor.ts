@@ -217,6 +217,8 @@ export type AgentRunInput = SummariseInput & {
   browser?: Omit<RoutineBrowser, "started">;
   /** Whose knowledge `search_documents` may read. See `knowledgeScopeOf`. */
   knowledgeScope?: KnowledgeScope;
+  /** How many routines started one another to reach this run. See `IngestTrigger.depth`. */
+  chainDepth?: number;
 };
 
 export type AgentRunResult = {
@@ -480,6 +482,14 @@ export type IngestTrigger = {
    * delivers exactly as before.
    */
   replyTo?: EventReplyTo;
+  /**
+   * How many routines started one another, by `run_routine`, to get here:
+   * one for a routine an agent started from a conversation, two for one that
+   * routine then started. Absent is zero. The tool refuses past
+   * `MAX_CHAIN_DEPTH`, so two routines that start each other stop after a
+   * few rounds instead of spending a workspace's credits in a loop.
+   */
+  depth?: number;
 };
 
 /** A place a poked run's report is answered to, besides its delivery channel. */
@@ -1051,6 +1061,7 @@ export async function runRoutine(
           routineRunId: runId,
           knowledgeScope: knowledgeScopeOf(routine),
           ...(browser ? { browser } : {}),
+          ...(trigger?.depth ? { chainDepth: trigger.depth } : {}),
         },
         runEnv,
       )) ?? (await deps.summarise(summariseInput, runEnv));

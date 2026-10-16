@@ -1006,6 +1006,25 @@ describe("runRoutine", () => {
       expect(claim.values).toMatchObject([{ item_key: "evt:composio:msg_1" }]);
     });
 
+    // `run_routine`'s loop guard: a run started by another routine tells its
+    // tools how deep it is, so the next start is refused past the limit.
+    it("tells its tools how deep in a chain of routines it is", async () => {
+      const { db } = makeDb();
+      let seen: Record<string, unknown> | null = null;
+      const runWithTools = vi.fn(async (input: Record<string, unknown>) => {
+        seen = input;
+        return { text: "done", tokens: 1, declined: false };
+      });
+
+      await runRoutine(
+        waiting(),
+        { ...(makeDeps(db) as Record<string, unknown>), runWithTools } as never,
+        { ...event, depth: 2 },
+      );
+
+      expect(seen).toMatchObject({ chainDepth: 2 });
+    });
+
     it("is a visible skipped run when the provider delivers it twice", async () => {
       const { db, inserts } = makeDb({ claimWins: () => [] });
 

@@ -827,6 +827,15 @@ with the same settings, on the same account share one trigger at Composio.
 Each one still runs on every event. Deleting or pausing one leaves the
 trigger in place for the other.
 
+**An agent can set one up.** Ask in a conversation ("tell me whenever a
+customer emails about an invoice") and the agent proposes the routine with
+`watch_event`: the event, its filters, the instruction and where it delivers.
+Nothing is created until you approve the card. It goes through the same checks
+as the dialog, and what it creates is an ordinary routine you can change or
+stop on the Routines screen. An event that needs a credential pasted in, like a
+Telegram bot's token, is never proposed: the agent asks you to set that one up
+yourself.
+
 #### Setting it up
 
 1. `COMPOSIO_API_KEY` must already be set, as for connected apps. Use

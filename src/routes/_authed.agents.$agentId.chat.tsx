@@ -126,7 +126,7 @@ function ChatTab() {
   const { agentId } = Route.useParams();
   const { s: activeId } = Route.useSearch();
   const navigate = useNavigate();
-  const { agents, sessions, bundles, startSession, canWrite } = useAgentsStore();
+  const { agents, sessions, sessionsLoaded, bundles, startSession, canWrite } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId)!;
   // A file dropped here goes into the agent's chat bundle, and the first one
   // attaches that bundle to the agent — which since 0104 takes Can edit on it.
@@ -390,8 +390,15 @@ function ChatTab() {
 
   // Make sure a session always exists, and keep the URL pointing at the active
   // one so the sidebar highlight and this view stay in sync.
+  //
+  // Not before the sessions have answered. Until then `agentSessions` is the
+  // query's empty default, which looks exactly like an agent with no
+  // conversations — and a cold load of a thread's own link used to start a
+  // new, empty one and replace the URL with it, so somebody opening a link
+  // met a blank "New thread" and the sidebar kept the junk.
   const initedFor = useRef<string | null>(null);
   useEffect(() => {
+    if (!sessionsLoaded) return;
     if (agentSessions.length === 0) {
       if (initedFor.current === agentId) return;
       initedFor.current = agentId;
@@ -412,7 +419,7 @@ function ChatTab() {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, activeId, agentSessions.length]);
+  }, [agentId, activeId, agentSessions.length, sessionsLoaded]);
 
   // Live-sync peer + assistant messages for shared sessions. Private
   // sessions never open a subscription.

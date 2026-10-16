@@ -244,6 +244,13 @@ export type Idea = {
 type Store = {
   agents: Agent[];
   sessions: ChatSession[];
+  /**
+   * Whether `sessions` is an answer yet. It defaults to `[]` while the first
+   * request is in flight, and "nothing loaded" and "no conversations" are
+   * different facts: the chat page starts a conversation for the second and
+   * must wait out the first.
+   */
+  sessionsLoaded: boolean;
   favorites: string[];
   bundles: Bundle[];
   /**
@@ -334,7 +341,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
     refetchInterval: (query) =>
       (query.state.data ?? []).some((a) => a.documents.some(indexingNow)) ? 4_000 : false,
   });
-  const { data: sessions = [] } = useQuery({
+  const { data: sessions = [], isSuccess: sessionsLoaded } = useQuery({
     queryKey: ["sessions"],
     queryFn: () => api.sessions.list(),
     enabled: signedIn,
@@ -363,6 +370,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
     return {
       agents,
       sessions,
+      sessionsLoaded,
       favorites,
       bundles,
       canWrite,
@@ -581,7 +589,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           });
       },
     };
-  }, [agents, sessions, favorites, bundles, canWrite, queryClient]);
+  }, [agents, sessions, sessionsLoaded, favorites, bundles, canWrite, queryClient]);
 
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
 }

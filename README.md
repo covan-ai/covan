@@ -39,7 +39,7 @@ shared; the conversations people have with it are not.
   sandbox and no per-employee workspace to administer. If your team is mostly
   engineers, that other kind of tool is probably the one you want.
 
-Every feature is in this repository. The open build ships a real
+Everything Covan does today is in this repository. The open build ships a real
 `unlimitedEntitlements` implementation — no licence key, no phone-home, no plan
 tiers — so a self-hosted Covan is the whole product rather than a trial of it;
 [what is never gated](#what-is-never-gated) says where the commercial line
@@ -353,10 +353,17 @@ rather than a stub that throws, so nothing phones home and nothing counts.
 Nothing that works today will move behind a paywall later.
 
 There is a hosted Covan, and what it sells is not features: it is somebody else
-running the database, the backups and the upgrades. If paid capabilities do
-appear, the one genuinely missing from this tree is SAML single sign-on, and
-alongside it the operational things a service can offer and a repository cannot:
-hosting, support, an SLA, a signed data-processing agreement.
+running the database, the backups and the upgrades.
+
+Where a commercial line could fall later is written down now, before anybody
+asks for it. Paid capabilities, if they appear, will be new ones that large
+organisations need and small teams do not — single sign-on (SAML and OIDC),
+SCIM provisioning, audit-log retention and export, compliance controls — and
+they may live outside this repository, under a commercial licence. Alongside
+them sit the operational things a service can offer and a repository cannot:
+hosting, support, an SLA, a signed data-processing agreement. Nothing in the
+paragraph above is on that side of the line, and nothing in it will be moved
+there.
 
 ## Licence
 

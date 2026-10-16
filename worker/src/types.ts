@@ -376,6 +376,14 @@ export type Bindings = SyncEnv & {
    */
   TURN_ROOMS?: DurableObjectNamespace;
   /**
+   * Where a routine started by a webhook or an app event runs on Cloudflare,
+   * so it finishes after the sender has been answered: the `RoutineRoom`
+   * class (`lib/routines/poke-room.ts`). Absent on Node, where the process
+   * outlives the request, and on a Cloudflare deploy that has not added it,
+   * where the run gets `waitUntil`'s thirty seconds.
+   */
+  ROUTINE_ROOMS?: DurableObjectNamespace;
+  /**
    * The address of the socket this request arrived on. Node only: `node.ts`
    * sets it on every request, and its presence is how `clientAddress` knows it
    * is not on Cloudflare — where `CF-Connecting-IP` is the address and this is

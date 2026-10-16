@@ -9,6 +9,7 @@ import { receiveEvent } from "../lib/routines/events/receive";
 import { lapseSubscriptions } from "../lib/routines/events/lifecycle";
 import { announceLapsedSubscription } from "../lib/routines/dispatcher";
 import { cancelOrphanTrigger } from "../lib/routines/events/composio";
+import { startPokedRun } from "../lib/routines/poke-room";
 
 /**
  * `POST /composio/events` — Composio, telling us one of our triggers fired.
@@ -164,7 +165,10 @@ composioEvents.post("/composio/events", async (c) => {
     c.env,
     { provider: "composio", externalId: triggerId },
     delivery,
-    { defer: (work) => deferred(c, work) },
+    {
+      defer: (work) => deferred(c, work),
+      run: (_env, routine, trigger) => startPokedRun(c.env, routine, trigger),
+    },
   );
 
   // A trigger nothing here is waiting for: a routine deleted while Composio

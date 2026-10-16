@@ -23,7 +23,7 @@ const ENV = { RATE_LIMIT_EXPENSIVE_PER_MINUTE: "20" };
 function post(
   path: string,
   init: { body?: string | ReadableStream; headers?: Record<string, string> } = {},
-  env: Record<string, string> = {},
+  env: Record<string, unknown> = {},
 ) {
   const app = new Hono<AppEnv>();
   app.route("/", routineHooks);
@@ -90,6 +90,41 @@ describe("POST /routine-hooks/:token", () => {
       payload: '{"deploy":"finished"}',
       source: "webhook",
     });
+  });
+
+  it("moves the run into the event's room where one is bound, and runs nothing here", async () => {
+    // `waitUntil` ends thirty seconds after this 202; a run takes longer.
+    const parked: { name: string; body: unknown }[] = [];
+    let name = "";
+    const ROUTINE_ROOMS = {
+      idFromName: (n: string) => (name = n),
+      get: () => ({
+        fetch: async (_url: string, init: RequestInit) => {
+          parked.push({ name, body: JSON.parse(String(init.body)) });
+          return Response.json({ ok: true }, { status: 202 });
+        },
+      }),
+    };
+
+    const res = await post(
+      "/routine-hooks/covan_whk_abc",
+      { body: '{"deploy":"finished"}', headers: { "X-Covan-Event-Id": "evt-1" } },
+      { ROUTINE_ROOMS },
+    );
+    await settle();
+
+    expect(res.status).toBe(202);
+    expect(runPokedRoutine).not.toHaveBeenCalled();
+    expect(parked).toEqual([
+      {
+        name: "r1:evt-1",
+        body: {
+          routineId: "r1",
+          trigger: { eventId: "evt-1", payload: '{"deploy":"finished"}', source: "webhook" },
+        },
+      },
+    ]);
+    expect(touchTrigger).toHaveBeenCalledWith(expect.anything(), "r1");
   });
 
   // GitHub will not be setting ours, and most APIs settled on Idempotency-Key.

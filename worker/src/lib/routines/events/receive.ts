@@ -20,7 +20,8 @@
  *   5. The flood guard counts it (0109's `count_routine_event`), and a routine
  *      over its hourly or daily limit is paused and its owner told.
  *   6. The run is deferred through `runPokedRoutine`, exactly as a webhook's
- *      is: the membership check, the credit check, claim-before-send and
+ *      is, by way of the route's `run`, which on Cloudflare moves it into a
+ *      Durable Object (`../poke-room.ts`): the membership check, the credit check, claim-before-send and
  *      delivery are the executor's, unchanged. The event's own id becomes the
  *      delivery claim (`evt:<provider>:<id>`), so a provider that delivers
  *      twice — they all do, eventually — produces one message.
@@ -34,7 +35,7 @@ import type { RoutineEnv } from "../../../types";
 import { serviceClient } from "../../supabase";
 import { decryptSecret } from "../../secret-box";
 import { ROUTINE_COLUMNS } from "../ingest";
-import type { RoutineRow } from "../executor";
+import type { IngestTrigger, RoutineRow } from "../executor";
 import { pauseForEventFlood, runPokedRoutine } from "../dispatcher";
 import { EVENT_REGISTRY, type EventRegistry, type SubscriptionRow } from "./adapter";
 import { triggerLabel } from "./catalog";
@@ -95,8 +96,12 @@ export type ReceiveDeps = {
   registry?: EventRegistry;
   /** `deferred(c, …)` from the route; keeps this file free of Hono. */
   defer: (work: Promise<unknown>) => void;
-  /** Injected so a test can see what would have run. */
-  run?: typeof runPokedRoutine;
+  /**
+   * What runs the routine. The route passes `startPokedRun`, which moves the
+   * run somewhere it can outlive the response (`lib/routines/poke-room.ts`);
+   * a test passes a spy to see what would have run.
+   */
+  run?: (env: RoutineEnv, routine: RoutineRow, trigger: IngestTrigger) => Promise<unknown>;
   pause?: typeof pauseForEventFlood;
   sync?: typeof syncSubscription;
 };

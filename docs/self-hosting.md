@@ -789,6 +789,23 @@ Long documents — a report from the composer, or one the agent writes with its
 On Node and in Docker neither applies: the API process writes the document
 itself, and PDFs go through the print dialog, so the image needs no Chromium.
 
+### Routines started by a webhook or an app event, and `ROUTINE_ROOMS`
+
+A webhook sender and Composio are both answered before the routine runs, and
+on Cloudflare whatever runs after the response gets thirty seconds
+(`waitUntil`). Most runs take longer than that: they read documents, call a
+model and deliver. **`ROUTINE_ROOMS`**, a Durable Object (`RoutineRoom`) in
+`wrangler.toml.example`, gives each such run an alarm of its own, which may
+last fifteen minutes. Without it those runs still start and are cut off at
+thirty seconds, usually before they have delivered or written their row in the
+run history. It is SQLite-backed, so it works on Workers Free. Add its
+`[[migrations]]` block with the next tag after the ones your `wrangler.toml`
+already has.
+
+Scheduled and manual runs do not go through it. The cron Worker and the request
+behind "Run now" both stay alive for the whole run already. On Node and in
+Docker it does not apply either, because the process outlives the request.
+
 ### The emails Supabase sends, and where their design lives
 
 Confirming an address, changing it, and resetting a password are sent by Supabase, not by this

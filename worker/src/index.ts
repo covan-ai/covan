@@ -286,6 +286,10 @@ export const TurnRoom = turnRoom(replay);
 // Cloudflare to find under `DOC_ROOMS`; Node never constructs it.
 export { DocumentRoom } from "./lib/docs/host";
 
+// Where a webhook's or an app event's run happens (`lib/routines/poke-room.ts`),
+// bound as `ROUTINE_ROOMS`; Node never constructs it.
+export { RoutineRoom } from "./lib/routines/poke-room";
+
 // The Worker now has two entry points. `fetch` is the API, unchanged.
 // `scheduled` is the routine engine: it wakes on the cron trigger, asks which
 // routines are due, and runs them. Per-routine frequency lives in

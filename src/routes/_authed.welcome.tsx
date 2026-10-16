@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Me } from "@/lib/api-client";
-import { isNoWorkspace } from "@/lib/api-error";
 import { useIsHosted } from "@/lib/credits";
 import {
   resolveStep,
@@ -78,17 +77,13 @@ function Welcome() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const {
-    data: me,
-    error: meError,
-    isError: meFailed,
-  } = useQuery({
+  const { data: me, isError: meFailed } = useQuery({
     queryKey: ["me"],
     queryFn: () => api.me(),
   });
   // An account with no workspace yet (0115) has no /me, but its survey answers
   // are its own regardless — so they are read on their own, and only then.
-  const noWorkspace = isNoWorkspace(meError);
+  const noWorkspace = me === null;
   const { data: ownOnboarding, isPending: ownOnboardingPending } = useQuery({
     queryKey: ["onboarding"],
     queryFn: () => api.onboarding.get(),

@@ -50,7 +50,7 @@ function AccountSettingsPage() {
         <TwoFactorCard />
       </section>
 
-      <PersonalPreferencesSection me={me} />
+      <PersonalPreferencesSection me={me ?? undefined} />
 
       {/* A delivery channel belongs to a person — every policy on it is
           `user_id = auth.uid()` — so it sits here, beside the switches that

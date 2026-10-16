@@ -5,7 +5,6 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase/client";
 import { readSession } from "@/lib/supabase/session";
 import { api } from "@/lib/api-client";
-import { isNoWorkspace } from "@/lib/api-error";
 import { onboardingRedirect } from "@/lib/onboarding-gate";
 import { hasPendingGrant } from "@/lib/sensitive-url";
 
@@ -95,7 +94,6 @@ function AuthedLayout() {
   // request — react-query serves both from one fetch.
   const {
     data: me,
-    error: meError,
     isError,
     isPending,
   } = useQuery({
@@ -110,7 +108,8 @@ function AuthedLayout() {
   const redirect = onboardingRedirect({
     pathname,
     completed,
-    noWorkspace: isNoWorkspace(meError),
+    // `api.me` answers null for an account with no workspace (0115).
+    noWorkspace: me === null,
   });
 
   useEffect(() => {

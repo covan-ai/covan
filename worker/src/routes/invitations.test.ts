@@ -347,7 +347,7 @@ describe("POST /invitations", () => {
     });
 
     expect(res.status).toBe(409);
-    await expect(res.json()).resolves.toEqual({ error: "they're already in this workspace" });
+    await expect(res.json()).resolves.toEqual({ error: "They're already in this workspace." });
   });
 
   it("does not block an invite to someone who belongs to a different workspace", async () => {
@@ -493,57 +493,78 @@ describe("DELETE /invitations/:id", () => {
 });
 
 describe("GET /invitations/incoming", () => {
-  it("names the workspace whether PostgREST embeds it as an object or an array", async () => {
-    for (const embedded of [{ name: "Acme" }, [{ name: "Acme" }]]) {
-      const { app } = appWith({
-        tables: {
-          invitations: {
-            select: () => ({
-              data: [
-                {
-                  id: "inv-1",
-                  workspace_id: "ws-2",
-                  role: "member",
-                  created_at: CREATED_AT,
-                  workspaces: embedded,
-                },
-              ],
-              error: null,
-            }),
-          },
-        },
-      });
+  it("names the workspace and whoever sent the invitation", async () => {
+    const { app } = appWith({
+      rpc: {
+        incoming_invitations: () => ({
+          data: [
+            {
+              id: "inv-1",
+              workspace_id: "ws-2",
+              workspace_name: "Acme",
+              inviter_name: "Ada",
+              role: "member",
+              created_at: CREATED_AT,
+            },
+          ],
+          error: null,
+        }),
+      },
+    });
 
-      const res = await json(app, "GET", "/invitations/incoming");
+    const res = await json(app, "GET", "/invitations/incoming");
 
-      await expect(res.json()).resolves.toEqual([
-        {
-          id: "inv-1",
-          workspaceId: "ws-2",
-          workspaceName: "Acme",
-          role: "member",
-          createdAt: Date.parse(CREATED_AT),
-        },
-      ]);
-    }
+    await expect(res.json()).resolves.toEqual([
+      {
+        id: "inv-1",
+        workspaceId: "ws-2",
+        workspaceName: "Acme",
+        inviterName: "Ada",
+        role: "member",
+        createdAt: Date.parse(CREATED_AT),
+      },
+    ]);
   });
 
-  it("survives an invitation whose workspace did not come back", async () => {
+  it("survives an inviter with no name", async () => {
     const { app } = appWith({
-      tables: {
-        invitations: {
-          select: () => ({
-            data: [
-              {
-                id: "inv-1",
-                workspace_id: "ws-2",
-                role: "member",
-                created_at: CREATED_AT,
-                workspaces: null,
-              },
-            ],
-            error: null,
-          }),
+      rpc: {
+        incoming_invitations: () => ({
+          data: [
+            {
+              id: "inv-1",
+              workspace_id: "ws-2",
+              workspace_name: "Acme",
+              inviter_name: null,
+              role: "member",
+              created_at: CREATED_AT,
+            },
+          ],
+          error: null,
+        }),
+      },
+    });
+
+    const res = await json(app, "GET", "/invitations/incoming");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual([expect.objectContaining({ inviterName: null })]);
+  });
+
+  /**
+   * The route used to select from `invitations` and lean on its policy, which
+   * admits an admin's outgoing invitations as well as the caller's incoming
+   * ones, and hid the workspace's name from somebody not yet in it. The
+   * function decides both from the caller's own account, so the route passes
+   * it nothing a caller could choose.
+   */
+  it("asks the database function, naming nobody", async () => {
+    let args: unknown = "not called";
+    const { app } = appWith({
+      rpc: {
+        incoming_invitations: (received) => {
+          args = received;
+          return { data: [], error: null };
         },
       },
     });
@@ -551,61 +572,17 @@ describe("GET /invitations/incoming", () => {
     const res = await json(app, "GET", "/invitations/incoming");
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual([expect.objectContaining({ workspaceName: "" })]);
+    expect(args ?? {}).toEqual({});
   });
 
-  /**
-   * The route used to lean entirely on `invitations_select_admin_or_invitee`,
-   * which admits a row when the caller is an admin of the workspace OR the row
-   * is addressed to them. So it answered "invitations you can see" to a
-   * question that asked "invitations addressed to you", and an admin met their
-   * own outgoing invitations in the incoming banner — "You've been invited to
-   * <your own workspace> as <the role you just granted somebody else>", with an
-   * Accept button `accept_invitation()` was always going to refuse.
-   *
-   * Asserted on the filter rather than on the rows, because the fake client
-   * cannot enforce a policy: a test that only checked the response would pass
-   * with the filter deleted.
-   */
-  it("asks only for invitations addressed to the caller, not every one they may read", async () => {
-    let filters: { column: string; value: unknown }[] = [];
+  it("reports a read that failed", async () => {
     const { app } = appWith({
-      tables: {
-        invitations: {
-          select: (ctx) => {
-            filters = ctx.filters as typeof filters;
-            return { data: [], error: null };
-          },
-        },
-      },
+      rpc: { incoming_invitations: () => ({ data: null, error: { message: "boom" } }) },
     });
 
-    await json(app, "GET", "/invitations/incoming");
+    const res = await json(app, "GET", "/invitations/incoming");
 
-    expect(filters).toContainEqual(expect.objectContaining({ column: "email", value: USER.email }));
-  });
-
-  it("lowercases the caller's own address, since the stored one always is", async () => {
-    let filters: { column: string; value: unknown }[] = [];
-    const { app } = appWith({
-      user: { id: USER.id, email: "Admin@Example.com" },
-      tables: {
-        invitations: {
-          select: (ctx) => {
-            filters = ctx.filters as typeof filters;
-            return { data: [], error: null };
-          },
-        },
-      },
-    });
-
-    await json(app, "GET", "/invitations/incoming");
-
-    // POST /invitations lowercases on the way in, so a caller whose auth record
-    // kept its capitals would otherwise match none of their own invitations.
-    expect(filters).toContainEqual(
-      expect.objectContaining({ column: "email", value: "admin@example.com" }),
-    );
+    expect(res.status).toBe(500);
   });
 });
 

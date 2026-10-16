@@ -37,7 +37,9 @@ export function InviteAcceptStep({ onDone }: { onDone: () => void }) {
           <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-brand" />
           <span className="min-w-0 flex-1 text-base">
             <strong className="font-medium">{invite.workspaceName}</strong>
-            <span className="text-muted-foreground"> · as {invite.role}</span>
+            <span className="text-muted-foreground">
+              {invite.inviterName ? ` · from ${invite.inviterName}` : ""} · as {invite.role}
+            </span>
           </span>
           {canAccept(invite.id) ? (
             <Button

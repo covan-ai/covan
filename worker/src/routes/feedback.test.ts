@@ -303,7 +303,11 @@ describe("POST /feedback — telling whoever runs this install", () => {
     );
     const { db, inserted } = fakeDb();
 
-    const res = await post(db, { message: "hello" }, { ...MAIL, FEEDBACK_EMAIL: "ops@example.com" });
+    const res = await post(
+      db,
+      { message: "hello" },
+      { ...MAIL, FEEDBACK_EMAIL: "ops@example.com" },
+    );
 
     expect(res.status).toBe(201);
     expect(inserted).toHaveLength(1);

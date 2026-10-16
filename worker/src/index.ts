@@ -26,6 +26,7 @@ import { me } from "./routes/me";
 import { workspace } from "./routes/workspace";
 import { support } from "./routes/support";
 import { invitations } from "./routes/invitations";
+import { invitationPreview } from "./routes/invitation-preview";
 import { usage } from "./routes/usage";
 import { coverage } from "./routes/coverage";
 import { routines } from "./routes/routines";
@@ -153,6 +154,10 @@ app.use("/*", bodyLimit({ maxSize: MAX_REQUEST_BYTES, onError: tooLarge }));
 
 // Unauthenticated — used for uptime checks / boot verification.
 app.get("/health", (c) => c.json({ ok: true }));
+
+// Unauthenticated too: the `/invite` page, before sign-in, asking what the
+// email's id and token are an invitation to. The pair is its own proof.
+app.route("/", invitationPreview);
 
 // Authenticated sub-router: Task 3 hangs /agents, /sessions, etc. off `api`.
 // Everything mounted here requires a valid Supabase bearer token, and gets

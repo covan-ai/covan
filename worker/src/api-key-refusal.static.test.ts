@@ -322,6 +322,8 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
     "Resend's inbound mail deliveries, verified by the webhook signature and the sender's SPF, DKIM and DMARC",
   addressConfirmationsPublic:
     "somebody at an email address confirming it, holding the token mailed to it",
+  invitationPreview:
+    "the /invite page before sign-in, holding the invitation's id and the token mailed with it",
 };
 
 /** Every `<router>.<method>("<path>"` registration in a route file. */

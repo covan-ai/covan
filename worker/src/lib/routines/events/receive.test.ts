@@ -283,3 +283,66 @@ describe("a delivery for a trigger two routines share", () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe("receiveEvent, for an adapter that checks each delivery's signature", () => {
+  function signedRegistry(authenticate: EventAdapter["authenticate"]): EventRegistry {
+    const adapter: EventAdapter = {
+      provider: "github",
+      isConfigured: () => true,
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      setEnabled: vi.fn(),
+      authenticate,
+      normalize: normalize as unknown as EventAdapter["normalize"],
+    };
+    return {
+      ...catalogueOf([{ ...MAIL, provider: "github" }]),
+      adapterFor: (p) => (p === "github" ? adapter : undefined),
+    };
+  }
+
+  function receiveSigned(authenticate: EventAdapter["authenticate"], routineOver: Row = {}) {
+    const m = memoryDb({
+      routines: [routine(routineOver)],
+      routine_event_subscriptions: [subscription({ provider: "github", external_id: "gh_1" })],
+    });
+    (m.db as unknown as { rpc: unknown }).rpc = rpc;
+    return receiveEvent(
+      ENV,
+      { provider: "github", externalId: "gh_1" },
+      { raw: true },
+      {
+        db: m.db as unknown as SupabaseClient,
+        registry: signedRegistry(authenticate),
+        defer: (p) => deferred.push(p),
+        run: run as never,
+        pause: pause as never,
+        sync: sync as never,
+      },
+    );
+  }
+
+  it("refuses a delivery whose signature fails, before reading anything else", async () => {
+    const out = await receiveSigned(async () => false);
+    expect(out).toEqual({ status: "forged" });
+    expect(normalize).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("says forged, not paused, to a sender without the secret", async () => {
+    expect(await receiveSigned(async () => false, { status: "paused" })).toEqual({
+      status: "forged",
+    });
+  });
+
+  it("carries on as usual once the signature holds", async () => {
+    const authenticate = vi.fn(async () => true);
+    const out = await receiveSigned(authenticate);
+    expect(out).toEqual({ status: "accepted", eventId: "github:msg_1" });
+    expect(authenticate).toHaveBeenCalledWith(
+      { raw: true },
+      expect.objectContaining({ subscription: expect.objectContaining({ external_id: "gh_1" }) }),
+    );
+  });
+});

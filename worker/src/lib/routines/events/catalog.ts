@@ -23,11 +23,15 @@
  * missing or unconfigured is never shown, and a row that names one is marked
  * `failed` with a sentence rather than left `pending` forever
  * (`lifecycle.ts`). Composio's — Gmail, Outlook, Google Calendar — are the
- * first, in `composio-catalog.ts` beside what Composio needs to serve them.
+ * first, in `composio-catalog.ts` beside what Composio needs to serve them;
+ * GitHub's (`github.ts`) and WebSub's — YouTube and instant RSS
+ * (`websub.ts`) — sit beside their adapters the same way.
  */
 
 import type { z } from "zod";
 import { COMPOSIO_EVENTS } from "./composio-catalog";
+import { GITHUB_EVENTS } from "./github";
+import { WEBSUB_EVENTS } from "./websub";
 
 /**
  * Who sends the event. The adapter registry is keyed on this, and so is the
@@ -130,7 +134,11 @@ export type EventTypeDef = {
  * The list, in the order the dialog offers it. Each provider's entries live
  * beside the adapter half that serves them; see the module comment.
  */
-export const EVENT_TYPES: readonly EventTypeDef[] = COMPOSIO_EVENTS.map((spec) => spec.def);
+export const EVENT_TYPES: readonly EventTypeDef[] = [
+  ...COMPOSIO_EVENTS,
+  ...GITHUB_EVENTS,
+  ...WEBSUB_EVENTS,
+].map((spec) => spec.def);
 
 /** `routine_runs.trigger_label` is at most this long (0109). */
 export const MAX_TRIGGER_LABEL = 120;

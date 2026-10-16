@@ -10,6 +10,9 @@
  *   1. The subscription and its routine are read with the service role,
  *      because a delivery carries no Covan caller — `routine_hooks`' reason
  *      (`ingest.ts`), one provider further away.
+ *  1b. Where each subscription has its own signing secret — a GitHub webhook,
+ *      a WebSub hub — the route cannot check the signature before it knows
+ *      the subscription, so the adapter's `authenticate` checks it here, first.
  *   2. Anything not running is refused: a paused or binned routine, one that
  *      stopped waiting for events, a subscription that is not `active`.
  *   3. The adapter turns the raw delivery into a paragraph the model can read,
@@ -37,7 +40,12 @@ import { decryptSecret } from "../../secret-box";
 import { ROUTINE_COLUMNS } from "../ingest";
 import type { IngestTrigger, RoutineRow } from "../executor";
 import { pauseForEventFlood, runPokedRoutine } from "../dispatcher";
-import { EVENT_REGISTRY, type EventRegistry, type SubscriptionRow } from "./adapter";
+import {
+  EVENT_REGISTRY,
+  type AdapterContext,
+  type EventRegistry,
+  type SubscriptionRow,
+} from "./adapter";
 import { triggerLabel } from "./catalog";
 import { SUBSCRIPTION_COLUMNS, syncSubscription } from "./lifecycle";
 
@@ -86,10 +94,12 @@ export type DeliveryTarget =
  *   inactive  the routine or the subscription is not running
  *   flood     over the limit; the routine is now paused
  *   unknown   no subscription matches — the route may cancel at the source
+ *   forged    the adapter's `authenticate` refused it; the route answers 401
+ *             and counts the miss, as for any bad signature
  */
 export type ReceiveOutcome =
   | { status: "accepted"; eventId: string }
-  | { status: "filtered" | "ignored" | "inactive" | "flood" | "unknown" };
+  | { status: "filtered" | "ignored" | "inactive" | "flood" | "unknown" | "forged" };
 
 export type ReceiveDeps = {
   db?: SupabaseClient;
@@ -152,6 +162,7 @@ const RANK: Record<ReceiveOutcome["status"], number> = {
   ignored: 3,
   inactive: 4,
   unknown: 5,
+  forged: 6,
 };
 
 /** Steps 2–6, for one subscription. */
@@ -173,10 +184,31 @@ async function receiveFor(
   if (routineError) throw new Error(`could not read the routine: ${routineError.message}`);
   const routine = routineRow as
     (RoutineRow & { status: string; trigger_kind: string; deleted_at: string | null }) | null;
+  if (!routine) return { status: "inactive" };
+
+  const def = registry.eventType(sub.event_type);
+  const adapter = registry.adapterFor(sub.provider);
+  const ctx: AdapterContext | null = def
+    ? {
+        env,
+        routine: { id: routine.id, user_id: routine.user_id, workspace_id: routine.workspace_id },
+        subscription: sub,
+        eventType: def,
+        secret: sub.secret_ciphertext
+          ? await decryptSecret(sub.secret_ciphertext, env.ROUTINE_SECRET_KEY)
+          : null,
+      }
+    : null;
+
+  // 1b. Is it really from them? Before the routine's state is consulted, so
+  // a sender without the secret learns nothing — not even whether the
+  // routine is paused — from how it is answered.
+  if (adapter?.authenticate && (!ctx || !(await adapter.authenticate(raw, ctx)))) {
+    return { status: "forged" };
+  }
 
   // 2. Only a running routine waiting for exactly this.
   if (
-    !routine ||
     routine.deleted_at ||
     routine.status !== "active" ||
     routine.trigger_kind !== "event" ||
@@ -184,21 +216,10 @@ async function receiveFor(
   ) {
     return { status: "inactive" };
   }
-
-  const def = registry.eventType(sub.event_type);
-  const adapter = registry.adapterFor(sub.provider);
-  if (!def || !adapter) return { status: "inactive" };
+  if (!ctx || !adapter || !def) return { status: "inactive" };
 
   // 3. What happened, in a paragraph.
-  const event = await adapter.normalize(raw, {
-    env,
-    routine: { id: routine.id, user_id: routine.user_id, workspace_id: routine.workspace_id },
-    subscription: sub,
-    eventType: def,
-    secret: sub.secret_ciphertext
-      ? await decryptSecret(sub.secret_ciphertext, env.ROUTINE_SECRET_KEY)
-      : null,
-  });
+  const event = await adapter.normalize(raw, ctx);
   if (!event) return { status: "ignored" };
 
   // 4. The routine's own filter, before anything is counted or spent.

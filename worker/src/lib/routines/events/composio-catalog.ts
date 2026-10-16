@@ -34,6 +34,7 @@
 
 import { z } from "zod";
 import type { EventTypeDef, NormalizedEvent } from "./catalog";
+import { clip, lines, rec, str } from "./text";
 
 /**
  * How a description asks Composio for more than the delivery carried — an
@@ -51,40 +52,6 @@ export type ComposioEventSpec = {
   /** A delivery's `data`, in a paragraph. `null` runs nothing. */
   describe: (data: Record<string, unknown>, fetch: ToolFetch) => Promise<NormalizedEvent | null>;
 };
-
-/**
- * The most of a message body the model is shown. A routine about a mail needs
- * what the mail says, and a quoted thread underneath it is mostly what earlier
- * mails said; the run's own `MAX_MATERIAL_CHARS` is the ceiling, this is
- * what a reasonable reply is made from.
- */
-const MAX_BODY_CHARS = 6_000;
-
-// ---- small readers ----------------------------------------------------------
-
-function str(value: unknown): string {
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "";
-}
-
-function rec(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-/** Lines with a value, joined — a missing field is left out, not "undefined". */
-function lines(pairs: Array<[string, string]>): string {
-  return pairs
-    .filter(([, v]) => v)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join("\n");
-}
-
-function clip(text: string, max = MAX_BODY_CHARS): string {
-  return text.length > max ? `${text.slice(0, max)}\n[…cut at ${max} characters]` : text;
-}
 
 /** HTML to readable text, roughly — enough for a model, not for a browser. */
 export function textOfHtml(html: string): string {

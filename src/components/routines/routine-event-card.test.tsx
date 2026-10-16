@@ -5,11 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RoutineEventCard } from "./routine-event-card";
 import type { Routine, RoutineEvent } from "@/lib/routines-api";
 
-const { eventCatalog, setEvent, removeEvent, testEvent, toast } = vi.hoisted(() => ({
+const { eventCatalog, setEvent, removeEvent, testEvent, eventSetup, toast } = vi.hoisted(() => ({
   eventCatalog: vi.fn(),
   setEvent: vi.fn(),
   removeEvent: vi.fn(),
   testEvent: vi.fn(),
+  eventSetup: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
 
@@ -20,7 +21,7 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 vi.mock("@/lib/api-client", () => ({
-  api: { routines: { eventCatalog, setEvent, removeEvent, testEvent } },
+  api: { routines: { eventCatalog, setEvent, removeEvent, testEvent, eventSetup } },
   ApiError: class ApiError extends Error {
     status: number;
     constructor(status: number, message: string) {
@@ -81,7 +82,7 @@ function renderCard(event: RoutineEvent | null) {
 }
 
 beforeEach(() => {
-  for (const fn of [eventCatalog, setEvent, removeEvent, testEvent]) fn.mockReset();
+  for (const fn of [eventCatalog, setEvent, removeEvent, testEvent, eventSetup]) fn.mockReset();
   for (const fn of Object.values(toast)) fn.mockReset();
   eventCatalog.mockResolvedValue([
     {
@@ -122,6 +123,32 @@ describe("RoutineEventCard", () => {
 
     expect(testEvent).toHaveBeenCalledWith("r1");
     expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/run history/));
+  });
+
+  it("shows a GitHub routine the webhook to add, with the secret behind a button", async () => {
+    eventSetup.mockResolvedValue({
+      kind: "github",
+      url: "https://api.example.com/routine-events/github/gh_abc",
+      secret: "s3cret",
+      contentType: "application/json",
+    });
+    const user = userEvent.setup();
+    renderCard({ ...EVENT, type: "github.push", provider: "github", app: "GitHub", label: "Push" });
+
+    expect(
+      await screen.findByText("https://api.example.com/routine-events/github/gh_abc"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/tick Pushes/)).toBeInTheDocument();
+    expect(screen.queryByText("s3cret")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show secret" }));
+    expect(screen.getByText("s3cret")).toBeInTheDocument();
+    expect(eventSetup).toHaveBeenCalledWith("r1");
+  });
+
+  it("asks for nothing to be pasted for an event Covan sets up itself", () => {
+    renderCard(EVENT);
+    expect(eventSetup).not.toHaveBeenCalled();
   });
 
   it("asks for an event straight away when none was chosen", async () => {

@@ -180,7 +180,12 @@ export function useSetRoutineEvent() {
   return useMutation({
     mutationFn: ({ id, choice }: { id: string; choice: EventChoice }) =>
       api.routines.setEvent(id, choice),
-    onSuccess: () => qc.invalidateQueries({ queryKey: routinesKey }),
+    // A new choice is a new subscription, and a GitHub one a new URL.
+    onSuccess: (_routine, { id }) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: routinesKey }),
+        qc.invalidateQueries({ queryKey: eventSetupKey(id) }),
+      ]),
   });
 }
 
@@ -189,6 +194,21 @@ export function useRemoveRoutineEvent() {
   return useMutation({
     mutationFn: (id: string) => api.routines.removeEvent(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: routinesKey }),
+  });
+}
+
+export const eventSetupKey = (routineId: string) => ["routine-event-setup", routineId] as const;
+
+/**
+ * What the owner pastes into the app — a GitHub webhook's URL and secret.
+ * Keyed by routine, and dropped by `useSetRoutineEvent`, because choosing the
+ * event again makes a new URL.
+ */
+export function useRoutineEventSetup(routineId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: eventSetupKey(routineId),
+    queryFn: () => api.routines.eventSetup(routineId),
+    enabled,
   });
 }
 

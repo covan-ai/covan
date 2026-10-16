@@ -224,3 +224,42 @@ export async function fetchSource(
   if (cursor?.contentHash === hash) return { status: "unchanged" };
   return { status: "content", text: body, hash, etag };
 }
+
+/**
+ * A page somebody chose, read under the same guard a source is: a public
+ * address only, at most three redirects, each one checked again, the body
+ * capped. For the event side, which reads a feed once to learn where its
+ * WebSub hub is (`events/websub.ts`) and has no cursor or etag to bring.
+ */
+export async function fetchPublicText(url: string, deps: FetchDeps): Promise<string> {
+  const res = await guardedFetch(url, null, deps);
+  if (!res.ok) throw new UpstreamError(res.status);
+  return readCapped(res, deps.maxBytes ?? MAX_BYTES);
+}
+
+/**
+ * A form POST to an address somebody chose — a WebSub hub a feed named — under
+ * the same guard, and refusing to follow a redirect at all: a hub that
+ * answers a subscription with one is not behaving like a hub, and a POST
+ * re-sent to wherever it points is how a guard is walked around.
+ */
+export async function postPublicForm(
+  url: string,
+  form: Record<string, string>,
+  deps: FetchDeps,
+): Promise<Response> {
+  const target = assertFetchableUrl(url, deps.ownHosts);
+  const address = await resolvesPublicly(target.hostname);
+  return deps.fetchImpl(
+    ...pinnedRequest(target, address, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "covan-routines/1.0",
+      },
+      body: new URLSearchParams(form).toString(),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    }),
+  );
+}

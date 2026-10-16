@@ -740,13 +740,16 @@ Composio before the row goes, so does closing the account.
 
 A routine can start on an event in a connected app rather than on a clock
 or a webhook: **a new email in Gmail or Outlook, a new Outlook calendar event,
-or a Google Calendar event that is new, changed, cancelled, or about to
-start.** In the routine dialog, under _Starts_, pick _When something happens
+a Google Calendar event that is new, changed, cancelled, or about to
+start, a GitHub push, pull request or issue, a new YouTube video, or a new
+post in a feed that supports instant updates.** In the routine dialog, under _Starts_, pick _When something happens
 in an app_, then the app, then the event and any filter (a Gmail search, an
 Outlook sender, how many minutes before a meeting). If the app is not
 connected yet, the dialog says so and links to the Integrations page.
 
-These events come through Composio, the same way connected apps do. Composio
+The mail and calendar events come through Composio, the same way connected
+apps do; GitHub, YouTube and feeds are described under their own headings
+below. Composio
 watches the account and calls Covan when something happens. Each routine gets
 a short, readable summary of the event (sender, subject and text; or title,
 time and attendees), not the raw payload. The filters you pick are sent to
@@ -821,6 +824,68 @@ trigger in place for the other.
 own HubSpot developer app and developer key before they deliver anything.
 That is more than connecting HubSpot from the Integrations page, so they are
 not offered.
+
+#### GitHub: a push, a pull request or an issue
+
+These need no app installed and nothing connected. Each routine gets its own
+webhook, which you add to the repository yourself:
+
+1. Make the routine with _When something happens in an app_ → **GitHub**,
+   and pick **Push** (optionally only some branches), **Pull request**
+   (opened, merged, closed without merging, reopened, ready for review, or
+   anything) or **Issue** (opened, closed, reopened, or anything).
+2. The routine's page shows a **payload URL** and a **secret**. On GitHub,
+   open the repository's _Settings → Webhooks → Add webhook_. Paste both and
+   set the content type to `application/json`.
+3. Under _Which events would you like to trigger this webhook?_, choose _Let
+   me select individual events_ and tick the matching one: _Pushes_, _Pull
+   requests_ or _Issues_.
+
+The same webhook can go on several repositories. Choosing a different event
+later gives the routine a new URL and secret, so update the webhook too.
+
+**How it is protected:**
+
+- **The URL is random.** It contains an id that is not the routine's.
+- **Every delivery is signed.** It must carry GitHub's `X-Hub-Signature-256`
+  made with that routine's own secret. Anything else is refused with a 401
+  before the routine is looked at, and an address that keeps failing is
+  turned away.
+- **Filters are applied here.** GitHub sends every push to the webhook,
+  whatever the branch, so the branch and the pull request or issue action are
+  checked when a delivery arrives. A delivery that does not match starts
+  nothing and costs nothing.
+- **Each delivery runs once.** A redelivery from GitHub's settings page
+  carries the same delivery id and does not run the routine again.
+- **GitHub's own test is ignored.** The `ping` GitHub sends when you add the
+  webhook is answered but starts nothing.
+
+Only the routine's owner can see the secret, only in the app, and never
+through an API key.
+
+#### YouTube and instant RSS (WebSub)
+
+- **YouTube · New video** starts a routine within minutes of a channel
+  publishing. Paste the channel's link, its `@handle`, or its channel id.
+- **RSS feed · New post (instant)** does the same for any feed that supports
+  WebSub, which many blogs and podcasts do. A feed that doesn't is refused
+  with a sentence that says so. Watch it on a schedule instead: a scheduled
+  routine with the feed as its source.
+
+How it works: Covan subscribes at the hub the publisher names (Google's hub,
+for YouTube). The hub calls back to `/routine-events/websub/<id>` to check the
+subscription is real, then pushes each update there, signed with a secret only
+that routine has. Subscriptions are leased for five days, and the cron Worker
+renews them a day before they lapse. A paused routine's lease is left to
+expire, and resuming subscribes again.
+
+YouTube pushes a video again whenever its title or description changes. Those
+pushes start a run only if the video was published within the last two days,
+and each set of videos runs at most once.
+
+These events need a public address for the hub to call back to: set
+`WORKER_HOST` to the API's own domain on both Workers. Without it, they are not
+offered.
 
 ### A real browser
 

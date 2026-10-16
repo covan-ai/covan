@@ -134,6 +134,9 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   // `runPokedRoutine` through `events/receive.ts`, so this file imports
   // neither seam. Its bounds are pinned below with the hooks'.
   "composio-events.ts": "receiveEvent",
+  // GitHub webhooks and WebSub hubs, the same road: `receiveEvent`, and the
+  // signature checked inside it by the adapter. Pinned below as well.
+  "routine-events.ts": "receiveEvent",
   // The document poll, `GET /sessions/:id/document-jobs`. On a deployment
   // with no document host it advances the caller's own job one unit per poll,
   // which is a model call — and it is a GET the tab makes every few seconds,
@@ -228,6 +231,13 @@ describe("the expensive rate limit", () => {
     expect(composioEvents).toContain('getRateLimiter(c.env, "expensive")');
     expect(composioEvents).toContain("hasSpentMisses(c)");
     expect(composioEvents).toContain("countMiss(c)");
+    // GitHub and WebSub: the expensive tier per subscription, the address
+    // charged for an unknown id or a failed signature, and refused once spent.
+    const routineEvents = readFileSync(join(ROUTES, "routine-events.ts"), "utf8");
+    expect(routineEvents).toContain('getRateLimiter(c.env, "expensive")');
+    expect(routineEvents).toContain("hasSpentMisses(c)");
+    expect(routineEvents).toContain("countMiss(c)");
+    expect(routineEvents).toContain('outcome.status === "forged"');
     expect(readFileSync(join(SRC, "lib", "routines", "events", "receive.ts"), "utf8")).toContain(
       "count_routine_event",
     );

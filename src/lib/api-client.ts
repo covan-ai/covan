@@ -32,6 +32,7 @@ import type {
   RoutineTrigger,
   EventCatalogEntry,
   EventChoice,
+  EventSetup,
   CreateRoutineInput,
   UpdateRoutineInput,
 } from "./routines-api";
@@ -1114,6 +1115,8 @@ export const api = {
     setEvent: (id: string, choice: EventChoice): Promise<Routine> =>
       request("PUT", `/routines/${id}/event`, choice),
     removeEvent: (id: string): Promise<void> => request("DELETE", `/routines/${id}/event`),
+    /** What to paste into the app (a GitHub webhook's URL and secret), if anything. */
+    eventSetup: (id: string): Promise<EventSetup> => request("GET", `/routines/${id}/event/setup`),
     /** Runs the routine on a sample of its event. Resolves when the run ends. */
     testEvent: (
       id: string,

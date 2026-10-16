@@ -70,6 +70,9 @@ const events = vi.hoisted(() => {
     releaseSubscription: vi.fn(async (..._args: unknown[]) => {}),
     syncSubscription: vi.fn(async (..._args: unknown[]) => ({ status: null, detail: null })),
     runPokedRoutine: vi.fn(async (..._args: unknown[]) => ({ status: "ok", itemsNew: 1 })),
+    subscriptionSetup: vi.fn(
+      async (..._args: unknown[]): Promise<Record<string, unknown> | null> => null,
+    ),
   };
 });
 vi.mock("../lib/routines/events/adapter", async () => {
@@ -92,6 +95,7 @@ vi.mock("../lib/routines/events/lifecycle", () => ({
   replaceSubscription: events.replaceSubscription,
   releaseSubscription: events.releaseSubscription,
   syncSubscription: events.syncSubscription,
+  subscriptionSetup: events.subscriptionSetup,
 }));
 vi.mock("../lib/routines/dispatcher", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/routines/dispatcher")>()),
@@ -1109,6 +1113,7 @@ describe("event triggers (0109)", () => {
     events.releaseSubscription.mockClear();
     events.syncSubscription.mockClear();
     events.runPokedRoutine.mockClear();
+    events.subscriptionSetup.mockClear();
   });
 
   /** A caller's client that sees one routine, and records what it deleted. */
@@ -1312,6 +1317,47 @@ describe("event triggers (0109)", () => {
       expect((await request("PUT", "/routines/r1/event", { type: "test.anything" })).status).toBe(
         404,
       );
+    });
+  });
+
+  describe("GET /routines/:id/event/setup", () => {
+    it("hands the owner a GitHub webhook's URL and secret to paste", async () => {
+      events.subscriptionSetup.mockResolvedValueOnce({
+        provider: "github",
+        externalId: "gh_abc",
+        secret: "s3cret",
+      });
+      const { request } = withRoutine(EVENT_ROUTINE);
+
+      const { status, body } = await request("GET", "/routines/r1/event/setup");
+
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        kind: "github",
+        secret: "s3cret",
+        contentType: "application/json",
+      });
+      expect(body.url).toMatch(/\/routine-events\/github\/gh_abc$/);
+      expect(events.subscriptionSetup.mock.calls[0][1]).toBe("r1");
+    });
+
+    it("has nothing to show for an event this code sets up by itself", async () => {
+      events.subscriptionSetup.mockResolvedValueOnce({
+        provider: "composio",
+        externalId: "ti_1",
+        secret: null,
+      });
+      const { request } = withRoutine(EVENT_ROUTINE);
+
+      expect((await request("GET", "/routines/r1/event/setup")).body).toEqual({ kind: "none" });
+    });
+
+    it("is refused to an API key, and a 404 for somebody else's routine", async () => {
+      const keyed = withRoutine(EVENT_ROUTINE, { id: "key-1", workspaceId: WORKSPACE_ID });
+      expect((await keyed.request("GET", "/routines/r1/event/setup")).status).toBe(403);
+      const stranger = withRoutine(null);
+      expect((await stranger.request("GET", "/routines/r1/event/setup")).status).toBe(404);
+      expect(events.subscriptionSetup).not.toHaveBeenCalled();
     });
   });
 

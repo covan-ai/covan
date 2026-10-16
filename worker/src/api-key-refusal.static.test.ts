@@ -134,6 +134,8 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "hands back a fresh webhook signing secret, so whoever holds it can sign payloads to the owner's endpoint after the key is revoked",
   "routes/routines.ts PUT /routines/:id/event":
     "attaches a listener at a third party to a routine that may have been made in a session, which a revoked key does not pause — a routine the key itself creates is paused on revocation (0088), and its listener with it",
+  "routes/routines.ts GET /routines/:id/event/setup":
+    "hands back a GitHub webhook's secret, so whoever holds it can start the routine with a signed delivery after the key is revoked",
 
   // -- the owner's browser
   "routes/browser.ts POST /browser/takeovers":
@@ -312,6 +314,8 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
   composioPublic: "a logo proxy for <img> tags, serving nothing about anybody",
   routineHooks: "a third-party sender holding an ingest token, which is the credential",
   composioEvents: "Composio's trigger deliveries, verified by the webhook signature",
+  routineEvents:
+    "GitHub webhooks and WebSub hubs, each delivery verified by its own subscription's secret",
   addressConfirmationsPublic:
     "somebody at an email address confirming it, holding the token mailed to it",
 };

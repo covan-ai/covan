@@ -93,6 +93,11 @@ RESEND_FROM=
 # too. See docs/integrations.md.
 # NOTION_WEBHOOK_VERIFICATION_TOKEN=
 
+# Optional. Inbound mail through Resend: replies to a routine's report, and
+# routines with an address of their own. Both or neither.
+# INBOUND_EMAIL_DOMAIN=reply.example.com
+# RESEND_INBOUND_WEBHOOK_SECRET=whsec_...
+
 # Optional. Lets an agent drive a real browser — read a page that needs
 # JavaScript, pull a number out of a site with no API — through browser-use,
 # which runs the browser and the agent loop. Unset, the `browse` tool is not

@@ -1121,6 +1121,7 @@ describe("event triggers (0109)", () => {
     routine: Record<string, unknown> | null,
     key?: { id: string; workspaceId: string },
     extra: FakeDbSpec["tables"] = {},
+    env: Record<string, string> = {},
   ) {
     const deleted: string[] = [];
     const request = appWith(
@@ -1136,7 +1137,7 @@ describe("event triggers (0109)", () => {
           ...extra,
         },
       },
-      {},
+      env as never,
       key,
     );
     return { request, deleted };
@@ -1339,6 +1340,28 @@ describe("event triggers (0109)", () => {
       });
       expect(body.url).toMatch(/\/routine-events\/github\/gh_abc$/);
       expect(events.subscriptionSetup.mock.calls[0][1]).toBe("r1");
+    });
+
+    it("hands the owner the address a mailed routine answers at", async () => {
+      events.subscriptionSetup.mockResolvedValueOnce({
+        provider: "email",
+        externalId: "abcdefghijklmnop",
+        secret: null,
+      });
+      const { request } = withRoutine(
+        EVENT_ROUTINE,
+        undefined,
+        {},
+        {
+          INBOUND_EMAIL_DOMAIN: "reply.example.com",
+          RESEND_INBOUND_WEBHOOK_SECRET: "whsec_x",
+        },
+      );
+
+      expect((await request("GET", "/routines/r1/event/setup")).body).toEqual({
+        kind: "email",
+        address: "inbox-abcdefghijklmnop@reply.example.com",
+      });
     });
 
     it("has nothing to show for an event this code sets up by itself", async () => {

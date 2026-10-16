@@ -146,6 +146,24 @@ describe("RoutineEventCard", () => {
     expect(eventSetup).toHaveBeenCalledWith("r1");
   });
 
+  it("shows a mailed routine its address, and who may use it", async () => {
+    eventSetup.mockResolvedValue({
+      kind: "email",
+      address: "inbox-abcdefghijklmnop@reply.example.com",
+    });
+    renderCard({
+      ...EVENT,
+      type: "email.received",
+      provider: "email",
+      app: "Email",
+      label: "Mail to this routine",
+      config: { senders: "@acme.com" },
+    });
+
+    expect(await screen.findByText("inbox-abcdefghijklmnop@reply.example.com")).toBeInTheDocument();
+    expect(screen.getByText(/Mail from @acme.com starts it/)).toBeInTheDocument();
+  });
+
   it("asks for nothing to be pasted for an event Covan sets up itself", () => {
     renderCard(EVENT);
     expect(eventSetup).not.toHaveBeenCalled();

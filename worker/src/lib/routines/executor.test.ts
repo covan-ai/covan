@@ -1056,6 +1056,38 @@ describe("runRoutine", () => {
       });
       expect(JSON.parse(deliverCalls[0].init.body as string).run.triggeredBy).toBe("event");
     });
+
+    // With inbound mail on, the emailed report's Reply-To names the row this
+    // run writes — so an answer finds the report — and a run answering a
+    // reply goes back into that reply's thread.
+    it("emails a report its own run can be found by, threaded when it answers a reply", async () => {
+      const { db, inserts } = makeDb({
+        rows: {
+          delivery_channels: {
+            kind: "email",
+            secret_ciphertext: await encryptSecret("deniz@example.com", SECRET_KEY),
+            confirmed_at: "2026-08-01T00:00:00Z",
+          },
+        },
+      });
+      const deps = makeDeps(db) as any;
+      deps.deliveryDeps.inboundDomain = "reply.example.com";
+      const reply = {
+        ...event,
+        source: "reply" as const,
+        thread: { inReplyTo: "<m1@x>", references: "<m1@x>", subject: "Re: Inbox" },
+      };
+
+      await runRoutine(waiting(), deps, reply);
+
+      const sent = JSON.parse(deliverCalls[0].init.body as string);
+      const runId = inserts.find((i) => i.table === "routine_runs")!.values.id;
+      expect(sent.headers["Message-ID"]).toBe(`<run-${runId}@reply.example.com>`);
+      expect(sent.headers["In-Reply-To"]).toBe("<m1@x>");
+      expect(sent.subject).toBe("Re: Inbox");
+      const { runOfReply } = await import("../inbound-email/address");
+      expect(await runOfReply(SECRET_KEY, sent.reply_to.split("@")[0])).toBe(runId);
+    });
   });
 
   it("checks the delivery channel before summarising, so a missing channel skips the LLM call", async () => {

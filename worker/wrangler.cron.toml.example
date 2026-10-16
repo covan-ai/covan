@@ -37,6 +37,9 @@
 #   NOTION_WEBHOOK_VERIFICATION_TOKEN <- REQUIRED here if the API Worker has
 #                           it, for the same reason: this Worker keeps the
 #                           Notion subscriptions, and both must agree they exist.
+#   RESEND_INBOUND_WEBHOOK_SECRET <- REQUIRED here if the API Worker has it,
+#                           with INBOUND_EMAIL_DOMAIN in [vars]: this Worker
+#                           puts the Reply-To on the reports it sends.
 #   BROWSER_USE_API_KEY  <- REQUIRED here if the API Worker has it. This Worker
 #                           is the FALLBACK now, not the only clock: while a
 #                           conversation is open in a tab, the tab polls its
@@ -121,6 +124,10 @@ ALLOWED_ORIGIN = "https://your-app.example.com"
 # keeps calling OpenAI while chat has moved on. Both must match wrangler.toml.
 # OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
 # OPENAI_MODEL = "meta-llama/llama-3.3-70b-instruct"
+
+# Inbound mail: the same domain as wrangler.toml, so the reports this Worker
+# sends carry a Reply-To the API Worker can receive.
+# INBOUND_EMAIL_DOMAIN = "reply.example.com"
 
 # Where a sync puts the documents it reads. Step 2 of the header's two, and the
 # one to uncomment second — the same bucket name as wrangler.toml, since both

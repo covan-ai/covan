@@ -140,6 +140,10 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   // Notion's deliveries: the integration's signature checked in the route,
   // then `receiveEvent` per connection that can see the page. Pinned below.
   "notion-events.ts": "receiveEvent",
+  // Inbound mail: `receiveEvent` for a routine's own address and
+  // `receiveReply` for an answer to a report, which reaches `runPokedRoutine`
+  // without `receive.ts`. Pinned below as well.
+  "email-inbound.ts": "receiveReply",
   // The document poll, `GET /sessions/:id/document-jobs`. On a deployment
   // with no document host it advances the caller's own job one unit per poll,
   // which is a model call — and it is a GET the tab makes every few seconds,
@@ -248,6 +252,18 @@ describe("the expensive rate limit", () => {
     expect(notionEvents).toContain('getRateLimiter(c.env, "expensive")');
     expect(notionEvents).toContain("hasSpentMisses(c)");
     expect(notionEvents).toContain("countMiss(c)");
+    // Inbound mail: Resend's signature before the body is parsed, the
+    // expensive tier per address, a miss for an address nothing holds, and
+    // replies capped per routine per hour.
+    const emailInbound = readFileSync(join(ROUTES, "email-inbound.ts"), "utf8");
+    expect(emailInbound).toContain("verifyResendWebhook");
+    expect(emailInbound).toContain('getRateLimiter(c.env, "expensive")');
+    expect(emailInbound).toContain("hasSpentMisses(c)");
+    expect(emailInbound).toContain("countMiss(c)");
+    expect(emailInbound).toContain("passesAuthentication");
+    expect(readFileSync(join(SRC, "lib", "routines", "replies.ts"), "utf8")).toContain(
+      "REPLIES_PER_HOUR",
+    );
     expect(readFileSync(join(SRC, "lib", "routines", "events", "receive.ts"), "utf8")).toContain(
       "count_routine_event",
     );

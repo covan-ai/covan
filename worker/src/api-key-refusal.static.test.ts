@@ -318,6 +318,8 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
     "Notion's webhook deliveries, verified by the integration's signature once its token is set",
   routineEvents:
     "GitHub webhooks and WebSub hubs, each delivery verified by its own subscription's secret",
+  emailInbound:
+    "Resend's inbound mail deliveries, verified by the webhook signature and the sender's SPF, DKIM and DMARC",
   addressConfirmationsPublic:
     "somebody at an email address confirming it, holding the token mailed to it",
 };

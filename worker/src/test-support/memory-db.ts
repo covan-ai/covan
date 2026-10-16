@@ -51,6 +51,11 @@ export function matchesFilters(row: Row, filters: Filter[]): boolean {
         return (cellOf(row, f.column) ?? null) === f.value;
       case "in":
         return (f.value as unknown[]).includes(cellOf(row, f.column));
+      case "gte": {
+        // As text, which is right for the ISO timestamps it is used on.
+        const v = cellOf(row, f.column);
+        return v !== null && v !== undefined && String(v) >= String(f.value);
+      }
       case "or":
         return matchesOr(row, String(f.value));
       default:

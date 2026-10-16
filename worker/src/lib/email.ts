@@ -30,6 +30,17 @@ export type Email = {
    * message. Resend takes both in one request and lets the client choose.
    */
   html?: string;
+  /**
+   * Where an answer goes, when not to the sender. A routine's report sets it to
+   * an address on `INBOUND_EMAIL_DOMAIN` that names the run, so a reply comes
+   * back to the routine (`lib/inbound-email/`); nothing else sets it.
+   */
+  replyTo?: string;
+  /**
+   * Extra headers: a report's own `Message-ID`, and on an answer to a reply the
+   * `In-Reply-To` and `References` that keep it in the same thread.
+   */
+  headers?: Record<string, string>;
 };
 
 /**
@@ -65,6 +76,8 @@ export function sendEmail(email: Email, deps: EmailDeps): Promise<Response> {
       // sends the same request it always did rather than an explicit null that
       // Resend would have to interpret.
       html: email.html,
+      reply_to: email.replyTo,
+      headers: email.headers,
     }),
   });
 }

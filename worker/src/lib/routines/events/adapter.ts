@@ -33,6 +33,7 @@ import { WEBSUB_ADAPTER } from "./websub";
 import { SLACK_ADAPTER } from "./slack";
 import { NOTION_ADAPTER } from "./notion";
 import { DRIVE_ADAPTER } from "./drive";
+import { EMAIL_ADAPTER } from "./email";
 
 /** The row as the engine reads it, secret still sealed. */
 export type SubscriptionRow = {
@@ -165,6 +166,7 @@ const ADAPTERS: Partial<Record<EventProvider, EventAdapter>> = {
   slack: SLACK_ADAPTER,
   notion: NOTION_ADAPTER,
   google_drive: DRIVE_ADAPTER,
+  email: EMAIL_ADAPTER,
 };
 
 export const ADAPTER_REGISTRY: AdapterRegistry = {

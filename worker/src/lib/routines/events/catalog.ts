@@ -36,6 +36,7 @@ import { WEBSUB_EVENTS } from "./websub";
 import { SLACK_EVENTS } from "./slack";
 import { NOTION_EVENTS } from "./notion";
 import { DRIVE_EVENTS } from "./drive";
+import { EMAIL_RECEIVED } from "./email";
 
 /**
  * Who sends the event. The adapter registry is keyed on this, and so is the
@@ -145,6 +146,7 @@ export const EVENT_TYPES: readonly EventTypeDef[] = [
     ...WEBSUB_EVENTS,
     ...NOTION_EVENTS,
     ...DRIVE_EVENTS,
+    { def: EMAIL_RECEIVED },
   ].map((spec) => spec.def),
   // Slack's entries are plain definitions: there is nothing per entry for the
   // adapter to keep beside them (`slack.ts`).

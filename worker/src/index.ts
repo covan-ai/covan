@@ -46,6 +46,7 @@ import { composio, composioPublic } from "./routes/composio";
 import { composioEvents } from "./routes/composio-events";
 import { routineEvents } from "./routes/routine-events";
 import { notionEvents } from "./routes/notion-events";
+import { emailInbound } from "./routes/email-inbound";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
@@ -127,6 +128,9 @@ app.route("/", routineEvents);
 // Notion's deliveries: one signature for the integration (once its token is
 // set), the Notion workspace to count against, the address for failures.
 app.route("/", notionEvents);
+// Inbound mail from Resend: one signature for the deployment, and a token in
+// each address to count against.
+app.route("/", emailInbound);
 
 // After cors, so a preflight is answered rather than counted: an OPTIONS that
 // gets a 429 makes the browser report the real request as a CORS failure, which

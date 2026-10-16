@@ -111,6 +111,22 @@ export type RoutineEnv = {
    */
   NOTION_WEBHOOK_VERIFICATION_TOKEN?: string;
   /**
+   * The domain Resend receives mail on for this deployment, like
+   * `reply.example.com` — the MX record points there. With the secret below it
+   * switches on inbound mail (`lib/inbound-email/`): a routine's report carries
+   * a `Reply-To` that starts the routine again with the answer, and a routine
+   * can be given an address of its own to be mailed at. Optional, and both
+   * Workers need both: the cron Worker sends most reports and keeps the event
+   * subscriptions in step, the API Worker receives the mail.
+   */
+  INBOUND_EMAIL_DOMAIN?: string;
+  /**
+   * The signing secret of the Resend webhook that delivers `email.received` to
+   * `POST /email/inbound` — Svix's format, `whsec_…`. On Cloudflare:
+   * `wrangler secret put RESEND_INBOUND_WEBHOOK_SECRET`, on both Workers.
+   */
+  RESEND_INBOUND_WEBHOOK_SECRET?: string;
+  /**
    * browser-use's API key, and the switch that makes the `browse` tool exist.
    *
    * On `RoutineEnv` rather than `Bindings` for `COMPOSIO_API_KEY`'s reason,

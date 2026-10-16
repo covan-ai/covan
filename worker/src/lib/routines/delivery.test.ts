@@ -119,6 +119,77 @@ describe("deliver", () => {
     expect(payload.subject).toBe("r/saas");
   });
 
+  describe("an emailed report, with inbound mail on", () => {
+    const RUN = "3f2a91c0-8c01-4d4e-9a1b-0123456789ab";
+    const emailChannel = async () => ({
+      kind: "email" as const,
+      secret_ciphertext: await encryptSecret("deniz@example.com", KEY),
+      confirmed_at: "2026-10-01T00:00:00Z",
+    });
+    const sent = (fetchImpl: ReturnType<typeof vi.fn>) =>
+      JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+
+    it("carries a Reply-To naming its run, its own Message-ID, and asks responders to stay quiet", async () => {
+      const fetchImpl = vi.fn(ok);
+      await deliver(
+        await emailChannel(),
+        { subject: "Weekly", body: "3 new posts" },
+        deps(fetchImpl, { inboundDomain: "reply.example.com" }),
+        { event: "routine.delivered", runId: RUN },
+      );
+      const payload = sent(fetchImpl);
+      const { runOfReply } = await import("../inbound-email/address");
+      const local = String(payload.reply_to).split("@")[0];
+      expect(payload.reply_to).toMatch(/@reply\.example\.com$/);
+      expect(await runOfReply(KEY, local)).toBe(RUN);
+      expect(payload.headers).toEqual({
+        "Message-ID": `<run-${RUN}@reply.example.com>`,
+        "Auto-Submitted": "auto-generated",
+      });
+      expect(payload.html).toContain("Reply to it");
+    });
+
+    it("answers a reply in its thread, under Re:", async () => {
+      const fetchImpl = vi.fn(ok);
+      await deliver(
+        await emailChannel(),
+        { subject: "Weekly", body: "Here is the second item in depth." },
+        deps(fetchImpl, { inboundDomain: "reply.example.com" }),
+        {
+          event: "routine.delivered",
+          runId: RUN,
+          thread: {
+            inReplyTo: "<m1@example.com>",
+            references: "<a> <m1@example.com>",
+            subject: "Re: Weekly",
+          },
+        },
+      );
+      const payload = sent(fetchImpl);
+      expect(payload.subject).toBe("Re: Weekly");
+      expect(payload.headers["In-Reply-To"]).toBe("<m1@example.com>");
+      expect(payload.headers.References).toBe("<a> <m1@example.com>");
+    });
+
+    it("adds nothing with inbound mail off, or for a notice that has no run", async () => {
+      const off = vi.fn(ok);
+      await deliver(await emailChannel(), { subject: "W", body: "b" }, deps(off), {
+        event: "routine.delivered",
+        runId: RUN,
+      });
+      expect(sent(off).reply_to).toBeUndefined();
+      expect(sent(off).headers).toBeUndefined();
+      const notice = vi.fn(ok);
+      await deliver(
+        await emailChannel(),
+        { subject: "Paused", body: "b" },
+        deps(notice, { inboundDomain: "reply.example.com" }),
+        { event: "routine.paused" },
+      );
+      expect(sent(notice).reply_to).toBeUndefined();
+    });
+  });
+
   // The summary is whatever the model wrote, and models write Markdown. Until
   // this was rendered, a digest arrived with its asterisks and dashes intact —
   // the routine's own output looked like a draft of itself.

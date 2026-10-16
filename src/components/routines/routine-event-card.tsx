@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EventPicker } from "@/components/routines/event-picker";
 import { GitHubWebhookSetup } from "@/components/routines/github-webhook-setup";
+import { EmailAddressSetup } from "@/components/routines/email-address-setup";
 import { eventChoiceReady } from "@/lib/event-choice";
 import { ApiError } from "@/lib/api-client";
 import { formatRelative } from "@/lib/relative-time";
@@ -149,6 +150,12 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
             </div>
             {event.provider === "github" && (
               <GitHubWebhookSetup routineId={routine.id} eventType={event.type} />
+            )}
+            {event.provider === "email" && (
+              <EmailAddressSetup
+                routineId={routine.id}
+                senders={typeof event.config.senders === "string" ? event.config.senders : null}
+              />
             )}
             <div className="flex flex-wrap gap-2">
               <Button
